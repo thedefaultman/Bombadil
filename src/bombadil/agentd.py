@@ -68,6 +68,7 @@ class AgentD:
         self.dev.on_change = self._dev_changed
         self._loop: asyncio.AbstractEventLoop | None = None
         self._dev_dirty = False
+        self._dev_last: dict | None = None
         self._signals: asyncio.Queue = asyncio.Queue()
         self.launcher = launch or launcher.Launcher(snaps=self.snaps, sessions=self.dev)
         self.stopper = stopper or procs.Stopper()
@@ -280,7 +281,10 @@ class AgentD:
     async def _dev_broadcast(self):
         await asyncio.sleep(0.03)   # a burst of hook events goes out as one message
         self._dev_dirty = False
-        await self.broadcast(await asyncio.to_thread(self.dev.snapshot))
+        snap = await asyncio.to_thread(self.dev.snapshot)
+        if snap != self._dev_last:
+            self._dev_last = snap
+            await self.broadcast(snap)
 
     async def _dev_signals(self):
         """The tools' hooks, one at a time and in order: a prompt then its stop must not swap."""

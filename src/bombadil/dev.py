@@ -302,8 +302,7 @@ class Dev:
                 if s.tool != "shell" and not s.conversation:
                     return self._start(s.tool, Path(paths.projects_dir() / s.project), s.role, previous=s)
                 return self._launch(s, resume=s.tool != "shell")
-            self._show(s)
-            return True, f"Back to {s.title}."
+            return True, f"Back to {s.title}.{self._show(s)}"
 
     def open_project(self, folder: Path) -> tuple[bool, str]:
         """A project's name alone: its most recent session, or how to start one."""
@@ -353,7 +352,8 @@ class Dev:
                     boot=self.boot)
         ok, line = self._launch(s, resume=False)
         if ok:
-            line = f"Started {s.title}" + (" in its own copy." if copy else (note + "." if note else "."))
+            shown = line.split(".", 1)[1] if "." in line else ""
+            line = f"Started {s.title}" + (" in its own copy." if copy else (note + ".")) + shown
         return ok, line
 
     def _checkout_taken(self, folder: Path) -> bool:
@@ -384,9 +384,9 @@ class Dev:
             # Still running after all (agentd missed it): never start a second one.
             s.alive, s.state, s.since = True, "idle", now
             self.sessions[s.key] = s
-            self._show(s)
+            shown = self._show(s)
             self._changed()
-            return True, f"Back to {s.title}."
+            return True, f"Back to {s.title}.{shown}"
         s.alive, s.state, s.since, s.boot, s.code, s.why, s.unseen = True, "idle", now, self.boot, None, "", False
         s.pid = s.pid_start = 0
         s.last = "Resuming" if resume else "Starting"
@@ -415,9 +415,10 @@ class Dev:
             s.alive, s.state, s.last = False, "failed", _first_line(r.stderr or r.stdout) or "zellij did not start"
             self._changed()
             return False, f"Could not start {s.title}: {s.last}"
-        self._show(s)
+        s.last = ""
+        shown = self._show(s)
         self._changed()
-        return True, f"{'Resumed' if resume else 'Started'} {s.title}."
+        return True, f"{'Resumed' if resume else 'Started'} {s.title}.{shown}"
 
     def _wait_listed(self, name: str, seconds: float = 5.0) -> bool:
         deadline = time.monotonic() + seconds
@@ -441,8 +442,16 @@ class Dev:
 
     # -- windows --
 
-    def _show(self, s: Session) -> None:
-        """Its viewer to the front, or a new viewer when none is open."""
+    def _show(self, s: Session) -> str:
+        """Its viewer to the front, or a new viewer when none is open. Returns "" or what went
+        wrong: the session runs either way."""
+        try:
+            self._viewer(s)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+            return f" Its window did not open: {_first_line(str(e), 80)}"
+        return ""
+
+    def _viewer(self, s: Session) -> None:
         if self.hypr.available:
             try:
                 if any(c.get("class") == s.app_id for c in self.hypr.clients()):
@@ -647,7 +656,8 @@ class Dev:
             if s.state == "done":
                 return f"{s.title} finished" + (f": {s.last}" if s.last else ".")
             return f"{s.title} stopped: {s.last}" if s.last else f"{s.title} stopped."
-        roles = [s.role for s in waiting]
+        # A named role reads alone ("api and reviewer"); a tool's name needs its project.
+        roles = [s.role if s.role != s.tool else s.title for s in waiting]
         names = roles if len(set(roles)) == len(roles) else [s.title for s in waiting]
         both = ", ".join(names[:-1]) + " and " + names[-1]
         return f"{both} are waiting" if len(names) < 5 else f"{len(names)} sessions are waiting"

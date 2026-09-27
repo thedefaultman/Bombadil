@@ -162,7 +162,7 @@ def test_end_kills_the_session_and_keeps_its_copy(projects):
     d.open("claude", "bombadil", "builder")
     ok, line = d.end(d.sessions["bombadil/builder"])
     assert ok and line == "Ended builder on Bombadil. Its copy is kept."
-    assert ["zellij", "kill-session", "bombadil-bombadil-builder"] in [c[-3:] for c in z.calls]
+    assert ["kill-session", "bombadil-bombadil-builder"] in [c[-2:] for c in z.calls if c[0].endswith("zellij")]
     assert Path(d.sessions["bombadil/builder"].folder).is_dir()
     assert d.snapshot()["sessions"][-1]["key"] == "bombadil/claude"   # ended ones are not shown
     # Starting it again reuses its copy, with a new conversation.
