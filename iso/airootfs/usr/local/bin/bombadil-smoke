@@ -88,6 +88,39 @@ check details-drawer agentd_send '{"type": "details"}'
 check details-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
 shot details
 
+# Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
+# slice with a floating viewer, lives on when that window closes, comes back by name and ends.
+# A shell needs no provider login, so this runs on a fresh VM.
+viewer=bombadil-session-smoke-shell
+unit_active() { as_user systemctl --user list-units --all --no-legend --plain "$1" | grep -q ' active '; }
+unit_gone() { ! unit_active "$1"; }
+zellij_has() { as_user zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$1"; }
+zellij_lacks() { ! zellij_has "$1"; }
+no_client() { ! has_client "$1"; }
+says() { local want=$1; shift; as_user bombadil ask "$*" | tee /dev/stderr | grep -q "$want"; }
+hypr_do() { local o; o=$(as_user hyprctl dispatch "$1") && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+close_viewer() { hypr_do "hl.dsp.focus({ window = \"class:^($viewer)\$\" })" && hypr_do 'hl.dsp.window.close()'; }
+make_project() { as_user bash -c 'mkdir -p ~/Projects/smoke && cd ~/Projects/smoke && git init -q && git -c user.name=smoke -c user.email=smoke@localhost commit -q --allow-empty -m start'; }
+check dev-tools bash -c 'command -v zellij foot footclient bombadil-signal'
+check dev-hooks-parse python3 -c 'import json, tomllib; json.load(open("/etc/claude-code/managed-settings.d/50-bombadil.json")); tomllib.load(open("/etc/codex/requirements.toml", "rb"))'
+check dev-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes'
+check dev-project make_project
+check dev-start says "Started shell on Smoke" shell smoke
+check dev-zellij wait_for 20 zellij_has bombadil-smoke-shell
+check dev-scope wait_for 20 unit_active 'bombadil-dev-smoke-shell-*.scope'
+check dev-slice unit_active 'bombadil-dev-smoke.slice'
+check dev-window wait_for 60 has_client "c['class']=='$viewer' and c['floating']"
+shot session
+check dev-close-window close_viewer
+check dev-window-gone wait_for 30 no_client "c['class']=='$viewer'"
+check dev-lives-on zellij_has bombadil-smoke-shell
+check dev-back-by-name says "Back to shell on Smoke" shell smoke
+check dev-window-again wait_for 60 has_client "c['class']=='$viewer'"
+check dev-end says "Ended shell on Smoke" end shell smoke
+check dev-ended wait_for 20 zellij_lacks bombadil-smoke-shell
+check dev-scope-gone wait_for 20 unit_gone 'bombadil-dev-smoke-shell-*.scope'
+check dev-in-history history_has "Ended shell on Smoke"
+
 
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
