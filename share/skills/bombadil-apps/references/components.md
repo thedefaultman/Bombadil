@@ -70,7 +70,9 @@ Tokens: `Theme.bg`, `panel`, `raised`, `overlay`, `sunken`, `border`, `borderStr
 `normal` (animation ms).
 
 Functions: `Theme.icon(name)` → url for `icon.source`; `Theme.tone(name)` → color;
-`Theme.alpha(color, a)` → same color with alpha.
+`Theme.alpha(color, a)` → same color with alpha. `color` may be a color or a color string,
+such as a `Theme.series` entry or a color loaded from JSON or a Store
+(`Theme.alpha(Theme.series[0], 0.2)`); an invalid color string is reported as an error.
 
 ## Fmt (singleton, formatting)
 
@@ -166,10 +168,13 @@ A vertical scroll area for content taller than the window. Children go into a
 | `Caption { text }` | `captionSize`, `Theme.muted`, wraps |
 | `Mono { text }` | `monoFont`, `Theme.fg`, selectable |
 
-All four are `Text`-based (`Body`/`Caption` have `wrapMode: Text.Wrap`); any `Text`
-property can be set. `Mono` is a read-only `TextEdit` so it can be selected and copied.
-`Body`, `Caption` and `Mono` fill the width of their layout, so long text wraps instead
-of running off the window.
+`Heading`, `Body` and `Caption` are `Text`-based (`Body`/`Caption` have
+`wrapMode: Text.Wrap`); any `Text` property can be set. `Mono` is a read-only `TextEdit`
+so it can be selected and copied; it has no `elide` or `maximumLineCount`. To shorten a
+long path or command line, use `Caption { font.family: Theme.monoFamily; wrapMode:
+Text.NoWrap; elide: Text.ElideMiddle }` for one line, or `maximumLineCount: 3; elide:
+Text.ElideRight` for a few. `Body`, `Caption` and `Mono` fill the width of their layout,
+so long text wraps instead of running off the window.
 
 ## Small pieces
 
@@ -218,8 +223,10 @@ signal `action()` (a button is shown when `actionText` is set).
 Two-column label/value pairs. `rows: [{ label: "PID", value: "1234" }, ...]`; optional
 `mono: true` on a row renders its value in the mono font, `copyable: true` adds a copy
 button (copies to the clipboard; add `secret: true` for a password so the clipboard clears
-after 30 s). An empty or missing value shows `"—"`; values can be
-selected.
+after 30 s). An empty or missing value shows `"—"`. Values can be selected, except in
+`secret: true` rows: a mouse selection goes to the primary selection, which never clears,
+so for secrets use `copyable: true` (the clipboard clears after 30 s). Mark password rows
+`secret: true` even when nothing is copyable.
 
 ## Lists and tables
 
@@ -252,11 +259,26 @@ var item)` (right click). Up/Down/Home/End move the selection once the list has 
 
 When `model` is replaced by a new array (filtering, an edit saved to a `Store`), the
 selection stays on the same item, matched by its `id`, `uuid`, `key` or `pid` field, else
-by equal content, and the scroll position is kept. When the selected item is gone from
-the new array (deleted, filtered out), `currentIndex` becomes -1 and `current` `null`;
-set `currentIndex` yourself to select a neighbour. A custom `delegate` is a normal
-`ListView` delegate (`index`, `modelData`); set `selected: ListView.isCurrentItem` on a
-`ListRow`. Clicks select rows whatever the delegate.
+by equal content, and the scroll position is kept. When a selected item with an `id`,
+`uuid`, `key` or `pid` field is gone from the new array (deleted, filtered out),
+`currentIndex` becomes -1 and `current` `null`; set `currentIndex` yourself to select a
+neighbour. An item with none of those fields is matched by content: if it is gone while
+the count stays the same, the selection keeps its row, because the item was probably
+edited in place (a changed count gives -1 and `null` too).
+
+A custom `delegate` is a normal `ListView` delegate (`index`, `modelData`); set
+`selected: ListView.isCurrentItem` on a `ListRow`. A click selects the row and emits
+`activated` when the delegate does not take the press itself (`ListRow` or a plain
+`Item`). It does the same when the delegate's root is a button (`ItemDelegate`,
+`CheckDelegate`, `SwitchDelegate`): that row is selected on press and activated on click,
+and the delegate's own `onClicked` still runs, first. If that `onClicked` moves its item
+(mark as read in a list sorted unread first), the selection and `activated` follow the
+item to its new index when it has an `id`, `uuid`, `key` or `pid` field. An item without
+one that its `onClicked` edits keeps its row, and `activated` reports whatever item is now
+in that row, so give such items an `id`. If it removes the item (ticking a todo in a
+list that hides done items), the selection becomes -1/`null` and `activated` is not
+emitted. A delegate that takes the press some other way, such as a `MouseArea` over the
+row, has to set `ListView.view.currentIndex = index` itself.
 
 On its own an ItemList is as tall as its rows, up to eight, then scrolls; give it
 `Layout.fillHeight: true` to take the free height instead.
@@ -292,6 +314,11 @@ click). Clicking a header sorts by it (numbers start descending); clicking again
 the order. Up/Down, PageUp/PageDown, Home/End and Enter work once the table has focus.
 When `rows` is replaced (a poller refreshing every second), the scroll position stays and
 the selection follows the same row, matched by its `id`, `uuid`, `key` or `pid` field.
+When that row is gone from the new rows (a process that exited, or one that dropped out
+of a `limit`), `currentIndex` becomes -1 and `current` `null`, so details panels and
+actions bound to `current` must handle `null` (`table.current ? table.current.pid : -1`).
+Rows with none of those fields are matched by content; one that is gone keeps its place
+when the count is unchanged (its values changed), else it is deselected too.
 
 ```qml
 DataTable {
@@ -299,10 +326,10 @@ DataTable {
     columns: [
         { key: "name", title: "Process", width: 3 },
         { key: "pid", title: "PID", width: "70px", mono: true },
-        { key: "rss", title: "Memory", format: v => Fmt.bytes(v) }
+        { key: "memory", title: "Memory", format: v => Fmt.bytes(v) }
     ]
     rows: procs.list
-    sortKey: "rss"; sortDescending: true
+    sortKey: "memory"; sortDescending: true
 }
 ```
 
@@ -332,11 +359,16 @@ Form {
 A `TextField` with `echoMode: TextInput.Password` and an eye button to reveal it.
 Extra properties: `revealed` (bool), `showStrength` (bool, draws a 4-step meter under
 it, using `strength`), `strength` (0..4, computed from `text`: length and character
-variety, minus common passwords, repeats and sequences like `1234`; `Vault.strength()`
-gives the same score). Everything else is `TextField` (`text`, `placeholderText`,
-`onAccepted`, ...). It fills the width of its layout, and a revealed password shows in the
-mono font. With `showStrength`, a button placed beside it in a `RowLayout` needs
-`Layout.alignment: Qt.AlignTop` to line up with the field rather than field plus meter.
+variety, minus common passwords, repeats and sequences like `1234`; a `Vault` instance's
+`strength(password)` gives the same score, e.g. `vault.strength(pw.text)` with
+`Vault { id: vault }`, see native.md; pass the text, not the field). Everything else is `TextField` (`text`,
+`placeholderText`, `onAccepted`, ...). It fills the width of its layout, and a revealed
+password shows in the mono font. While `revealed`, the text cannot be selected with the
+mouse, because it would stay in the primary selection. `revealed` is never reset for
+you: set it back to false once the secret is done with (for example after unlocking), or
+the next password typed shows in clear. With `showStrength`, a button placed beside it
+in a `RowLayout` needs `Layout.alignment: Qt.AlignTop` to line up with the field rather
+than field plus meter.
 
 ## Editing
 
@@ -369,7 +401,7 @@ and `closed()` work too.
 When the thing being confirmed comes from live data (a selected row in a table that
 refreshes), copy it when the dialog opens so a refresh cannot change what gets deleted:
 `ConfirmDialog { id: confirm; property var target: null; onConfirmed: procs.kill(target.pid) }`
-and `onClicked: { confirm.target = table.current; confirm.open() }`.
+and a button with `enabled: table.current !== null; onClicked: { confirm.target = table.current; confirm.open() }`.
 
 For anything else use `Dialog` from QtQuick.Controls (already styled) and
 `toast()` on your AppWindow (`win.toast("Saved", "good")`, where `win` is its id) for transient messages.

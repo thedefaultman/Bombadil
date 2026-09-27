@@ -737,14 +737,14 @@ def test_running_parses_pgrep_and_close_sends_sigterm(monkeypatch):
 def test_open_url_validates_and_opens_in_the_browser_panel(monkeypatch):
     launched, panels = [], []
     monkeypatch.setattr(placement.shutil, "which", lambda cmd: "/usr/bin/" + cmd)
-    monkeypatch.setattr(placement.subprocess, "Popen", lambda cmd, **k: launched.append(cmd))
+    monkeypatch.setattr(placement.subprocess, "run", lambda cmd, **k: launched.append(cmd))
     h = FakeHypr()
     h.panel = lambda name, show=True: panels.append(name)
     for bad in ("--renderer-cmd-prefix=sh", "javascript:alert(1)", ""):
         with pytest.raises(ValueError):
             placement.open_url(bad, h)
     assert placement.open_url("example.com/a b", h) == "opened https://example.com/a b in the browser panel"
-    assert launched[-1] == [*hypr.PANELS["browser"], "https://example.com/a b"]
+    assert launched[-1] == ["setsid", "-f", *hypr.PANELS["browser"], "https://example.com/a b"]
     # Chromium was not running: the new window lands in special:browser; show it.
     assert h.sent[-1] == 'dispatch hl.dsp.focus({ workspace = "special:browser" })' and panels == []
     h.clients = lambda: [{"class": "bombadil-browser", "workspace": {"name": "special:browser"}}]

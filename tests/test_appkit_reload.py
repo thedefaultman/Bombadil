@@ -72,6 +72,24 @@ def test_a_new_backend_does_not_make_the_old_ui_report_errors(home):
     assert out["removed"] == [True, "no backend", "", True, []]
 
 
+def test_an_old_backend_the_old_ui_kept_is_not_counted(home):
+    pytest.importorskip("PySide6")
+    make_app("keeper", {"main.qml": 'import QtQuick\nimport Bombadil\nAppWindow {\n'
+                                    '    property var keep: ({count: 0})\n'
+                                    '    Component.onCompleted: keep = backend\n'
+                                    '    Text { objectName: "label"; text: "count " + keep.count }\n}\n',
+                        "app.py": COUNT_PY})
+    out = drive("keeper", """
+        out["start"] = [host.start(), label()]
+        write("app.py", (d / "app.py").read_text().replace("return 7", "return 8"))
+        wait_for(lambda: host.attempts == 2)
+        st = status()
+        out["edited"] = [host.loaded, label(), st["ok"], st["errors"]]
+    """)
+    assert out["start"] == [True, "count 7"]
+    assert out["edited"] == [True, "count 8", True, []]
+
+
 @pytest.mark.parametrize("how", ["rm", "mv"])
 def test_hot_reload_survives_the_app_folder_being_removed_and_written_again(home, how):
     pytest.importorskip("PySide6")
@@ -194,3 +212,60 @@ def test_a_running_app_rotates_its_log(home):
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
+
+
+def test_an_app_whose_log_is_on_a_full_disk_still_runs(home):
+    """Launched from the bar, stdout and stderr are the log: every echo, traceback and
+    console.log fails with ENOSPC. The log is a link to /dev/full, which fails every write."""
+    pytest.importorskip("PySide6")
+    if not os.path.exists("/dev/full"):
+        pytest.skip("no /dev/full")
+    says = ('import QtQuick\nimport Bombadil\nAppWindow {\n'
+            '    Component.onCompleted: console.log("hello V")\n'
+            '    Text { objectName: "label"; text: "V" }\n}\n')
+    make_app("says", {"main.qml": says.replace("V", "v1")})
+    make_app("broken", {"main.qml": 'import QtQuick\nimport Bombadil\nAppWindow { bogus: 1 }\n'})
+    make_app("pyerr", {"main.qml": says.replace("V", "v1"), "app.py": "raise RuntimeError('no')\n"})
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software",
+           "PYTHONPATH": str(ROOT / "src")}
+    names = ["says", "broken", "pyerr"]
+    for name in names:
+        apps.log_path(name).parent.mkdir(parents=True, exist_ok=True)
+        apps.log_path(name).symlink_to("/dev/full")
+    status_path = lambda name: apps.log_path(name).with_name(f"{name}.status.json")   # noqa: E731
+    procs = {name: subprocess.Popen([sys.executable, str(ROOT / "bin" / "bombadil-app"), "run", name], env=env,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL) for name in names}
+
+    def wait_status(name, pred):
+        deadline = time.monotonic() + 30
+        while True:
+            st = runtime._read_json(status_path(name))
+            if st and pred(st):
+                return st
+            assert procs[name].poll() is None, f"{name} exited with {procs[name].returncode}"
+            assert time.monotonic() < deadline, f"{name}: {st}"
+            time.sleep(0.1)
+    try:
+        st = wait_status("says", lambda st: st["loaded"])
+        assert st["ok"] and st["console"] == ["hello v1"]
+        st = wait_status("broken", lambda st: st["errors"])
+        assert not st["loaded"] and "bogus" in st["errors"][0]
+        st = wait_status("pyerr", lambda st: st["errors"])
+        assert not st["loaded"] and st["errors"] == ["app.py:1: RuntimeError: no"]
+        # A reload whose new UI says something on completion replaces the old UI.
+        (apps.app_dir("says") / "main.qml").write_text(says.replace("V", "v2"))
+        st = wait_status("says", lambda st: st["reloads"] == 1)
+        assert st["ok"] and st["showing"] == "current" and st["console"] == ["hello v2"]
+        time.sleep(0.5)
+        assert all(p.poll() is None for p in procs.values())
+    finally:
+        for p in procs.values():
+            p.terminate()
+        for p in procs.values():
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=10)
+    assert {name: p.returncode for name, p in procs.items()} == dict.fromkeys(names, 0)

@@ -24,9 +24,22 @@ Calling `create_app` again with the same title updates the same app.
 - Every write to a `.qml`, `.js`, `.py`, `qmldir` or `app.toml` in the app directory (or a
   folder in it) reloads the UI within ~0.2 s, in the same window (no flicker, same size,
   same place). Writes under `data/` never trigger a reload.
-- A change to `app.py` re-imports it and makes a new `backend` before the QML reloads.
-  While `app.py` fails to load, every reload tries it again and its error stays in the
-  status until it is fixed (the last good version keeps running meanwhile).
+- A change to `app.py` re-imports it first, but QML sees the new `backend` only once the
+  new `main.qml` compiles. If it does not compile, the old UI stays up on its old
+  `backend`, and the next reload that compiles (even a QML-only edit) uses the new one. A
+  `main.qml` that compiles but then fails to create (a `QtObject` root, a required
+  property left unset) still switches `backend`, so the old UI that stays up then runs on
+  the new one. Nothing the old UI reports while it switches over is counted as an error,
+  including errors from an old `backend` it kept in a property (deleted, it reads as
+  `null`). While `app.py` fails to load, every reload tries it again and its error stays
+  in the status until it is fixed (the last good version keeps running meanwhile).
+- The app's folder being removed or moved away and then written again (`rm -rf
+  ~/Apps/<name>`, then `create_app`) is picked up by the running app: while the folder is
+  gone the old UI stays up with the error `main.qml: No such file or directory`, and it
+  reloads by itself when the files are back, with no restart needed. A running app with a
+  Store writes `data/<name>.json` back into the folder at once, so `rm -rf` does not clear
+  its saved state; to start from scratch, `close_app` it first (or call the Store's
+  `reset()`).
 - If the new version fails to load, the old UI stays up with a red banner showing the
   first error, and the error is recorded (see below). Fix the file and it reloads.
 - If the app has never loaded successfully, the window shows the error list instead.
@@ -58,8 +71,8 @@ Calling `create_app` again with the same title updates the same app.
   highlighted chip is the one on screen.
   Clicking a chip toggles that app, its × closes it.
 - `Ctrl+W` or the chip's × quits the app; state is saved first. When the × (or
-  `close_app`) finds the app has not quit after 3 s (stuck in a loop), it kills it, and
-  unsaved changes are lost.
+  `close_app`) finds the app has not quit after 3 s (stuck in a loop), it kills it
+  together with the programs its Commands started, and unsaved changes are lost.
 
 ## Errors and logs
 
@@ -67,7 +80,10 @@ Calling `create_app` again with the same title updates the same app.
   (`--wait MS`, default 1200) and prints JSON:
   `{ ok, loaded, errors, warnings, console, screenshot, size }`. Errors are QML load
   errors and runtime JS errors (`ReferenceError`, `TypeError`, bad assignments, binding
-  loops) with `file:line`. `console.log` output is in `console`. `create_app` runs this
+  loops) with `file:line`. `console.log` output is in `console`. The check's stdout
+  carries only the JSON result: what `app.py` prints (`print()`, or programs it starts
+  writing to stdout) goes to stderr during a check and is not in `console`, so use
+  `console.log` in QML for output that should appear in the result. `create_app` runs this
   for you and returns the result with the screenshot. A check still busy 25 s after the
   wait (a loop that never ends) is stopped, its Commands are killed, and the result says
   the app did not settle.
@@ -76,8 +92,19 @@ Calling `create_app` again with the same title updates the same app.
   warnings, console, reloads, showing, size, at }`, where `showing` is `"current"`,
   `"previous"` (the last reload failed; the old UI is up) or `"errors"` (it never
   loaded). Exceptions raised in `app.py` count as errors (`app.py:12: NameError: ...`).
-  Its stdout/stderr go to `~/.local/state/bombadil/apps/<name>.log` (moved to `.log.1`
-  past 1 MB) however it was started; only an app started from a terminal prints there.
+- The status file and `<name>.window.json` (the saved size) are best-effort: if they
+  cannot be written (a full disk), the app still starts and runs, and the log says
+  `cannot write <name>.status.json: ...` (or `cannot save the window size: ...`) when
+  the log has room (on a full disk it is usually full too).
+  `app_status` then shows the last status that was written, which may be stale.
+- A running app's stdout/stderr go to `~/.local/state/bombadil/apps/<name>.log`, unless
+  it was started from a terminal (then it prints there). The log is moved to `.log.1`
+  past 1 MB, at start and while the app runs (checked about every half second).
+  `app_status` and `bombadil-app status` show its last 40 lines, read from its last
+  64 KiB, so a very long last line can mean fewer lines are shown. When the log is on a
+  full disk, what it has no room for (console.log lines, errors, tracebacks, `app.py`'s
+  own prints) is dropped from it; the app keeps running, and errors and console lines
+  still reach the status file when that can be written.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
   calls do nothing, and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
   throwaway test location (`~/.qttest`) instead of the user's `~/.config` and

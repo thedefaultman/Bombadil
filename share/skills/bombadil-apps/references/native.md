@@ -26,7 +26,7 @@ missing value is `null`.
 | `App.show()` / `App.hide()` / `App.toggle()` | slide the app's window in or out |
 | `App.close()` | quit the app (it leaves the bar) |
 | `App.notify(title, body = "")` | desktop notification |
-| `App.openUrl(url)` | open a link in the browser panel |
+| `App.openUrl(url)` | open a link in the browser panel (shared by every app; it stays open when the app is closed or killed) |
 
 ## Store
 
@@ -47,7 +47,7 @@ Store {
 |---|---|
 | `name` | file name without `.json`; default `"state"`. Two stores need two names. |
 | `loaded` | true once the saved values were applied |
-| `save()` | write now (normally automatic, 300 ms after a change and before a reload or quit) |
+| `save()` | write now (normally automatic: at most 300 ms after a change, also while a value keeps changing, like a sampler or a stopwatch, and before a reload or quit) |
 | `reset()` | delete the file and go back to the declared defaults |
 
 Saved values are applied before any `Component.onCompleted` runs, so the app never sees
@@ -76,7 +76,9 @@ Vault { id: vault; name: "passwords" }
 // first run:   vault.create(password)        -> bool
 // later:       vault.unlock(password)        -> bool (false = wrong password)
 // then:        vault.data                    (any JSON value, e.g. an array of entries)
-//              vault.data = newValue         (re-encrypts and saves immediately)
+//              vault.data = newValue         (re-encrypts and saves immediately; if the save
+//                                             fails, error says why and data keeps its old value,
+//                                             or becomes null when the vault changed on disk)
 ```
 
 | Member | |
@@ -85,13 +87,22 @@ Vault { id: vault; name: "passwords" }
 | `exists` | a vault file is there |
 | `unlocked` | data is readable |
 | `data` | the decrypted value; `null` while locked. Assign to save (same rule as Store: assign a new array/object) |
-| `error` | last error message: `"wrong password"`, `"a vault already exists"`, `"empty password"`, `"no vault yet"`, `"the vault is locked"`; `""` after a success |
-| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never. Close anything that shows a secret when it does: `onUnlockedChanged: if (!unlocked) editor.close()` |
+| `error` | last error message: `"wrong password"`, `"a vault already exists"`, `"empty password"`, `"no vault yet"`, `"the vault is locked"`, `"cannot save: ..."`, `"not JSON: ..."`, `"the vault file is damaged: ..."`, `"the vault changed on disk; unlock it again"`; `""` after a success. The last one: a save refuses to overwrite a file that something else (another process, a restored backup) changed since this vault last read or wrote it, and locks (`data` becomes `null`) so the user unlocks the fresh content |
+| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never. The countdown includes time the machine was asleep (it is checked about once a second), so a vault left open before a suspend locks right after resume. Close anything that shows a secret when it does: `onUnlockedChanged: if (!unlocked) editor.close()` |
 | `create(password)` | make a new empty vault (`data` = `[]`) and unlock it; false if one exists |
 | `unlock(password)` / `lock()` | |
 | `changePassword(old, new)` | bool; re-encrypts with the new password and leaves the vault unlocked |
 | `generatePassword(length = 20, symbols = true)` | a random password (from `secrets`) with at least one lowercase, uppercase, digit (and symbol) |
 | `strength(password)` | 0..4 estimate (0 = common or very short, 4 = strong); the same score as `PasswordField`'s meter |
+
+After assigning `data`, check `vault.error` before telling the user it was saved
+(`examples/password-manager/main.qml`, `save()` and `remove()`).
+
+Several `Vault` objects with the same `name` (for example one in a dialog) are views of
+one vault: saving, unlocking or locking through one shows in all of them, and using any
+of them keeps them all from auto-locking. The shortest `autoLock` among them wins: a main
+Vault set to 60 locks all of them after 60 s idle, even beside a dialog Vault left at the
+default 300 or one with `autoLock: 0`.
 
 `create`, `unlock` and `changePassword` take about half a second (scrypt with 128 MiB, as
 OWASP recommends; that is the point), so call them from a button, not from a binding.
@@ -217,7 +228,9 @@ During `check` nothing is written: `save` only updates `text`.
 
 `Clipboard.copy(text, clearAfterSeconds = 0)`; `Clipboard.text` (read, bindable). Passing
 `clearAfterSeconds` clears it later if it still holds that text (use 30 for secrets) and
-marks it as a secret so clipboard managers that honour the hint skip it.
+marks it as a secret so clipboard managers that honour the hint skip it. That countdown
+includes time the machine was asleep; it is checked once a second, so it can clear up to
+a second late.
 
 ## Agent (singleton)
 

@@ -379,17 +379,17 @@ class Host:
         return True
 
     def _use_backend(self) -> None:
-        """Point `backend` at the Backend app.py made. The old UI re-evaluates against it on
-        its way out: what it says then is not about the new UI, so it is not counted. The old
-        Backend is kept until nothing points at it, or the old UI would see a deleted object."""
+        """Point `backend` at the Backend app.py made, then let the old one go. The old UI
+        re-evaluates on its way out, against the new Backend or against an old one it kept
+        that is now deleted: what it says then is not about the new UI, so it is not counted."""
         if self._next_backend is None:
             return
         (name, backend), self._next_backend = self._next_backend, None
         said = self.collector.errors[:], self.collector.warnings[:]
         self.engine.rootContext().setContextProperty("backend", backend)
-        self.collector.errors, self.collector.warnings = said
         sys.modules.pop(self._module_name, None)
-        self._module_name, self.backend = name, backend
+        self._module_name, self.backend = name, backend   # the old Backend is deleted here
+        self.collector.errors, self.collector.warnings = said
 
     def _refresh_meta(self) -> None:
         title = apps.read_meta(self.ctx.dir).get("title")
@@ -694,11 +694,35 @@ def _single_instance(ctx: AppContext):
     return f
 
 
+class _Lossy:
+    """stdout or stderr when they are the log: a line the disk has no room for is dropped,
+    not raised into whatever printed it (an echo, a traceback, the app's own print)."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except OSError:
+            return len(text)
+
+    def flush(self) -> None:
+        try:
+            self._stream.flush()
+        except OSError:
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def _log_to_file(ctx: AppContext) -> None:
     """Started by a launcher (a .desktop file), not from a terminal: send stdout and stderr
     to the app's log, where app_status reads them, rotated like apps.run rotates it."""
     if os.isatty(2):
         return
+    sys.stdout, sys.stderr = _Lossy(sys.stdout), _Lossy(sys.stderr)
     try:
         _open_log(ctx.log_path)
     except OSError as e:
@@ -738,10 +762,7 @@ def run(name: str) -> int:
         return 0
     _log_to_file(ctx)
     app = kit_engine.make_app(ctx)
-    try:
-        print(f"--- {_stamp()} bombadil-app run {name} (pid {os.getpid()})", file=sys.stderr, flush=True)
-    except OSError:
-        pass   # the log is on a full disk: run anyway
+    print(f"--- {_stamp()} bombadil-app run {name} (pid {os.getpid()})", file=sys.stderr, flush=True)
     for sig in (signal.SIGTERM, signal.SIGINT):
         # Queued, so a signal during startup quits as soon as the loop runs.
         signal.signal(sig, lambda *_: QTimer.singleShot(0, app.quit))

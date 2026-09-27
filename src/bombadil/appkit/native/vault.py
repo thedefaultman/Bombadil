@@ -44,8 +44,9 @@ COMMON = ("123456 12345678 qwerty azerty letmein welcome admin iloveyou monkey "
           "hunter batman superman pokemon passw0rd").split(" ")
 RUNS = re.compile(r"(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|cdef|qwer|wert|asdf|sdfg|zxcv)")
 
-# file path -> {"key", "salt", "expires"}; survives hot reloads, not restarts. Every Vault
-# object on the file shares `expires` (a _now() time), so using one keeps them all open.
+# file path -> {"key", "salt", "expires", "touched"}; survives hot reloads, not restarts. Every
+# Vault object on the file shares them (_now() times), so using one keeps them all open, and the
+# shortest autoLock among them wins.
 _keys: dict[str, dict] = {}
 # file path -> what the file would hold, during `check` (which writes nothing).
 _dry: dict[str, bytes] = {}
@@ -261,12 +262,14 @@ class Vault(QObject):
         """Push the auto-lock deadline back; the key cache expires with it."""
         if self._unlocked:
             expires = _now() + self._auto_lock if self._auto_lock > 0 else None
-            _keys[str(self._file)] = {"key": self._key, "salt": self._salt, "expires": expires}
+            _keys[str(self._file)] = {"key": self._key, "salt": self._salt, "expires": expires,
+                                      "touched": _now()}
 
     def _tick(self):
         """Lock once the deadline has passed, time asleep included (a Qt timer does not count it)."""
-        cached = _keys.get(str(self._file))
-        if cached is None or (cached["expires"] is not None and _now() >= cached["expires"]):
+        cached, now = _keys.get(str(self._file)), _now()
+        if (cached is None or (cached["expires"] is not None and now >= cached["expires"])
+                or (self._auto_lock > 0 and now >= cached["touched"] + self._auto_lock)):
             self.lock()
 
     def _write(self, key: bytes, salt: bytes, kdf: dict, value) -> bool:

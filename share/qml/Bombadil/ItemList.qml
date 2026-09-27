@@ -144,7 +144,7 @@ FocusScope {
         }
 
         // A delegate that is a button (ItemDelegate, CheckDelegate) takes the press, so the
-        // TapHandler never sees it: its own clicked() selects the row instead.
+        // TapHandler never sees it: its own pressed and clicked() select and activate the row.
         Connections {
             target: view.contentItem
             function onChildrenChanged() {
@@ -153,9 +153,19 @@ FocusScope {
                 for (const c of view.contentItem.children) {
                     if (!(c instanceof T.AbstractButton))
                         continue
-                    if (root._hooked.indexOf(c) < 0)
-                        c.clicked.connect(() => root._tap(view.indexAt(c.x + c.width / 2, c.y + c.height / 2),
-                                                          Qt.LeftButton))
+                    if (root._hooked.indexOf(c) < 0) {
+                        // Selected on press: the row's own onClicked runs first and may move or
+                        // remove its item, and the selection follows the item, not the row.
+                        c.pressedChanged.connect(() => {
+                            if (!c.pressed)
+                                return
+                            view.forceActiveFocus()
+                            const i = view.indexAt(c.x + c.width / 2, c.y + c.height / 2)
+                            if (i >= 0)
+                                view.currentIndex = i
+                        })
+                        c.clicked.connect(() => root._activateCurrent())
+                    }
                     hooked.push(c)
                 }
                 root._hooked = hooked

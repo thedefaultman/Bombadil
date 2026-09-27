@@ -292,8 +292,9 @@ def open_url(url: str, h: hypr.Hyprland | None = None) -> str:
     except (OSError, RuntimeError, ValueError):
         has_window = False
     # A running Chromium hands the URL to its window as a new tab; otherwise this starts it.
-    subprocess.Popen([*cmd, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
+    # Not as our child: closing a stuck app kills its children, and the browser is shared.
+    subprocess.run(["setsid", "-f", *cmd, url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, check=False)
     if has_window:
         h.panel("browser", show=True)
     else:

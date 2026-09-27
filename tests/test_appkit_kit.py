@@ -143,6 +143,62 @@ out["ownClicks"] = root.property("ownClicks")
     assert out == {"first": True, "second": True, "log": [1, "two", 0, "one"], "ownClicks": 2}
 
 
+def test_item_list_button_rows_that_move_their_item_keep_it_selected(home):
+    """The row's own onClicked runs first: the click is about its item, wherever it went."""
+    out = run(home, """
+import QtQuick.Controls
+Window {
+    width: 600; height: 300; visible: true
+    property Item mailList: mailList
+    property Item todoList: todoList
+    property var log: []
+    // Unread first: opening "a" marks it read and sorts it below "b".
+    property var mail: [{ id: 1, title: "a", read: false }, { id: 2, title: "b", read: false },
+                        { id: 3, title: "c", read: true }]
+    // Done items leave the list: ticking "b" removes it.
+    property var todos: [{ id: 1, title: "a", done: false }, { id: 2, title: "b", done: false },
+                         { id: 3, title: "c", done: false }]
+    ItemList {
+        id: mailList
+        x: 0; width: 300; height: 300
+        model: mail.slice().sort((p, q) => (p.read - q.read) || (p.id - q.id))
+        delegate: ItemDelegate {
+            required property var modelData
+            width: ListView.view.width
+            height: 40
+            text: modelData.title
+            onClicked: mail = mail.map(m => m.id === modelData.id ? Object.assign({}, m, { read: true }) : m)
+        }
+        onActivated: (i, item) => log = log.concat(["mail", i, item.title])
+    }
+    ItemList {
+        id: todoList
+        x: 300; width: 300; height: 300
+        model: todos.filter(t => !t.done)
+        delegate: CheckDelegate {
+            required property var modelData
+            width: ListView.view.width
+            height: 40
+            text: modelData.title
+            onClicked: todos = todos.map(t => t.id === modelData.id ? Object.assign({}, t, { done: true }) : t)
+        }
+        onActivated: (i, item) => log = log.concat(["todo", i, item.title])
+    }
+}""", """
+QTest.qWaitForWindowExposed(root)
+mail, todo = root.property("mailList"), root.property("todoList")
+click(100, 15)
+spin(50)
+out["mail"] = [mail.property("currentIndex"), js(mail.property("current"))]
+click(400, 60)
+spin(50)
+out["todo"] = [todo.property("currentIndex"), js(todo.property("current"))]
+out["log"] = js(root.property("log"))
+""")
+    assert out == {"mail": [1, {"id": 1, "title": "a", "read": True}], "todo": [-1, None],
+                   "log": ["mail", 1, "a"]}
+
+
 def test_item_list_rows_of_the_default_delegate_activate_once_per_click(home):
     out = run(home, """
 Window {

@@ -394,6 +394,18 @@ def test_vault_auto_lock(kit, fast_kdf):
     assert vault(kit, "shortlived").property("unlocked") is False
 
 
+def test_vault_objects_on_one_file_lock_after_the_shortest_auto_lock(kit, fast_kdf):
+    """Using a Vault that never locks itself must not keep a stricter one on the same file open."""
+    root = make(kit, '''Item { property var a: a; property var b: b
+        Vault { id: a; name: "mixed"; autoLock: 1 }
+        Vault { id: b; name: "mixed"; autoLock: 0 } }''')
+    a, b = root.property("a"), root.property("b")
+    assert a.create("pw") is True                        # b follows it, and so touched it last
+    assert b.property("unlocked") is True
+    assert wait_until(lambda: not a.property("unlocked"), 3000)
+    assert b.property("unlocked") is False
+
+
 def test_vault_auto_lock_counts_time_asleep(kit, fast_kdf, monkeypatch):
     """Qt timers and time.monotonic stop during suspend: a vault left open must lock on resume."""
     from bombadil.appkit.native import vault as vault_mod
@@ -923,7 +935,7 @@ def test_clipboard_copy_and_clear(kit):
     assert wait_until(lambda: clip.text() == "", 2000)
     make(kit, 'Item { Component.onCompleted: Clipboard.copy("short", 0.1) }')
     clip.setText("user copied something else")
-    spin(250)
+    spin(1300)                             # past the first 1 s check
     assert clip.text() == "user copied something else"
 
 
