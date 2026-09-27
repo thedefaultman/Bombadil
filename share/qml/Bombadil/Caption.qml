@@ -1,4 +1,11 @@
 import QtQuick
+import QtQuick.Layouts
 
-// TODO(appkit): stub
-Item {}
+// Secondary text: hints, timestamps, units.
+Text {
+    color: Theme.muted
+    font.family: Theme.fontFamily
+    font.pixelSize: Theme.captionSize
+    wrapMode: Text.Wrap
+    Layout.fillWidth: true
+}

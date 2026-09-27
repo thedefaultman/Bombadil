@@ -16,7 +16,29 @@ Conventions used by every component:
 
 ## Styled controls
 
-TODO(style): which QtQuick.Controls are restyled, and the extra `Button` options.
+Restyled: `Button`, `RoundButton`, `ToolButton`, `TextField`, `TextArea`, `ComboBox`,
+`SpinBox`, `CheckBox`, `RadioButton`, `Switch`, `Slider`, `RangeSlider`, `ProgressBar`,
+`BusyIndicator`, `TabBar`, `TabButton`, `ToolBar`, `ToolSeparator`, `ToolTip`, `Menu`,
+`MenuItem`, `MenuSeparator`, `Popup`, `Dialog`, `DialogButtonBox`, `Drawer`, `ItemDelegate`,
+`CheckDelegate`, `RadioDelegate`, `SwitchDelegate`, `Label`, `Frame`, `Pane`, `Page`,
+`GroupBox`, `ScrollView`, `ScrollBar`, `ScrollIndicator`, `SplitView`, `StackView`,
+`ApplicationWindow`. Heights are `Theme.controlHeight` (36), rows `Theme.rowHeight` (44);
+disabled controls fade, keyboard focus shows an accent ring.
+
+`Button` looks (they combine): default is a raised neutral button; `highlighted: true` is the
+accent primary action (one per view); `flat: true` has no surface until hovered; the extra
+`danger: true` is destructive (red text and border, filled red with `highlighted`);
+`checkable` + `checked` is accent-tinted. `icon.source: Theme.icon("plus")` puts a 16 px
+icon before the text, tinted to the text color (`icon.color` overrides); with no `text` it
+is a square icon button.
+
+- `ToolButton { icon.source: Theme.icon("settings") }`: 32 px flat icon button, muted until
+  hovered, accent when `checked`. Add `ToolTip.text: "..."; ToolTip.visible: hovered`.
+- `Dialog` is modal and centered by default; `standardButtons: Dialog.Save | Dialog.Cancel`
+  puts the buttons at the bottom right with the affirmative one highlighted and last.
+- `MenuItem { danger: true }` is a red destructive entry. `TabBar` draws text tabs with an
+  accent underline; `ItemDelegate { highlighted: true }` is a selected row.
+- `TextArea` wraps by default; put it in a `ScrollView` when the text can grow.
 
 ## Theme (singleton)
 
@@ -39,11 +61,13 @@ Functions: `Theme.icon(name)` → url for `icon.source`; `Theme.tone(name)` → 
 | `Fmt.percent(x, digits = 0)` (x in 0..1) | `"42%"` |
 | `Fmt.number(n, digits = 0)` | `"12,840"` |
 | `Fmt.compact(n)` | `"12.8K"`, `"4.2M"` |
-| `Fmt.duration(seconds)` | `"3d 4h"`, `"12m 5s"`, `"800 ms"` |
-| `Fmt.time(date)` / `Fmt.date(date)` / `Fmt.dateTime(date)` | `"14:05"`, `"27 Sep 2026"` |
-| `Fmt.relative(date)` | `"just now"`, `"5 min ago"`, `"yesterday"` |
+| `Fmt.duration(seconds)` | `"3d 4h"`, `"12m 5s"`, `"4.2s"`, `"800 ms"` |
+| `Fmt.time(date)` / `Fmt.date(date)` / `Fmt.dateTime(date)` | `"14:05"`, `"27 Sep 2026"`, `"27 Sep 2026, 14:05"` |
+| `Fmt.relative(date)` | `"just now"`, `"5 min ago"`, `"3 h ago"`, `"yesterday"`, `"4 days ago"`, then the date (`"in 5 min"` for the future) |
 
-`date` may be a `Date`, milliseconds, or an ISO string.
+`date` may be a `Date`, milliseconds, Unix seconds (any number below 10^11, like
+`Processes` `started`), or an ISO string. A missing value (`null`, `undefined`, `NaN`)
+formats as `"—"`, so a binding never shows `NaN`.
 
 ## Window and layout
 
@@ -64,11 +88,15 @@ the app, Ctrl+W closes it).
 | `showHeader` | bool | `true` | hide the title row for a chromeless app |
 | `width` / `height` | int | 560 / 680 | size on first open; later opens keep the size the user left |
 
-Function: `toast(text, tone = "")` shows a short message at the bottom for 2.5 s.
+Function: `toast(text, tone = "")` shows a short message at the bottom for 2.5 s (a
+`"good"` tone adds a check, `"warn"`/`"bad"` a warning sign).
 
-Children are laid out in a `ColumnLayout` filling the content area, so give the main
-child `Layout.fillWidth: true; Layout.fillHeight: true`. Popups and `Dialog`s work as
-usual (they open over the whole window).
+Children stack top to bottom in a `ColumnLayout` filling the content area. They stay
+packed at the top unless one has `Layout.fillHeight: true`, which then takes the free
+height, so give the main child `Layout.fillWidth: true; Layout.fillHeight: true`. A child
+with `focus: true` has the keyboard when the app opens. Popups and `Dialog`s work as
+usual (they open over the whole window). When a hot reload fails, a red banner at the top
+shows the first error line; clicking it shows the whole error.
 
 ```qml
 AppWindow {
@@ -93,11 +121,14 @@ A card: a rounded `Theme.panel` surface with optional header.
 | `spacing` | int | `Theme.gap` | between children |
 | `flat` | bool | `false` | no background, just the layout |
 
-Children go into a `ColumnLayout`.
+Children stack in a `ColumnLayout`, packed at the top unless one has
+`Layout.fillHeight: true` (a list or table that takes the rest). Panels side by side in
+a `RowLayout` or `GridLayout` all get the height of the tallest one, so a row of cards
+lines up without extra settings.
 
 ### Spacer
-`Item { Layout.fillWidth: true; Layout.fillHeight: true }`; takes the free space in a
-row or column.
+`Spacer {}` takes the free space along its layout: width in a `RowLayout` (pushes the
+next items to the right), height in a `ColumnLayout` (pushes them to the bottom).
 
 ### Divider
 A 1 px `Theme.border` line. `vertical: false` by default; fills the layout's width (or
@@ -118,6 +149,8 @@ A vertical scroll area for content taller than the window. Children go into a
 
 All four are `Text`-based (`Body`/`Caption` have `wrapMode: Text.Wrap`); any `Text`
 property can be set. `Mono` is a read-only `TextEdit` so it can be selected and copied.
+`Body`, `Caption` and `Mono` fill the width of their layout, so long text wraps instead
+of running off the window.
 
 ## Small pieces
 
@@ -127,7 +160,8 @@ property can be set. `Mono` is a read-only `TextEdit` so it can be selected and 
 ### IconButton
 A square flat button with just an icon and a tooltip.
 Properties: `icon` (name), `tooltip`, `tone` (tints the icon), `size` (32), `checkable`,
-`checked`. Signal: `clicked()`.
+`checked`, `hovered` (read-only). Signal: `clicked()`. Clicking it does not take the
+keyboard focus from a field or list.
 
 ### Badge
 A small pill. `Badge { text: "weak"; tone: "bad" }`. Properties: `text`, `tone`, `icon`.
@@ -142,7 +176,10 @@ A headline number.
 | `detail` | string | small muted line under the value |
 | `delta` | string | e.g. `"+12%"`, colored by `deltaTone` |
 | `deltaTone` | string | tone for the delta |
-| `trend` | list&lt;real&gt; | optional values; draws a sparkline under the number |
+| `trend` | list&lt;real&gt; | optional values; draws a sparkline under the number (in the delta's tone, else `Theme.series[0]`) |
+
+Stats in a row line up at the top; wrapped in `Panel`s in a `RowLayout`, the cards share
+one height.
 
 ### EmptyState
 For an empty list or a locked screen. Properties: `icon`, `title`, `text`, `actionText`;
@@ -151,20 +188,24 @@ signal `action()` (a button is shown when `actionText` is set).
 ### DetailGrid
 Two-column label/value pairs. `rows: [{ label: "PID", value: "1234" }, ...]`; optional
 `mono: true` on a row renders its value in the mono font, `copyable: true` adds a copy
-button.
+button (copies to the clipboard). An empty or missing value shows `"—"`; values can be
+selected.
 
 ## Lists and tables
 
 ### SearchField
-A `TextField` with a search icon and a clear button. Ctrl+F focuses it. Property `text`;
-signal `accepted()`. Use its `text` to filter your model.
+A `TextField` with a search icon and a clear button. Ctrl+F focuses it, Esc clears it.
+Property `text`; signal `accepted()`. Use its `text` to filter your model. It fills the
+width of its layout; in `actions` give it `Layout.preferredWidth: 200;
+Layout.fillWidth: false`. (Qt has its own `SearchField`; with the usual imports the kit's
+wins, so do not add `import QtQuick.Controls.Basic`.)
 
 ### ItemList
 A styled, selectable, keyboard-navigable list.
 
 | Property | Type | Default | |
 |---|---|---|---|
-| `model` | array or model | | an array of objects is easiest |
+| `model` | array or model | | an array of objects is easiest; an array of strings, a list from Python or a `ListModel` also work |
 | `titleRole` | string | `"title"` | field shown as the main line |
 | `subtitleRole` | string | `"subtitle"` | field shown muted under it (optional) |
 | `iconRole` | string | `""` | field holding an icon name |
@@ -173,15 +214,23 @@ A styled, selectable, keyboard-navigable list.
 | `current` | var | (read-only) | the selected model item or `null` |
 | `emptyText` | string | `"Nothing here yet"` | shown when the model is empty |
 | `delegate` | Component | a `ListRow` | replace for fully custom rows |
+| `count` | int | (read-only) | number of rows |
 
 Signals: `activated(int index, var item)` (click or Enter), `contextRequested(int index,
-var item)` (right click).
+var item)` (right click). Up/Down/Home/End move the selection once the list has focus
+(click it, or `focus: true`).
+
+When `model` is replaced by a new array (filtering, an edit saved to a `Store`), the
+selection stays on the same item, matched by its `id`, `uuid`, `key` or `pid` field, else
+by equal content, and the scroll position is kept. A custom `delegate` is a normal
+`ListView` delegate (`index`, `modelData`); set `selected: ListView.isCurrentItem` on a
+`ListRow`. Clicks select rows whatever the delegate.
 
 ### ListRow
 The row `ItemList` uses; use it in your own `ListView` delegates.
 Properties: `title`, `subtitle`, `icon`, `trailing` (string), `selected`, `trailingItem`
-(an Item placed at the right, e.g. a Badge or IconButton). Signals: `clicked()`,
-`doubleClicked()`.
+(an Item placed at the right, e.g. a Badge or IconButton), `hovered` (read-only).
+Signals: `clicked()`, `doubleClicked()`, `contextRequested()` (right click).
 
 ### DataTable
 A sortable table with a sticky header.
@@ -189,19 +238,25 @@ A sortable table with a sticky header.
 | Property | Type | |
 |---|---|---|
 | `columns` | array | `[{ key, title, width, align, format, mono }]` |
-| `rows` | array of objects | the data |
+| `rows` | array of objects | the data (a `ListModel` or a list from Python also works) |
 | `sortKey` | string | column key currently sorted (click a header to change) |
 | `sortDescending` | bool | |
 | `currentIndex` | int | selected row in the *sorted* order |
 | `current` | var | (read-only) selected row object |
-| `emptyText` | string | |
+| `emptyText` | string | default `"Nothing to show"` |
+| `count` | int | (read-only) number of rows |
 
 Column fields: `key` (field name), `title`, `width` (a number is a flex weight, default 1;
 a string like `"80px"` is fixed), `align` (`"left"` / `"right"` / `"center"`; numbers
-default right), `format` (function `value => string`), `mono` (bool), `sortable` (default
-true).
+default right), `format` (function `(value, row) => string`), `mono` (bool), `sortable`
+(default true). A flex column never gets narrower than its title, and a number column
+keeps room for its values; names elide.
 
-Signals: `activated(var row)`, `contextRequested(var row)`.
+Signals: `activated(var row)` (double-click or Enter), `contextRequested(var row)` (right
+click). Clicking a header sorts by it (numbers start descending); clicking again flips
+the order. Up/Down, PageUp/PageDown, Home/End and Enter work once the table has focus.
+When `rows` is replaced (a poller refreshing every second), the scroll position stays and
+the selection follows the same row, matched by its `id`, `uuid`, `key` or `pid` field.
 
 ```qml
 DataTable {
@@ -225,7 +280,8 @@ labels sit to the left at that width instead of above.
 ### Field
 A labeled wrapper around one control. Properties: `label`, `hint` (muted help under the
 control), `error` (red text; replaces the hint when not empty), `required` (adds a dot).
-The control is the child.
+The control is the child; inputs stretch to the field's width, while buttons, checkboxes
+and switches keep their own.
 
 ```qml
 Form {
@@ -238,7 +294,10 @@ Form {
 ### PasswordField
 A `TextField` with `echoMode: TextInput.Password` and an eye button to reveal it.
 Extra properties: `revealed` (bool), `showStrength` (bool, draws a 4-step meter under
-it, using `strength`), `strength` (0..4, computed from `text`).
+it, using `strength`), `strength` (0..4, computed from `text`: length and character
+variety, minus common passwords, repeats and sequences like `1234`). Everything else
+is `TextField` (`text`, `placeholderText`, `onAccepted`, ...). It fills the width of its
+layout.
 
 ## Editing
 
@@ -247,75 +306,122 @@ A code/text editor with line numbers and syntax highlighting.
 
 | Property | Type | Default | |
 |---|---|---|---|
-| `text` | string | | the content |
+| `text` | string | | the content (with `path`, what was loaded from the file) |
 | `path` | string | `""` | when set, loads that file, shows a dirty dot, Ctrl+S saves |
-| `language` | string | from `path` | `"plain"`, `"markdown"`, `"python"`, `"json"`, `"qml"`, `"javascript"`, `"shell"`, `"toml"`, `"ini"` |
+| `language` | string | from `path`'s extension | `"plain"`, `"markdown"`, `"python"`, `"json"`, `"qml"`, `"javascript"`, `"shell"`, `"toml"`, `"ini"` |
 | `readOnly` | bool | false | |
 | `lineNumbers` | bool | true | |
 | `wrap` | bool | false | |
 | `dirty` | bool | (read-only) | text differs from the file |
 
-Functions: `save()`, `reload()`. Signal `saved()`.
+Functions: `save()` (writes `path` when set, then emits `saved()`), `reload()` (drops
+unsaved edits). Signal `saved()`. With `path`, a change on disk is picked up unless you
+have unsaved edits.
 
 ## Dialogs and feedback
 
 ### ConfirmDialog
 `ConfirmDialog { id: confirm; title: "Delete entry?"; text: "This cannot be undone.";
 confirmText: "Delete"; danger: true; onConfirmed: remove() }` then `confirm.open()`.
+Properties: `title`, `text`, `confirmText` (`"Confirm"`), `cancelText` (`"Cancel"`),
+`danger` (red confirm button; Cancel gets the focus). It is a `Dialog`, so `rejected()`
+and `closed()` work too.
 
 For anything else use `Dialog` from QtQuick.Controls (already styled) and
 `AppWindow.toast()` for transient messages.
 
 ## Charts
 
-All charts are drawn with Canvas, follow the series colors in `Theme.series` in order,
-show a hover tooltip, and animate new values. They size to their layout; give them a
-`Layout.preferredHeight`.
+Charts take series colors from `Theme.series` in order (the first series is
+`Theme.series[0]`; an item's own `color` overrides it), keep all text in the text colors,
+show a tooltip on hover and animate changes. LineChart and Sparkline fill their size, so
+give them `Layout.fillWidth: true` and a `Layout.preferredHeight`; the others have a
+natural height. Plot one measure per chart: two measures with different units are two
+charts, never two y axes. When series can come and go (a filter), give each a fixed
+`color: Theme.series[n]` so the others keep theirs; past 8 series, fold the rest into
+"Other".
+
+`format` properties take a function `v => string` and default to compact numbers
+(`"12.8K"`, `"0.25"`); pass `v => Fmt.bytes(v)` for sizes and `v => Fmt.percent(v)` for
+0..1 fractions. Every chart with a tooltip also has `hoverIndex` (int, -1 when nothing is
+hovered): the hovered point, bar or part. Setting it shows that tooltip.
 
 ### Series
 Records a changing value over time for a chart.
 `Series { id: cpu; value: System.cpu; capacity: 120 }`. Each time `value` changes a
-point is appended. Read `values` (array), `last`, `min`, `max`, `average`. Function
-`clear()`, `push(v)` (append manually instead of binding `value`).
+point is appended (the oldest drops off past `capacity`). Read `values` (array, oldest
+first), `last`, `min`, `max`, `average` (all 0 while empty). Function `clear()`,
+`push(v)` (append manually instead of binding `value`).
 
 ### LineChart
 
 | Property | Type | |
 |---|---|---|
-| `series` | array | `[{ name, values, color? }]`; `values` is an array of numbers (equal spacing) or of `{x, y}` |
-| `yMin` / `yMax` | real | fixed range; default auto from the data (0-based when all values are >= 0) |
+| `series` | array | `[{ name, values, color? }]`; `values` is an array of numbers (equal spacing, newest last; `null` leaves a gap) or of `{x, y}` with numeric x (e.g. ms) |
+| `yMin` / `yMax` | real | fixed range; default auto from the data (0-based when all values are >= 0, top rounded up to a round tick; byte axes step in whole KiB/MiB/GiB) |
 | `format` | function | formats y values for axis and tooltip (`v => Fmt.bytes(v)`) |
-| `xFormat` | function | formats x for the tooltip |
+| `xFormat` | function | formats x for the tooltip and the labels under both ends of the x axis (no x labels without it); for plain numbers x is the index |
+| `capacity` | int | x slots for plain numbers; set it to the Series' capacity so a live chart fills in from the right instead of stretching (default: the longest series) |
 | `area` | bool | fill under the lines with a 10% wash (default true for one series) |
 | `legend` | bool | default true when there are 2+ series |
-| `gridLines` | int | horizontal gridlines (4) |
+| `gridLines` | int | about this many horizontal gridlines (4); ticks land on round numbers |
+
+The last point of each line carries a dot; hovering shows a crosshair and one tooltip
+with every series at that x.
+
+```qml
+Series { id: mem; value: System.memory.used; capacity: 120 }
+LineChart {
+    Layout.fillWidth: true; Layout.preferredHeight: 200
+    series: [{ name: "Used", values: mem.values }]
+    capacity: mem.capacity
+    yMax: System.memory.total
+    format: v => Fmt.bytes(v)
+    xFormat: i => i === mem.capacity - 1 ? "now" : Fmt.duration(mem.capacity - 1 - i) + " ago"
+}
+```
 
 ### BarChart
 
 | Property | Type | |
 |---|---|---|
-| `bars` | array | `[{ label, value, color? }]` |
-| `horizontal` | bool | default true (labels on the left read best) |
+| `bars` | array | `[{ label, value, color? }]`, in the order to show (sort them yourself); every bar is `Theme.series[0]` unless it sets `color` |
+| `horizontal` | bool | default true (labels on the left read best); false draws columns with labels under them |
 | `format` | function | value labels and tooltip |
 | `max` | real | fixed scale max; default the largest value |
 
+Each bar shows its value at the tip. Height: 32 px per bar when horizontal.
+
 ### Sparkline
 A tiny line with no axes. `Sparkline { values: cpu.values; color: Theme.series[0] }`.
-Properties: `values`, `color`, `area` (true), `min`/`max` (auto).
+Properties: `values`, `color`, `area` (true), `min`/`max` (auto: the data's own range),
+`format` (tooltip).
 
 ### Meter
 A horizontal bar for a 0..1 fraction. `Meter { value: 0.72; label: "Memory"; detail:
-"11.2 of 16 GiB" }`. Properties: `value`, `label`, `detail`, `tone` (default: accent,
-warn above `warnAt` (0.75), bad above `badAt` (0.9)), `warnAt`, `badAt`.
+"11.2 of 16 GiB" }`. The label, muted detail and percentage sit above the bar.
+Properties: `value`, `label`, `detail`, `tone` (default: accent, warn above `warnAt`
+(0.75), bad above `badAt` (0.9)), `warnAt`, `badAt`.
 
 ### Ring
-A circular gauge. `Ring { value: 0.42; label: "CPU"; size: 96 }`. Properties as `Meter`
-plus `size` and `thickness`.
+A circular gauge with the percentage in the middle and the label (and detail) under it.
+`Ring { value: 0.42; label: "CPU"; size: 96 }`. Properties as `Meter` plus `size` (96)
+and `thickness` (8).
 
 ### StackedBar
-One bar split into parts with a legend. `StackedBar { total: mem.total; parts: [{ label:
-"Apps", value: used }, { label: "Cache", value: cached }] }`. Properties: `parts`,
-`total` (the rest is drawn as free space), `format`, `legend` (true).
+One bar split into parts, with a legend of each part's value under it. Properties:
+`parts` (`[{ label, value, color? }]`), `total` (the rest is drawn as free space; default
+the sum of the parts), `format` (legend and tooltip values), `legend` (true), `freeLabel`
+(`"Free"`: the legend entry for the free space; `""` hides it).
+
+```qml
+StackedBar {
+    Layout.fillWidth: true
+    total: System.memory.total
+    format: v => Fmt.bytes(v)
+    parts: [{ label: "Apps", value: System.memory.used }, { label: "Cache", value: System.memory.cached }]
+}
+```
 
 ## Icons
 
