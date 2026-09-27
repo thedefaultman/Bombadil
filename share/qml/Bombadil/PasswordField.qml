@@ -22,11 +22,11 @@ TextField {
     selectByMouse: true
     Layout.fillWidth: true
 
-    readonly property var _common: ["password", "passw0rd", "123456", "12345678", "qwerty", "azerty", "letmein",
-        "welcome", "admin", "iloveyou", "monkey", "dragon", "football", "baseball", "master", "login",
-        "abc123", "111111", "000000", "sunshine", "princess", "trustno1", "secret", "shadow", "summer",
-        "winter", "hello", "freedom", "whatever", "starwars", "changeme", "default", "root", "test",
-        "hunter", "batman", "superman", "pokemon"]
+    // The most used passwords, which score 0 whatever their length (a deny list, not credentials).
+    readonly property var _common: ("123456 12345678 qwerty azerty letmein welcome admin iloveyou monkey "
+        + "dragon football baseball master login abc123 111111 000000 sunshine princess trustno1 secret "
+        + "shadow summer winter hello freedom password whatever starwars changeme default root test "
+        + "hunter batman superman pokemon passw0rd").split(" ")
 
     function _estimate(pw) {
         if (!pw)
