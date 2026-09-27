@@ -4,10 +4,14 @@ These are real Python objects the runtime registers into the `Bombadil` module, 
 reaches the system without writing any Python. They exist only inside `bombadil-app`
 (which is the only place apps run, including `check`).
 
-Paths: `~` expands to the home directory; a relative path resolves inside the app's data
-directory (`App.dataDir`, i.e. `~/Apps/<name>/data/`). Byte counts are in bytes, times
-in seconds unless named `...Ms`. Arrays and objects these types give you are ordinary JS
-values (`Array.isArray`, `.map`, `.filter` all work), and a missing value is `null`.
+Paths: `~` expands to the home directory; a relative `TextFile` path (and a Store's or
+Vault's file) resolves inside the app's data directory (`App.dataDir`, i.e.
+`~/Apps/<name>/data/`). A `Command` runs in the home directory, so relative paths in a
+command resolve there, not in `data/` (pass `App.dataDir + "/x"`). Byte counts are in bytes.
+Every `interval` is in milliseconds; other durations (`autoLock`, `uptime`,
+`clearAfterSeconds`) are in seconds, and `started` is a Unix time. Arrays and objects these
+types give you are ordinary JS values (`Array.isArray`, `.map`, `.filter` all work), and a
+missing value is `null`.
 
 ## App (singleton)
 
@@ -49,7 +53,8 @@ Store {
 Saved values are applied before any `Component.onCompleted` runs, so the app never sees
 the defaults first. Declare plain values, not bindings (`property int n: list.count` would
 be overwritten by the saved number). Values go through JSON: `color`, `url` and `date`
-properties are saved as strings and come back as the same value. Not saved: `readonly`
+properties are saved as strings and come back as the same value; `NaN` and `Infinity`
+(anywhere, also inside arrays) are saved as `null`. Not saved: `readonly`
 properties, object properties (`property Item x`) and names starting with `_`. Nothing is
 written during `check`.
 
@@ -84,8 +89,9 @@ Vault { id: vault; name: "passwords" }
 | `generatePassword(length = 20, symbols = true)` | a random password (from `secrets`) with at least one lowercase, uppercase, digit (and symbol) |
 | `strength(password)` | 0..4 estimate (0 = common or very short, 4 = strong) |
 
-Unlocking takes about a tenth of a second (that is the point of scrypt). During `check`,
-`create`/`unlock` work in memory and nothing is written.
+`create`, `unlock` and `changePassword` take about half a second (scrypt with 128 MiB, as
+OWASP recommends; that is the point), so call them from a button, not from a binding.
+During `check`, `create`/`unlock` work in memory and nothing is written.
 
 ## System (singleton)
 
@@ -104,12 +110,12 @@ bindable, so `Label { text: Fmt.percent(System.cpu) }` just stays current.
 | `load` | `[1, 5, 15]` minute load averages |
 | `uptime` | seconds |
 | `processCount` | |
-| `disks` | `[{ mount, device, fs, total, used, free }]` for real filesystems, one entry per device (refreshed every 10 s; `free` is what a user can still write) |
+| `disks` | `[{ mount, device, fs, total, used, free }]` for local filesystems, one entry per device (refreshed every 10 s; `free` is what a user can still write). Network mounts (NFS, SMB, sshfs, ...) are left out: asking a dead server would freeze the app |
 | `network` | `{ rx, tx }` bytes per second over all non-loopback interfaces (0 until the second sample) |
 | `battery` | `{ present, percent, charging }` (`percent` 0..100; `present: false` and `percent: null` on desktops and VMs) |
 | `temperature` | hottest thermal zone in °C, or `null` |
 | `hostname`, `kernel`, `user` | strings |
-| `interval` | refresh period in ms (1000); settable |
+| `interval` | refresh period in ms (1000, at least 100); settable |
 
 The first values are there as soon as the app starts (`cpu` starts as the average since
 boot).
@@ -126,17 +132,27 @@ DataTable { rows: procs.list; ... }
 
 | Member | |
 |---|---|
-| `interval` | ms between refreshes (2000); 0 = read once, then only on `refresh()` |
+| `interval` | ms between refreshes (2000, at least 100); 0 = read once, then only on `refresh()` |
 | `sortBy` | `"memory"`, `"cpu"`, `"name"`, `"pid"` (or any other field of `list`); `descending` (true) |
-| `limit` | keep the top N (0 = all) |
+| `limit` | keep the top N; default 0 = all |
 | `filter` | case-insensitive match on name or command line |
 | `list` | `[{ pid, ppid, name, command, user, state, cpu, memory, memoryPercent, threads, started }]` (`cpu` is a fraction of one core, `memory` is RSS in bytes, `memoryPercent` is 0..100 of RAM, `state` is `"running"`, `"sleeping"`, `"waiting"` (disk), `"idle"`, `"stopped"` or `"zombie"`, `started` is a Unix time) |
 | `count` | processes after filtering, before `limit` |
 | `refresh()` | now |
-| `details(pid)` | `{ pid, ppid, name, command, exe, cwd, user, state, rss, pss, uss, swap, shared, threads, fds, started, oomScore }` from `/proc/<pid>` (`pss`/`uss`/`swap`/`shared` from `smaps_rollup`); a field the user may not read (another user's process) is `null`; `null` if the process is gone |
+| `details(pid)` | `{ pid, ppid, name, command, exe, cwd, user, state, rss, pss, uss, swap, shared, threads, fds, started, oomScore }` from `/proc/<pid>` (`pss`/`uss`/`swap`/`shared` from `smaps_rollup`), read once per call; a field the user may not read (another user's process) is `null`; `null` if the process is gone |
 | `kill(pid, signal = "TERM")` | bool; `signal` is `"TERM"`, `"KILL"`, `"STOP"`, `"CONT"`, `"INT"`, `"HUP"`; always false during `check` |
 
-Changing `sortBy`, `descending`, `limit` or `filter` re-sorts the last reading at once.
+`list` is filled when the `Processes` is created, so it already has rows in
+`Component.onCompleted` and in `check`'s screenshot (`cpu` in that first reading is each
+process's average since it started). Changing `sortBy`, `descending`, `limit` or `filter`
+re-sorts the last reading at once.
+
+To keep a details view live, mention `procs.list` in the binding so it re-reads on every
+refresh:
+
+```qml
+readonly property var proc: procs.list && table.current ? procs.details(table.current.pid) : null
+```
 
 ## Command
 
@@ -147,24 +163,28 @@ Command { id: ip; command: "ip -j addr"; running: true }    // shell string, run
 Label { text: ip.json ? ip.json.length + " interfaces" : "…" }
 Command { id: ls; program: "ls"; args: ["-la", "~"]; onFinished: (code, out) => console.log(out) }
 Button { onClicked: ls.run() }
+Command { id: sorter; command: "sort -u"; stdin: names.join("\n"); running: true }   // input, then EOF
 ```
 
 | Member | |
 |---|---|
 | `command` | a shell string, run with `sh -c` |
 | `program` + `args` | or a program and argument list (no shell); `~` in args expands |
-| `running` | set true to start (`running: true` starts once the app has loaded); true while it runs; set false to kill |
-| `interval` | ms; when > 0 it runs on start and re-runs that often (a poller; no `running: true` needed) |
+| `running` | set true to start (`running: true` starts once the app has loaded); true while it runs; set false to kill the current run (a poller still runs again at its next tick: set `interval: 0` to stop it) |
+| `interval` | ms (at least 100); when > 0 it runs on start and re-runs that often, skipping a tick while a run is still going (a poller; no `running: true` needed) |
+| `stdin` | text written to the program's input when each run starts; then the input is closed, so `sort`, `wc`, `jq` or `ssh host cmd` see the end and finish |
+| `interactive` | false; true keeps the input open for `write(text)` (a REPL, `bc`) until the program ends or is killed |
 | `stdout`, `stderr`, `exitCode` | of the last run (`exitCode` is -1 before the first run and after a crash, 127 when the program does not exist) |
 | `lines` | `stdout` split into lines |
 | `json` | `stdout` parsed as JSON, or `null` |
-| `run()` / `run(extraArgs)` / `kill()` / `write(text)` (to stdin) | `run` restarts a run that is still going; `extraArgs` are appended (quoted for a `command`); `kill` ends the program and everything it started |
+| `run()` / `run(extraArgs)` / `kill()` / `write(text)` | `run` restarts a run that is still going; `extraArgs` are appended as separate arguments (for a `command`, as `"$@"` after its last command, so no quoting is needed); `kill` ends the program and everything it started; `write` sends text to the program's input and needs `interactive: true` |
 | `finished(exitCode, stdout)` | signal |
 
-The output properties change when a run finishes, so a poller never shows half an answer
-(until then they keep the last run's values); a program that keeps running (`tail -f`)
-shows its output as it arrives. Commands run in the home directory and do run during
-`check`.
+A poller's output properties change when a run finishes, so it never shows half an answer
+(until then they keep the last run's values). Any other run (`running: true`, `run()`, a
+`tail -f`) shows its output as it arrives, a few times a second. Only the last MiB or so of
+`stdout` and of `stderr` is kept. Commands run in the home directory (relative paths
+resolve there) and do run during `check`.
 
 ## TextFile
 
@@ -202,8 +222,8 @@ The app can talk to the OS agent, the same one the user types to in the bar.
 |---|---|
 | `Agent.connected`, `Agent.busy`, `Agent.provider` | |
 | `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable |
-| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`) |
-| `replied(text)` | signal when that answer is complete |
+| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`, including a provider that is not installed and a lost connection) |
+| `replied(text)` | signal when that answer is complete, also after an error |
 
 The prompt is prefixed with `[from app <name>]` so the agent knows where it came from
 and can, for example, edit this app in response. During `check` Agent never connects.

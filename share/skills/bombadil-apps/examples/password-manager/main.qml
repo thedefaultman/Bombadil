@@ -7,7 +7,7 @@ AppWindow {
     id: win
     title: "Password Manager"
     icon: "key"
-    width: 860; height: 560
+    width: 760; height: 560
     subtitle: entries.length === 0 ? "" : entries.length === 1 ? "1 item" : entries.length + " items"
 
     actions: [
