@@ -286,16 +286,25 @@ class H(BaseHTTPRequestHandler):
                 )
                 stop = "tool_use"
         elif first == "ask me":
-            # A coding session's permission prompt: its dot lights and the pill's line asks.
+            # A coding session asks its user: its dot lights and the pill's line asks.
             if after_tool:
                 text("Migrated the local database.")
             else:
                 tool(
                     f"toolu_mg{N[0]}",
-                    "Bash",
+                    "AskUserQuestion",
                     {
-                        "command": "sh -c 'echo migrated > .migrated'",
-                        "description": "Run the migration on the local database",
+                        "questions": [
+                            {
+                                "question": "Run the migration on the local database?",
+                                "header": "Migration",
+                                "multiSelect": False,
+                                "options": [
+                                    {"label": "Yes", "description": "Apply it now"},
+                                    {"label": "No", "description": "Leave the database as it is"},
+                                ],
+                            }
+                        ]
                     },
                 )
                 stop = "tool_use"
