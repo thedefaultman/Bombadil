@@ -38,7 +38,8 @@ from . import hypr, narrate, paths, procs
 TOOLS = ("claude", "codex", "shell")
 TOOL_TITLES = {"claude": "Claude", "codex": "Codex", "shell": "Shell"}
 ROLE_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
-VIEWER = "bombadil-session-"       # the viewer windows' app id prefix
+VIEWER = "bombadil-session-"
+BARS = ("zellij:tab-bar", "zellij:status-bar", "zellij:compact-bar")   # closed in each session       # the viewer windows' app id prefix
 PENDING_SECONDS = 20               # a session may take this long to show up in zellij
 LINES_KEPT = 6
 ENDED_KEPT = 30 * 86400            # an ended session is forgotten after this long
@@ -423,9 +424,35 @@ class Dev:
             self._changed()
             return False, f"Could not start {s.title}: {s.last}"
         s.last = ""
+        self._bare(s.zellij)
         shown = self._show(s)
         self._changed()
         return True, f"{'Resumed' if resume else 'Started'} {s.title}.{shown}"
+
+    def _bare(self, name: str, seconds: float = 3.0) -> None:
+        """A background session always gets zellij's default layout, whatever --layout or
+        default_layout say, so its tab and status bars are closed here and the viewer shows
+        only the tool. They load a moment after the session starts."""
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                r = self._run([zellij(), "-s", name, "action", "list-panes", "--all", "--json"], capture_output=True,
+                              text=True, check=False, timeout=5)
+                panes = json.loads(r.stdout) if r.returncode == 0 else []
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                panes = []
+            bars = [p["id"] for p in panes if isinstance(p, dict) and p.get("is_plugin") and p.get("plugin_url") in BARS]
+            if bars:
+                for pane in bars:
+                    try:
+                        self._run([zellij(), "-s", name, "action", "close-pane", "-p", f"plugin_{pane}"],
+                                  capture_output=True, check=False, timeout=5)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
+                return
+            if time.monotonic() > deadline:
+                return
+            time.sleep(0.1)
 
     def _wait_listed(self, name: str, seconds: float = 5.0) -> bool:
         deadline = time.monotonic() + seconds

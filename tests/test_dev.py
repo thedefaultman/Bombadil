@@ -39,6 +39,12 @@ class FakeZellij:
                 self.envs.append(kw.get("env") or {})
             elif rest[:1] == ["kill-session"]:
                 self.running.discard(rest[1])
+            elif rest[:1] == ["-s"] and rest[2:4] == ["action", "list-panes"]:
+                # zellij's default layout: its link plugin, the two bars and the tool's pane.
+                out = json.dumps([{"id": 0, "is_plugin": True, "plugin_url": "zellij:link"},
+                                  {"id": 1, "is_plugin": True, "plugin_url": "zellij:tab-bar"},
+                                  {"id": 2, "is_plugin": True, "plugin_url": "zellij:status-bar"},
+                                  {"id": 0, "is_plugin": False, "plugin_url": None}])
         return subprocess.CompletedProcess(argv, 1 if argv[0] == "pgrep" else 0, out, "")
 
     def started(self):
@@ -149,6 +155,9 @@ def test_first_session_takes_the_checkout_and_the_next_one_a_copy(projects):
     assert ok and line == "Started claude on Latchkey."
     first = d.sessions["latchkey/claude"]
     assert first.folder == str(projects / "latchkey") and not first.copy
+    # Only the tool shows: zellij's tab and status bars are closed, its link plugin kept.
+    closed = [c[-1] for c in z.calls if "close-pane" in c]
+    assert closed == ["plugin_1", "plugin_2"]
     cmd = z.started()[0]
     assert cmd[-6:] == ["--close-on-exit", "--", dev.bombadil_bin(), "dev", "run", "latchkey/claude"]
     assert cmd[cmd.index("--create-background") + 1] == "bombadil-latchkey-claude"

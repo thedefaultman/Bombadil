@@ -382,6 +382,8 @@ o = wait(ev("local", phase="done"), 20, n)
 results["timings"]["session_start_s"] = round(o["_t"] - t0, 3) if o else None
 check("claude spike started from the pill", o and o.get("ok") and o.get("text") == "Started claude on Spike.", o)
 check("its window opened", until(lambda: viewer_open("bombadil-session-spike-claude"), 15))
+panes = run("zellij", "-s", "bombadil-spike-claude", "action", "list-panes", "--all", "--json").stdout
+check("only the tool shows, no zellij bars", "tab-bar" not in panes and "status-bar" not in panes, panes[-300:])
 check("Claude Code runs in the project", until(lambda: "claude on Spike" in zscreen("bombadil-spike-claude"), 30),
       zscreen("bombadil-spike-claude")[-400:])
 time.sleep(1)
