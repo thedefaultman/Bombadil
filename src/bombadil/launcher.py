@@ -147,7 +147,11 @@ def _dev_match(t: str, d) -> Action | None:
         return Action("sessions")
     ending = _strip_verb(t, END_VERBS)
     word = ending if ending is not None else (_strip_verb(t, OPEN_VERBS) or t)
-    if ending is None:
+    if ending is not None:
+        found = _dev_end(ending, d)
+        if found is not None:
+            return found
+    else:
         folder = d.project(word)
         if folder is not None:
             return Action("project", folder.name, "open", dev.project_title(folder.name))
@@ -163,11 +167,40 @@ def _dev_match(t: str, d) -> Action | None:
         found = [s for s in found if folder is not None and dev.key(s.project) == dev.key(folder.name)]
     if len(found) > 1:
         where = " and ".join(dev.project_title(s.project) for s in found)
-        return Action("choose", parts[0], title=f"{parts[0]} is on {where}", role=found[0].project.lower())
+        return Action("choose", parts[0], "end" if ending is not None else "open", f"{parts[0]} is on {where}",
+                      role=found[0].project.lower())
     if found:
         s = found[0]
-        return Action("end" if ending is not None else "session", s.key, "open", s.title, tool=s.tool, role=s.role)
+        if ending is not None:
+            return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+        return Action("session", s.key, "open", s.title, tool=s.tool, role=s.role)
     return None
+
+
+def _dev_end(word: str, d) -> Action | None:
+    """"end claude latchkey" and "end latchkey": the sessions a role cannot name. A project
+    with one session ends it; with several, say which."""
+    m = DEV_RE.fullmatch(word)
+    folder = d.project(m.group(2)) if m else d.project(word)
+    if folder is None:
+        return None
+    title = dev.project_title(folder.name)
+    if m:
+        role = m.group(3) or m.group(1)
+        k = f"{dev.slug(folder.name)}/{role}"
+        s = d.sessions.get(k)
+        if s is None or s.state == "ended":
+            return Action("end", "", "end", f"{role} on {title}", role=role)
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    found = [s for s in d.on_project(folder) if not s.yours]
+    if len(found) == 1:
+        s = found[0]
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    if not found:
+        return Action("end", "", "end", title)
+    roles = [s.role for s in found]
+    listed = ", ".join(roles[:-1]) + " and " + roles[-1]
+    return Action("choose", roles[0], "end", f"{title} runs {listed}", role=folder.name.lower())
 
 
 def match(text: str, app_list: list | None = None, dev_names=None) -> Action | None:
@@ -364,13 +397,15 @@ class Launcher:
 
     def _end(self, a: Action) -> tuple[bool, str]:
         d = self._sessions_or_raise()
-        s = d.sessions.get(a.target)
-        if s is None:
-            return False, f"{a.title} is gone."
+        s = d.sessions.get(a.target) if a.target else None
+        if s is None or s.state == "ended":
+            return False, (f"{a.title[:1].upper()}{a.title[1:]} is not running." if a.role
+                           else f"Nothing runs on {a.title}.")
         return d.end(s)
 
     def _choose(self, a: Action) -> tuple[bool, str]:
-        return False, f"{a.title[:1].upper()}{a.title[1:]}: say which, as in “{a.target} {a.role}”."
+        verb = "end " if a.verb == "end" else ""
+        return False, f"{a.title[:1].upper()}{a.title[1:]}: say which, as in “{verb}{a.target} {a.role}”."
 
     def _sessions(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "dev", "list"])

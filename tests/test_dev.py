@@ -114,6 +114,33 @@ def test_a_named_session_comes_back_by_its_name(projects):
     assert names["bombadil/reviewer"]["words"] == ["reviewer"]
 
 
+def test_end_names_sessions_a_role_cannot(projects):
+    d, z, _ = _dev()
+    run = launcher.Launcher(sessions=d, runner=z, spawn=Spawns())
+    # A project with nothing on it; a session that is not running.
+    assert run.run(launcher.match("end latchkey", [], d)) == (False, "Nothing runs on Latchkey.")
+    assert run.run(launcher.match("end claude latchkey", [], d)) == (False, "Claude on Latchkey is not running.")
+    d.open("claude", "latchkey")
+    a = launcher.match("end claude latchkey", [], d)
+    assert (a.kind, a.target) == ("end", "latchkey/claude")
+    # The project's name ends its one session...
+    a = launcher.match("end latchkey", [], d)
+    assert (a.kind, a.target) == ("end", "latchkey/claude")
+    # ...and with two, asks which.
+    d.open("codex", "latchkey", "reviewer")
+    a = launcher.match("end latchkey", [], d)
+    assert a.kind == "choose"
+    assert run.run(a) == (False, "Latchkey runs reviewer and claude: say which, as in “end reviewer latchkey”.")
+    assert run.run(launcher.match("end codex latchkey reviewer", [], d)) == (True, "Ended reviewer on Latchkey. Its copy is kept.")
+    assert run.run(launcher.match("end latchkey", [], d)) == (True, "Ended claude on Latchkey.")
+    assert run.run(launcher.match("end claude latchkey", [], d)) == (False, "Claude on Latchkey is not running.")
+    # A role on two projects: the choice keeps the verb.
+    d.open("claude", "latchkey", "builder")
+    d.open("claude", "bombadil", "builder")
+    a = launcher.match("end builder", [], d)
+    assert run.run(a) == (False, "Builder is on Bombadil and Latchkey: say which, as in “end builder bombadil”.")
+
+
 # -- starting, bringing back, ending --
 
 def test_first_session_takes_the_checkout_and_the_next_one_a_copy(projects):
