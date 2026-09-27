@@ -8,7 +8,7 @@ AppWindow {
     title: "Memory"
     subtitle: Fmt.bytes(mem.total) + " on " + System.hostname
     icon: "memory-stick"
-    width: 1120; height: 880
+    width: 1120; height: 760
     actions: [
         SearchField {
             id: search
@@ -70,7 +70,7 @@ AppWindow {
             title: "Memory use"
             subtitle: "Last 3 minutes"
             LineChart {
-                Layout.fillWidth: true; Layout.preferredHeight: 180
+                Layout.fillWidth: true; Layout.preferredHeight: 150
                 series: [{ name: "Used", values: used.values }, { name: "Cache", values: cache.values }]
                 capacity: used.capacity
                 yMax: win.mem.total

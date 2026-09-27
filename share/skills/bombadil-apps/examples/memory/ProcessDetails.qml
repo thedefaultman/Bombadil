@@ -11,6 +11,15 @@ Panel {
 
     title: proc ? proc.name : "Details"
     subtitle: proc ? "PID " + proc.pid + " · " + proc.user + " · " + proc.state : ""
+    actions: [
+        Button {
+            visible: !!root.proc
+            text: "End"
+            icon.source: Theme.icon("x")
+            danger: true
+            onClicked: root.endRequested()
+        }
+    ]
 
     EmptyState {
         visible: !root.proc
@@ -19,10 +28,10 @@ Panel {
         title: "No process selected"
         text: "Select a process to see what it really costs."
     }
-    ColumnLayout {
+    // Scrolls when the window is short; the End button stays in the header.
+    ScrollPane {
         visible: !!root.proc
         Layout.fillWidth: true; Layout.fillHeight: true
-        spacing: Theme.gap
         Stat {
             label: "Freed if it ends"
             value: Fmt.bytes(root.proc?.uss)
@@ -43,16 +52,8 @@ Panel {
         Caption {
             text: root.proc?.command ?? ""
             font.family: Theme.monoFamily
-            maximumLineCount: 2
+            maximumLineCount: 3
             elide: Text.ElideRight
-        }
-        Spacer {}
-        Button {
-            Layout.fillWidth: true
-            text: "End process"
-            icon.source: Theme.icon("x")
-            danger: true
-            onClicked: root.endRequested()
         }
     }
 }

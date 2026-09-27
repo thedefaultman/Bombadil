@@ -98,7 +98,7 @@ Item {
         visible: root.legend
         y: root._barHeight + 10
         width: parent.width
-        spacing: 16
+        spacing: 8                  // between lines; entries get 8 more to their right
         Repeater {
             model: root.legend ? root._parts.length + (root._free > 0 && root.freeLabel !== "" ? 1 : 0) : 0
             delegate: Row {
@@ -106,6 +106,7 @@ Item {
                 readonly property bool isFree: index >= root._parts.length
                 readonly property var part: isFree ? null : root._parts[index]
                 spacing: 6
+                rightPadding: 8
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 10; height: 10; radius: 2

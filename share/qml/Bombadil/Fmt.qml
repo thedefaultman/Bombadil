@@ -27,7 +27,7 @@ QtObject {
         while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
         if (i > 0 && Number(v.toFixed(d)) >= 1024 && i < units.length - 1) { v /= 1024; i++ }
         const s = i === 0 ? String(Math.round(v)) : v.toFixed(d)
-        return (n < 0 ? "-" : "") + s + " " + units[i]
+        return (n < 0 ? "-" : "") + s + "\u00a0" + units[i]   // no-break space: "458.2 MiB" never wraps apart
     }
 
     // x is a fraction: 0.42 -> "42%".
@@ -64,13 +64,13 @@ QtObject {
         let s = Math.abs(Number(seconds))
         const sign = Number(seconds) < 0 ? "-" : ""
         if (s < 1)
-            return sign + Math.round(s * 1000) + " ms"
+            return sign + Math.round(s * 1000) + "\u00a0ms"
         if (s < 10)
             return sign + (Math.round(s * 10) / 10) + "s"
         s = Math.round(s)
         const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600)
         const m = Math.floor(s % 3600 / 60), sec = s % 60
-        const pair = (a, ua, b, ub) => sign + a + ua + (b ? " " + b + ub : "")
+        const pair = (a, ua, b, ub) => sign + a + ua + (b ? "\u00a0" + b + ub : "")
         if (d > 0)
             return pair(d, "d", h, "h")
         if (h > 0)

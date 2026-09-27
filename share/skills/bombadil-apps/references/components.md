@@ -172,13 +172,23 @@ A headline number.
 |---|---|---|
 | `label` | string | sentence case, no colon |
 | `value` | string | the formatted number (`Fmt.bytes(x)`) |
-| `detail` | string | small muted line under the value |
+| `detail` | string | small muted line under the value (one line; longer text is elided) |
 | `delta` | string | e.g. `"+12%"`, colored by `deltaTone` |
 | `deltaTone` | string | tone for the delta |
 | `trend` | list&lt;real&gt; | optional values; draws a sparkline under the number (in the delta's tone, else `Theme.series[0]`) |
 
 Stats in a row line up at the top; wrapped in `Panel`s in a `RowLayout`, the cards share
-one height.
+one height. For cards of equal width too, give the row `uniformCellSizes: true` and each
+Panel `Layout.fillWidth: true`:
+
+```qml
+RowLayout {
+    Layout.fillWidth: true
+    uniformCellSizes: true
+    Panel { Layout.fillWidth: true; Stat { label: "Used"; value: Fmt.bytes(System.memory.used) } }
+    Panel { Layout.fillWidth: true; Stat { label: "CPU"; value: Fmt.percent(System.cpu) } }
+}
+```
 
 ### EmptyState
 For an empty list or a locked screen. Properties: `icon`, `title`, `text`, `actionText`;
@@ -329,6 +339,11 @@ Properties: `title`, `text`, `confirmText` (`"Confirm"`), `cancelText` (`"Cancel
 `danger` (red confirm button; Cancel gets the focus). It is a `Dialog`, so `rejected()`
 and `closed()` work too.
 
+When the thing being confirmed comes from live data (a selected row in a table that
+refreshes), copy it when the dialog opens so a refresh cannot change what gets deleted:
+`ConfirmDialog { id: confirm; property var target: null; onConfirmed: procs.kill(target.pid) }`
+and `onClicked: { confirm.target = table.current; confirm.open() }`.
+
 For anything else use `Dialog` from QtQuick.Controls (already styled) and
 `toast()` on your AppWindow (`win.toast("Saved", "good")`, where `win` is its id) for transient messages.
 
@@ -349,11 +364,13 @@ charts, never two y axes. When series can come and go (a filter), give each a fi
 hovered): the hovered point, bar or part. Setting it shows that tooltip.
 
 ### Series
-Records a changing value over time for a chart.
-`Series { id: cpu; value: System.cpu; capacity: 120 }`. Each time `value` changes a
-point is appended (the oldest drops off past `capacity`). Read `values` (array, oldest
-first), `last`, `min`, `max`, `average` (all 0 while empty). Function `clear()`,
-`push(v)` (append manually instead of binding `value`).
+Records a value over time for a chart.
+`Series { id: cpu; value: System.cpu; capacity: 120 }` takes a sample of `value` every
+`interval` ms (1000), also when it did not change, so point `i` of a full series is
+`(capacity - 1 - i)` seconds old and a flat line still moves along. The oldest point drops
+off past `capacity`. Read `values` (array, oldest first), `last`, `min`, `max`, `average`
+(all 0 while empty). Function `clear()`. With `interval: 0` a point is added only when
+`value` changes or you call `push(v)` (for events rather than a clock).
 
 ### LineChart
 

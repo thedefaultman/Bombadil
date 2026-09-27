@@ -12,9 +12,9 @@ build a web page, a local server, a port, an Electron app or a terminal UI for t
 
 ## The loop
 
-1. Pick the closest pattern below. For a full example, read
-   `examples/password-manager/main.qml` or `examples/memory/main.qml` next to this file
-   (or call `app_guide("password-manager")` / `app_guide("memory")`).
+1. Pick the closest pattern below. For a complete app, read the example folders next to
+   this file, `examples/password-manager/` and `examples/memory/` (or call
+   `app_guide("password-manager")` / `app_guide("memory")`).
 2. Write `main.qml` rooted at `AppWindow`, composed from kit components and native
    bindings. Add `app.py` only for something the bindings cannot do.
 3. Call `create_app(title, qml)`. It writes `~/Apps/<name>/`, loads the app offscreen,
@@ -82,15 +82,19 @@ AppWindow {
 - No `QtCharts`, `QtWebEngine`, `Qt5Compat.GraphicalEffects`, `MultiEffect`, shaders or
   `layer.effect`: they are not installed or not rendered by the check.
 - Show real data or a real empty state (`EmptyState`), never lorem ipsum.
-- Keep `main.qml` under ~250 lines; move a repeated piece into its own file via
-  `create_app(..., files: {"EntryRow.qml": "..."})` and use it as `EntryRow {}`.
+- Size the window with `width`/`height` on `AppWindow`: about 760×560 for a manager or
+  a tool, up to about 1200×760 for a dashboard. Bigger windows are shrunk to fit the screen.
+- Keep `main.qml` under ~250 lines; move a self-contained piece into its own file via
+  `create_app(..., files: {"EntryRow.qml": "..."})` and use it as `EntryRow {}`. That file
+  starts with the same four imports and cannot see `main.qml`'s ids: pass data in as
+  properties and send actions out as signals (`examples/memory/ProcessDetails.qml`).
 
 ## Patterns
 
 | The user wants | Shape |
 |---|---|
 | a manager / notes / contacts / bookmarks | `RowLayout { ItemList (260 px) ; Panel { DetailGrid or Form } }`, `SearchField` in `actions`, a `Store` |
-| a monitor / dashboard | a `GridLayout` of `Stat`, `Ring`, `Meter`; `Panel`s holding `LineChart`s fed by `Series { value: System.cpu }` |
+| a monitor / dashboard | a `RowLayout { uniformCellSizes: true }` of `Panel { Stat {} }` cards; `Panel`s holding `LineChart`s fed by `Series { value: System.cpu }`, `Ring`, `Meter`, `StackedBar` |
 | a table explorer (processes, files, logs) | `SearchField` in `actions`, a full-size `DataTable`, a detail `Panel` or `Dialog` on `activated` |
 | a form tool (converter, generator, calculator) | a `Panel` with a `Form` of `Field`s and a result `Mono` with a copy `IconButton` |
 | an editor (notes, config files, scripts) | `Editor { path: "~/notes.md" }` with a file list beside it |
