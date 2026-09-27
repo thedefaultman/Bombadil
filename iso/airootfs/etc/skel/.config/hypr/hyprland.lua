@@ -70,7 +70,7 @@ hl.window_rule({
     match = { class = "^(bombadil-session-.*)$" },
     float = true,
     center = true,
-    size = "86% 80%",
+    size = "(monitor_w*0.86) (monitor_h*0.8)",
 })
 
 -- Panel apps open straight into their panel; os-mcp (hypr.py) only launches and toggles.

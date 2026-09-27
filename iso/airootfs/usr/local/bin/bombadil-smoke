@@ -100,6 +100,8 @@ no_client() { ! has_client "$1"; }
 says() { local want=$1; shift; as_user bombadil ask "$*" | tee /dev/stderr | grep -q "$want"; }
 hypr_do() { local o; o=$(as_user hyprctl dispatch "$1") && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
 close_viewer() { hypr_do "hl.dsp.focus({ window = \"class:^($viewer)\$\" })" && hypr_do 'hl.dsp.window.close()'; }
+# The viewer is most of the screen, not foot's own 700x500.
+viewer_big() { local m c; m=$(hypr_json monitors) && c=$(hypr_json clients) && python3 -c 'import json, sys; m = json.loads(sys.argv[1])[0]; c = [x for x in json.loads(sys.argv[2]) if x["class"] == sys.argv[3]]; print(m["width"], m["height"], [x["size"] for x in c]); sys.exit(not c or c[0]["size"][0] < 0.7 * m["width"] / m.get("scale", 1))' "$m" "$c" "$viewer"; }
 make_project() { as_user bash -c 'mkdir -p ~/Projects/smoke && cd ~/Projects/smoke && git init -q && git -c user.name=smoke -c user.email=smoke@localhost commit -q --allow-empty -m start'; }
 check dev-tools bash -c 'command -v zellij foot footclient bombadil-signal'
 check dev-hooks-parse python3 -c 'import json, tomllib; json.load(open("/etc/claude-code/managed-settings.d/50-bombadil.json")); tomllib.load(open("/etc/codex/requirements.toml", "rb"))'
@@ -110,6 +112,7 @@ check dev-zellij wait_for 20 zellij_has bombadil-smoke-shell
 check dev-scope wait_for 20 unit_active 'bombadil-dev-smoke-shell-*.scope'
 check dev-slice unit_active 'bombadil-dev-smoke.slice'
 check dev-window wait_for 60 has_client "c['class']=='$viewer' and c['floating']"
+check dev-window-size viewer_big
 shot session
 check dev-close-window close_viewer
 check dev-window-gone wait_for 30 no_client "c['class']=='$viewer'"
