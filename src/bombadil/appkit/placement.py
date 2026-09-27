@@ -1,7 +1,7 @@
 """Slide app windows in and out: each app lives in its own Hyprland special workspace.
 
 `prepare()` adds a runtime window rule before the app's window first maps, so it opens
-floating, centered, at its own size (shrunk by `fit()` when the screen is smaller), straight
+floating, centered, at its own size (shrunk by `fit()` when the screen is too small), straight
 into `special:app-<name>` (and therefore slides in). After that, showing and hiding is showing and hiding that special workspace.
 Everything here returns a short sentence and is a no-op without Hyprland (dev machines,
 tests). No Qt: os-mcp and the bar's `bombadil-app close` use this too.
@@ -148,9 +148,8 @@ def usable_area(h: hypr.Hyprland | None = None) -> tuple[int, int] | None:
     return int(w - left - right - 2 * MARGIN), int(h_ - top - bottom - 2 * MARGIN)
 
 
-def fit(w: int, h_: int, h: hypr.Hyprland | None = None) -> tuple[int, int]:
-    """The window size to open with: w x h, shrunk to the focused monitor when it is too big."""
-    room = usable_area(h)
+def fit(w: int, h_: int, room: tuple[int, int] | None) -> tuple[int, int]:
+    """w x h, shrunk to `room` (from usable_area) where it is bigger; as it is without one."""
     if room is None:
         return int(w), int(h_)
     return min(int(w), max(room[0], MIN_SIZE[0])), min(int(h_), max(room[1], MIN_SIZE[1]))

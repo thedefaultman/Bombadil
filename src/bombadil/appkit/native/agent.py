@@ -82,7 +82,9 @@ class Agent(QObject):
         if self._socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
             return
         self._buffer = b""
-        if self._current in self._turns:
+        if self._turns or self._waiting:        # a turn of ours was queued or running
+            if self._current not in self._turns:
+                self._set("_reply", "", self.replyChanged)
             self._add_error("lost the connection to agentd")
             self.replied.emit(self._reply)
         self._waiting, self._turns, self._current = 0, set(), None

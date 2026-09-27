@@ -2,7 +2,8 @@
 
 Each refresh reads one small file per process (`/proc/<pid>/stat`); the command line and
 owner are read once per process and cached, so a few hundred processes every two seconds
-cost a few milliseconds.
+cost a few milliseconds. The first read happens when the object is made, so `list` is
+filled before any `Component.onCompleted` (and in `check`'s first frame).
 """
 
 import os
@@ -164,12 +165,13 @@ class Processes(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(2000)
         self._timer.timeout.connect(self.refresh)
-        # First scan once QML has set sortBy/filter/limit, not once per property.
+        # Read now; QML then sets sortBy/filter/limit, and each re-sorts this reading. The timer
+        # starts once those are set, so `interval: 0` never sees a tick.
+        self.refresh()
         QTimer.singleShot(0, self, self._begin)
 
     @Slot()
     def _begin(self):
-        self.refresh()
         if self._timer.interval() > 0:
             self._timer.start()
 
@@ -256,6 +258,8 @@ class Processes(QObject):
 
     def _set_interval(self, ms: int):
         ms = max(0, int(ms))
+        if 0 < ms < 100:
+            ms = 100
         if ms == self._timer.interval():
             return
         self._timer.setInterval(ms)

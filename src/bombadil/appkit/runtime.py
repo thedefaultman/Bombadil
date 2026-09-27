@@ -104,6 +104,10 @@ def _stamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
+def _log(text: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} {text}", file=sys.stderr, flush=True)
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
@@ -160,9 +164,12 @@ class Host:
         # PySide deletes what a QQmlComponent created when the component goes away.
         self._components: dict[int, object] = {}
         self.declared: tuple[int, int] | None = None  # the size the current root asks for
+        self._room: tuple[int, int] | None = None     # the screen's room for the window (Hyprland)
+        self._fitted: tuple[int, int] | None = None   # a size the runtime shrank to fit, not the user's
         self.attempts = 0
         self.loaded = False         # the latest load succeeded
         self.backend = None
+        self._backend_failed = False  # app.py did not load: try it again on every reload
         self._module_name = ""
         self._sig: dict = {}
         self._dirty = False
@@ -240,21 +247,22 @@ class Host:
         if isinstance(obj, QQuickWindow):
             declared = (obj.width(), obj.height())
             size = self._target_size(declared)
-            obj.resize(*size)
             if not self.ctx.check:
-                placement.prepare(self.ctx.name, *size)
+                size = self._place(size)
+            obj.resize(*size)
             if not self._complete(comp, obj):
                 return None
             if not obj.isVisible():
                 obj.show()
         elif isinstance(obj, QQuickItem):
-            declared = self._item_size(obj)
-            size = self._target_size(declared)
             win = self._runtime_window()
             # Parented before completion, so Component.onCompleted already sees its window.
             obj.setParentItem(win.contentItem())
             if not self._complete(comp, obj):
                 return None
+            # Only now: `width: Theme.pad * 30` is a binding, and bindings run on completion.
+            declared = self._item_size(obj)
+            size = self._target_size(declared)
             if (win.width(), win.height()) != size:
                 win.resize(*size)
         else:
@@ -327,10 +335,12 @@ class Host:
         self._show(self.window)
 
     def _load_backend(self, changed: set[str] | None) -> bool:
-        """Import app.py afresh (a new module each time) and expose its Backend as `backend`."""
-        if changed is not None and not any(c.endswith(".py") for c in changed):
+        """Import app.py afresh (a new module each time) and expose its Backend as `backend`.
+        Skipped when only QML changed, unless app.py is still broken: its error stays until fixed."""
+        if changed is not None and not self._backend_failed and not any(c.endswith(".py") for c in changed):
             return True
         py = self.ctx.dir / "app.py"
+        self._backend_failed = False
         if not py.exists():
             if self.backend is not None:
                 self.engine.rootContext().setContextProperty("backend", None)
@@ -349,6 +359,7 @@ class Host:
             if self.collector.echo:
                 traceback.print_exc()
             self.collector.add("error", python_error(self.ctx, e))
+            self._backend_failed = True
             return False
         sys.modules.pop(self._module_name, None)
         self._module_name = name
@@ -387,9 +398,20 @@ class Host:
         if win is None or win.isVisible():
             return
         if not self.ctx.check:
-            # Map straight into the app's drawer (floating, centered, this size): it slides in.
-            placement.prepare(self.ctx.name, win.width(), win.height())
+            size = self._place((win.width(), win.height()))
+            if size != (win.width(), win.height()):
+                win.resize(*size)
         win.show()
+
+    def _place(self, size: tuple[int, int]) -> tuple[int, int]:
+        """Before a window maps: shrink it to the screen if needed, and have Hyprland map it
+        straight into the app's drawer (floating, centered, this size), so it slides in."""
+        self._room = placement.usable_area()
+        fitted = placement.fit(*size, self._room)
+        if fitted != size:
+            self._fitted = fitted
+        _log(f"window: {placement.prepare(self.ctx.name, *fitted)}")
+        return fitted
 
     def _theme_bg(self):
         from PySide6.QtCore import QUrl
@@ -441,12 +463,17 @@ class Host:
 
     def _target_size(self, declared: tuple[int, int]) -> tuple[int, int]:
         """First load: the size the user left it at, unless the app now asks for a new one.
-        Reload: keep the window as it is, unless the app asks for a different size."""
-        declared = (min(max(declared[0], 240), 3840), min(max(declared[1], 160), 2160))
+        Reload: keep the window as it is, unless the app asks for a different size, which is
+        shrunk to the screen like the first one."""
+        declared = (min(max(declared[0], placement.MIN_SIZE[0]), 3840),
+                    min(max(declared[1], placement.MIN_SIZE[1]), 2160))
         if self.declared is None:
             return self._saved_size(declared) or declared
         if declared != self.declared:
-            return declared
+            fitted = placement.fit(*declared, self._room)
+            if fitted != declared:
+                self._fitted = fitted
+            return fitted
         win = self.current_window()
         return (win.width(), win.height()) if win is not None else declared
 
@@ -468,6 +495,8 @@ class Host:
         win = self.current_window()
         if self.ctx.check or self._closed or win is None or not win.isVisible() or self.declared is None:
             return
+        if (win.width(), win.height()) == self._fitted:
+            return  # shrunk to this screen by the runtime: not a size the user chose
         data = {"width": win.width(), "height": win.height(), "declared": list(self.declared)}
         if _read_json(self._size_path) != data:
             _write_json(self._size_path, data)
@@ -527,7 +556,7 @@ class Host:
             return
         changed = {k for k in sig.keys() | self._sig.keys() if sig.get(k) != self._sig.get(k)}
         self._sig = sig
-        print(f"{time.strftime('%H:%M:%S')} reload: {', '.join(sorted(changed))}", file=sys.stderr, flush=True)
+        _log(f"reload: {', '.join(sorted(changed))}")
         self.load(changed)
 
     # Status and errors
@@ -620,6 +649,27 @@ def _single_instance(ctx: AppContext):
     return f
 
 
+def _log_to_file(ctx: AppContext) -> None:
+    """Started by a launcher (a .desktop file), not from a terminal: send stdout and stderr
+    to the app's log, where app_status reads them, rotated like apps.run rotates it."""
+    if os.isatty(2):
+        return
+    log = ctx.log_path
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        if log.exists() and log.stat().st_size > 1_000_000:
+            log.replace(log.with_suffix(".log.1"))
+        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    except OSError as e:
+        print(f"cannot log to {log}: {e}", file=sys.stderr, flush=True)
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.dup2(fd, 1)
+    os.dup2(fd, 2)
+    os.close(fd)
+
+
 def run(name: str) -> int:
     from PySide6.QtCore import QTimer
 
@@ -628,6 +678,7 @@ def run(name: str) -> int:
     if lock is None:
         print(f"{name} is already running: {placement.show(name, start=False)}", file=sys.stderr)
         return 0
+    _log_to_file(ctx)
     app = kit_engine.make_app(ctx)
     print(f"--- {_stamp()} bombadil-app run {name} (pid {os.getpid()})", file=sys.stderr, flush=True)
     for sig in (signal.SIGTERM, signal.SIGINT):
