@@ -22,10 +22,14 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from ..context import AppContext
 from . import MAJOR, MINOR, URI
 from . import context as native_context
-from .files import NULL, atomic_write, from_js, js_value
+from .files import NULL, atomic_write, js_value, to_json
 
 VERSION = 1
-KDF = {"name": "scrypt", "n": 2 ** 15, "r": 8, "p": 1}
+# New vaults and password changes (OWASP's scrypt minimum: 128 MiB, about half a second).
+KDF = {"name": "scrypt", "n": 2 ** 17, "r": 8, "p": 1}
+# The most a file may ask for (512 MiB): the parameters are read before the password is
+# checked, so a damaged or hostile file must not be able to demand gigabytes.
+MAX_N, MAX_R, MAX_P = 2 ** 18, 16, 4
 AAD = b"bombadil-vault-1"
 SYMBOLS = "!#$%&()*+,-./:;<=>?@[]^_{|}~"
 COMMON = {"password", "123456", "12345678", "123456789", "qwerty", "letmein", "iloveyou", "admin",
@@ -62,7 +66,9 @@ def seal(key: bytes, salt: bytes, kdf: dict, value) -> bytes:
 def open_file(path: Path) -> dict:
     doc = json.loads(path.read_text())
     kdf = doc["kdf"]
-    if kdf.get("name") != "scrypt" or not (2 <= int(kdf["n"]) <= 2 ** 20 and int(kdf["r"]) <= 32 and int(kdf["p"]) <= 16):
+    n, r, p = int(kdf["n"]), int(kdf["r"]), int(kdf["p"])
+    if kdf.get("name") != "scrypt" or not (2 <= n <= MAX_N and n & (n - 1) == 0 and 1 <= r <= MAX_R
+                                           and 1 <= p <= MAX_P):
         raise ValueError(f"unsupported key derivation {kdf}")
     return {"kdf": kdf, "salt": base64.b64decode(doc["salt"]), "nonce": base64.b64decode(doc["nonce"]),
             "ciphertext": base64.b64decode(doc["ciphertext"])}
@@ -182,32 +188,41 @@ class Vault(QObject):
         if not self._ctx.check:
             _keys[str(self._file)] = {"key": self._key, "salt": self._salt, "expires": expires}
 
-    def _write(self) -> bool:
+    def _write(self, key: bytes | None = None, salt: bytes | None = None, kdf: dict | None = None,
+               value=None) -> bool:
+        """Save `value` under that key (by default the current key and data)."""
+        if key is None:
+            key, salt, kdf, value = self._key, self._salt, self._kdf, self._data
         if self._ctx.check:
             return True
         try:
-            atomic_write(self._file, seal(self._key, self._salt, self._kdf, self._data), mode=0o600)
+            atomic_write(self._file, seal(key, salt, kdf, value), mode=0o600)
         except (OSError, TypeError, ValueError, RuntimeError) as e:
             return self._fail(f"cannot save: {e}")
         self._set("_exists", True, self.existsChanged)
         return True
 
+    def _check_exists(self) -> bool:
+        """Look at the disk: another Vault object (or process) may have made or removed the file."""
+        self._set("_exists", self._file.exists(), self.existsChanged)
+        return self._exists
+
     @Slot(str, result=bool)
     def create(self, password: str) -> bool:
-        if self._exists:
+        if self._check_exists():
             return self._fail("a vault already exists")
         if not password:
             return self._fail("empty password")
-        salt = os.urandom(16)
-        self._key, self._salt, self._kdf, self._data = derive(password, salt, KDF), salt, dict(KDF), []
-        if not self._write():
+        salt, kdf = os.urandom(16), dict(KDF)
+        key = derive(password, salt, kdf)
+        if not self._write(key, salt, kdf, []):
             return False
-        self._open(self._key, salt, self._kdf, [])
+        self._open(key, salt, kdf, [])
         return True
 
     @Slot(str, result=bool)
     def unlock(self, password: str) -> bool:
-        if not self._file.exists():
+        if not self._check_exists():
             return self._fail("no vault yet")
         try:
             _, InvalidTag = _crypto()
@@ -245,11 +260,11 @@ class Vault(QObject):
             return False
         else:
             value = self._data
-        salt = os.urandom(16)
-        self._key, self._salt, self._kdf, self._data = derive(new, salt, KDF), salt, dict(KDF), value
-        if not self._write():
+        salt, kdf = os.urandom(16), dict(KDF)
+        key = derive(new, salt, kdf)
+        if not self._write(key, salt, kdf, value):     # the old key stays until the new one is on disk
             return False
-        self._open(self._key, salt, self._kdf, value)
+        self._open(key, salt, kdf, value)
         return True
 
     @Slot(result=str)
@@ -274,10 +289,9 @@ class Vault(QObject):
         if not self._unlocked:
             self._fail("the vault is locked")
             return
-        value = from_js(value)
         try:
-            json.dumps(value)
-        except (TypeError, ValueError) as e:
+            value = to_json(value)
+        except TypeError as e:
             self._fail(f"not JSON: {e}")
             return
         self._data = value

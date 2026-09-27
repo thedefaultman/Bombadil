@@ -8,6 +8,7 @@ any `Component.onCompleted` in the app runs.
 """
 
 import json
+import math
 import os
 import stat
 import tempfile
@@ -67,9 +68,15 @@ def from_js(value):
 
 
 def to_json(value):
-    """A property value as JSON data; colors, urls and dates become strings. Raises TypeError."""
+    """A property value as JSON data; colors, urls and dates become strings. Raises TypeError.
+
+    NaN and Infinity become null: JSON has no word for them, and a file holding `NaN` would
+    fail JSON.parse on the next start.
+    """
     if isinstance(value, QJSValue):
         value = value.toVariant()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     if isinstance(value, dict):
@@ -153,15 +160,48 @@ class KitFiles(QObject):
         return keys
 
     @Slot(QObject, "QVariant", result=str)
-    def snapshot(self, obj: QObject, keys) -> str:
-        """Those properties' values as a JSON object, read without creating binding dependencies."""
+    @Slot(QObject, "QVariant", "QVariant", result=str)
+    def snapshot(self, obj: QObject, keys, keep=None) -> str:
+        """Those properties' values as a JSON object, read without creating binding dependencies.
+
+        `keep` is what the file held before: its keys that are not properties any more are
+        written back, so a property that one version of the app renames is not lost.
+        """
         out = {}
+        kept = from_js(keep)
+        if isinstance(kept, dict):
+            for k, v in kept.items():
+                try:
+                    out[str(k)] = to_json(v)
+                except TypeError:
+                    pass
         for k in from_js(keys) or []:
             try:
                 out[k] = to_json(obj.property(k))
             except TypeError as e:
                 print(f"Store: {k} is not saved: {e}")
-        return json.dumps(out, indent=1, ensure_ascii=False)
+        return json.dumps(out, indent=1, ensure_ascii=False, allow_nan=False)
+
+    @Slot(str, result=str)
+    def setAside(self, path: str) -> str:
+        """Rename a file that cannot be read (`x.json` -> `x.json.bad`, then `.bad.2`, ...) so it is
+        not overwritten; the new path, or "" when nothing was moved (missing file, `check`)."""
+        if self._ctx.check:
+            return ""
+        src = self._ctx.resolve(path)
+        if not src.is_file():
+            return ""
+        dest = src.with_name(src.name + ".bad")
+        n = 1
+        while dest.exists():
+            n += 1
+            dest = src.with_name(f"{src.name}.bad.{n}")
+        try:
+            os.replace(src, dest)
+        except OSError as e:
+            print(f"KitFiles: cannot set {path} aside: {e}")
+            return ""
+        return str(dest)
 
     @Slot(str, result=bool)
     def remove(self, path: str) -> bool:

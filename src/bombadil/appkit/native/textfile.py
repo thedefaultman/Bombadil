@@ -2,8 +2,13 @@
 
 Editors save by writing a new file and renaming it over the old one, which drops the old
 inode from QFileSystemWatcher; watching the folder too catches that and re-arms the watch.
+
+Every TextFile shares one QFileSystemWatcher: each watcher is an inotify instance, and a
+user may only have 128 of them (for every program they run, not just this app).
 """
 
+import itertools
+import weakref
 from pathlib import Path
 
 from PySide6.QtCore import Property, QFileSystemWatcher, QObject, Signal, Slot
@@ -12,6 +17,60 @@ from ..context import AppContext
 from . import MAJOR, MINOR, URI
 from . import context as native_context
 from .files import atomic_write
+
+
+class _Watcher:
+    """The shared watcher: which TextFile wants which paths, and who to tell when one changes."""
+
+    def __init__(self):
+        self._qt: QFileSystemWatcher | None = None
+        self._paths: dict[int, set[str]] = {}         # TextFile token -> the paths it watches
+        self._handlers: dict[int, weakref.WeakMethod] = {}
+
+    def _watcher(self) -> QFileSystemWatcher:
+        if self._qt is None:
+            self._qt = QFileSystemWatcher()
+            self._qt.fileChanged.connect(self._changed)
+            self._qt.directoryChanged.connect(self._changed)
+        return self._qt
+
+    def watching(self, path: str) -> bool:
+        return self._qt is not None and path in self._qt.files()
+
+    def set(self, token: int, paths: set[str], handler=None):
+        """Watch `paths` for this token instead of what it watched before (nothing: stop)."""
+        before = self._paths.pop(token, set())
+        self._handlers.pop(token, None)
+        if paths:
+            self._paths[token] = set(paths)
+            self._handlers[token] = weakref.WeakMethod(handler)
+        wanted = set().union(*self._paths.values())
+        try:
+            w = self._watcher()
+            have = set(w.files()) | set(w.directories())
+            gone = [p for p in before if p in have and p not in wanted]
+            if gone:
+                w.removePaths(gone)
+            new = [p for p in paths if p not in have]
+            if new:
+                w.addPaths(new)
+        except RuntimeError:        # quitting: Qt already deleted the watcher
+            pass
+
+    def _changed(self, path: str):
+        for token, paths in list(self._paths.items()):
+            if path not in paths:
+                continue
+            handler = self._handlers.get(token)
+            method = handler() if handler is not None else None
+            if method is None:
+                self.set(token, set())
+            else:
+                method(path)
+
+
+_watcher = _Watcher()
+_tokens = itertools.count(1)
 
 
 class TextFile(QObject):
@@ -33,9 +92,8 @@ class TextFile(QObject):
         self._exists = False
         self._error = ""
         self._watch = True
-        self._watcher = QFileSystemWatcher(self)
-        self._watcher.fileChanged.connect(self._on_disk)
-        self._watcher.directoryChanged.connect(self._on_disk)
+        self._token = next(_tokens)
+        self.destroyed.connect(lambda *_, t=self._token: _watcher.set(t, set()))
 
     def _set(self, attr: str, value, signal):
         if getattr(self, attr) != value:
@@ -43,15 +101,13 @@ class TextFile(QObject):
             signal.emit()
 
     def _rewatch(self):
-        old = self._watcher.files() + self._watcher.directories()
-        if old:
-            self._watcher.removePaths(old)
-        if not self._watch or self._file is None:
-            return
-        if self._file.exists():
-            self._watcher.addPath(str(self._file))
-        if self._file.parent.is_dir():
-            self._watcher.addPath(str(self._file.parent))
+        paths = set()
+        if self._watch and self._file is not None:
+            if self._file.exists():
+                paths.add(str(self._file))
+            if self._file.parent.is_dir():
+                paths.add(str(self._file.parent))
+        _watcher.set(self._token, paths, self._on_disk)
 
     def _stat(self):
         try:
@@ -81,7 +137,7 @@ class TextFile(QObject):
     def _on_disk(self, _path: str):
         if self._file is None:
             return
-        if self._file.exists() and str(self._file) not in self._watcher.files():
+        if self._file.exists() and not _watcher.watching(str(self._file)):
             self._rewatch()
         if self._stat() == self._stamp:
             return
