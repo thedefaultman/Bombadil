@@ -196,6 +196,7 @@ class Launcher:
         self.snaps = snaps or snapshots.Snapshots()
         self._run = runner
         self._spawn = spawn
+        self._drawer: list[str] | None = None   # what the details drawer shows, as its argv
 
     # -- words for the line while it works --
 
@@ -351,19 +352,64 @@ class Launcher:
 
     # -- things that open in the details drawer --
 
-    def details(self, argv: list[str]) -> str:
-        """Run a terminal program in the details drawer (a foot window in special:details)."""
+    def details(self, argv: list[str], toggle: bool = False) -> str:
+        """Run a terminal program in the details drawer (a foot window in special:details).
+        With toggle, the same drawer already open closes instead: a second click on Details."""
         foot = shutil.which("foot")
         if foot is None:
             raise RuntimeError("foot is not installed")
-        # "--" first: the pattern itself starts with dashes.
-        self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
-        self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        shows = [a for a in argv if a != "--follow"]   # following or not, it is the same turn
+        if toggle and shows == self._drawer and self._drawer_open():
+            self.close_details()
+            return "hidden"
+        self.close_details()
+        proc = self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self._drawer = shows
         if self.hypr.available:
-            # The window rule puts it in special:details; focus shows that drawer (never toggles it off).
-            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+            self._focus_drawer(proc)
         return "shown"
+
+    def _focus_drawer(self, proc, wait: float = 5.0) -> None:
+        """Slide the drawer in with the keyboard, so Esc (any key) closes it. Its window rule is
+        silent, so the window never takes the keyboard by itself, and showing the workspace before
+        the window maps opens it empty and leaves the keyboard where it was (the bar). So wait
+        for the window, then focus it: that shows the drawer and moves keys and pointer into it."""
+        pid = getattr(proc, "pid", None)
+
+        def gone() -> bool:   # closed meanwhile (Esc, a second click), or foot failed
+            poll = getattr(proc, "poll", None)
+            return poll is not None and poll() is not None
+
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if gone():
+                return
+            try:
+                mapped = any(c.get("class") == DETAILS_CLASS and (pid is None or c.get("pid") == pid)
+                             for c in self.hypr.clients())
+            except (OSError, ValueError, RuntimeError):   # a busy compositor: ask again
+                mapped = False
+            if mapped:
+                sel = f"pid:{pid}" if pid is not None else f"class:^({DETAILS_CLASS})$"
+                self.hypr.dispatch(f'hl.dsp.focus({{ window = "{sel}" }})')
+                return
+            time.sleep(0.05)
+        if not gone():
+            # Still starting: show the drawer anyway; a click in it gives it the keyboard.
+            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+
+    def _drawer_open(self) -> bool:
+        r = self._run(["pgrep", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
+        return getattr(r, "returncode", 1) == 0
+
+    def close_details(self) -> bool:
+        """Put the drawer away (Esc in the pill, a second click on Details). Hyprland hides a
+        special workspace when its last window closes."""
+        self._drawer = None
+        # "--" first: the pattern itself starts with dashes.
+        r = self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
+        return getattr(r, "returncode", 1) == 0
 
     def _history(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "history"])

@@ -323,6 +323,48 @@ shot("20-details")
 tree = run("swaymsg", "-t", "get_tree").stdout
 check("details drawer opened", "bombadil-details" in tree)
 
+
+def drawer_open():
+    return "bombadil-details" in run("swaymsg", "-t", "get_tree").stdout
+
+
+def focused_app():
+    todo = [json.loads(run("swaymsg", "-t", "get_tree").stdout or "{}")]
+    while todo:
+        node = todo.pop()
+        if node.get("focused"):
+            return node.get("app_id") or node.get("name")
+        todo += node.get("nodes", []) + node.get("floating_nodes", [])
+    return None
+
+
+def until(pred, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+# 7. every way out of the drawer: Esc in it, Details again, Esc in the pill. (Clicks on the line
+# and its Details button are covered offscreen in tests/test_pill_qml.py: headless sway has no pointer.)
+check("details drawer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("Esc in the drawer closes it", until(lambda: not drawer_open()))
+send({"type": "details", "turn": docker_turn})
+until(drawer_open)
+time.sleep(1)
+send({"type": "details", "turn": docker_turn})
+check("Details again closes it", until(lambda: not drawer_open()))
+send({"type": "details", "turn": docker_turn})
+until(drawer_open)
+time.sleep(1)
+summon()
+key("Escape")
+check("Esc in the pill closes it", until(lambda: not drawer_open()))
+shot("21-details-closed")
+
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
     p.terminate()
