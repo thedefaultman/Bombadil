@@ -1,0 +1,5 @@
+#!/bin/sh
+# The real CLI, pointed at the scripted API.
+export ANTHROPIC_API_KEY=sk-ant-fake ANTHROPIC_BASE_URL=http://127.0.0.1:18555 DISABLE_TELEMETRY=1 \
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
+exec /opt/claude "$@"

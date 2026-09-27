@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Tiny QMP client for test-vm.sh: `qmp.py SOCK send-keys down ret` or `qmp.py SOCK screenshot out.png`."""
+"""Tiny QMP client for test-vm.sh: `qmp.py SOCK send-keys down ret` or `qmp.py SOCK screenshot out.png`.
+
+A key joined with + is a chord: `meta_l+esc` holds both together."""
 import json
 import socket
 import struct
@@ -51,7 +53,7 @@ def main():
     cmd = qmp(sock)
     if what == "send-keys":
         for k in rest:
-            cmd("send-key", keys=[{"type": "qcode", "data": k}])
+            cmd("send-key", keys=[{"type": "qcode", "data": part} for part in k.split("+")])
     elif what == "screenshot":
         ppm = rest[0] + ".ppm"
         cmd("screendump", filename=ppm)
