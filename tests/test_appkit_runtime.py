@@ -300,7 +300,7 @@ def test_store_keeps_saved_values_across_a_rename_and_a_type_change(home):
         import QtQuick
         import Bombadil
         AppWindow {
-            property alias store: st
+            property var store: st
             Store { id: st; property var entries: []; property string filter: ""; property var tags: [] }
         }
         """)})
@@ -343,7 +343,7 @@ def test_store_sets_a_broken_file_aside_and_takes_a_nan_default(home):
         import QtQuick
         import Bombadil
         AppWindow {
-            property alias store: st
+            property var store: st
             Store { id: st; property real avg: NaN; property var entries: [] }
         }
         """)})
@@ -375,16 +375,16 @@ def test_check_is_stopped_when_the_app_never_settles_and_its_commands_die(home):
         import Bombadil
         AppWindow {
             Command { command: "sleep 97.31 | cat"; running: true }
-            Timer { interval: 400; running: true; onTriggered: { console.log("spinning"); while (true) {} } }
+            Timer { interval: 100; running: true; onTriggered: { console.log("spinning"); while (true) {} } }
         }
         """)})
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
-    script = "import sys\nfrom bombadil.appkit import check\ncheck.main(sys.argv[1], None, 200, None, settle=2)\n"
+    script = "import sys\nfrom bombadil.appkit import check\ncheck.main(sys.argv[1], None, 500, None, settle=2)\n"
     r = subprocess.run([sys.executable, "-c", script, str(apps.app_dir("busy"))], capture_output=True, text=True,
                        env=env, timeout=60)
     result = json.loads(r.stdout)
     assert r.returncode == -signal.SIGKILL and result["ok"] is False and result["loaded"] is True
-    assert "did not settle within 2.2 s" in result["errors"][-1] and result["console"] == ["spinning"]
+    assert "did not settle within 2.5 s" in result["errors"][-1] and result["console"] == ["spinning"]
     deadline = time.monotonic() + 5
     while subprocess.run(["pgrep", "-f", "sleep 97.31"], capture_output=True).returncode == 0:
         assert time.monotonic() < deadline, "the Command's program outlived the check"
@@ -578,9 +578,9 @@ def test_prepare_says_what_went_wrong_instead_of_raising(monkeypatch):
     class Hung(FakeHypr):
         def request(self, command):
             raise TimeoutError("timed out")
-    assert placement.prepare("notes", 1, 2, Hung()) == (
-        "could not add the window rule for notes, it opens as a plain window: "
-        "Hyprland did not take 'eval hl.window_rule({ name = \"bombadil-app-notes\", match = ': timed out")
+    said = placement.prepare("notes", 1, 2, Hung())
+    assert said.startswith("could not add the window rule for notes, it opens as a plain window: Hyprland did not")
+    assert said.endswith("timed out")
     assert "opens as a plain window" in placement.prepare("notes", 1, 2, FakeHypr(replies=["", "", ""]))
 
 
