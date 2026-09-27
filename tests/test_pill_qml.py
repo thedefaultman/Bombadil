@@ -32,10 +32,12 @@ Window {
     color: "#3b4a5a"
     property var sent: []
     property int screens: 1
+    property var summons: []
     PillState {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onSummoned: text => w.summons = w.summons.concat([text])
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
@@ -388,3 +390,11 @@ def test_hovering_the_line_on_one_screen_keeps_it_on_all(bar):
     QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
     bar.pump(0.8)
     assert bar.pill.property("mode") == "idle"
+
+
+def test_a_summon_can_carry_words_for_the_pill(bar):
+    bar.send(type="summon")
+    bar.send(type="summon", text="About ~/Documents/lease.pdf: ")
+    summons = bar.win.property("summons")
+    summons = summons.toVariant() if hasattr(summons, "toVariant") else summons
+    assert list(summons) == ["", "About ~/Documents/lease.pdf: "]
