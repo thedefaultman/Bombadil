@@ -20,7 +20,8 @@ SYSTEM_PROMPT = (
     "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML, hot "
     "reloaded, no web servers), take screenshots to check your work, and use rollback when the user says "
     "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
-    "permission. Keep spoken replies short: the UI is a small bar, the work shows up on screen."
+    "permission. The user sees your work on screen and your final reply as at most four lines above the "
+    "bar: one or two plain sentences saying what you did, no markdown, no lists."
 )
 
 
@@ -80,13 +81,23 @@ def _json(line: str) -> dict | None:
     return m if isinstance(m, dict) else None
 
 
+def _result_text(content) -> str:
+    """A tool result's text: a string, or a list of text (and image) blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b.get("text", "") if b.get("type") == "text" else f"[{b.get('type')}]"
+                         for b in content if isinstance(b, dict))
+    return "" if content is None else json.dumps(content)
+
+
 class Claude(Provider):
     name = "claude"
     binary = "claude"
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         cmd = [self.binary, "-p",
-               "--output-format", "stream-json", "--verbose",
+               "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--permission-mode", "bypassPermissions", "--dangerously-skip-permissions",
                "--mcp-config", str(mcp_config(workdir / "claude-mcp.json", self.mcp_command)),
                "--append-system-prompt", SYSTEM_PROMPT]
@@ -106,12 +117,37 @@ class Claude(Provider):
             servers = {s.get("name"): s.get("status") for s in m.get("mcp_servers", []) if isinstance(s, dict)}
             if servers.get("bombadil-os") not in ("connected", "pending"):
                 yield {"kind": "error", "text": f"the OS tools did not start (bombadil-os: {servers.get('bombadil-os', 'missing')})"}
+        elif t == "stream_event":
+            # --include-partial-messages: the reply and each tool call as they are written, for the
+            # live line only (the complete message follows as "assistant").
+            e = m.get("event") or {}
+            et = e.get("type")
+            if et == "content_block_start":
+                block = e.get("content_block") or {}
+                if block.get("type") == "tool_use":
+                    yield {"kind": "tool_start", "index": e.get("index", 0), "name": block.get("name", ""),
+                           "id": block.get("id")}
+                elif block.get("type") in ("thinking", "redacted_thinking"):
+                    yield {"kind": "thinking"}
+            elif et == "content_block_delta":
+                d = e.get("delta") or {}
+                if d.get("type") == "text_delta" and d.get("text"):
+                    yield {"kind": "text_delta", "text": d["text"]}
+                elif d.get("type") == "input_json_delta":
+                    yield {"kind": "tool_input", "index": e.get("index", 0), "partial": d.get("partial_json", "")}
         elif t == "assistant":
             for block in m.get("message", {}).get("content", []):
                 if block.get("type") == "text" and block.get("text"):
                     yield {"kind": "text", "text": block["text"]}
                 elif block.get("type") == "tool_use":
-                    yield {"kind": "tool", "name": block.get("name"), "input": block.get("input", {})}
+                    yield {"kind": "tool", "name": block.get("name"), "input": block.get("input", {}),
+                           "id": block.get("id")}
+        elif t == "user":
+            content = m.get("message", {}).get("content", [])
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    yield {"kind": "tool_result", "id": block.get("tool_use_id"),
+                           "output": _result_text(block.get("content")), "error": bool(block.get("is_error"))}
         elif t == "result":
             ok = not m.get("is_error", False)
             text = m.get("result") or ""
@@ -166,9 +202,37 @@ class Codex(Provider):
         elif t == "item.completed" and item.get("type") == "agent_message":
             self._last_text = item.get("text", "")
             yield {"kind": "text", "text": self._last_text}
-        elif t == "item.started" and item.get("type") in ("command_execution", "mcp_tool_call"):
-            yield {"kind": "tool", "name": item.get("command") or item.get("tool"),
-                   "input": item.get("arguments", {})}
+        elif t == "item.started" and item.get("type") == "command_execution":
+            yield {"kind": "tool", "name": "Bash", "input": {"command": item.get("command", "")}, "id": item.get("id")}
+        elif t == "item.started" and item.get("type") == "mcp_tool_call":
+            yield {"kind": "tool", "name": f"mcp__{item.get('server', '')}__{item.get('tool', '')}",
+                   "input": item.get("arguments") or {}, "id": item.get("id")}
+        elif t == "item.completed" and item.get("type") == "reasoning":
+            # Codex streams no text, but its reasoning summary is a plain heading: "**Installing ffmpeg**".
+            head = (item.get("text") or "").strip().splitlines()
+            yield {"kind": "thinking", "text": head[0].strip("*# ").strip() if head else ""}
+        elif t in ("item.started", "item.updated") and item.get("type") == "todo_list":
+            todo = next((i for i in item.get("items") or [] if isinstance(i, dict) and not i.get("completed")), None)
+            if todo:
+                yield {"kind": "tool", "name": "TodoWrite",
+                       "input": {"todos": [{"content": todo.get("text", ""), "status": "in_progress"}]}}
+        elif t == "item.completed" and item.get("type") == "command_execution":
+            code = item.get("exit_code")
+            yield {"kind": "tool_result", "id": item.get("id"), "output": item.get("aggregated_output") or "",
+                   "error": code not in (0, None), "exit_code": code}
+        elif t == "item.completed" and item.get("type") == "mcp_tool_call":
+            res, err = item.get("result"), item.get("error")
+            out = err.get("message", "") if isinstance(err, dict) else (err or "")
+            if not out and isinstance(res, dict):
+                out = _result_text(res.get("content"))
+            yield {"kind": "tool_result", "id": item.get("id"), "output": out, "error": bool(err)}
+        elif t == "item.started" and item.get("type") == "file_change":
+            yield {"kind": "file_change", "id": item.get("id"), "changes": item.get("changes") or []}
+        elif t == "item.completed" and item.get("type") == "file_change":
+            yield {"kind": "tool_result", "id": item.get("id"), "output": "",
+                   "error": item.get("status") == "failed"}
+        elif t == "item.completed" and item.get("type") == "web_search":
+            yield {"kind": "tool", "name": "WebSearch", "input": {"query": item.get("query", "")}, "id": item.get("id")}
         elif t == "turn.completed":
             yield {"kind": "result", "ok": True, "text": getattr(self, "_last_text", "")}
         elif t == "turn.failed":
@@ -181,6 +245,34 @@ class Codex(Provider):
 
     def login_command(self):
         return [self.binary, "login"]
+
+
+class Shell(Provider):
+    """A "!command" typed into the pill: sh runs it, its output streams like the agent's words."""
+    name = "shell"
+    binary = "sh"
+
+    def __init__(self):
+        super().__init__("", None)
+        self.tail: list[str] = []
+        self.returncode: int | None = None
+
+    def parse(self, line):
+        line = line.rstrip("\n")
+        self.tail = (self.tail + [line])[-200:]
+        if line.strip():
+            yield {"kind": "output", "text": line}
+
+    def finish(self):
+        out = "\n".join(self.tail).strip()
+        yield {"kind": "tool_result", "id": "shell", "output": out, "error": self.returncode not in (0, None),
+               "exit_code": self.returncode}
+        last = "\n".join(line for line in self.tail if line.strip())
+        if self.returncode in (0, None):
+            yield {"kind": "result", "ok": True, "text": "\n".join(last.splitlines()[-4:])}
+        else:
+            text = "\n".join(last.splitlines()[-3:])
+            yield {"kind": "result", "ok": False, "text": (text + "\n" if text else "") + f"(exit {self.returncode})"}
 
 
 PROVIDERS: dict[str, type[Provider]] = {"claude": Claude, "codex": Codex}

@@ -43,7 +43,14 @@ hl.bind("SUPER + T", hl.dsp.workspace.toggle_special("terminal"))
 hl.bind("SUPER + F", hl.dsp.workspace.toggle_special("files"))
 hl.bind("SUPER + Q", hl.dsp.window.close())
 hl.bind("SUPER + Return", hl.dsp.exec_cmd("foot"))
-hl.bind("SUPER + Escape", hl.dsp.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml"))
+-- Tap Super alone: the pill takes the keyboard (a second tap gives it back). It fires on
+-- release, and Hyprland drops it when another key, a click or a drag happened meanwhile.
+hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })
+hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("bombadil pill"), { release = true })
+-- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
+hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
+-- If the bar itself hangs: start it again.
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({
@@ -58,3 +65,5 @@ hl.window_rule({
 hl.window_rule({ name = "panel-browser", match = { class = "^(bombadil-browser)$" }, workspace = "special:browser silent" })
 hl.window_rule({ name = "panel-terminal", match = { class = "^(bombadil-terminal)$" }, workspace = "special:terminal silent" })
 hl.window_rule({ name = "panel-files", match = { class = "^(org.gnome.Nautilus)$" }, workspace = "special:files silent" })
+-- The details drawer: a turn's commands and output (click the line above the pill), history, Wi-Fi.
+hl.window_rule({ name = "panel-details", match = { class = "^(bombadil-details)$" }, workspace = "special:details silent" })

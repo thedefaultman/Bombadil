@@ -3,6 +3,10 @@
 
   bombadil ask "open the browser"     send a prompt and stream the reply
   bombadil status                      is the agent busy, which provider
+  bombadil stop                        end the running turn and everything it started
+  bombadil pill                        give the pill the keyboard (Hyprland runs this on a Super tap)
+  bombadil watch [--file F] [--follow] every step, command and output of the last (or a) turn
+  bombadil history                     recent turns and launcher actions
   bombadil undo                        roll back the last turn (reboot to apply)
   bombadil provider claude|codex       switch provider (restart agentd to apply)
 """
@@ -12,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, paths, snapshots  # noqa: E402
+from bombadil import config, paths, snapshots, watch  # noqa: E402
 
 
 def talk(msg: dict, until: str | None = "turn_end"):
@@ -34,9 +38,17 @@ def talk(msg: dict, until: str | None = "turn_end"):
             if ev.get("type") == "queued":
                 mine = ev["turn"]
                 continue
+            if ev.get("type") == "local":
+                mine = "local"  # a launcher word: answered at once, no turn follows
+                continue
+            if mine == "local":
+                if ev.get("kind") == "local" and ev.get("phase") == "done":
+                    print(ev.get("text", ""), file=sys.stdout if ev.get("ok") else sys.stderr)
+                    return 0 if ev.get("ok") else 1
+                continue
             if ev.get("turn") is not None and ev.get("turn") != mine:
                 continue
-            if ev.get("kind") == "text":
+            if ev.get("kind") in ("text", "output"):
                 print(ev["text"])
             elif ev.get("kind") == "tool":
                 print(f"  [{ev['name']}] {json.dumps(ev.get('input', {}))[:120]}")
@@ -49,6 +61,19 @@ def talk(msg: dict, until: str | None = "turn_end"):
     return 0
 
 
+def send(msg: dict) -> int:
+    """Fire one message at agentd and return; for key binds, which must never hang."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(2)
+        try:
+            s.connect(str(paths.socket_path()))
+            s.sendall((json.dumps(msg) + "\n").encode())
+        except OSError as e:
+            print(f"agentd is not running ({e})", file=sys.stderr)
+            return 1
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -58,6 +83,20 @@ def main() -> int:
         return talk({"type": "prompt", "text": " ".join(args)})
     elif cmd == "status":
         return talk({"type": "status"}, until="status")
+    elif cmd == "stop":
+        return send({"type": "stop"})
+    elif cmd == "pill":
+        return send({"type": "summon"})
+    elif cmd == "watch":
+        path = Path(args[args.index("--file") + 1]) if "--file" in args else watch.last_turn_file()
+        code = watch.show(path, live="--follow" in args)
+        watch.wait_for_key()
+        return code
+    elif cmd == "history":
+        for line in watch.history_lines(color=sys.stdout.isatty()):
+            print(line)
+        watch.wait_for_key()
+        return 0
     elif cmd == "undo":
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
