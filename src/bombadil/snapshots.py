@@ -10,6 +10,9 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
+
+SNAPPER_CONFIGS = Path("/etc/snapper/configs")
 
 
 @dataclass
@@ -19,13 +22,15 @@ class Snapshot:
 
 
 class Snapshots:
-    def __init__(self, config_name: str = "root", runner=subprocess.run):
+    def __init__(self, config_name: str = "root", runner=subprocess.run, configs_dir: Path = SNAPPER_CONFIGS):
         self.config_name = config_name
         self._run = runner
+        self._configs_dir = configs_dir
 
     @property
     def available(self) -> bool:
-        return shutil.which("snapper") is not None
+        # The live ISO has snapper but no btrfs root and no config; only an installed system has undo.
+        return shutil.which("snapper") is not None and (self._configs_dir / self.config_name).exists()
 
     def _snapper(self, *args: str) -> str:
         cmd = ["sudo", "snapper", "-c", self.config_name, "--jsonout", *args]
@@ -46,10 +51,14 @@ class Snapshots:
         return snaps[-limit:]
 
     def rollback(self, number: int) -> bool:
-        """Roll the root subvolume back to `number`. Takes effect on next boot."""
+        """Make snapshot `number` the root subvolume. Takes effect on next boot.
+
+        bombadil-rollback swaps the snapshot in under the name @ (the installer mounts / by
+        name), which works with any bootloader, unlike `snapper rollback`'s default-subvolume
+        scheme."""
         if not self.available:
             return False
-        self._run(["sudo", "snapper", "-c", self.config_name, "rollback", str(number)], check=True)
+        self._run(["sudo", "bombadil-rollback", str(number)], check=True)
         return True
 
     def undo_last_turn(self) -> Snapshot | None:

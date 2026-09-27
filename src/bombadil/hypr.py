@@ -46,8 +46,12 @@ class Hyprland:
                 chunks.append(chunk)
         return b"".join(chunks).decode()
 
-    def dispatch(self, *args: str) -> str:
-        return self.request("dispatch " + " ".join(args))
+    def dispatch(self, lua: str) -> str:
+        """Run a dispatcher. Since 0.55 Hyprland dispatchers are Lua (`hl.dsp.*`)."""
+        out = subprocess.run(["hyprctl", "dispatch", lua], capture_output=True, text=True, timeout=10)
+        if out.returncode != 0 or out.stdout.strip() not in ("", "ok"):
+            raise RuntimeError(f"hyprctl dispatch {lua!r}: {(out.stdout + out.stderr).strip()}")
+        return out.stdout
 
     def clients(self) -> list[dict]:
         return json.loads(self.request("j/clients"))
@@ -63,12 +67,14 @@ class Hyprland:
             cmd = PANELS[name]
             if shutil.which(cmd[0]) is None:
                 raise RuntimeError(f"{cmd[0]} is not installed")
-            self.dispatch("exec", f"[workspace special:{name} silent]", *cmd)
+            # hyprland.lua has a window rule per panel class that puts the window in its panel.
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
         # togglespecialworkspace flips; make it idempotent by checking the active special.
         active = json.loads(self.request("j/monitors"))
         showing = any(m.get("specialWorkspace", {}).get("name") == f"special:{name}" for m in active)
         if show != showing:
-            self.dispatch("togglespecialworkspace", name)
+            self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
         return f"panel {name} {'shown' if show else 'hidden'}"
 
     def screenshot(self, path: Path) -> Path:

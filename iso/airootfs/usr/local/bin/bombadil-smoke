@@ -8,18 +8,76 @@ say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
 ok=0; fail=0
 check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); fi; }
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
+# bombadil.smoke          live checks, then power off
+# bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
+# bombadil.smoke=undo     on an installed system: session checks, then an undo round trip over a reboot
+mode="$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^bombadil\.smoke=\?//p' | head -1)"
+say "START mode=${mode:-live}"
 
 check user-exists id user
 check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
-sock="/run/user/$(id -u user)/bombadil/agentd.sock"
+uid=$(id -u user 2>/dev/null || echo 1000)
+run="/run/user/$uid"
+sock="$run/bombadil/agentd.sock"
+# Run a command inside the user's Hyprland session.
+as_user() {
+  sudo -u user env HOME=/home/user XDG_RUNTIME_DIR="$run" \
+    HYPRLAND_INSTANCE_SIGNATURE="$(ls "$run/hypr" 2>/dev/null | head -1)" \
+    WAYLAND_DISPLAY="$(cd "$run" 2>/dev/null && ls wayland-* 2>/dev/null | grep -v lock | head -1)" "$@"
+}
+# Call one os-mcp tool the way the agent would.
+mcp_call() {
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}" \
+    | as_user timeout 60 bombadil-os-mcp | tail -1 | tee /dev/stderr | grep -qv '"isError": true'
+}
+has_client() { as_user hyprctl -j clients | python3 -c "import json,sys; sys.exit(not any($1 for c in json.load(sys.stdin)))"; }
+# Ask the host (scripts/test-vm.sh) for a screenshot of the VM screen.
+shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
+
 check agentd-socket wait_for 90 test -S "$sock"
 check quickshell-running wait_for 60 pgrep -x quickshell
-check agentd-status sudo -u user env XDG_RUNTIME_DIR="/run/user/$(id -u user)" bombadil status
+check hypr-config-ok bash -c "$(declare -f as_user); run=$run; as_user hyprctl -j configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'"
+check bar-layer wait_for 30 bash -c "$(declare -f as_user); run=$run; as_user hyprctl -j layers | grep -q bombadil-bar"
+check agentd-status as_user bombadil status
+check claude-cli as_user claude --version
+check codex-cli as_user codex --version
 check os-mcp-lists-tools bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q show_panel'
-check screenshot bash -c 'sudo -u user env XDG_RUNTIME_DIR="/run/user/$(id -u user)" HYPRLAND_INSTANCE_SIGNATURE="$(ls /run/user/$(id -u user)/hypr | head -1)" grim /tmp/smoke.png && test -s /tmp/smoke.png'
+shot desktop
+check browser-panel mcp_call show_panel '{"name":"browser"}'
+check browser-window wait_for 120 has_client 'c["class"]=="bombadil-browser" and c["workspace"]["name"]=="special:browser"'
+check browser-shown bash -c "$(declare -f as_user); run=$run; as_user hyprctl -j monitors | grep -q '\"special:browser\"'"
+shot browser
+check browser-hide mcp_call hide_panel '{"name":"browser"}'
+qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
+check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
+check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
+shot app
+check screenshot bash -c "$(declare -f as_user); run=$run; as_user grim /tmp/smoke.png && test -s /tmp/smoke.png"
+
+
+if [[ "$mode" == "install" ]]; then
+  check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
+fi
+
+if [[ "$mode" == "undo" ]]; then
+  phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
+  if [[ ! -f "$phase" ]]; then
+    check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
+    check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
+    check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
+    check undo as_user bombadil undo
+    echo 2 > "$phase"; chown user: "$phase"
+    say "REBOOT pass=$ok fail=$fail"
+    [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
+    exit 0
+  fi
+  check undo-applied bash -c '! test -e /etc/bombadil-smoke-marker'
+  rm -f "$phase"
+fi
 
 say "DONE pass=$ok fail=$fail"
 [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl poweroff

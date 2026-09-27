@@ -102,6 +102,12 @@ class AgentD:
                 await self.broadcast({"type": "event", "kind": "error", "text": f"{type(e).__name__}: {e}"})
 
     async def turn(self, prompt: str):
+        if not self.provider.installed:
+            await self.broadcast({"type": "event", "kind": "error",
+                                  "text": f"{self.provider.binary} is not installed yet: press Super+Return "
+                                          "and run bombadil-setup"})
+            await self.broadcast({"type": "event", "kind": "turn_end", "seconds": 0})
+            return
         self.turns += 1
         started = time.time()
         snap = self.snaps.create(f"turn:{self.turns}: {prompt[:60]}") if self.snaps.available else None
@@ -155,8 +161,8 @@ def main(argv: list[str] | None = None) -> int:
     name = os.environ.get("BOMBADIL_PROVIDER", cfg.provider)
     provider = providers.get(name, model=cfg.model)
     if not provider.installed:
+        # Keep serving so the bar connects and can say what is missing; turns report it.
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)
-        return 1
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
     daemon = AgentD(provider, snaps)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)

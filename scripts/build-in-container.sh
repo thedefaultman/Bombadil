@@ -18,11 +18,11 @@ for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy; do
   [[ "${!v:-}" ]] && args+=(-e "$v=${!v}")
 done
 if [[ "${SSL_CERT_FILE:-}" ]]; then
-  args+=(-v "$SSL_CERT_FILE:/etc/bombadil-ca.crt:ro" -e SSL_CERT_FILE=/etc/bombadil-ca.crt -e CURL_CA_BUNDLE=/etc/bombadil-ca.crt)
+  args+=(-v "$SSL_CERT_FILE:/etc/bombadil-ca.crt:ro" -e SSL_CERT_FILE=/etc/bombadil-ca.crt -e CURL_CA_BUNDLE=/etc/bombadil-ca.crt -e NODE_EXTRA_CA_CERTS=/etc/bombadil-ca.crt)
 fi
 [[ -d "${PACMAN_CACHE:-}" ]] && args+=(-v "$PACMAN_CACHE:/var/cache/pacman/pkg")
 
 exec "$runtime" run "${args[@]}" "$image" bash -euo pipefail -c '
-  pacman -Syu --noconfirm --needed archiso git
+  pacman -Syu --noconfirm --needed archiso git nodejs npm
   WORK=/tmp/bombadil-work OUT=/src/out /src/scripts/build-iso.sh
 '

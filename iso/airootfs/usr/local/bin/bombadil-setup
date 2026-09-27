@@ -15,6 +15,6 @@ case "$provider" in
   codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex;            codex login ;;
 esac
 pkill -x agentd || true
-hyprctl dispatch exec agentd >/dev/null
+hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null
 echo "Done. Type in the bar at the bottom of the screen."
 read -r -p "Press enter to close."

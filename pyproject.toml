@@ -7,7 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 apps = ["PySide6"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "pytest-asyncio", "ruff"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

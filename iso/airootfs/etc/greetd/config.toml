@@ -2,8 +2,8 @@
 [terminal]
 vt = 1
 [default_session]
-command = "Hyprland"
+command = "start-hyprland"
 user = "user"
 [initial_session]
-command = "Hyprland"
+command = "start-hyprland"
 user = "user"

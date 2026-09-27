@@ -10,7 +10,7 @@ def test_create_and_list(home):
     assert app.name == "password-manager"
     assert (app.path / "main.qml").read_text() == QML
     assert (app.path / "app.py").exists()
-    desktop = home / "share/applications/bombadil-password-manager.desktop"
+    desktop = home / "share/applications/bombadil-app-password-manager.desktop"
     assert "Exec=bombadil-app run password-manager" in desktop.read_text()
     assert [a.title for a in apps.list_apps()] == ["Password Manager"]
 

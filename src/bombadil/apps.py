@@ -60,7 +60,7 @@ def create(title: str, qml: str, python: str | None = None, description: str = "
 def _write_desktop_entry(name: str, title: str, description: str) -> None:
     apps = Path(os.environ.get("XDG_DATA_HOME", paths.home() / ".local/share")) / "applications"
     apps.mkdir(parents=True, exist_ok=True)
-    (apps / f"bombadil-{name}.desktop").write_text(
+    (apps / f"bombadil-app-{name}.desktop").write_text(
         "[Desktop Entry]\nType=Application\n"
         f"Name={title}\nComment={description}\nExec=bombadil-app run {name}\n"
         "Categories=Bombadil;\n"
@@ -87,6 +87,10 @@ def run(name: str, detach: bool = True) -> subprocess.Popen:
     runner = shutil.which("bombadil-app") or str(Path(__file__).resolve().parents[2] / "bin" / "bombadil-app")
     cmd = [runner, "run", app.name]
     if detach:
-        return subprocess.Popen(cmd, start_new_session=True,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # QML errors land here, so the agent can read why a window did not appear.
+        log = paths.state_dir() / "apps" / f"{app.name}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("ab") as out:
+            return subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                                    stdout=out, stderr=subprocess.STDOUT)
     return subprocess.Popen(cmd)

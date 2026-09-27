@@ -18,4 +18,5 @@ file_permissions=(
   ["/usr/local/bin/bombadil-setup"]="0:0:755"
   ["/usr/local/bin/bombadil-install"]="0:0:755"
   ["/usr/local/bin/bombadil-smoke"]="0:0:755"
+  ["/usr/local/bin/bombadil-rollback"]="0:0:755"
 )

@@ -16,32 +16,46 @@ ShellRoot {
     property string transcript: ""
     property bool connected: false
 
-    Socket {
-        id: agentd
-        path: (Quickshell.env("BOMBADIL_SOCKET") || (Quickshell.env("XDG_RUNTIME_DIR") + "/bombadil/agentd.sock"))
-        connected: true
-        parser: SplitParser {
-            onRead: message => {
-                let ev
-                try { ev = JSON.parse(message) } catch (e) { return }
-                if (ev.type === "status") { root.busy = ev.busy; root.provider = ev.provider; return }
-                switch (ev.kind) {
-                case "turn_start": root.transcript = "› " + ev.prompt + "\n"; break
-                case "text": root.transcript += ev.text + "\n"; break
-                case "tool": root.transcript += "  ⚙ " + ev.name + "\n"; break
-                case "error": root.transcript += "✗ " + ev.text + "\n"; break
-                case "turn_end": fade.restart(); break
-                }
+    // agentd may start after the shell or restart under it. A Quickshell Socket that failed
+    // to connect does not retry, so each attempt is a fresh Socket.
+    property var agentd: null
+    Component {
+        id: link
+        Socket {
+            path: (Quickshell.env("BOMBADIL_SOCKET") || (Quickshell.env("XDG_RUNTIME_DIR") + "/bombadil/agentd.sock"))
+            connected: true
+            parser: SplitParser {
+                onRead: message => root.handle(message)
             }
+            onConnectionStateChanged: root.connected = connected
         }
-        // agentd may start after the shell; keep trying.
-        onConnectionStateChanged: { root.connected = connected; if (!connected) reconnect.restart() }
     }
-    Timer { id: reconnect; interval: 1500; onTriggered: agentd.connected = true }
+    Timer {
+        interval: 1500; repeat: true; running: !root.connected; triggeredOnStart: true
+        onTriggered: {
+            if (root.agentd) root.agentd.destroy()
+            root.agentd = link.createObject(root)
+        }
+    }
+
+    function handle(message) {
+        let ev
+        try { ev = JSON.parse(message) } catch (e) { return }
+        if (ev.type === "status") { root.busy = ev.busy; root.provider = ev.provider; return }
+        switch (ev.kind) {
+        case "turn_start": root.transcript = "› " + ev.prompt + "\n"; break
+        case "text": root.transcript += ev.text + "\n"; break
+        case "tool": root.transcript += "  ⚙ " + ev.name + "\n"; break
+        case "error": root.transcript += "✗ " + ev.text + "\n"; break
+        case "turn_end": fade.restart(); break
+        }
+    }
 
     function send(text) {
         if (!text.trim()) return
-        agentd.write(JSON.stringify({ type: "prompt", text: text }) + "\n")
+        if (!root.connected) return
+        root.agentd.write(JSON.stringify({ type: "prompt", text: text }) + "\n")
+        root.agentd.flush()
     }
 
     Variants {
@@ -53,6 +67,9 @@ ShellRoot {
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
             WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.namespace: "bombadil-bar"
+            // Without this a layer surface never gets keys and the prompt cannot be typed in.
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
             exclusiveZone: 64
 
             ColumnLayout {
@@ -123,7 +140,7 @@ ShellRoot {
                             background: null
                             focus: true
                             onAccepted: { root.send(text); text = "" }
-                            Keys.onEscapePressed: { if (root.busy) agentd.write(JSON.stringify({type: "cancel"}) + "\n"); root.transcript = "" }
+                            Keys.onEscapePressed: { if (root.busy && root.connected) { root.agentd.write(JSON.stringify({type: "cancel"}) + "\n"); root.agentd.flush() } root.transcript = "" }
                         }
                         Text { text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
                                Timer { interval: 30000; running: true; repeat: true; onTriggered: parent.text = Qt.formatTime(new Date(), "HH:mm") } }

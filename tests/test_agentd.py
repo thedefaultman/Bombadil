@@ -39,7 +39,7 @@ async def test_turn_round_trip(home):
     kinds = [m.get("kind") for m in msgs if m["type"] == "event"]
     assert kinds == ["turn_start", "text", "result", "turn_end"]
     assert next(m for m in msgs if m.get("kind") == "text")["text"] == "echo: open the browser"
-    log = [json.loads(l) for l in paths.turns_log().read_text().splitlines()]
+    log = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
     assert log[0]["prompt"] == "open the browser" and log[0]["provider"] == "fake"
     w.close()
     server.cancel()

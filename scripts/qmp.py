@@ -13,7 +13,8 @@ def qmp(path):
     f = s.makefile("rw")
     f.readline()  # greeting
     def cmd(execute, **arguments):
-        f.write(json.dumps({"execute": execute, "arguments": arguments}) + "\n"); f.flush()
+        f.write(json.dumps({"execute": execute, "arguments": arguments}) + "\n")
+        f.flush()
         while True:
             r = json.loads(f.readline())
             if "return" in r or "error" in r:
@@ -23,13 +24,16 @@ def qmp(path):
 
 
 def ppm_to_png(ppm, png):
-    data = open(ppm, "rb").read()
+    with open(ppm, "rb") as f:
+        data = f.read()
     parts = data.split(maxsplit=4)
-    w, h = int(parts[1]), int(parts[2]); pix = parts[4][-(w * h * 3):]
+    w, h = int(parts[1]), int(parts[2])
+    pix = parts[4][-(w * h * 3):]
     raw = b"".join(b"\x00" + pix[y * w * 3:(y + 1) * w * 3] for y in range(h))
     def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
-    open(png, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-                          + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
+    with open(png, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b""))
 
 
 def main():

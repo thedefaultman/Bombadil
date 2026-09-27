@@ -16,5 +16,10 @@ mkdir -p "$profile/airootfs/usr/local/bin"
 for b in agentd bombadil bombadil-app bombadil-os-mcp; do
   ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
 done
+# Bake the provider CLIs in, so the first-run picker only has to log in.
+if [[ -z "${BOMBADIL_NO_CLIS:-}" ]]; then
+  npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \
+    --prefix "$profile/airootfs/usr" @anthropic-ai/claude-code @openai/codex
+fi
 mkarchiso -v -w "$work/build" -o "$out" "$profile"
 echo "ISO in $out"

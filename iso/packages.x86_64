@@ -3,6 +3,7 @@ base
 linux
 linux-firmware
 btrfs-progs
+gptfdisk
 snapper
 grub
 efibootmgr
@@ -31,7 +32,7 @@ nautilus
 chromium
 pipewire
 wireplumber
-ttf-inter
+inter-font
 noto-fonts
 noto-fonts-emoji
 # agents

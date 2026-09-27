@@ -18,7 +18,7 @@ def run(name: str) -> int:
     app = apps.load(name)
     qt_app = QGuiApplication(sys.argv[:1])
     qt_app.setApplicationName(app.title)
-    qt_app.setDesktopFileName(f"bombadil-{app.name}")
+    qt_app.setDesktopFileName(f"bombadil-app-{app.name}")
 
     backend: QObject | None = None
     py = app.path / "app.py"

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Install the live system to a disk: btrfs with @ and @home subvolumes so snapper can roll back.
-# Usage: sudo bombadil-install /dev/nvme0n1
+# Install the live system to a disk: btrfs with @, @home and @snapshots so a turn can be undone.
+# Copies the running live system (no network needed), then turns it into a normal boot.
+# Usage: sudo bombadil-install /dev/nvme0n1 [--yes]
 set -euo pipefail
-disk="${1:?usage: bombadil-install /dev/DISK}"
-read -r -p "This erases $disk. Type the disk name to continue: " ok
-[[ "$ok" == "$disk" ]] || exit 1
+disk="${1:?usage: bombadil-install /dev/DISK [--yes]}"
+if [[ "${2:-}" != "--yes" ]]; then
+  read -r -p "This erases $disk. Type the disk name to continue: " ok
+  [[ "$ok" == "$disk" ]] || exit 1
+fi
 sgdisk -Z "$disk"
-sgdisk -n1:0:+512M -t1:ef00 -n2:0:0 -t2:8300 "$disk"
+sgdisk -n1:0:+1G -t1:ef00 -n2:0:0 -t2:8300 "$disk"
+partprobe "$disk" 2>/dev/null || true; udevadm settle
 p1="${disk}1"; p2="${disk}2"; [[ "$disk" == *nvme* || "$disk" == *mmcblk* ]] && { p1="${disk}p1"; p2="${disk}p2"; }
 mkfs.fat -F32 "$p1"
 mkfs.btrfs -f -L bombadil "$p2"
@@ -14,25 +18,54 @@ mount "$p2" /mnt
 btrfs subvolume create /mnt/@; btrfs subvolume create /mnt/@home; btrfs subvolume create /mnt/@snapshots
 umount /mnt
 mount -o subvol=@,compress=zstd "$p2" /mnt
-mkdir -p /mnt/home /mnt/.snapshots /mnt/boot
+mkdir -p /mnt/home /mnt/boot
 mount -o subvol=@home,compress=zstd "$p2" /mnt/home
-mount -o subvol=@snapshots "$p2" /mnt/.snapshots
 mount "$p1" /mnt/boot
-pacstrap -K /mnt $(grep -v '^#' /usr/share/bombadil/packages.x86_64 | grep -vE 'archiso|syslinux|arch-install-scripts|archinstall')
-genfstab -U /mnt >> /mnt/etc/fstab
-cp -a /etc/greetd /etc/sudoers.d/bombadil /etc/bombadil /mnt/etc/
-cp -a /etc/skel /mnt/etc/
-cp -a /usr/share/bombadil /mnt/usr/share/
-cp -a /usr/local/bin/bombadil* /usr/local/bin/agentd /mnt/usr/local/bin/
+
+# The live root (erofs + overlay) minus runtime and live-only state.
+echo "Copying the system…"
+cp -ax /. /mnt/
+rm -rf /mnt/home/* /mnt/etc/machine-id /mnt/var/lib/systemd/random-seed /mnt/etc/mkinitcpio.conf.d/archiso.conf
+cp /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux /mnt/boot/
+for u in bombadil-live pacman-init; do
+  rm -f /mnt/etc/systemd/system/*.wants/$u.service
+done
+rm -f /mnt/etc/systemd/system/{bombadil-live,pacman-init}.service
+
+genfstab -U /mnt > /mnt/etc/fstab
+# Mount / by subvolume *name*, not id: undo swaps a snapshot in under the name @.
+sed -i -E 's/subvolid=[0-9]+,?//; s/,+(\s)/\1/' /mnt/etc/fstab
+echo "UUID=$(blkid -s UUID -o value "$p2") /.snapshots btrfs subvol=/@snapshots 0 0" >> /mnt/etc/fstab
+
+cat > /mnt/etc/mkinitcpio.d/linux.preset <<'P'
+PRESETS=('default')
+ALL_kver='/boot/vmlinuz-linux'
+default_image='/boot/initramfs-linux.img'
+P
+
 arch-chroot /mnt /bin/bash -e <<'CH'
+systemd-machine-id-setup
 ln -sf /usr/share/zoneinfo/UTC /etc/localtime
 echo bombadil > /etc/hostname
-echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen && echo 'LANG=en_US.UTF-8' > /etc/locale.conf
-useradd -m -G wheel,video,input user || true
+id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user
+mkdir -p /home/user && cp -aT /etc/skel /home/user && chown -R user: /home/user
 passwd -d user
-systemctl enable greetd NetworkManager snapper-timeline.timer snapper-cleanup.timer
-snapper --no-dbus -c root create-config / || true
+systemctl enable greetd NetworkManager
+# snapper wants to create /.snapshots itself; let it, then put the @snapshots subvolume there.
+rmdir /.snapshots 2>/dev/null || true
+snapper --no-dbus -c root create-config /
+btrfs subvolume delete /.snapshots
+mkdir /.snapshots
+mkinitcpio -P
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 CH
+# Extra kernel arguments for the installed system (the VM test boots it with the smoke test).
+if [[ -n "${BOMBADIL_INSTALL_CMDLINE:-}" ]]; then
+  sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$BOMBADIL_INSTALL_CMDLINE |" /mnt/etc/default/grub
+  sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' /mnt/etc/default/grub
+  arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+fi
+mount -o subvol=@snapshots "$p2" /mnt/.snapshots
+chmod 750 /mnt/.snapshots
 echo "Installed. Reboot into Bombadil."
