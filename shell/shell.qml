@@ -3,6 +3,8 @@
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
 // while it works and how the turn ended. The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
+// Left of the pill, a chip per project holds a dot per coding session; when one waits for
+// you the pill's empty line says so, and Tab goes there.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
 import Quickshell.Io
@@ -25,6 +27,12 @@ ShellRoot {
         onSummoned: root.summon()
     }
 
+    // The coding sessions (dev.py): their dots, and the line the pill shows while one waits.
+    DevState {
+        id: devState
+        onOutgoing: msg => root.write(msg)
+    }
+
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
     // to connect does not retry, so each attempt is a fresh Socket.
     property var agentd: null
@@ -39,7 +47,7 @@ ShellRoot {
             onConnectionStateChanged: {
                 root.connected = connected
                 if (connected) pillState.connected = true
-                else pillState.lost()
+                else { pillState.lost(); devState.lost() }
             }
         }
     }
@@ -54,7 +62,8 @@ ShellRoot {
     function handle(message) {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
-        pillState.handle(ev)
+        if (ev && ev.type === "dev") devState.handle(ev)
+        else pillState.handle(ev)
     }
 
     function write(msg) {
@@ -94,6 +103,7 @@ ShellRoot {
                 Region { item: statusLine }
                 Region { item: chips }
                 Region { item: pillBox }
+                Region { item: sessionChips }
             }
 
             onSummonedChanged: {
@@ -123,6 +133,14 @@ ShellRoot {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
 
+                // A hovered dot's last few lines, over its chip. It takes no clicks.
+                SessionPeek {
+                    id: sessionPeek
+                    dev: devState
+                    Layout.alignment: Qt.AlignLeft
+                    Layout.leftMargin: Math.max(0, Math.min(sessionChips.x, column.width - width))
+                }
+
                 StatusLine {
                     id: statusLine
                     pill: pillState
@@ -141,110 +159,138 @@ ShellRoot {
                     Layout.maximumWidth: 900
                 }
 
-                // Prompt bar
-                Rectangle {
-                    id: pillBox
+                // The pill, and left of it the sessions' chips. The pill stays centred; without
+                // room beside it the chips sit above its left end.
+                Item {
+                    id: pillRow
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
-                    Layout.alignment: Qt.AlignHCenter
-                    implicitHeight: 52
-                    radius: 26
-                    color: "#f01a1d21"
-                    border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
-                    border.width: 1.5
-                    Behavior on border.color { ColorAnimation { duration: 300 } }
+                    readonly property bool beside: (width - pillBox.width) / 2 >= sessionChips.implicitWidth + 10
+                    readonly property bool above: sessionChips.visible && !beside
+                    implicitHeight: pillBox.height + (above ? sessionChips.implicitHeight + 8 : 0)
 
-                    RowLayout {
-                        anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
-                        spacing: 8
+                    SessionChips {
+                        id: sessionChips
+                        dev: devState
+                        x: pillRow.beside ? pillBox.x - width - 10 : pillBox.x + 14
+                        y: pillRow.beside ? pillBox.y + (pillBox.height - height) / 2 : 0
+                        width: implicitWidth
+                        height: implicitHeight
+                    }
 
-                        // The dot. While a turn runs it is orange; hover turns it into Stop.
-                        Rectangle {
-                            id: dotBox
-                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered
-                            implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
-                            implicitHeight: 24
-                            radius: 12
-                            color: stoppable ? "#3a2a26" : "transparent"
-                            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+                    // Prompt bar
+                    Rectangle {
+                        id: pillBox
+                        width: Math.min(pillRow.width, 900)
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        height: 52
+                        radius: 26
+                        color: "#f01a1d21"
+                        border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
+                        border.width: 1.5
+                        Behavior on border.color { ColorAnimation { duration: 300 } }
+
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                            spacing: 8
+
+                            // The dot. While a turn runs it is orange; hover turns it into Stop.
                             Rectangle {
-                                visible: !dotBox.stoppable
-                                anchors.centerIn: parent
-                                width: 10; height: 10; radius: 5
-                                color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
-                                SequentialAnimation on opacity {
-                                    running: pillState.busy; loops: Animation.Infinite
-                                    NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
-                                }
-                            }
-                            Row {
-                                id: stopRow
-                                visible: dotBox.stoppable
-                                anchors.centerIn: parent
-                                spacing: 6
-                                Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
-                            }
-                            HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                            TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                            implicitHeight: input.implicitHeight
-
-                            TextField {
-                                id: input
-                                anchors.fill: parent
-                                placeholderText: root.connected ? "Ask anything" : "Waiting for agentd…"
-                                color: "#e6e8eb"
-                                placeholderTextColor: "#8b939c"
-                                font.pixelSize: 16
-                                background: null
-                                focus: true
-                                onAccepted: {
-                                    if (pillState.submit(text)) {
-                                        text = ""
-                                        root.release()
+                                id: dotBox
+                                readonly property bool stoppable: pillState.stoppable && dotHover.hovered
+                                implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
+                                implicitHeight: 24
+                                radius: 12
+                                color: stoppable ? "#3a2a26" : "transparent"
+                                Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+                                Rectangle {
+                                    visible: !dotBox.stoppable
+                                    anchors.centerIn: parent
+                                    width: 10; height: 10; radius: 5
+                                    color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
+                                    SequentialAnimation on opacity {
+                                        running: pillState.busy; loops: Animation.Infinite
+                                        NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
                                     }
                                 }
-                                onTextChanged: if (win.summoned) idle.restart()
-                                // Tab takes the suggested name: "pass" + Tab = "passwords".
-                                Keys.onTabPressed: {
-                                    const rest = pillState.completion(text)
-                                    if (rest) text = text + rest
+                                Row {
+                                    id: stopRow
+                                    visible: dotBox.stoppable
+                                    anchors.centerIn: parent
+                                    spacing: 6
+                                    Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
                                 }
-                                // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
-                                Keys.onEscapePressed: {
-                                    if (pillState.stoppable) pillState.stop()
-                                    else if (text !== "") text = ""
-                                    else { pillState.dismiss(); root.release() }
+                                HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                                TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
+                            }
+
+                            Item {
+                                Layout.fillWidth: true
+                                implicitHeight: input.implicitHeight
+
+                                TextField {
+                                    id: input
+                                    anchors.fill: parent
+                                    // While a coding session waits for you, the empty pill says so ("reviewer on
+                                    // Bombadil: run the migration?") and Tab goes there.
+                                    placeholderText: !root.connected ? "Waiting for agentd…"
+                                                     : (devState.line !== "" ? devState.line + "   ⇥" : "Ask anything")
+                                    color: "#e6e8eb"
+                                    placeholderTextColor: devState.line !== "" && root.connected ? "#ffd9b8" : "#8b939c"
+                                    font.pixelSize: 16
+                                    background: null
+                                    focus: true
+                                    onAccepted: {
+                                        if (pillState.submit(text)) {
+                                            text = ""
+                                            root.release()
+                                        }
+                                    }
+                                    onTextChanged: if (win.summoned) idle.restart()
+                                    // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
+                                    // pill it walks to the next session waiting for you.
+                                    Keys.onTabPressed: {
+                                        if (text === "" && devState.sessions.length > 0) {
+                                            devState.next()
+                                            root.release()
+                                            return
+                                        }
+                                        const rest = pillState.completion(text)
+                                        if (rest) text = text + rest
+                                    }
+                                    // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
+                                    Keys.onEscapePressed: {
+                                        if (pillState.stoppable) pillState.stop()
+                                        else if (text !== "") text = ""
+                                        else { pillState.dismiss(); root.release() }
+                                    }
+                                }
+
+                                // The rest of a name Tab would complete, drawn after what was typed.
+                                Row {
+                                    x: input.leftPadding
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    visible: input.text !== "" && ghost.text !== ""
+                                    Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
+                                    Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
                                 }
                             }
 
-                            // The rest of a name Tab would complete, drawn after what was typed.
-                            Row {
-                                x: input.leftPadding
-                                anchors.verticalCenter: parent.verticalCenter
-                                visible: input.text !== "" && ghost.text !== ""
-                                Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
-                                Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
+                            // An exact launcher word: say it opens here, without the model.
+                            Text {
+                                readonly property string target: pillState.exact(input.text)
+                                visible: target !== ""
+                                text: "↵ " + target
+                                color: "#8b939c"
+                                font.pixelSize: 12
                             }
-                        }
 
-                        // An exact launcher word: say it opens here, without the model.
-                        Text {
-                            readonly property string target: pillState.exact(input.text)
-                            visible: target !== ""
-                            text: "↵ " + target
-                            color: "#8b939c"
-                            font.pixelSize: 12
-                        }
-
-                        Text {
-                            id: clock
-                            text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
-                            Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
+                            Text {
+                                id: clock
+                                text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
+                                Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
+                            }
                         }
                     }
                 }
