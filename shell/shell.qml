@@ -106,7 +106,8 @@ ShellRoot {
             WlrLayershell.namespace: "bombadil-bar"
             // Without this a layer surface never gets keys and the prompt cannot be typed in.
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
-            exclusiveZone: 64
+            // The prompt bar, plus the chip row while apps run, so windows never cover the chips.
+            exclusiveZone: 64 + (chips.visible ? chips.implicitHeight + column.spacing : 0)
 
             ColumnLayout {
                 id: column
@@ -145,6 +146,7 @@ ShellRoot {
 
                 // Running apps: a chip per app. Click slides it in or out, × quits it.
                 RowLayout {
+                    id: chips
                     Layout.alignment: Qt.AlignHCenter
                     Layout.fillWidth: false
                     Layout.maximumWidth: 900
