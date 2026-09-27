@@ -85,7 +85,7 @@ Vault { id: vault; name: "passwords" }
 | `unlocked` | data is readable |
 | `data` | the decrypted value; `null` while locked. Assign to save (same rule as Store: assign a new array/object) |
 | `error` | last error message: `"wrong password"`, `"a vault already exists"`, `"empty password"`, `"no vault yet"`, `"the vault is locked"`; `""` after a success |
-| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never |
+| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never. Close anything that shows a secret when it does: `onUnlockedChanged: if (!unlocked) editor.close()` |
 | `create(password)` | make a new empty vault (`data` = `[]`) and unlock it; false if one exists |
 | `unlock(password)` / `lock()` | |
 | `changePassword(old, new)` | bool; re-encrypts with the new password and leaves the vault unlocked |
