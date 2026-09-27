@@ -1,0 +1,9 @@
+# Boot straight into the agent session; there is no login screen and no separate user.
+[terminal]
+vt = 1
+[default_session]
+command = "Hyprland"
+user = "user"
+[initial_session]
+command = "Hyprland"
+user = "user"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# First-run wizard: pick the provider and log in. Re-run any time with `bombadil-setup`.
+set -euo pipefail
+cfg="$HOME/.config/bombadil/config.toml"
+if [[ "${1:-}" == "--first-run" && -f "$cfg" ]]; then exit 0; fi
+[[ "${1:-}" == "--first-run" ]] && exec foot -a bombadil-setup -e "$0"
+
+echo "Welcome to Bombadil. Which agent should run this machine?"
+select provider in claude codex; do [[ -n "$provider" ]] && break; done
+mkdir -p "$(dirname "$cfg")"
+printf 'provider = "%s"\n' "$provider" > "$cfg"
+
+case "$provider" in
+  claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code; claude /login ;;
+  codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex;            codex login ;;
+esac
+pkill -x agentd || true
+hyprctl dispatch exec agentd >/dev/null
+echo "Done. Type in the bar at the bottom of the screen."
+read -r -p "Press enter to close."

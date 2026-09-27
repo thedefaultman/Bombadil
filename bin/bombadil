@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""bombadil: talk to agentd from a terminal, or manage the system.
+
+  bombadil ask "open the browser"     send a prompt and stream the reply
+  bombadil status                      is the agent busy, which provider
+  bombadil undo                        roll back the last turn (reboot to apply)
+  bombadil provider claude|codex       switch provider (restart agentd to apply)
+"""
+import json
+import socket
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from bombadil import config, paths, snapshots  # noqa: E402
+
+
+def talk(msg: dict, until: str | None = "turn_end"):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.connect(str(paths.socket_path()))
+        s.sendall((json.dumps(msg) + "\n").encode())
+        f = s.makefile("r")
+        for line in f:
+            ev = json.loads(line)
+            if ev.get("type") == "status" and until != "status":
+                continue
+            if ev.get("kind") == "text":
+                print(ev["text"])
+            elif ev.get("kind") == "tool":
+                print(f"  [{ev['name']}] {json.dumps(ev.get('input', {}))[:120]}")
+            elif ev.get("kind") == "error":
+                print(f"error: {ev['text']}", file=sys.stderr)
+            elif ev.get("type") == "status" and until == "status":
+                print(json.dumps(ev))
+                return
+            if ev.get("kind") == until:
+                return
+
+
+def main() -> int:
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 2
+    cmd, args = sys.argv[1], sys.argv[2:]
+    if cmd == "ask":
+        talk({"type": "prompt", "text": " ".join(args)})
+    elif cmd == "status":
+        talk({"type": "status"}, until="status")
+    elif cmd == "undo":
+        s = snapshots.Snapshots().undo_last_turn()
+        print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
+    elif cmd == "provider":
+        if args[0] not in config.PROVIDERS:
+            print(f"unknown provider; choose from {config.PROVIDERS}")
+            return 2
+        print(f"wrote {config.save_user(args[0])}; restart agentd to apply")
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

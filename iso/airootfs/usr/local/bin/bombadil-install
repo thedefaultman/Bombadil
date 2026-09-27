@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Install the live system to a disk: btrfs with @ and @home subvolumes so snapper can roll back.
+# Usage: sudo bombadil-install /dev/nvme0n1
+set -euo pipefail
+disk="${1:?usage: bombadil-install /dev/DISK}"
+read -r -p "This erases $disk. Type the disk name to continue: " ok
+[[ "$ok" == "$disk" ]] || exit 1
+sgdisk -Z "$disk"
+sgdisk -n1:0:+512M -t1:ef00 -n2:0:0 -t2:8300 "$disk"
+p1="${disk}1"; p2="${disk}2"; [[ "$disk" == *nvme* || "$disk" == *mmcblk* ]] && { p1="${disk}p1"; p2="${disk}p2"; }
+mkfs.fat -F32 "$p1"
+mkfs.btrfs -f -L bombadil "$p2"
+mount "$p2" /mnt
+btrfs subvolume create /mnt/@; btrfs subvolume create /mnt/@home; btrfs subvolume create /mnt/@snapshots
+umount /mnt
+mount -o subvol=@,compress=zstd "$p2" /mnt
+mkdir -p /mnt/home /mnt/.snapshots /mnt/boot
+mount -o subvol=@home,compress=zstd "$p2" /mnt/home
+mount -o subvol=@snapshots "$p2" /mnt/.snapshots
+mount "$p1" /mnt/boot
+pacstrap -K /mnt $(grep -v '^#' /usr/share/bombadil/packages.x86_64 | grep -vE 'archiso|syslinux|arch-install-scripts|archinstall')
+genfstab -U /mnt >> /mnt/etc/fstab
+cp -a /etc/greetd /etc/sudoers.d/bombadil /etc/bombadil /mnt/etc/
+cp -a /etc/skel /mnt/etc/
+cp -a /usr/share/bombadil /mnt/usr/share/
+cp -a /usr/local/bin/bombadil* /usr/local/bin/agentd /mnt/usr/local/bin/
+arch-chroot /mnt /bin/bash -e <<'CH'
+ln -sf /usr/share/zoneinfo/UTC /etc/localtime
+echo bombadil > /etc/hostname
+echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen && locale-gen && echo 'LANG=en_US.UTF-8' > /etc/locale.conf
+useradd -m -G wheel,video,input user || true
+passwd -d user
+systemctl enable greetd NetworkManager snapper-timeline.timer snapper-cleanup.timer
+snapper --no-dbus -c root create-config / || true
+grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable
+grub-mkconfig -o /boot/grub/grub.cfg
+CH
+echo "Installed. Reboot into Bombadil."

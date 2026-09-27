@@ -1,0 +1,2 @@
+# The agent runs as the user and may do anything the machine can do.
+user ALL=(ALL) NOPASSWD: ALL

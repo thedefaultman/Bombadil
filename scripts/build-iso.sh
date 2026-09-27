@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Build the Bombadil ISO. Needs an Arch host (or container) with archiso installed:
+#   sudo pacman -S archiso   or   podman run --privileged -v "$PWD":/src archlinux ...
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+work="${WORK:-/tmp/bombadil-work}"
+out="${OUT:-$root/out}"
+profile="$work/profile"
+rm -rf "$profile"; mkdir -p "$profile" "$out"
+cp -a "$root/iso/." "$profile/"
+# Ship the whole tree at /usr/share/bombadil so the live system and the installer both have it.
+dest="$profile/airootfs/usr/share/bombadil"
+mkdir -p "$dest"
+cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/iso/packages.x86_64" "$dest/"
+mkarchiso -v -w "$work/build" -o "$out" "$profile"
+echo "ISO in $out"
