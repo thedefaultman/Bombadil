@@ -7,14 +7,15 @@
 #   wsl-vm.sh live       boot the live ISO (the disk is not touched)
 #   wsl-vm.sh reinstall  rebuild the ISO if the checkout changed it, then wipe the disk and install
 #   wsl-vm.sh build      only build the ISO
-# MEM (default 5G), SMP (4) and GL (0) go to run-vm.sh. WSLg's host OpenGL is often llvmpipe, and
-# then the guest rendering in software itself is the faster of the two.
+# MEM (default 5G), SMP (4), RES (1600x900) and GL (0) go to run-vm.sh; RES is also pinned in the
+# installed system. WSLg's host OpenGL is often llvmpipe, and then the guest rendering in software
+# itself is the faster of the two.
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo "run as root (wsl -d bombadil -u root ...)"; exit 2; }
 src="$(cd "$(dirname "$0")/.." && pwd)"
 tree="${BOMBADIL_TREE:-/root/Bombadil}"
 out="$tree/out"; vm="$out/vm"; disk="$out/bombadil.qcow2"
-export MEM="${MEM:-5G}" SMP="${SMP:-4}" GL="${GL:-0}"
+export MEM="${MEM:-5G}" SMP="${SMP:-4}" GL="${GL:-0}" RES="${RES:-1600x900}"
 
 setup() {
   local pkgs=(archiso qemu-desktop edk2-ovmf git nodejs npm python)
@@ -77,13 +78,17 @@ install() {
   local keys=(down e end); for _ in $(seq 15); do keys+=(backspace); done   # " bombadil.smoke"
   python3 "$tree/scripts/qmp.py" "$qmp" send-keys "${keys[@]}" ret
   wait_log "$log" 'root@[^ ]+ [^ ]+\]#' 300 $pid
+  # Then pin the screen to the VM window's size: QEMU's GTK window tells the guest 640x480 before
+  # it grows, so Hyprland's "preferred" mode would be 640x480.
   # Typed a few bytes at a time and the socket held open: QEMU drops whatever the UART hasn't
   # taken yet when the client hangs up. The echo is split so the typed line never matches it.
-  python3 - "$sock" <<'PY'
+  python3 - "$sock" "$RES" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
-line = (b"BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
-        b" && echo INSTALL-''DONE; poweroff\r")
+monitor = f'hl.monitor({{ output = "Virtual-1", mode = "{sys.argv[2]}@60", position = "0x0", scale = 1 }})'
+line = ("BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
+        f" && echo '{monitor} -- the VM window (scripts/wsl-vm.sh)' >> /mnt/home/user/.config/hypr/hyprland.lua"
+        " && echo INSTALL-''DONE; poweroff\r").encode()
 for i in range(0, len(line), 8):
     s.sendall(line[i:i + 8]); time.sleep(0.05)
 time.sleep(1)
