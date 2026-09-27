@@ -18,19 +18,22 @@ mount "$p2" /mnt
 btrfs subvolume create /mnt/@; btrfs subvolume create /mnt/@home; btrfs subvolume create /mnt/@snapshots
 umount /mnt
 mount -o subvol=@,compress=zstd "$p2" /mnt
-mkdir -p /mnt/home /mnt/boot
+mkdir -p /mnt/home
 mount -o subvol=@home,compress=zstd "$p2" /mnt/home
-mount "$p1" /mnt/boot
 
-# The live root (erofs + overlay) minus runtime and live-only state.
+# The live root (erofs + overlay) minus runtime and live-only state. The ESP is mounted after
+# the copy: FAT cannot take the ownership cp -a tries to preserve.
 echo "Copying the system…"
 cp -ax /. /mnt/
-rm -rf /mnt/home/* /mnt/etc/machine-id /mnt/var/lib/systemd/random-seed /mnt/etc/mkinitcpio.conf.d/archiso.conf
-cp /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux /mnt/boot/
+rm -rf /mnt/home/* /mnt/boot /mnt/etc/machine-id /mnt/var/lib/systemd/random-seed \
+  /mnt/etc/mkinitcpio.conf.d/archiso.conf /mnt/etc/systemd/system/serial-getty@ttyS0.service.d
 for u in bombadil-live pacman-init; do
   rm -f /mnt/etc/systemd/system/*.wants/$u.service
 done
 rm -f /mnt/etc/systemd/system/{bombadil-live,pacman-init}.service
+mkdir -p /mnt/boot
+mount "$p1" /mnt/boot
+cp /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux /mnt/boot/
 
 genfstab -U /mnt > /mnt/etc/fstab
 # Mount / by subvolume *name*, not id: undo swaps a snapshot in under the name @.

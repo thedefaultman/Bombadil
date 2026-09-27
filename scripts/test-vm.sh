@@ -18,7 +18,9 @@ for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF.4m.fd /usr
 done
 [[ "$ovmf" ]] || { echo "no OVMF firmware found; install edk2-ovmf (Arch) or ovmf (Debian/Ubuntu)"; exit 2; }
 
-accel=(-accel tcg,thread=multi -cpu max)
+# Without KVM, Mesa's llvmpipe JIT crashes on QEMU's emulated AVX2 (seen in Hyprland and
+# Quickshell's render threads), so emulate a CPU without AVX.
+accel=(-accel tcg,thread=multi -cpu "${QEMU_CPU:-Nehalem}")
 [[ -w /dev/kvm ]] && accel=(-enable-kvm -cpu host)
 disk="$out/disk.qcow2"
 if [[ "$mode" == "install" ]]; then rm -f "$disk"; qemu-img create -q -f qcow2 "$disk" 40G; fi

@@ -10,11 +10,12 @@ import os
 import shutil
 import socket
 import subprocess
+import time
 from pathlib import Path
 
 PANELS: dict[str, list[str]] = {
     "browser": ["chromium", "--ozone-platform=wayland", "--remote-debugging-port=9222",
-                "--class=bombadil-browser"],
+                "--class=bombadil-browser", "--no-first-run", "--no-default-browser-check"],
     "terminal": ["foot", "--app-id=bombadil-terminal"],
     "files": ["nautilus"],
 }
@@ -48,10 +49,14 @@ class Hyprland:
 
     def dispatch(self, lua: str) -> str:
         """Run a dispatcher. Since 0.55 Hyprland dispatchers are Lua (`hl.dsp.*`)."""
-        out = subprocess.run(["hyprctl", "dispatch", lua], capture_output=True, text=True, timeout=10)
-        if out.returncode != 0 or out.stdout.strip() not in ("", "ok"):
-            raise RuntimeError(f"hyprctl dispatch {lua!r}: {(out.stdout + out.stderr).strip()}")
-        return out.stdout
+        for attempt in range(3):  # a busy compositor can miss hyprctl's IPC deadline
+            out = subprocess.run(["hyprctl", "dispatch", lua], capture_output=True, text=True, timeout=15)
+            if out.returncode == 0 and out.stdout.strip() in ("", "ok"):
+                return out.stdout
+            if "didn't respond in time" not in out.stdout + out.stderr:
+                break
+            time.sleep(1 + attempt)
+        raise RuntimeError(f"hyprctl dispatch {lua!r}: {(out.stdout + out.stderr).strip()}")
 
     def clients(self) -> list[dict]:
         return json.loads(self.request("j/clients"))
