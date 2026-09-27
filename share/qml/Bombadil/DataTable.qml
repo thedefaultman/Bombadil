@@ -45,15 +45,18 @@ FocusScope {
     implicitWidth: 360
     implicitHeight: header.height + Math.max(3, Math.min(_sorted.length, 8)) * Theme.rowHeight
 
-    // Columns with their defaults filled in; numbers are detected from the data.
+    // Columns with their defaults filled in; numbers are detected from the data. What was
+    // seen is remembered, so an empty result (a search with no match) keeps the alignment.
+    readonly property var _numericSeen: ({})
     readonly property var _cols: {
         const rs = _rows
         return (columns || []).map(c => {
-            let numeric = false
+            let numeric = !!_numericSeen[c.key]
             for (let i = 0; i < rs.length && i < 50; i++) {
                 const v = rs[i] ? rs[i][c.key] : undefined
                 if (v !== null && v !== undefined) {
                     numeric = typeof v === "number"
+                    _numericSeen[c.key] = numeric
                     break
                 }
             }
