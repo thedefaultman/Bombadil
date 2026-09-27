@@ -12,5 +12,9 @@ cp -a "$root/iso/." "$profile/"
 dest="$profile/airootfs/usr/share/bombadil"
 mkdir -p "$dest"
 cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/iso/packages.x86_64" "$dest/"
+mkdir -p "$profile/airootfs/usr/local/bin"
+for b in agentd bombadil bombadil-app bombadil-os-mcp; do
+  ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
+done
 mkarchiso -v -w "$work/build" -o "$out" "$profile"
 echo "ISO in $out"

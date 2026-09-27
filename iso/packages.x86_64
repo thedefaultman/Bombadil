@@ -42,4 +42,3 @@ arch-install-scripts
 archinstall
 mkinitcpio
 mkinitcpio-archiso
-syslinux

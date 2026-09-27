@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Boot-time smoke test, run by bombadil-smoke.service when the kernel cmdline has `bombadil.smoke`.
+# Prints one BOMBADIL-SMOKE line per check to the console (serial, when booted that way) and
+# powers the machine off, so a VM run can be judged from its serial log.
+set -u
+out=/dev/console
+say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
+ok=0; fail=0
+check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); fi; }
+wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
+
+check user-exists id user
+check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
+check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
+check greetd-active wait_for 60 systemctl is-active --quiet greetd
+check hyprland-running wait_for 120 pgrep -x Hyprland
+sock="/run/user/$(id -u user)/bombadil/agentd.sock"
+check agentd-socket wait_for 90 test -S "$sock"
+check quickshell-running wait_for 60 pgrep -x quickshell
+check agentd-status sudo -u user env XDG_RUNTIME_DIR="/run/user/$(id -u user)" bombadil status
+check os-mcp-lists-tools bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q show_panel'
+check screenshot bash -c 'sudo -u user env XDG_RUNTIME_DIR="/run/user/$(id -u user)" HYPRLAND_INSTANCE_SIGNATURE="$(ls /run/user/$(id -u user)/hypr | head -1)" grim /tmp/smoke.png && test -s /tmp/smoke.png'
+
+say "DONE pass=$ok fail=$fail"
+[[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl poweroff

@@ -1,8 +1,9 @@
 [Unit]
-Description=Bombadil live: create the user and link the tree into place
+Description=Bombadil live: create the session user
 Before=greetd.service
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'id user >/dev/null 2>&1 || useradd -m -G wheel,video,input user; passwd -d user; ln -sfn /usr/share/bombadil/bin/agentd /usr/local/bin/agentd; ln -sfn /usr/share/bombadil/bin/bombadil /usr/local/bin/bombadil; ln -sfn /usr/share/bombadil/bin/bombadil-app /usr/local/bin/bombadil-app; ln -sfn /usr/share/bombadil/bin/bombadil-os-mcp /usr/local/bin/bombadil-os-mcp'
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user; passwd -d user'
 [Install]
 WantedBy=multi-user.target

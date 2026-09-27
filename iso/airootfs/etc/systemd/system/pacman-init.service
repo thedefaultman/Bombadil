@@ -1,0 +1,10 @@
+[Unit]
+Description=Initialize the pacman keyring on the live system
+Before=bombadil-live.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pacman-key --init
+ExecStart=/usr/bin/pacman-key --populate
+[Install]
+WantedBy=multi-user.target
