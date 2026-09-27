@@ -67,11 +67,19 @@ def _write_desktop_entry(name: str, title: str, description: str) -> None:
     )
 
 
+def read_meta(d: Path) -> dict:
+    """app.toml as a dict; {} when missing or unreadable (a half-written file mid-edit)."""
+    try:
+        return tomllib.loads((d / "app.toml").read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
 def load(name: str) -> App:
     d = app_dir(name)
     if not (d / "main.qml").exists():
         raise FileNotFoundError(f"no app named {name!r} in {paths.apps_dir()}")
-    meta = tomllib.loads((d / "app.toml").read_text()) if (d / "app.toml").exists() else {}
+    meta = read_meta(d)
     return App(name, d, meta.get("title", name), meta.get("description", ""))
 
 

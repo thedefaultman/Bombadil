@@ -1,0 +1,4 @@
+module Bombadil.Style
+# Qt Quick Controls style with the OS look. Controls not listed here fall back to Basic,
+# which follows the palette AppWindow sets.
+import QtQuick.Controls.Basic

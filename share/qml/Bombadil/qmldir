@@ -1,3 +1,39 @@
 module Bombadil
+# The app kit. Native types (App, System, Store helpers, Vault, Processes, Command,
+# TextFile, Clipboard, Agent, Highlighter) are registered into this module from Python by
+# the app runtime (src/bombadil/appkit), so they exist only inside bombadil-app.
 singleton Theme 1.0 Theme.qml
+singleton Fmt 1.0 Fmt.qml
+AppWindow 1.0 AppWindow.qml
 Window 1.0 Window.qml
+Panel 1.0 Panel.qml
+Spacer 1.0 Spacer.qml
+Divider 1.0 Divider.qml
+ScrollPane 1.0 ScrollPane.qml
+Heading 1.0 Heading.qml
+Body 1.0 Body.qml
+Caption 1.0 Caption.qml
+Mono 1.0 Mono.qml
+Icon 1.0 Icon.qml
+IconButton 1.0 IconButton.qml
+Badge 1.0 Badge.qml
+Stat 1.0 Stat.qml
+EmptyState 1.0 EmptyState.qml
+DetailGrid 1.0 DetailGrid.qml
+SearchField 1.0 SearchField.qml
+ItemList 1.0 ItemList.qml
+ListRow 1.0 ListRow.qml
+DataTable 1.0 DataTable.qml
+Form 1.0 Form.qml
+Field 1.0 Field.qml
+PasswordField 1.0 PasswordField.qml
+Editor 1.0 Editor.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
+Store 1.0 Store.qml
+Series 1.0 Series.qml
+LineChart 1.0 LineChart.qml
+BarChart 1.0 BarChart.qml
+Sparkline 1.0 Sparkline.qml
+Meter 1.0 Meter.qml
+Ring 1.0 Ring.qml
+StackedBar 1.0 StackedBar.qml
