@@ -1,0 +1,3 @@
+# System defaults; the setup wizard writes the user's choice to ~/.config/bombadil/config.toml
+provider = "claude"
+snapshots = true

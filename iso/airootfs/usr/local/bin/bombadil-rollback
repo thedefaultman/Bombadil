@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Undo: make snapper snapshot N the root filesystem from the next boot on.
+# The current root is kept as @.undone-<time> in the btrfs top level, so an undo can itself
+# be undone by hand. Usage: sudo bombadil-rollback N
+set -euo pipefail
+n="${1:?usage: bombadil-rollback SNAPSHOT_NUMBER}"
+dev="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+top="$(mktemp -d)"
+mount -o subvolid=5 "$dev" "$top"
+trap 'umount "$top"; rmdir "$top"' EXIT
+src="$top/@snapshots/$n/snapshot"
+[[ -d "$src" ]] || { echo "no snapshot $n" >&2; exit 1; }
+aside="@.undone-$(date +%Y%m%d-%H%M%S)"
+mv "$top/@" "$top/$aside"
+btrfs subvolume snapshot "$src" "$top/@" >/dev/null
+echo "root is snapshot $n from the next boot; the previous root is kept as $aside"

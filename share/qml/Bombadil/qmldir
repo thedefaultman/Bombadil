@@ -1,0 +1,3 @@
+module Bombadil
+singleton Theme 1.0 Theme.qml
+AppWindow 1.0 AppWindow.qml

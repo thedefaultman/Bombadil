@@ -1,0 +1,9 @@
+[Unit]
+Description=Bombadil live: create the session user
+Before=greetd.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user; passwd -d user'
+[Install]
+WantedBy=multi-user.target

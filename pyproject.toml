@@ -1,0 +1,17 @@
+[project]
+name = "bombadil"
+version = "0.1.0"
+description = "A Linux distro whose main interface is an AI agent"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+apps = ["PySide6"]
+dev = ["pytest", "pytest-asyncio", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 110

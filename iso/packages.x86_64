@@ -1,0 +1,46 @@
+# base system
+base
+linux
+linux-firmware
+btrfs-progs
+gptfdisk
+dosfstools
+snapper
+grub
+efibootmgr
+networkmanager
+sudo
+git
+openssh
+# graphics and session
+hyprland
+xdg-desktop-portal-hyprland
+greetd
+quickshell
+qt6-wayland
+qt6-declarative
+qt6-5compat
+pyside6
+python
+python-pip
+grim
+slurp
+wl-clipboard
+mako
+libnotify
+foot
+nautilus
+chromium
+pipewire
+wireplumber
+inter-font
+noto-fonts
+noto-fonts-emoji
+# agents
+nodejs
+npm
+# archiso live
+arch-install-scripts
+archinstall
+mkinitcpio
+mkinitcpio-archiso
