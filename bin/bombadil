@@ -68,9 +68,17 @@ def send(msg: dict) -> int:
         try:
             s.connect(str(paths.socket_path()))
             s.sendall((json.dumps(msg) + "\n").encode())
+            s.shutdown(socket.SHUT_WR)
         except OSError as e:
             print(f"agentd is not running ({e})", file=sys.stderr)
             return 1
+        # Closing at once would make agentd's greeting fail and drop the line unread; it hangs
+        # up once it has read it.
+        try:
+            while s.recv(65536):
+                pass
+        except OSError:
+            pass
     return 0
 
 

@@ -114,7 +114,11 @@ QtObject {
             changed = !!ev.changed
             irreversible = !!ev.irreversible
             risk = ""; command = ""
-            if (stopped) { line = ev.line || "Stopped."; source = "step" }
+            if (stopped) {
+                line = ev.line || "Stopped."; source = "step"
+                // A queued prompt starts at once; still say what was stopped for a moment.
+                flash = line; flashAt = _now()
+            }
             else if (_error && !_resultOk || (_error && !_result)) { line = _firstLines(_error, 2); source = "error" }
             else if (_result) { line = _result.trim(); source = "agent" }
             else if (ev.summary) { line = ev.summary; source = "step" }

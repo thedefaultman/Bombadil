@@ -32,16 +32,21 @@ Window {
     color: "#3b4a5a"
     property var sent: []
     PillState {
-        id: pill
+        id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
     }
-    ColumnLayout {
-        anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
-        spacing: 8
-        StatusLine { objectName: "statusLine"; pill: pill; Layout.fillWidth: true }
-        QueueChips { objectName: "chips"; pill: pill; Layout.alignment: Qt.AlignHCenter }
-        Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
+    // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
+    Repeater {
+        model: 1
+        ColumnLayout {
+            parent: w.contentItem
+            anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
+            spacing: 8
+            StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
+            QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
+            Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
+        }
     }
 }
 """
@@ -63,6 +68,9 @@ class Bar:
         self.engine.load(QtCore.QUrl.fromLocalFile(str(qml)))
         assert self.engine.rootObjects(), self.warnings
         self.win = self.engine.rootObjects()[0]
+        # Binding errors (a TypeError on an undefined pill) arrive as messages, not as engine warnings.
+        QtCore.qInstallMessageHandler(lambda mode, ctx, msg: self.warnings.append(msg)
+                                      if ".qml" in (ctx.file or "") or "TypeError" in msg else None)
         self.pill = self.win.findChild(QtCore.QObject, "pill")
         self.pump()
 
@@ -87,17 +95,18 @@ class Bar:
         return ret
 
     def item(self, name):
-        return self.win.findChild(QtQuick.QQuickItem, name)
+        found = self.items(name, visible_only=False)
+        return found[0] if found else None
 
     def text(self, name="line"):
         return self.item(name).property("text")
 
-    def items(self, name):
-        """Visible items by objectName, found through the visual tree (Repeater items included)."""
+    def items(self, name, visible_only=True):
+        """Items by objectName, found through the visual tree (delegates included)."""
         found, todo = [], [self.win.contentItem()]
         while todo:
             it = todo.pop()
-            if it.objectName() == name and it.isVisible():
+            if it.objectName() == name and (it.isVisible() or not visible_only):
                 found.append(it)
             todo.extend(it.childItems())
         return found
@@ -207,6 +216,16 @@ def test_stop_says_what_it_stopped_and_offers_no_undo(bar):
     bar.snap("6-stopped")
 
 
+def test_a_queued_prompt_starting_after_stop_still_shows_what_stopped(bar):
+    bar.call("submit", "install docker")
+    bar.send(kind="turn_start", turn=3, prompt="install docker")
+    bar.send(kind="queued", turn=4, prompt="tell me a joke")
+    bar.send(kind="turn_end", turn=3, seconds=5, stopped=True, line="Stopped while installing docker.")
+    bar.send(kind="turn_start", turn=4, prompt="tell me a joke")
+    assert bar.pill.property("mode") == "working"
+    assert bar.text() == "Stopped while installing docker."
+
+
 def test_prompts_typed_while_working_wait_as_chips(bar):
     bar.call("submit", "install docker")
     bar.send(kind="turn_start", turn=4, prompt="install docker")
@@ -279,5 +298,8 @@ def test_tab_completes_names_and_exact_words_show_where_they_go(bar):
     assert bar.call("exact", "open the browser and search") == ""
 
 
-def test_the_harness_loads_without_qml_warnings(bar):
-    assert [w for w in bar.warnings if "StatusLine" in w or "PillState" in w or "QueueChips" in w] == []
+def test_the_bar_loads_without_qml_warnings(bar):
+    bar.call("submit", "hello")
+    bar.send(kind="turn_start", turn=1, prompt="hello")
+    bar.send(kind="turn_end", turn=1, seconds=1, changed=True, summary="Did it.")
+    assert bar.warnings == []

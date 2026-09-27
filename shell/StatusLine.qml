@@ -31,9 +31,10 @@ Rectangle {
 
     // The marked edge: amber for system steps, red for ones that cannot be undone.
     Rectangle {
-        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; margins: 1 }
-        width: 4
-        radius: 2
+        // Inset, so it stays inside the rounded corners (clip does not follow the radius).
+        anchors { left: parent.left; top: parent.top; bottom: parent.bottom; leftMargin: 7; topMargin: 9; bottomMargin: 9 }
+        width: 3
+        radius: 1.5
         color: bar.edge
         visible: bar.edge !== "transparent"
     }

@@ -313,3 +313,19 @@ async def test_details_show_the_turns_own_log(home, monkeypatch):
     assert kinds[0] == "turn_start" and kinds[-1] == "turn_end" and "tool_result" in kinds
     w.close()
     server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_key_binds_reach_the_bar(home):
+    """`bombadil pill` and `bombadil stop` send one line and go: agentd must still act on it."""
+    import sys
+    from pathlib import Path
+    bombadil = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    for _ in range(5):
+        proc = await asyncio.create_subprocess_exec(sys.executable, str(bombadil), "pill")
+        assert await asyncio.wait_for(proc.wait(), 5) == 0
+        assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
+    w.close()
+    server.cancel()

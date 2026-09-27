@@ -18,8 +18,9 @@ ShellRoot {
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
 
+    // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
-        id: pill
+        id: pillState
         onOutgoing: msg => root.write(msg)
         onSummoned: root.summon()
     }
@@ -37,8 +38,8 @@ ShellRoot {
             }
             onConnectionStateChanged: {
                 root.connected = connected
-                if (connected) pill.connected = true
-                else pill.lost()
+                if (connected) pillState.connected = true
+                else pillState.lost()
             }
         }
     }
@@ -53,7 +54,7 @@ ShellRoot {
     function handle(message) {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
-        pill.handle(ev)
+        pillState.handle(ev)
     }
 
     function write(msg) {
@@ -112,7 +113,7 @@ ShellRoot {
 
                 StatusLine {
                     id: statusLine
-                    pill: pill
+                    pill: pillState
                     Layout.fillWidth: true
                     Layout.maximumWidth: 900
                     Layout.alignment: Qt.AlignHCenter
@@ -120,7 +121,10 @@ ShellRoot {
 
                 QueueChips {
                     id: chips
-                    pill: pill
+                    pill: pillState
+                    // A layout fills the width by default; this one stays as wide as its chips,
+                    // so the input mask lets clicks beside them through.
+                    Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
                     Layout.maximumWidth: 900
                 }
@@ -134,7 +138,7 @@ ShellRoot {
                     implicitHeight: 52
                     radius: 26
                     color: "#f01a1d21"
-                    border.color: pill.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
+                    border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
                     border.width: 1.5
                     Behavior on border.color { ColorAnimation { duration: 300 } }
 
@@ -145,7 +149,7 @@ ShellRoot {
                         // The dot. While a turn runs it is orange; hover turns it into Stop.
                         Rectangle {
                             id: dotBox
-                            readonly property bool stoppable: pill.busy && dotHover.hovered
+                            readonly property bool stoppable: pillState.busy && dotHover.hovered
                             implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
                             implicitHeight: 24
                             radius: 12
@@ -155,9 +159,9 @@ ShellRoot {
                                 visible: !dotBox.stoppable
                                 anchors.centerIn: parent
                                 width: 10; height: 10; radius: 5
-                                color: pill.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
+                                color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
                                 SequentialAnimation on opacity {
-                                    running: pill.busy; loops: Animation.Infinite
+                                    running: pillState.busy; loops: Animation.Infinite
                                     NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
                                 }
                             }
@@ -169,8 +173,8 @@ ShellRoot {
                                 Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
                                 Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
                             }
-                            HoverHandler { id: dotHover; cursorShape: pill.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                            TapHandler { enabled: pill.busy; onTapped: pill.stop() }
+                            HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                            TapHandler { enabled: pillState.busy; onTapped: pillState.stop() }
                         }
 
                         Item {
@@ -187,21 +191,21 @@ ShellRoot {
                                 background: null
                                 focus: true
                                 onAccepted: {
-                                    if (pill.submit(text)) {
+                                    if (pillState.submit(text)) {
                                         text = ""
                                         root.release()
                                     }
                                 }
                                 // Tab takes the suggested name: "pass" + Tab = "passwords".
                                 Keys.onTabPressed: {
-                                    const rest = pill.completion(text)
+                                    const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
                                 // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
                                 Keys.onEscapePressed: {
-                                    if (pill.busy) pill.stop()
+                                    if (pillState.busy) pillState.stop()
                                     else if (text !== "") text = ""
-                                    else { pill.dismiss(); root.release() }
+                                    else { pillState.dismiss(); root.release() }
                                 }
                             }
 
@@ -211,13 +215,13 @@ ShellRoot {
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: input.text !== "" && ghost.text !== ""
                                 Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
-                                Text { id: ghost; text: pill.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
+                                Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
                             }
                         }
 
                         // An exact launcher word: say it opens here, without the model.
                         Text {
-                            readonly property string target: pill.exact(input.text)
+                            readonly property string target: pillState.exact(input.text)
                             visible: target !== ""
                             text: "↵ " + target
                             color: "#8b939c"

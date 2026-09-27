@@ -124,7 +124,6 @@ _TRIVIAL = {"cd", "export", "set", "true", "false", ":", "source", ".", "echo", 
             "test", "[", "exit", "read"}
 _WRAPPERS = {"sudo", "doas", "env", "nohup", "time", "nice", "ionice", "stdbuf", "timeout", "exec", "command",
              "builtin", "setsid", "unbuffer", "script"}
-_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||;|\||\n|&(?!>))\s*")
 
 
 def _unwrap(command: str) -> str:
@@ -138,9 +137,44 @@ def _unwrap(command: str) -> str:
     return command
 
 
+def _split(command: str) -> list[str]:
+    """Split on ; && || | & and newlines outside quotes (`sh -c 'a && b'` stays whole, 2>&1 too)."""
+    parts: list[str] = []
+    cur: list[str] = []
+    quote = None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            cur.append(c)
+            if c == "\\" and quote == '"' and i + 1 < n:
+                cur.append(command[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+            cur.append(c)
+        elif c == "\\" and i + 1 < n:
+            cur += [c, command[i + 1]]
+            i += 1
+        elif command[i:i + 2] in ("&&", "||"):
+            parts.append("".join(cur))
+            cur = []
+            i += 1
+        elif c in ";|\n" or (c == "&" and command[i - 1:i] not in ("<", ">") and command[i + 1:i + 2] != ">"):
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    parts.append("".join(cur))
+    return [p.strip() for p in parts if p.strip()]
+
+
 def _segments(command: str) -> list[list[str]]:
     out = []
-    for part in _SPLIT_RE.split(command.strip()):
+    for part in _split(command.strip()):
         if not part:
             continue
         try:
@@ -418,7 +452,7 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
         script = next((a for a in argv[1:] if not a.startswith("-") and "/" in a or a.endswith((".py", ".js", ".sh"))), "")
         if script:
             return Step(f"Running {_name(script)}")
-        return Step("Running a script")
+        return Step(from_description(description) or "Running a script") if description else Step("Running a script")
     if prog in ("hyprctl",):
         if a0 == "reload":
             return Step("Reloading the desktop settings", "Reloaded the desktop settings")
@@ -493,13 +527,24 @@ def shell_step(command: str, description: str | None = None) -> Step:
             system = True
         if prog in _TRIVIAL and best is None:
             continue
-        step = _command_step(argv, segment, description)
+        if prog in ("bash", "sh", "zsh", "dash") and len(argv) > 2 and argv[1] in ("-c", "-lc"):
+            # `sudo sh -c '...'`: read the script inside.
+            step = shell_step(argv[2], description)
+            irreversible = irreversible or step.risk == IRREVERSIBLE
+            system = system or step.risk == SYSTEM
+        else:
+            step = _command_step(argv, segment, description)
         if step is not None and (best is None or (step.changes and not best.changes)):
             best = step
             if step.risk == SYSTEM:
                 system = True
+    said = from_description(description) if description else None
+    if best is not None and said and not best.changes:
+        # The model's own words for what it runs beat a generic reading ("Waiting", "Running
+        # a script"); a recognised change (Installing ffmpeg) keeps its reading and its summary.
+        best = Step(said, None, best.risk)
     if best is None:
-        text = from_description(description) if description else None
+        text = said
         prog = next((PurePosixPath(a[0]).name for a in (_strip_wrappers(s)[0] for s in _segments(inner)) if a), "a command")
         best = Step(text or f"Running {prog}")
     if irreversible:
@@ -526,7 +571,7 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         n = _lines(a.get("qml"), a.get("python"), *files.values())
         again = _app_exists(a.get("title", "")) if a.get("title") else False
         now, past = ("Changing", "Changed") if again else ("Building", "Made")
-        return Step(f"{now} {title}" + (f", {n} lines" if n else ""), f"{past} {title}")
+        return Step(f"{now} {title}" + (f", {n} lines" if n > 1 else ""), f"{past} {title}")
     if tool in ("open_app", "show_app"):
         return Step(f"Opening {a.get('name') or 'an app'}")
     if tool == "hide_app":
@@ -657,7 +702,7 @@ def partial_step(name: str, partial: str) -> Step | None:
         title = _app_title(json.loads(f'"{m.group(1)}"')) if m else "an app"
         n = partial.count("\\n")
         again = _app_exists(title) if m else False
-        return Step(f"{'Changing' if again else 'Building'} {title}" + (f", {n} lines" if n else ""),
+        return Step(f"{'Changing' if again else 'Building'} {title}" + (f", {n} lines" if n > 1 else ""),
                     f"{'Changed' if again else 'Made'} {title}")
     if name == "Write":
         m = _PATH_RE.search(partial)
@@ -686,6 +731,7 @@ class Narrator:
         self._partial: dict[int, dict] = {}
         self._creating: dict[str, str] = {}   # TaskCreate tool id -> its present-tense form
         self._tasks: dict[str, str] = {}      # task id -> its present-tense form
+        self._shown: dict | None = None       # the line last returned
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
 
@@ -698,12 +744,18 @@ class Narrator:
             self.irreversible = True
         elif step.risk == SYSTEM:
             self.system = True
-        if self.step and (step.text, step.risk, step.command) == (self.step.text, self.step.risk, self.step.command):
-            return None
         self.step = step
         return {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
 
     def on_event(self, ev: dict) -> dict | None:
+        line = self._line(ev)
+        # The complete message repeats what its stream already showed; say each line once.
+        if line is None or line == self._shown:
+            return None
+        self._shown = line
+        return line
+
+    def _line(self, ev: dict) -> dict | None:
         kind = ev.get("kind")
         if kind == "tool_result" and ev.get("id") in self._creating:
             m = re.search(r"#?(\d+)", str(ev.get("output", "")))

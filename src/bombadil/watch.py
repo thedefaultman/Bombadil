@@ -17,6 +17,7 @@ from pathlib import Path
 from . import narrate, paths
 
 AMBER, RED, DIM, BOLD, RESET = "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
+CLAUDE_REJECTED = "The user doesn't want to proceed with this tool use"
 
 
 def _color(on: bool):
@@ -72,6 +73,10 @@ class Renderer:
             yield c(DIM, f"  {ev['text']}")
         elif kind == "tool_result":
             out = (ev.get("output") or "").rstrip()
+            if out.startswith(CLAUDE_REJECTED):
+                # What Claude Code tells the model about a tool call cut short by Stop.
+                yield c(RED, "  │ stopped")
+                return
             if out:
                 shown = out.splitlines()
                 for line in shown:

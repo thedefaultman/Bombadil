@@ -41,6 +41,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
     ("nmcli device wifi connect HomeNet password hunter2", "Connecting to HomeNet", SYSTEM),
     ("hyprctl reload", "Reloading the desktop settings", None),
     ("sleep 5", "Waiting", None),
+    ("sudo sh -c 'pacman -S --noconfirm docker && systemctl enable --now docker'", "Installing docker", SYSTEM),
+    ("bash -c 'mkfs.ext4 /dev/sdb1'", "Formatting /dev/sdb1", IRREVERSIBLE),
+    ("make 2>&1 | tail -20", "Building", None),
 ])
 def test_shell_commands_in_plain_words(command, text, risk):
     step = narrate.shell_step(command)
@@ -55,6 +58,8 @@ def test_unknown_commands_use_the_description_or_the_program():
     assert narrate.shell_step("frobnicate --all", "Install frobnicator plugins").text == "Installing frobnicator plugins"
     assert narrate.shell_step("frobnicate --all", "Frobnicator plugin run").text == "Running frobnicate"
     assert narrate.shell_step("sudo frobnicate").risk == SYSTEM
+    assert narrate.shell_step("sudo sh -c 'echo installing; sleep 120'", "Install docker").text == "Installing docker"
+    assert narrate.shell_step("python3 -c 'print(1)'", "Check the Python version").text == "Checking the Python version"
 
 
 def test_gerunds():
@@ -86,7 +91,7 @@ def test_tools_in_plain_words(home, name, args, text, done):
 def test_changing_an_existing_app_says_so(home):
     (home / "Apps" / "passwords").mkdir(parents=True)
     (home / "Apps" / "passwords" / "main.qml").write_text("")
-    assert narrate.tool_step("mcp__bombadil-os__create_app", {"title": "Passwords", "qml": "x"}).text == "Changing Passwords, 1 lines"
+    assert narrate.tool_step("mcp__bombadil-os__create_app", {"title": "Passwords", "qml": "x"}).text == "Changing Passwords"
 
 
 def test_internals_never_show():
@@ -174,3 +179,13 @@ def test_codex_reasoning_headings_become_the_line():
     evs = list(p.parse(json.dumps({"type": "item.completed", "item": {
         "id": "item_0", "type": "reasoning", "text": "**Installing ffmpeg with pacman**\n\nI will..."}})))
     assert n.on_event(evs[0])["text"] == "Installing ffmpeg with pacman"
+
+
+def test_each_line_is_said_once_and_a_repeated_step_comes_back_after_the_agent_spoke():
+    n = narrate.Narrator()
+    bash = {"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S ffmpeg"}}
+    assert n.on_event(bash)["text"] == "Installing ffmpeg"
+    assert n.on_event(bash) is None
+    assert n.on_event({"kind": "text_delta", "text": "Retrying."})["text"] == "Retrying."
+    assert n.on_event({"kind": "text", "text": "Retrying."}) is None   # the full message, already shown
+    assert n.on_event(bash)["text"] == "Installing ffmpeg"
