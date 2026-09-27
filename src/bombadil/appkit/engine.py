@@ -27,14 +27,22 @@ def configure(check: bool) -> None:
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         # The software renderer is what offscreen gets anyway; asking for it avoids GL probing.
         os.environ.setdefault("QT_QUICK_BACKEND", "software")
+        # For app.py and the programs Commands run: this is a check, keep your hands off.
+        os.environ["BOMBADIL_CHECK"] = "1"
+    else:
+        os.environ.pop("BOMBADIL_CHECK", None)
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", STYLE)
 
 
 def make_app(ctx: AppContext):
+    from PySide6.QtCore import QStandardPaths
     from PySide6.QtGui import QFont, QGuiApplication
     from PySide6.QtQuickControls2 import QQuickStyle
 
     configure(ctx.check)
+    if ctx.check:
+        # Qt's own storage (Settings, LocalStorage) goes to ~/.qttest, not the user's ~/.config.
+        QStandardPaths.setTestModeEnabled(True)
     app = QGuiApplication.instance() or QGuiApplication([f"bombadil-app-{ctx.name}"])
     app.setApplicationName(ctx.title)
     app.setOrganizationName("Bombadil")

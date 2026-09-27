@@ -54,9 +54,12 @@ Saved values are applied before any `Component.onCompleted` runs, so the app nev
 the defaults first. Declare plain values, not bindings (`property int n: list.count` would
 be overwritten by the saved number). Values go through JSON: `color`, `url` and `date`
 properties are saved as strings and come back as the same value; `NaN` and `Infinity`
-(anywhere, also inside arrays) are saved as `null`. Not saved: `readonly`
-properties, object properties (`property Item x`) and names starting with `_`. Nothing is
-written during `check`.
+(anywhere, also inside arrays) are saved as `null`. Not saved: `readonly` properties,
+object properties (`property Item x`) and names starting with `_`. A saved value this
+version cannot take (a renamed property, a changed type) stays in the file until the app
+sets that property, so undoing the rename brings it back; a file that is not valid JSON is
+renamed to `<name>.json.bad` (kept, never overwritten) and the Store starts from the
+defaults. Nothing is written during `check`.
 
 **Assign, don't mutate.** A change is seen when the property is assigned:
 `store.entries = store.entries.concat([item])`, not `store.entries.push(item)`. To edit
@@ -87,11 +90,12 @@ Vault { id: vault; name: "passwords" }
 | `unlock(password)` / `lock()` | |
 | `changePassword(old, new)` | bool; re-encrypts with the new password and leaves the vault unlocked |
 | `generatePassword(length = 20, symbols = true)` | a random password (from `secrets`) with at least one lowercase, uppercase, digit (and symbol) |
-| `strength(password)` | 0..4 estimate (0 = common or very short, 4 = strong) |
+| `strength(password)` | 0..4 estimate (0 = common or very short, 4 = strong); the same score as `PasswordField`'s meter |
 
 `create`, `unlock` and `changePassword` take about half a second (scrypt with 128 MiB, as
 OWASP recommends; that is the point), so call them from a button, not from a binding.
-During `check`, `create`/`unlock` work in memory and nothing is written.
+During `check` nothing is written: the vault lives in memory for that run, so `create`,
+`lock`, `unlock`, `changePassword` and assigning `data` behave as they will for the user.
 
 ## System (singleton)
 

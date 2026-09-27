@@ -17,7 +17,7 @@ QtObject {
         if (!loaded || App.checking)
             return
         _timer.stop()
-        const values = _parse(KitFiles.snapshot(store, _keys))
+        const values = JSON.parse(KitFiles.snapshot(store, _keys))
         const merged = Object.assign({}, _state.file)
         for (const k in values) {
             if (!_state.held[k])
@@ -59,12 +59,12 @@ QtObject {
         _state.started = true
         const keys = KitFiles.storeKeys(store)
         _keys = keys
-        _defaults = _parse(KitFiles.snapshot(store, keys))
+        _defaults = JSON.parse(KitFiles.snapshot(store, keys))
         const text = KitFiles.readText(name + ".json")
         if (text.trim()) {
             let saved = null
             try {
-                saved = _parse(text)
+                saved = JSON.parse(text)
             } catch (e) {
             }
             if (saved && typeof saved === "object" && !Array.isArray(saved)) {
@@ -77,9 +77,10 @@ QtObject {
                 }
             } else {
                 // Moved aside, so the next save cannot overwrite what is in it.
-                KitFiles.quarantine(name + ".json")
-                console.warn("Store: " + name + ".json is not valid JSON; it was renamed to " + name
-                             + ".json.bad and the app starts from the defaults")
+                const moved = KitFiles.quarantine(name + ".json")
+                console.warn("Store: " + name + ".json is not valid JSON"
+                             + (moved ? "; it was renamed to " + moved.split("/").pop() : "")
+                             + ", so the app starts from the defaults")
             }
         }
         for (const k of keys)
@@ -93,7 +94,7 @@ QtObject {
         const tried = [], failed = []
         _state.applying = true
         for (const k of _keys) {
-            // null is how an unset date or a NaN is saved: nothing to restore over the same default.
+            // null is how an unset date or a NaN is saved: nothing to restore over a default like it.
             if (!values.hasOwnProperty(k) || (values[k] === null && _defaults[k] === null))
                 continue
             try {
@@ -105,7 +106,7 @@ QtObject {
         }
         _state.applying = false
         // A typed property can also turn a value into something else (an array into a string).
-        const now = _parse(KitFiles.snapshot(store, tried))
+        const now = JSON.parse(KitFiles.snapshot(store, tried))
         return failed.concat(tried.filter(k => now.hasOwnProperty(k) && !_same(now[k], values[k])))
     }
 
@@ -114,16 +115,6 @@ QtObject {
             return
         delete _state.held[k]
         _timer.restart()
-    }
-
-    // JSON.parse, except that NaN and Infinity (written by Python's json) become null.
-    function _parse(text) {
-        try {
-            return JSON.parse(text)
-        } catch (e) {
-            return JSON.parse(text.replace(/"(?:[^"\\]|\\.)*"|-?\b(?:NaN|Infinity)\b/g,
-                                           m => m[0] === '"' ? m : "null"))
-        }
     }
 
     function _same(a, b) {

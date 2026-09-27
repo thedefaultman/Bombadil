@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .. import apps
+from .check import WAIT_MS
 
 
 def _exit(code: int) -> int:
@@ -25,7 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("check", help="load an app offscreen and report errors as JSON")
     c.add_argument("target", help="app name, app directory, or a .qml file")
     c.add_argument("--screenshot", metavar="PNG", help="save a picture of the window")
-    c.add_argument("--wait", type=int, default=1200, metavar="MS", help="run this long before judging (1200)")
+    c.add_argument("--wait", type=int, default=WAIT_MS, metavar="MS", help=f"run this long before judging ({WAIT_MS})")
     c.add_argument("--size", metavar="WxH", help="window size for the screenshot")
     sub.add_parser("list", help="list generated apps")
     cr = sub.add_parser("create", help="create an app from a QML file")

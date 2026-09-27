@@ -81,7 +81,9 @@ def run_check(name: str) -> dict:
     png = paths.state_dir() / "apps" / f"{name}.check.png"
     png.parent.mkdir(parents=True, exist_ok=True)
     png.unlink(missing_ok=True)
-    cmd = [*apps.runner(), "check", name, "--screenshot", str(png)]
+    # The app's directory, not its bare name: a relative name would be tried against the
+    # server's working directory first, where some other `<name>/main.qml` may live.
+    cmd = [*apps.runner(), "check", str(apps.app_dir(name)), "--screenshot", str(png)]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=CHECK_TIMEOUT,
                            stdin=subprocess.DEVNULL, check=False)

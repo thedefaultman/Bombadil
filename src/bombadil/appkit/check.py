@@ -4,11 +4,20 @@ The agent gets this back from `create_app`, so it sees QML errors, runtime JS er
 and a picture of the window in the same tool call, without a display. It loads through
 the same Host as `run` (same window, same size rules, same backend), so the picture is
 what the user gets. Check mode is read-only: Store, Vault and TextFile never write,
-window and agent calls are no-ops. Commands do run, so the screenshot shows real data.
+window and agent calls are no-ops, Qt's own storage (Settings, LocalStorage) goes to a
+throwaway test location, and BOMBADIL_CHECK=1 tells app.py and Commands. Commands do run,
+so the screenshot shows real data.
+
+An app stuck in a busy loop blocks the whole check process, so a forked watchdog ends it:
+it stops the programs the app's Commands started, prints the result the check could not,
+and kills the check.
 """
 
 import json
+import os
 import re
+import select
+import signal
 import sys
 import time
 from collections.abc import Callable
@@ -28,6 +37,8 @@ FATAL = re.compile(
     r"Non-existent attached object|Binding loop|Unable to assign|Cannot call method|"
     r"is not a function|Expected token|Syntax error|failed to load|module .* is not installed|"
     r"Type .* unavailable|Cannot anchor|No such file")
+WAIT_MS = 1200  # how long a check lets the app run before judging it (`--wait`)
+SETTLE_S = 25   # seconds a check may run past that before the watchdog ends it (tools gives up at 40)
 
 
 class Collector:
@@ -92,8 +103,9 @@ class Collector:
         return {"errors": self.errors[:20], "warnings": self.warnings[:20], "console": self.console[-20:]}
 
 
-def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = 1200,
-          size: tuple[int, int] | None = None) -> dict:
+def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = WAIT_MS,
+          size: tuple[int, int] | None = None, watchdog: int | None = None) -> dict:
+    """`watchdog`: the pipe from start_watchdog(), kept up to date with what the check saw so far."""
     from PySide6.QtCore import QEventLoop, QTimer
 
     from .runtime import Host
@@ -102,7 +114,22 @@ def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = 1200,
     ctx.check = True
     app = kit_engine.make_app(ctx)
     host = Host(ctx)
+    if watchdog is not None:
+        on_change = host.collector.on_change
+
+        def tell_watchdog():
+            try:
+                os.write(watchdog, json.dumps({"loaded": host.loaded, **host.collector.summary()}).encode() + b"\n")
+            except OSError:
+                pass
+
+        def changed():
+            on_change()
+            tell_watchdog()
+        host.collector.on_change = changed
     loaded = host.start()
+    if watchdog is not None:
+        tell_watchdog()
 
     shot = shown_size = None
     win = host.current_window()
@@ -132,12 +159,83 @@ def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = 1200,
     }
 
 
-def main(target: str, screenshot: str | None, wait_ms: int, size: str | None) -> int:
+def _kill_children(parent: int) -> None:
+    """SIGKILL every process `parent` started, each with its process group: a Command's program
+    runs in a session of its own (with whatever `sh -c "a | b"` forked), which outlives the check."""
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            fields = Path(entry.path, "stat").read_text().rpartition(")")[2].split()
+            pid, ppid, pgrp = int(entry.name), int(fields[1]), int(fields[2])
+        except (OSError, IndexError, ValueError):
+            continue
+        if ppid != parent:
+            continue
+        try:
+            if pgrp == pid:
+                os.killpg(pid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _watch(pipe: int, parent: int, name: str, seconds: float) -> None:
+    seen, buf = {}, b""
+    deadline = time.monotonic() + seconds
+    while (left := deadline - time.monotonic()) > 0:
+        if not select.select([pipe], [], [], left)[0]:
+            continue
+        chunk = os.read(pipe, 65536)
+        if not chunk:
+            return   # the check finished (or crashed)
+        *lines, buf = (buf + chunk).split(b"\n")
+        if lines:   # each line is the whole summary so far: the last one is enough
+            try:
+                seen = json.loads(lines[-1])
+            except ValueError:
+                pass
+    os.kill(parent, signal.SIGSTOP)   # nothing new starts while its programs are killed
+    try:
+        _kill_children(parent)
+        result = {
+            "app": name, "ok": False, "loaded": bool(seen.get("loaded")),
+            "errors": [*seen.get("errors", []),
+                       f"the app did not settle within {seconds:g} s, so the check was stopped: probably a busy "
+                       "loop (a loop that never ends in JS, a binding or app.py). Its Commands were killed."],
+            "warnings": seen.get("warnings", []), "console": seen.get("console", []),
+            "screenshot": None, "size": None, "seconds": round(seconds, 2),
+        }
+        sys.stdout.write(json.dumps(result, indent=2) + "\n")
+        sys.stdout.flush()
+    finally:
+        os.kill(parent, signal.SIGKILL)
+
+
+def start_watchdog(name: str, seconds: float) -> int:
+    """Fork the watchdog, before Qt starts. Returns the pipe check() feeds; when the check
+    exits, the pipe closes and the watchdog leaves quietly."""
+    r, w = os.pipe()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if os.fork():
+        os.close(r)
+        return w
+    try:   # never return into the caller's code from the child
+        os.close(w)
+        _watch(r, os.getppid(), name, seconds)
+    finally:
+        os._exit(0)
+
+
+def main(target: str, screenshot: str | None, wait_ms: int, size: str | None, settle: float = SETTLE_S) -> int:
     from .context import for_target
 
     ctx = for_target(target, check=True)
     wh = tuple(int(x) for x in size.lower().split("x")) if size else None
-    result = check(ctx, Path(screenshot) if screenshot else None, wait_ms, wh)
+    dog = start_watchdog(ctx.name, wait_ms / 1000 + settle)
+    result = check(ctx, Path(screenshot) if screenshot else None, wait_ms, wh, dog)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
     sys.stdout.flush()
     return 0 if result["ok"] else 1

@@ -160,21 +160,9 @@ class KitFiles(QObject):
         return keys
 
     @Slot(QObject, "QVariant", result=str)
-    @Slot(QObject, "QVariant", "QVariant", result=str)
-    def snapshot(self, obj: QObject, keys, keep=None) -> str:
-        """Those properties' values as a JSON object, read without creating binding dependencies.
-
-        `keep` is what the file held before: its keys that are not properties any more are
-        written back, so a property that one version of the app renames is not lost.
-        """
+    def snapshot(self, obj: QObject, keys) -> str:
+        """Those properties' values as a JSON object, read without creating binding dependencies."""
         out = {}
-        kept = from_js(keep)
-        if isinstance(kept, dict):
-            for k, v in kept.items():
-                try:
-                    out[str(k)] = to_json(v)
-                except TypeError:
-                    pass
         for k in from_js(keys) or []:
             try:
                 out[k] = to_json(obj.property(k))
@@ -183,9 +171,9 @@ class KitFiles(QObject):
         return json.dumps(out, indent=1, ensure_ascii=False, allow_nan=False)
 
     @Slot(str, result=str)
-    def setAside(self, path: str) -> str:
-        """Rename a file that cannot be read (`x.json` -> `x.json.bad`, then `.bad.2`, ...) so it is
-        not overwritten; the new path, or "" when nothing was moved (missing file, `check`)."""
+    def quarantine(self, path: str) -> str:
+        """Rename a file that cannot be read (`x.json` -> `x.json.bad`, then `.bad.2`, ...) so the
+        next save does not overwrite it; the new path, or "" when nothing moved (no file, `check`)."""
         if self._ctx.check:
             return ""
         src = self._ctx.resolve(path)

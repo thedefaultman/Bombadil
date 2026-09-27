@@ -3,6 +3,9 @@
 The file holds only the KDF parameters, salt, nonce and ciphertext. The derived key is kept
 in memory for the life of the process (keyed by file), so a Vault that hot reload creates
 again comes back unlocked, until it auto-locks or `lock()` is called.
+
+During `check` nothing is written: what would go to the file is kept in memory instead, so
+create, lock, unlock and changePassword behave as they will for the user.
 """
 
 import base64
@@ -32,11 +35,18 @@ KDF = {"name": "scrypt", "n": 2 ** 17, "r": 8, "p": 1}
 MAX_N, MAX_R, MAX_P = 2 ** 18, 16, 4
 AAD = b"bombadil-vault-1"
 SYMBOLS = "!#$%&()*+,-./:;<=>?@[]^_{|}~"
-COMMON = {"password", "123456", "12345678", "123456789", "qwerty", "letmein", "iloveyou", "admin",
-          "welcome", "monkey", "dragon", "football", "abc123", "111111", "passw0rd", "trustno1"}
+# The most used passwords, which score 0 whatever their length (a deny list, not credentials).
+# The same list as PasswordField.qml's `_common`, kept as one string there and here.
+COMMON = ("123456 12345678 qwerty azerty letmein welcome admin iloveyou monkey "
+          "dragon football baseball master login abc123 111111 000000 sunshine princess trustno1 secret "
+          "shadow summer winter hello freedom password whatever starwars changeme default root test "
+          "hunter batman superman pokemon passw0rd").split(" ")
+RUNS = re.compile(r"(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|cdef|qwer|wert|asdf|sdfg|zxcv)")
 
 # file path -> {"key", "salt", "expires"}; survives hot reloads, not restarts.
 _keys: dict[str, dict] = {}
+# file path -> what the file would hold, during `check` (which writes nothing).
+_dry: dict[str, bytes] = {}
 
 
 def _crypto():
@@ -63,8 +73,9 @@ def seal(key: bytes, salt: bytes, kdf: dict, value) -> bytes:
                        "ciphertext": b64(ct)}, indent=1).encode()
 
 
-def open_file(path: Path) -> dict:
-    doc = json.loads(path.read_text())
+def parse(raw: bytes | str) -> dict:
+    """A vault file's fields; raises ValueError (or KeyError, TypeError) for a damaged one."""
+    doc = json.loads(raw)
     kdf = doc["kdf"]
     n, r, p = int(kdf["n"]), int(kdf["r"]), int(kdf["p"])
     if kdf.get("name") != "scrypt" or not (2 <= n <= MAX_N and n & (n - 1) == 0 and 1 <= r <= MAX_R
@@ -90,22 +101,44 @@ def generate_password(length: int = 20, symbols: bool = True) -> str:
     return "".join(chars)
 
 
-def strength(password: str) -> int:
-    """0..4 like zxcvbn's score, from character variety and length with repeats and runs discounted."""
-    if not password or password.lower() in COMMON or len(password) < 6:
+def strength(pw: str) -> int:
+    """0..4, the same score as PasswordField's meter: a line-for-line port of its `_estimate`.
+
+    JavaScript counts a string's length in UTF-16 units and its `.` matches one unit, so the
+    checks run on the password spelled that way.
+    """
+    if not pw:
         return 0
-    pool = sum(size for test, size in ((str.islower, 26), (str.isupper, 26), (str.isdigit, 10))
-               if any(test(c) for c in password))
-    if any(not c.isalnum() for c in password):
+    units = "".join(c if ord(c) < 0x10000 else chr(0xD800 + ((ord(c) - 0x10000) >> 10))
+                    + chr(0xDC00 + ((ord(c) - 0x10000) & 0x3FF)) for c in pw)
+    lower = units.lower()
+    pool = 0
+    if re.search(r"[a-z]", units):
+        pool += 26
+    if re.search(r"[A-Z]", units):
+        pool += 26
+    if re.search(r"[0-9]", units):
+        pool += 10
+    if re.search(r"[^a-zA-Z0-9]", units):
         pool += 33
-    # Characters that repeat or continue a run (aaa, abc, 123) add little.
-    effective = 1.0
-    for a, b in zip(password, password[1:], strict=False):
-        effective += 0.25 if a == b or abs(ord(b) - ord(a)) == 1 else 1.0
-    if re.fullmatch(r"(.+?)\1+", password):
-        effective = min(effective, len(password) / 2)
-    bits = effective * math.log2(max(pool, 2))
-    return 0 if bits < 28 else 1 if bits < 40 else 2 if bits < 60 else 3 if bits < 80 else 4
+    bits = len(units) * math.log(max(pool, 2)) / math.log(2)
+    # Few distinct characters ("aaaa1111") carry less than their length suggests.
+    if len(set(pw)) < len(units) / 2:
+        bits *= 0.6
+    if re.search(r"([^\n\r\u2028\u2029])\1\1", units):
+        bits -= 8
+    if RUNS.search(lower):
+        bits -= 12
+    if re.search(r"(19|20)[0-9][0-9]", units):
+        bits -= 6
+    stripped = re.sub(r"[^a-z]", "", lower)
+    if any(w in lower or stripped == w for w in COMMON):
+        bits -= 20
+        if lower in COMMON or stripped in COMMON:
+            return 0
+    if len(units) < 6 or bits < 28:
+        return 0 if len(units) < 4 else 1
+    return 1 if bits < 40 else 2 if bits < 60 else 3 if bits < 80 else 4
 
 
 class Vault(QObject):
@@ -152,14 +185,19 @@ class Vault(QObject):
         self.errorChanged.emit()
         return False
 
+    def _read(self) -> dict:
+        """The file, parsed; during `check`, what this run would have written, if anything."""
+        dry = _dry.get(str(self._file)) if self._ctx.check else None
+        return parse(dry if dry is not None else self._file.read_bytes())
+
     def _load(self):
         """Look at the file, and unlock with a key an earlier Vault (before a hot reload) left behind."""
         self._key, self._data = None, None
-        self._set("_exists", self._file.exists(), self.existsChanged)
+        self._check_exists()
         cached = _keys.get(str(self._file))
         if self._exists and cached and (cached["expires"] is None or cached["expires"] > time.monotonic()):
             try:
-                doc = open_file(self._file)
+                doc = self._read()
                 if doc["salt"] == cached["salt"]:
                     self._open(cached["key"], doc["salt"], doc["kdf"], unseal(cached["key"], doc))
                     return
@@ -193,10 +231,11 @@ class Vault(QObject):
         """Save `value` under that key (by default the current key and data)."""
         if key is None:
             key, salt, kdf, value = self._key, self._salt, self._kdf, self._data
-        if self._ctx.check:
-            return True
         try:
-            atomic_write(self._file, seal(key, salt, kdf, value), mode=0o600)
+            if self._ctx.check:
+                _dry[str(self._file)] = seal(key, salt, kdf, value)
+            else:
+                atomic_write(self._file, seal(key, salt, kdf, value), mode=0o600)
         except (OSError, TypeError, ValueError, RuntimeError) as e:
             return self._fail(f"cannot save: {e}")
         self._set("_exists", True, self.existsChanged)
@@ -204,7 +243,8 @@ class Vault(QObject):
 
     def _check_exists(self) -> bool:
         """Look at the disk: another Vault object (or process) may have made or removed the file."""
-        self._set("_exists", self._file.exists(), self.existsChanged)
+        there = self._file.exists() or (self._ctx.check and str(self._file) in _dry)
+        self._set("_exists", there, self.existsChanged)
         return self._exists
 
     @Slot(str, result=bool)
@@ -229,7 +269,7 @@ class Vault(QObject):
         except RuntimeError as e:
             return self._fail(str(e))
         try:
-            doc = open_file(self._file)
+            doc = self._read()
             key = derive(password, doc["salt"], doc["kdf"])
             value = unseal(key, doc)
         except InvalidTag:

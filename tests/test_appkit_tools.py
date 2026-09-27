@@ -39,11 +39,12 @@ def fake_check(home, tmp_path, monkeypatch):
     script = tmp_path / "fake-check"
     script.write_text(textwrap.dedent(f"""\
         import json, sys
+        from pathlib import Path
         args = sys.argv[1:]
-        name, png = args[1], args[args.index("--screenshot") + 1]
+        target, png = Path(args[1]), args[args.index("--screenshot") + 1]
         open(png, "wb").write({PNG!r})
-        ok = "broken" not in open("{home}/Apps/" + name + "/main.qml").read()
-        print(json.dumps({{"app": name, "ok": ok, "loaded": True,
+        ok = "broken" not in (target / "main.qml").read_text()
+        print(json.dumps({{"app": target.name, "ok": ok, "loaded": True, "target": str(target),
                           "errors": [] if ok else ["main.qml:3:1: broken is not defined"],
                           "warnings": [], "console": ["hi"], "screenshot": png, "size": [560, 680]}}))
         """))
@@ -117,6 +118,23 @@ def test_check_app_and_a_crashing_check(home, fake_check, monkeypatch):
     monkeypatch.setattr(tools.apps, "runner", lambda: [sys.executable, "-c", "import sys; sys.exit('boom')"])
     r = call(s, "check_app", name="todo")
     assert len(r["content"]) == 1 and "check crashed (exit 1)" in r["content"][0]["text"] and "boom" in r["content"][0]["text"]
+
+
+def test_the_check_gets_the_apps_directory_not_a_name_relative_to_the_cwd(home, fake_check, tmp_path, monkeypatch):
+    call(make(), "create_app", title="Todo", qml=QML, open=False)
+    decoy = tmp_path / "cwd"
+    (decoy / "todo").mkdir(parents=True)
+    (decoy / "todo" / "main.qml").write_text(QML + "// broken\n")
+    monkeypatch.chdir(decoy)       # a `todo/main.qml` where the MCP server happens to run
+    result = tools.run_check("todo")
+    assert result["target"] == str(home / "Apps" / "todo") and result["ok"]
+
+
+def test_the_runtime_doc_states_checks_default_wait():
+    from bombadil.appkit import check
+
+    doc = (tools.skill_dir() / "references" / "runtime.md").read_text()
+    assert f"`--wait MS`, default {check.WAIT_MS}" in doc
 
 
 def test_list_apps_says_what_is_running_and_shown(home, fake_check):

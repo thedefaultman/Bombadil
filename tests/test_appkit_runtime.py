@@ -6,9 +6,12 @@ singleton exist once per process, and a test must not leave either behind.
 
 import json
 import os
+import signal
+import socket
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -49,9 +52,10 @@ class Backend(QObject):
 PRELUDE = """\
 import json, os, sys, time
 from pathlib import Path
-from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtCore import QEventLoop, QMetaObject, QTimer
 from PySide6.QtQuick import QQuickItem
 from bombadil.appkit import context, engine, runtime
+from bombadil.appkit.native.files import from_js
 
 name = sys.argv[1]
 d = Path(os.environ["BOMBADIL_APPS"]) / name
@@ -233,10 +237,225 @@ def test_check_renders_through_the_runtime(home, tmp_path):
     assert any(e.startswith("main.qml:7") and "nope" in e for e in result["errors"]), result
 
 
+def test_a_broken_app_py_is_retried_on_every_reload_until_fixed(home):
+    pytest.importorskip("PySide6")
+    make_app("pyapp", {"main.qml": ITEM_QML, "app.py": "def broken(:\n"})
+    out = drive("pyapp", """
+        out["start"] = [host.start(), host.collector.errors]
+        src = (d / "main.qml").read_text()
+        # Only QML changes, but app.py is still broken: it is tried again, its error stays.
+        write("main.qml", src.replace("hello v1", "hello v2"))
+        out["qml_only"] = [wait_for(lambda: host.attempts == 2), host.loaded, host.collector.errors, status()["errors"]]
+        write("app.py", BACKEND_SRC)
+        out["fixed"] = [wait_for(lambda: host.loaded), label()]
+        write("app.py", "raise ValueError('bad edit')\\n")
+        out["broken_again"] = [wait_for(lambda: host.attempts == 4), host.loaded, host.collector.errors]
+        write("main.qml", src.replace("hello v1", "hello v3"))
+        out["then_qml"] = [wait_for(lambda: host.attempts == 5), host.loaded, host.collector.errors, label(),
+                           status()["ok"]]
+    """.replace("BACKEND_SRC", repr(BACKEND)))
+    syntax = ["app.py:1: SyntaxError: invalid syntax"]
+    assert out["start"] == [False, syntax]
+    assert out["qml_only"] == [True, False, syntax, syntax]
+    assert out["fixed"] == [True, "hello v2 from py1"]
+    assert out["broken_again"] == [True, False, ["app.py:1: ValueError: bad edit"]]
+    # The old UI and its old backend stay up, and the status does not claim otherwise.
+    assert out["then_qml"] == [True, False, ["app.py:1: ValueError: bad edit"], "hello v2 from py1", False]
+
+
+def test_the_first_size_is_read_after_bindings_run(home):
+    pytest.importorskip("PySide6")
+    make_app("sized", {"main.qml": "import QtQuick\nimport Bombadil\n"
+                                   "AppWindow { width: 400 + 20; height: Theme.pad * 20 }\n"})
+    out = drive("sized", """
+        out["start"] = [host.start(), host.window.width(), host.window.height()]
+        write("main.qml", (d / "main.qml").read_text().replace("400 + 20", "400 + 60"))
+        out["edited"] = [wait_for(lambda: host.window.width() == 460), host.window.width(), host.window.height()]
+    """)
+    assert out["start"] == [True, 420, 320]
+    assert out["edited"] == [True, 460, 320]
+
+
+def test_a_window_too_big_for_the_screen_is_shrunk_and_that_size_is_not_saved(home):
+    pytest.importorskip("PySide6")
+    make_app("big", {"main.qml": "import QtQuick\nimport Bombadil\nAppWindow { width: 1120; height: 880 }\n"})
+    out = drive("big", """
+        runtime.placement.usable_area = lambda h=None: (1232, 716)   # a 1280x800 laptop with a bar
+        out["start"] = [host.start(), host.window.width(), host.window.height()]
+        pump(900)
+        out["saved"] = (ctx.state_dir / "big.window.json").exists()
+        write("main.qml", (d / "main.qml").read_text().replace("width: 1120; height: 880", "width: 1000; height: 900"))
+        out["edited"] = [wait_for(lambda: host.window.width() == 1000), host.window.width(), host.window.height()]
+        write("main.qml", (d / "main.qml").read_text().replace("width: 1000; height: 900", "width: 600; height: 500"))
+        out["small"] = [wait_for(lambda: host.window.width() == 600), host.window.width(), host.window.height()]
+    """)
+    assert out["start"] == [True, 1120, 716] and out["saved"] is False
+    assert out["edited"] == [True, 1000, 716]
+    assert out["small"] == [True, 600, 500]      # a size that fits is kept as declared
+
+
+def test_store_keeps_saved_values_across_a_rename_and_a_type_change(home):
+    pytest.importorskip("PySide6")
+    make_app("stored", {"main.qml": textwrap.dedent("""\
+        import QtQuick
+        import Bombadil
+        AppWindow {
+            property alias store: st
+            Store { id: st; property var entries: []; property string filter: ""; property var tags: [] }
+        }
+        """)})
+    out = drive("stored", """
+        st = lambda: host.root.property("store")
+        saved = lambda: json.loads((d / "data" / "state.json").read_text())
+        out["start"] = host.start()
+        st().setProperty("entries", [{"site": "github"}])
+        st().setProperty("tags", ["a", "b"])
+        src = (d / "main.qml").read_text()
+        # One edit renames entries to items and makes tags a string.
+        write("main.qml", src.replace("property var entries: []", "property var items: []")
+                             .replace("property var tags: []", 'property string tags: ""'))
+        out["edited"] = [wait_for(lambda: reloads() == 1), host.collector.warnings]
+        st().setProperty("filter", "git")
+        pump(500)
+        out["file"] = saved()
+        write("main.qml", src)
+        out["undone"] = [wait_for(lambda: reloads() == 2), from_js(st().property("entries")),
+                         from_js(st().property("tags")), st().property("filter"), host.collector.warnings]
+        QMetaObject.invokeMethod(st(), "reset")
+        out["reset"] = [(d / "data" / "state.json").exists(), from_js(st().property("entries"))]
+        st().setProperty("filter", "x")
+        pump(500)
+        out["after_reset"] = saved()
+    """)
+    assert out["start"]
+    ok, warnings = out["edited"]
+    assert ok and warnings == ["Store: the saved tags does not fit this property; it stays in state.json "
+                               "until the app sets tags"]
+    assert out["file"] == {"entries": [{"site": "github"}], "filter": "git", "tags": ["a", "b"], "items": []}
+    assert out["undone"] == [True, [{"site": "github"}], ["a", "b"], "git", []]
+    assert out["reset"] == [False, []]
+    assert out["after_reset"] == {"entries": [], "filter": "x", "tags": []}   # reset dropped `items`
+
+
+def test_store_sets_a_broken_file_aside_and_takes_a_nan_default(home):
+    pytest.importorskip("PySide6")
+    d = make_app("nan", {"main.qml": textwrap.dedent("""\
+        import QtQuick
+        import Bombadil
+        AppWindow {
+            property alias store: st
+            Store { id: st; property real avg: NaN; property var entries: [] }
+        }
+        """)})
+    (d / "data").mkdir()
+    (d / "data" / "state.json").write_text('{"entries": [1, 2')
+    out = drive("nan", """
+        import math
+        st = lambda: host.root.property("store")
+        out["start"] = [host.start(), st().property("loaded"), math.isnan(st().property("avg")), host.collector.warnings]
+        out["bad"] = (d / "data" / "state.json.bad").read_text()
+        st().setProperty("entries", [3])
+        pump(500)
+        out["file"] = json.loads((d / "data" / "state.json").read_text())
+        write("main.qml", (d / "main.qml").read_text() + "\\n")
+        out["reloaded"] = [wait_for(lambda: reloads() == 1), math.isnan(st().property("avg")),
+                           from_js(st().property("entries")), host.collector.warnings]
+    """)
+    assert out["start"] == [True, True, True, ["Store: state.json is not valid JSON; it was renamed to "
+                                               "state.json.bad, so the app starts from the defaults"]]
+    assert out["bad"] == '{"entries": [1, 2'
+    assert out["file"] == {"avg": None, "entries": [3]}
+    assert out["reloaded"] == [True, True, [3], []]
+
+
+def test_check_is_stopped_when_the_app_never_settles_and_its_commands_die(home):
+    pytest.importorskip("PySide6")
+    make_app("busy", {"main.qml": textwrap.dedent("""\
+        import QtQuick
+        import Bombadil
+        AppWindow {
+            Command { command: "sleep 97.31 | cat"; running: true }
+            Timer { interval: 400; running: true; onTriggered: { console.log("spinning"); while (true) {} } }
+        }
+        """)})
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    script = "import sys\nfrom bombadil.appkit import check\ncheck.main(sys.argv[1], None, 200, None, settle=2)\n"
+    r = subprocess.run([sys.executable, "-c", script, str(apps.app_dir("busy"))], capture_output=True, text=True,
+                       env=env, timeout=60)
+    result = json.loads(r.stdout)
+    assert r.returncode == -signal.SIGKILL and result["ok"] is False and result["loaded"] is True
+    assert "did not settle within 2.2 s" in result["errors"][-1] and result["console"] == ["spinning"]
+    deadline = time.monotonic() + 5
+    while subprocess.run(["pgrep", "-f", "sleep 97.31"], capture_output=True).returncode == 0:
+        assert time.monotonic() < deadline, "the Command's program outlived the check"
+        time.sleep(0.1)
+
+
+def test_check_keeps_app_py_commands_and_qt_storage_off_the_users_files(home):
+    pytest.importorskip("PySide6")
+    make_app("storage", {
+        "main.qml": textwrap.dedent("""\
+            import QtQuick
+            import QtCore
+            import Bombadil
+            AppWindow {
+                Settings { id: settings; property int n: 5 }
+                Command { command: "echo command BOMBADIL_CHECK=$BOMBADIL_CHECK"; running: true
+                          onFinished: console.log(output.trim()) }
+                Component.onCompleted: { settings.n = 7; settings.sync(); console.log("app.py " + backend.check) }
+            }
+            """),
+        "app.py": textwrap.dedent("""\
+            import os
+            from PySide6.QtCore import Property, QObject
+
+
+            class Backend(QObject):
+                @Property(str, constant=True)
+                def check(self):
+                    return "BOMBADIL_CHECK=" + os.environ.get("BOMBADIL_CHECK", "")
+            """)})
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "XDG_CONFIG_HOME": str(home / "config-home")}
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "bombadil-app"), "check", "storage"],
+                       capture_output=True, text=True, env=env, timeout=90)
+    result = json.loads(r.stdout)
+    assert result["ok"], result
+    assert sorted(result["console"]) == ["app.py BOMBADIL_CHECK=1", "command BOMBADIL_CHECK=1"]
+    assert not (home / "config-home").exists() and not (home / ".config").exists()
+
+
+def test_a_launched_app_logs_to_its_log_and_a_stuck_one_is_killed_on_close(home):
+    """Started by a launcher (stderr not a terminal), not through apps.run."""
+    pytest.importorskip("PySide6")
+    make_app("stuck", {"main.qml": ITEM_QML.replace(
+        'Component.onCompleted: console.log("loaded")',
+        'Timer { id: spin; interval: 300; onTriggered: { while (true) {} } }\n'
+        '    Component.onCompleted: { console.log("loaded"); spin.start() }')})
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software",
+           "PYTHONPATH": str(ROOT / "src")}
+    proc = subprocess.Popen([sys.executable, str(ROOT / "bin" / "bombadil-app"), "run", "stuck"], env=env,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        status_file = home / "state" / "apps" / "stuck.status.json"
+        deadline = time.monotonic() + 30
+        while not status_file.exists():
+            assert proc.poll() is None and time.monotonic() < deadline, proc.stderr.read()
+            time.sleep(0.1)
+        time.sleep(1.0)   # the Timer has fired: the app spins and never runs its SIGTERM handler
+        log = apps.log_path("stuck").read_text()
+        assert "bombadil-app run stuck" in log and "console: loaded" in log
+        assert "window: Hyprland is not running; stuck opens as a plain window" in log
+        assert "was killed" in placement.close("stuck", wait=1.0)
+        out, err = proc.communicate(timeout=10)
+        assert proc.returncode == -signal.SIGKILL and out == b"" and err == b""
+    finally:
+        proc.kill()
+
+
 def test_saved_size_wins_unless_the_app_asks_for_a_new_one(home):
     ctx = AppContext("demo", "Demo", home / "Apps" / "demo", home / "Apps" / "demo" / "main.qml")
     host = runtime.Host.__new__(runtime.Host)   # the size rules need no Qt
-    host.ctx, host.declared = ctx, None
+    host.ctx, host.declared, host._room, host._fitted = ctx, None, None, None
     assert host._target_size((560, 680)) == (560, 680)
     runtime._write_json(ctx.state_dir / "demo.window.json", {"width": 900, "height": 700, "declared": [560, 680]})
     assert host._target_size((560, 680)) == (900, 700)
@@ -351,6 +570,75 @@ def test_requests_retry_and_errors_are_reported(monkeypatch):
     monkeypatch.setattr(placement, "running", lambda: {"notes": [42]})
     with pytest.raises(RuntimeError, match="window not found"):
         placement.show("notes", FakeHypr(replies=["hl.focus: window not found"]))
+
+
+def test_prepare_says_what_went_wrong_instead_of_raising(monkeypatch):
+    monkeypatch.setattr(placement.time, "sleep", lambda s: None)
+
+    class Hung(FakeHypr):
+        def request(self, command):
+            raise TimeoutError("timed out")
+    assert placement.prepare("notes", 1, 2, Hung()) == (
+        "could not add the window rule for notes, it opens as a plain window: "
+        "Hyprland did not take 'eval hl.window_rule({ name = \"bombadil-app-notes\", match = ': timed out")
+    assert "opens as a plain window" in placement.prepare("notes", 1, 2, FakeHypr(replies=["", "", ""]))
+
+
+def test_a_hyprland_request_times_out(home, monkeypatch):
+    runtime_dir = Path("/tmp") / f"bombadil-test-{os.getpid()}"   # short: socket paths are limited
+    sock_dir = runtime_dir / "hypr" / "sig"
+    sock_dir.mkdir(parents=True, exist_ok=True)
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(str(sock_dir / ".socket.sock"))
+        server.listen(1)     # accepts, never answers: a hung compositor
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+        monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig")
+        started = time.monotonic()
+        with pytest.raises(OSError):
+            hypr.Hyprland().request("j/monitors")
+        assert time.monotonic() - started < 4
+    finally:
+        server.close()
+        (sock_dir / ".socket.sock").unlink(missing_ok=True)
+        for p in (sock_dir, sock_dir.parent, runtime_dir):
+            p.rmdir()
+
+
+def test_usable_area_is_the_focused_monitor_without_the_bar():
+    laptop = {"name": "eDP-1", "focused": True, "width": 1280, "height": 800, "scale": 1.0,
+              "transform": 0, "reserved": [0, 36, 0, 0]}
+    other = {**laptop, "name": "DP-1", "focused": False, "width": 3840, "height": 2160}
+    assert placement.usable_area(FakeHypr([other, laptop])) == (1280 - 48, 800 - 36 - 48)
+    hidpi = {**laptop, "width": 2560, "height": 1600, "scale": 2.0}
+    assert placement.usable_area(FakeHypr([hidpi])) == (1232, 716)
+    assert placement.usable_area(FakeHypr([{**laptop, "transform": 1}])) == (800 - 48, 1280 - 36 - 48)
+    assert placement.usable_area(FakeHypr([{"name": "?"}])) is None
+    assert placement.usable_area(FakeHypr(available=False)) is None
+    assert placement.fit(1120, 880, (1232, 716)) == (1120, 716)
+    assert placement.fit(560, 680, (1232, 716)) == (560, 680)
+    assert placement.fit(1120, 880, None) == (1120, 880)
+    assert placement.fit(900, 900, (100, 100)) == placement.MIN_SIZE
+
+
+def test_the_runtime_logs_where_its_window_goes(home, monkeypatch, capsys):
+    ctx = AppContext("demo", "Demo", home / "Apps" / "demo", home / "Apps" / "demo" / "main.qml")
+    host = runtime.Host.__new__(runtime.Host)
+    host.ctx, host._room, host._fitted = ctx, None, None
+    monkeypatch.setattr(placement, "usable_area", lambda h=None: (1232, 716))
+    monkeypatch.setattr(placement, "prepare", lambda name, w, h: f"could not add the window rule for {name}: no")
+    assert host._place((1120, 880)) == (1120, 716) and host._fitted == (1120, 716)
+    assert "window: could not add the window rule for demo: no" in capsys.readouterr().err
+
+
+def test_close_kills_an_app_that_does_not_quit(monkeypatch):
+    sent = []
+    monkeypatch.setattr(placement, "running", lambda: {} if (101, signal.SIGKILL) in sent else {"notes": [101]})
+    monkeypatch.setattr(placement.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(placement.time, "sleep", lambda s: None)
+    assert placement.close("notes", wait=0.05) == ("notes did not quit within 0.05 s (stuck?) and was killed; "
+                                                   "unsaved changes are lost")
+    assert sent == [(101, signal.SIGTERM), (101, signal.SIGKILL)]
 
 
 def test_running_parses_pgrep_and_close_sends_sigterm(monkeypatch):

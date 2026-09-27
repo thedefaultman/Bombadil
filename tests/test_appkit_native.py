@@ -5,6 +5,8 @@ whole module shares one offscreen app, one AppContext and one QML engine.
 """
 
 import asyncio
+import contextlib
+import gc
 import json
 import os
 import stat
@@ -150,6 +152,51 @@ def test_store_saves_before_reload(kit):
     assert json.loads((kit.ctx.data_dir / "reload.json").read_text())["selected"] == 3
 
 
+def test_store_saves_nan_and_infinity_as_null(kit):
+    """`NaN` in the file would fail JSON.parse on the next start, and the Store would start over."""
+    src = """
+Item {
+    property var store: st
+    Store { id: st; name: "nan"; property real avg: NaN; property var entries: [] }
+}"""
+    store = make(kit, src).property("store")
+    assert store.property("loaded") is True            # the NaN default did not break the snapshot
+    store.setProperty("entries", [1.5, float("inf"), {"x": float("nan")}])
+    path = kit.ctx.data_dir / "nan.json"
+    assert wait_until(path.exists, 2000)
+    assert json.loads(path.read_text()) == {"avg": None, "entries": [1.5, None, {"x": None}]}
+    destroy(store.parent())
+    again = make(kit, src).property("store")
+    assert again.property("loaded") is True and js(again.property("entries")) == [1.5, None, {"x": None}]
+
+
+def test_kitfiles_quarantine_keeps_every_damaged_file(kit):
+    from bombadil.appkit.native.files import KitFiles
+
+    kf = KitFiles(kit.ctx)
+    bad = kit.ctx.data_dir / "damaged.json"
+    for text in ("{oops", "{again"):
+        bad.write_text(text)
+        moved = kf.quarantine("damaged.json")
+        assert moved and Path(moved).read_text() == text and not bad.exists()
+    assert sorted(p.name for p in kit.ctx.data_dir.glob("damaged.json*")) == ["damaged.json.bad", "damaged.json.bad.2"]
+    assert kf.quarantine("damaged.json") == ""           # nothing there
+    obj = make(kit, "QtObject { property real avg: NaN; property var list: [1, Infinity] }")
+    assert json.loads(kf.snapshot(obj, ["avg", "list"])) == {"avg": None, "list": [1, None]}
+
+
+def test_store_moves_a_damaged_file_aside(kit):
+    path = kit.ctx.data_dir / "damaged-store.json"
+    path.write_text('{"filter": "open", oops')
+    store = make(kit, STORE % "damaged-store").property("store")
+    assert store.property("loaded") is True and store.property("filter") == "all"
+    assert (kit.ctx.data_dir / "damaged-store.json.bad").read_text() == '{"filter": "open", oops'
+    store.setProperty("filter", "new")
+    assert wait_until(path.exists, 2000)
+    assert json.loads(path.read_text())["filter"] == "new"
+    assert (kit.ctx.data_dir / "damaged-store.json.bad").read_text() == '{"filter": "open", oops'
+
+
 def test_store_never_writes_in_check(kit, checking):
     store = make(kit, STORE % "checked").property("store")
     store.setProperty("filter", "changed")
@@ -164,7 +211,15 @@ def vault(kit, name: str, extra: str = ""):
     return make(kit, f'Item {{ property var vault: v; Vault {{ id: v; name: "{name}"; {extra} }} }}').property("vault")
 
 
-def test_vault_create_unlock_and_change_password(kit):
+@pytest.fixture
+def fast_kdf(monkeypatch):
+    """New vaults with cheap scrypt parameters: the real ones take half a second per call."""
+    from bombadil.appkit.native import vault as vault_mod
+
+    monkeypatch.setattr(vault_mod, "KDF", {"name": "scrypt", "n": 2 ** 10, "r": 8, "p": 1})
+
+
+def test_vault_create_unlock_and_change_password(kit, fast_kdf):
     v = vault(kit, "secrets")
     assert v.property("exists") is False and v.property("unlocked") is False
     assert v.create("correct horse") is True
@@ -194,7 +249,77 @@ def test_vault_create_unlock_and_change_password(kit):
     assert v.create("again") is False          # one vault per name
 
 
-def test_vault_survives_hot_reload_until_locked(kit):
+def test_vault_new_files_use_owasp_scrypt_and_old_files_still_open(kit, monkeypatch):
+    from bombadil.appkit.native import vault as vault_mod
+
+    fresh = vault(kit, "owasp")
+    assert fresh.create("pw") is True
+    assert json.loads((kit.ctx.data_dir / "owasp.vault").read_text())["kdf"] == \
+        {"name": "scrypt", "n": 2 ** 17, "r": 8, "p": 1}
+
+    old_kdf = {"name": "scrypt", "n": 2 ** 10, "r": 8, "p": 1}
+    monkeypatch.setattr(vault_mod, "KDF", old_kdf)       # a vault made by an older kit
+    old = vault(kit, "older")
+    assert old.create("pw") is True
+    monkeypatch.undo()
+    old.lock()
+    assert old.unlock("pw") is True
+    old.setProperty("data", [1])                          # saving keeps the file's parameters
+    path = kit.ctx.data_dir / "older.vault"
+    assert json.loads(path.read_text())["kdf"] == old_kdf
+
+
+def test_vault_refuses_key_derivation_that_asks_for_too_much(kit):
+    """The parameters are read before the password is checked: a file must not demand gigabytes."""
+    v = vault(kit, "greedy")
+    path = kit.ctx.data_dir / "greedy.vault"
+    for n, r, p in ((2 ** 20, 8, 1), (2 ** 15, 32, 1), (2 ** 15, 8, 16), (1000, 8, 1)):
+        path.write_text(json.dumps({"version": 1, "kdf": {"name": "scrypt", "n": n, "r": r, "p": p},
+                                    "salt": "AAAA", "nonce": "AAAA", "ciphertext": "AAAA"}))
+        started = time.monotonic()
+        assert v.unlock("pw") is False
+        assert v.property("error").startswith("the vault file is damaged"), v.property("error")
+        assert time.monotonic() - started < 0.5
+
+
+def test_vault_create_does_not_overwrite_what_another_object_made(kit, fast_kdf):
+    root = make(kit, '''Item { property var a: a; property var b: b
+        Vault { id: a; name: "shared" }
+        Vault { id: b; name: "shared" } }''')
+    a, b = root.property("a"), root.property("b")
+    assert a.create("first") is True
+    a.setProperty("data", [{"site": "bank"}])
+    assert b.property("exists") is False                 # b looked before a made the file
+    assert b.create("second") is False and b.property("error") == "a vault already exists"
+    assert b.property("exists") is True
+    assert b.unlock("first") is True and js(b.property("data")) == [{"site": "bank"}]
+
+    late = vault(kit, "appears-later")
+    (kit.ctx.data_dir / "appears-later.vault").write_bytes((kit.ctx.data_dir / "shared.vault").read_bytes())
+    assert late.property("exists") is False
+    assert late.unlock("first") is True and late.property("exists") is True
+
+
+def test_vault_change_password_keeps_the_old_key_when_saving_fails(kit, fast_kdf, monkeypatch):
+    from bombadil.appkit.native import vault as vault_mod
+
+    v = vault(kit, "readonly")
+    assert v.create("old")
+    v.setProperty("data", [1])
+
+    def fail(*_, **__):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(vault_mod, "atomic_write", fail)
+    assert v.changePassword("old", "new") is False and v.property("error") == "cannot save: disk full"
+    monkeypatch.undo()
+    v.setProperty("data", [2])                            # saved under the key that is on disk
+    v.lock()
+    assert v.unlock("new") is False
+    assert v.unlock("old") is True and js(v.property("data")) == [2]
+
+
+def test_vault_survives_hot_reload_until_locked(kit, fast_kdf):
     first = vault(kit, "reloaded")
     assert first.create("pw")
     first.setProperty("data", [{"k": "v"}])
@@ -207,19 +332,32 @@ def test_vault_survives_hot_reload_until_locked(kit):
     assert third.property("unlocked") is False and third.property("exists") is True
 
 
-def test_vault_auto_lock(kit):
+def test_vault_auto_lock(kit, fast_kdf):
     v = vault(kit, "shortlived", "autoLock: 1")
     assert v.create("pw")
     assert wait_until(lambda: not v.property("unlocked"), 3000)
     assert vault(kit, "shortlived").property("unlocked") is False
 
 
-def test_vault_in_check_works_in_memory_only(kit, checking):
+def test_vault_in_check_works_in_memory_only(kit, checking, fast_kdf):
     v = vault(kit, "dryrun")
-    assert v.create("pw") is True and v.property("unlocked") is True
+    assert v.create("pw") is True and v.property("unlocked") is True and v.property("exists") is True
     v.setProperty("data", [1, 2])
     assert js(v.property("data")) == [1, 2]
+    v.lock()
+    assert v.unlock("nope") is False and v.property("error") == "wrong password"
+    assert v.unlock("pw") is True and js(v.property("data")) == [1, 2]
+    assert v.changePassword("pw", "new") is True
+    v.lock()
+    assert v.unlock("new") is True and js(v.property("data")) == [1, 2]
+    assert v.create("again") is False and v.property("error") == "a vault already exists"
+    assert vault(kit, "dryrun").property("exists") is True
     assert not (kit.ctx.data_dir / "dryrun.vault").exists()
+
+
+def test_app_data_dir_is_absolute_in_check_too(kit, checking):
+    root = make(kit, "QtObject { property string d: App.dataDir }")
+    assert root.property("d") == str(kit.ctx.data_dir) and Path(root.property("d")).is_absolute()
 
 
 def test_vault_passwords():
@@ -231,9 +369,27 @@ def test_vault_passwords():
         assert any(c.islower() for c in pw) and any(c.isupper() for c in pw) and any(c.isdigit() for c in pw)
         assert any(c in SYMBOLS for c in pw) == symbols
     assert len({generate_password() for _ in range(20)}) == 20
-    assert strength("") == 0 and strength("password") == 0 and strength("aaaaaaaaaaaa") == 0
+    assert strength("") == 0 and strength("password") == 0
     assert strength("Tr0ub4dor&3") >= 2
     assert strength(generate_password()) == 4
+
+
+def test_vault_strength_is_the_password_fields_score(kit):
+    """A badge from Vault.strength and PasswordField's meter must never disagree."""
+    from bombadil.appkit.native.vault import generate_password, strength
+
+    pinned = {"password123": 0, "Summer2024!": 0, "sunshine2019": 0, "letmein!": 0, "qwerty123": 0,
+              "aaaaaaaaaaaa": 1, "abcd1234": 1}
+    assert {pw: strength(pw) for pw in pinned} == pinned
+    field = make(kit, "import QtQuick.Controls\nPasswordField {}")
+    samples = list(pinned) + [
+        "", "abc", "hunter2", "Tr0ub4dor&3", "correct horse battery staple", "aaa111bbb222", "zxcvbnm,./",
+        "P@ssw0rd!", "1990-05-17", "qwertyuiop", "Ünïcödé-pässwörd", "🙂🙂🙂🙂🙂🙂", "a🙂b🙂c🙂d", "x\ny\nz",
+        "ROOT", "MyDog2019", "9f8e7d6c", "!!!!!!!!", "Summer", "ab12CD34ef",
+    ] + [generate_password(n, sym) for n in (6, 8, 12, 20) for sym in (True, False)]
+    for pw in samples:
+        field.setProperty("text", pw)
+        assert strength(pw) == field.property("strength"), pw
 
 
 # -- Command --
@@ -285,6 +441,100 @@ Item {
     assert missing.property("stderr") == "no-such-program: command not found\n"
 
 
+def test_command_poller_never_shows_half_an_answer(kit):
+    root = make(kit, """
+Item {
+    property var seen: []
+    property var live: []
+    property var once: once
+    Command { id: poll; command: "echo a; sleep 0.3; echo b"; interval: 5000
+              onLinesChanged: seen = seen.concat([lines.join(",")]) }
+    Command { id: once; command: "echo a; sleep 0.6; echo b"
+              onStdoutChanged: live = live.concat([stdout]) }
+}""")
+    root.property("once").run()
+    assert wait_until(lambda: js(root.property("seen")) and len(js(root.property("live"))) >= 2, 3000)
+    assert set(js(root.property("seen"))) == {"a,b"}
+    assert js(root.property("live"))[:2] == ["a\n", "a\nb\n"]     # not a poller: streams
+
+
+def test_command_stdin_is_written_then_closed(kit):
+    root = make(kit, """
+Item {
+    property var sorter: sorter
+    property var counter: counter
+    property var tr: tr
+    property var repl: repl
+    Command { id: sorter; command: "sort"; stdin: "b\\na\\nc\\n" }
+    Command { id: counter; property int runs: 0; command: "wc -l"; interval: 100; onFinished: runs++ }
+    Command { id: tr; program: "tr"; args: ["a-z", "A-Z"]; stdin: "hello" }
+    Command { id: repl; command: "cat"; interactive: true }
+}""")
+    sorter, counter, tr, repl = (root.property(n) for n in ("sorter", "counter", "tr", "repl"))
+    sorter.run()
+    tr.run()
+    repl.run()
+    assert wait_until(lambda: sorter.property("stdout") == "a\nb\nc\n" and tr.property("stdout") == "HELLO")
+    assert wait_until(lambda: counter.property("runs") >= 2, 3000)      # the poller keeps going
+    assert counter.property("stdout").strip() == "0"
+    repl.write("line 1\n")
+    assert wait_until(lambda: repl.property("stdout") == "line 1\n")
+    assert repl.property("running") is True                            # still open for more
+    repl.kill()
+    sorter.write("ignored")                                             # not interactive: stdin is closed
+
+
+def test_command_interval_has_a_floor(kit):
+    root = make(kit, """
+Item {
+    property var c: c
+    property var p: p
+    Command { id: c; command: "true"; interval: 1 }
+    Processes { id: p; interval: 5 }
+}""")
+    c, p = root.property("c"), root.property("p")
+    assert c.property("interval") == 100 and p.property("interval") == 100
+    c.setProperty("interval", 0)
+    p.setProperty("interval", 0)
+    assert c.property("interval") == 0 and p.property("interval") == 0
+
+
+@pytest.mark.parametrize("command", [
+    "printf '[%s]'", "printf '[%s]'\n", "printf '[%s]';", "printf '[%s]' # comment",
+    "printf '[%s]' ;  # c; d\n\n", "echo a; printf '[%s]'\n# a comment line\n",
+])
+def test_command_extra_args_after_any_ending(kit, command):
+    c = make(kit, 'Item { property var c: c; Command { id: c } }').property("c")
+    c.setProperty("command", command)
+    c.run(["x y", "$HOME", "'q'"])
+    assert wait_until(lambda: not c.property("running"))
+    assert c.property("stdout").removeprefix("a\n") == "[x y][$HOME]['q']", c.property("stderr")
+
+
+def test_command_extra_args_keep_quoted_hashes_and_escaped_semicolons():
+    from bombadil.appkit.native.command import _with_args
+
+    assert _with_args("printf '[%s]' '#x'") == "printf '[%s]' '#x' \"$@\""
+    assert _with_args("find . -exec echo {} \\;") == "find . -exec echo {} \\; \"$@\""
+    assert _with_args("echo ${#x}  ") == "echo ${#x} \"$@\""
+
+
+def test_command_keeps_only_the_last_mib_of_output(kit):
+    from bombadil.appkit.native.command import LIMIT, _Output
+
+    c = make(kit, 'Item { property var c: c; Command { id: c; command: "seq 1 400000" } }').property("c")
+    c.run()
+    assert wait_until(lambda: c.property("exitCode") == 0)
+    out, lines = c.property("stdout"), js(c.property("lines"))
+    assert len(out) <= LIMIT and lines[-1] == "400000"
+    assert int(lines[0]) == 400000 - len(lines) + 1                   # starts at a whole line
+
+    o = _Output()
+    o.add("é".encode()[:1])
+    o.add("é".encode()[1:])                                             # split inside a character
+    assert o.fresh and o.text() == "é" and not o.fresh
+
+
 def _running(cmdline: str) -> bool:
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
@@ -311,6 +561,7 @@ Item {
     spin(100)
     assert f.property("external") == 0          # our own write is not "changed on disk"
 
+    gc.collect()                                # the shared watcher holds TextFiles weakly
     path.write_text("edited elsewhere")
     assert wait_until(lambda: tf.property("text") == "edited elsewhere", 2000)
     tmp = path.with_name(".swap")
@@ -326,6 +577,34 @@ Item {
     assert path.read_text() == "and again"
     assert tf.save() is True and path.read_text() == "in memory"
     assert tf.remove() is True and not path.exists() and tf.property("exists") is False
+
+
+def _inotify_instances() -> int:
+    n = 0
+    for fd in os.listdir("/proc/self/fd"):
+        with contextlib.suppress(OSError):
+            n += os.readlink(f"/proc/self/fd/{fd}") == "anon_inode:inotify"
+    return n
+
+
+def test_textfiles_share_one_inotify_instance(kit):
+    """A user may have 128 inotify instances in all; one per TextFile would run out."""
+    (kit.ctx.data_dir / "many").mkdir(parents=True, exist_ok=True)
+    make(kit, 'Item { TextFile { path: "many/warm-up.md" } }')
+    before = _inotify_instances()
+    root = make(kit, """
+Item {
+    property var last: last
+    Repeater { model: 40; delegate: Item { TextFile { path: "many/note-" + index + ".md" } } }
+    TextFile { id: last; path: "many/last.md" }
+}""")
+    assert _inotify_instances() == before
+    (kit.ctx.data_dir / "many" / "last.md").write_text("seen")
+    assert wait_until(lambda: root.property("last").property("text") == "seen", 2000)
+    destroy(root)
+    from bombadil.appkit.native import textfile
+
+    assert not [p for p in textfile._watcher._qt.files() if "/many/note-" in p]
 
 
 def test_textfile_paths_and_check(kit, checking):
@@ -368,6 +647,31 @@ def test_system_fields(kit):
     assert root.property("cpu") == v["cpu"] or 0 <= root.property("cpu") <= 1
 
 
+def test_system_disks_never_stat_network_mounts(monkeypatch):
+    """statvfs on a mount whose server is gone blocks the UI thread of every app using System."""
+    from bombadil.appkit.native import system
+
+    mounts = "\n".join([
+        "/dev/sda2 / ext4 rw 0 0",
+        "/dev/sda1 /boot vfat rw 0 0",
+        "/dev/sdb1 /mnt/win fuseblk rw 0 0",
+        "server:/export /mnt/nfs nfs4 rw 0 0",
+        "//nas/share /mnt/smb cifs rw 0 0",
+        "me@host:/ /mnt/ssh fuse.sshfs rw 0 0",
+        "tmpfs /tmp tmpfs rw 0 0",
+    ])
+    statted = []
+
+    def statvfs(path):
+        statted.append(path)
+        return SimpleNamespace(f_blocks=100, f_frsize=4096, f_bavail=50, f_bfree=60)
+
+    monkeypatch.setattr(system, "read", lambda path: mounts if path == "/proc/self/mounts" else "")
+    monkeypatch.setattr(system.os, "statvfs", statvfs)
+    assert [d["mount"] for d in system.disks()] == ["/", "/boot", "/mnt/win"]
+    assert statted == ["/", "/boot", "/mnt/win"]
+
+
 def test_system_first_read_in_a_binding_is_clean(kit):
     """The singleton is made inside the first binding that mentions it; that must not look like a loop."""
     from PySide6.QtCore import qInstallMessageHandler
@@ -406,7 +710,7 @@ Item {
         assert root.property(name) is True, name
 
 
-def test_lists_from_native_types_are_real_arrays(kit):
+def test_lists_from_native_types_are_real_arrays(kit, fast_kdf):
     root = make(kit, """
 Item {
     property bool procs: Array.isArray(p.list) && p.list.length > 0 && p.details(p.list[0].pid).pid === p.list[0].pid
@@ -458,6 +762,17 @@ Item {
     assert {"swap", "shared", "oomScore", "user", "command", "name"} <= set(d)
     assert js(procs.details(2 ** 22 + 12345)) is None
     assert procs.kill(2 ** 22 + 12345) is False
+
+
+def test_processes_list_is_there_in_on_completed(kit):
+    root = make(kit, """
+Item {
+    property int seen: -1
+    property int count: -1
+    Processes { id: p; sortBy: "pid"; descending: false; limit: 3; interval: 0 }
+    Component.onCompleted: { seen = p.list.length; count = p.count }
+}""")
+    assert root.property("seen") == 3 and root.property("count") > 3
 
 
 def test_processes_kill_does_nothing_in_check(kit, checking):
@@ -576,7 +891,7 @@ QtObject {
     assert root.property("resolved") == str(kit.ctx.data_dir / "kitfiles" / "x.txt")
 
 
-def test_agent_reply_only_for_this_apps_prompts(kit, monkeypatch, tmp_path):
+def test_agent_reply_only_for_this_apps_turns(kit, monkeypatch, tmp_path):
     from bombadil.appkit.native.agent import Agent
 
     a = Agent(kit.ctx)
@@ -584,29 +899,38 @@ def test_agent_reply_only_for_this_apps_prompts(kit, monkeypatch, tmp_path):
     a.replied.connect(replies.append)
     a.handle({"type": "status", "busy": False, "provider": "claude"})
     assert a.property("provider") == "claude"
-    a._sent.append(f"[from app {kit.ctx.name}] hi")
+    a._waiting = 2                               # two prompts sent
     for msg in (
-        {"type": "event", "kind": "turn_start", "prompt": "someone else"},
-        {"type": "event", "kind": "text", "text": "not for us"},
-        {"type": "event", "kind": "turn_end"},
-        {"type": "event", "kind": "turn_start", "prompt": f"[from app {kit.ctx.name}] hi"},
-        {"type": "event", "kind": "text", "text": "Hello"},
-        {"type": "event", "kind": "text", "text": "there"},
-        {"type": "event", "kind": "result", "ok": True, "text": "Hello\n\nthere"},
-        {"type": "event", "kind": "turn_end"},
+        {"type": "event", "kind": "turn_start", "turn": 6, "prompt": "someone else"},
+        {"type": "queued", "turn": 7},
+        {"type": "event", "kind": "text", "turn": 6, "text": "not for us"},
+        {"type": "event", "kind": "turn_end", "turn": 6},
+        {"type": "event", "kind": "turn_start", "turn": 7, "prompt": f"[from app {kit.ctx.name}] hi"},
+        {"type": "event", "kind": "text", "turn": 7, "text": "Hello"},
+        {"type": "event", "kind": "text", "turn": 7, "text": "there"},
+        {"type": "event", "kind": "result", "turn": 7, "ok": True, "text": "Hello\n\nthere"},
+        {"type": "event", "kind": "turn_end", "turn": 7},
     ):
         a.handle(msg)
     assert replies == ["Hello\n\nthere"] and a.property("reply") == "Hello\n\nthere"
+    for msg in (                                 # agentd fails a turn before it starts
+        {"type": "queued", "turn": 8},
+        {"type": "event", "kind": "error", "turn": 8, "text": "claude is not installed yet"},
+        {"type": "event", "kind": "turn_end", "turn": 8, "seconds": 0},
+    ):
+        a.handle(msg)
+    assert replies[-1] == a.property("reply") == "Error: claude is not installed yet"
 
 
-def test_agent_talks_to_agentd(kit, monkeypatch, tmp_path):
-    from bombadil import agentd, providers
-    from bombadil.appkit.native.agent import Agent
+@contextlib.contextmanager
+def _agentd(monkeypatch, tmp_path, provider):
+    """A real agentd on a socket in tmp_path, served from a thread."""
+    from bombadil import agentd
 
     sock = tmp_path / "agentd.sock"
     monkeypatch.setenv("BOMBADIL_SOCKET", str(sock))
     monkeypatch.setenv("BOMBADIL_STATE", str(tmp_path / "state"))
-    daemon = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), socket_path=sock)
+    daemon = agentd.AgentD(provider, agentd._NoSnapshots(), socket_path=sock)
     loop = asyncio.new_event_loop()
     task = loop.create_task(daemon.serve())
 
@@ -623,24 +947,56 @@ def test_agent_talks_to_agentd(kit, monkeypatch, tmp_path):
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    a = None
     try:
-        a = Agent(kit.ctx)
-        replies = []
-        a.replied.connect(replies.append)
-        a.ask("what is running?")               # queued until the connection is up
-        a.start()
-        assert wait_until(lambda: a.property("connected"), 5000)
-        assert a.property("provider") == "fake"
-        assert wait_until(lambda: replies, 5000)
-        assert replies[0] == f"echo: [from app {kit.ctx.name}] what is running?"
-        assert a.property("reply") == replies[0]
+        yield
     finally:
-        if a is not None:
-            a._retry.stop()
-            a._socket.abort()
         loop.call_soon_threadsafe(task.cancel)
         thread.join(2)
+
+
+def test_agent_talks_to_agentd(kit, monkeypatch, tmp_path):
+    from bombadil import providers
+    from bombadil.appkit.native.agent import Agent
+
+    with _agentd(monkeypatch, tmp_path, providers.Fake("x")):
+        a = Agent(kit.ctx)
+        try:
+            replies = []
+            a.replied.connect(replies.append)
+            a.ask("what is running?")               # queued until the connection is up
+            a.start()
+            assert wait_until(lambda: a.property("connected"), 5000)
+            assert a.property("provider") == "fake"
+            assert wait_until(lambda: replies, 5000)
+            assert replies[0] == f"echo: [from app {kit.ctx.name}] what is running?"
+            assert a.property("reply") == replies[0]
+        finally:
+            a._retry.stop()
+            a._socket.abort()
+
+
+def test_agent_reports_a_provider_that_is_not_installed(kit, monkeypatch, tmp_path):
+    """agentd sends error and turn_end with no turn_start then; the app still gets its answer."""
+    from bombadil import providers
+    from bombadil.appkit.native.agent import Agent
+
+    class Missing(providers.Fake):
+        installed = False
+
+    with _agentd(monkeypatch, tmp_path, Missing("x")):
+        a = Agent(kit.ctx)
+        try:
+            replies = []
+            a.replied.connect(replies.append)
+            a.start()
+            assert wait_until(lambda: a.property("connected"), 5000)
+            a.ask("hello")
+            assert wait_until(lambda: replies, 5000)
+            assert replies[0].startswith("Error: ") and "not installed" in replies[0]
+            assert a.property("reply") == replies[0]
+        finally:
+            a._retry.stop()
+            a._socket.abort()
 
 
 def test_agent_stays_offline_in_check(kit, checking, monkeypatch, tmp_path):
