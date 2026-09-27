@@ -61,7 +61,22 @@ check browser-hide mcp_call hide_panel '{"name":"browser"}'
 qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
+# The app kit: each app slides in from its own drawer, reports its load, and the skill is installed.
+app_ok() { as_user bombadil-app status "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d.get("ok") and d.get("running")))'; }
+app_hidden() { as_user bombadil-app hide "$1"; sleep 2; ! special_shown "app-$1"; }
+open_example() { as_user cp -rT "/usr/share/bombadil/share/skills/bombadil-apps/examples/$1" "/home/user/Apps/$1" && mcp_call open_app "{\"name\":\"$1\"}"; }
+check app-shown wait_for 30 special_shown app-smoke-test
+check app-status wait_for 30 app_ok smoke-test
+check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 shot app
+check app-hide app_hidden smoke-test
+for ex in memory password-manager; do
+  [[ -d "/usr/share/bombadil/share/skills/bombadil-apps/examples/$ex" ]] || continue
+  check "example-$ex" open_example "$ex"
+  check "example-$ex-shown" wait_for 60 special_shown "app-$ex"
+  check "example-$ex-status" wait_for 30 app_ok "$ex"
+  shot "$ex"
+done
 check screenshot grab
 
 
