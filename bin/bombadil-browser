@@ -24,10 +24,13 @@ def tell_agentd(url: str) -> bool:
             s.connect(str(paths.socket_path()))
             s.sendall((json.dumps(msg) + "\n").encode())
             s.shutdown(socket.SHUT_WR)
+        except OSError:
+            return False
+        try:
             while s.recv(65536):   # agentd hangs up once it has read the line
                 pass
         except OSError:
-            return False
+            pass   # slow to hang up, but it has the URL: opening it here too would open it twice
     return True
 
 

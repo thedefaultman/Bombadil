@@ -1,1 +1,2 @@
-BROWSER=bombadil-browser
+# Every link opens in the browser panel. A bare path: Codex's opener wants an executable path.
+BROWSER=/usr/local/bin/bombadil-browser

@@ -74,8 +74,9 @@ class DevTools:
         return [t for t in out if isinstance(t, dict) and t.get("type") == "page"] if isinstance(out, list) else []
 
     def new_tab(self, url: str) -> dict:
-        # Chromium only takes PUT here; the URL is the whole query string, unencoded '?' included.
-        return self._get("/json/new?" + urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%-._~"), method="PUT")
+        # Chromium only takes PUT here, keeps the query up to its first "&" and unescapes it:
+        # the whole URL goes percent-encoded, or a sign-in page loses all but its first field.
+        return self._get("/json/new?" + urllib.parse.quote(url, safe=""), method="PUT")
 
     def activate(self, tab_id: str) -> None:
         self._get(f"/json/activate/{tab_id}")
