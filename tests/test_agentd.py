@@ -35,6 +35,8 @@ async def test_turn_round_trip(home):
                      "snapshots": False, "queued": 0, "turn": None, "queue": []}
     entries = json.loads(await r.readline())
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
+    sessions = json.loads(await r.readline())
+    assert sessions["type"] == "dev" and sessions["sessions"] == [] and sessions["line"] == ""
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
     await w.drain()
     msgs = await _read_until(r, "turn_end")
@@ -74,6 +76,7 @@ async def _start(d):
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # coding sessions
     return server, r, w
 
 

@@ -9,6 +9,10 @@
   bombadil history                     recent turns and launcher actions
   bombadil undo                        roll back the last turn (reboot to apply)
   bombadil provider claude|codex       switch provider (restart agentd to apply)
+  bombadil dev list                    the coding sessions and what each is doing
+  bombadil dev next                    bring the next session waiting for you to the front
+  bombadil dev why <key>               the last screen of a session that stopped
+  bombadil dev run <key> [--resume]    (inside a session's pane) run its tool
 """
 import json
 import socket
@@ -16,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, paths, snapshots, watch  # noqa: E402
+from bombadil import config, dev, paths, snapshots, watch  # noqa: E402
 
 
 def talk(msg: dict, until: str | None = "turn_end"):
@@ -82,6 +86,33 @@ def send(msg: dict) -> int:
     return 0
 
 
+def dev_command(args: list[str]) -> int:
+    sub = args[0] if args else "list"
+    if sub == "run" and len(args) > 1:
+        return dev.run(args[1], resume="--resume" in args)
+    if sub == "next":
+        return send({"type": "dev", "action": "next"})
+    if sub == "list":
+        for line in dev.Dev().listing():
+            print(line)
+        watch.wait_for_key()
+        return 0
+    if sub == "why" and len(args) > 1:
+        s = dev.Dev().sessions.get(args[1])
+        path = Path(s.why) if s is not None and s.why else None
+        if path is None or not path.exists():
+            print("No last screen was kept for that session.")
+        else:
+            print(f"The last screen of {s.title}, before it stopped:\n")
+            print(path.read_text(errors="replace").rstrip())
+            print(f"\nType “{s.role if s.role != s.tool else s.tool + ' ' + s.project.lower()}” "
+                  "in the pill to resume it.")
+        watch.wait_for_key()
+        return 0
+    print(__doc__)
+    return 2
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -109,6 +140,8 @@ def main() -> int:
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
         return 0 if s else 1
+    elif cmd == "dev":
+        return dev_command(args)
     elif cmd == "provider":
         if args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")

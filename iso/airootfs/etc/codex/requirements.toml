@@ -1,0 +1,47 @@
+# Bombadil: Codex tells the dots beside the pill how each session is doing (bombadil-signal).
+# Hooks set here are managed, so they run without a trust prompt. They are skipped inside the
+# machine's own agent (BOMBADIL_OS=1). Agent-turn-complete also arrives through `notify` in
+# ~/.codex/config.toml, for Codex versions whose hooks do not reach it.
+check_for_update_on_startup = false
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+async = true
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+async = true
+
+[[hooks.PermissionRequest]]
+[[hooks.PermissionRequest.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+async = true
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+async = true
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+async = true
+
+[[hooks.Interrupt]]
+[[hooks.Interrupt.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+timeout = 2
+
+[[hooks.SessionEnd]]
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "bombadil-signal codex"
+timeout = 2

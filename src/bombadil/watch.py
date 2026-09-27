@@ -189,6 +189,9 @@ def history_lines(limit: int = 40, color: bool = False) -> list[str]:
         if e.get("kind") == "local":
             out.append(c(DIM, f"  {when}  {e.get('prompt', '')}: {e.get('result', '')}"))
             continue
+        if e.get("kind") == "dev":
+            out.append(c(DIM, f"  {when}  {e.get('result', '')}"))
+            continue
         end = e.get("summary") or ("Stopped." if e.get("stopped") else "")
         if not end:
             end = (e.get("result") or "").strip().splitlines()[0][:80] if (e.get("result") or "").strip() else ""

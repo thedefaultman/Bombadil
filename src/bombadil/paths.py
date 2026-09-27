@@ -42,3 +42,12 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def projects_dir() -> Path:
+    return _env_path("BOMBADIL_PROJECTS", home() / "Projects")
+
+
+def dev_dir() -> Path:
+    """Where the coding sessions' registry and last screens live."""
+    return state_dir() / "dev"

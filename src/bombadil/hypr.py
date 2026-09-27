@@ -29,6 +29,12 @@ def _socket_path() -> Path | None:
     return Path(base) / "hypr" / sig / ".socket.sock"
 
 
+def events_path() -> Path | None:
+    """Hyprland's event socket (activewindow, openwindow, ...), one line per event."""
+    p = _socket_path()
+    return p.with_name(".socket2.sock") if p is not None else None
+
+
 def _launching(cmd: list[str]) -> bool:
     """Is this panel's app already running (e.g. Chromium still starting, no window yet)?"""
     marker = next((a for a in cmd if a.startswith(("--class=", "--app-id="))), None)

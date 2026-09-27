@@ -5,6 +5,8 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
     hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
     hl.exec_cmd("mako")
+    -- One foot server for the coding sessions' windows, so a session's window rises at once.
+    hl.exec_cmd("foot --server")
     hl.exec_cmd("bombadil-setup --first-run")
 end)
 
@@ -59,6 +61,16 @@ hl.window_rule({
     float = true,
     center = true,
     size = "540 660",
+})
+
+-- A coding session's window (foot on its zellij session, dev.py) rises large in the middle, clear
+-- of the pill. It is only a viewer: closing it leaves the session running.
+hl.window_rule({
+    name = "bombadil-sessions",
+    match = { class = "^(bombadil-session-.*)$" },
+    float = true,
+    center = true,
+    size = "86% 80%",
 })
 
 -- Panel apps open straight into their panel; os-mcp (hypr.py) only launches and toggles.
