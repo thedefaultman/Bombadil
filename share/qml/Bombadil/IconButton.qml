@@ -30,8 +30,10 @@ Item {
         icon.source: root.icon ? Theme.icon(root.icon) : ""
         icon.width: Math.max(14, Math.round(root.size / 2))
         icon.height: Math.max(14, Math.round(root.size / 2))
-        // Empty (transparent) leaves the style's muted/hover/checked colors.
-        icon.color: root.tone ? Theme.tone(root.tone) : "transparent"
+        // The style's colors, spelled out: an explicitly set transparent color draws the SVG black.
+        icon.color: root.tone ? Theme.tone(root.tone)
+                  : checked ? Theme.accent
+                  : hovered || down ? Theme.fg : Theme.muted
         Accessible.name: root.tooltip
         ToolTip.visible: hovered && root.tooltip !== ""
         ToolTip.text: root.tooltip

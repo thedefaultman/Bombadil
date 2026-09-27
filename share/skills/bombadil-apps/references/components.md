@@ -35,10 +35,29 @@ is a square icon button.
 - `ToolButton { icon.source: Theme.icon("settings") }`: 32 px flat icon button, muted until
   hovered, accent when `checked`. Add `ToolTip.text: "..."; ToolTip.visible: hovered`.
 - `Dialog` is modal and centered by default; `standardButtons: Dialog.Save | Dialog.Cancel`
-  puts the buttons at the bottom right with the affirmative one highlighted and last.
+  puts the buttons at the bottom right with the affirmative one highlighted and last. A
+  dialog is never taller than the window (its content is clipped), so put a long form in
+  a `ScrollPane`. For buttons of your own (a Save that is disabled until the form is
+  valid), use a custom footer and name the primary one with `defaultButton` (the box
+  resets `highlighted` on every button it holds):
+
+  ```qml
+  Dialog {
+      id: editor; title: "New entry"
+      Form { Field { label: "Name"; TextField { id: name } } }
+      footer: DialogButtonBox {
+          defaultButton: save
+          Button { text: "Cancel"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole }
+          Button { id: save; text: "Save"; enabled: name.text !== ""; DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole }
+      }
+      onAccepted: add(name.text)
+  }
+  ```
 - `MenuItem { danger: true }` is a red destructive entry. `TabBar` draws text tabs with an
   accent underline; `ItemDelegate { highlighted: true }` is a selected row.
 - `TextArea` wraps by default; put it in a `ScrollView` when the text can grow.
+- Keyboard shortcuts: `Shortcut { sequence: "Ctrl+N"; onActivated: add() }`. Use the string
+  form; `StandardKey.New` maps to several keys and warns.
 
 ## Theme (singleton)
 
@@ -123,7 +142,8 @@ Children stack in a `ColumnLayout`, packed at the top unless one has
 `Layout.fillHeight: true` (a list or table that takes the rest). Panels side by side in
 a `RowLayout` or `GridLayout` all get the height of the tallest one, so a row of cards
 lines up without extra settings; a Panel with `Layout.fillHeight: true` takes the row's
-full height instead.
+full height instead. Items in `actions` refer to the Panel's own properties through its
+id (`details.title`), not bare names.
 
 ### Spacer
 `Spacer {}` takes the free space along its layout: width in a `RowLayout` (pushes the
@@ -197,7 +217,8 @@ signal `action()` (a button is shown when `actionText` is set).
 ### DetailGrid
 Two-column label/value pairs. `rows: [{ label: "PID", value: "1234" }, ...]`; optional
 `mono: true` on a row renders its value in the mono font, `copyable: true` adds a copy
-button (copies to the clipboard). An empty or missing value shows `"—"`; values can be
+button (copies to the clipboard; add `secret: true` for a password so the clipboard clears
+after 30 s). An empty or missing value shows `"—"`; values can be
 selected.
 
 ## Lists and tables
@@ -231,7 +252,9 @@ var item)` (right click). Up/Down/Home/End move the selection once the list has 
 
 When `model` is replaced by a new array (filtering, an edit saved to a `Store`), the
 selection stays on the same item, matched by its `id`, `uuid`, `key` or `pid` field, else
-by equal content, and the scroll position is kept. A custom `delegate` is a normal
+by equal content, and the scroll position is kept. When the selected item is gone from
+the new array (deleted, filtered out), `currentIndex` becomes -1 and `current` `null`;
+set `currentIndex` yourself to select a neighbour. A custom `delegate` is a normal
 `ListView` delegate (`index`, `modelData`); set `selected: ListView.isCurrentItem` on a
 `ListRow`. Clicks select rows whatever the delegate.
 
@@ -287,7 +310,9 @@ DataTable {
 
 ### Form
 A `ColumnLayout` for `Field`s with `Theme.gap` spacing. Property `labelWidth`: when set,
-labels sit to the left at that width instead of above.
+labels sit to the left at that width instead of above. It fills the width of its layout;
+for a narrower form (an unlock screen) give it `Layout.fillWidth: false;
+Layout.preferredWidth: 320; Layout.alignment: Qt.AlignHCenter`.
 
 ### Field
 A labeled wrapper around one control. Properties: `label`, `hint` (muted help under the
@@ -307,9 +332,11 @@ Form {
 A `TextField` with `echoMode: TextInput.Password` and an eye button to reveal it.
 Extra properties: `revealed` (bool), `showStrength` (bool, draws a 4-step meter under
 it, using `strength`), `strength` (0..4, computed from `text`: length and character
-variety, minus common passwords, repeats and sequences like `1234`). Everything else
-is `TextField` (`text`, `placeholderText`, `onAccepted`, ...). It fills the width of its
-layout.
+variety, minus common passwords, repeats and sequences like `1234`; `Vault.strength()`
+gives the same score). Everything else is `TextField` (`text`, `placeholderText`,
+`onAccepted`, ...). It fills the width of its layout, and a revealed password shows in the
+mono font. With `showStrength`, a button placed beside it in a `RowLayout` needs
+`Layout.alignment: Qt.AlignTop` to line up with the field rather than field plus meter.
 
 ## Editing
 

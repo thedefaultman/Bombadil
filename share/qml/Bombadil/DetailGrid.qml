@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 
 // Label/value pairs in two aligned columns:
-// rows: [{ label: "PID", value: "1234", mono: true, copyable: true }, ...]
+// rows: [{ label: "PID", value: "1234", mono: true, copyable: true, secret: false }, ...]
 GridLayout {
     id: root
 
@@ -65,7 +65,7 @@ GridLayout {
                 tone: cell.copied ? "good" : ""
                 tooltip: cell.copied ? "Copied" : "Copy"
                 onClicked: {
-                    Clipboard.copy(root._show(cell.modelData.value))
+                    Clipboard.copy(root._show(cell.modelData.value), cell.modelData.secret ? 30 : 0)
                     cell.copied = true
                     copiedTimer.restart()
                 }

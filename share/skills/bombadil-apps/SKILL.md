@@ -98,7 +98,7 @@ AppWindow {
 | a table explorer (processes, files, logs) | `SearchField` in `actions`, a full-size `DataTable`, a detail `Panel` or `Dialog` on `activated` |
 | a form tool (converter, generator, calculator) | a `Panel` with a `Form` of `Field`s and a result `Mono` with a copy `IconButton` |
 | an editor (notes, config files, scripts) | `Editor { path: "~/notes.md" }` with a file list beside it |
-| anything with secrets | `Vault` behind an unlock screen (`EmptyState` + `PasswordField`), `Clipboard.copy(pw, 30)` |
+| anything with secrets | `Vault` behind an unlock screen (`examples/password-manager/LockScreen.qml`), `Clipboard.copy(pw, 30)`, close what shows secrets `onUnlockedChanged` |
 
 ## The kit at a glance
 

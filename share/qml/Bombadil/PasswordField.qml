@@ -13,6 +13,7 @@ TextField {
     readonly property int strength: _estimate(text)
 
     echoMode: revealed ? TextInput.Normal : TextInput.Password
+    font.family: revealed ? Theme.monoFamily : Theme.fontFamily   // l, I and 1 stay apart when shown
     passwordCharacter: "•"
     rightPadding: 40
     bottomInset: showStrength ? 10 : 0

@@ -34,7 +34,7 @@ FocusScope {
     // A child takes the free height when it has Layout.fillHeight (and no maximum). Nested
     // layouts default to fillHeight, so they count only when something inside them does.
     function _grows(item) {
-        if (!item.visible || !item.Layout.fillHeight || isFinite(item.Layout.maximumHeight))
+        if (!item.visible || !item.Layout.fillHeight || item.Layout.maximumHeight < 1e30)   // "no maximum" reads as FLT_MAX or Infinity
             return false
         if (!(item instanceof ColumnLayout || item instanceof RowLayout || item instanceof GridLayout))
             return true

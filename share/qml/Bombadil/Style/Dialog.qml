@@ -19,6 +19,9 @@ T.Dialog {
     parent: T.Overlay.overlay
     x: parent ? Math.round((parent.width - width) / 2) : 0
     y: parent ? Math.round((parent.height - height) / 2) : 0
+    // Never taller than the window; the content is clipped (put a long form in a ScrollPane).
+    height: parent ? Math.min(implicitHeight, parent.height - 2 * Theme.pad) : implicitHeight
+    Component.onCompleted: if (contentItem) contentItem.clip = true
     modal: true
     margins: Theme.pad
     padding: 20

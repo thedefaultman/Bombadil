@@ -11,7 +11,7 @@ Item {
     height: 1300
 
     readonly property var entries: [
-        { id: 1, title: "GitHub", subtitle: "daniel@latchkey.dev", icon: "globe", when: "2 days ago" },
+        { id: 1, title: "GitHub", subtitle: "sam@example.com", icon: "globe", when: "2 days ago" },
         { id: 2, title: "Arch Wiki", subtitle: "daniel", icon: "globe", when: "yesterday" },
         { id: 3, title: "Router admin", subtitle: "admin", icon: "wifi", when: "5 min ago" },
         { id: 4, title: "SSH key passphrase", icon: "key", when: "3 Sep" },
