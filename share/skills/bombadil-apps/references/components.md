@@ -330,7 +330,7 @@ Properties: `title`, `text`, `confirmText` (`"Confirm"`), `cancelText` (`"Cancel
 and `closed()` work too.
 
 For anything else use `Dialog` from QtQuick.Controls (already styled) and
-`AppWindow.toast()` for transient messages.
+`toast()` on your AppWindow (`win.toast("Saved", "good")`, where `win` is its id) for transient messages.
 
 ## Charts
 
