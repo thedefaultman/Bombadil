@@ -92,6 +92,7 @@ ShellRoot {
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
+                Region { item: setupChips }
                 Region { item: chips }
                 Region { item: pillBox }
             }
@@ -129,6 +130,15 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: 900
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                // Which AI, Sign in, Show sign-in: the choices under the setup line.
+                SetupChips {
+                    id: setupChips
+                    pill: pillState
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: 900
                 }
 
                 QueueChips {

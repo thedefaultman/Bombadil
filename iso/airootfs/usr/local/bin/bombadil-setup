@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
-# First-run wizard: pick the provider and log in. Re-run any time with `bombadil-setup`.
+# Pick the provider and sign in, from a terminal. First boot does this in the pill (agentd asks
+# which AI and opens the sign-in in the browser panel); this is the fallback, and it works the
+# same way: the sign-in page opens in the browser panel through bombadil-browser.
 set -euo pipefail
 cfg="$HOME/.config/bombadil/config.toml"
-if [[ "${1:-}" == "--first-run" && -f "$cfg" ]]; then exit 0; fi
-[[ "${1:-}" == "--first-run" ]] && exec foot -a bombadil-setup -e "$0"
+[[ "${1:-}" == "--first-run" && -f "$cfg" ]] && exit 0
 
-echo "Welcome to Bombadil. Which agent should run this machine?"
+echo "Which AI should run this computer?"
 select provider in claude codex; do [[ -n "$provider" ]] && break; done
-mkdir -p "$(dirname "$cfg")"
-printf 'provider = "%s"\n' "$provider" > "$cfg"
-
 case "$provider" in
-  claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code; claude auth login ;;
-  codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex;            codex login ;;
+  claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code ;;
+  codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex ;;
 esac
-pkill -x agentd || true
-hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null
-echo "Done. Type in the bar at the bottom of the screen."
-read -r -p "Press enter to close."
+if bombadil provider "$provider" && bombadil status >/dev/null 2>&1; then
+  echo "Done. Type in the pill at the bottom of the screen."
+else
+  # No agentd to ask: run the CLI's own login, with its page in the browser panel.
+  mkdir -p "$(dirname "$cfg")"
+  printf 'provider = "%s"\n' "$provider" > "$cfg"
+  export BROWSER=bombadil-browser
+  case "$provider" in
+    claude) claude auth login ;;
+    codex)  codex login ;;
+  esac
+  pkill -x agentd || true
+  hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null 2>&1 || true
+  echo "Done. Type in the pill at the bottom of the screen."
+fi
+[[ -t 0 ]] && read -r -p "Press enter to close."
+exit 0

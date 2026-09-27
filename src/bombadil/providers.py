@@ -9,7 +9,11 @@ The CLI flags live only here, so a CLI change is a one-file fix.
 
 import json
 import os
+import re
 import shutil
+import subprocess
+import sys
+import urllib.parse
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,9 +45,15 @@ def mcp_config(path: Path, mcp_command: str) -> Path:
 class Provider:
     """One provider CLI. agentd writes the prompt to the CLI's stdin (so a prompt that starts
     with "-" or names a subcommand is never parsed as arguments) and feeds each stdout line to
-    `parse` as it arrives, so the bar streams the reply."""
+    `parse` as it arrives, so the bar streams the reply.
+
+    Signing in (signin.py) runs `signin_command` in a terminal and asks the adapter which URLs
+    are its sign-in page, which tab address carries a code to paste, whether it is signed in,
+    and whether an error means the login is gone."""
     name = ""
+    title = ""                                    # how the pill names it: "Claude"
     binary = ""
+    signin_host: tuple[str, int] | None = None    # reachable = online enough to sign in
 
     def __init__(self, mcp_command: str, model: str | None = None):
         self.mcp_command = mcp_command
@@ -72,6 +82,63 @@ class Provider:
     def login_command(self) -> list[str]:
         return [self.binary]
 
+    # -- signing in --
+
+    def signin_command(self) -> list[str]:
+        return self.login_command()
+
+    def signin_url_kind(self, url: str) -> str | None:
+        """"auto" for this provider's sign-in page when it returns to the CLI on localhost by
+        itself, "manual" when it ends on a code to paste, None for any other URL."""
+        return None
+
+    def code_from_url(self, url: str) -> str | None:
+        """The code to type into the CLI's prompt, when a tab is at the page that shows it."""
+        return None
+
+    def signed_in(self) -> bool | None:
+        """Signed in? None when it cannot tell (the CLI is missing or said nothing useful)."""
+        return None
+
+    def signed_out(self, text: str) -> bool:
+        """Does this error say the login is gone (expired, revoked, never made)?"""
+        return bool(text) and any(re.search(p, text, re.I | re.M) for p in self.SIGNED_OUT)
+
+    SIGNED_OUT: tuple[str, ...] = ()
+    ends_when_signed_out = False   # end the turn at the first sign, rather than let the CLI retry
+
+    def signin_error(self, text: str) -> str:
+        """Why a login failed, from what the CLI printed: one short plain line."""
+        from .signin import last_words
+        for pattern, plain in self.SIGNIN_ERRORS:
+            if re.search(pattern, text, re.I):
+                return plain
+        return last_words(text)
+
+    SIGNIN_ERRORS: tuple[tuple[str, str], ...] = (
+        (r"ENOTFOUND|EAI_AGAIN|getaddrinfo|network ?error|Could not resolve|dns error|error sending request",
+         "no internet"),
+        (r"timed? ?out", "the sign-in server did not answer"),
+    )
+
+    def _status(self, argv: list[str], timeout: float = 20) -> subprocess.CompletedProcess | None:
+        if not self.installed:
+            return None
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                                  stdin=subprocess.DEVNULL, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+
+
+def _query(url: str) -> tuple[urllib.parse.SplitResult, dict[str, str]]:
+    u = urllib.parse.urlsplit(url)
+    return u, dict(urllib.parse.parse_qsl(u.query))
+
+
+def _local(url: str) -> bool:
+    return (urllib.parse.urlsplit(url).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
 
 def _json(line: str) -> dict | None:
     try:
@@ -93,7 +160,10 @@ def _result_text(content) -> str:
 
 class Claude(Provider):
     name = "claude"
+    title = "Claude"
     binary = "claude"
+    # The sign-in page is claude.com's; the code is exchanged at platform.claude.com.
+    signin_host = ("platform.claude.com", 443)
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         cmd = [self.binary, "-p",
@@ -135,6 +205,10 @@ class Claude(Provider):
                     yield {"kind": "text_delta", "text": d["text"]}
                 elif d.get("type") == "input_json_delta":
                     yield {"kind": "tool_input", "index": e.get("index", 0), "partial": d.get("partial_json", "")}
+        elif t == "assistant" and m.get("error") == "authentication_failed":
+            # "Not logged in · Please run /login" and its kin: the login is gone. The result
+            # line that follows carries the words; this is the structured sign.
+            yield {"kind": "signed_out"}
         elif t == "assistant":
             for block in m.get("message", {}).get("content", []):
                 if block.get("type") == "text" and block.get("text"):
@@ -161,6 +235,54 @@ class Claude(Provider):
     def login_command(self):
         return [self.binary, "auth", "login"]
 
+    # `claude auth login` (Claude Code 2.1.283, checked 2026-09-27) prints "If the browser
+    # didn't open, visit: <URL>" and "Paste code here if prompted > ", and 5 ms later hands
+    # $BROWSER the same page with redirect_uri=http://localhost:<port>/callback. That page
+    # comes back to the CLI by itself; the printed one ends at platform.claude.com's code page,
+    # whose address holds code and state, typed in as "code#state". It waits forever; success
+    # is "Login successful." and exit 0. Credentials: ~/.claude/.credentials.json (0600).
+
+    AUTH_HOSTS = ("claude.com", "claude.ai", "platform.claude.com", "console.anthropic.com")
+    CODE_PAGES = ("platform.claude.com", "console.anthropic.com")
+
+    def signin_url_kind(self, url):
+        u, q = _query(url)
+        if u.scheme != "https" or (u.hostname or "") not in self.AUTH_HOSTS or not u.path.endswith("/oauth/authorize"):
+            return None
+        return "auto" if _local(q.get("redirect_uri", "")) else "manual"
+
+    def code_from_url(self, url):
+        u, q = _query(url)
+        if (u.hostname or "") in self.CODE_PAGES and u.path == "/oauth/code/callback" and q.get("code"):
+            return f"{q['code']}#{q.get('state', '')}"
+        return None
+
+    def signed_in(self):
+        # Exit 0 when credentials are stored (it does not ask the server whether they still
+        # work: a turn finds that out, and signs in again).
+        r = self._status([self.binary, "auth", "status"])
+        if r is None:
+            return None
+        if r.returncode == 0:
+            return True
+        try:
+            return bool(json.loads(r.stdout).get("loggedIn"))
+        except (json.JSONDecodeError, AttributeError):
+            return False if r.returncode == 1 else None
+
+    SIGNED_OUT = (
+        r"Please run /login", r"Not logged in", r"Failed to authenticate", r"Login expired",
+        r"OAuth (access )?token (has been revoked|has expired|is invalid)", r"Invalid bearer token",
+        r"does not have access to Claude\. Please login again", r"Credential is invalid",
+    )
+    SIGNIN_ERRORS = (
+        (r"EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|getaddrinfo|socket hang up", "no internet"),
+        (r"status code 429", "too many tries; wait a minute, then sign in again"),
+        (r"status code 4\d\d", "the sign-in was refused; try again"),
+        (r"Invalid state parameter", "that page was from an older sign-in; try again"),
+        (r"No authorization code received", "the sign-in was cancelled in the browser"),
+    )
+
 
 # What the OS tools need from the session; Codex starts MCP servers with only HOME/PATH/etc.
 MCP_ENV = ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DISPLAY",
@@ -171,7 +293,11 @@ MCP_ENV = ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", 
 
 class Codex(Provider):
     name = "codex"
+    title = "Codex"
     binary = "codex"
+    signin_host = ("auth.openai.com", 443)
+    # Logged out, `codex exec` retries for about 15 s before it gives up; the first 401 says enough.
+    ends_when_signed_out = True
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         self._last_text = ""
@@ -239,12 +365,53 @@ class Codex(Provider):
             err = m.get("error") or {}
             text = err.get("message", "codex turn failed") if isinstance(err, dict) else str(err)
             yield {"kind": "result", "ok": False, "text": text}
+        elif t == "error" and self.signed_out(m.get("message", "")):
+            yield {"kind": "signed_out"}
         elif t == "error":
             # Top-level errors are retry notices ("Reconnecting... 2/5"); turn.failed is the failure.
             yield {"kind": "text", "text": m.get("message", "")}
 
     def login_command(self):
         return [self.binary, "login"]
+
+    # `codex login` (0.157.1, checked 2026-09-27) first signs out (it revokes the stored login
+    # even if the new one is then called off), serves its callback on localhost:1455 (1457 when
+    # that is taken) and hands $BROWSER auth.openai.com's page, printing the same URL. There is
+    # no code to paste: only the page coming back finishes it. It waits forever; success is
+    # "Successfully logged in" and exit 0, which a stray visit to its /success page also
+    # produces, so `codex login status` has the last word. Credentials: ~/.codex/auth.json.
+
+    def signin_url_kind(self, url):
+        u, q = _query(url)
+        if u.scheme == "https" and u.hostname == "auth.openai.com" and u.path == "/oauth/authorize" \
+                and _local(q.get("redirect_uri", "")):
+            return "auto"
+        return None
+
+    def signed_in(self):
+        # Exit 0 when credentials are stored, whatever their age; a turn finds out the rest.
+        r = self._status([self.binary, "login", "status"])
+        if r is None:
+            return None
+        if r.returncode == 0:
+            return True
+        return False if "Not logged in" in (r.stderr + r.stdout) else None
+
+    SIGNED_OUT = (
+        r"unexpected status 401 Unauthorized", r"Missing bearer or basic authentication",
+        r"Incorrect API key provided|invalid_api_key", r"workspace routing discovery unauthorized",
+        r"Please log out and sign in again", r"signed in to another account\. Please sign in again",
+        r"^Not logged in",
+    )
+    SIGNIN_ERRORS = (
+        (r"error sending request|dns error|Could not resolve|Network is unreachable", "no internet"),
+        (r"Port 127\.0\.0\.1:\d+ is already in use", "another sign-in is holding its port; close it and try again"),
+        (r"Codex is not enabled for your workspace", "Codex is not enabled for this workspace; its admin can turn it on"),
+        (r"User cancelled|access_denied", "the sign-in was cancelled in the browser"),
+        (r"Login cancelled", "another sign-in took over"),
+        (r"Missing authorization code", "the sign-in did not finish; try again"),
+        (r"Token exchange failed: token endpoint returned status 4\d\d", "the sign-in was refused; try again"),
+    )
 
 
 class Shell(Provider):
@@ -285,9 +452,42 @@ def get(name: str, mcp_command: str | None = None, model: str | None = None) -> 
 
 
 class Fake(Provider):
-    """For tests and for running the shell without any provider: echoes the prompt."""
+    """For tests and for running the shell without any provider: echoes the prompt.
+
+    With BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail it also needs signing in, through
+    fake_signin.py, which plays a provider's login on localhost (the VM smoke test uses it)."""
     name = "fake"
+    title = "Fake"
     binary = os.environ.get("BOMBADIL_FAKE_PROVIDER", "cat")
+
+    def signin_command(self):
+        return [sys.executable, str(Path(__file__).with_name("fake_signin.py")),
+                os.environ.get("BOMBADIL_FAKE_SIGNIN") or "auto"]
+
+    def signin_url_kind(self, url):
+        u, q = _query(url)
+        if not _local(url) or u.path != "/authorize":
+            return None
+        return "manual" if urllib.parse.urlsplit(q.get("redirect_uri", "")).path == "/code" else "auto"
+
+    def code_from_url(self, url):
+        u, q = _query(url)
+        if _local(url) and u.path == "/code" and q.get("code") and q.get("state"):
+            return f"{q['code']}#{q['state']}"
+        return None
+
+    def signed_in(self):
+        if not os.environ.get("BOMBADIL_FAKE_SIGNIN"):
+            return True
+        return (Path.home() / ".fake-signin").exists()
+
+    SIGNED_OUT = (r"fake: signed out",)
+
+    @property
+    def signin_host(self):
+        # BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:9 plays a sign-in server out of reach (no internet).
+        host, _, port = (os.environ.get("BOMBADIL_FAKE_SIGNIN_HOST") or "").rpartition(":")
+        return (host, int(port)) if host and port.isdigit() else None
 
     @property
     def installed(self) -> bool:

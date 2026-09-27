@@ -2,7 +2,7 @@
 # Boot the newest ISO headless with a smoke entry, capture the serial log and screenshots,
 # and exit 0 when the smoke test reports no failures.
 #
-#   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app
+#   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app, sign-in
 #   MODE=install scripts/test-vm.sh   # live checks, install to a scratch disk, boot it, test undo
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 set -euo pipefail
@@ -10,7 +10,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 iso="${ISO:-$(ls -t "$root"/out/*.iso | head -1)}"
 mode="${MODE:-live}"
 out="$root/out/test"; mkdir -p "$out"
-timeout="${TIMEOUT:-1500}"
+timeout="${TIMEOUT:-2400}"
 
 ovmf=""
 for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do

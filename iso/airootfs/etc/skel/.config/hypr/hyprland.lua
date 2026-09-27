@@ -5,7 +5,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
     hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
     hl.exec_cmd("mako")
-    hl.exec_cmd("bombadil-setup --first-run")
+    -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
 hl.config({

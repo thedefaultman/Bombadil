@@ -13,12 +13,18 @@ import subprocess
 import time
 from pathlib import Path
 
-PANELS: dict[str, list[str]] = {
-    "browser": ["chromium", "--ozone-platform=wayland", "--remote-debugging-port=9222",
-                "--class=bombadil-browser", "--no-first-run", "--no-default-browser-check"],
+PANELS: dict[str, list[str] | None] = {
+    "browser": None,   # browser.command(): its profile lives in the user's home
     "terminal": ["foot", "--app-id=bombadil-terminal"],
     "files": ["nautilus"],
 }
+
+
+def panel_command(name: str) -> list[str]:
+    if name == "browser":
+        from . import browser
+        return browser.command()
+    return list(PANELS[name] or [])
 
 
 def _socket_path() -> Path | None:
@@ -79,7 +85,7 @@ class Hyprland:
             raise ValueError(f"unknown panel {name!r}, known: {sorted(PANELS)}")
         note = ""
         if show and not self._panel_has_window(name):
-            cmd = PANELS[name]
+            cmd = panel_command(name)
             if shutil.which(cmd[0]) is None:
                 raise RuntimeError(f"{cmd[0]} is not installed")
             if not _launching(cmd):

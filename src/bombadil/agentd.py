@@ -11,18 +11,31 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "local", "action": "undo"}  a launcher action by name (the Undo button)
                    {"type": "details", "turn": n}       show a turn's commands and output (drawer)
                    {"type": "summon"}                   ask the bar to take the keyboard (Super)
+                   {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"}
+                                                        a chip under the setup line (see below)
+                   {"type": "signin", "provider": "codex"?}  sign in (again), after switching provider
+                   {"type": "open_url", "url": "...", "signin": id?}  a link for the browser panel
+                                                        (bombadil-browser: $BROWSER and xdg-open)
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
                     "local", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
+                   {"type": "setup", "state": ..., "line": ..., "actions": [...]}  see below
                    {"type": "summon"}
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
+
+"setup" is whether the machine can talk to its AI: state "choose" (no provider picked yet: the
+pill offers Claude and Codex), "checking", "signed_out", "offline" (no way to reach the sign-in
+page), "signing_in" (the CLI's login runs and its page is in the browser panel, signin.py) or
+"ready". Prompts wait in the queue until it is ready, and a turn that finds the login gone
+signs in again and then runs once more. `line` is what the pill says about it, `tone` is
+step, ask, error or done, and `actions` are its chips: [{"id", "label", "style"}].
 
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
@@ -32,12 +45,14 @@ the os-mcp server attached in its own scope, stream its events, log the turn. La
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
-from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
+from . import browser, config, launcher, narrate, paths, procs, providers, signin, snapshots, watch
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
@@ -49,12 +64,14 @@ SEND_TIMEOUT = 5.0
 # After a turn's process exits, how long its output may take to drain. Longer means a job it
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
+OFFLINE_POLL = 5.0   # while there is no way to the sign-in page, look again this often
 
 
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None):
+                 stopper: procs.Stopper | None = None, chosen: bool = True, auto_signin: bool = False,
+                 panel=None):
         self.provider = provider
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
@@ -79,6 +96,18 @@ class AgentD:
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
+        # The provider: picked yet (config or BOMBADIL_PROVIDER), and signed in (setup, above).
+        self.chosen = chosen
+        self.auto_signin = auto_signin              # sign in at once when the session starts signed out
+        self.access = "checking"
+        self._access_line = ("", "step")
+        self.signin: signin.SignIn | None = None
+        self._signin_task: asyncio.Task | None = None
+        self._offline_task: asyncio.Task | None = None
+        self._external = False                       # a sign-in started in a terminal is being watched
+        self._signed_out = False                     # the running turn found the login gone
+        self._retried: set[int] = set()              # turns already run again after a sign-in
+        self.panel = panel or browser.Panel()
 
     # -- socket --
 
@@ -90,6 +119,7 @@ class AgentD:
         await asyncio.to_thread(procs.scope_supported)
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
         worker = asyncio.create_task(self._worker())
+        self._background(self.check_access(start=self.auto_signin))
         watcher = asyncio.create_task(self._watch_apps())
         async with server:
             await server.serve_forever()
@@ -103,6 +133,7 @@ class AgentD:
         try:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
+            await self._send(writer, self._setup_msg())
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -137,6 +168,10 @@ class AgentD:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
             action = await self._match(text)
+            if action is None and self.access == "choose":
+                # First boot asks which AI: typing its name answers too.
+                name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
+                action = launcher.Action("provider", name) if name else None
             if action is not None:
                 await self._send(writer, {"type": "local", "action": action.kind})
                 self._background(self.local(action, text))
@@ -144,11 +179,15 @@ class AgentD:
             self.next_id += 1
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
-            if self.current is not None or self.pending:
+            waits = not self._runnable(text)
+            if self.current is not None or self.pending or waits:
                 await self.broadcast({"type": "event", "kind": "queued", "turn": self.next_id, "prompt": text})
             self.pending.append((self.next_id, text))
             self._wake.set()
             await self.broadcast(self._status())
+            if waits and self.access == "signed_out":
+                # Asked for something while signed out: sign in, and the ask runs after.
+                self._background(self.start_signin())
         elif t in ("stop", "cancel"):
             await self.stop()
         elif t == "unqueue":
@@ -167,11 +206,20 @@ class AgentD:
             await self.broadcast({"type": "summon"})
         elif t == "status":
             await self._send(writer, self._status())
+        elif t == "setup_action":
+            self._background(self.setup_action(str(msg.get("id", ""))))
+        elif t == "signin":
+            name = msg.get("provider")
+            self._background(self.choose(str(name)) if name and (name != self.provider.name or not self.chosen)
+                             else self.start_signin())
+        elif t == "open_url":
+            self._background(self.open_url(str(msg.get("url", "")), msg.get("signin")))
 
     def _status(self) -> dict:
         # Busy from the moment a prompt is accepted, so Esc stops it even before its turn starts.
-        return {"type": "status", "busy": self.current is not None or bool(self.pending),
-                "provider": self.provider.name, "turns": self.turns,
+        return {"type": "status",
+                "busy": self.current is not None or any(self._runnable(p) for _, p in self.pending),
+                "provider": self.provider.name, "setup": self.access, "turns": self.turns,
                 "snapshots": self.snaps.available, "queued": len(self.pending),
                 "turn": self.current, "queue": [{"turn": i, "prompt": p} for i, p in self.pending]}
 
@@ -249,6 +297,12 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
+        if action.kind == "signin":
+            await self.start_signin()
+            return
+        if action.kind == "provider":
+            await self.choose(action.target)
+            return
         if action.kind == "stop":
             stopping = await self.stop()
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
@@ -303,6 +357,14 @@ class AgentD:
         Returns at once; the stopper works in the background. A turn still saving its restore
         point is marked, and ends before its CLI starts."""
         if self.current is None:
+            # Nothing runs but the sign-in: Esc cancels that.
+            if self.signin is not None and self.signin.running:
+                self.signin.cancel()
+                return True
+            if self._external and self.access == "signing_in":
+                self._external = False
+                await self._set_access("signed_out", "Sign-in cancelled.")
+                return True
             return False
         if self.stopping:
             return True
@@ -327,19 +389,267 @@ class AgentD:
             if proc.returncode is None:
                 proc.kill()
 
+    # -- the provider: picked, and signed in --
+
+    def _title(self) -> str:
+        return self.provider.title or self.provider.name
+
+    def _setup_msg(self) -> dict:
+        line, tone, actions = self._describe()
+        s = self.signin
+        return {"type": "setup", "state": self.access, "provider": self.provider.name, "title": self._title(),
+                "line": line, "tone": tone, "actions": actions,
+                "phase": s.phase if s is not None else None, "view": s.view if s is not None and s.running else None}
+
+    def _describe(self) -> tuple[str, str, list[dict]]:
+        """What the pill says about the setup, and the chips under it."""
+        t = self._title()
+        others = [(n, c.title or n) for n, c in providers.PROVIDERS.items()
+                  if n in config.PROVIDERS and n != self.provider.name]
+        switch = [{"id": f"provider:{n}", "label": f"Use {title} instead", "style": "quiet"} for n, title in others]
+        cancel = {"id": "cancel", "label": "Cancel", "style": "quiet"}
+        if self.access == "choose":
+            return ("Which AI should run this computer?", "ask",
+                    [{"id": f"provider:{n}", "label": providers.PROVIDERS[n].title or n, "style": "big"}
+                     for n in config.PROVIDERS])
+        if self.access == "offline":
+            return (f"No internet. Connect to a network to sign in to {t}.", "error",
+                    [{"id": "wifi", "label": "Wi-Fi", "style": "primary"},
+                     {"id": "signin", "label": "Try again", "style": "quiet"}])
+        if self.access == "signing_in":
+            s = self.signin
+            if s is None:   # started in a terminal; that CLI finishes it, agentd only watches
+                return f"Sign in to {t} in the browser", "step", []
+            if s.phase == "starting":
+                return f"Opening the {t} sign-in", "step", [cancel]
+            if s.phase == "finishing":
+                return f"Finishing the {t} sign-in", "step", []
+            if s.view == "hidden":
+                return (f"The {t} sign-in is waiting in the browser", "step",
+                        [{"id": "show", "label": "Show sign-in", "style": "primary"}, cancel])
+            if s.view == "closed":
+                return (f"The {t} sign-in page was closed", "step",
+                        [{"id": "show", "label": "Open it again", "style": "primary"}, cancel])
+            return f"Sign in to {t} in the browser", "step", [cancel]
+        line, tone = self._access_line
+        if self.access == "signed_out":
+            return (line or f"Sign in to {t} to start.", tone,
+                    [{"id": "signin", "label": "Sign in", "style": "primary"}, *switch])
+        return line, tone, []
+
+    async def _set_access(self, state: str, line: str = "", tone: str = "step"):
+        self.access = state
+        self._access_line = (line, tone)
+        await self.broadcast(self._setup_msg())
+        await self.broadcast(self._status())
+        if state == "ready":
+            self._wake.set()
+
+    async def check_access(self, start: bool = False, announce: bool = False):
+        """Is the provider picked and signed in? `start` signs in at once when it is not."""
+        if not self.chosen:
+            await self._set_access("choose")
+            return
+        if not self.provider.installed:
+            await self._set_access("ready")   # its turns say it is missing
+            return
+        try:
+            ok = await asyncio.to_thread(self.provider.signed_in)
+        except Exception as e:  # noqa: BLE001 - cannot tell: let the turns find out
+            print(f"agentd: sign-in check: {type(e).__name__}: {e}", file=sys.stderr)
+            ok = None
+        if ok is False:
+            await self._set_access("signed_out")
+            if start:
+                await self.start_signin()
+        else:
+            await self._set_access("ready", f"{self._title()} is ready. Ask me for anything." if announce else "",
+                                   "done")
+
+    async def start_signin(self):
+        """Run the provider CLI's login with its page in the browser panel (signin.py)."""
+        if not self.chosen:
+            await self._set_access("choose")
+            return
+        if self.signin is not None and self.signin.running:
+            await self.signin.show()
+            await self.broadcast(self._setup_msg())
+            return
+        host = self.provider.signin_host
+        if host and not await asyncio.to_thread(signin.reachable, *host):
+            await self._set_access("offline")
+            if self._offline_task is None:
+                self._offline_task = self._background(self._wait_online())
+            return
+        s = signin.SignIn(self.provider, self._signin_changed, panel=self.panel,
+                          env={"BROWSER": _bombadil_browser()})
+        self.signin = s
+        await self._set_access("signing_in")
+        self._signin_task = self._background(self._run_signin(s))
+
+    async def _wait_online(self):
+        try:
+            while self.access == "offline":
+                await asyncio.sleep(OFFLINE_POLL)
+                host = self.provider.signin_host
+                if host is None or await asyncio.to_thread(signin.reachable, *host):
+                    break
+        finally:
+            self._offline_task = None
+        if self.access == "offline":
+            await self.start_signin()
+
+    def _signin_changed(self, s: signin.SignIn):
+        if s is self.signin and s.running:
+            self._background(self.broadcast(self._setup_msg()))
+
+    async def _run_signin(self, s: signin.SignIn):
+        phase = await s.run()
+        self._log_line({"t": time.time(), "kind": "signin", "provider": s.provider.name, "result": phase,
+                        "reason": s.reason})
+        if self.signin is not s:
+            return   # replaced: the provider changed meanwhile
+        t = self._title()
+        if phase == "done":
+            await self._set_access("ready", f"Signed in to {t}. Ask me for anything.", "done")
+        elif phase == "timeout":
+            await self._set_access("signed_out", f"The {t} sign-in timed out.", "error")
+        elif phase == "cancelled":
+            await self._drop_waiting()
+            await self._set_access("signed_out", "Sign-in cancelled.")
+        else:
+            reason = (s.reason or "it did not finish").rstrip(". ")
+            await self._set_access("signed_out", f"Could not sign in to {t}: {reason}.", "error")
+
+    async def _drop_waiting(self):
+        """Sign-in was called off: the prompts that waited for it go too."""
+        dropped = [i for i, p in self.pending if not self._runnable(p)]
+        self.pending = [(i, p) for i, p in self.pending if self._runnable(p)]
+        for i in dropped:
+            await self.broadcast({"type": "event", "kind": "unqueued", "turn": i})
+
+    async def _end_signin(self):
+        """Call off a sign-in in progress and wait until its page is put away."""
+        s, task = self.signin, self._signin_task
+        self.signin = None
+        if s is not None and s.running:
+            s.cancel()
+            if task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), 10)
+                except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                    pass
+
+    def end_signin_now(self):
+        """agentd is going away: so does a login it started (a codex login would hold its port)."""
+        s = self.signin
+        if s is not None and s.proc is not None and s.proc.returncode is None:
+            try:
+                os.killpg(s.proc.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    async def choose(self, name: str):
+        """Use this provider from now on (the choice is saved), signing in to it if needed."""
+        if name not in config.PROVIDERS:
+            return
+        await self._end_signin()
+        model = self.provider.model if name == self.provider.name else None
+        await asyncio.to_thread(config.save_user, name, model)
+        if name != self.provider.name:
+            self.provider = providers.get(name, model=model)
+            self.session_id = None   # the other provider's conversation means nothing to this one
+        self.chosen = True
+        await self.check_access(start=True, announce=True)
+
+    async def setup_action(self, action: str):
+        if action.startswith("provider:"):
+            await self.choose(action.split(":", 1)[1])
+        elif action == "signin":
+            await self.start_signin()
+        elif action == "show" and self.signin is not None:
+            await self.signin.show()
+        elif action == "cancel":
+            await self.stop()
+        elif action == "wifi":
+            await self._local(launcher.Action("wifi"), "wifi")
+
+    async def open_url(self, url: str, signin_id=None):
+        """A link for the browser panel, from bombadil-browser ($BROWSER, xdg-open)."""
+        if urllib.parse.urlsplit(url).scheme not in ("http", "https", "file"):
+            return
+        s = self.signin
+        if s is not None and s.running and (signin_id == s.id or (
+                s.url is None and signin_id is None and self.provider.signin_url_kind(url))):
+            s.browser_url(url)   # the sign-in's own page: it opens and follows it
+            return
+        try:
+            await asyncio.to_thread(self.panel.open, url)
+        except Exception as e:  # noqa: BLE001
+            await self.event("error", turn=None, text=f"Could not open the link: {e}")
+            return
+        if self.provider.signin_url_kind(url) and self.access != "ready" and self.signin is None:
+            # Someone ran the CLI's own login in a terminal (/login): it gets its page back and
+            # saves the login; agentd watches for it to land.
+            self._background(self._watch_external())
+
+    async def _watch_external(self):
+        if self._external:
+            return
+        self._external = True
+        await self._set_access("signing_in")
+        try:
+            deadline = time.monotonic() + signin.TIMEOUT
+            while self._external and self.signin is None and time.monotonic() < deadline:
+                await asyncio.sleep(2)
+                try:
+                    ok = await asyncio.to_thread(self.provider.signed_in)
+                except Exception:  # noqa: BLE001
+                    ok = None
+                if ok and self._external and self.signin is None:
+                    await asyncio.to_thread(self.panel.hide)
+                    await self._set_access("ready", f"Signed in to {self._title()}. Ask me for anything.", "done")
+                    return
+            if self._external and self.signin is None:
+                await self._set_access("signed_out")
+        finally:
+            self._external = False
+
+    async def _signed_out_turn(self, turn_id: int, prompt: str):
+        """The turn found the login gone: sign in again, and run the prompt once more after."""
+        if turn_id not in self._retried and not self.stopping:
+            self._retried.add(turn_id)
+            self.pending.insert(0, (turn_id, prompt))
+            await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
+        await self._set_access("signed_out", f"{self._title()} signed you out.", "error")
+        await self.start_signin()
+
     # -- turns --
+
+    def _runnable(self, prompt: str) -> bool:
+        """Can this prompt run now? A "!command" needs no AI; the rest wait until it is ready."""
+        return self.access == "ready" or prompt.startswith("!")
+
+    def _next(self) -> tuple[int, str] | None:
+        if self._hold:
+            return None
+        for i, (_, p) in enumerate(self.pending):
+            if self._runnable(p):
+                return self.pending.pop(i)
+        return None
 
     async def _worker(self):
         while True:
-            while not self.pending or self._hold:
+            while (item := self._next()) is None:
                 self._wake.clear()
                 await self._wake.wait()
-            turn_id, prompt = self.pending.pop(0)
+            turn_id, prompt = item
             self.stopping = False
             self._stopped_line = ""
             self.proc = None
             self._unit = None
             self.current = turn_id
+            self._signed_out = False
             try:
                 await self.turn(prompt)
             except Exception as e:  # noqa: BLE001 - keep the daemon alive whatever a turn does
@@ -351,6 +661,8 @@ class AgentD:
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
+            if self._signed_out:
+                await self._signed_out_turn(turn_id, prompt)
 
     async def event(self, kind: str, **fields):
         fields.setdefault("turn", self.current)
@@ -410,6 +722,7 @@ class AgentD:
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
         env = dict(os.environ)
+        env["BROWSER"] = _bombadil_browser()   # a link the agent opens slides the browser panel in
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
@@ -478,8 +791,12 @@ class AgentD:
                 if proc.stderr is not None:
                     self._background(_drain(proc.stderr))
             err = err.decode(errors="replace").strip()[-2000:]
-            if (proc.returncode not in (0, None) and not reported_error and result["ok"] is not True
-                    and not self.stopping):
+            if (not reported_error and result["ok"] is not True and not self.stopping
+                    and (proc.returncode not in (0, None) or self._signed_out)):
+                # (Ended at the first sign the login is gone, npm's codex wrapper exits 0.)
+                if not shell and (self._signed_out or self.provider.signed_out(err)):
+                    self._signed_out = True
+                    err = f"{self._title()} signed you out."
                 await self.event("error", text=err or f"{source.name} exited with {proc.returncode}")
         finally:
             if proc.returncode is None:
@@ -503,6 +820,16 @@ class AgentD:
         kind = ev["kind"]
         if kind == "session":
             return ev.get("session_id") or pending_session, reported_error
+        if kind == "signed_out":   # the CLI's own sign that the login is gone
+            if not turn.prompt.startswith("!"):
+                self._signed_out = True
+                proc = self.proc
+                if self.provider.ends_when_signed_out and proc is not None and proc.returncode is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+            return pending_session, reported_error
         try:
             line = self.narrator.on_event(ev) if self.narrator else None
         except Exception as e:  # noqa: BLE001 - odd input costs a line, never the turn
@@ -523,6 +850,9 @@ class AgentD:
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
+                if not turn.prompt.startswith("!") and (self._signed_out or self.provider.signed_out(text)):
+                    self._signed_out = True
+                    text = f"{self._title()} signed you out."
                 if not self.stopping:
                     await self.event("error", text=text)
                 reported_error = True
@@ -544,6 +874,11 @@ class AgentD:
         paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
         with paths.turns_log().open("a") as f:
             f.write(json.dumps(entry) + "\n")
+
+
+def _bombadil_browser() -> str:
+    local = Path(__file__).resolve().parents[2] / "bin" / "bombadil-browser"
+    return str(local) if local.exists() else "bombadil-browser"
 
 
 def _action(msg: dict) -> launcher.Action | None:
@@ -600,12 +935,24 @@ def main(argv: list[str] | None = None) -> int:
         # Keep serving so the bar connects and can say what is missing; turns report it.
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
-    daemon = AgentD(provider, snaps)
+    # Picked means the user chose (first boot asks in the pill) or the environment says so.
+    chosen = cfg.configured or bool(os.environ.get("BOMBADIL_PROVIDER"))
+    daemon = AgentD(provider, snaps, chosen=chosen, auto_signin=True)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
+
+    async def run():
+        serving = asyncio.ensure_future(daemon.serve())
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, serving.cancel)
+        try:
+            await serving
+        except asyncio.CancelledError:
+            pass
+        finally:
+            daemon.end_signin_now()
     try:
-        asyncio.run(daemon.serve())
+        asyncio.run(run())
     except KeyboardInterrupt:
-        pass
+        daemon.end_signin_now()
     return 0
 
 

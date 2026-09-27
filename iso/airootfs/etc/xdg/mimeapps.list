@@ -1,0 +1,6 @@
+# Every link opens in the browser panel (bombadil-browser asks agentd, which slides it in).
+[Default Applications]
+x-scheme-handler/http=bombadil-browser.desktop
+x-scheme-handler/https=bombadil-browser.desktop
+text/html=bombadil-browser.desktop
+application/xhtml+xml=bombadil-browser.desktop
