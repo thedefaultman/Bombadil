@@ -77,12 +77,16 @@ install() {
   local keys=(down e end); for _ in $(seq 15); do keys+=(backspace); done   # " bombadil.smoke"
   python3 "$tree/scripts/qmp.py" "$qmp" send-keys "${keys[@]}" ret
   wait_log "$log" 'root@[^ ]+ [^ ]+\]#' 300 $pid
-  # The echo is split so the typed command itself never matches what we wait for.
+  # Typed a few bytes at a time and the socket held open: QEMU drops whatever the UART hasn't
+  # taken yet when the client hangs up. The echo is split so the typed line never matches it.
   python3 - "$sock" <<'PY'
-import socket, sys
+import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
-s.sendall(b"BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
-          b" && echo INSTALL-''DONE; poweroff\r")
+line = (b"BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
+        b" && echo INSTALL-''DONE; poweroff\r")
+for i in range(0, len(line), 8):
+    s.sendall(line[i:i + 8]); time.sleep(0.05)
+time.sleep(1)
 PY
   wait $pid || true
   grep -aq "INSTALL-DONE" "$log" || { echo "install failed; see $log"; exit 1; }
