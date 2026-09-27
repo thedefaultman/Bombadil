@@ -302,7 +302,14 @@ class Dev:
                 if s.tool != "shell" and not s.conversation:
                     return self._start(s.tool, Path(paths.projects_dir() / s.project), s.role, previous=s)
                 return self._launch(s, resume=s.tool != "shell")
-            return True, f"Back to {s.title}.{self._show(s)}"
+            shown = self._show(s)
+            if not shown:
+                # Asked for by name, it is in front: what it said is seen, whether or not the
+                # compositor reports the focus change.
+                self.front = s.key
+                self._looked(s)
+                self._changed()
+            return True, f"Back to {s.title}.{shown}"
 
     def open_project(self, folder: Path) -> tuple[bool, str]:
         """A project's name alone: its most recent session, or how to start one."""

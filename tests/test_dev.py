@@ -304,6 +304,17 @@ def test_several_waiting_merge_into_one_line_and_tab_walks_them(projects):
     assert d.line() == "reviewer on Bombadil: Push the branch?"
 
 
+def test_bringing_a_session_back_by_name_is_looking_at_it(projects):
+    d, _, _ = _dev()
+    d.open("claude", "bombadil", "api")
+    d.signal({"event": "Stop", "dev_id": "bombadil/api", "text": "Done."})
+    assert d.line() == "api on Bombadil finished: Done."
+    # No focus event arrives (another compositor, a missed event): typing its name is enough.
+    assert d.open("claude", "bombadil", "api") == (True, "Back to api on Bombadil.")
+    s = d.sessions["bombadil/api"]
+    assert (s.state, s.unseen, d.front) == ("idle", False, "bombadil/api") and d.line() == ""
+
+
 def test_a_tool_that_crashes_turns_red_and_resumes_by_its_name(projects):
     d, z, _ = _dev()
     d.open("claude", "bombadil", "builder")
