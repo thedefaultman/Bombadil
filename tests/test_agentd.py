@@ -329,3 +329,191 @@ async def test_key_binds_reach_the_bar(home):
         assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
     w.close()
     server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_stop_while_the_restore_point_is_saved_ends_the_turn_before_its_cli(home):
+    d = agentd.AgentD(providers.Fake("x"), SlowSnaps())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("text") == "Saving a restore point")
+    assert all(m["busy"] for m in msgs if m["type"] == "status")   # Esc and the dot still stop
+    w.write(b'{"type": "stop"}\n')
+    await w.drain()
+    msgs = await _read_until(r, "turn_end")
+    assert msgs[-1]["stopped"] is True
+    assert not [m for m in msgs if m.get("kind") in ("text", "result")]   # the CLI never ran
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_broken_app_folder_never_costs_a_client(home):
+    from pathlib import Path
+    import sys
+    (home / "Apps" / "passwords.bak").mkdir(parents=True)
+    (home / "Apps" / "passwords.bak" / "main.qml").write_text("Item {}")
+    (home / "Apps" / "notes").mkdir()
+    (home / "Apps" / "notes" / "main.qml").write_text("Item {}")
+    (home / "Apps" / "notes" / "app.toml").write_text('title = "\\ud83c"\n')
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "stop")
+    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "local", "action": "stop"}
+    done = (await _events_until(r, lambda m: m.get("phase") == "done"))[-1]
+    assert done["text"] == "Nothing is running."
+    bombadil = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
+    proc = await asyncio.create_subprocess_exec(sys.executable, str(bombadil), "pill")
+    assert await asyncio.wait_for(proc.wait(), 5) == 0
+    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_job_left_in_the_background_does_not_hold_the_turn(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    loop = asyncio.get_running_loop()
+    t0 = loop.time()
+    await _ask(w, "!sleep 7.25 &")
+    await _read_until(r, "turn_end")
+    assert loop.time() - t0 < 3
+    await _ask(w, "!echo second")
+    msgs = await _read_until(r, "turn_end")
+    assert [m["text"] for m in msgs if m.get("kind") == "output"] == ["second"]
+    assert loop.time() - t0 < 5
+    w.close()
+    server.cancel()
+    from bombadil import procs
+    for p in procs.all_procs().values():
+        if "7.25" in p.cmdline:
+            import os
+            import signal
+            os.kill(p.pid, signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_a_client_that_stops_reading_holds_up_nobody(home, monkeypatch):
+    monkeypatch.setattr(agentd, "SEND_TIMEOUT", 1.0)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    stuck_r, stuck_w = await _client(d.socket_path)   # never reads
+    await _ask(w, "!python3 -c \"import time\nwhile True: print('x' * 4000, flush=True); time.sleep(0.0005)\"")
+    await _events_until(r, lambda m: m.get("kind") == "output")
+    await asyncio.sleep(1.5)
+    stop_r, stop_w = await _client(d.socket_path)
+    stop_w.write(b'{"type": "stop"}\n')
+    await stop_w.drain()
+    msgs = await _read_until(r, "turn_end")
+    assert msgs[-1]["stopped"] is True
+    for x in (w, stuck_w, stop_w):
+        x.close()
+    server.cancel()
+
+
+class RecordingSnaps(agentd._NoSnapshots):
+    available = True
+
+    def __init__(self):
+        self.made, self.log = [], []
+
+    def create(self, description):
+        from bombadil import snapshots
+        s = snapshots.Snapshot(len(self.made) + 1, description)
+        self.made.append(s)
+        self.log.append(("create", s.number))
+        return s
+
+    def list(self, limit=20):
+        return list(self.made)
+
+    def rollback(self, number):
+        self.log.append(("rollback", number))
+        return True
+
+
+@pytest.mark.asyncio
+async def test_undo_during_a_turn_takes_back_that_turn_even_with_one_queued(home):
+    snaps = RecordingSnaps()
+    d = agentd.AgentD(providers.Fake("x"), snaps)
+    server, r, w = await _start(d)
+    # A turn whose child ignores SIGINT, so Stop takes its whole grace.
+    await _ask(w, "!python3 -c \"import signal, time; signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(30)\"")
+    await _events_until(r, lambda m: m.get("kind") == "snapshot")
+    await _ask(w, "!echo two")
+    await _events_until(r, lambda m: m.get("kind") == "queued")
+    await _ask(w, "undo")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done", timeout=15)
+    assert msgs[-1]["ok"] is True and "“!python3" in msgs[-1]["text"]
+    await _read_until(r, "turn_end")     # the queued turn runs after the undo, not before it
+    assert snaps.log == [("create", 1), ("rollback", 1), ("create", 2)]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_ask_stop_answers_and_returns(home):
+    import sys
+    from pathlib import Path
+    bombadil = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "!sleep 30")
+    await _events_until(r, lambda m: m.get("kind") == "tool")
+    proc = await asyncio.create_subprocess_exec(sys.executable, str(bombadil), "ask", "stop",
+                                                stdout=asyncio.subprocess.PIPE)
+    out, _ = await asyncio.wait_for(proc.communicate(), 8)
+    assert proc.returncode == 0 and out.decode().strip() == "Stopping."
+    msgs = await _read_until(r, "turn_end")
+    assert msgs[-1]["stopped"] is True
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_slow_launcher_word_does_not_hold_up_what_comes_after_it(home, monkeypatch):
+    import time as _time
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    monkeypatch.setattr(d.launcher, "run", lambda action: (_time.sleep(2), (True, "Opened the browser."))[1])
+    server, r, w = await _start(d)
+    await _ask(w, "chrome")
+    await _ask(w, "!echo hi")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    kinds = [m.get("kind") for m in msgs]
+    assert kinds.index("turn_end") < len(kinds) - 1   # the turn ran while the browser was opening
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_narration_bug_costs_a_line_not_the_turn(home, monkeypatch):
+    from bombadil import narrate
+
+    def broken(self, ev):
+        raise TypeError("unhashable type: 'list'")
+    monkeypatch.setattr(narrate.Narrator, "on_event", broken)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert not [m for m in msgs if m.get("kind") == "error"]
+    assert next(m for m in msgs if m.get("kind") == "result")["text"] == "echo: hello"
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
+    class Missing(providers.Claude):
+        @property
+        def installed(self):
+            return False
+    d = agentd.AgentD(Missing("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    kinds = [m.get("kind") for m in msgs if m["type"] == "event"]
+    assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
+    w.close()
+    server.cancel()

@@ -33,7 +33,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
     ("sudo sed -i 's/a/b/' /etc/pacman.conf", "Editing pacman.conf", SYSTEM),
     ("df -h", "Checking disk space", None),
     ("sudo mkfs.ext4 /dev/sdb1", "Formatting /dev/sdb1", IRREVERSIBLE),
-    ("sudo dd if=arch.iso of=/dev/sdb bs=4M", "Formatting /dev/sdb", IRREVERSIBLE),
+    ("sudo dd if=arch.iso of=/dev/sdb bs=4M", "Writing arch.iso to /dev/sdb", IRREVERSIBLE),
     ("rm -rf ~/Downloads/old", "Deleting old", IRREVERSIBLE),
     ("rm -f /tmp/scratch.txt", "Deleting scratch.txt", None),
     ("sudo rm -rf /etc/nginx/sites-enabled/default", "Deleting default", SYSTEM),
@@ -189,3 +189,106 @@ def test_each_line_is_said_once_and_a_repeated_step_comes_back_after_the_agent_s
     assert n.on_event({"kind": "text_delta", "text": "Retrying."})["text"] == "Retrying."
     assert n.on_event({"kind": "text", "text": "Retrying."}) is None   # the full message, already shown
     assert n.on_event(bash)["text"] == "Installing ffmpeg"
+
+
+@pytest.mark.parametrize("command, text, risk", [
+    # Deleting in home written with $HOME, or above it, cannot be undone either.
+    ('rm -rf "$HOME/Documents"', "Deleting Documents", IRREVERSIBLE),
+    ("rm -rf ${HOME}/old", "Deleting old", IRREVERSIBLE),
+    ('rm -rf "$HOME"', None, IRREVERSIBLE),
+    ("sudo rm -rf /home", "Deleting home", IRREVERSIBLE),
+    ("rm -rf /", None, IRREVERSIBLE),
+    ("find ~ -name '*.tmp' -exec rm -f {} +", "Looking through files", IRREVERSIBLE),
+    ("cd /tmp && rm -rf build", "Deleting build", None),
+    ("rm -rf build", "Deleting build", IRREVERSIBLE),
+    ("rm -rf $SOMEDIR/x", "Deleting x", None),
+    # Force pushes and cleans with the flag anywhere.
+    ("git push origin main --force", None, IRREVERSIBLE),
+    ("git push -u origin +main", None, IRREVERSIBLE),
+    ("git -C ~/src/app push --force-with-lease", None, IRREVERSIBLE),
+    ("git clean -d -f", None, IRREVERSIBLE),
+    ("git push -u origin main", "Pushing changes", None),
+    # Any shell option cluster with -c.
+    ('bash -ec "mkfs.ext4 /dev/sdb1"', "Formatting /dev/sdb1", IRREVERSIBLE),
+    ("bash -e -o pipefail -c 'wipefs -a /dev/sdb'", "Erasing /dev/sdb", IRREVERSIBLE),
+    # Reading disks and system files is not changing them.
+    ("sudo cryptsetup open /dev/sda2 root", "Unlocking /dev/sda2", SYSTEM),
+    ("sudo cryptsetup status root", "Looking at the disks", SYSTEM),
+    ("dd if=/dev/sda of=/dev/null bs=1M", "Reading /dev/sda", None),
+    ("sudo dd if=/dev/nvme0n1 of=~/backup.img", "Writing backup.img", SYSTEM),
+    ("sudo sfdisk -d /dev/sda", "Looking at the disks", SYSTEM),
+    ("sfdisk -l -o Device,Size", "Looking at the disks", None),
+    ("wipefs /dev/sdb", "Looking at the disks", None),
+    ("sudo sfdisk /dev/sdb < layout.txt", "Changing the partitions on sdb", IRREVERSIBLE),
+    ('sed -n "1,200p" /etc/pacman.conf', None, None),
+    ("bash -lc 'sed -n 1,50p /etc/fstab'", None, None),
+    ("cp /usr/share/applications/firefox.desktop ~/.local/share/applications/", "Copying firefox.desktop", None),
+    ("ln -s /usr/bin/python3 ~/bin/python", "Linking python", None),
+    ("sudo sed -i 's/#Color/Color/' /etc/pacman.conf", "Editing pacman.conf", SYSTEM),
+    ("cp my.conf /etc/my.conf", "Copying my.conf", SYSTEM),
+])
+def test_marks_follow_what_a_command_really_does(command, text, risk, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path / "home" / "dan"))
+    step = narrate.shell_step(command)
+    if text is not None:
+        assert step.text == text
+    assert step.risk == risk
+
+
+def test_a_heredoc_is_what_it_writes_not_commands():
+    script = "cat > ~/bin/cleanup.sh <<'EOF'\n#!/bin/sh\nrm -rf ~/.cache/thumbnails\nEOF"
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": script}})
+    assert n.step.text == "Writing cleanup.sh" and n.step.risk is None
+    assert n.summary() == "Wrote cleanup.sh." and not n.irreversible
+    readme = "cat > ~/README.md <<EOF\nRun:\n  sudo pacman -S ffmpeg\nEOF\necho done"
+    assert narrate.shell_step(readme).text == "Writing README.md"
+    assert narrate.shell_step(readme).risk is None
+    assert narrate.shell_step("cat << 'EOF' > ~/a.txt\nhi\nEOF").text == "Writing a.txt"
+    tabs = "cat <<-END > notes.txt\n\thello\n\tEND\nrm -rf ~/x"
+    assert narrate.shell_step(tabs).risk == IRREVERSIBLE   # the command after the body still counts
+
+
+# Made up at run time, so no secret scanner mistakes these fixtures for credentials.
+FAKE = "not" + "-a-" + "real-one"
+
+
+@pytest.mark.parametrize("command, host", [
+    (f"curl https://user:{FAKE}@api.example.com/v1/x", "api.example.com"),
+    (f"curl -u admin:{FAKE} example.com/api", "example.com"),
+    (f'curl -H "Authorization: Bearer {FAKE}" api.example.com/v1', "api.example.com"),
+    ("curl -sS -X POST -d '{\"a\": 1}' https://api.example.com/v1/items", "api.example.com"),
+    ("http POST api.example.com/items name=x", "api.example.com"),
+])
+def test_a_fetch_names_its_host_never_its_credentials(command, host):
+    assert narrate.shell_step(command).text == f"Fetching {host}"
+
+
+def test_web_tools_strip_credentials_too():
+    url = f"https://u:{FAKE}@x.com/a"
+    assert narrate.tool_step("WebFetch", {"url": url}).text == "Reading x.com"
+    assert narrate.tool_step("mcp__bombadil-os__open_url", {"url": url}).text == "Opening x.com"
+
+
+def test_a_tool_that_has_not_said_its_argument_yet_gets_plain_words():
+    n = narrate.Narrator()
+    assert n.on_event({"kind": "tool_start", "name": "Edit", "index": 0})["text"] == "Editing a file"
+    assert n.stopped_line() == "Stopped while editing a file."
+    assert n.on_event({"kind": "tool_input", "index": 0, "partial": '{"file_path": "/home/d/app.py", "old'})["text"] \
+        == "Editing app.py"
+    assert narrate.tool_step("Grep", {}).text == "Searching"
+    assert narrate.tool_step("WebSearch", {}).text == "Searching the web"
+    assert narrate.tool_step("Write", {}).text == "Writing a file"
+
+
+@pytest.mark.parametrize("ev", [
+    {"kind": "tool", "name": "mcp__bombadil-os__show_panel", "input": {"name": ["browser"]}},
+    {"kind": "tool", "name": "mcp__bombadil-os__create_app", "input": {"title": 5}},
+    {"kind": "tool", "name": "mcp__bombadil-os__create_app", "input": {"title": {"a": 1}}},
+    {"kind": "text", "text": None},
+    {"kind": "text_delta", "text": None},
+    {"kind": "output", "text": None},
+    {"kind": "file_change", "changes": 3},
+])
+def test_odd_input_never_raises(ev):
+    narrate.Narrator().on_event(ev)

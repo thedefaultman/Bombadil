@@ -3,7 +3,10 @@ import signal
 import subprocess
 import sys
 import textwrap
+import threading
 import time
+
+import pytest
 
 from bombadil import procs
 
@@ -119,3 +122,74 @@ def test_pacman_lock_is_removed_only_when_nobody_holds_it(monkeypatch, tmp_path)
     monkeypatch.setattr(procs, "all_procs", lambda: {})
     s._unlock_pacman()
     assert calls == [["sudo", "-n", "rm", "-f", str(lock)]]
+
+
+def _pids_running(marker):
+    return [p.pid for p in procs.all_procs().values() if marker in p.cmdline and not procs._zombie(p.pid)]
+
+
+@pytest.mark.parametrize("new_session", [True, False])
+def test_what_a_dead_root_left_behind_is_still_stopped(new_session):
+    """A job the turn put in the background outlives its root; Stop must still reach what
+    that job starts after the first signal (`sleep 31.4159` here), with or without a scope."""
+    root = subprocess.Popen(["sh", "-c", "sh -c 'sleep 1; sleep 31.4159; true' >/dev/null 2>&1 & sleep 30"],
+                            start_new_session=new_session)
+    # Reaped at once, as asyncio's child watcher does: its orphans are reparented.
+    threading.Thread(target=root.wait, daemon=True).start()
+    time.sleep(0.3)
+    try:
+        procs.Stopper(grace=1.5).stop(root.pid)
+        time.sleep(0.2)
+        assert _pids_running("31.4159") == []
+    finally:
+        for pid in _pids_running("31.4159"):
+            os.kill(pid, signal.SIGKILL)
+
+
+FAKE_PACMAN = textwrap.dedent("""
+    import signal, sys, time
+    log = sys.argv[1]
+    def note(s):
+        open(log, "a").write(f"{s} {time.time()}\\n")
+    def on_int(*_):
+        note("pacman-int")
+        time.sleep(1.2)       # finishing the package it was extracting
+        note("pacman-done")
+        sys.exit(130)
+    signal.signal(signal.SIGINT, on_int)
+    signal.signal(signal.SIGTERM, lambda *_: note("pacman-term"))
+    time.sleep(60)
+""")
+FAKE_CLI = textwrap.dedent("""
+    import signal, subprocess, sys, time
+    log, pacman, script = sys.argv[1:4]
+    def on_int(*_):
+        open(log, "a").write(f"cli-int {time.time()}\\n")
+        sys.exit(130)
+    signal.signal(signal.SIGINT, on_int)
+    subprocess.Popen([pacman, "-c", script, log])
+    time.sleep(60)
+""")
+
+
+def test_stop_lets_pacman_finish_its_package_before_the_rest_stops(tmp_path):
+    pacman = tmp_path / "pacman"     # a python named pacman, so its comm is "pacman"
+    pacman.symlink_to(sys.executable)
+    log = tmp_path / "log"
+    root = subprocess.Popen([sys.executable, "-c", FAKE_CLI, str(log), str(pacman), FAKE_PACMAN])
+    try:
+        for _ in range(50):
+            if any(p.comm == "pacman" for p in procs.Stopper().members(root.pid).values()):
+                break
+            time.sleep(0.05)
+        said = []
+        out = procs.Stopper(grace=0.5).stop(root.pid, notify=said.append)
+        root.wait(timeout=5)
+        events = dict(line.split() for line in log.read_text().splitlines())
+        assert said == ["Stopping after this package"]
+        assert "pacman-term" not in events
+        # The CLI was frozen while pacman finished, and only interrupted after it.
+        assert float(events["cli-int"]) >= float(events["pacman-done"])
+        assert out["waited"] >= 1.0
+    finally:
+        root.kill()

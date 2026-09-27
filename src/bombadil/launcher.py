@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import apps, hypr, paths, snapshots
 
@@ -35,7 +35,7 @@ CORE_COMMANDS = {
     "hide": ["hide", "hide it", "hide that", "hide everything", "put it away", "put that away"],
     "lock": ["lock", "lock screen", "lock the screen"],
     "restart": ["restart", "reboot", "restart the computer"],
-    "shutdown": ["shut down", "shutdown", "power off", "poweroff", "turn off"],
+    "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
 }
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
@@ -67,7 +67,14 @@ def normalize(text: str) -> str:
 
 
 def _key(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", s.lower())
+    """'Wi-Fi' -> 'wifi'. Only spaces, hyphens and underscores fold away: any other letter or
+    sign ('почему wifi', '¿restart') makes the text no launcher word at all."""
+    k = re.sub(r"[\s_-]+", "", str(s).lower())
+    return k if re.fullmatch(r"[a-z0-9]+", k) else ""
+
+
+def _title_key(s: str) -> str:
+    return " ".join(str(s).split()).casefold()
 
 
 def _strip_verb(t: str, verbs) -> str | None:
@@ -89,23 +96,50 @@ def _lookup(word: str, table: dict[str, list[str]]) -> str | None:
 
 
 def _find_app(word: str, app_list: list) -> "apps.App | None":
-    k = _key(word)
-    if not k:
+    k, title = _key(word), _title_key(word)
+    if not k and not title:
         return None
     for a in app_list:
-        if k in (_key(a.name), _key(a.title)):
+        if (k and k in (_key(a.name), _key(a.title))) or title == _title_key(a.title):
             return a
     return None
 
 
+def known_apps() -> list:
+    """The apps, skipping what is not one: a copy named passwords.bak, a folder with no
+    main.qml. An app.toml that does not parse still lists the app under its folder name."""
+    root = paths.apps_dir()
+    try:
+        dirs = sorted(root.iterdir()) if root.is_dir() else []
+    except OSError:
+        return []
+    out = []
+    for d in dirs:
+        try:
+            if not apps.NAME_RE.match(d.name) or not (d / "main.qml").exists():
+                continue
+            out.append(apps.load(d.name))
+        except Exception:  # noqa: BLE001 - one broken app never hides the others
+            out.append(apps.App(d.name, d, d.name))
+    return out
+
+
 def match(text: str, app_list: list | None = None) -> Action | None:
     """The local action for exactly this text, or None to send it to the agent."""
-    t = normalize(text)
-    if not t or t.startswith("!"):
+    raw = str(text).strip()
+    if not raw or raw.startswith("!"):
+        return None   # "!cmd" is a shell command, whatever follows the "!"
+    t = normalize(raw)
+    if not t:
         return None
-    app_list = apps.list_apps() if app_list is None else app_list
-    cmd = _lookup(t, CORE_COMMANDS)
+    app_list = known_apps() if app_list is None else app_list
+    # A sentence in another script or with signs in it is for the agent, even when one
+    # launcher word is in it; only an app's own title (Café, Recipes 🍲) opens here.
+    plain = t.isascii()
+    cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
+        if cmd in ("restart", "shutdown") and raw.endswith("?"):
+            return None   # "restart?" asks, it does not tell
         return Action(cmd)
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
@@ -114,6 +148,8 @@ def match(text: str, app_list: list | None = None) -> Action | None:
         app = _find_app(word, app_list)
         if app is not None:
             return Action("app", app.name, verb, app.title)
+        if not plain:
+            continue
         panel = _lookup(word, PANEL_WORDS)
         if panel is not None:
             return Action("panel", panel, verb, PANEL_TITLES[panel])
@@ -126,8 +162,9 @@ def match(text: str, app_list: list | None = None) -> Action | None:
 
 def entries(app_list: list | None = None) -> list[dict]:
     """What the pill can complete with Tab: apps first, then panels, then commands."""
-    app_list = apps.list_apps() if app_list is None else app_list
-    out = [{"name": a.name, "title": a.title, "kind": "app", "words": [a.title.lower(), a.name]} for a in app_list]
+    app_list = known_apps() if app_list is None else app_list
+    out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
+           for a in app_list]
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     for table in (CORE_COMMANDS, UTILITY_COMMANDS):
@@ -172,6 +209,17 @@ class Launcher:
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping"}.get(action.kind, "On it")
 
+    @staticmethod
+    def failed(action: Action) -> str:
+        if action.kind in ("panel", "app"):
+            verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
+            return f"Could not {verb} {action.title or action.target}"
+        return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
+                "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
+                "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
+                "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                }.get(action.kind, "That did not work")
+
     def run(self, action: Action) -> tuple[bool, str]:
         fn = getattr(self, f"_{action.kind}", None)
         if fn is None:
@@ -179,7 +227,7 @@ class Launcher:
         try:
             return fn(action)
         except Exception as e:  # noqa: BLE001 - one plain line, whatever broke
-            return False, f"Could not {action.verb if action.kind in ('panel', 'app') else action.kind}: {e}"
+            return False, f"{self.failed(action)}: {_reason(e)}"
 
     # -- panels and apps --
 
@@ -228,17 +276,40 @@ class Launcher:
 
     # -- undo --
 
+    # A rollback swaps the root at the next boot. Until then the running system still has
+    # what was undone, and a restore point taken now would bring it back, so the marker of
+    # the last undo stays until a restart has applied it.
+
     def _undo_marker(self) -> Path:
         return paths.state_dir() / "undo.json"
 
-    def last_undo(self) -> int | None:
+    def _marker(self) -> dict | None:
         try:
-            return int(json.loads(self._undo_marker().read_text())["snapshot"])
+            m = json.loads(self._undo_marker().read_text())
+            int(m["snapshot"])
+            return m
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
+    def _write_marker(self, m: dict) -> None:
+        path = self._undo_marker()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(m))
+
+    def last_undo(self) -> int | None:
+        m = self._marker()
+        return int(m["snapshot"]) if m else None
+
+    @staticmethod
+    def _pending(m: dict | None) -> bool:
+        """Is this undo still waiting for a restart?"""
+        return bool(m and m.get("boot") and m.get("boot") == _boot_id())
+
     def clear_undo(self) -> None:
-        """A new turn starts a new history: the next undo takes back that turn."""
+        """A new turn starts a new history: the next undo takes back that turn. Not while an
+        undo still waits for its restart, which takes back this turn's system changes too."""
+        if self._pending(self._marker()):
+            return
         try:
             self._undo_marker().unlink()
         except OSError:
@@ -249,10 +320,22 @@ class Launcher:
             if Path("/run/archiso").exists():
                 return False, "Undo starts once Bombadil is installed. The live system keeps no restore points."
             return False, "Undo is off here: this system keeps no restore points."
+        m = self._marker()
+        before = int(m["snapshot"]) if m else None
+        snaps = self.snaps.list(limit=200)
+        if m is not None and self._pending(m):
+            # Turns since that undo run on the old root, which the restart replaces: they are
+            # already covered. Say so once; the undo after that goes one turn further back.
+            newest = max((s.number for s in snaps if s.number > before and s.description.startswith("turn:")),
+                         default=0)
+            if newest > int(m.get("covered") or 0):
+                m["covered"] = newest
+                self._write_marker(m)
+                return True, (f"Already undone: when you restart, system files go back to before “{m.get('what', '')}”, "
+                              "and that takes back everything since too.")
         # Each undo goes one turn further back until a new turn runs.
-        before = self.last_undo()
         target = None
-        for snap in reversed(self.snaps.list(limit=200)):
+        for snap in reversed(snaps):
             if before is not None and snap.number >= before:
                 continue
             if snap.description.startswith("turn:"):
@@ -261,10 +344,8 @@ class Launcher:
         if target is None:
             return False, "Nothing to undo yet."
         self.snaps.rollback(target.number)
-        m = self._undo_marker()
-        m.parent.mkdir(parents=True, exist_ok=True)
-        m.write_text(json.dumps({"snapshot": target.number, "t": time.time()}))
         what = _snapshot_prompt(target.description)
+        self._write_marker({"snapshot": target.number, "what": what, "boot": _boot_id(), "t": time.time()})
         return True, (f"Undone. System files go back to before “{what}” when you restart. "
                       "Your home folder and apps stay as they are.")
 
@@ -275,7 +356,8 @@ class Launcher:
         foot = shutil.which("foot")
         if foot is None:
             raise RuntimeError("foot is not installed")
-        self._run(["pkill", "-f", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
+        # "--" first: the pattern itself starts with dashes.
+        self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
         self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         if self.hypr.available:
@@ -340,6 +422,26 @@ class Launcher:
     def _shutdown(self, _a: Action) -> tuple[bool, str]:
         self._run(["systemctl", "poweroff"], capture_output=True, check=True, timeout=10)
         return True, "Shutting down."
+
+
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return ""
+
+
+def _reason(e: Exception) -> str:
+    """Why an action failed, in one line: what the command said, not how Python saw it."""
+    if isinstance(e, subprocess.CalledProcessError):
+        said = e.stderr or e.output or ""
+        if isinstance(said, bytes):
+            said = said.decode(errors="replace")
+        lines = [line.strip() for line in str(said).splitlines() if line.strip()]
+        return lines[-1][:200] if lines else f"{PurePosixPath(str(e.cmd[0] if e.cmd else '')).name or 'it'} failed"
+    if isinstance(e, subprocess.TimeoutExpired):
+        return "it did not answer in time"
+    return " ".join(str(e).split())[:200] or type(e).__name__
 
 
 def _bombadil() -> str:

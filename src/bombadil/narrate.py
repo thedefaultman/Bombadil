@@ -111,8 +111,8 @@ def _app_title(title: str) -> str:
 def _app_exists(title: str) -> bool:
     from . import apps
     try:
-        return (paths.apps_dir() / apps.slug(title) / "main.qml").exists()
-    except ValueError:
+        return (paths.apps_dir() / apps.slug(str(title)) / "main.qml").exists()
+    except Exception:  # noqa: BLE001 - only decides "Building" or "Changing"
         return False
 
 
@@ -126,25 +126,74 @@ _WRAPPERS = {"sudo", "doas", "env", "nohup", "time", "nice", "ionice", "stdbuf",
              "builtin", "setsid", "unbuffer", "script"}
 
 
+_SHELLS = ("bash", "sh", "zsh", "dash")
+
+
+def _shell_script(argv: list[str]) -> str | None:
+    """The script of `bash -c SCRIPT`, `sh -ec SCRIPT`, `bash -e -o pipefail -c SCRIPT`."""
+    if not argv or PurePosixPath(argv[0]).name not in _SHELLS:
+        return None
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-o", "+o", "-O", "+O"):
+            i += 2
+        elif a.startswith("--"):
+            i += 1
+        elif a[:1] in ("-", "+") and len(a) > 1:
+            if a[0] == "-" and "c" in a[1:]:
+                return argv[i + 1] if i + 1 < len(argv) else None
+            i += 1
+        else:
+            return None   # a script file, not -c
+    return None
+
+
 def _unwrap(command: str) -> str:
     """Codex runs `bash -lc '<cmd>'`; show and read the inner command."""
     try:
         argv = shlex.split(command)
     except ValueError:
         return command
-    if len(argv) >= 3 and PurePosixPath(argv[0]).name in ("bash", "sh", "zsh", "dash") and argv[1] in ("-lc", "-c", "-l -c"):
-        return argv[2]
-    return command
+    script = _shell_script(argv)
+    return command if script is None else script
+
+
+_HEREDOC_RE = re.compile(r"""<<(-?)[ \t]*(['"]?)([A-Za-z0-9_.-]+)\2""")
 
 
 def _split(command: str) -> list[str]:
-    """Split on ; && || | & and newlines outside quotes (`sh -c 'a && b'` stays whole, 2>&1 too)."""
+    """Split on ; && || | & and newlines outside quotes (`sh -c 'a && b'` stays whole, 2>&1 too).
+    A heredoc's body is text, not commands: it is left out."""
     parts: list[str] = []
     cur: list[str] = []
     quote = None
+    heredocs: list[tuple[str, bool]] = []   # (terminator, <<- strips tabs) waiting for their body
     i, n = 0, len(command)
     while i < n:
         c = command[i]
+        if not quote and command.startswith("<<", i) and not command.startswith("<<<", i):
+            m = _HEREDOC_RE.match(command, i)
+            if m:
+                heredocs.append((m.group(3), m.group(1) == "-"))
+                cur.append(m.group(0))
+                i = m.end()
+                continue
+        if not quote and c == "\n" and heredocs:
+            parts.append("".join(cur))
+            cur = []
+            j = i + 1
+            for word, tabs in heredocs:
+                while j < n:
+                    end = command.find("\n", j)
+                    end = n if end == -1 else end
+                    line = command[j:end]
+                    j = end + 1
+                    if (line.lstrip("\t") if tabs else line) == word:
+                        break
+            heredocs = []
+            i = j
+            continue
         if quote:
             cur.append(c)
             if c == "\\" and quote == '"' and i + 1 < n:
@@ -218,15 +267,67 @@ def _writes_redirect(segment: str) -> list[str]:
     return re.findall(r">>?\s*([^\s;&|]+)", segment)
 
 
+_REDIRECT_RE = re.compile(r"^(\d*|&)(>>|>\||>&|>|<<<|<<-|<<|<&|<>|<)(.*)$")
+
+
+def _strip_redirects(argv: list[str]) -> tuple[list[str], list[str]]:
+    """(the words of a command without its redirections, the files its output goes to)."""
+    words: list[str] = []
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        m = _REDIRECT_RE.match(argv[i])
+        if not m:
+            words.append(argv[i])
+            i += 1
+            continue
+        fd, op, target = m.groups()
+        if not target and i + 1 < len(argv):
+            target = argv[i + 1]
+            i += 1
+        i += 1
+        if op in (">", ">>", ">|") and fd in ("", "1", "&") and target and not target.startswith("&"):
+            out.append(target)
+    return words, out
+
+
 def _is_system_path(p: str) -> bool:
     return any(p == s or p.startswith(s + "/") for s in SYSTEM_PATHS)
 
 
-def _is_home_path(p: str) -> bool:
+def _expand_home(p: str) -> str:
     home = str(paths.home())
-    p = os.path.expanduser(p)
-    return (p.startswith("~") or p == home or p.startswith(home + "/")
-            or (not p.startswith("/") and not p.startswith("$")))
+    return os.path.expanduser(p.replace("${HOME}", home).replace("$HOME", home))
+
+
+def _is_home_path(p: str, cwd: str | None = None) -> bool:
+    """Is this path in the home folder, or above it (/, /home)? A relative path is where the
+    command runs: after `cd /tmp` not home, otherwise the agent's own folder, which is."""
+    home = str(paths.home())
+    p = _expand_home(p)
+    if p.startswith(("$", "~")):
+        return p.startswith("~")   # ~otheruser is someone's home; $VAR is anyone's guess
+    if not p.startswith("/"):
+        if cwd is None:
+            return True
+        p = os.path.join(cwd, p)
+    p = os.path.normpath(p)
+    if p.rstrip("*").rstrip("/") in ("", "/home"):
+        return True   # everything under it, home folders included
+    return p == home or p.startswith(home + "/")
+
+
+def _git_sub(argv: list[str]) -> tuple[str, list[str]]:
+    """`git -C repo push -f` -> ("push", ["-f"])."""
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        i += 2 if argv[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") else 1
+    return (argv[i], argv[i + 1:]) if i < len(argv) else ("", [])
+
+
+def _short(a: str, letter: str) -> bool:
+    """Is `a` a short option cluster (-xf) containing `letter`?"""
+    return a.startswith("-") and not a.startswith("--") and letter in a[1:]
 
 
 def _pkg_step(prog: str, argv: list[str]) -> Step | None:
@@ -302,24 +403,61 @@ def _systemctl_step(argv: list[str]) -> Step | None:
     return None
 
 
-def _irreversible(prog: str, argv: list[str], segment: str) -> bool:
-    if prog.startswith("mkfs") or prog in ("wipefs", "blkdiscard", "shred", "mkswap"):
+_DEV_SAFE = ("/dev/null", "/dev/zero", "/dev/stdout", "/dev/stderr", "/dev/random", "/dev/urandom")
+_SFDISK_READ = {"-l", "--list", "-d", "--dump", "-J", "--json", "-s", "--show-size", "-g", "--show-geometry",
+                "-F", "--list-free", "-V", "--verify", "-v", "--version", "-h", "--help", "-b", "--backup"}
+
+
+def _dd_of(argv: list[str]) -> str | None:
+    return next((a.split("=", 1)[1] for a in argv if a.startswith("of=")), None)
+
+
+def _find_paths(argv: list[str]) -> list[str]:
+    """find's starting points: the arguments before its first test or action."""
+    out = []
+    for a in argv[1:]:
+        if a.startswith(("-", "(", "!")) or a == ")":
+            break
+        out.append(a)
+    return out or ["."]
+
+
+def _irreversible(prog: str, argv: list[str], segment: str, cwd: str | None = None) -> bool:
+    if prog.startswith("mkfs") or prog in ("blkdiscard", "shred", "mkswap"):
         return True
-    if prog == "dd" and any(a.startswith("of=/dev/") for a in argv):
+    if prog == "wipefs":
+        return any(a in ("--all", "--offset") or a.startswith("--offset=") or _short(a, "a") or _short(a, "o")
+                   for a in argv[1:])
+    if prog == "dd":
+        of = _dd_of(argv)
+        return bool(of and of.startswith("/dev/") and of not in _DEV_SAFE)
+    if prog == "sgdisk" and any(a in ("-Z", "--zap-all", "-o", "--clear", "-z", "--zap", "--delete")
+                                or re.match(r"^-d\d*$", a) for a in argv[1:]):
         return True
-    if prog in ("sgdisk", "sfdisk", "gdisk") and any(a in ("-Z", "--zap-all", "-o", "--clear", "-z", "--zap",
-                                                            "--delete") or a.startswith("-d") for a in argv[1:]):
-        return True
+    if prog == "sfdisk":
+        if "--delete" in argv:
+            return True
+        # Without a flag that only reads, sfdisk writes the table it reads on stdin.
+        return not any(a in _SFDISK_READ for a in argv[1:]) and any(a.startswith("/dev/") for a in argv[1:])
     if prog == "parted" and re.search(r"\b(mklabel|mktable|rm)\b", segment):
         return True
     if prog == "cryptsetup" and re.search(r"\b(luksFormat|erase|luksErase)\b", segment):
         return True
-    if prog in ("rm", "find") and (prog == "rm" or "-delete" in argv):
-        targets = _args(argv) if prog == "rm" else argv[1:2]
+    if prog == "rm" or (prog == "find" and ("-delete" in argv or any(
+            a in ("-exec", "-execdir", "-ok", "-okdir") and PurePosixPath(argv[i + 1] if i + 1 < len(argv) else "").name == "rm"
+            for i, a in enumerate(argv)))):
+        targets = _args(argv) if prog == "rm" else _find_paths(argv)
         # Home is not in the restore points yet, so deleting there cannot be undone.
-        return any(_is_home_path(t) and not t.startswith(("/tmp", "/var/tmp")) for t in targets)
-    if prog == "git" and re.search(r"\b(push\s+(-f|--force)|reset\s+--hard|clean\s+-\w*f)", segment):
-        return True
+        return any(_is_home_path(t, cwd) for t in targets)
+    if prog == "git":
+        sub, rest = _git_sub(argv)
+        if sub == "push":
+            return any(a in ("--force", "--mirror", "--delete", "--prune") or a.startswith(("--force", "+", ":"))
+                       or _short(a, "f") or _short(a, "d") for a in rest)
+        if sub == "clean":
+            return any(a == "--force" or _short(a, "f") for a in rest)
+        if sub == "reset":
+            return "--hard" in rest
     return False
 
 
@@ -358,8 +496,10 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
             return Step("Running the tests")
         return None
     if prog == "git":
-        if a0 == "clone" and len(args) > 1:
-            repo = _name(args[1]).removesuffix(".git")
+        a0, rest = _git_sub(argv)
+        rest = [a for a in rest if not a.startswith("-")]
+        if a0 == "clone" and rest:
+            repo = _name(rest[0]).removesuffix(".git")
             return Step(f"Downloading {repo}", f"Downloaded {repo}")
         return {"pull": Step("Pulling changes", "Pulled changes"), "push": Step("Pushing changes"),
                 "commit": Step("Saving a version", "Saved a version"), "status": Step("Checking changes"),
@@ -368,14 +508,15 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
                 "switch": Step("Switching versions", "Switched versions"),
                 "reset": Step("Resetting changes", "Reset changes"),
                 "init": Step("Starting a repository", "Started a repository")}.get(a0)
-    if prog in ("curl", "wget", "aria2c", "xh", "http"):
-        url = next((a for a in args if re.match(r"^(https?|ftp)://", a)), a0)
-        host = re.sub(r"^\w+://", "", url).split("/")[0] or "the web"
+    if prog in ("curl", "wget", "aria2c", "xh", "http", "https"):
+        url = _url_arg(argv)
+        host = _host(url) or "the web"
         short = "".join(a[1:] for a in argv[1:] if a.startswith("-") and not a.startswith("--"))
         out = ("o" in short or "O" in short or "--output" in argv or "--remote-name" in argv
                or prog in ("wget", "aria2c") or ">" in segment)
         if out:
             fname = _name(url.split("?")[0]) if "/" in re.sub(r"^\w+://", "", url) else host
+            fname = fname or host
             return Step(f"Downloading {fname}", f"Downloaded {fname}")
         return Step(f"Fetching {host}")
     if prog in ("mkdir",) and args:
@@ -414,8 +555,11 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
     if prog in ("kill", "pkill", "killall"):
         what = next((a for a in args if not a.isdigit()), "a process")
         return Step(f"Stopping {what}", f"Stopped {what}")
-    if prog in ("lsblk", "blkid", "fdisk", "parted", "sgdisk", "sfdisk", "smartctl", "findmnt") and not _irreversible(prog, argv, segment):
-        return Step("Looking at the disks")
+    if prog in ("lsblk", "blkid", "fdisk", "gdisk", "parted", "sgdisk", "sfdisk", "smartctl", "findmnt"):
+        if not _irreversible(prog, argv, segment):
+            return Step("Looking at the disks")
+        dev = next((_name(a) for a in args if a.startswith("/dev/")), "a disk")
+        return Step(f"Changing the partitions on {dev}", f"Changed the partitions on {dev}")
     if prog in ("mount", "umount"):
         return Step("Mounting a disk" if prog == "mount" else "Unmounting a disk", None, SYSTEM)
     if prog == "nmcli":
@@ -496,9 +640,102 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
     if prog in ("ufw", "iptables", "nft", "firewall-cmd"):
         return Step("Changing the firewall", "Changed the firewall", SYSTEM)
     if prog.startswith("mkfs") or prog in ("wipefs", "blkdiscard", "shred", "dd", "cryptsetup", "mkswap"):
-        dev = next((a.split("=", 1)[1] for a in argv if a.startswith("of=")), args[-1] if args else "a disk")
-        return Step(f"Formatting {dev}" if prog != "shred" else f"Wiping {dev}", f"Erased {dev}")
+        return _disk_step(prog, argv, args, segment)
     return None
+
+
+def _disk_step(prog: str, argv: list[str], args: list[str], segment: str) -> Step:
+    dev = args[-1] if args else "a disk"
+    if prog.startswith("mkfs"):
+        return Step(f"Formatting {dev}", f"Formatted {dev}")
+    if prog == "mkswap":
+        return Step(f"Making swap on {dev}", f"Made swap on {dev}")
+    if prog == "wipefs":
+        if _irreversible(prog, argv, segment):
+            return Step(f"Erasing {dev}", f"Erased {dev}")
+        return Step("Looking at the disks")
+    if prog == "blkdiscard":
+        return Step(f"Erasing {dev}", f"Erased {dev}")
+    if prog == "shred":
+        what = _name(dev) if len(args) == 1 else f"{len(args)} files"
+        return Step(f"Wiping {what}", f"Wiped {what}")
+    if prog == "dd":
+        of = _dd_of(argv)
+        src = next((a.split("=", 1)[1] for a in argv if a.startswith("if=")), "")
+        if not of or of in _DEV_SAFE:
+            return Step(f"Reading {src}" if src else "Copying data")
+        if of.startswith("/dev/"):
+            what = f"{_name(src)} to" if src and not src.startswith("/dev/") else "to"
+            return Step(f"Writing {what} {of}", f"Wrote {what} {of}")
+        return Step(f"Writing {_name(of)}", f"Wrote {_name(of)}")
+    # cryptsetup
+    action = args[0] if args else ""
+    target = args[1] if len(args) > 1 else "a disk"
+    if action == "luksFormat":
+        return Step(f"Encrypting {target}", f"Encrypted {target}")
+    if action in ("erase", "luksErase"):
+        return Step(f"Erasing the keys of {target}", f"Erased the keys of {target}")
+    if action in ("open", "luksOpen"):
+        return Step(f"Unlocking {target}")
+    if action in ("close", "luksClose"):
+        return Step(f"Locking {target}")
+    if action in ("status", "luksDump", "isLuks", "tcryptDump", "benchmark"):
+        return Step("Looking at the disks")
+    return Step("Changing disk encryption", "Changed disk encryption")
+
+
+_VALUE_OPTS = {  # download tools' options that take a value: never the address
+    "-u", "--user", "-H", "--header", "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode",
+    "--data-ascii", "--json", "-o", "--output", "-X", "--request", "-A", "--user-agent", "-e", "--referer",
+    "-b", "--cookie", "-c", "--cookie-jar", "-F", "--form", "-T", "--upload-file", "-x", "--proxy",
+    "-U", "--proxy-user", "--oauth2-bearer", "-K", "--config", "-w", "--write-out", "-m", "--max-time",
+    "--connect-timeout", "-r", "--range", "-E", "--cert", "--key", "--cacert", "--resolve", "--retry",
+    "-C", "--continue-at", "-O", "-P", "--directory-prefix", "--password", "--http-user", "--http-password",
+    "--post-data", "--body-data", "--load-cookies", "--save-cookies", "-a", "--auth", "--session",
+}
+_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+
+def _url_arg(argv: list[str]) -> str:
+    """The address a download command fetches: an argument with a scheme, else the first
+    one that is not an option's value (a user:password, a header) or an HTTP method."""
+    plain = []
+    i = 1
+    while i < len(argv):
+        a = argv[i]
+        if a == "--url" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a in _VALUE_OPTS:
+            i += 2
+            continue
+        if not a.startswith("-") and a not in _METHODS:
+            plain.append(a)
+        i += 1
+    return next((a for a in plain if re.match(r"^(https?|ftp)://", a)), plain[0] if plain else "")
+
+
+def _host(url: str) -> str:
+    """'https://user:secret@api.example.com/v1' -> 'api.example.com'. Never a credential."""
+    rest = re.sub(r"^\w+://", "", str(url)).split("/")[0].split("?")[0]
+    rest = rest.rsplit("@", 1)[-1]
+    return rest if re.fullmatch(r"[\w.:\[\]-]+", rest) else ""
+
+
+def _changed_paths(prog: str, argv: list[str]) -> list[str]:
+    """The paths a file command changes: a copy's destination, not its source; sed's files
+    only with -i."""
+    args = _args(argv)
+    if prog in ("cp", "ln", "install", "rsync"):
+        target = next((argv[i + 1] for i, a in enumerate(argv[:-1]) if a in ("-t", "--target-directory")),
+                      next((a.split("=", 1)[1] for a in argv if a.startswith("--target-directory=")), None))
+        return [target] if target else args[-1:]
+    if prog == "sed":
+        if not any(a == "--in-place" or a.startswith("--in-place=") or _short(a, "i") for a in argv[1:]):
+            return []
+        return args if any(a in ("-e", "-f", "--expression", "--file") for a in argv) else args[1:]
+    if prog in ("tee", "mv", "rm", "rmdir", "chmod", "chown", "chgrp", "touch", "mkdir", "truncate"):
+        return args
+    return []
 
 
 def shell_step(command: str, description: str | None = None) -> Step:
@@ -508,32 +745,47 @@ def shell_step(command: str, description: str | None = None) -> Step:
     sudo_any = False
     system = False
     irreversible = False
+    cwd: str | None = None      # after a `cd`, where relative paths point
     for segment_argv in _segments(inner):
-        argv, sudo = _strip_wrappers(segment_argv)
+        words, writes = _strip_redirects(segment_argv)
+        argv, sudo = _strip_wrappers(words)
         sudo_any = sudo_any or sudo
         if not argv:
             continue
         prog = PurePosixPath(argv[0]).name
         segment = " ".join(segment_argv)
-        if _irreversible(prog, argv, segment):
+        if prog == "cd":
+            to = _expand_home(argv[1]) if len(argv) > 1 else str(paths.home())
+            if to.startswith("/"):
+                cwd = os.path.normpath(to)
+            elif cwd and not to.startswith(("$", "-", "~")):
+                cwd = os.path.normpath(os.path.join(cwd, to))
+            else:
+                cwd = None
+            continue
+        if _irreversible(prog, argv, segment, cwd):
             irreversible = True
         if prog in _PKG and any(a.startswith(("-S", "-R", "-U", "--sync", "--remove", "--upgrade"))
                                 and not re.match(r"^-S[si]", a) for a in argv[1:]):
             system = True
-        if any(_is_system_path(p) for p in _writes_redirect(segment)):
+        if any(_is_system_path(p) for p in _writes_redirect(segment) + writes):
             system = True
-        if prog in ("tee", "cp", "mv", "rm", "ln", "install", "chmod", "chown", "sed", "touch", "mkdir") and any(
-                _is_system_path(a) for a in _args(argv)):
+        if any(_is_system_path(p) for p in _changed_paths(prog, argv)):
             system = True
-        if prog in _TRIVIAL and best is None:
+        files = [w for w in writes if not w.startswith("/dev/")]
+        if prog in _TRIVIAL and best is None and not (files and prog in ("echo", "printf")):
             continue
-        if prog in ("bash", "sh", "zsh", "dash") and len(argv) > 2 and argv[1] in ("-c", "-lc"):
+        script = _shell_script(argv)
+        if script is not None:
             # `sudo sh -c '...'`: read the script inside.
-            step = shell_step(argv[2], description)
+            step = shell_step(script, description)
             irreversible = irreversible or step.risk == IRREVERSIBLE
             system = system or step.risk == SYSTEM
         else:
             step = _command_step(argv, segment, description)
+        if files and (prog in ("cat", "echo", "printf") or step is None):
+            # `cat > notes.txt <<EOF`: the command is writing that file.
+            step = Step(f"Writing {_name(files[-1])}", f"Wrote {_name(files[-1])}")
         if step is not None and (best is None or (step.changes and not best.changes)):
             best = step
             if step.risk == SYSTEM:
@@ -545,7 +797,8 @@ def shell_step(command: str, description: str | None = None) -> Step:
         best = Step(said, None, best.risk)
     if best is None:
         text = said
-        prog = next((PurePosixPath(a[0]).name for a in (_strip_wrappers(s)[0] for s in _segments(inner)) if a), "a command")
+        prog = next((PurePosixPath(a[0]).name for a in (_strip_wrappers(_strip_redirects(s)[0])[0]
+                                                          for s in _segments(inner)) if a), "a command")
         best = Step(text or f"Running {prog}")
     if irreversible:
         best.risk = IRREVERSIBLE
@@ -560,16 +813,18 @@ def shell_step(command: str, description: str | None = None) -> Step:
 
 def _os_tool(tool: str, a: dict) -> Step | None:
     """bombadil-os tools (os-mcp), for both providers."""
+    name = str(a.get("name") or "")
     if tool == "show_panel":
-        return Step(f"Opening {PANEL_WORDS.get(a.get('name'), a.get('name') or 'a panel')}",
-                    f"Opened {PANEL_WORDS.get(a.get('name'), a.get('name') or 'a panel')}")
+        return Step(f"Opening {PANEL_WORDS.get(name, name or 'a panel')}",
+                    f"Opened {PANEL_WORDS.get(name, name or 'a panel')}")
     if tool == "hide_panel":
-        return Step(f"Putting {PANEL_WORDS.get(a.get('name'), a.get('name') or 'a panel')} away")
+        return Step(f"Putting {PANEL_WORDS.get(name, name or 'a panel')} away")
     if tool == "create_app":
-        title = _app_title(a.get("title", ""))
+        raw = str(a.get("title") or "")
+        title = _app_title(raw)
         files = a.get("files") if isinstance(a.get("files"), dict) else {}
         n = _lines(a.get("qml"), a.get("python"), *files.values())
-        again = _app_exists(a.get("title", "")) if a.get("title") else False
+        again = _app_exists(raw) if raw else False
         now, past = ("Changing", "Changed") if again else ("Building", "Made")
         return Step(f"{now} {title}" + (f", {n} lines" if n > 1 else ""), f"{past} {title}")
     if tool in ("open_app", "show_app"):
@@ -597,8 +852,7 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     if tool == "show_card":
         return Step("Showing a card")
     if tool == "open_url":
-        url = str(a.get("url", ""))
-        host = re.sub(r"^\w+://", "", url).split("/")[0]
+        host = _host(str(a.get("url", "")))
         return Step(f"Opening {host}" if host else "Opening the browser")
     return None
 
@@ -618,28 +872,30 @@ def tool_step(name: str, a: dict | None) -> Step | None:
         return Step(f"Reading {_name(a.get('file_path') or a.get('notebook_path') or 'a file')}")
     if name == "Write":
         n = _lines(a.get("content"))
-        p = str(a.get("file_path", ""))
-        step = Step(f"Writing {_name(p)}" + (f", {n} lines" if n > 1 else ""), f"Wrote {_name(p)}")
+        p = str(a.get("file_path") or "")
+        what = _name(p) if p else "a file"
+        step = Step(f"Writing {what}" + (f", {n} lines" if n > 1 else ""), f"Wrote {what}")
         if _is_system_path(p):
             step.risk, step.command = SYSTEM, f"write {p}"
         return step
     if name in ("Edit", "MultiEdit", "NotebookEdit"):
         p = str(a.get("file_path") or a.get("notebook_path") or "")
-        step = Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
+        what = _name(p) if p else "a file"
+        step = Step(f"Editing {what}", f"Edited {what}")
         if _is_system_path(p):
             step.risk, step.command = SYSTEM, f"edit {p}"
         return step
     if name == "Glob":
         return Step("Looking for files")
     if name == "Grep":
-        return Step(f"Searching for {_quote(a.get('pattern', ''))}")
+        return Step(f"Searching for {_quote(a['pattern'])}" if a.get("pattern") else "Searching")
     if name == "LS":
         return Step("Looking through files")
     if name == "WebFetch":
-        host = re.sub(r"^\w+://", "", str(a.get("url", ""))).split("/")[0]
+        host = _host(str(a.get("url", "")))
         return Step(f"Reading {host}" if host else "Reading a web page")
     if name == "WebSearch":
-        return Step(f"Searching the web for {_quote(a.get('query', ''))}")
+        return Step(f"Searching the web for {_quote(a['query'])}" if a.get("query") else "Searching the web")
     if name == "TodoWrite":
         todos = a.get("todos") if isinstance(a.get("todos"), list) else []
         active = next((t for t in todos if isinstance(t, dict) and t.get("status") == "in_progress"), None)
@@ -670,7 +926,7 @@ def tool_step(name: str, a: dict | None) -> Step | None:
 
 def file_change_step(changes: list) -> Step:
     """Codex's file_change item: [{path, kind: add|delete|update}]."""
-    changes = [c for c in changes if isinstance(c, dict)]
+    changes = [c for c in changes if isinstance(c, dict)] if isinstance(changes, list) else []
     if not changes:
         return Step("Editing files", "Edited files")
     kinds = {c.get("kind") for c in changes}
@@ -710,6 +966,11 @@ def partial_step(name: str, partial: str) -> Step | None:
         if m:
             p = json.loads(f'"{m.group(1)}"')
             return Step(f"Writing {_name(p)}" + (f", {n} lines" if n > 1 else ""), f"Wrote {_name(p)}")
+    if name in ("Edit", "MultiEdit"):
+        m = _PATH_RE.search(partial)
+        if m:
+            p = json.loads(f'"{m.group(1)}"')
+            return Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
     return None
 
 
@@ -798,20 +1059,20 @@ class Narrator:
                 return None
             return self._set(Step(step.text))
         if kind == "text_delta":
-            self.said += ev.get("text", "")
+            self.said += str(ev.get("text") or "")
             line = self.said.strip().splitlines()[-1].strip() if self.said.strip() else ""
             if not line:
                 return None
             return {"text": line[-200:], "risk": None, "command": None, "source": "agent"}
         if kind == "text":
             self.said = ""
-            text = ev.get("text", "").strip()
+            text = str(ev.get("text") or "").strip()
             if not text:
                 return None
             return {"text": text.splitlines()[-1].strip()[-200:], "risk": None, "command": None, "source": "agent"}
         if kind == "output":
             # A typed "!command": its newest output line, keeping the command's mark.
-            text = ev.get("text", "").strip()
+            text = str(ev.get("text") or "").strip()
             if not text:
                 return None
             s = self.step

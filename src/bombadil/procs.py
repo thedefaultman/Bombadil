@@ -6,11 +6,17 @@ were reparented. Without systemd (dev machines, tests) the turn is the CLI's pro
 
 Windows the turn opened (the browser, the terminal, an app) are yours now, so Stop leaves
 them and their children alone. Everything else first gets SIGINT: the CLI saves the
-conversation, sudo relays it to its command, and pacman (which ignores SIGTERM) removes
-its lock. Whatever is left gets SIGTERM, then SIGKILL. Processes owned by root cannot be
-signalled by the user, so those without a sudo to relay go through `sudo -n kill`; the
-agent has passwordless sudo on Bombadil. If pacman died anyway, its lock file is removed
-so the next install does not fail with "unable to lock database".
+conversation and sudo relays it to its command. Whatever is left gets SIGTERM, then
+SIGKILL. Processes owned by root cannot be signalled by the user, so those without a sudo
+to relay go through `sudo -n kill`; the agent has passwordless sudo on Bombadil.
+
+pacman is the exception. Killed mid-package it leaves files on disk that its database
+does not know about, and the next install fails. On SIGINT it finishes the package it is
+extracting and then stops cleanly, so Stop freezes the rest of the turn (so the agent
+cannot start it again), interrupts pacman alone, waits for it however long that takes, and
+only then stops everything else. pacman and its hooks never get SIGTERM or SIGKILL. If
+pacman left its lock behind, it is removed so the next install does not fail with "unable
+to lock database".
 """
 
 import os
@@ -36,6 +42,7 @@ class Proc:
     start: int         # start time in clock ticks: tells a reused pid apart
     comm: str
     cmdline: str       # argv joined with NUL, as /proc has it
+    pgrp: int = 0      # process group
 
 
 def read(pid: int) -> Proc | None:
@@ -49,7 +56,7 @@ def read(pid: int) -> Proc | None:
     comm = stat[stat.index("(") + 1: stat.rindex(")")]
     fields = stat[stat.rindex(")") + 2:].split()
     uid = next((int(line.split()[1]) for line in status.splitlines() if line.startswith("Uid:")), -1)
-    return Proc(pid, int(fields[1]), uid, int(fields[19]), comm, cmd)
+    return Proc(pid, int(fields[1]), uid, int(fields[19]), comm, cmd, int(fields[2]))
 
 
 def all_procs() -> dict[int, Proc]:
@@ -86,6 +93,20 @@ def cgroup_of(pid: int) -> Path | None:
     except OSError:
         pass
     return None
+
+
+def scope_cgroup(unit: str | None, runner=subprocess.run) -> Path | None:
+    """The cgroup of a turn's scope by its unit name, for when its first process is gone."""
+    if not unit or not scope_supported():
+        return None
+    try:
+        r = runner(["systemctl", "--user", "show", "-P", "ControlGroup", f"{unit}.scope"],
+                   capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    cg = (r.stdout or "").strip()
+    path = CGROUP_ROOT / cg.lstrip("/") if cg else None
+    return path if path is not None and path.name.startswith("bombadil-turn-") else None
 
 
 def cgroup_pids(cg: Path) -> set[int]:
@@ -146,18 +167,28 @@ def _protected(pid: int, procs: dict[int, Proc], memo: dict[int, bool]) -> bool:
 
 
 class Stopper:
-    def __init__(self, sudo=("sudo", "-n"), grace: float = 3.0, runner=subprocess.run):
+    def __init__(self, sudo=("sudo", "-n"), grace: float = 3.0, runner=subprocess.run,
+                 pacman_grace: float = 900.0):
         self.sudo = list(sudo)
         self.grace = grace
+        self.pacman_grace = pacman_grace   # how long a package may take to finish after Stop
         self._run = runner
 
-    def members(self, root: int) -> dict[int, Proc]:
-        """Every live process of the turn rooted at `root`, minus the windows it opened."""
+    def members(self, root: int, cg: Path | None = None, pgid: int | None = None,
+                roots=()) -> dict[int, Proc]:
+        """Every live process of the turn rooted at `root`, minus the windows it opened: the
+        root's descendants, everything in its scope's cgroup and process group, and the
+        descendants of `roots` (earlier members, which may have been reparented since)."""
         procs = all_procs()
         pids = descendants(root, procs) | {root}
-        cg = cgroup_of(root)
+        for r in roots:
+            pids |= descendants(r, procs) | {r}
+        if cg is None:
+            cg = cgroup_of(root)
         if cg is not None:
             pids |= cgroup_pids(cg)
+        if pgid is not None and pgid > 1:
+            pids |= {p.pid for p in procs.values() if p.pgrp == pgid}
         pids.discard(os.getpid())
         memo: dict[int, bool] = {}
         return {pid: procs[pid] for pid in pids if pid in procs and not _protected(pid, procs, memo)}
@@ -201,15 +232,61 @@ class Stopper:
             alive = self._alive(alive)
         return alive
 
-    def stop(self, root: int) -> dict:
-        """End the turn rooted at `root`. Returns what it did, for the log."""
-        first = self.members(root)
-        had_pacman = any(p.comm == "pacman" for p in first.values())
-        # 1. SIGINT: the CLI saves its conversation, sudo relays it, pacman cleans up after itself.
-        self._signal(first, signal.SIGINT, relayed=True)
-        left = self._wait(first, self.grace)
-        # Anything that started meanwhile belongs to the turn too.
-        left.update({pid: p for pid, p in self.members(root).items() if pid not in first})
+    @staticmethod
+    def _pacman_tree(members: dict[int, Proc]) -> tuple[dict[int, Proc], dict[int, Proc]]:
+        """(pacman and the sudo above it, pacman's hooks and scriptlets) among the members."""
+        pacmen = {pid: p for pid, p in members.items() if p.comm == "pacman"}
+        if not pacmen:
+            return {}, {}
+        top = dict(pacmen)
+        for p in pacmen.values():
+            parent = members.get(p.ppid)
+            while parent is not None and parent.comm == "sudo":
+                top[parent.pid] = parent
+                parent = members.get(parent.ppid)
+        procs = all_procs()
+        below = set()
+        for pid in pacmen:
+            below |= descendants(pid, procs)
+        hooks = {pid: members.get(pid) or procs[pid] for pid in below if pid in procs and pid not in top}
+        return top, hooks
+
+    def stop(self, root: int, unit: str | None = None, notify=None) -> dict:
+        """End the turn rooted at `root` (its scope is `unit`, when it has one). `notify(text)`
+        is told when Stop has to wait for something. Returns what it did, for the log."""
+        # Found once, while the root may still be alive: after it exits, its scope and
+        # process group are the only ways to reach what it left running.
+        cg = cgroup_of(root) or scope_cgroup(unit, self._run)
+        first = self.members(root, cg, root)
+        out = {"interrupted": 0, "terminated": 0, "killed": 0, "waited": 0.0}
+        pacman, hooks = self._pacman_tree(first)
+        busy = {}   # pacman still running after its long grace: left alone for good
+        interrupted: set[int] = set()
+        if pacman:
+            frozen = {pid: p for pid, p in first.items() if pid not in pacman and pid not in hooks}
+            self._signal(frozen, signal.SIGSTOP)
+            try:
+                if notify is not None:
+                    notify("Stopping after this package")
+                t0 = time.monotonic()
+                self._signal(pacman, signal.SIGINT, relayed=True)
+                busy = self._wait({pid: p for pid, p in pacman.items() if p.comm == "pacman"}, self.pacman_grace)
+                out["waited"] = round(time.monotonic() - t0, 1)
+            finally:
+                # The rest gets its SIGINT before it runs again.
+                self._signal(frozen, signal.SIGINT, relayed=True)
+                self._signal(frozen, signal.SIGCONT)
+                interrupted = set(frozen)
+        spare = set(busy)
+        if busy:
+            spare |= set(pacman) | set(hooks)
+        targets = {pid: p for pid, p in self.members(root, cg, root, roots=first).items() if pid not in spare}
+        # 1. SIGINT: the CLI saves its conversation, sudo relays it.
+        self._signal({pid: p for pid, p in targets.items() if pid not in interrupted}, signal.SIGINT, relayed=True)
+        left = self._wait(targets, self.grace)
+        # Anything that started meanwhile belongs to the turn too, even if its parent is gone.
+        now = self.members(root, cg, root, roots=list(first) + list(targets))
+        left.update({pid: p for pid, p in now.items() if pid not in targets and pid not in spare})
         # 2. SIGTERM, then 3. SIGKILL for whatever is still there.
         killed = {}
         if left:
@@ -217,10 +294,10 @@ class Stopper:
             killed = self._wait(left, 1.0)
             if killed:
                 self._signal(killed, signal.SIGKILL)
-        had_pacman = had_pacman or any(p.comm == "pacman" for p in left.values())
-        if had_pacman:
+        if pacman or any(p.comm == "pacman" for p in left.values()):
             self._unlock_pacman()
-        return {"interrupted": len(first), "terminated": len(left), "killed": len(killed)}
+        out.update(interrupted=len(targets) + len(pacman), terminated=len(left), killed=len(killed))
+        return out
 
     def _unlock_pacman(self) -> None:
         # Only a lock nobody holds: pacman may still be finishing on its own.

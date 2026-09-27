@@ -96,13 +96,25 @@ ShellRoot {
                 Region { item: pillBox }
             }
 
-            onSummonedChanged: if (summoned) input.forceActiveFocus()
+            onSummonedChanged: {
+                if (summoned) input.forceActiveFocus()
+                grab.active = summoned
+            }
+
+            // While summoned the pill holds the keyboard; a click anywhere else hands it back,
+            // so typing meant for another window (a password prompt) never lands in the pill.
+            HyprlandFocusGrab {
+                id: grab
+                windows: [win]
+                onCleared: root.release()
+            }
 
             Timer {
-                // Summoned but left empty: give the keyboard back to the windows.
+                // Summoned and left alone: give the keyboard back to the windows. Typing starts
+                // the wait again; text already typed stays in the pill.
                 id: idle
-                interval: 20000
-                running: win.summoned && input.text === ""
+                interval: input.text === "" ? 20000 : 60000
+                running: win.summoned
                 onTriggered: root.release()
             }
 
@@ -149,7 +161,7 @@ ShellRoot {
                         // The dot. While a turn runs it is orange; hover turns it into Stop.
                         Rectangle {
                             id: dotBox
-                            readonly property bool stoppable: pillState.busy && dotHover.hovered
+                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered
                             implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
                             implicitHeight: 24
                             radius: 12
@@ -174,7 +186,7 @@ ShellRoot {
                                 Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
                             }
                             HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                            TapHandler { enabled: pillState.busy; onTapped: pillState.stop() }
+                            TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
                         }
 
                         Item {
@@ -196,6 +208,7 @@ ShellRoot {
                                         root.release()
                                     }
                                 }
+                                onTextChanged: if (win.summoned) idle.restart()
                                 // Tab takes the suggested name: "pass" + Tab = "passwords".
                                 Keys.onTabPressed: {
                                     const rest = pillState.completion(text)
@@ -203,7 +216,7 @@ ShellRoot {
                                 }
                                 // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
                                 Keys.onEscapePressed: {
-                                    if (pillState.busy) pillState.stop()
+                                    if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""
                                     else { pillState.dismiss(); root.release() }
                                 }

@@ -42,6 +42,11 @@ def test_exact_words_open_locally(home, text, kind, target, verb):
 @pytest.mark.parametrize("text", [
     "open the browser and search for flights", "make me a password manager", "undo the docker install",
     "pass", "!ls", "", "what is using my memory", "start docker", "the wifi is slow",
+    # A sentence in another script keeps its one launcher word only in ASCII; it is still a sentence.
+    "Как сделать restart?", "shutdownしないで", "不要 undo", "为什么 browser 很慢", "почему wifi не работает?",
+    "¿restart?", "电脑 restart 以后很慢", "turn off", "restart?", "open the browser, please",
+    # "!" always means a shell command, even before a launcher word.
+    "!shutdown", "!restart", "!undo", "!files", " !history",
 ])
 def test_everything_else_goes_to_the_agent(home, text):
     assert launcher.match(text, _apps(home)) is None
@@ -78,7 +83,8 @@ class Snaps(snapshots.Snapshots):
         return True
 
 
-def test_undo_goes_back_one_turn_at_a_time_until_a_new_turn(home):
+def test_undo_goes_back_one_turn_at_a_time_until_a_new_turn(home, monkeypatch):
+    monkeypatch.setattr(launcher, "_boot_id", lambda: "boot-1")
     s = Snaps(3)
     lx = launcher.Launcher(snaps=s)
     ok, text = lx.run(launcher.Action("undo"))
@@ -86,10 +92,27 @@ def test_undo_goes_back_one_turn_at_a_time_until_a_new_turn(home):
     assert "“prompt 3”" in text and "restart" in text and "home folder" in text
     lx.run(launcher.Action("undo"))
     assert s.rolled == [3, 2]
+    monkeypatch.setattr(launcher, "_boot_id", lambda: "boot-2")   # the restart applied it
     lx.clear_undo()                   # agentd does this when a new turn starts
     s.n = 4
     lx.run(launcher.Action("undo"))
     assert s.rolled == [3, 2, 4]
+
+
+def test_a_turn_before_the_restart_does_not_bring_back_what_was_undone(home, monkeypatch):
+    """Until the restart applies an undo, the running root still has the undone change; the
+    next turn's restore point has it too, and rolling back to that would restore it."""
+    monkeypatch.setattr(launcher, "_boot_id", lambda: "boot-1")
+    s = Snaps(2)
+    lx = launcher.Launcher(snaps=s)
+    lx.run(launcher.Action("undo"))            # undo turn 2, "prompt 2"
+    lx.clear_undo()                            # turn 3 starts in the same boot
+    s.n = 3
+    ok, text = lx.run(launcher.Action("undo"))
+    assert ok and s.rolled == [2]              # nothing new: the restart already covers turn 3
+    assert "Already undone" in text and "“prompt 2”" in text
+    lx.run(launcher.Action("undo"))            # asked again: one turn further back
+    assert s.rolled == [2, 1]
 
 
 def test_undo_without_restore_points_says_so(home):
@@ -151,8 +174,38 @@ def test_failures_are_one_plain_line(home):
         def panel(self, name, show=True):
             raise RuntimeError("chromium is not installed")
     ok, text = launcher.Launcher(hyprland=Broken(), snaps=Snaps(0)).run(launcher.match("browser", []))
-    assert not ok and text == "Could not open: chromium is not installed"
+    assert not ok and text == "Could not open the browser: chromium is not installed"
     assert "\n" not in text
+
+
+def test_a_failed_command_says_why_in_its_own_words(home):
+    import subprocess
+
+    def fail(argv, **k):
+        raise subprocess.CalledProcessError(1, argv, output=b"", stderr=b"warning: x\nsudo: a password is required\n")
+    ok, text = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0), runner=fail).run(launcher.Action("restart"))
+    assert (ok, text) == (False, "Could not restart: sudo: a password is required")
+
+
+def test_a_folder_that_is_not_an_app_is_skipped(home):
+    _apps(home)
+    (home / "Apps" / "passwords.bak").mkdir()
+    (home / "Apps" / "passwords.bak" / "main.qml").write_text("Item {}")
+    (home / "Apps" / "notes").mkdir()
+    (home / "Apps" / "notes" / "main.qml").write_text("Item {}")
+    (home / "Apps" / "notes" / "app.toml").write_text('title = "\\ud83c"\n')   # not valid TOML
+    names = [a.name for a in launcher.known_apps()]
+    assert names == ["memory-viewer", "notes", "passwords"]
+    assert launcher.match("stop").kind == "stop"
+    assert launcher.match("notes").target == "notes"
+    assert [e["name"] for e in launcher.entries()][:3] == names
+
+
+def test_an_app_title_in_any_script_still_opens(home):
+    apps.create("Café", "import QtQuick\nItem {}\n")
+    a = launcher.match("café")
+    assert a is not None and a.kind == "app" and a.target == "caf"
+    assert launcher.match("open Café").verb == "open"
 
 
 def test_details_drawer_runs_in_foot_and_slides_in(home, monkeypatch):
@@ -163,5 +216,5 @@ def test_details_drawer_runs_in_foot_and_slides_in(home, monkeypatch):
                            spawn=lambda argv, **k: spawned.append(argv))
     lx.details(["bombadil", "watch"])
     assert spawned == [["/usr/bin/foot", "--app-id=bombadil-details", "--title=Details", "bombadil", "watch"]]
-    assert ran == [["pkill", "-f", "--app-id=bombadil-details"]]
+    assert ran == [["pkill", "-f", "--", "--app-id=bombadil-details"]]
     assert h.calls == [("dispatch", 'hl.dsp.focus({ workspace = "special:details" })')]

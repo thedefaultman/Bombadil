@@ -28,9 +28,10 @@ import "%s"
 
 Window {
     id: w
-    width: 820; height: 260; visible: true
+    width: 820; height: 260 + (w.screens - 1) * 200; visible: true
     color: "#3b4a5a"
     property var sent: []
+    property int screens: 1
     PillState {
         id: pillState
         objectName: "pill"
@@ -38,10 +39,12 @@ Window {
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
-        model: 1
+        model: w.screens
         ColumnLayout {
+            required property int index
             parent: w.contentItem
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
+            anchors.bottomMargin: 12 + index * 200
             spacing: 8
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
@@ -303,3 +306,85 @@ def test_the_bar_loads_without_qml_warnings(bar):
     bar.send(kind="turn_start", turn=1, prompt="hello")
     bar.send(kind="turn_end", turn=1, seconds=1, changed=True, summary="Did it.")
     assert bar.warnings == []
+
+
+def test_a_turn_that_ends_before_it_starts_still_ends_on_screen(bar):
+    """agentd answers the prompt with its turn id; an error and turn_end for that id close
+    "On it" even when no turn_start came (a CLI that is not installed yet)."""
+    bar.call("submit", "hello")
+    bar.send(type="queued", turn=1)
+    bar.send(kind="error", turn=1, text="claude is not installed yet: press Super+Return and run bombadil-setup")
+    bar.send(kind="turn_end", turn=1, seconds=0)
+    assert bar.pill.property("mode") == "closing"
+    assert bar.text().startswith("claude is not installed yet")
+    assert not bar.pill.property("stoppable")
+
+
+def test_esc_and_the_dot_can_stop_from_the_first_moment(bar):
+    bar.call("submit", "install docker")
+    bar.send(type="status", busy=False, provider="claude", queue=[])   # agentd has not started it yet
+    assert bar.pill.property("stoppable")
+    bar.send(kind="turn_start", turn=1, prompt="install docker")
+    bar.send(kind="status", turn=1, text="Saving a restore point", source="step")
+    assert bar.pill.property("stoppable")
+
+
+def test_a_new_prompt_after_a_stop_shows_on_it_at_once(bar):
+    bar.call("submit", "install docker")
+    bar.send(kind="turn_start", turn=3, prompt="install docker")
+    bar.send(kind="turn_end", turn=3, seconds=5, stopped=True, line="Stopped while installing docker.")
+    bar.call("submit", "undo")
+    assert bar.text() == "On it"
+
+
+def test_not_connected_fades_even_after_a_line_that_stayed(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    assert bar.pill.property("sticky")
+    bar.call("lost")
+    bar.call("submit", "hello")
+    assert bar.text() == "Not connected to the agent yet." and not bar.pill.property("sticky")
+
+
+def test_undo_while_disconnected_keeps_the_line_and_says_why(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    bar.call("lost")
+    before = len(bar.sent)
+    bar.click("undoButton")
+    assert len(bar.sent) == before and bar.pill.property("sticky")
+    assert bar.text() == "Not connected to the agent yet."
+    bar.send(kind="queued", turn=5, prompt="later")
+    bar.call("unqueue", 5)
+    assert len(bar.items("queuedChip")) == 1   # the chip stays: nothing was taken back
+
+
+def test_exact_words_are_the_launchers_own(bar):
+    assert bar.call("exact", "почему browser") == ""
+    assert bar.call("exact", "!browser") == ""
+    assert bar.call("exact", "Pass-words") == "Passwords"
+    assert bar.call("exact", "browser, please") == ""
+
+
+def test_hovering_the_line_on_one_screen_keeps_it_on_all(bar):
+    bar.win.setProperty("screens", 2)
+    bar.pump(0.2)
+    lines = bar.items("statusLine", visible_only=False)
+    assert len(lines) == 2
+    bar.call("submit", "what time is it")
+    bar.send(kind="turn_start", turn=8, prompt="what time is it")
+    bar.send(kind="turn_end", turn=8, seconds=2, changed=False, summary="")
+    bar.pump(0.3)
+    first = min(lines, key=lambda it: it.mapToScene(QtCore.QPointF(0, 0)).y())
+    centre = first.mapToScene(QtCore.QPointF(first.width() / 2, first.height() / 2)).toPoint()
+    QtTest.QTest.mouseMove(bar.win, centre)
+    bar.pump(0.2)
+    assert bar.pill.property("hovers") == 1
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(0.8)
+    assert bar.pill.property("mode") == "closing"   # the other screen's line did not dismiss it
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
+    bar.pump(0.8)
+    assert bar.pill.property("mode") == "idle"

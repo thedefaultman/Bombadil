@@ -63,7 +63,7 @@ class Renderer:
             step = narrate.tool_step(ev.get("name", ""), ev.get("input"))
             if step is None:
                 return
-            yield from self._step(step)
+            yield from self._step(step, _what_ran(ev))
         elif kind == "file_change":
             yield from self._step(narrate.file_change_step(ev.get("changes") or []))
             for ch in ev.get("changes") or []:
@@ -95,12 +95,28 @@ class Renderer:
             if ev.get("irreversible"):
                 yield c(RED, "  One step here cannot be undone.")
 
-    def _step(self, step: narrate.Step) -> Iterator[str]:
+    def _step(self, step: narrate.Step, ran: str = "") -> Iterator[str]:
+        """The step in words, then exactly what ran: the plain words can be wrong, this is not.
+        Marked steps show it in their colour, the rest dimmed."""
         c = self.c
         mark = {"system": c(AMBER, "  [system]"), "irreversible": c(RED, "  [cannot be undone]")}.get(step.risk or "", "")
         yield f"▸ {step.text}{mark}"
-        if step.command:
-            yield c(AMBER if step.risk == "system" else RED, f"  $ {step.command}")
+        exact = ran or step.command or ""
+        colour = AMBER if step.risk == "system" else RED if step.risk else DIM
+        for i, line in enumerate(exact.splitlines()):
+            yield c(colour, ("  $ " if i == 0 else "    ") + line[: self.width * 3])
+
+
+def _what_ran(ev: dict) -> str:
+    """A tool call's command (Bash, the inner script of `bash -lc`) or the file it touched."""
+    a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+    name = str(ev.get("name") or "")
+    if name == "Bash" and a.get("command"):
+        return narrate._unwrap(str(a["command"])).strip()
+    path = a.get("file_path") or a.get("notebook_path") or a.get("path")
+    if name in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Read") and path:
+        return f"{name.lower().removeprefix('multi').removeprefix('notebook')} {path}"
+    return ""
 
 
 def _terminal() -> tuple[bool, int]:

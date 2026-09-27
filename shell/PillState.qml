@@ -34,6 +34,9 @@ QtObject {
     property int fadeAfter: 12000    // how long a closing or local line stays (ms)
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
+    property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
+    // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
+    readonly property bool stoppable: busy || optimistic
 
     property string _result: ""
     property bool _resultOk: true
@@ -66,7 +69,12 @@ QtObject {
         if (ev.type === "summon") { summoned(); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
-            if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; lineAt = _now() }
+            if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }
+            return
+        }
+        if (ev.type === "queued") {
+            // agentd accepted our prompt as this turn: follow it, even if it ends before it starts.
+            if (optimistic && turn === null) turn = ev.turn
             return
         }
         if (ev.type !== "event") return
@@ -97,7 +105,7 @@ QtObject {
         case "error":
             if (ev.turn === null || ev.turn === undefined) {
                 if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now() }
-                else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; lineAt = _now() }
+                else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; sticky = false; lineAt = _now() }
             } else if (ev.turn === turn) {
                 _error = ev.text || ""
             }
@@ -109,6 +117,7 @@ QtObject {
             break
         case "turn_end":
             if (ev.turn !== turn) break
+            optimistic = false
             busy = false
             stopped = !!ev.stopped
             changed = !!ev.changed
@@ -145,7 +154,8 @@ QtObject {
         const t = String(text || "").trim()
         if (!t) return false
         if (!connected) {
-            mode = "local"; line = "Not connected to the agent yet."; source = "error"; lineAt = _now(); fadeAfter = 4000
+            mode = "local"; line = "Not connected to the agent yet."; source = "error"; sticky = false
+            lineAt = _now(); fadeAfter = 4000
             return false
         }
         outgoing({ type: "prompt", text: t })
@@ -154,6 +164,7 @@ QtObject {
             optimistic = true
             mode = "working"; line = "On it"; source = "step"; risk = ""; command = ""
             startedAt = _now(); turn = null; sticky = false; stopped = false
+            flash = ""   // a "Stopped while…" still showing would hide "On it"
         } else if (mode === "closing" || mode === "local") {
             mode = "idle"
         }
@@ -171,17 +182,29 @@ QtObject {
         }
     }
 
+    // Nothing reaches agentd while the socket is down: say so, and keep what is on screen.
+    function _offline() {
+        if (connected) return false
+        flash = "Not connected to the agent yet."; flashAt = _now()
+        return true
+    }
+
     function stop() {
+        if (_offline()) return
         outgoing({ type: "stop" })
         if (mode === "working") { line = "Stopping"; source = "step"; risk = ""; command = "" }
     }
 
     function unqueue(t) {
+        if (_offline()) return
         outgoing({ type: "unqueue", turn: t })
         _setQueue(queue.filter(q => q.turn !== t))
     }
 
-    function undo() { outgoing({ type: "local", action: "undo" }); sticky = false }
+    function undo() {
+        if (_offline()) return
+        outgoing({ type: "local", action: "undo" }); sticky = false
+    }
 
     function details() { outgoing({ type: "details", turn: turn }) }
 
@@ -201,6 +224,15 @@ QtObject {
         return { verb: "", rest: t }
     }
 
+    // As launcher.py's _key: only spaces, hyphens and underscores fold away; any other sign
+    // or letter outside a-z makes it no launcher word ("" never matches).
+    function _key(s) {
+        const k = String(s || "").toLowerCase().replace(/[\s_-]+/g, "")
+        return /^[a-z0-9]+$/.test(k) ? k : ""
+    }
+
+    function _title(s) { return String(s || "").trim().split(/\s+/).join(" ").toLowerCase() }
+
     // The rest of the word Tab would fill in, or "".
     function completion(text) {
         const s = _split(text)
@@ -216,13 +248,17 @@ QtObject {
 
     // What an exact launcher word would open ("Passwords"), or "" when it goes to the agent.
     function exact(text) {
+        if (String(text || "").trim().startsWith("!")) return ""
         const s = _split(text)
-        const k = s.rest.trim().replace(/[.!?]+$/, "").replace(/[^a-z0-9]+/g, "")
-        if (!k) return ""
+        const rest = s.rest.trim().replace(/[.!?,;:]+$/, "")
+        const k = _key(rest)
+        const title = _title(rest)
+        if (!k && !title) return ""
         for (const e of entries) {
-            if (s.verb && e.kind === "command") continue
+            if (e.kind === "app" && title === _title(e.title)) return e.title || e.name
+            if (!k || (s.verb && e.kind === "command")) continue
             for (const w of (e.words || []).concat([e.name, String(e.title || "").toLowerCase()])) {
-                if (String(w).replace(/[^a-z0-9]+/g, "") === k) return e.title || e.name
+                if (_key(w) === k) return e.title || e.name
             }
         }
         return ""

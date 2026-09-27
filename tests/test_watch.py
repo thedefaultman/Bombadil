@@ -24,6 +24,19 @@ def test_details_show_each_step_its_command_and_output():
     assert lines[-1].startswith("  Stopped while installing docker.")
 
 
+def test_every_command_shows_under_its_step_marked_or_not():
+    events = [
+        {"kind": "tool", "name": "Bash", "input": {"command": "ls -la ~/Downloads"}},
+        {"kind": "tool_result", "output": "a\nb", "error": False},
+        {"kind": "tool", "name": "Bash", "input": {"command": "bash -lc 'cat > x <<EOF\nhello\nEOF'"}},
+        {"kind": "tool", "name": "Edit", "input": {"file_path": "/home/d/app.py"}},
+    ]
+    lines = list(watch.Renderer().lines(events))
+    assert lines[:4] == ["▸ Looking through files", "  $ ls -la ~/Downloads", "  │ a", "  │ b"]
+    assert lines[4:8] == ["▸ Writing x", "  $ cat > x <<EOF", "    hello", "    EOF"]
+    assert lines[8:] == ["▸ Editing app.py", "  $ edit /home/d/app.py"]
+
+
 def test_history_lists_turns_and_launcher_actions(home):
     log = paths.turns_log()
     log.parent.mkdir(parents=True, exist_ok=True)

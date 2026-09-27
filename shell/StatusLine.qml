@@ -45,13 +45,18 @@ Rectangle {
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > 3500) bar.pill.flash = ""
+            // The line shows on every screen; hovering it on any of them keeps it.
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
-            if (done && !bar.pill.sticky && !bar.hovered && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
+            if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.dismiss()
         }
     }
 
-    HoverHandler { id: hover }
+    HoverHandler {
+        id: hover
+        onHoveredChanged: bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
+    }
+    Component.onDestruction: if (hover.hovered) bar.pill.hovers = Math.max(0, bar.pill.hovers - 1)
     TapHandler {
         // A finished turn opens its details; anything else just stays while you read it.
         enabled: bar.pill.mode === "closing"
