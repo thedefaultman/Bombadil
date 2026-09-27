@@ -59,6 +59,12 @@ scripts/run-vm.sh --disk     # then `sudo bombadil-install /dev/vda` inside
 
 On first boot a setup window asks which provider to use and runs its login.
 
+On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an Arch WSL
+distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
+checkout has checked out, installs it onto a VM disk, and opens the VM as a window. Run it again
+to boot the same VM; `bombadil-vm reinstall` puts a newer build on it; `wsl --unregister bombadil`
+removes everything.
+
 ## Status
 
 First milestone: the pieces above, tested where they can be without a display.
