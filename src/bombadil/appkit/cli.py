@@ -2,10 +2,19 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from .. import apps
+
+
+def _exit(code: int) -> int:
+    """Leave without Python tearing down Qt objects in a random order (a crash at exit
+    would look like an app error in the log)."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,8 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     cr.add_argument("title")
     cr.add_argument("qml", type=Path)
     cr.add_argument("--python", type=Path)
+    cr.add_argument("--description", default="")
+    cr.add_argument("--icon", default="")
     for verb in ("show", "hide", "toggle", "close"):
-        v = sub.add_parser(verb, help=f"{verb} a running app")
+        v = sub.add_parser(verb, help=f"{verb} an app" + (" (starts it if needed)" if verb == "show" else ""))
         v.add_argument("name")
     st = sub.add_parser("status", help="last load result and log of an app")
     st.add_argument("name")
@@ -32,16 +43,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "run":
         from . import runtime
-        return runtime.run(args.name)
+        return _exit(runtime.run(args.name))
     if args.cmd == "check":
         from . import check
-        return check.main(args.target, args.screenshot, args.wait, args.size)
+        return _exit(check.main(args.target, args.screenshot, args.wait, args.size))
     if args.cmd == "list":
+        from . import placement
+        running, shown = placement.running(), placement.shown()
         for a in apps.list_apps():
-            print(f"{a.name:24} {a.title}  {a.path}")
+            flags = ("shown" if a.name in shown else "running") if a.name in running else ""
+            print(f"{a.name:24} {flags:8} {a.title}  {a.path}")
         return 0
     if args.cmd == "create":
-        a = apps.create(args.title, args.qml.read_text(), args.python.read_text() if args.python else None)
+        a = apps.create(args.title, args.qml.read_text(), args.python.read_text() if args.python else None,
+                        args.description, icon=args.icon)
         print(a.path)
         return 0
     if args.cmd in ("show", "hide", "toggle", "close"):

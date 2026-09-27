@@ -18,7 +18,7 @@ STYLE = "Bombadil.Style"
 def qml_dirs() -> list[Path]:
     """Where `import Bombadil` is found: this checkout first, then the installed copy."""
     local = Path(__file__).resolve().parents[3] / "share" / "qml"
-    return [d for d in (local, paths.share_dir() / "qml") if d.exists()]
+    return [d for d in (local, paths.share_dir() / "share" / "qml") if d.exists()]
 
 
 def configure(check: bool) -> None:

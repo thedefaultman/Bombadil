@@ -21,10 +21,11 @@ Calling `create_app` again with the same title updates the same app.
 
 - The runtime owns the native window; `main.qml`'s `AppWindow` is placed inside it. The
   window's title follows `AppWindow.title` and its first size is `AppWindow.width` ×
-  `height`; after that the size the user leaves it at is kept between runs.
-- Every write to a `.qml`, `.js`, `app.py` or `app.toml` in the app directory reloads the
-  UI within ~0.2 s, in the same window (no flicker, same size, same place). Writes under
-  `data/` never trigger a reload.
+  `height`; after that the size the user leaves it at is kept between runs. An edit that
+  changes `width`/`height` resizes the window to the new values.
+- Every write to a `.qml`, `.js`, `.py`, `qmldir` or `app.toml` in the app directory (or a
+  folder in it) reloads the UI within ~0.2 s, in the same window (no flicker, same size,
+  same place). Writes under `data/` never trigger a reload.
 - A change to `app.py` re-imports it and makes a new `backend` before the QML reloads.
 - If the new version fails to load, the old UI stays up with a red banner showing the
   first error, and the error is recorded (see below). Fix the file and it reloads.
@@ -51,8 +52,11 @@ Calling `create_app` again with the same title updates the same app.
   loops) with `file:line`. `console.log` output is in `console`. `create_app` runs this
   for you and returns the result with the screenshot.
 - A running app writes `~/.local/state/bombadil/apps/<name>.status.json` after every
-  (re)load with the same shape, and its stdout/stderr go to
-  `~/.local/state/bombadil/apps/<name>.log`.
+  (re)load, and again when new errors or console output arrive: `{ ok, loaded, errors,
+  warnings, console, reloads, showing, size, at }`, where `showing` is `"current"`,
+  `"previous"` (the last reload failed; the old UI is up) or `"errors"` (it never
+  loaded). Exceptions raised in `app.py` count as errors (`app.py:12: NameError: ...`).
+  Its stdout/stderr go to `~/.local/state/bombadil/apps/<name>.log`.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
   calls do nothing. `Command`s do run so the screenshot has real data; `App.checking` is
   true if an app wants to skip something during a check.
@@ -60,7 +64,7 @@ Calling `create_app` again with the same title updates the same app.
 ## Commands
 
 ```
-bombadil-app run <name>              open (hot reloads on edit)
+bombadil-app run <name>              open (hot reloads on edit); if it is running, show it
 bombadil-app check <name|dir|file.qml> [--screenshot out.png] [--size WxH] [--wait MS]
 bombadil-app show|hide|toggle|close <name>
 bombadil-app status <name>           last load result + log tail

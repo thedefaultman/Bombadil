@@ -1,15 +1,17 @@
 """`bombadil-app check`: load an app offscreen, report what went wrong, screenshot it.
 
 The agent gets this back from `create_app`, so it sees QML errors, runtime JS errors
-and a picture of the window in the same tool call, without a display. Check mode is
-read-only: Store, Vault and TextFile never write, window and agent calls are no-ops.
-Commands do run, so the screenshot shows real data.
+and a picture of the window in the same tool call, without a display. It loads through
+the same Host as `run` (same window, same size rules, same backend), so the picture is
+what the user gets. Check mode is read-only: Store, Vault and TextFile never write,
+window and agent calls are no-ops. Commands do run, so the screenshot shows real data.
 """
 
 import json
 import re
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import engine as kit_engine
@@ -29,18 +31,44 @@ FATAL = re.compile(
 
 
 class Collector:
-    def __init__(self, ctx: AppContext):
+    """Sorts what Qt and the QML engine say into errors, warnings and console output.
+
+    Installed as the Qt message handler (console.log, Qt warnings) and connected to the
+    engine's `warnings` signal (QML load and runtime errors, with file:line).
+    """
+
+    def __init__(self, ctx: AppContext, echo: bool = False, on_change: Callable[[], None] | None = None):
         self.ctx = ctx
+        self.echo = echo            # also write every message to stderr (the app's log)
+        self.on_change = on_change
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.console: list[str] = []
         kit = kit_engine.qml_dirs()
         self._prefixes = [f"file://{ctx.dir}/", f"{ctx.dir}/"] + [f"file://{d}/" for d in kit] + [f"{d}/" for d in kit]
 
+    def reset(self) -> None:
+        self.errors, self.warnings, self.console = [], [], []
+
     def clean(self, text: str) -> str:
         for p in self._prefixes:
             text = text.replace(p, "")
         return text.strip()
+
+    def add(self, kind: str, text: str) -> None:
+        """kind is "error", "warning" or "console"."""
+        if kind == "console":
+            self.console = (self.console + [text])[-200:]
+        else:
+            target = self.errors if kind == "error" else self.warnings
+            if text in self.errors or text in self.warnings:
+                return
+            target.append(text)
+        if self.echo:
+            sys.stderr.write(f"{time.strftime('%H:%M:%S')} {kind}: {text}\n")
+            sys.stderr.flush()
+        if self.on_change is not None:
+            self.on_change()
 
     def __call__(self, mode, _context, message: str):
         from PySide6.QtCore import QtMsgType
@@ -49,84 +77,59 @@ class Collector:
         if not text or NOISE.search(text):
             return
         if mode in (QtMsgType.QtDebugMsg, QtMsgType.QtInfoMsg):
-            self.console.append(text.removeprefix("qml: "))
-        elif text in self.errors or text in self.warnings:
-            return
-        elif FATAL.search(text):
-            self.errors.append(text)
+            self.add("console", text.removeprefix("qml: "))
         else:
-            self.warnings.append(text)
+            self.add("error" if FATAL.search(text) else "warning", text)
 
-    def add_errors(self, qml_errors) -> None:
+    def add_qml_errors(self, qml_errors, fatal: bool = False) -> None:
+        """From QQmlComponent.errors() (fatal: the file did not load) or engine.warnings."""
         for e in qml_errors:
             text = self.clean(e.toString())
-            if text not in self.errors:
-                self.errors.append(text)
+            if text:
+                self.add("error" if fatal or FATAL.search(text) else "warning", text)
 
-
-def _window_for(root):
-    """The QQuickWindow to screenshot. A bare Item root (a kit gallery) gets a window made for it."""
-    from PySide6.QtGui import QColor
-    from PySide6.QtQuick import QQuickItem, QQuickWindow
-
-    if isinstance(root, QQuickWindow):
-        return root
-    if isinstance(root, QQuickItem):
-        win = QQuickWindow()
-        win.setColor(QColor("#101214"))
-        root.setParentItem(win.contentItem())
-        w, h = int(root.width() or root.implicitWidth() or 640), int(root.height() or root.implicitHeight() or 480)
-        win.resize(w, h)
-        win._kit_root = root  # keep the item alive with its window
-        return win
-    return None
+    def summary(self) -> dict:
+        return {"errors": self.errors[:20], "warnings": self.warnings[:20], "console": self.console[-20:]}
 
 
 def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = 1200,
           size: tuple[int, int] | None = None) -> dict:
-    from PySide6.QtCore import QEventLoop, QTimer, QUrl, qInstallMessageHandler
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from .runtime import Host
 
     started = time.monotonic()
     ctx.check = True
     app = kit_engine.make_app(ctx)
-    collector = Collector(ctx)
-    qInstallMessageHandler(collector)
-    engine = kit_engine.make_engine(ctx)
-    engine.warnings.connect(collector.add_errors)
-    engine.load(QUrl.fromLocalFile(str(ctx.main)))
-    roots = engine.rootObjects()
-    result: dict = {"app": ctx.name, "loaded": bool(roots)}
+    host = Host(ctx)
+    loaded = host.start()
 
-    shot = None
-    if roots:
-        win = _window_for(roots[0])
-        if win is None:
-            collector.errors.append("main.qml: the root object must be AppWindow (or a Window/Item)")
-        else:
-            if size:
-                win.resize(*size)
-            win.show()
-            loop = QEventLoop()
-            QTimer.singleShot(wait_ms, loop.quit)
-            loop.exec()
-            result["size"] = [win.width(), win.height()]
-            if screenshot is not None:
-                img = win.grabWindow()
-                screenshot.parent.mkdir(parents=True, exist_ok=True)
-                if img.save(str(screenshot)):
-                    shot = str(screenshot)
-    qInstallMessageHandler(None)
-    result.update({
-        "ok": bool(roots) and not collector.errors,
-        "errors": collector.errors[:20],
-        "warnings": collector.warnings[:20],
-        "console": collector.console[-20:],
-        "screenshot": shot,
-        "seconds": round(time.monotonic() - started, 2),
-    })
-    del engine
+    shot = shown_size = None
+    win = host.current_window()
+    if loaded and win is not None:
+        if size:
+            win.resize(*size)
+        loop = QEventLoop()
+        QTimer.singleShot(wait_ms, loop.quit)
+        loop.exec()
+        shown_size = [win.width(), win.height()]
+        if screenshot is not None:
+            img = win.grabWindow()
+            screenshot.parent.mkdir(parents=True, exist_ok=True)
+            if img.save(str(screenshot)):
+                shot = str(screenshot)
+    summary = host.collector.summary()
+    host.close()
     app.processEvents()
-    return result
+    return {
+        "app": ctx.name,
+        "ok": loaded and not summary["errors"],
+        "loaded": loaded,
+        **summary,
+        "screenshot": shot,
+        "size": shown_size,
+        "seconds": round(time.monotonic() - started, 2),
+    }
 
 
 def main(target: str, screenshot: str | None, wait_ms: int, size: str | None) -> int:

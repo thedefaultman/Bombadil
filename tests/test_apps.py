@@ -29,3 +29,40 @@ def test_bad_names(home):
         apps.app_dir("../etc")
     with pytest.raises(FileNotFoundError):
         apps.load("nothing")
+
+
+def test_toml_escaping_survives_any_title(home):
+    title = 'Say "hi"\\ \n\tnow\x7f 😀'
+    app = apps.create(title, QML, description='a "quoted"\nline', icon="key")
+    loaded = apps.load(app.name)
+    assert (loaded.title, loaded.description, loaded.icon) == (title, 'a "quoted"\nline', "key")
+    desktop = (home / "share/applications" / f"bombadil-app-{app.name}.desktop").read_text()
+    assert 'Name=Say "hi"\\\\ now 😀\n' in desktop and "Icon=" in desktop and desktop.count("\n") == 7
+
+
+def test_extra_files_and_what_create_refuses(home):
+    app = apps.create("Notes", QML, files={"EntryRow.qml": "import QtQuick\nItem {}\n", "lib/util.js": "var x = 1\n"})
+    assert (app.path / "EntryRow.qml").exists() and (app.path / "lib/util.js").read_text() == "var x = 1\n"
+    (app.path / "data").mkdir()
+    (app.path / "data/state.json").write_text('{"keep": true}')
+    for bad in ("data/state.json", "/etc/passwd", "../x.qml", "lib/../../x.qml", "a//b.qml", ".hidden.qml",
+                "run.sh", "main.qml", "app.py", ""):
+        with pytest.raises(ValueError):
+            apps.create("Notes", QML + "// v2\n", files={bad: "x"})
+    # A refused call writes nothing: not main.qml, not data.
+    assert "v2" not in (app.path / "main.qml").read_text()
+    assert (app.path / "data/state.json").read_text() == '{"keep": true}'
+    assert not list(app.path.glob(".*.tmp"))
+
+
+def test_run_logs_to_the_state_dir(home, monkeypatch):
+    apps.create("Notes", QML)
+    seen = {}
+
+    def popen(cmd, **kw):
+        seen.update(cmd=cmd, out=kw.get("stdout"))
+        return None
+    monkeypatch.setattr(apps.subprocess, "Popen", popen)
+    apps.run("notes")
+    assert seen["cmd"][-2:] == ["run", "notes"] and seen["cmd"][-3].endswith("bin/bombadil-app")
+    assert seen["out"].name == str(apps.log_path("notes")) == str(home / "state/apps/notes.log")

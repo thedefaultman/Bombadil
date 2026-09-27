@@ -6,7 +6,8 @@ reaches the system without writing any Python. They exist only inside `bombadil-
 
 Paths: `~` expands to the home directory; a relative path resolves inside the app's data
 directory (`App.dataDir`, i.e. `~/Apps/<name>/data/`). Byte counts are in bytes, times
-in seconds unless named `...Ms`.
+in seconds unless named `...Ms`. Arrays and objects these types give you are ordinary JS
+values (`Array.isArray`, `.map`, `.filter` all work), and a missing value is `null`.
 
 ## App (singleton)
 
@@ -17,6 +18,7 @@ in seconds unless named `...Ms`.
 | `App.dir` | `~/Apps/<name>` as a path string |
 | `App.dataDir` | `~/Apps/<name>/data`, created on first use; never overwritten by `create_app` |
 | `App.reloads` | how many times the UI has hot reloaded (0 on start) |
+| `App.checking` | true while `check` renders the app offscreen (nothing is saved then) |
 | `App.show()` / `App.hide()` / `App.toggle()` | slide the app's window in or out |
 | `App.close()` | quit the app (it leaves the bar) |
 | `App.notify(title, body = "")` | desktop notification |
@@ -41,8 +43,15 @@ Store {
 |---|---|
 | `name` | file name without `.json`; default `"state"`. Two stores need two names. |
 | `loaded` | true once the saved values were applied |
-| `save()` | write now (normally automatic, 300 ms after a change and on quit) |
+| `save()` | write now (normally automatic, 300 ms after a change and before a reload or quit) |
 | `reset()` | delete the file and go back to the declared defaults |
+
+Saved values are applied before any `Component.onCompleted` runs, so the app never sees
+the defaults first. Declare plain values, not bindings (`property int n: list.count` would
+be overwritten by the saved number). Values go through JSON: `color`, `url` and `date`
+properties are saved as strings and come back as the same value. Not saved: `readonly`
+properties, object properties (`property Item x`) and names starting with `_`. Nothing is
+written during `check`.
 
 **Assign, don't mutate.** A change is seen when the property is assigned:
 `store.entries = store.entries.concat([item])`, not `store.entries.push(item)`. To edit
@@ -51,7 +60,7 @@ one element: `const e = store.entries.slice(); e[i] = changed; store.entries = e
 ## Vault
 
 Encrypted storage for secrets (scrypt key derivation + AES-256-GCM). The file is
-`data/<name>.vault`; nothing is written in the clear.
+`data/<name>.vault` (mode 600); nothing is written in the clear.
 
 ```qml
 Vault { id: vault; name: "passwords" }
@@ -67,13 +76,16 @@ Vault { id: vault; name: "passwords" }
 | `exists` | a vault file is there |
 | `unlocked` | data is readable |
 | `data` | the decrypted value; `null` while locked. Assign to save (same rule as Store: assign a new array/object) |
-| `error` | last error message (`"wrong password"`) |
-| `autoLock` | seconds of no `data` access before it locks again; default 300, 0 = never |
-| `create(password)` | make a new empty vault (`data` = `[]`) and unlock it |
+| `error` | last error message: `"wrong password"`, `"a vault already exists"`, `"empty password"`, `"no vault yet"`, `"the vault is locked"`; `""` after a success |
+| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never |
+| `create(password)` | make a new empty vault (`data` = `[]`) and unlock it; false if one exists |
 | `unlock(password)` / `lock()` | |
-| `changePassword(old, new)` | bool |
-| `generatePassword(length = 20, symbols = true)` | a random password (from `secrets`) |
-| `strength(password)` | 0..4 estimate |
+| `changePassword(old, new)` | bool; re-encrypts with the new password and leaves the vault unlocked |
+| `generatePassword(length = 20, symbols = true)` | a random password (from `secrets`) with at least one lowercase, uppercase, digit (and symbol) |
+| `strength(password)` | 0..4 estimate (0 = common or very short, 4 = strong) |
+
+Unlocking takes about a tenth of a second (that is the point of scrypt). During `check`,
+`create`/`unlock` work in memory and nothing is written.
 
 ## System (singleton)
 
@@ -85,19 +97,22 @@ bindable, so `Label { text: Fmt.percent(System.cpu) }` just stays current.
 | `cpu` | total CPU busy fraction 0..1 |
 | `cpus` | array of per-core fractions |
 | `cpuCount` | |
-| `memory` | `{ total, used, available, free, cached, buffers, shared, swapTotal, swapUsed, swapCached, dirty }` in bytes (`used` = total - available) |
-| `memoryUsage` | `memory.used / memory.total` |
-| `meminfo` | every `/proc/meminfo` field, in bytes, keyed by its name (`"Slab"`, `"AnonPages"`, ...) |
-| `pressure` | `{ cpu, memory, io }` PSI "some avg10" percentages, `null` when unavailable |
+| `memory` | `{ total, used, available, free, cached, buffers, shared, swapTotal, swapUsed, swapCached, dirty }` in bytes (`used` = total - available; `cached` = page cache + reclaimable slab, like `free`) |
+| `memoryUsage` | `memory.used / memory.total` (0..1) |
+| `meminfo` | every `/proc/meminfo` field, in bytes, keyed by its name (`"Slab"`, `"AnonPages"`, ...; the `HugePages_*` counts stay counts) |
+| `pressure` | `{ cpu, memory, io }` PSI "some avg10" as percentages 0..100 (divide by 100 for `Fmt.percent`); `null` when the kernel has no PSI |
 | `load` | `[1, 5, 15]` minute load averages |
 | `uptime` | seconds |
 | `processCount` | |
-| `disks` | `[{ mount, device, fs, total, used, free }]` for real filesystems (refreshed every 10 s) |
-| `network` | `{ rx, tx }` bytes per second over all non-loopback interfaces |
-| `battery` | `{ present, percent, charging }` (`present: false` on desktops and VMs) |
+| `disks` | `[{ mount, device, fs, total, used, free }]` for real filesystems, one entry per device (refreshed every 10 s; `free` is what a user can still write) |
+| `network` | `{ rx, tx }` bytes per second over all non-loopback interfaces (0 until the second sample) |
+| `battery` | `{ present, percent, charging }` (`percent` 0..100; `present: false` and `percent: null` on desktops and VMs) |
 | `temperature` | hottest thermal zone in °C, or `null` |
 | `hostname`, `kernel`, `user` | strings |
-| `interval` | refresh period in ms (1000) |
+| `interval` | refresh period in ms (1000); settable |
+
+The first values are there as soon as the app starts (`cpu` starts as the average since
+boot).
 
 ## Processes
 
@@ -111,15 +126,17 @@ DataTable { rows: procs.list; ... }
 
 | Member | |
 |---|---|
-| `interval` | ms between refreshes (2000); 0 = only on `refresh()` |
-| `sortBy` | `"memory"`, `"cpu"`, `"name"`, `"pid"`; `descending` (true) |
+| `interval` | ms between refreshes (2000); 0 = read once, then only on `refresh()` |
+| `sortBy` | `"memory"`, `"cpu"`, `"name"`, `"pid"` (or any other field of `list`); `descending` (true) |
 | `limit` | keep the top N (0 = all) |
 | `filter` | case-insensitive match on name or command line |
-| `list` | `[{ pid, ppid, name, command, user, state, cpu, memory, memoryPercent, threads, started }]` (`cpu` is a fraction of one core, `memory` is RSS in bytes, `started` is a Unix time) |
+| `list` | `[{ pid, ppid, name, command, user, state, cpu, memory, memoryPercent, threads, started }]` (`cpu` is a fraction of one core, `memory` is RSS in bytes, `memoryPercent` is 0..100 of RAM, `state` is `"running"`, `"sleeping"`, `"waiting"` (disk), `"idle"`, `"stopped"` or `"zombie"`, `started` is a Unix time) |
 | `count` | processes after filtering, before `limit` |
 | `refresh()` | now |
-| `details(pid)` | `{ pid, name, command, exe, cwd, user, rss, pss, uss, swap, shared, threads, fds, started, oomScore }` from `/proc/<pid>` (`pss`/`uss`/`swap` from `smaps_rollup`); `null` if gone |
-| `kill(pid, signal = "TERM")` | bool; `signal` is `"TERM"`, `"KILL"`, `"STOP"`, `"CONT"`, `"INT"`, `"HUP"` |
+| `details(pid)` | `{ pid, ppid, name, command, exe, cwd, user, state, rss, pss, uss, swap, shared, threads, fds, started, oomScore }` from `/proc/<pid>` (`pss`/`uss`/`swap`/`shared` from `smaps_rollup`); a field the user may not read (another user's process) is `null`; `null` if the process is gone |
+| `kill(pid, signal = "TERM")` | bool; `signal` is `"TERM"`, `"KILL"`, `"STOP"`, `"CONT"`, `"INT"`, `"HUP"`; always false during `check` |
+
+Changing `sortBy`, `descending`, `limit` or `filter` re-sorts the last reading at once.
 
 ## Command
 
@@ -136,13 +153,18 @@ Button { onClicked: ls.run() }
 |---|---|
 | `command` | a shell string, run with `sh -c` |
 | `program` + `args` | or a program and argument list (no shell); `~` in args expands |
-| `running` | set true to start; true while it runs |
-| `interval` | ms; when > 0 it re-runs that often (a poller) |
-| `stdout`, `stderr`, `exitCode` | of the last run |
+| `running` | set true to start (`running: true` starts once the app has loaded); true while it runs; set false to kill |
+| `interval` | ms; when > 0 it runs on start and re-runs that often (a poller; no `running: true` needed) |
+| `stdout`, `stderr`, `exitCode` | of the last run (`exitCode` is -1 before the first run and after a crash, 127 when the program does not exist) |
 | `lines` | `stdout` split into lines |
 | `json` | `stdout` parsed as JSON, or `null` |
-| `run()` / `run(extraArgs)` / `kill()` / `write(text)` (to stdin) | |
+| `run()` / `run(extraArgs)` / `kill()` / `write(text)` (to stdin) | `run` restarts a run that is still going; `extraArgs` are appended (quoted for a `command`); `kill` ends the program and everything it started |
 | `finished(exitCode, stdout)` | signal |
+
+The output properties change when a run finishes, so a poller never shows half an answer
+(until then they keep the last run's values); a program that keeps running (`tail -f`)
+shows its output as it arrives. Commands run in the home directory and do run during
+`check`.
 
 ## TextFile
 
@@ -157,17 +179,20 @@ Button { text: "Save"; onClicked: notes.save(editor.text) }
 | Member | |
 |---|---|
 | `path` | |
-| `text` | current content ("" if missing) |
-| `exists`, `error` | |
-| `watch` | re-read when the file changes on disk (true) |
-| `save(text)` | atomic write (creates folders); `save()` writes the current `text` |
+| `text` | current content (`""` if missing); assigning it changes it in memory only |
+| `exists`, `error` | `error` is `""` or why the last read/write failed (a missing file is not an error) |
+| `watch` | re-read when the file changes on disk (true); also catches editors that save by renaming |
+| `save(text)` | bool; atomic write (creates folders, keeps the file's mode, follows a symlink); `save()` writes the current `text` |
 | `reload()`, `remove()` | |
-| `changedOnDisk()` | signal |
+| `changedOnDisk()` | signal: something else changed the file (`text` already holds the new content) |
+
+During `check` nothing is written: `save` only updates `text`.
 
 ## Clipboard (singleton)
 
-`Clipboard.copy(text, clearAfterSeconds = 0)`; `Clipboard.text` (read). Passing
-`clearAfterSeconds` clears it later if it still holds that text (use 30 for secrets).
+`Clipboard.copy(text, clearAfterSeconds = 0)`; `Clipboard.text` (read, bindable). Passing
+`clearAfterSeconds` clears it later if it still holds that text (use 30 for secrets) and
+marks it as a secret so clipboard managers that honour the hint skip it.
 
 ## Agent (singleton)
 
@@ -176,19 +201,20 @@ The app can talk to the OS agent, the same one the user types to in the bar.
 | Member | |
 |---|---|
 | `Agent.connected`, `Agent.busy`, `Agent.provider` | |
-| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar |
-| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams |
+| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable |
+| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`) |
 | `replied(text)` | signal when that answer is complete |
 
 The prompt is prefixed with `[from app <name>]` so the agent knows where it came from
-and can, for example, edit this app in response.
+and can, for example, edit this app in response. During `check` Agent never connects.
 
 ## Highlighter
 
 Syntax highlighting for any `TextEdit`/`TextArea` (the kit's `Editor` uses it):
 `Highlighter { textDocument: area.textDocument; language: "python" }`. Languages:
-`plain`, `markdown`, `python`, `json`, `qml`, `javascript`, `shell`, `toml`, `ini`. Colors
-follow the theme.
+`plain`, `markdown`, `python`, `json`, `qml`, `javascript`, `shell`, `toml`, `ini`;
+`language` also takes a file name or extension (`"notes.md"`, `".py"`, `"sh"`), and
+anything unknown is `plain`. Colors follow the theme.
 
 ## Anything else
 

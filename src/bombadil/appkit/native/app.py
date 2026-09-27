@@ -2,6 +2,7 @@
 
 import shutil
 import subprocess
+import threading
 from collections.abc import Callable
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
@@ -14,6 +15,7 @@ from . import MAJOR, MINOR, URI
 class App(QObject):
     reloadsChanged = Signal()
     lastErrorChanged = Signal()
+    titleChanged = Signal()
     # Emitted just before the UI is torn down for a hot reload or quit, so Store can save.
     aboutToReload = Signal()
 
@@ -32,9 +34,14 @@ class App(QObject):
     def name(self):
         return self._ctx.name
 
-    @Property(str, constant=True)
+    @Property(str, notify=titleChanged)
     def title(self):
         return self._ctx.title
+
+    def set_title(self, title: str):
+        """app.toml changed (the runtime re-reads it on reload)."""
+        self._ctx.title = title
+        self.titleChanged.emit()
 
     @Property(str, constant=True)
     def dir(self):
@@ -99,7 +106,14 @@ class App(QObject):
         if self._ctx.check:
             return
         from .. import placement
-        placement.open_url(url)
+
+        def open_it():
+            try:
+                placement.open_url(url)
+            except Exception as e:  # noqa: BLE001 - a bad link must not take the app down
+                print(f"openUrl({url!r}): {e}", flush=True)
+        # Starting the browser can take seconds; never block the UI on it.
+        threading.Thread(target=open_it, daemon=True).start()
 
 
 _instance: App | None = None
