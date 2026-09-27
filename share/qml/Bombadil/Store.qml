@@ -5,8 +5,8 @@ import Bombadil
 // data/<name>.json (300 ms after it changes, and before a hot reload or quit) and
 // applied again when the Store is created. Values go through JSON.
 // The file is never trimmed to what this version declares: a saved value for a property
-// that was renamed, or whose new type cannot take it, stays in the file until the app
-// assigns that property again, so the next edit of the app can still get it back.
+// this version does not have (renamed) or cannot take (a new type) stays in the file, so
+// the next edit of the app can still get it back. reset() and setting the property end that.
 QtObject {
     id: store
 

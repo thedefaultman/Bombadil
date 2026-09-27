@@ -55,16 +55,16 @@ class Collector:
         self.errors: list[str] = []
         self.warnings: list[str] = []
         self.console: list[str] = []
-        kit = kit_engine.qml_dirs()
-        self._prefixes = [f"file://{ctx.dir}/", f"{ctx.dir}/"] + [f"file://{d}/" for d in kit] + [f"{d}/" for d in kit]
+        dirs = "|".join(re.escape(str(d)) for d in sorted([ctx.dir, *kit_engine.qml_dirs()], key=lambda d: -len(str(d))))
+        # Where a message points (a file URL, or a `path:line`) is shown relative to the app;
+        # any other path in the text is left alone.
+        self._where = re.compile(rf"file://(?:{dirs})/|(?<![\w/])(?:{dirs})/(?=[^\s:]+:\d)")
 
     def reset(self) -> None:
         self.errors, self.warnings, self.console = [], [], []
 
     def clean(self, text: str) -> str:
-        for p in self._prefixes:
-            text = text.replace(p, "")
-        return text.strip()
+        return self._where.sub("", text).strip()
 
     def add(self, kind: str, text: str) -> None:
         """kind is "error", "warning" or "console"."""
@@ -84,10 +84,12 @@ class Collector:
     def __call__(self, mode, _context, message: str):
         from PySide6.QtCore import QtMsgType
 
-        text = self.clean(message)
+        console = mode in (QtMsgType.QtDebugMsg, QtMsgType.QtInfoMsg)
+        # console.log text is the app's own words: `console.log(App.dataDir)` shows the real path.
+        text = message.strip() if console else self.clean(message)
         if not text or NOISE.search(text):
             return
-        if mode in (QtMsgType.QtDebugMsg, QtMsgType.QtInfoMsg):
+        if console:
             self.add("console", text.removeprefix("qml: "))
         else:
             self.add("error" if FATAL.search(text) else "warning", text)

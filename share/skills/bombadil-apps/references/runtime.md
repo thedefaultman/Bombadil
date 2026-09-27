@@ -20,7 +20,7 @@ Calling `create_app` again with the same title updates the same app.
 ## Loading and hot reload
 
 - The runtime owns the native window; `main.qml`'s `AppWindow` is placed inside it, and
-  the window's title follows `AppWindow.title`. Its size: see below.
+  the window's title follows `AppWindow.title` (its size: see Window size below).
 - Every write to a `.qml`, `.js`, `.py`, `qmldir` or `app.toml` in the app directory (or a
   folder in it) reloads the UI within ~0.2 s, in the same window (no flicker, same size,
   same place). Writes under `data/` never trigger a reload.
@@ -34,9 +34,9 @@ Calling `create_app` again with the same title updates the same app.
   where it was. A `Vault` that was unlocked stays unlocked across reloads (not across
   restarts).
 - An edit never costs saved data: a Store keeps the saved value of a property the new
-  version no longer declares (renamed `entries` to `items`) or cannot take (a new type) in
-  its file until the app sets that property again, so undoing the edit brings it back.
-  `reset()` drops them. A `data/<name>.json` that is not valid JSON is renamed to
+  version no longer declares (renamed `entries` to `items`; kept until `reset()`) or cannot
+  take (a new type; kept until the app sets that property) in its file, so undoing the
+  edit brings it back. A `data/<name>.json` that is not valid JSON is renamed to
   `<name>.json.bad` (`.bad.2`, ... if that exists) and the Store starts from its defaults.
 
 ## Window size
@@ -54,10 +54,12 @@ Calling `create_app` again with the same title updates the same app.
   `app-<name>`), floating and centered at its own size. Opening the app, or updating it
   with `create_app`, slides it in; `Esc` inside the app, or clicking its chip in the bar,
   slides it out. Only one drawer (an app or the browser) is shown at a time.
-- The bar shows a chip for every running app; the highlighted chip is the one on screen.
+- The bar shows a chip for every running app, labelled with its `AppWindow.title`; the
+  highlighted chip is the one on screen.
   Clicking a chip toggles that app, its × closes it.
-- `Ctrl+W` or the chip's × quits the app; state is saved first. An app that does not quit
-  within 3 s (stuck in a loop) is killed, and then unsaved changes are lost.
+- `Ctrl+W` or the chip's × quits the app; state is saved first. When the × (or
+  `close_app`) finds the app has not quit after 3 s (stuck in a loop), it kills it, and
+  unsaved changes are lost.
 
 ## Errors and logs
 
@@ -75,7 +77,7 @@ Calling `create_app` again with the same title updates the same app.
   `"previous"` (the last reload failed; the old UI is up) or `"errors"` (it never
   loaded). Exceptions raised in `app.py` count as errors (`app.py:12: NameError: ...`).
   Its stdout/stderr go to `~/.local/state/bombadil/apps/<name>.log` (moved to `.log.1`
-  past 1 MB) however it was started, unless it was started from a terminal.
+  past 1 MB) however it was started; only an app started from a terminal prints there.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
   calls do nothing, and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
   throwaway test location (`~/.qttest`) instead of the user's `~/.config` and

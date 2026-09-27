@@ -56,10 +56,11 @@ be overwritten by the saved number). Values go through JSON: `color`, `url` and 
 properties are saved as strings and come back as the same value; `NaN` and `Infinity`
 (anywhere, also inside arrays) are saved as `null`. Not saved: `readonly` properties,
 object properties (`property Item x`) and names starting with `_`. A saved value this
-version cannot take (a renamed property, a changed type) stays in the file until the app
-sets that property, so undoing the rename brings it back; a file that is not valid JSON is
-renamed to `<name>.json.bad` (kept, never overwritten) and the Store starts from the
-defaults. Nothing is written during `check`.
+version cannot take stays in the file: one for a property that was renamed or removed
+(until `reset()`), and one whose property changed type (until the app sets that
+property), so undoing the edit brings it back. A file that is not valid JSON (or not a
+JSON object) is renamed to `<name>.json.bad` (`.bad.2`, ... if that exists; never
+overwritten) and the Store starts from the defaults. Nothing is written during `check`.
 
 **Assign, don't mutate.** A change is seen when the property is assigned:
 `store.entries = store.entries.concat([item])`, not `store.entries.push(item)`. To edit

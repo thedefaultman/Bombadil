@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -402,7 +403,12 @@ def test_check_keeps_app_py_commands_and_qt_storage_off_the_users_files(home):
                 Settings { id: settings; property int n: 5 }
                 Command { command: "echo command BOMBADIL_CHECK=$BOMBADIL_CHECK"; running: true
                           onFinished: console.log(output.trim()) }
-                Component.onCompleted: { settings.n = 7; settings.sync(); console.log("app.py " + backend.check) }
+                Component.onCompleted: {
+                    settings.n = 7
+                    settings.sync()
+                    console.log("app.py " + backend.check)
+                    console.log("data in " + App.dataDir)
+                }
             }
             """),
         "app.py": textwrap.dedent("""\
@@ -420,7 +426,8 @@ def test_check_keeps_app_py_commands_and_qt_storage_off_the_users_files(home):
                        capture_output=True, text=True, env=env, timeout=90)
     result = json.loads(r.stdout)
     assert result["ok"], result
-    assert sorted(result["console"]) == ["app.py BOMBADIL_CHECK=1", "command BOMBADIL_CHECK=1"]
+    assert sorted(result["console"]) == ["app.py BOMBADIL_CHECK=1", "command BOMBADIL_CHECK=1",
+                                         f"data in {home}/Apps/storage/data"]   # console text keeps its paths
     assert not (home / "config-home").exists() and not (home / ".config").exists()
 
 
@@ -450,6 +457,25 @@ def test_a_launched_app_logs_to_its_log_and_a_stuck_one_is_killed_on_close(home)
         assert proc.returncode == -signal.SIGKILL and out == b"" and err == b""
     finally:
         proc.kill()
+
+
+def test_the_collector_shortens_where_a_message_points_but_not_what_the_app_logs(home):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QtMsgType
+
+    from bombadil.appkit.check import Collector
+
+    d = home / "Apps" / "demo"
+    c = Collector(AppContext("demo", "Demo", d, d / "main.qml"))
+    c(QtMsgType.QtDebugMsg, None, f"{d}/data")
+    c(QtMsgType.QtDebugMsg, None, f"file://{d}/main.qml")
+    c(QtMsgType.QtWarningMsg, None, f"file://{d}/main.qml:3:5: Unable to assign [undefined] to QString")
+    c(QtMsgType.QtCriticalMsg, None, f"{d}/lib/Row.qml:7: TypeError: Cannot read property 'x' of null")
+    c(QtMsgType.QtWarningMsg, None, f"saving to {d}/data/x.json")
+    assert c.console == [f"{d}/data", f"file://{d}/main.qml"]
+    assert c.errors == ["main.qml:3:5: Unable to assign [undefined] to QString",
+                        "lib/Row.qml:7: TypeError: Cannot read property 'x' of null"]
+    assert c.warnings == [f"saving to {d}/data/x.json"]
 
 
 def test_saved_size_wins_unless_the_app_asks_for_a_new_one(home):
@@ -594,10 +620,17 @@ def test_a_hyprland_request_times_out(home, monkeypatch):
         server.listen(1)     # accepts, never answers: a hung compositor
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
         monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig")
-        started = time.monotonic()
-        with pytest.raises(OSError):
-            hypr.Hyprland().request("j/monitors")
-        assert time.monotonic() - started < 4
+        raised = []
+
+        def ask():
+            try:
+                hypr.Hyprland().request("j/monitors")
+            except OSError as e:
+                raised.append(e)
+        asking = threading.Thread(target=ask, daemon=True)
+        asking.start()
+        asking.join(4)
+        assert not asking.is_alive() and raised, "a request to a hung Hyprland never returned"
     finally:
         server.close()
         (sock_dir / ".socket.sock").unlink(missing_ok=True)
