@@ -26,7 +26,9 @@ PSEUDO_FS = {
     "binfmt_misc", "efivarfs", "nsfs", "overlay", "squashfs", "iso9660", "selinuxfs", "rpc_pipefs",
     "nfsd", "zram",
 }
-NETWORK_FS = {"nfs", "nfs4", "cifs", "smb3", "fuse.sshfs"}
+# Never statted: statvfs on a mount whose server is gone blocks, and this runs on the UI thread.
+NETWORK_FS = {"nfs", "nfs4", "cifs", "smb3", "smbfs", "ncpfs", "afs", "ceph", "glusterfs", "9p", "davfs",
+              "fuse.sshfs", "fuse.rclone", "fuse.davfs2", "fuse.s3fs", "fuse.gvfsd-fuse"}
 
 
 def read(path: str) -> str:
@@ -111,13 +113,16 @@ def _unescape(s: str) -> str:
 
 
 def disks() -> list[dict]:
+    """Local filesystems only: network mounts are skipped (see NETWORK_FS)."""
     seen: dict[str, dict] = {}
     for line in read("/proc/self/mounts").splitlines():
         parts = line.split()
         if len(parts) < 3:
             continue
         device, mount, fs = _unescape(parts[0]), _unescape(parts[1]), parts[2]
-        if fs in PSEUDO_FS or (fs not in NETWORK_FS and (fs.startswith("fuse") or not device.startswith("/"))):
+        if fs in PSEUDO_FS or fs in NETWORK_FS or device.startswith("//") or not device.startswith("/"):
+            continue
+        if fs.startswith("fuse") and fs != "fuseblk":       # fuseblk: NTFS/exFAT disks through FUSE
             continue
         try:
             st = os.statvfs(mount)

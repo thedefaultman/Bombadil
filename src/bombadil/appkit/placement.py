@@ -1,8 +1,8 @@
 """Slide app windows in and out: each app lives in its own Hyprland special workspace.
 
 `prepare()` adds a runtime window rule before the app's window first maps, so it opens
-floating, centered, at its own size, straight into `special:app-<name>` (and therefore
-slides in). After that, showing and hiding is showing and hiding that special workspace.
+floating, centered, at its own size (shrunk by `fit()` when the screen is smaller), straight
+into `special:app-<name>` (and therefore slides in). After that, showing and hiding is showing and hiding that special workspace.
 Everything here returns a short sentence and is a no-op without Hyprland (dev machines,
 tests). No Qt: os-mcp and the bar's `bombadil-app close` use this too.
 """
@@ -18,6 +18,8 @@ import time
 from .. import apps, hypr
 
 NO_HYPRLAND = "Hyprland is not running"
+MARGIN = 24           # logical px kept free around a window that had to be shrunk to fit
+MIN_SIZE = (240, 160)
 _RUN_RE = re.compile(r"bombadil-app run ([a-z0-9][a-z0-9-]*)$")
 
 
@@ -126,12 +128,44 @@ def shown(h: hypr.Hyprland | None = None) -> set[str]:
     return {n.removeprefix("special:app-") for n in names if n.startswith("special:app-")}
 
 
+def usable_area(h: hypr.Hyprland | None = None) -> tuple[int, int] | None:
+    """The focused monitor's room for a window in logical px: without the bar, less a margin."""
+    h = _hypr(h)
+    if not h.available:
+        return None
+    mons = [m for m in _monitors(h) if isinstance(m, dict)]
+    m = next((m for m in mons if m.get("focused")), mons[0] if mons else None)
+    if m is None:
+        return None
+    try:
+        scale = float(m.get("scale") or 1)
+        w, h_ = float(m["width"]) / scale, float(m["height"]) / scale
+        if int(m.get("transform") or 0) % 2:   # rotated a quarter turn
+            w, h_ = h_, w
+        left, top, right, bottom = ([float(x) for x in m.get("reserved") or []] + [0.0] * 4)[:4]
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        return None
+    return int(w - left - right - 2 * MARGIN), int(h_ - top - bottom - 2 * MARGIN)
+
+
+def fit(w: int, h_: int, h: hypr.Hyprland | None = None) -> tuple[int, int]:
+    """The window size to open with: w x h, shrunk to the focused monitor when it is too big."""
+    room = usable_area(h)
+    if room is None:
+        return int(w), int(h_)
+    return min(int(w), max(room[0], MIN_SIZE[0])), min(int(h_), max(room[1], MIN_SIZE[1]))
+
+
 def prepare(name: str, w: int, h_: int, h: hypr.Hyprland | None = None) -> str:
-    """Before the window first maps: open it floating, centered, w x h, in its drawer."""
+    """Before the window first maps: open it floating, centered, w x h, in its drawer.
+    Never raises: the app opens as a plain window when Hyprland does not answer."""
     h = _hypr(h)
     if not h.available:
         return f"{NO_HYPRLAND}; {name} opens as a plain window"
-    reply = _send(h, "eval " + rule_lua(name, w, h_))
+    try:
+        reply = _send(h, "eval " + rule_lua(name, w, h_))
+    except (OSError, RuntimeError) as e:
+        return f"could not add the window rule for {name}, it opens as a plain window: {e}"
     if reply != "ok":
         return f"could not add the window rule for {name}: {reply}"
     return f"{name} opens in its drawer at {int(w)}x{int(h_)}"
@@ -174,22 +208,36 @@ def toggle(name: str, h: hypr.Hyprland | None = None, start: bool = True) -> str
     return show(name, h, start)
 
 
-def close(name: str, wait: float = 3.0) -> str:
-    """Quit the app. SIGTERM lets it save its state first."""
-    pids = running().get(_check(name), [])
-    if not pids:
-        return f"{name} is not running"
+def _signal_all(pids: list[int], sig: int) -> None:
     for pid in pids:
         try:
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, sig)
         except ProcessLookupError:
             pass
+
+
+def _gone(name: str, wait: float) -> bool:
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         if name not in running():
-            return f"{name} closed"
+            return True
         time.sleep(0.1)
-    return f"asked {name} to quit"
+    return name not in running()
+
+
+def close(name: str, wait: float = 3.0) -> str:
+    """Quit the app. SIGTERM lets it save its state first; an app that does not quit in
+    `wait` seconds (stuck in a loop, so its handler never runs) is killed."""
+    pids = running().get(_check(name), [])
+    if not pids:
+        return f"{name} is not running"
+    _signal_all(pids, signal.SIGTERM)
+    if _gone(name, wait):
+        return f"{name} closed"
+    _signal_all(running().get(name, []), signal.SIGKILL)
+    if _gone(name, 2.0):
+        return f"{name} did not quit within {wait:g} s (stuck?) and was killed; unsaved changes are lost"
+    return f"{name} did not quit within {wait:g} s and could not be killed"
 
 
 def open_url(url: str, h: hypr.Hyprland | None = None) -> str:

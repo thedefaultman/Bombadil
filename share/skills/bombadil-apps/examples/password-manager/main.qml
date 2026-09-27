@@ -12,7 +12,7 @@ AppWindow {
 
     actions: [
         SearchField { id: search; visible: vault.unlocked && entries.length > 0; Layout.preferredWidth: 200; Layout.fillWidth: false },
-        IconButton { icon: "lock"; tooltip: "Lock"; visible: vault.unlocked; onClicked: vault.lock() },
+        IconButton { icon: "lock"; tooltip: "Lock"; tone: "muted"; visible: vault.unlocked; onClicked: vault.lock() },
         Button { text: "New"; icon.source: Theme.icon("plus"); highlighted: true; visible: vault.unlocked; onClicked: editor.openFor(null) }
     ]
 
@@ -85,11 +85,11 @@ AppWindow {
                         visible: !!details.entry
                     },
                     IconButton {
-                        icon: "external-link"; tooltip: "Open website"
+                        icon: "external-link"; tooltip: "Open website"; tone: "muted"
                         visible: !!details.entry && details.entry.url !== ""
                         onClicked: App.openUrl(details.entry.url)
                     },
-                    IconButton { icon: "pencil"; tooltip: "Edit"; visible: !!details.entry; onClicked: editor.openFor(details.entry) },
+                    IconButton { icon: "pencil"; tooltip: "Edit"; tone: "muted"; visible: !!details.entry; onClicked: editor.openFor(details.entry) },
                     IconButton { icon: "trash"; tooltip: "Delete"; tone: "bad"; visible: !!details.entry; onClicked: confirmDelete.open() }
                 ]
 

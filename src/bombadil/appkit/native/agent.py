@@ -3,6 +3,10 @@
 Newline-delimited JSON over agentd's Unix socket (see agentd.py). The singleton is made,
 and connects, the first time an app's QML mentions `Agent`; it retries every 3 s while
 agentd is away. `check` never connects or sends.
+
+agentd answers each prompt with {"type": "queued", "turn": id} on this connection only, and
+tags every event with its turn id, so the app follows its own turns by id. That also
+catches a turn that fails before it starts (provider missing): error and turn_end, no turn_start.
 """
 
 import json
@@ -31,9 +35,10 @@ class Agent(QObject):
         self._busy = False
         self._provider = ""
         self._reply = ""
-        self._sent: list[str] = []      # prompts this app sent that have not started yet
         self._outbox: list[str] = []    # asked before the connection was up
-        self._ours = False              # the running turn is one of ours
+        self._waiting = 0               # prompts sent whose "queued" (with the turn id) has not come
+        self._turns: set[int] = set()   # this app's turns that have not ended
+        self._current = None            # the turn `reply` belongs to
         self._buffer = b""
         self._socket = QLocalSocket(self)
         self._socket.connected.connect(self._on_connected)
@@ -69,7 +74,7 @@ class Agent(QObject):
             self._send(text)
 
     def _send(self, text: str):
-        self._sent.append(text)
+        self._waiting += 1
         self._socket.write((json.dumps({"type": "prompt", "text": text}) + "\n").encode())
         self._socket.flush()
 
@@ -77,6 +82,10 @@ class Agent(QObject):
         if self._socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
             return
         self._buffer = b""
+        if self._current in self._turns:
+            self._add_error("lost the connection to agentd")
+            self.replied.emit(self._reply)
+        self._waiting, self._turns, self._current = 0, set(), None
         self._set("_connected", False, self.connectedChanged)
         self._set("_busy", False, self.busyChanged)
         if self._started and not self._retry.isActive():
@@ -93,34 +102,40 @@ class Agent(QObject):
             if isinstance(msg, dict):
                 self.handle(msg)
 
+    def _add_error(self, text: str):
+        sep = "\n\n" if self._reply else ""
+        self._set("_reply", self._reply + sep + "Error: " + text, self.replyChanged)
+
     def handle(self, msg: dict):
         """One message from agentd."""
         if msg.get("type") == "status":
             self._set("_busy", bool(msg.get("busy")), self.busyChanged)
             self._set("_provider", str(msg.get("provider") or ""), self.providerChanged)
             return
+        if msg.get("type") == "queued":       # replies come in the order the prompts went out
+            if self._waiting > 0:
+                self._waiting -= 1
+                self._turns.add(msg.get("turn"))
+            return
         if msg.get("type") != "event":
             return
-        kind = msg.get("kind")
+        kind, turn = msg.get("kind"), msg.get("turn")
         if kind == "turn_start":
             self._set("_busy", True, self.busyChanged)
-            prompt = str(msg.get("prompt", ""))
-            self._ours = prompt in self._sent
-            if self._ours:
-                self._sent.remove(prompt)
-                self._set("_reply", "", self.replyChanged)
-        elif not self._ours:
+        if turn is None or turn not in self._turns:
             return
-        elif kind == "text" and msg.get("text"):
+        if turn != self._current:             # the first event of a new turn of ours
+            self._current = turn
+            self._set("_reply", "", self.replyChanged)
+        if kind == "text" and msg.get("text"):
             sep = "\n\n" if self._reply and not self._reply.endswith("\n") else ""
             self._set("_reply", self._reply + sep + str(msg["text"]), self.replyChanged)
         elif kind == "result" and msg.get("text") and not self._reply:
             self._set("_reply", str(msg["text"]), self.replyChanged)
         elif kind == "error" and msg.get("text"):
-            sep = "\n\n" if self._reply else ""
-            self._set("_reply", self._reply + sep + "Error: " + str(msg["text"]), self.replyChanged)
+            self._add_error(str(msg["text"]))
         elif kind == "turn_end":
-            self._ours = False
+            self._turns.discard(turn)
             self.replied.emit(self._reply)
 
     @Slot(str)
