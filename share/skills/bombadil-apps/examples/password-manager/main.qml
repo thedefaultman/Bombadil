@@ -30,14 +30,17 @@ AppWindow {
     readonly property var strengthNames: ["Very weak", "Weak", "Fair", "Good", "Strong"]
     readonly property var strengthTones: ["bad", "bad", "warn", "good", "good"]
 
+    // A save that failed leaves vault.data as it was and says why in vault.error.
     function save(entry) {
         vault.data = entries.filter(e => e.id !== entry.id).concat([entry])
+        if (vault.error) { toast("Not saved: " + vault.error, "bad"); return }
         list.currentIndex = shown.findIndex(e => e.id === entry.id)
         toast("Saved " + entry.name, "good")
     }
     function remove(entry) {
         const i = list.currentIndex
         vault.data = entries.filter(e => e.id !== entry.id)
+        if (vault.error) { toast("Not deleted: " + vault.error, "bad"); return }
         list.currentIndex = Math.min(i, shown.length - 1)   // select the next entry
         toast("Deleted " + entry.name)
     }
@@ -98,7 +101,7 @@ AppWindow {
                     visible: !!details.entry
                     rows: details.entry ? [
                         { label: "Username", value: details.entry.username },
-                        { label: "Password", value: details.revealed ? details.entry.password : "•".repeat(12), mono: true },
+                        { label: "Password", value: details.revealed ? details.entry.password : "•".repeat(12), mono: true, secret: true },
                         { label: "Website", value: details.entry.url },
                         { label: "Notes", value: details.entry.notes }
                     ] : []

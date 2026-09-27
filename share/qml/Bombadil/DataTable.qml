@@ -158,6 +158,11 @@ FocusScope {
         return JSON.stringify(row)
     }
 
+    function _hasId(row) {
+        return !!row && typeof row === "object"
+            && ["id", "uuid", "key", "pid"].some(k => row[k] !== undefined)
+    }
+
     function _compare(a, b) {
         const an = a === null || a === undefined || a === "", bn = b === null || b === undefined || b === ""
         if (an || bn)
@@ -183,13 +188,16 @@ FocusScope {
         }
         const prevIndex = view.currentIndex
         const prevKey = prevIndex >= 0 ? _key(_sorted[prevIndex]) : undefined
+        const prevHasId = prevIndex >= 0 && _hasId(_sorted[prevIndex])
         const prevCount = _sorted.length
         const y = view.contentY
         _sorted = next
         let index = prevIndex < next.length ? prevIndex : -1
         if (prevKey !== undefined) {
             const found = next.findIndex(r => _key(r) === prevKey)
-            if (found >= 0 || next.length !== prevCount)
+            // Only a row known by its content keeps its place when it is gone: its values
+            // changed. One with an id that is gone (a process that exited) is deselected.
+            if (found >= 0 || prevHasId || next.length !== prevCount)
                 index = found
         }
         if (view.currentIndex !== index)

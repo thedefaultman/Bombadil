@@ -20,7 +20,7 @@ QML = "import QtQuick\nimport Bombadil\nAppWindow { title: \"Todo\" }\n"
 class FakeHypr(hypr.Hyprland):
     available = True
 
-    def request(self, command):
+    def request(self, command, timeout=10):
         return "[]" if command.startswith("j/") else "ok"
 
 

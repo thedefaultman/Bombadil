@@ -3,6 +3,8 @@ import QtQuick.Layouts
 
 // Label/value pairs in two aligned columns:
 // rows: [{ label: "PID", value: "1234", mono: true, copyable: true, secret: false }, ...]
+// A secret row can't be selected with the mouse, which would put it in the primary selection
+// for good; its copy button clears the clipboard after 30 s.
 GridLayout {
     id: root
 
@@ -51,7 +53,7 @@ GridLayout {
                 color: Theme.fg
                 font: cell.modelData.mono ? Theme.monoFont : Theme.font
                 readOnly: true
-                selectByMouse: true
+                selectByMouse: !cell.modelData.secret
                 textFormat: TextEdit.PlainText
                 wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
                 selectionColor: Theme.accentSoft

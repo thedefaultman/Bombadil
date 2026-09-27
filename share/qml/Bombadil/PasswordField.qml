@@ -20,7 +20,7 @@ TextField {
     bottomPadding: topPadding + bottomInset
     implicitHeight: implicitBackgroundHeight + topInset + bottomInset
     inputMethodHints: Qt.ImhHiddenText | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
-    selectByMouse: true
+    selectByMouse: !revealed   // shown text selected with the mouse would stay in the primary selection
     Layout.fillWidth: true
 
     // The most used passwords, which score 0 whatever their length (a deny list, not credentials).

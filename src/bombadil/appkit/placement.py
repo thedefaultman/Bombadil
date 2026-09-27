@@ -14,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import time
+from pathlib import Path
 
 from .. import apps, hypr
 
@@ -73,7 +74,7 @@ def _send(h: hypr.Hyprland, command: str, tries: int = 3) -> str:
     err: Exception | None = None
     for attempt in range(tries):
         try:
-            reply = h.request(command).strip()
+            reply = h.request(command, timeout=2).strip()
         except (OSError, RuntimeError) as e:
             err = e
         else:
@@ -215,6 +216,38 @@ def _signal_all(pids: list[int], sig: int) -> None:
             pass
 
 
+def kill_children(parent: int) -> None:
+    """SIGKILL every process `parent` started, each with its process group: a Command's program
+    runs in a session of its own (with whatever `sh -c "a | b"` forked), which outlives the app."""
+    for entry in os.scandir("/proc"):
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            fields = Path(entry.path, "stat").read_text().rpartition(")")[2].split()
+            pid, ppid, pgrp = int(entry.name), int(fields[1]), int(fields[2])
+        except (OSError, IndexError, ValueError):
+            continue
+        if ppid != parent:
+            continue
+        try:
+            if pgrp == pid:
+                os.killpg(pid, signal.SIGKILL)
+            else:
+                os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _kill(pid: int) -> None:
+    """SIGKILL an app with its Commands' programs: nothing reaps those once the app is gone."""
+    try:
+        os.kill(pid, signal.SIGSTOP)   # nothing new starts while its programs are killed
+        kill_children(pid)
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def _gone(name: str, wait: float) -> bool:
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
@@ -233,7 +266,8 @@ def close(name: str, wait: float = 3.0) -> str:
     _signal_all(pids, signal.SIGTERM)
     if _gone(name, wait):
         return f"{name} closed"
-    _signal_all(running().get(name, []), signal.SIGKILL)
+    for pid in running().get(name, []):
+        _kill(pid)
     if _gone(name, 2.0):
         return f"{name} did not quit within {wait:g} s (stuck?) and was killed; unsaved changes are lost"
     return f"{name} did not quit within {wait:g} s and could not be killed"

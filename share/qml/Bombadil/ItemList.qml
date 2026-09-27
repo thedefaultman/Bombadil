@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Templates as T
 
 // A selectable, keyboard-navigable list of ListRows. An array of objects is the easiest
 // model; when a new array is assigned the selection follows the same item (matched by
@@ -53,6 +54,11 @@ FocusScope {
         return JSON.stringify(item)
     }
 
+    function _hasId(item) {
+        return !!item && typeof item === "object"
+            && ["id", "uuid", "key", "pid"].some(k => item[k] !== undefined)
+    }
+
     // A new array would reset the view to the top and the first row; keep both instead.
     function _sync() {
         const m = root.model
@@ -62,6 +68,7 @@ FocusScope {
         }
         const prevIndex = view.currentIndex
         const prevKey = _key(_selected)
+        const prevHasId = _hasId(_selected)
         const prevCount = view.count
         const y = view.contentY
         view.model = m
@@ -71,7 +78,9 @@ FocusScope {
             for (let i = 0; i < m.length && found < 0; i++)
                 if (_key(m[i]) === prevKey)
                     found = i
-            if (found >= 0 || m.length !== prevCount)
+            // Only an item known by its content keeps its row when it is gone: it was
+            // probably edited in place. One with an id that is gone is deselected.
+            if (found >= 0 || prevHasId || m.length !== prevCount)
                 index = found
         }
         if (view.currentIndex !== index)
@@ -80,6 +89,8 @@ FocusScope {
         view.contentY = Math.max(0, Math.min(y, view.contentHeight - view.height))
     }
     property var _selected: null
+    // Delegates whose clicked() already selects their row.
+    property var _hooked: []
     onModelChanged: _sync()
     Component.onCompleted: _sync()
 
@@ -126,19 +137,28 @@ FocusScope {
                 positionViewAtIndex(currentIndex, ListView.Contain)
         }
 
-        // Works for any delegate: a tap selects the row under it (and activates it).
+        // A tap selects the row under it (and activates it).
         TapHandler {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onTapped: (point, button) => {
-                const i = view.indexAt(point.position.x, point.position.y)
-                view.forceActiveFocus()
-                if (i < 0)
-                    return
-                view.currentIndex = i
-                if (button === Qt.RightButton)
-                    root.contextRequested(i, root._itemAt(i))
-                else
-                    root.activated(i, root._itemAt(i))
+            onTapped: (point, button) => root._tap(view.indexAt(point.position.x, point.position.y), button)
+        }
+
+        // A delegate that is a button (ItemDelegate, CheckDelegate) takes the press, so the
+        // TapHandler never sees it: its own clicked() selects the row instead.
+        Connections {
+            target: view.contentItem
+            function onChildrenChanged() {
+                // Reused rows stay children; destroyed ones leave, and leave the list.
+                const hooked = []
+                for (const c of view.contentItem.children) {
+                    if (!(c instanceof T.AbstractButton))
+                        continue
+                    if (root._hooked.indexOf(c) < 0)
+                        c.clicked.connect(() => root._tap(view.indexAt(c.x + c.width / 2, c.y + c.height / 2),
+                                                          Qt.LeftButton))
+                    hooked.push(c)
+                }
+                root._hooked = hooked
             }
         }
 
@@ -153,6 +173,17 @@ FocusScope {
                 event.accepted = true
             }
         }
+    }
+
+    function _tap(i, button) {
+        view.forceActiveFocus()
+        if (i < 0)
+            return
+        view.currentIndex = i
+        if (button === Qt.RightButton)
+            contextRequested(i, _itemAt(i))
+        else
+            activated(i, _itemAt(i))
     }
 
     function _activateCurrent() {

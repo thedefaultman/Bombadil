@@ -289,15 +289,70 @@ def test_vault_create_does_not_overwrite_what_another_object_made(kit, fast_kdf)
     a, b = root.property("a"), root.property("b")
     assert a.create("first") is True
     a.setProperty("data", [{"site": "bank"}])
-    assert b.property("exists") is False                 # b looked before a made the file
     assert b.create("second") is False and b.property("error") == "a vault already exists"
     assert b.property("exists") is True
+    b.lock()
     assert b.unlock("first") is True and js(b.property("data")) == [{"site": "bank"}]
 
     late = vault(kit, "appears-later")
     (kit.ctx.data_dir / "appears-later.vault").write_bytes((kit.ctx.data_dir / "shared.vault").read_bytes())
     assert late.property("exists") is False
     assert late.unlock("first") is True and late.property("exists") is True
+
+
+def test_vault_objects_on_one_file_show_one_state(kit, fast_kdf):
+    """A second Vault with the same name (say in a dialog) must not save from what it saw earlier."""
+    root = make(kit, '''Item { property var a: a; property var b: b
+        Vault { id: a; name: "twins" }
+        Vault { id: b; name: "twins" } }''')
+    a, b = root.property("a"), root.property("b")
+    assert a.create("old") is True
+    assert b.property("unlocked") is True and js(b.property("data")) == []
+    a.setProperty("data", [{"n": "bank"}])
+    b.setProperty("data", js(b.property("data")) + [{"n": "shop"}])
+    assert js(a.property("data")) == [{"n": "bank"}, {"n": "shop"}]      # nothing a saved is lost
+
+    assert b.changePassword("old", "new") is True
+    a.setProperty("data", [{"n": "mail"}])               # saved under the new key, not the old one
+    a.lock()
+    assert b.property("unlocked") is False and js(b.property("data")) is None
+    assert b.unlock("old") is False
+    assert b.unlock("new") is True and js(b.property("data")) == [{"n": "mail"}]
+    assert a.property("unlocked") is True
+
+
+def test_vault_does_not_save_over_a_file_changed_elsewhere(kit, fast_kdf):
+    from bombadil.appkit.native import vault as vault_mod
+
+    v = vault(kit, "elsewhere")
+    assert v.create("pw")
+    v.setProperty("data", [1])
+    path = kit.ctx.data_dir / "elsewhere.vault"
+    doc = vault_mod.parse(path.read_bytes())             # another process saves [1, 2]
+    path.write_bytes(vault_mod.seal(vault_mod.derive("pw", doc["salt"], doc["kdf"]), doc["salt"], doc["kdf"], [1, 2]))
+    v.setProperty("data", [1, 3])
+    assert v.property("error") == "the vault changed on disk; unlock it again"
+    assert v.property("unlocked") is False
+    assert v.unlock("pw") is True and js(v.property("data")) == [1, 2]
+
+
+def test_vault_shows_only_what_it_saved(kit, fast_kdf, monkeypatch):
+    """A save that fails must not look saved: the entry would be gone after the next lock."""
+    from bombadil.appkit.native import vault as vault_mod
+
+    v = vault(kit, "diskfull")
+    assert v.create("pw")
+    v.setProperty("data", [1])
+
+    def fail(*_, **__):
+        raise OSError("disk full")
+
+    with monkeypatch.context() as m:
+        m.setattr(vault_mod, "atomic_write", fail)
+        v.setProperty("data", [1, 2])
+        assert v.property("error") == "cannot save: disk full" and js(v.property("data")) == [1]
+    v.setProperty("data", [1, 3])
+    assert v.property("error") == "" and js(v.property("data")) == [1, 3]
 
 
 def test_vault_change_password_keeps_the_old_key_when_saving_fails(kit, fast_kdf, monkeypatch):
@@ -337,6 +392,18 @@ def test_vault_auto_lock(kit, fast_kdf):
     assert v.create("pw")
     assert wait_until(lambda: not v.property("unlocked"), 3000)
     assert vault(kit, "shortlived").property("unlocked") is False
+
+
+def test_vault_auto_lock_counts_time_asleep(kit, fast_kdf, monkeypatch):
+    """Qt timers and time.monotonic stop during suspend: a vault left open must lock on resume."""
+    from bombadil.appkit.native import vault as vault_mod
+
+    v = vault(kit, "slept", "autoLock: 300")
+    assert v.create("pw")
+    resumed = vault_mod._now() + 3600
+    monkeypatch.setattr(vault_mod, "_now", lambda: resumed)   # an hour asleep, no Qt time passed
+    assert wait_until(lambda: not v.property("unlocked"), 3000)
+    assert vault(kit, "slept").property("unlocked") is False
 
 
 def test_vault_in_check_works_in_memory_only(kit, checking, fast_kdf):
@@ -858,6 +925,17 @@ def test_clipboard_copy_and_clear(kit):
     clip.setText("user copied something else")
     spin(250)
     assert clip.text() == "user copied something else"
+
+
+def test_clipboard_clear_counts_time_asleep(kit, monkeypatch):
+    from bombadil.appkit.native import clipboard as clipboard_mod
+
+    clip = QGuiApplication.clipboard()
+    make(kit, 'Item { Component.onCompleted: Clipboard.copy("slept on", 30) }')
+    assert clip.text() == "slept on"
+    resumed = clipboard_mod._now() + 3600
+    monkeypatch.setattr(clipboard_mod, "_now", lambda: resumed)
+    assert wait_until(lambda: clip.text() == "", 3000)
 
 
 def test_clipboard_does_nothing_in_check(kit, checking):

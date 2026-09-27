@@ -2,7 +2,8 @@
 
 The file holds only the KDF parameters, salt, nonce and ciphertext. The derived key is kept
 in memory for the life of the process (keyed by file), so a Vault that hot reload creates
-again comes back unlocked, until it auto-locks or `lock()` is called.
+again comes back unlocked, until it auto-locks or `lock()` is called. Every Vault object on
+one file shows the same state: saving, unlocking or locking through one shows in the others.
 
 During `check` nothing is written: what would go to the file is kept in memory instead, so
 create, lock, unlock and changePassword behave as they will for the user.
@@ -43,10 +44,24 @@ COMMON = ("123456 12345678 qwerty azerty letmein welcome admin iloveyou monkey "
           "hunter batman superman pokemon passw0rd").split(" ")
 RUNS = re.compile(r"(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|cdef|qwer|wert|asdf|sdfg|zxcv)")
 
-# file path -> {"key", "salt", "expires"}; survives hot reloads, not restarts.
+# file path -> {"key", "salt", "expires"}; survives hot reloads, not restarts. Every Vault
+# object on the file shares `expires` (a _now() time), so using one keeps them all open.
 _keys: dict[str, dict] = {}
 # file path -> what the file would hold, during `check` (which writes nothing).
 _dry: dict[str, bytes] = {}
+
+
+def _now() -> float:
+    """Seconds on a clock that keeps counting while the machine sleeps (monotonic and Qt timers stop)."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+class _Hub(QObject):
+    # file path, and the Vault object whose state every other one on that file should show
+    changed = Signal(str, QObject)
+
+
+_hub: _Hub | None = None
 
 
 def _crypto():
@@ -162,9 +177,14 @@ class Vault(QObject):
         self._key: bytes | None = None
         self._salt = b""
         self._kdf = dict(KDF)
+        self._nonce = b""                  # the file's nonce as this object last read or wrote it
         self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.lock)
+        self._timer.setInterval(1000)      # polls the deadline in _keys while unlocked
+        self._timer.timeout.connect(self._tick)
+        global _hub
+        if _hub is None:
+            _hub = _Hub()
+        _hub.changed.connect(self._follow)
         self._load()
 
     @property
@@ -195,10 +215,11 @@ class Vault(QObject):
         self._key, self._data = None, None
         self._check_exists()
         cached = _keys.get(str(self._file))
-        if self._exists and cached and (cached["expires"] is None or cached["expires"] > time.monotonic()):
+        if self._exists and cached and (cached["expires"] is None or cached["expires"] > _now()):
             try:
                 doc = self._read()
                 if doc["salt"] == cached["salt"]:
+                    self._nonce = doc["nonce"]
                     self._open(cached["key"], doc["salt"], doc["kdf"], unseal(cached["key"], doc))
                     return
             except Exception:  # noqa: BLE001 - a changed or damaged file just means locked
@@ -210,36 +231,67 @@ class Vault(QObject):
         self._key, self._salt, self._kdf, self._data = key, salt, kdf, value
         self._set("_error", "", self.errorChanged)
         self._set("_unlocked", True, self.unlockedChanged)
+        self._timer.start()
         self._touch()
         self._data_changed()
 
-    def _touch(self):
-        """Restart the auto-lock countdown; the key cache expires with it."""
-        if not self._unlocked:
+    def _close(self):
+        self._timer.stop()
+        self._key, self._data = None, None
+        self._set("_unlocked", False, self.unlockedChanged)
+        self._data_changed()
+
+    def _share(self):
+        """Make every other Vault object on this file show what this one does."""
+        _hub.changed.emit(str(self._file), self)
+
+    @Slot(str, QObject)
+    def _follow(self, path: str, other):
+        """Another Vault object on this file saved, unlocked or locked it: show the same."""
+        if other is self or path != str(self._file):
             return
-        expires = None
-        if self._auto_lock > 0:
-            self._timer.start(self._auto_lock * 1000)
-            expires = time.monotonic() + self._auto_lock
-        else:
-            self._timer.stop()
-        if not self._ctx.check:
+        self._set("_exists", other._exists, self.existsChanged)
+        if other._unlocked:
+            self._nonce = other._nonce
+            self._open(other._key, other._salt, other._kdf, other._data)
+        elif self._unlocked:
+            self._close()
+
+    def _touch(self):
+        """Push the auto-lock deadline back; the key cache expires with it."""
+        if self._unlocked:
+            expires = _now() + self._auto_lock if self._auto_lock > 0 else None
             _keys[str(self._file)] = {"key": self._key, "salt": self._salt, "expires": expires}
 
-    def _write(self, key: bytes | None = None, salt: bytes | None = None, kdf: dict | None = None,
-               value=None) -> bool:
-        """Save `value` under that key (by default the current key and data)."""
-        if key is None:
-            key, salt, kdf, value = self._key, self._salt, self._kdf, self._data
+    def _tick(self):
+        """Lock once the deadline has passed, time asleep included (a Qt timer does not count it)."""
+        cached = _keys.get(str(self._file))
+        if cached is None or (cached["expires"] is not None and _now() >= cached["expires"]):
+            self.lock()
+
+    def _write(self, key: bytes, salt: bytes, kdf: dict, value) -> bool:
+        """Save `value` under that key, unless something else changed the file since this object read it."""
+        if self._unlocked and self._changed_on_disk():
+            self.lock()
+            return self._fail("the vault changed on disk; unlock it again")
         try:
+            sealed = seal(key, salt, kdf, value)
             if self._ctx.check:
-                _dry[str(self._file)] = seal(key, salt, kdf, value)
+                _dry[str(self._file)] = sealed
             else:
-                atomic_write(self._file, seal(key, salt, kdf, value), mode=0o600)
+                atomic_write(self._file, sealed, mode=0o600)
         except (OSError, TypeError, ValueError, RuntimeError) as e:
             return self._fail(f"cannot save: {e}")
+        self._nonce = parse(sealed)["nonce"]
         self._set("_exists", True, self.existsChanged)
         return True
+
+    def _changed_on_disk(self) -> bool:
+        """Another process (or an edit by hand) saved the file after this object read or wrote it."""
+        try:
+            return self._read()["nonce"] != self._nonce
+        except (OSError, KeyError, TypeError, ValueError):
+            return False                   # gone or damaged: saving puts it right
 
     def _check_exists(self) -> bool:
         """Look at the disk: another Vault object (or process) may have made or removed the file."""
@@ -258,6 +310,7 @@ class Vault(QObject):
         if not self._write(key, salt, kdf, []):
             return False
         self._open(key, salt, kdf, [])
+        self._share()
         return True
 
     @Slot(str, result=bool)
@@ -276,16 +329,16 @@ class Vault(QObject):
             return self._fail("wrong password")
         except (OSError, KeyError, TypeError, ValueError) as e:
             return self._fail(f"the vault file is damaged: {e}")
+        self._nonce = doc["nonce"]
         self._open(key, doc["salt"], doc["kdf"], value)
+        self._share()
         return True
 
     @Slot()
     def lock(self):
-        self._timer.stop()
         _keys.pop(str(self._file), None)
-        self._key, self._data = None, None
-        self._set("_unlocked", False, self.unlockedChanged)
-        self._data_changed()
+        self._close()
+        self._share()
 
     @Slot(str, str, result=bool)
     def changePassword(self, old: str, new: str) -> bool:
@@ -305,6 +358,7 @@ class Vault(QObject):
         if not self._write(key, salt, kdf, value):     # the old key stays until the new one is on disk
             return False
         self._open(key, salt, kdf, value)
+        self._share()
         return True
 
     @Slot(result=str)
@@ -334,11 +388,12 @@ class Vault(QObject):
         except TypeError as e:
             self._fail(f"not JSON: {e}")
             return
-        self._data = value
         self._touch()
-        if self._write():
+        if self._write(self._key, self._salt, self._kdf, value):   # a value that was not saved is not shown
+            self._data = value
             self._set("_error", "", self.errorChanged)
-        self._data_changed()
+            self._data_changed()
+            self._share()
 
     def _set_name(self, name: str):
         if name and name != self._name:

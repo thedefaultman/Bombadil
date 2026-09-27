@@ -88,7 +88,8 @@ QtObject {
             return isNaN(value.getTime()) ? null : value
         if (typeof value === "number" || /^\d+(\.\d+)?$/.test(String(value))) {
             const n = Number(value)
-            return new Date(n < 1e11 ? n * 1000 : n)
+            const d = new Date(n < 1e11 ? n * 1000 : n)
+            return isNaN(d.getTime()) ? null : d
         }
         const d = new Date(String(value))
         return isNaN(d.getTime()) ? null : d

@@ -74,6 +74,7 @@ QtObject {
         default: return fg
         }
     }
-    // Same color with a new alpha (0..1).
-    function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
+    // Same color with a new alpha (0..1). `c` may be a color or a string like "#3987e5"
+    // (`series` entries, colors from JSON).
+    function alpha(c, a) { const k = Qt.color(c); return Qt.rgba(k.r, k.g, k.b, a) }
 }

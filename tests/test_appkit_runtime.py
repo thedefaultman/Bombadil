@@ -431,6 +431,34 @@ def test_check_keeps_app_py_commands_and_qt_storage_off_the_users_files(home):
     assert not (home / "config-home").exists() and not (home / ".config").exists()
 
 
+def test_what_an_app_prints_goes_to_stderr_and_the_check_result_still_parses(home):
+    pytest.importorskip("PySide6")
+    make_app("printer", {
+        "main.qml": "import QtQuick\nimport Bombadil\nAppWindow { Component.onCompleted: console.log(backend.greeting) }\n",
+        "app.py": textwrap.dedent("""\
+            import os
+            from PySide6.QtCore import Property, QObject
+
+            os.write(1, b"straight to fd 1\\n")
+
+
+            class Backend(QObject):
+                def __init__(self):
+                    super().__init__()
+                    print("backend ready")
+
+                @Property(str, constant=True)
+                def greeting(self):
+                    return "hi"
+            """)})
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "bombadil-app"), "check", "printer"],
+                       capture_output=True, text=True, env=env, timeout=90)
+    result = json.loads(r.stdout)
+    assert result["ok"] and result["console"] == ["hi"], result
+    assert "straight to fd 1" in r.stderr and "backend ready" in r.stderr
+
+
 def test_a_launched_app_logs_to_its_log_and_a_stuck_one_is_killed_on_close(home):
     """Started by a launcher (stderr not a terminal), not through apps.run."""
     pytest.importorskip("PySide6")
@@ -516,7 +544,7 @@ class FakeHypr(hypr.Hyprland):
     def available(self):
         return self._available
 
-    def request(self, command):
+    def request(self, command, timeout=10):
         self.sent.append(command)
         if command == "j/monitors":
             return json.dumps(self.monitors)
@@ -602,29 +630,39 @@ def test_prepare_says_what_went_wrong_instead_of_raising(monkeypatch):
     monkeypatch.setattr(placement.time, "sleep", lambda s: None)
 
     class Hung(FakeHypr):
-        def request(self, command):
-            raise TimeoutError("timed out")
+        def request(self, command, timeout=10):
+            raise TimeoutError(f"timed out after {timeout} s")
     said = placement.prepare("notes", 1, 2, Hung())
     assert said.startswith("could not add the window rule for notes, it opens as a plain window: Hyprland did not")
-    assert said.endswith("timed out")
+    assert said.endswith("timed out after 2 s")   # placement retries, so each try gives up fast
     assert "opens as a plain window" in placement.prepare("notes", 1, 2, FakeHypr(replies=["", "", ""]))
 
 
-def test_a_hyprland_request_times_out(home, monkeypatch):
+def test_a_hyprland_request_waits_out_a_busy_compositor_but_not_a_hung_one(home, monkeypatch):
     runtime_dir = Path("/tmp") / f"bombadil-test-{os.getpid()}"   # short: socket paths are limited
     sock_dir = runtime_dir / "hypr" / "sig"
     sock_dir.mkdir(parents=True, exist_ok=True)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         server.bind(str(sock_dir / ".socket.sock"))
-        server.listen(1)     # accepts, never answers: a hung compositor
+        server.listen(1)
         monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
         monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig")
-        raised = []
+
+        def answer_late():   # a busy compositor (software emulation) answers, but late
+            conn, _ = server.accept()
+            with conn:
+                conn.recv(100)
+                time.sleep(2.5)
+                conn.sendall(b"[]")
+        threading.Thread(target=answer_late, daemon=True).start()
+        assert hypr.Hyprland().request("j/monitors") == "[]"
+
+        raised = []   # from here on nobody accepts: a hung compositor
 
         def ask():
             try:
-                hypr.Hyprland().request("j/monitors")
+                hypr.Hyprland().request("j/monitors", timeout=1)
             except OSError as e:
                 raised.append(e)
         asking = threading.Thread(target=ask, daemon=True)
@@ -668,10 +706,11 @@ def test_close_kills_an_app_that_does_not_quit(monkeypatch):
     sent = []
     monkeypatch.setattr(placement, "running", lambda: {} if (101, signal.SIGKILL) in sent else {"notes": [101]})
     monkeypatch.setattr(placement.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    monkeypatch.setattr(placement, "kill_children", lambda pid: sent.append((pid, "children")))
     monkeypatch.setattr(placement.time, "sleep", lambda s: None)
     assert placement.close("notes", wait=0.05) == ("notes did not quit within 0.05 s (stuck?) and was killed; "
                                                    "unsaved changes are lost")
-    assert sent == [(101, signal.SIGTERM), (101, signal.SIGKILL)]
+    assert sent == [(101, signal.SIGTERM), (101, signal.SIGSTOP), (101, "children"), (101, signal.SIGKILL)]
 
 
 def test_running_parses_pgrep_and_close_sends_sigterm(monkeypatch):

@@ -114,7 +114,9 @@ QtObject {
         if (!loaded || _state.applying || App.checking)
             return
         delete _state.held[k]
-        _timer.restart()
+        // Not restarted: a value that changes all the time is still saved every 300 ms.
+        if (!_timer.running)
+            _timer.start()
     }
 
     function _same(a, b) {

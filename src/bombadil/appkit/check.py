@@ -25,6 +25,7 @@ from pathlib import Path
 
 from . import engine as kit_engine
 from .context import AppContext
+from .placement import kill_children
 
 # Lines Qt prints that say nothing about the app.
 NOISE = re.compile(
@@ -161,29 +162,13 @@ def check(ctx: AppContext, screenshot: Path | None = None, wait_ms: int = WAIT_M
     }
 
 
-def _kill_children(parent: int) -> None:
-    """SIGKILL every process `parent` started, each with its process group: a Command's program
-    runs in a session of its own (with whatever `sh -c "a | b"` forked), which outlives the check."""
-    for entry in os.scandir("/proc"):
-        if not entry.name.isdigit() or int(entry.name) == os.getpid():
-            continue
-        try:
-            fields = Path(entry.path, "stat").read_text().rpartition(")")[2].split()
-            pid, ppid, pgrp = int(entry.name), int(fields[1]), int(fields[2])
-        except (OSError, IndexError, ValueError):
-            continue
-        if ppid != parent:
-            continue
-        try:
-            if pgrp == pid:
-                os.killpg(pid, signal.SIGKILL)
-            else:
-                os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
+def _emit(out: int, result: dict) -> None:
+    data = (json.dumps(result, indent=2) + "\n").encode()
+    while data:
+        data = data[os.write(out, data):]
 
 
-def _watch(pipe: int, parent: int, name: str, seconds: float) -> None:
+def _watch(pipe: int, parent: int, name: str, seconds: float, out: int) -> None:
     seen, buf = {}, b""
     deadline = time.monotonic() + seconds
     while (left := deadline - time.monotonic()) > 0:
@@ -200,7 +185,7 @@ def _watch(pipe: int, parent: int, name: str, seconds: float) -> None:
                 pass
     os.kill(parent, signal.SIGSTOP)   # nothing new starts while its programs are killed
     try:
-        _kill_children(parent)
+        kill_children(parent)
         result = {
             "app": name, "ok": False, "loaded": bool(seen.get("loaded")),
             "errors": [*seen.get("errors", []),
@@ -209,15 +194,14 @@ def _watch(pipe: int, parent: int, name: str, seconds: float) -> None:
             "warnings": seen.get("warnings", []), "console": seen.get("console", []),
             "screenshot": None, "size": None, "seconds": round(seconds, 2),
         }
-        sys.stdout.write(json.dumps(result, indent=2) + "\n")
-        sys.stdout.flush()
+        _emit(out, result)
     finally:
         os.kill(parent, signal.SIGKILL)
 
 
-def start_watchdog(name: str, seconds: float) -> int:
+def start_watchdog(name: str, seconds: float, out: int) -> int:
     """Fork the watchdog, before Qt starts. Returns the pipe check() feeds; when the check
-    exits, the pipe closes and the watchdog leaves quietly."""
+    exits, the pipe closes and the watchdog leaves quietly. `out`: where it writes its result."""
     r, w = os.pipe()
     sys.stdout.flush()
     sys.stderr.flush()
@@ -226,7 +210,7 @@ def start_watchdog(name: str, seconds: float) -> int:
         return w
     try:   # never return into the caller's code from the child
         os.close(w)
-        _watch(r, os.getppid(), name, seconds)
+        _watch(r, os.getppid(), name, seconds, out)
     finally:
         os._exit(0)
 
@@ -234,10 +218,14 @@ def start_watchdog(name: str, seconds: float) -> int:
 def main(target: str, screenshot: str | None, wait_ms: int, size: str | None, settle: float = SETTLE_S) -> int:
     from .context import for_target
 
+    # stdout carries the JSON result only: app.py's print(), kit messages and anything else
+    # written to fd 1 go to stderr, or the result would not parse.
+    sys.stdout.flush()
+    out = os.dup(1)
+    os.dup2(2, 1)
     ctx = for_target(target, check=True)
     wh = tuple(int(x) for x in size.lower().split("x")) if size else None
-    dog = start_watchdog(ctx.name, wait_ms / 1000 + settle)
+    dog = start_watchdog(ctx.name, wait_ms / 1000 + settle, out)
     result = check(ctx, Path(screenshot) if screenshot else None, wait_ms, wh, dog)
-    sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    sys.stdout.flush()
+    _emit(out, result)
     return 0 if result["ok"] else 1

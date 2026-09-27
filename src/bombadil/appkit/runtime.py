@@ -31,6 +31,7 @@ WATCHED_SUFFIXES = {".qml", ".js", ".mjs", ".py", ".toml"}
 SKIP_DIRS = {"__pycache__", "node_modules"}
 DEBOUNCE_MS = 150
 DEFAULT_SIZE = (560, 680)
+LOG_MAX = 1_000_000   # bytes; past this the log is moved to .log.1
 _modules = itertools.count(1)
 
 # Shown in place of an app that has never loaded, until an edit makes it load.
@@ -105,14 +106,21 @@ def _stamp() -> str:
 
 
 def _log(text: str) -> None:
-    print(f"{time.strftime('%H:%M:%S')} {text}", file=sys.stderr, flush=True)
+    try:
+        print(f"{time.strftime('%H:%M:%S')} {text}", file=sys.stderr, flush=True)
+    except OSError:
+        pass   # stderr is the log, on a full disk
 
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _read_json(path: Path) -> dict:
@@ -171,7 +179,9 @@ class Host:
         self.backend = None
         self._backend_failed = False  # app.py did not load: try it again on every reload
         self._module_name = ""
+        self._next_backend = None     # (module name, Backend) from app.py, used once its QML compiles
         self._sig: dict = {}
+        self._top = None              # the app folder's (st_dev, st_ino), to notice it being replaced
         self._dirty = False
         self._closed = False
         self._bg_color = None
@@ -238,6 +248,7 @@ class Host:
         if not comp.isReady():
             self.collector.add_qml_errors(comp.errors(), fatal=True)
             return None
+        self._use_backend()
         obj = comp.beginCreate(self.engine.rootContext())
         if obj is None:
             self.collector.add_qml_errors(comp.errors(), fatal=True)
@@ -335,16 +346,19 @@ class Host:
         self._show(self.window)
 
     def _load_backend(self, changed: set[str] | None) -> bool:
-        """Import app.py afresh (a new module each time) and expose its Backend as `backend`.
+        """Import app.py afresh (a new module each time); its Backend becomes `backend` once
+        the new QML compiles, so a failed reload leaves the old UI on its own backend.
         Skipped when only QML changed, unless app.py is still broken: its error stays until fixed."""
         if changed is not None and not self._backend_failed and not any(c.endswith(".py") for c in changed):
             return True
         py = self.ctx.dir / "app.py"
         self._backend_failed = False
+        if self._next_backend is not None:   # from an edit whose QML never compiled
+            sys.modules.pop(self._next_backend[0], None)
+            self._next_backend = None
         if not py.exists():
             if self.backend is not None:
-                self.engine.rootContext().setContextProperty("backend", None)
-                self.backend = None
+                self._next_backend = ("", None)
             return True
         name = f"bombadil_app_{self.ctx.name.replace('-', '_')}_{next(_modules)}"
         module = types.ModuleType(name)
@@ -361,11 +375,21 @@ class Host:
             self.collector.add("error", python_error(self.ctx, e))
             self._backend_failed = True
             return False
-        sys.modules.pop(self._module_name, None)
-        self._module_name = name
-        self.backend = backend
-        self.engine.rootContext().setContextProperty("backend", backend)
+        self._next_backend = (name, backend)
         return True
+
+    def _use_backend(self) -> None:
+        """Point `backend` at the Backend app.py made. The old UI re-evaluates against it on
+        its way out: what it says then is not about the new UI, so it is not counted. The old
+        Backend is kept until nothing points at it, or the old UI would see a deleted object."""
+        if self._next_backend is None:
+            return
+        (name, backend), self._next_backend = self._next_backend, None
+        said = self.collector.errors[:], self.collector.warnings[:]
+        self.engine.rootContext().setContextProperty("backend", backend)
+        self.collector.errors, self.collector.warnings = said
+        sys.modules.pop(self._module_name, None)
+        self._module_name, self.backend = name, backend
 
     def _refresh_meta(self) -> None:
         title = apps.read_meta(self.ctx.dir).get("title")
@@ -499,7 +523,10 @@ class Host:
             return  # shrunk to this screen by the runtime: not a size the user chose
         data = {"width": win.width(), "height": win.height(), "declared": list(self.declared)}
         if _read_json(self._size_path) != data:
-            _write_json(self._size_path, data)
+            try:
+                _write_json(self._size_path, data)
+            except OSError as e:   # a full disk: only the size is lost
+                _log(f"cannot save the window size: {e}")
 
     # Hot reload
 
@@ -537,10 +564,24 @@ class Host:
 
     def _sync_watch(self) -> dict:
         """Watch every relevant file and folder; an atomic rename replaces a file's inode,
-        so watches are re-added after every change. Returns the files' signature."""
+        so watches are re-added after every change. The folder above is watched too, so the
+        app's folder being removed or moved away and written again is seen.
+        Returns the files' signature."""
+        parent = str(self.ctx.dir.parent)
+        try:
+            st = self.ctx.dir.stat()
+            top = (st.st_dev, st.st_ino)
+        except OSError:
+            top = None
+        if top != self._top:
+            # Watches follow inodes: those on a folder moved away would never fire again.
+            self._top = top
+            stale = [p for p in self.watcher.files() + self.watcher.directories() if p != parent]
+            if stale:
+                self.watcher.removePaths(stale)
         dirs, files = self._scan()
         have = set(self.watcher.files()) | set(self.watcher.directories())
-        missing = [str(p) for p in dirs + files if str(p) not in have]
+        missing = [p for p in [parent, *map(str, dirs + files)] if p not in have]
         if missing:
             self.watcher.addPaths(missing)
         return self._signature(files)
@@ -579,7 +620,10 @@ class Host:
     def write_status(self) -> None:
         self._dirty = False
         if not self.ctx.check and not self._closed:
-            _write_json(self.ctx.status_path, self.status())
+            try:
+                _write_json(self.ctx.status_path, self.status())
+            except OSError as e:   # a full disk: the app runs on without it
+                _log(f"cannot write {self.ctx.status_path.name}: {e}")
 
     def _messages_changed(self) -> None:
         self._dirty = True   # may run on any thread: only set a flag
@@ -587,6 +631,7 @@ class Host:
     def _flush_status(self) -> None:
         if self._dirty and self.attempts:
             self.write_status()
+        _rotate_log(self.ctx.log_path)
 
     def _python_error(self, etype, value, tb) -> None:
         """Exceptions in the app's Python (Backend slots) count as app errors."""
@@ -654,20 +699,33 @@ def _log_to_file(ctx: AppContext) -> None:
     to the app's log, where app_status reads them, rotated like apps.run rotates it."""
     if os.isatty(2):
         return
-    log = ctx.log_path
     try:
-        log.parent.mkdir(parents=True, exist_ok=True)
-        if log.exists() and log.stat().st_size > 1_000_000:
-            log.replace(log.with_suffix(".log.1"))
-        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        _open_log(ctx.log_path)
     except OSError as e:
-        print(f"cannot log to {log}: {e}", file=sys.stderr, flush=True)
-        return
+        print(f"cannot log to {ctx.log_path}: {e}", file=sys.stderr, flush=True)
+
+
+def _open_log(log: Path) -> None:
+    """Send stdout and stderr to the log, first moving it to .log.1 when it is past LOG_MAX."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    if log.exists() and log.stat().st_size > LOG_MAX:
+        log.replace(log.with_suffix(".log.1"))
+    fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     sys.stdout.flush()
     sys.stderr.flush()
     os.dup2(fd, 1)
     os.dup2(fd, 2)
     os.close(fd)
+
+
+def _rotate_log(log: Path) -> None:
+    """While the app runs: rotate its log like at start, when stderr is that log."""
+    try:
+        st = os.fstat(2)
+        if st.st_size > LOG_MAX and os.path.samestat(st, log.stat()):
+            _open_log(log)
+    except OSError:
+        pass
 
 
 def run(name: str) -> int:
@@ -680,7 +738,10 @@ def run(name: str) -> int:
         return 0
     _log_to_file(ctx)
     app = kit_engine.make_app(ctx)
-    print(f"--- {_stamp()} bombadil-app run {name} (pid {os.getpid()})", file=sys.stderr, flush=True)
+    try:
+        print(f"--- {_stamp()} bombadil-app run {name} (pid {os.getpid()})", file=sys.stderr, flush=True)
+    except OSError:
+        pass   # the log is on a full disk: run anyway
     for sig in (signal.SIGTERM, signal.SIGINT):
         # Queued, so a signal during startup quits as soon as the loop runs.
         signal.signal(sig, lambda *_: QTimer.singleShot(0, app.quit))
@@ -701,12 +762,21 @@ def status(name: str) -> dict:
     """The last load result a running app wrote, plus its log tail. No Qt."""
     apps.app_dir(name)
     state = _read_json(paths.state_dir() / "apps" / f"{name}.status.json")
-    log = apps.log_path(name)
-    try:
-        tail = log.read_text(errors="replace").splitlines()[-40:]
-    except OSError:
-        tail = []
-    out = {"app": name, **state, "running": placement.is_running(name), "log": tail}
+    out = {"app": name, **state, "running": placement.is_running(name), "log": _tail(apps.log_path(name))}
     if not state:
         out["note"] = "no status yet: the app has not been opened since it was created"
     return out
+
+
+def _tail(path: Path, lines: int = 40, window: int = 64 * 1024) -> list[str]:
+    """The last lines of a file, reading only its end: a log can be big."""
+    try:
+        with path.open("rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            f.seek(max(0, size - window))
+            out = f.read().decode(errors="replace").splitlines()
+    except OSError:
+        return []
+    if size > window and len(out) > 1:
+        out = out[1:]   # cut off by the window
+    return out[-lines:]

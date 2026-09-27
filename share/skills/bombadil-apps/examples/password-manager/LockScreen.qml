@@ -15,6 +15,7 @@ ColumnLayout {
         const ok = vault.exists ? vault.unlock(master.text) : vault.create(master.text)
         if (!ok) { master.selectAll(); return }
         master.text = ""; confirm.text = ""
+        master.revealed = false; confirm.revealed = false   // the next lock starts hidden again
         unlocked()
     }
 

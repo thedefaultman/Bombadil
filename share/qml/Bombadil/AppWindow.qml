@@ -20,6 +20,19 @@ FocusScope {
     property bool showHeader: true
     default property alias content: body.data
 
+    // Set by first-milestone apps, from when AppWindow was an ApplicationWindow. The bars
+    // are placed above and below the content; the size limits and closing are not used.
+    property color color: Theme.bg
+    property font font: Theme.font
+    property Item menuBar: null
+    property Item header: null
+    property Item footer: null
+    property int minimumWidth: 0
+    property int minimumHeight: 0
+    property int maximumWidth: 16777215
+    property int maximumHeight: 16777215
+    signal closing(var close)
+
     width: 560
     height: 680
 
@@ -83,22 +96,52 @@ FocusScope {
 
     Component.onCompleted: _applyPalette(frame.palette)
 
+    // Puts a first-milestone bar in its slot, in place of the one before it.
+    function _dock(item, slot) {
+        for (const c of Array.from(slot.children))
+            if (c !== item)
+                c.parent = null
+        if (item) {
+            item.parent = slot
+            item.width = Qt.binding(() => slot.width)
+        }
+    }
+    onMenuBarChanged: _dock(menuBar, menuSlot)
+    onHeaderChanged: _dock(header, headerSlot)
+    onFooterChanged: _dock(footer, footerSlot)
+
     Rectangle {
         anchors.fill: parent
-        color: Theme.bg
+        color: root.color
     }
 
     Control {
         id: frame
         anchors.fill: parent
-        font: Theme.font
+        font: root.font
         padding: 0
 
         contentItem: Item {
+            Item {
+                id: menuSlot
+                anchors { left: parent.left; right: parent.right; top: parent.top }
+                height: root.menuBar && root.menuBar.visible ? root.menuBar.height : 0
+            }
+            Item {
+                id: headerSlot
+                anchors { left: parent.left; right: parent.right; top: menuSlot.bottom }
+                height: root.header && root.header.visible ? root.header.height : 0
+            }
+            Item {
+                id: footerSlot
+                anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                height: root.footer && root.footer.visible ? root.footer.height : 0
+            }
+
             RowLayout {
-                id: header
+                id: titleRow
                 visible: root.showHeader
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: Theme.pad }
+                anchors { left: parent.left; right: parent.right; top: headerSlot.bottom; margins: Theme.pad }
                 height: Theme.controlHeight
                 spacing: Theme.gap
 
@@ -122,7 +165,7 @@ FocusScope {
                     font.pixelSize: Theme.headingSize
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
-                    Layout.maximumWidth: header.width / 2
+                    Layout.maximumWidth: titleRow.width / 2
                 }
                 Text {
                     Layout.fillWidth: true
@@ -142,8 +185,8 @@ FocusScope {
             Item {
                 id: area
                 anchors {
-                    left: parent.left; right: parent.right; bottom: parent.bottom
-                    top: root.showHeader ? header.bottom : parent.top
+                    left: parent.left; right: parent.right; bottom: footerSlot.top
+                    top: root.showHeader ? titleRow.bottom : headerSlot.bottom
                     leftMargin: root.padding; rightMargin: root.padding; bottomMargin: root.padding
                     topMargin: root.showHeader ? Theme.gap : root.padding
                 }
