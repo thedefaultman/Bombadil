@@ -93,12 +93,23 @@ def test_content_blocks_pass_through():
     assert json.loads(mcp_server._content([{"type": "x"}])[0]["text"]) == [{"type": "x"}]
 
 
-def test_snapshot_and_undo():
+def test_snapshot_and_undo(monkeypatch):
+    monkeypatch.delenv("BOMBADIL_TURN_SNAPSHOT", raising=False)
     s = make()
     call(s, "snapshot", description="turn:1: hi")
     call(s, "snapshot", description="turn:2: more")
     r = call(s, "rollback")
     assert "snapshot 2" in r["content"][0]["text"] and s.snaps.rolled == 2
+
+
+def test_undo_inside_a_turn_skips_that_turns_snapshot(monkeypatch):
+    # "install htop" took snapshot 1; "undo that" is turn 2 and took snapshot 2 (htop installed).
+    s = make()
+    call(s, "snapshot", description="turn:1: install htop")
+    call(s, "snapshot", description="turn:2: undo that")
+    monkeypatch.setenv("BOMBADIL_TURN_SNAPSHOT", "2")
+    r = call(s, "rollback")
+    assert "snapshot 1" in r["content"][0]["text"] and s.snaps.rolled == 1
 
 
 def test_serve_over_stdio():

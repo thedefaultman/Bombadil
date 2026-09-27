@@ -38,6 +38,9 @@ def mcp_config(path: Path, mcp_command: str) -> Path:
 
 
 class Provider:
+    """One provider CLI. agentd writes the prompt to the CLI's stdin (so a prompt that starts
+    with "-" or names a subcommand is never parsed as arguments) and feeds each stdout line to
+    `parse` as it arrives, so the bar streams the reply."""
     name = ""
     binary = ""
 
@@ -52,11 +55,29 @@ class Provider:
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         raise NotImplementedError
 
-    def events(self, lines: Iterator[str]) -> Iterator[dict]:
+    def parse(self, line: str) -> Iterator[dict]:
+        """Events for one line of the CLI's output."""
         raise NotImplementedError
+
+    def finish(self) -> Iterator[dict]:
+        """Events once the output has ended."""
+        return iter(())
+
+    def events(self, lines) -> Iterator[dict]:
+        for line in lines:
+            yield from self.parse(line)
+        yield from self.finish()
 
     def login_command(self) -> list[str]:
         return [self.binary]
+
+
+def _json(line: str) -> dict | None:
+    try:
+        m = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return m if isinstance(m, dict) else None
 
 
 class Claude(Provider):
@@ -64,7 +85,7 @@ class Claude(Provider):
     binary = "claude"
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
-        cmd = [self.binary, "-p", turn.prompt,
+        cmd = [self.binary, "-p",
                "--output-format", "stream-json", "--verbose",
                "--permission-mode", "bypassPermissions", "--dangerously-skip-permissions",
                "--mcp-config", str(mcp_config(workdir / "claude-mcp.json", self.mcp_command)),
@@ -75,27 +96,41 @@ class Claude(Provider):
             cmd += ["--resume", turn.session_id]
         return cmd
 
-    def events(self, lines):
-        for line in lines:
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = m.get("type")
-            if t == "system" and m.get("subtype") == "init":
-                yield {"kind": "session", "session_id": m.get("session_id")}
-            elif t == "assistant":
-                for block in m.get("message", {}).get("content", []):
-                    if block.get("type") == "text" and block.get("text"):
-                        yield {"kind": "text", "text": block["text"]}
-                    elif block.get("type") == "tool_use":
-                        yield {"kind": "tool", "name": block.get("name"), "input": block.get("input", {})}
-            elif t == "result":
-                yield {"kind": "result", "ok": not m.get("is_error", False),
-                       "text": m.get("result", ""), "session_id": m.get("session_id")}
+    def parse(self, line):
+        m = _json(line)
+        if m is None:
+            return
+        t = m.get("type")
+        if t == "system" and m.get("subtype") == "init":
+            yield {"kind": "session", "session_id": m.get("session_id")}
+            servers = {s.get("name"): s.get("status") for s in m.get("mcp_servers", []) if isinstance(s, dict)}
+            if servers.get("bombadil-os") not in ("connected", "pending"):
+                yield {"kind": "error", "text": f"the OS tools did not start (bombadil-os: {servers.get('bombadil-os', 'missing')})"}
+        elif t == "assistant":
+            for block in m.get("message", {}).get("content", []):
+                if block.get("type") == "text" and block.get("text"):
+                    yield {"kind": "text", "text": block["text"]}
+                elif block.get("type") == "tool_use":
+                    yield {"kind": "tool", "name": block.get("name"), "input": block.get("input", {})}
+        elif t == "result":
+            ok = not m.get("is_error", False)
+            text = m.get("result") or ""
+            if not ok and not text:
+                errs = m.get("errors") or []
+                text = "\n".join(e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errs)
+            yield {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
+                   "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
+                   "num_turns": m.get("num_turns")}
 
     def login_command(self):
-        return [self.binary, "/login"]
+        return [self.binary, "auth", "login"]
+
+
+# What the OS tools need from the session; Codex starts MCP servers with only HOME/PATH/etc.
+MCP_ENV = ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DISPLAY",
+           "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
+           "XDG_SESSION_TYPE", "BOMBADIL_TURN_SNAPSHOT", "BOMBADIL_SOCKET", "BOMBADIL_APPS",
+           "BOMBADIL_STATE", "BOMBADIL_SHARE"]
 
 
 class Codex(Provider):
@@ -103,37 +138,46 @@ class Codex(Provider):
     binary = "codex"
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
-        cmd = [self.binary, "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-               "--skip-git-repo-check", "-C", str(turn.cwd),
-               "-c", f'mcp_servers.bombadil-os.command="{self.mcp_command}"',
-               "-c", f"instructions={json.dumps(SYSTEM_PROMPT)}"]
+        self._last_text = ""
+        # The same overrides on a fresh and a resumed turn; a resumed turn without them loses the
+        # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
+        overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
+                     "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
+                     "-c", f"developer_instructions={json.dumps(SYSTEM_PROMPT)}",
+                     "--skip-git-repo-check"]
         if self.model:
-            cmd += ["--model", self.model]
+            overrides += ["--model", self.model]
+        base = [self.binary, "exec"]
         if turn.session_id:
-            cmd = [self.binary, "exec", "resume", "--json", "--dangerously-bypass-approvals-and-sandbox",
-                   turn.session_id]
-        cmd.append(turn.prompt)
-        return cmd
+            # `resume` takes no -C; agentd already runs the CLI in the turn's cwd.
+            return [*base, "resume", "--json", "--dangerously-bypass-approvals-and-sandbox",
+                    *overrides, turn.session_id, "-"]
+        return [*base, "--json", "--dangerously-bypass-approvals-and-sandbox", *overrides,
+                "-C", str(turn.cwd), "-"]
 
-    def events(self, lines):
-        for line in lines:
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = m.get("type", "")
-            item = m.get("item", {})
-            if t == "thread.started":
-                yield {"kind": "session", "session_id": m.get("thread_id")}
-            elif t == "item.completed" and item.get("type") == "agent_message":
-                yield {"kind": "text", "text": item.get("text", "")}
-            elif t == "item.started" and item.get("type") in ("command_execution", "mcp_tool_call"):
-                yield {"kind": "tool", "name": item.get("command") or item.get("tool"),
-                       "input": item.get("arguments", {})}
-            elif t == "turn.completed":
-                yield {"kind": "result", "ok": True, "text": ""}
-            elif t == "error":
-                yield {"kind": "error", "text": m.get("message", "codex error")}
+    def parse(self, line):
+        m = _json(line)
+        if m is None:
+            return
+        t = m.get("type", "")
+        item = m.get("item", {})
+        if t == "thread.started":
+            yield {"kind": "session", "session_id": m.get("thread_id")}
+        elif t == "item.completed" and item.get("type") == "agent_message":
+            self._last_text = item.get("text", "")
+            yield {"kind": "text", "text": self._last_text}
+        elif t == "item.started" and item.get("type") in ("command_execution", "mcp_tool_call"):
+            yield {"kind": "tool", "name": item.get("command") or item.get("tool"),
+                   "input": item.get("arguments", {})}
+        elif t == "turn.completed":
+            yield {"kind": "result", "ok": True, "text": getattr(self, "_last_text", "")}
+        elif t == "turn.failed":
+            err = m.get("error") or {}
+            text = err.get("message", "codex turn failed") if isinstance(err, dict) else str(err)
+            yield {"kind": "result", "ok": False, "text": text}
+        elif t == "error":
+            # Top-level errors are retry notices ("Reconnecting... 2/5"); turn.failed is the failure.
+            yield {"kind": "text", "text": m.get("message", "")}
 
     def login_command(self):
         return [self.binary, "login"]
@@ -158,11 +202,16 @@ class Fake(Provider):
         return True
 
     def command(self, turn, workdir):
+        self._seen = []
         return [self.binary]
 
-    def events(self, lines):
-        text = "".join(lines).strip()
-        yield {"kind": "text", "text": f"echo: {text}"}
+    def parse(self, line):
+        if line.strip():
+            self._seen.append(line.strip())
+            yield {"kind": "text", "text": f"echo: {line.strip()}"}
+
+    def finish(self):
+        text = " ".join(getattr(self, "_seen", []))
         yield {"kind": "result", "ok": True, "text": f"echo: {text}"}
 
 

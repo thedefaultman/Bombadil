@@ -17,12 +17,24 @@ from bombadil import config, paths, snapshots  # noqa: E402
 
 def talk(msg: dict, until: str | None = "turn_end"):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.connect(str(paths.socket_path()))
+        try:
+            s.connect(str(paths.socket_path()))
+        except OSError as e:
+            print(f"agentd is not running ({e}); it starts with the Hyprland session", file=sys.stderr)
+            return 1
         s.sendall((json.dumps(msg) + "\n").encode())
-        f = s.makefile("r")
-        for line in f:
+        mine = None  # the turn id agentd gave this prompt; other clients' turns are skipped
+        for line in s.makefile("r"):
             ev = json.loads(line)
-            if ev.get("type") == "status" and until != "status":
+            if ev.get("type") == "status":
+                if until == "status":
+                    print(json.dumps(ev))
+                    return 0
+                continue
+            if ev.get("type") == "queued":
+                mine = ev["turn"]
+                continue
+            if ev.get("turn") is not None and ev.get("turn") != mine:
                 continue
             if ev.get("kind") == "text":
                 print(ev["text"])
@@ -30,11 +42,11 @@ def talk(msg: dict, until: str | None = "turn_end"):
                 print(f"  [{ev['name']}] {json.dumps(ev.get('input', {}))[:120]}")
             elif ev.get("kind") == "error":
                 print(f"error: {ev['text']}", file=sys.stderr)
-            elif ev.get("type") == "status" and until == "status":
-                print(json.dumps(ev))
-                return
+                if ev.get("turn") is None:
+                    return 1
             if ev.get("kind") == until:
-                return
+                return 0
+    return 0
 
 
 def main() -> int:
@@ -43,12 +55,13 @@ def main() -> int:
         return 2
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "ask":
-        talk({"type": "prompt", "text": " ".join(args)})
+        return talk({"type": "prompt", "text": " ".join(args)})
     elif cmd == "status":
-        talk({"type": "status"}, until="status")
+        return talk({"type": "status"}, until="status")
     elif cmd == "undo":
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
+        return 0 if s else 1
     elif cmd == "provider":
         if args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")

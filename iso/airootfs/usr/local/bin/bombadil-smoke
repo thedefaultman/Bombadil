@@ -58,7 +58,7 @@ check browser-window wait_for 120 has_client 'c["class"]=="bombadil-browser" and
 check browser-shown special_shown browser
 shot browser
 check browser-hide mcp_call hide_panel '{"name":"browser"}'
-qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
+qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
 shot app

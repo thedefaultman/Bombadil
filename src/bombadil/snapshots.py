@@ -7,6 +7,7 @@ no-ops that report `available = False`.
 """
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -58,11 +59,20 @@ class Snapshots:
         scheme."""
         if not self.available:
             return False
-        self._run(["sudo", "bombadil-rollback", str(number)], check=True)
+        # Captured: this runs inside the MCP server, whose stdout is the JSON-RPC transport.
+        self._run(["sudo", "bombadil-rollback", str(number)], check=True, capture_output=True, text=True)
         return True
 
-    def undo_last_turn(self) -> Snapshot | None:
+    def undo_last_turn(self, before: int | None = None) -> Snapshot | None:
+        """Roll back to the snapshot taken before the last agent turn.
+
+        Inside a turn ("undo that"), agentd has already snapshotted the state the user wants
+        undone and passes that snapshot's number as BOMBADIL_TURN_SNAPSHOT; skip it and newer."""
+        if before is None and os.environ.get("BOMBADIL_TURN_SNAPSHOT", "").isdigit():
+            before = int(os.environ["BOMBADIL_TURN_SNAPSHOT"])
         for snap in reversed(self.list()):
+            if before is not None and snap.number >= before:
+                continue
             if snap.description.startswith("turn:"):
                 self.rollback(snap.number)
                 return snap
