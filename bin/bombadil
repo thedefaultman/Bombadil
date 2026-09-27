@@ -97,9 +97,7 @@ def main() -> int:
         return send({"type": "summon"})
     elif cmd == "watch":
         path = Path(args[args.index("--file") + 1]) if "--file" in args else watch.last_turn_file()
-        code = watch.show(path, live="--follow" in args)
-        watch.wait_for_key()
-        return code
+        return watch.show(path, live="--follow" in args, wait=True)
     elif cmd == "history":
         for line in watch.history_lines(color=sys.stdout.isatty()):
             print(line)
