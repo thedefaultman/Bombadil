@@ -3,8 +3,8 @@
 #   scripts/run-vm.sh              live boot of the newest ISO
 #   scripts/run-vm.sh --disk       live boot with a 40G disk to install onto (created if missing)
 #   scripts/run-vm.sh --installed  boot the installed disk, no ISO
-# MEM and SMP size the VM; GL=0 swaps virtio-vga-gl for plain virtio-vga (the guest renders in
-# software), for hosts without working host OpenGL. While it runs, out/vm/qmp.sock takes
+# MEM, SMP and RES (1600x900) size the VM; GL=0 swaps virtio-vga-gl for plain virtio-vga (the
+# guest renders in software), for hosts without working host OpenGL. While it runs, out/vm/qmp.sock takes
 # `scripts/qmp.py out/vm/qmp.sock screenshot shot.png`, out/vm/serial.log has the serial console
 # and host port 2222 reaches the guest's ssh.
 set -euo pipefail
@@ -16,8 +16,9 @@ for f in /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/sha
   [[ -f "$f" ]] && { ovmf="$f"; break; }
 done
 [[ "$ovmf" ]] || { echo "no OVMF firmware found; install edk2-ovmf (Arch) or ovmf (Debian/Ubuntu)"; exit 2; }
-gpu=(-device virtio-vga-gl -display gtk,gl=on)
-[[ "${GL:-1}" == 0 ]] && gpu=(-device virtio-vga -display gtk)
+res="${RES:-1600x900}"
+gpu=(-device "virtio-vga-gl,xres=${res%x*},yres=${res#*x}" -display gtk,gl=on)
+[[ "${GL:-1}" == 0 ]] && gpu=(-device "virtio-vga,xres=${res%x*},yres=${res#*x}" -display gtk)
 args=(-enable-kvm -m "${MEM:-6G}" -smp "${SMP:-4}" -cpu host -name Bombadil "${gpu[@]}"
       -device virtio-keyboard -device virtio-tablet -device intel-hda -device hda-duplex
       -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22" -device virtio-net,netdev=n0

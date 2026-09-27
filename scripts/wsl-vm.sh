@@ -90,14 +90,18 @@ time.sleep(1)
 PY
   wait $pid || true
   grep -aq "INSTALL-DONE" "$log" || { echo "install failed; see $log"; exit 1; }
-  git -C "$tree" log -1 --format='%h %s' > "$out/.installed"
-  echo "Installed Bombadil ($(cat "$out/.installed")) onto $disk."
+  { iso_key; git -C "$tree" log -1 --format='%h %s'; } > "$out/.installed"
+  echo "Installed Bombadil ($(sed -n 2p "$out/.installed")) onto $disk."
 }
 
 setup
 sync_tree
 case "${1:-}" in
-  "") [[ -f "$out/.installed" && -f "$disk" ]] || install
+  "") if [[ -f "$out/.installed" && -f "$disk" ]]; then
+        echo "Booting the installed VM: $(sed -n 2p "$out/.installed")"
+        [[ "$(head -1 "$out/.installed")" == "$(iso_key)" ]] ||
+          echo "This checkout has a newer Bombadil; 'bombadil-vm reinstall' puts it on the VM (and wipes the VM's disk)."
+      else install; fi
       exec "$tree/scripts/run-vm.sh" --installed ;;
   live) build; exec "$tree/scripts/run-vm.sh" ;;
   reinstall) install; exec "$tree/scripts/run-vm.sh" --installed ;;
