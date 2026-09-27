@@ -20,7 +20,7 @@ res="${RES:-1600x900}"
 gpu=(-device "virtio-vga-gl,xres=${res%x*},yres=${res#*x}" -display gtk,gl=on)
 [[ "${GL:-1}" == 0 ]] && gpu=(-device "virtio-vga,xres=${res%x*},yres=${res#*x}" -display gtk)
 args=(-enable-kvm -m "${MEM:-6G}" -smp "${SMP:-4}" -cpu host -name Bombadil "${gpu[@]}"
-      -device virtio-keyboard -device virtio-tablet -device intel-hda -device hda-duplex
+      -device virtio-keyboard -device virtio-tablet -device intel-hda -device hda-output
       -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22" -device virtio-net,netdev=n0
       -bios "$ovmf" -qmp "unix:$vm/qmp.sock,server,nowait"
       -chardev "socket,id=s0,path=$vm/serial.sock,server=on,wait=off,logfile=$vm/serial.log" -serial chardev:s0)

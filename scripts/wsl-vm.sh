@@ -94,6 +94,10 @@ PY
   echo "Installed Bombadil ($(sed -n 2p "$out/.installed")) onto $disk."
 }
 
+run() {  # run-vm.sh, with QEMU's own messages kept in out/vm/qemu.log
+  mkdir -p "$vm"; "$tree/scripts/run-vm.sh" "$@" 2>&1 | tee "$vm/qemu.log"
+}
+
 setup
 sync_tree
 case "${1:-}" in
@@ -102,9 +106,9 @@ case "${1:-}" in
         [[ "$(head -1 "$out/.installed")" == "$(iso_key)" ]] ||
           echo "This checkout has a newer Bombadil; 'bombadil-vm reinstall' puts it on the VM (and wipes the VM's disk)."
       else install; fi
-      exec "$tree/scripts/run-vm.sh" --installed ;;
-  live) build; exec "$tree/scripts/run-vm.sh" ;;
-  reinstall) install; exec "$tree/scripts/run-vm.sh" --installed ;;
+      run --installed ;;
+  live) build; run ;;
+  reinstall) install; run --installed ;;
   build) build ;;
   *) sed -n '2,12p' "$0"; exit 2 ;;
 esac
