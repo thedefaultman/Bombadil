@@ -42,8 +42,8 @@ class FakeZellij:
             elif rest[:1] == ["-s"] and rest[2:4] == ["action", "list-panes"]:
                 # zellij's default layout: its link plugin, the two bars and the tool's pane.
                 out = json.dumps([{"id": 0, "is_plugin": True, "plugin_url": "zellij:link"},
-                                  {"id": 1, "is_plugin": True, "plugin_url": "zellij:tab-bar"},
-                                  {"id": 2, "is_plugin": True, "plugin_url": "zellij:status-bar"},
+                                  {"id": 1, "is_plugin": True, "plugin_url": "tab-bar"},
+                                  {"id": 2, "is_plugin": True, "plugin_url": "status-bar"},
                                   {"id": 0, "is_plugin": False, "plugin_url": None}])
         return subprocess.CompletedProcess(argv, 1 if argv[0] == "pgrep" else 0, out, "")
 

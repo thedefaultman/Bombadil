@@ -39,7 +39,7 @@ TOOLS = ("claude", "codex", "shell")
 TOOL_TITLES = {"claude": "Claude", "codex": "Codex", "shell": "Shell"}
 ROLE_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,23}")
 VIEWER = "bombadil-session-"
-BARS = ("zellij:tab-bar", "zellij:status-bar", "zellij:compact-bar")   # closed in each session       # the viewer windows' app id prefix
+BARS = ("tab-bar", "status-bar", "compact-bar")   # zellij's own bars, closed in each session       # the viewer windows' app id prefix
 PENDING_SECONDS = 20               # a session may take this long to show up in zellij
 LINES_KEPT = 6
 ENDED_KEPT = 30 * 86400            # an ended session is forgotten after this long
@@ -441,7 +441,9 @@ class Dev:
                 panes = json.loads(r.stdout) if r.returncode == 0 else []
             except (OSError, subprocess.TimeoutExpired, ValueError):
                 panes = []
-            bars = [p["id"] for p in panes if isinstance(p, dict) and p.get("is_plugin") and p.get("plugin_url") in BARS]
+            # list-panes names them "tab-bar"; a layout says "zellij:tab-bar".
+            bars = [p["id"] for p in panes if isinstance(p, dict) and p.get("is_plugin")
+                    and str(p.get("plugin_url") or "").removeprefix("zellij:") in BARS]
             if bars:
                 for pane in bars:
                     try:
