@@ -176,10 +176,10 @@ def test_app_guide_topics(home, tmp_path, monkeypatch):
     assert "hot reload" in call(s, "app_guide", topic="runtime")["content"][0]["text"].lower()
 
     skill = tmp_path / "skill"
-    (skill / "reference").mkdir(parents=True)
+    (skill / "references").mkdir(parents=True)
     (skill / "examples" / "memory").mkdir(parents=True)
     (skill / "SKILL.md").write_text("# Guide\n")
-    (skill / "reference" / "patterns.md").write_text("# Patterns\n")
+    (skill / "references" / "patterns.md").write_text("# Patterns\n")
     (skill / "examples" / "memory" / "main.qml").write_text("AppWindow {}\n")
     monkeypatch.setattr(tools, "skill_dir", lambda: skill)
     assert tools.guide_topics() == (["patterns"], ["memory"])

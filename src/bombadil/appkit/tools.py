@@ -39,7 +39,7 @@ def guide_topics() -> tuple[list[str], list[str]]:
     d = skill_dir()
     if d is None:
         return [], []
-    refs = sorted(p.stem for p in (d / "reference").glob("*.md"))
+    refs = sorted(p.stem for p in (d / "references").glob("*.md"))
     examples = sorted(p.name for p in (d / "examples").iterdir() if p.is_dir()) if (d / "examples").is_dir() else []
     return refs, examples
 
@@ -65,7 +65,7 @@ def guide(topic: str | None = None) -> str:
         return skill.read_text() + footer
     topic = topic.strip().lower().removesuffix(".md")
     if topic in refs:
-        return (d / "reference" / f"{topic}.md").read_text() + footer
+        return (d / "references" / f"{topic}.md").read_text() + footer
     if topic in examples:
         root = d / "examples" / topic
         out = [f"# Example app `{topic}` ({root})"]

@@ -23,7 +23,7 @@ Item {
         const out = []
         for (let i = 0; i < 500; i++)
             out.push({ pid: 1000 + i * 7, name: names[i % names.length], user: i % 5 ? "daniel" : "root",
-                       cpu: (i * 37 % 100) / 400, rss: (i * 7919 % 1000) * 1717986.9,
+                       cpu: (i * 37 % 100) / 400, rss: Math.round(4096 * Math.pow(2, (i * 7919 % 500) / 26)),
                        state: i % 9 ? "S" : "R" })
         return out
     }

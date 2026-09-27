@@ -5,7 +5,6 @@ module Bombadil
 singleton Theme 1.0 Theme.qml
 singleton Fmt 1.0 Fmt.qml
 AppWindow 1.0 AppWindow.qml
-Window 1.0 Window.qml
 Panel 1.0 Panel.qml
 Spacer 1.0 Spacer.qml
 Divider 1.0 Divider.qml

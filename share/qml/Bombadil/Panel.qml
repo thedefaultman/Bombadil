@@ -18,13 +18,12 @@ Item {
     implicitHeight: (header.visible ? _headerPad + header.implicitHeight + spacing : padding) + body.implicitHeight + padding
     // A layout may squeeze a panel only when its content can shrink (a list, a table).
     Layout.minimumHeight: body.fills ? implicitHeight - body.implicitHeight : implicitHeight
-    // Cards side by side in a row or grid share the tallest one's height (without making
-    // the row take extra space); a panel whose content fills can grow further.
-    Layout.fillHeight: _inRow
+    // Cards side by side in a row or grid get the tallest one's height; one with
+    // Layout.fillHeight takes the row's full height.
     Layout.alignment: Qt.AlignTop
-    Layout.maximumHeight: {
-        if (!_inRow || body.fills)
-            return Number.POSITIVE_INFINITY
+    Layout.preferredHeight: {
+        if (!_inRow)
+            return -1
         let tallest = implicitHeight
         for (const c of parent.children)
             if (c.visible)

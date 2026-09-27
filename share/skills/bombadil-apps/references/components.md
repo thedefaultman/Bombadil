@@ -107,8 +107,6 @@ AppWindow {
 }
 ```
 
-`Window` is an alias of `AppWindow` kept for apps from the first milestone.
-
 ### Panel
 A card: a rounded `Theme.panel` surface with optional header.
 
@@ -124,7 +122,8 @@ A card: a rounded `Theme.panel` surface with optional header.
 Children stack in a `ColumnLayout`, packed at the top unless one has
 `Layout.fillHeight: true` (a list or table that takes the rest). Panels side by side in
 a `RowLayout` or `GridLayout` all get the height of the tallest one, so a row of cards
-lines up without extra settings.
+lines up without extra settings; a Panel with `Layout.fillHeight: true` takes the row's
+full height instead.
 
 ### Spacer
 `Spacer {}` takes the free space along its layout: width in a `RowLayout` (pushes the
@@ -225,6 +224,9 @@ selection stays on the same item, matched by its `id`, `uuid`, `key` or `pid` fi
 by equal content, and the scroll position is kept. A custom `delegate` is a normal
 `ListView` delegate (`index`, `modelData`); set `selected: ListView.isCurrentItem` on a
 `ListRow`. Clicks select rows whatever the delegate.
+
+On its own an ItemList is as tall as its rows, up to eight, then scrolls; give it
+`Layout.fillHeight: true` to take the free height instead.
 
 ### ListRow
 The row `ItemList` uses; use it in your own `ListView` delegates.

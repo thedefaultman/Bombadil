@@ -75,7 +75,7 @@ bombadil-app list
 
 | Tool | |
 |---|---|
-| `app_guide(topic?)` | this guide; `topic` = `components`, `native`, `runtime`, `patterns`, or an example name |
+| `app_guide(topic?)` | this guide; `topic` = `components`, `native`, `runtime`, or an example name |
 | `create_app(title, qml, files?, python?, description?, icon?, open?)` | write the app, check it, open or reload it; returns the check result and a screenshot |
 | `check_app(name)` | check again and get a fresh screenshot of the running app's QML |
 | `open_app(name)` / `show_app(name)` / `hide_app(name)` / `close_app(name)` | |

@@ -110,7 +110,7 @@ Native: `App` (name, dataDir, hide(), notify(), openUrl()), `Store`, `Vault`, `S
 (cpu, memory, disks, network, ...), `Processes`, `Command`, `TextFile`, `Clipboard`,
 `Agent` (ask the OS agent from inside the app), `Highlighter`.
 
-Full APIs: `reference/components.md`, `reference/native.md`, `reference/runtime.md`
+Full APIs: `references/components.md`, `references/native.md`, `references/runtime.md`
 next to this file, or `app_guide("components")`, `app_guide("native")`,
 `app_guide("runtime")`. Read the reference for any component whose properties you are
 not sure of; guessing a property name is the most common error.
