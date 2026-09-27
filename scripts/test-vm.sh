@@ -33,7 +33,7 @@ boot() {
     -device virtio-vga -display none -vnc "${VNC:-127.0.0.1:99}" \
     -device virtio-keyboard -device virtio-mouse \
     -netdev user,id=n0 -device virtio-net,netdev=n0 \
-    -serial "file:$log" -qmp "unix:$qmp,server,nowait" "$@" &
+    -chardev "socket,id=s0,path=$out/$name.serial.sock,server=on,wait=off,logfile=$log" -serial chardev:s0 -qmp "unix:$qmp,server,nowait" "$@" &
   local pid=$!
   trap "kill $pid 2>/dev/null || true" EXIT
   if [[ "${MENU_DOWN:-}" ]]; then

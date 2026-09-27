@@ -26,9 +26,19 @@ def qmp(path):
 def ppm_to_png(ppm, png):
     with open(ppm, "rb") as f:
         data = f.read()
-    parts = data.split(maxsplit=4)
-    w, h = int(parts[1]), int(parts[2])
-    pix = parts[4][-(w * h * 3):]
+    # Header: "P6" w h maxval, each followed by one whitespace byte; pixels start right after,
+    # and may themselves begin with whitespace bytes, so don't split the whole buffer.
+    fields, pos = [], 0
+    while len(fields) < 4:
+        while data[pos:pos + 1].isspace():
+            pos += 1
+        end = pos
+        while not data[end:end + 1].isspace():
+            end += 1
+        fields.append(data[pos:end])
+        pos = end + 1
+    w, h = int(fields[1]), int(fields[2])
+    pix = data[pos:pos + w * h * 3]
     raw = b"".join(b"\x00" + pix[y * w * 3:(y + 1) * w * 3] for y in range(h))
     def chunk(t, d): return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
     with open(png, "wb") as f:
