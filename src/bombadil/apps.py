@@ -8,6 +8,7 @@ An app is a directory under ~/Apps/<name>/ with:
 `bombadil-app run <name>` opens it as a real Wayland window; no build step, no ports.
 """
 
+import json
 import os
 import re
 import shutil
@@ -50,9 +51,8 @@ def create(title: str, qml: str, python: str | None = None, description: str = "
     (d / "main.qml").write_text(qml)
     if python is not None:
         (d / "app.py").write_text(python)
-    (d / "app.toml").write_text(
-        f'title = "{title}"\ndescription = "{description}"\n'
-    )
+    # json.dumps gives a valid TOML basic string for any title (quotes, newlines).
+    (d / "app.toml").write_text(f"title = {json.dumps(title)}\ndescription = {json.dumps(description)}\n")
     _write_desktop_entry(name, title, description)
     return App(name, d, title, description)
 
@@ -82,13 +82,17 @@ def list_apps() -> list[App]:
     return [load(p.name) for p in sorted(root.iterdir()) if (p / "main.qml").exists()]
 
 
+def log_path(name: str) -> Path:
+    return paths.state_dir() / "apps" / f"{name}.log"
+
+
 def run(name: str, detach: bool = True) -> subprocess.Popen:
     app = load(name)
     runner = shutil.which("bombadil-app") or str(Path(__file__).resolve().parents[2] / "bin" / "bombadil-app")
     cmd = [runner, "run", app.name]
     if detach:
         # QML errors land here, so the agent can read why a window did not appear.
-        log = paths.state_dir() / "apps" / f"{app.name}.log"
+        log = log_path(app.name)
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("ab") as out:
             return subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,

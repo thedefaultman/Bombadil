@@ -11,7 +11,7 @@ mkdir -p "$(dirname "$cfg")"
 printf 'provider = "%s"\n' "$provider" > "$cfg"
 
 case "$provider" in
-  claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code; claude /login ;;
+  claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code; claude auth login ;;
   codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex;            codex login ;;
 esac
 pkill -x agentd || true

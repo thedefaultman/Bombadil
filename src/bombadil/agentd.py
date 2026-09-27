@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -35,7 +36,9 @@ class AgentD:
         self.session_id: str | None = None
         self.turns = 0
         self.proc: asyncio.subprocess.Process | None = None
-        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        self.queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+        self.next_id = 0
+        self.current: int | None = None
         self.workdir = paths.state_dir()
 
     # -- socket --
@@ -68,8 +71,15 @@ class AgentD:
 
     async def handle(self, msg: dict, writer: asyncio.StreamWriter):
         t = msg.get("type")
-        if t == "prompt" and msg.get("text", "").strip():
-            await self.queue.put(msg["text"].strip())
+        if t == "prompt":
+            text = str(msg.get("text", "")).strip()
+            if not text:
+                await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
+                return
+            self.next_id += 1
+            # The id lets a client (bombadil ask) follow its own turn among everyone's events.
+            await self._send(writer, {"type": "queued", "turn": self.next_id})
+            await self.queue.put((self.next_id, text))
         elif t == "cancel" and self.proc and self.proc.returncode is None:
             self.proc.send_signal(signal.SIGINT)
         elif t == "status":
@@ -95,62 +105,102 @@ class AgentD:
 
     async def _worker(self):
         while True:
-            prompt = await self.queue.get()
+            turn_id, prompt = await self.queue.get()
+            self.current = turn_id
             try:
                 await self.turn(prompt)
             except Exception as e:  # noqa: BLE001 - keep the daemon alive whatever a turn does
-                await self.broadcast({"type": "event", "kind": "error", "text": f"{type(e).__name__}: {e}"})
+                await self.event("error", text=f"{type(e).__name__}: {e}")
+                await self.event("turn_end", seconds=0)
+            finally:
+                self.current = None
+
+    async def event(self, kind: str, **fields):
+        await self.broadcast({"type": "event", "kind": kind, "turn": self.current, **fields})
 
     async def turn(self, prompt: str):
         if not self.provider.installed:
-            await self.broadcast({"type": "event", "kind": "error",
-                                  "text": f"{self.provider.binary} is not installed yet: press Super+Return "
-                                          "and run bombadil-setup"})
-            await self.broadcast({"type": "event", "kind": "turn_end", "seconds": 0})
+            await self.event("error", text=f"{self.provider.binary} is not installed yet: press Super+Return "
+                                           "and run bombadil-setup")
+            await self.event("turn_end", seconds=0)
             return
         self.turns += 1
         started = time.time()
-        snap = self.snaps.create(f"turn:{self.turns}: {prompt[:60]}") if self.snaps.available else None
-        await self.broadcast({"type": "event", "kind": "turn_start", "prompt": prompt,
-                              "snapshot": snap.number if snap else None})
+        snap = None
+        if self.snaps.available:
+            try:
+                snap = self.snaps.create(f"turn:{self.turns}: {prompt[:60]}")
+            except subprocess.CalledProcessError as e:
+                await self.event("error", text=f"no undo point for this turn: snapper failed ({(e.stderr or '').strip()[-200:]})")
+        await self.event("turn_start", prompt=prompt, snapshot=snap.number if snap else None)
         turn = providers.Turn(prompt=prompt, session_id=self.session_id)
         self.workdir.mkdir(parents=True, exist_ok=True)
         cmd = self.provider.command(turn, self.workdir)
-        self.proc = await asyncio.create_subprocess_exec(
+        env = dict(os.environ)
+        if snap:
+            # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
+            # snapshot, not to it.
+            env["BOMBADIL_TURN_SNAPSHOT"] = str(snap.number)
+        self.proc = proc = await asyncio.create_subprocess_exec(
             *cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, cwd=str(turn.cwd))
-        if self.provider.name == "fake":
-            self.proc.stdin.write(prompt.encode())
-        self.proc.stdin.close()
+            stderr=asyncio.subprocess.PIPE, cwd=str(turn.cwd), env=env,
+            limit=64 * 1024 * 1024)  # a stream-json line can carry a whole screenshot
+        proc.stdin.write(prompt.encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+        stderr = asyncio.create_task(proc.stderr.read())
         await self.broadcast(self._status())
 
-        lines = []
-        async for raw in self.proc.stdout:
-            lines.append(raw.decode(errors="replace"))
-        events = list(self.provider.events(iter(lines)))
-        result_text = ""
-        for ev in events:
-            if ev["kind"] == "session" and ev.get("session_id"):
-                self.session_id = ev["session_id"]
-                continue
-            if ev["kind"] == "result":
-                result_text = ev.get("text", "")
-                if ev.get("session_id"):
-                    self.session_id = ev["session_id"]
-            await self.broadcast({"type": "event", **ev})
-        await self.proc.wait()
-        if self.proc.returncode not in (0, None) and not result_text:
-            err = (await self.proc.stderr.read()).decode(errors="replace").strip()[-2000:]
-            await self.broadcast({"type": "event", "kind": "error",
-                                  "text": err or f"{self.provider.name} exited with {self.proc.returncode}"})
-        await self.broadcast({"type": "event", "kind": "turn_end", "seconds": round(time.time() - started, 1)})
-        self._log(prompt, result_text, snap, cmd)
-        await self.broadcast(self._status())
+        result = {"text": "", "ok": None}
+        pending_session = None
+        reported_error = False
+        try:
+            async for raw in proc.stdout:
+                for ev in self.provider.parse(raw.decode(errors="replace")):
+                    pending_session, reported_error = await self._on_event(
+                        ev, turn, result, pending_session, reported_error)
+            for ev in self.provider.finish():
+                pending_session, reported_error = await self._on_event(
+                    ev, turn, result, pending_session, reported_error)
+            await proc.wait()
+            err = (await stderr).decode(errors="replace").strip()[-2000:]
+            if proc.returncode not in (0, None) and not reported_error and result["ok"] is not True:
+                await self.event("error", text=err or f"{self.provider.name} exited with {proc.returncode}")
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            stderr.cancel()
+            await self.event("turn_end", seconds=round(time.time() - started, 1))
+            self._log(prompt, result, snap, cmd)
+            await self.broadcast(self._status())
+
+    async def _on_event(self, ev, turn, result, pending_session, reported_error):
+        kind = ev["kind"]
+        if kind == "session":
+            return ev.get("session_id") or pending_session, reported_error
+        if kind == "result":
+            result.update(text=ev.get("text", ""), ok=ev.get("ok", True))
+            if ev.get("ok", True):
+                # Adopt a session id only from a turn that worked, so a dead one is not kept.
+                self.session_id = ev.get("session_id") or pending_session or self.session_id
+            else:
+                reason = ev.get("terminal_reason") or ""
+                text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
+                if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
+                    self.session_id = None
+                    text += " (the previous conversation is gone; the next prompt starts a new one)"
+                await self.event("error", text=text)
+                reported_error = True
+        elif kind == "error":
+            reported_error = True
+        await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
+        return pending_session, reported_error
 
     def _log(self, prompt, result, snap, cmd):
         paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
         with paths.turns_log().open("a") as f:
-            f.write(json.dumps({"t": time.time(), "prompt": prompt, "result": result,
+            f.write(json.dumps({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                                 "snapshot": snap.number if snap else None,
                                 "provider": self.provider.name, "session": self.session_id}) + "\n")
 

@@ -9,5 +9,5 @@ QtObject {
     readonly property color accent: "#d97757"
     readonly property int radius: 12
     readonly property int pad: 16
-    readonly property font font: Qt.font({ family: "Inter, sans-serif", pixelSize: 15 })
+    readonly property font font: Qt.font({ family: "Inter", pixelSize: 15 })
 }

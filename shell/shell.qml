@@ -83,8 +83,8 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: 900
                     Layout.alignment: Qt.AlignHCenter
-                    visible: root.transcript.length > 0
-                    opacity: visible ? 1 : 0
+                    opacity: root.transcript.length > 0 ? 1 : 0
+                    visible: opacity > 0
                     implicitHeight: Math.min(reply.implicitHeight + 24, 360)
                     radius: 14
                     color: "#e01a1d21"
@@ -104,7 +104,7 @@ ShellRoot {
                         }
                     }
                     Timer { id: fade; interval: 12000; onTriggered: root.transcript = "" }
-                    MouseArea { anchors.fill: parent; onClicked: fade.stop(); z: -1 }
+                    TapHandler { onTapped: fade.stop() }
                 }
 
                 // Prompt bar
@@ -142,8 +142,11 @@ ShellRoot {
                             onAccepted: { root.send(text); text = "" }
                             Keys.onEscapePressed: { if (root.busy && root.connected) { root.agentd.write(JSON.stringify({type: "cancel"}) + "\n"); root.agentd.flush() } root.transcript = "" }
                         }
-                        Text { text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
-                               Timer { interval: 30000; running: true; repeat: true; onTriggered: parent.text = Qt.formatTime(new Date(), "HH:mm") } }
+                        Text {
+                            id: clock
+                            text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
+                            Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
+                        }
                     }
                 }
             }

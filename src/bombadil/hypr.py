@@ -29,6 +29,14 @@ def _socket_path() -> Path | None:
     return Path(base) / "hypr" / sig / ".socket.sock"
 
 
+def _launching(cmd: list[str]) -> bool:
+    """Is this panel's app already running (e.g. Chromium still starting, no window yet)?"""
+    marker = next((a for a in cmd if a.startswith(("--class=", "--app-id="))), None)
+    if marker is None:
+        return False
+    return subprocess.run(["pgrep", "-f", "--", marker], capture_output=True, check=False).returncode == 0
+
+
 class Hyprland:
     @property
     def available(self) -> bool:
@@ -64,23 +72,32 @@ class Hyprland:
     def _panel_has_window(self, name: str) -> bool:
         return any(c.get("workspace", {}).get("name") == f"special:{name}" for c in self.clients())
 
-    def panel(self, name: str, show: bool = True) -> str:
-        """Slide a panel in (or out). Launches its app on first use."""
+    def panel(self, name: str, show: bool = True, wait: float = 20.0) -> str:
+        """Slide a panel in (or out). Launches its app on first use and waits for its window,
+        so a second call while the app is still starting does not launch it twice."""
         if name not in PANELS:
             raise ValueError(f"unknown panel {name!r}, known: {sorted(PANELS)}")
+        note = ""
         if show and not self._panel_has_window(name):
             cmd = PANELS[name]
             if shutil.which(cmd[0]) is None:
                 raise RuntimeError(f"{cmd[0]} is not installed")
-            # hyprland.lua has a window rule per panel class that puts the window in its panel.
-            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+            if not _launching(cmd):
+                # hyprland.lua has a window rule per panel class that puts the window in its panel.
+                subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+            deadline = time.monotonic() + wait
+            while not self._panel_has_window(name):
+                if time.monotonic() > deadline:
+                    note = ", its app is still starting"
+                    break
+                time.sleep(0.2)
         # togglespecialworkspace flips; make it idempotent by checking the active special.
         active = json.loads(self.request("j/monitors"))
         showing = any(m.get("specialWorkspace", {}).get("name") == f"special:{name}" for m in active)
         if show != showing:
             self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
-        return f"panel {name} {'shown' if show else 'hidden'}"
+        return f"panel {name} {'shown' if show else 'hidden'}{note}"
 
     def screenshot(self, path: Path) -> Path:
         if shutil.which("grim") is None:

@@ -10,9 +10,11 @@ Implemented by hand rather than with the `mcp` package to keep the base image sm
 
 import base64
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -55,21 +57,28 @@ class OsTools:
 
         @t("create_app",
            "Create a native app from QML (Qt Quick) and optional Python, then open it as a real window. "
-           "Use `import Bombadil` and the `Window` component for the standard look; a `Backend` class in "
+           "Use `import Bombadil` and its `AppWindow` component (not `Window`, which is QtQuick's) for the "
+           "standard look; a `Backend` class in "
            "the Python is exposed to QML as `backend`. The file is hot reloaded, so call again to update.",
            {"title": {"type": "string"}, "qml": {"type": "string"}, "python": {"type": "string"},
             "description": {"type": "string"}, "open": {"type": "boolean", "default": True}},
            ["title", "qml"])
         def create_app(a):
             app = apps.create(a["title"], a["qml"], a.get("python"), a.get("description", ""))
-            if a.get("open", True) and not _is_running(app.name):
+            if not a.get("open", True):
+                return f"app {app.name} written to {app.path}"
+            if _is_running(app.name) and a.get("python") is not None:
+                # The QML hot reloads, the Python behind it does not: restart for a new backend.
+                _stop(app.name)
+            if not _is_running(app.name):
                 apps.run(app.name)
-            return f"app {app.name} written to {app.path}" + (" and opened" if a.get("open", True) else "")
+            return f"app {app.name} written to {app.path}; " + _app_state(app.name)
 
         @t("open_app", "Open a previously generated app.", {"name": {"type": "string"}}, ["name"])
         def open_app(a):
-            apps.run(a["name"])
-            return f"opened {a['name']}"
+            if not _is_running(a["name"]):
+                apps.run(a["name"])
+            return _app_state(a["name"])
 
         @t("list_apps", "List generated apps.", {})
         def list_apps(_a):
@@ -173,5 +182,28 @@ def _is_running(name: str) -> bool:
     return r.returncode == 0
 
 
+def _stop(name: str) -> None:
+    subprocess.run(["pkill", "-f", f"bombadil-app run {name}$"], capture_output=True, check=False)
+    for _ in range(20):
+        if not _is_running(name):
+            return
+        time.sleep(0.1)
+
+
+def _app_state(name: str, wait: float = 1.5) -> str:
+    """Give the window a moment, then say whether it is up and pass on any QML errors."""
+    log = apps.log_path(name)
+    size = log.stat().st_size if log.exists() else 0
+    time.sleep(wait)
+    new = log.read_text(errors="replace")[size:].strip() if log.exists() else ""
+    state = "running" if _is_running(name) else "NOT running (it exited)"
+    return f"the app is {state}" + (f". Its log says:\n{new[-2000:]}" if new else "")
+
+
 def main() -> None:
-    OsTools().serve()
+    # stdout is the JSON-RPC transport: serve on a private copy of it and point fd 1 at stderr,
+    # so no child process (snapper, grim, an app) or stray print can write into the stream.
+    transport = os.fdopen(os.dup(1), "w", buffering=1)
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    OsTools().serve(sys.stdin, transport)
