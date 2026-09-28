@@ -1,0 +1,16 @@
+[Unit]
+Description=Bombadil brain: an index of this machine that nobody writes
+Documentation=file:///usr/share/bombadil/src/bombadil/brain/service.py
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bombadil-brain
+# brain.db is a cache beside your files: if the brain dies, the pill, turns and apps carry on
+# and the watcher spools what it sees until the brain is back.
+Restart=on-failure
+RestartSec=2
+# Behind the desktop and agentd; the first index also runs at idle I/O priority on its own.
+Nice=5
+
+[Install]
+WantedBy=default.target

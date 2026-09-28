@@ -42,3 +42,11 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def brain_socket() -> Path:
+    return _env_path("BOMBADIL_BRAIN_SOCKET", runtime_dir() / "brain.sock")
+
+
+def brain_db() -> Path:
+    return _env_path("BOMBADIL_BRAIN_DB", state_dir() / "brain.db")

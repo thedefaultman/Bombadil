@@ -96,6 +96,23 @@ fi
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
+    # The brain, where the watcher has btrfs to watch: every save is named by its writer (a
+    # turn's file is the machine's, a file you write is yours) and a rename keeps the thing.
+    # The watcher and the brain each need a moment, hence wait_for.
+    brain_says() { as_user bombadil brain why "$1" | tee /dev/stderr | grep -q "$2"; }
+    brain_watching() { as_user bombadil brain status --json | tee /dev/stderr | grep -q '"watching": true'; }
+    brain_id() { as_user bombadil brain focus --json "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["thing"]["id"])'; }
+    same_id() { [[ -n "$brain_before" && "$(brain_id "$1" 2>/dev/null)" == "$brain_before" ]]; }
+    check brain-watch-active wait_for 60 systemctl is-active --quiet bombadil-brain-watch
+    check brain-status wait_for 90 as_user bombadil brain status
+    check brain-watching wait_for 60 brain_watching
+    check brain-turn-writes as_user bombadil ask '!echo hi > ~/brain-smoke-turn.txt'
+    check brain-why-turn wait_for 60 brain_says /home/user/brain-smoke-turn.txt "Made by the machine in turn [0-9]"
+    check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt'
+    check brain-why-you wait_for 60 brain_says /home/user/brain-smoke-you.txt "You made it"
+    brain_before=$(wait_for 30 brain_id /home/user/brain-smoke-you.txt 2>/dev/null | tail -1)
+    check brain-rename as_user mv /home/user/brain-smoke-you.txt /home/user/brain-smoke-moved.txt
+    check brain-rename-keeps-thing wait_for 60 same_id /home/user/brain-smoke-moved.txt
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'

@@ -74,6 +74,7 @@ class Ingest:
         self.git = git or rules.GitIgnore()
         self.xattrs = xattrs
         self.changed: set[int] = set()           # things touched since the service last pushed
+        self._sessions: dict[str, int] = {}      # session key -> its thing, so a write does not rewrite it
         self.specials: dict[str, object] = {}    # exact path -> callback(ev, who): witnesses' files
         self._ignored: set[str] = set()
 
@@ -133,10 +134,13 @@ class Ingest:
         if actor.kind == "turn":
             return Who("turn", self.turn_thing_for_unit(actor.key.removeprefix("unit:")), actor.via)
         if actor.kind == "session":
-            rest = actor.key.removeprefix("session:")
-            project, _, name = rest.partition("/")
-            title = f"{name} on {project}" if name else f"a coding session on {project}"
-            tid = self.store.upsert_key("session", actor.key, title, meta={"project": project, "name": name})
+            tid = self._sessions.get(actor.key)
+            if tid is None or self.store.get(tid) is None:
+                rest = actor.key.removeprefix("session:")
+                project, _, name = rest.partition("/")
+                title = f"{name} on {project}" if name else f"a coding session on {project}"
+                tid = self.store.upsert_key("session", actor.key, title, meta={"project": project, "name": name})
+                self._sessions[actor.key] = tid
             return Who("session", tid, actor.via)
         if actor.kind == "app":
             return Who("app", self.app_thing(actor.key.removeprefix("app:")), actor.via)
@@ -176,6 +180,8 @@ class Ingest:
         in_etc = path == "/etc" or path.startswith("/etc/")
         if not in_home and not in_etc:
             return None
+        if path not in (self.home, "/etc") and rules.classify(path, self.home).kind != "thing":
+            return None   # ~/.config itself is not a thing, even when ~/.config/hypr is
         kind = rules.kind_of_folder(path, self.home) if in_home else "folder"
         parent = None if path in (self.home, "/etc") else self.folder(os.path.dirname(path))
         if kind == "app":
@@ -233,7 +239,10 @@ class Ingest:
             made = BEFORE if op == "write" else who
             if is_dir:
                 tid = self.folder(path)
-                self.store.update(tid, created=t, made_by=made.kind, made_by_thing=made.thing, made_via=made.via)
+                if tid is None:
+                    return None
+                self.store.update(tid, created=t, made_by=made.kind, made_by_thing=made.thing, made_via=made.via,
+                                  **({"ino": ino} if ino is not None else {}))
             else:
                 tid = self.store.add("file", os.path.basename(path), path=path,
                                      parent=self.folder(os.path.dirname(path)), area=self.area(path),
@@ -355,11 +364,15 @@ class Ingest:
             return None
         have = self.store.by_path(path)
         if have is not None:
-            if not is_dir and (have["size"] != st.st_size or have["ino"] != st.st_ino):
+            if is_dir and have["ino"] != st.st_ino:
+                self.store.update(have["id"], ino=st.st_ino)
+            elif not is_dir and (have["size"] != st.st_size or have["ino"] != st.st_ino):
                 self.store.update(have["id"], size=st.st_size, ino=st.st_ino)
             return have["id"]
         if is_dir:
             tid = self.folder(path)
+            if tid is None:
+                return None
             self.store.update(tid, created=st.st_mtime, changed=st.st_mtime, ino=st.st_ino,
                               made_by="before")
             return tid
@@ -434,6 +447,7 @@ class Ingest:
              ended: float | None = None, meta: dict | None = None) -> int:
         """The thing for turn n, merged with the one its scope made while it ran."""
         key = f"turn:{n}"
+        unit = unit.removesuffix(".scope") if unit else unit
         with self.store.tx():
             by_n = self.store.by_key(key)
             by_unit = self.store.by_key(f"unit:{unit}") if unit else None

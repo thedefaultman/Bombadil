@@ -90,6 +90,10 @@ def classify(path: str, home: str) -> Verdict:
     """Whether a path is a thing, and how. Pure: never touches the disk."""
     if not path.startswith("/") or "\n" in path:
         return SKIP
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return SKIP   # a name that is not UTF-8 (surrogate-escaped bytes) cannot be stored or shown
     if path.startswith("/etc/") or path == "/etc":
         if ETC_NOISE.search(path) or TEMP_NAME.search(PurePosixPath(path).name):
             return SKIP

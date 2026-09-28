@@ -48,6 +48,7 @@ class Hyprland:
         if path is None or not path.exists():
             raise RuntimeError("Hyprland is not running")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5)   # a stalled compositor raises TimeoutError instead of hanging the caller
             s.connect(str(path))
             s.sendall(command.encode())
             chunks = []

@@ -225,7 +225,7 @@ def test_ingest_a_turn_makes_a_file_and_its_number_arrives_later(brain):
     assert turn["title"] == "install the VPN"
     assert store.turn_by_unit("bombadil-turn-99-3-1727429990")["n"] == 41
     # the turn's own record did not add a second change: the watcher already saw it
-    assert [e["kind"] for e in store.events(f["id"])] == ["change", "create"]
+    assert [e["kind"] for e in store.events(f["id"])] == ["create"]   # the save that filled it folds in
     # a late event from the same scope lands on the numbered turn
     ing.apply([ev("write", f"{home}/setup-wg.sh", t0 + 120, TURN_CG, [])])
     assert store.events(f["id"])[0]["actor_thing"] == turn["id"]
@@ -337,3 +337,39 @@ def test_fingerprint_url():
     assert fingerprint_url("HTTPS://Example.org/a?b=1#frag") == "https://example.org/a?b=1"
     assert fingerprint_url("chrome://settings") is None
     assert fingerprint_url("not a url") is None
+
+
+def test_a_name_that_is_not_utf8_is_left_out_and_the_batch_goes_on(brain):
+    store, ing, home = brain
+    bad = os.fsdecode(os.fsencode(home) + b"/caf\xe9.txt")   # surrogate-escaped, as os.listdir gives it
+    assert rules.classify(bad, home) == rules.SKIP
+    ing.apply([ev("create", bad, 1000.0), ev("create", f"{home}/good.txt", 1001.0)])
+    assert store.by_path(f"{home}/good.txt") is not None
+
+
+def test_dot_folders_that_are_not_things_are_not_made_for_what_is_inside(brain):
+    store, ing, home = brain
+    os.makedirs(f"{home}/.config/hypr")
+    ing.apply([ev("create", f"{home}/.config/hypr/hyprland.lua", 1000.0)])
+    assert store.by_path(f"{home}/.config/hypr/hyprland.lua") is not None
+    assert store.by_path(f"{home}/.config/hypr") is not None
+    assert store.by_path(f"{home}/.config") is None
+    assert store.search("config") == [] or all(r["path"] != f"{home}/.config" for r in store.search("config"))
+
+
+def test_folders_keep_their_inode_so_a_move_is_seen(brain):
+    store, ing, home = brain
+    os.makedirs(f"{home}/Lease")
+    ino = os.stat(f"{home}/Lease").st_ino
+    ing.apply([ev("create", f"{home}/Lease", 1000.0, dir=True, ino=ino)])
+    assert store.by_path(f"{home}/Lease")["ino"] == ino
+    folder = store.by_path(f"{home}/Lease")
+    ing.found(f"{home}/Lease", os.stat(f"{home}/Lease"), True)
+    assert store.get(folder["id"])["ino"] == ino
+
+
+def test_a_turn_unit_named_with_scope_on_the_end_still_matches(brain):
+    store, ing, home = brain
+    ing.apply([ev("create", f"{home}/x.sh", 1000.0, TURN_CG, [])])
+    tid = ing.turn(7, unit="bombadil-turn-99-3-1727429990.scope", prompt="make x")
+    assert store.get(store.by_path(f"{home}/x.sh")["made_by_thing"])["id"] == tid

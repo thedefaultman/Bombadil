@@ -405,7 +405,8 @@ class Store:
         with self.tx():
             if coalesce and kind == "change":
                 last = self.one("SELECT * FROM events WHERE thing = ? ORDER BY t DESC, id DESC LIMIT 1", (thing,))
-                if (last and last["kind"] == "change" and last["actor"] == actor
+                # A new file is a create and then the save that fills it: one event, not two.
+                if (last and last["kind"] in ("change", "create") and last["actor"] == actor
                         and last["actor_thing"] == actor_thing and last["via"] == via
                         and 0 <= t - (last["t_end"] or last["t"]) <= coalesce):
                     self.x("UPDATE events SET t_end = ?, n = n + 1 WHERE id = ?", (t, last["id"]))

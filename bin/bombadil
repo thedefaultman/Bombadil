@@ -9,8 +9,16 @@
   bombadil history                     recent turns and launcher actions
   bombadil undo                        roll back the last turn (reboot to apply)
   bombadil provider claude|codex       switch provider (restart agentd to apply)
+  bombadil brain [status]              what the brain knows, and whether it sees every save
+  bombadil brain why PATH              who made a file, and when
+  bombadil brain find WORDS            things whose names match: title · where · when
+  bombadil brain focus PATH|URL|KEY    everything around one thing (turn:41, app:passwords, system)
+  bombadil brain rebuild               forget the index and make it again from your files
+                                       (add --json to any brain command for the whole answer)
 """
 import json
+import os
+import re
 import socket
 import sys
 from pathlib import Path
@@ -82,6 +90,101 @@ def send(msg: dict) -> int:
     return 0
 
 
+def brain_ref(arg: str) -> str:
+    """A path as typed (relative, ~) becomes absolute; links, ids and keys (turn:41) stay."""
+    if not os.path.lexists(arg):
+        if re.match(r"^[a-z][a-z0-9+.-]*:", arg) or arg.isdigit() or arg == "system":
+            return arg
+    return os.path.abspath(os.path.expanduser(arg))
+
+
+def _slot_line(item: dict) -> str:
+    why = item.get("why") or ""
+    bits = [item.get("title") or item.get("name") or "", why]
+    if item.get("when") and item["when"] not in why:
+        bits.append(item["when"])
+    return "  " + " · ".join(b for b in bits if b)
+
+
+def focus_lines(f: dict) -> list[str]:
+    """The Focus answer as a person reads it: the thing, where it came from, what goes with it."""
+    thing = f.get("thing") or {}
+    out = [thing.get("title") or thing.get("ref") or ""]
+    if thing.get("path") or thing.get("url"):
+        out.append(thing.get("path") or thing.get("url"))
+    out += [thing[k] for k in ("made", "last") if thing.get(k)]
+    d = f.get("description") or {}
+    if d.get("text"):
+        out.append(f"“{d['text']}”" + (" (out of date)" if d.get("stale") else ""))
+    elif d.get("pending"):
+        out.append("A description is being written.")
+    slots = f.get("slots") or {}
+    for key, name in (("came_from", "Came from"), ("read_with", "Read with"), ("used_with", "Used with")):
+        slot = slots.get(key) or {}
+        if slot.get("items"):
+            out += ["", name] + [_slot_line(i) for i in slot["items"]]
+            if slot.get("more"):
+                out.append(f"  and {slot['more']} more")
+    changes = slots.get("changes") or {}
+    if changes.get("items"):
+        out += ["", f"Changes ({changes.get('count_week') or 0} this week)"]
+        out += [f"  {i.get('when') or ''} · {i.get('why') or ''}" for i in changes["items"]]
+        if changes.get("more"):
+            out.append(f"  and {changes['more']} more")
+    kids = f.get("children") or {}
+    if kids.get("items"):
+        out += ["", f"In it ({kids.get('total') or len(kids['items'])})"]
+        for i in kids["items"][:20]:
+            name = (i.get("name") or "") + ("/" if i.get("kind") in ("folder", "project", "app") else "")
+            out.append("  " + " · ".join(b for b in (name, i.get("who"), i.get("when")) if b))
+        if (kids.get("total") or 0) > 20:
+            out.append(f"  and {kids['total'] - 20} more")
+    return out
+
+
+def brain(args: list[str]) -> int:
+    """`bombadil brain ...`: lines for a person by default, the whole answer with --json."""
+    from bombadil.brain import client
+    as_json = "--json" in args
+    args = [a for a in args if a != "--json"]
+    sub, rest = (args[0], args[1:]) if args else ("status", [])
+    words = " ".join(rest)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")   # a file name that is not UTF-8 still prints
+    try:
+        if sub == "status" and not rest:
+            result = client.request("status")
+            lines = [result.get("text") or ""]
+        elif sub == "why" and rest:
+            result = client.request("why", ref=brain_ref(words))
+            lines = [str(result)]
+        elif sub == "find" and rest:
+            result = client.request("search", q=words, limit=20)
+            items = (result or {}).get("items") or []
+            lines = [" · ".join(b for b in (i.get("title"), i.get("where"), i.get("when")) if b) for i in items]
+            if not items and not as_json:
+                print(f"Nothing matches “{words}” yet.", file=sys.stderr)
+                return 1
+        elif sub == "focus" and rest:
+            result = client.request("focus", timeout=10.0, ref=brain_ref(words))
+            lines = focus_lines(result or {})
+        elif sub == "rebuild" and not rest:
+            result = client.request("rebuild", timeout=70.0)
+            lines = [(result or {}).get("text") or ""]
+        else:
+            print(__doc__)
+            return 2
+    except (client.BrainUnavailable, client.BrainError) as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(result, indent=2))
+    else:
+        for line in lines:
+            print(line)
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -109,6 +212,8 @@ def main() -> int:
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
         return 0 if s else 1
+    elif cmd == "brain":
+        return brain(args)
     elif cmd == "provider":
         if args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")

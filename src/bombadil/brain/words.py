@@ -29,8 +29,9 @@ def _local(t: float) -> time.struct_time:
 
 def _days_apart(t: float, now: float) -> int:
     a, b = _local(t), _local(now)
-    return (time.mktime((b.tm_year, b.tm_mon, b.tm_mday, 0, 0, 0, 0, 0, -1))
-            - time.mktime((a.tm_year, a.tm_mon, a.tm_mday, 0, 0, 0, 0, 0, -1))) // 86400
+    # round, not floor: the day the clocks go forward is 23 hours long.
+    return round((time.mktime((b.tm_year, b.tm_mon, b.tm_mday, 0, 0, 0, 0, 0, -1))
+                  - time.mktime((a.tm_year, a.tm_mon, a.tm_mday, 0, 0, 0, 0, 0, -1))) / 86400)
 
 
 def when(t: float | None, now: float | None = None) -> str:
@@ -126,10 +127,10 @@ def by(w: Who) -> str:
 
 
 def _then(w: Who, day: str) -> str:
-    """The day after an actor: a quoted prompt needs a comma before it."""
+    """The day after an actor: "in turn 44, today at 10:02", "by you in the terminal today"."""
     if not day:
         return ""
-    return (", " if w.kind == "turn" and w.prompt else " ") + day
+    return (", " if w.kind == "turn" else " ") + day
 
 
 def made_sentence(w: Who, t: float | None, now: float | None = None) -> str:

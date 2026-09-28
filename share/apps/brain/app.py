@@ -248,9 +248,11 @@ class Backend(QObject):
     # ---- status, show -----------------------------------------------------------------
 
     def _set_status(self, s):
+        """The subtitle says something only while it matters: the first index, a catch-up,
+        or saves not being watched. "Knows 12,034 things" every time would be noise."""
         text = ""
-        if isinstance(s, dict):
-            text = str(s.get("text") or s.get("line") or "")
+        if isinstance(s, dict) and (s.get("walking") or s.get("watching") is False):
+            text = str(s.get("text") or "")
         self._set("_status", text, self.statusChanged)
 
     def _on_status(self, result, _err):

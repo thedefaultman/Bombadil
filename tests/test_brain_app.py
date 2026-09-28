@@ -134,7 +134,7 @@ def answers(requested=None):
         if op == "requested":
             return requested
         if op == "status":
-            return {"text": "Getting to know your files, 40%"}
+            return {"text": "Getting to know your files, 40%", "walking": "first", "watching": True}
         if op == "focus":
             ref = msg["ref"]
             if ref not in ids:
@@ -283,3 +283,15 @@ def test_paths_read_with_a_tilde(monkeypatch, tmp_path):
     assert mod.tilde(str(tmp_path / "Documents/lease.pdf")) == "~/Documents/lease.pdf"
     assert mod.tilde(str(tmp_path)) == "~"
     assert mod.tilde("/etc/hosts") == "/etc/hosts"
+
+
+def test_the_subtitle_speaks_only_while_it_matters(qt, monkeypatch, tmp_path):
+    monkeypatch.setenv("BOMBADIL_BRAIN_SOCKET", str(tmp_path / "none.sock"))
+    b = load_backend().Backend()
+    b._set_status({"text": "Knows 12 things; watching every save.", "walking": None, "watching": True})
+    assert b.status == ""
+    b._set_status({"text": "Knows 12 things; saves are not watched on this system.", "walking": None,
+                   "watching": False})
+    assert b.status.startswith("Knows 12 things; saves are not watched")
+    b._set_status({"text": "Catching up on your files, 10%", "walking": "reconcile", "watching": True})
+    assert b.status == "Catching up on your files, 10%"
