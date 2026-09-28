@@ -8,7 +8,7 @@ description: Daniel's format for Bombadil design work. Use whenever he asks for 
 When Daniel asks for ideas and how they would look, he wants a page he can see, in the same series as
 the briefs he has already confirmed. Chat text alone does not answer it.
 
-The series, all confirmed by Daniel, and all still in force:
+The series so far. The first four are confirmed by Daniel and stay in force; 4 and 5 wait for his confirmation:
 
 | Brief | Artifact |
 |---|---|
@@ -16,6 +16,8 @@ The series, all confirmed by Daniel, and all still in force:
 | 2 · Building on Bombadil: coding sessions (19 decisions) | https://claude.ai/artifact/5kd2NrfDp8xUDoWqrLPH5K |
 | 3 · Bombadil's Brain: the index, Map, Focus, Time (17 decisions) | https://claude.ai/artifact/5Ysyv6FdPDpMhX8uCWq57f |
 | The Bombadil Desk: widgets (15 decisions) | https://claude.ai/artifact/97xCqVJ3hAEeLw1mdHnqKV |
+| 4 · The Bombadil Kit: making apps and graphics (17 decisions, defaults not yet confirmed) | https://claude.ai/artifact/VxLBezm1vDbCyHPzq7VNUM |
+| 5 · Bombadil at Work: everyday work for PMs, office workers, students (18 decisions, defaults not yet confirmed) | https://claude.ai/artifact/U3FibR6CqdLKqkDbC4WQWL |
 
 Read the ones your subject touches (Artifact tool, `action: "read"`) before designing. A new brief
 never contradicts them silently: it names every decision it extends or changes.
