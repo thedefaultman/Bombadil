@@ -19,6 +19,7 @@ rebuild of brain.db.
 import hashlib
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
@@ -34,6 +35,9 @@ EPHEMERAL_S = 30.0
 # A folder that appears by a rename (moved in from out of sight) is looked into this far; a
 # walk finishes the rest.
 ADOPT_MAX = 2000
+# A shell turn's writer can be gone before the watcher looks, and its nearest live ancestor is
+# agentd, outside the turn's scope: such saves count for the turn until this long after it.
+LATE_TURN_S = 10.0
 XATTR_MADE_BY = "user.bombadil.made_by"
 XATTR_ORIGIN = "user.bombadil.origin"
 # Special files that feed witnesses rather than being things themselves.
@@ -66,6 +70,19 @@ def fingerprint_url(url: str) -> str | None:
                        parts.query, ""))
 
 
+def is_agentd(entry) -> bool:
+    """agentd, the daemon that starts turns: bombadil-agentd, `python3 -m bombadil.agentd` or
+    `python3 …/agentd.py`. An editor with agentd.py open is not."""
+    comm = str(entry[1]) if len(entry) > 1 else ""
+    argv = str(entry[2]).split() if len(entry) > 2 else []
+
+    def named(arg: str) -> bool:
+        return re.fullmatch(r"(?:[\w-]+\.)*(?:bombadil-)?agentd(?:\.py)?", os.path.basename(arg)) is not None
+    if comm.startswith("python") or (argv and os.path.basename(argv[0]).startswith("python")):
+        return any(named(a) for a in argv[1:4])
+    return named(comm) or bool(argv) and named(argv[0])
+
+
 def site_of(url: str) -> str:
     host = urlsplit(url).hostname or ""
     return host[4:] if host.startswith("www.") else host
@@ -82,6 +99,7 @@ class Ingest:
         self.changed: set[int] = set()           # things touched since the service last pushed
         self._sessions: dict[str, int] = {}      # session key -> its thing, so a write does not rewrite it
         self.specials: dict[str, object] = {}    # exact path -> callback(ev, who): witnesses' files
+        self.running: dict | None = None         # the turn agentd last said began: n, unit, start, end
         self._ignored: set[str] = set()
 
     # -- batches from the watcher --
@@ -115,7 +133,7 @@ class Ingest:
         if not isinstance(path, str):
             return
         t = float(ev.get("t") or time.time())
-        who = self.who(actors.from_event(ev, self.sessions))
+        who = self.who(self.actor_of(ev, t))
         special = self.specials.get(path)
         if special is not None:
             special(ev, who)
@@ -135,6 +153,21 @@ class Ingest:
             self.saw(path, op, t, who, bool(ev.get("dir")), size=ev.get("size"), ino=ev.get("ino"))
 
     # -- who --
+
+    def actor_of(self, ev: dict, t: float) -> actors.Actor:
+        """The actor of an event; a save by a writer that left before the watcher looked, whose
+        nearest live ancestor is agentd, is the running turn's (see LATE_TURN_S)."""
+        actor = actors.from_event(ev, self.sessions)
+        run = self.running
+        if run is None or actor.kind in ("turn", "session", "app") or not ev.get("gone"):
+            return actor
+        chain = ev.get("chain") or []
+        if not chain or not is_agentd(chain[0]):
+            return actor
+        end = run["end"]
+        if t < run["start"] or (end is not None and t > end + LATE_TURN_S):
+            return actor
+        return actors.Actor("turn", f"unit:{run['unit']}")   # the program left; agentd's name says nothing
 
     def who(self, actor: actors.Actor) -> Who:
         if actor.kind == "turn":
@@ -537,7 +570,7 @@ class Ingest:
             title = " ".join(str(prompt or "").split())[:120] or f"turn {n}"
             tid = self.store.upsert_key("turn", key, title if prompt else "", created=started,
                                         changed=ended, touched=ended or started, meta=meta)
-            if not prompt and self.store.get(tid)["title"] in ("a turn now running", ""):
+            if not prompt and self.store.get(tid)["title"] in ("a turn now running", "", "turn"):
                 self.store.update(tid, title=f"turn {n}")
             self.store.set_turn(n, tid, unit, started, ended, prompt)
             if self.xattrs:
@@ -547,6 +580,19 @@ class Ingest:
                         _setxattr(row["path"], XATTR_MADE_BY, f"turn {n}")
         self.changed.add(tid)
         return tid
+
+    def turn_started(self, n: int, unit: str | None, prompt: str | None, t: float) -> int:
+        """agentd says turn n began in this scope: its thing now, and the saves whose writer left
+        early are its own until it ends."""
+        tid = self.turn(n, unit, prompt, t)
+        unit = unit.removesuffix(".scope") if unit else None
+        self.running = {"n": n, "unit": unit, "start": t, "end": None} if unit else None
+        return tid
+
+    def turn_ended(self, t: float | None = None, n: int | None = None) -> None:
+        run = self.running
+        if run is not None and run["end"] is None and (n is None or n == run["n"]):
+            run["end"] = time.time() if t is None else t
 
     def turn_row(self, row: dict, n: int) -> int:
         """One finished turn from turns.jsonl: its thing, and the files it wrote and read."""

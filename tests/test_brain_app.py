@@ -113,6 +113,10 @@ class FakeBrain:
 
     def close(self):
         for c in self.clients:
+            try:
+                c.shutdown(socket.SHUT_RDWR)   # a thread blocked in recv keeps a plain close() open
+            except OSError:
+                pass
             c.close()
         self.sock.close()
 
@@ -295,3 +299,182 @@ def test_the_subtitle_speaks_only_while_it_matters(qt, monkeypatch, tmp_path):
     assert b.status.startswith("Knows 12 things; saves are not watched")
     b._set_status({"text": "Catching up on your files, 10%", "walking": "reconcile", "watching": True})
     assert b.status == "Catching up on your files, 10%"
+
+
+# -- review: what the first pass got wrong --
+
+def _with(base, extra):
+    """The default answers, with `extra(msg)` first (None means "not mine")."""
+    def answer(msg):
+        got = extra(msg)
+        return got if got is not None else base(msg)
+    return answer
+
+
+def test_a_change_to_an_event_id_does_not_refresh_what_is_on_screen(brain, qt):
+    def extra(msg):
+        if msg["op"] == "focus" and msg["ref"] == "/p/Bombadil/a.py":
+            f = thing("/p/Bombadil/a.py", id=1)
+            item = {"id": 5, "ref": "/p/Bombadil/b.py", "title": "b.py", "kind": "file"}
+            f["slots"] = {"changes": {"items": [{"id": 777, "title": "made it", "t": 1}], "total": 1},
+                          "read_with": {"items": [item], "total": 1}}
+            return f
+
+    fake = brain({"ref": "/p/Bombadil/a.py", "seq": 1})
+    fake.answer = _with(answers({"ref": "/p/Bombadil/a.py", "seq": 1}), extra)
+    b = load_backend().Backend()
+    assert wait_until(lambda: b.focus is not None)
+    before = len(fake.ops("focus"))
+    fake.push({"push": "changed", "things": [777], "t": 0})   # an event's id, not a thing's
+    spin(500)
+    assert len(fake.ops("focus")) == before
+    fake.push({"push": "changed", "things": [5], "t": 0})
+    assert wait_until(lambda: len(fake.ops("focus")) == before + 1)
+
+
+def folder_answers(total):
+    names = [f"f{i:04d}" for i in range(total)]
+
+    def item(n):
+        return {"id": 100 + int(n[1:]), "ref": f"/p/Docs/{n}", "title": n, "kind": "file",
+                "path": f"/p/Docs/{n}"}
+
+    def extra(msg):
+        if msg["op"] == "focus" and msg["ref"] == "/p/Docs":
+            f = thing("/p/Docs", id=50)
+            f["thing"]["kind"] = "folder"
+            f["children"] = {"items": [item(n) for n in names[:200]], "total": total}
+            return f
+        if msg["op"] == "children":
+            o, n = msg["offset"], msg["limit"]
+            return {"items": [item(x) for x in names[o:o + n]], "total": total}
+    return extra
+
+
+def test_show_in_folder_pages_on_until_the_entry_is_there_and_then_lets_go(brain, qt):
+    fake = brain({"ref": "/p/Docs", "seq": 1})
+    fake.answer = _with(answers({"ref": "/p/Docs", "seq": 1}), folder_answers(450))
+    b = load_backend().Backend()
+    assert wait_until(lambda: b.focus is not None)
+    assert len(b.focus["children"]["items"]) == 200
+    b.showInFolder("/p/Docs/f0430", "/p/Docs")
+    assert wait_until(lambda: any(i["ref"] == "/p/Docs/f0430" for i in b.focus["children"]["items"]))
+    assert [(r["offset"], r["limit"]) for r in fake.ops("children")] == [(200, 200), (400, 200)]
+    assert len(b.focus["children"]["items"]) == 450
+    assert b.select == "/p/Docs/f0430"
+    b.settled()
+    assert b.select == ""
+    b.moreChildren()   # nothing is left
+    spin(200)
+    assert len(fake.ops("children")) == 2
+
+
+def test_a_folder_that_never_shows_the_entry_is_not_paged_through_forever(brain, qt):
+    fake = brain({"ref": "/p/Docs", "seq": 1})
+    fake.answer = _with(answers({"ref": "/p/Docs", "seq": 1}), folder_answers(5000))
+    mod = load_backend()
+    b = mod.Backend()
+    assert wait_until(lambda: b.focus is not None)
+    b.showInFolder("/p/Docs/gone", "/p/Docs")
+    assert wait_until(lambda: len(b.focus["children"]["items"]) >= mod.SEEK_MAX)
+    spin(300)
+    assert len(b.focus["children"]["items"]) == mod.SEEK_MAX
+
+
+def test_enter_gets_results_for_what_was_typed_now(brain, qt):
+    fake = brain({"ref": "/p/Bombadil/a.py", "seq": 1})
+    b = load_backend().Backend()
+    assert wait_until(lambda: b.connected)
+    b.search("snap")
+    b.searchNow()   # Enter before the pause was over
+    assert wait_until(lambda: b.resultsFor == "snap" and b.results)
+    assert len(fake.ops("search")) == 1
+    b.search("snapshot")
+    assert b.resultsFor == "snap"   # the old results are for the old text
+    b.search("")
+    assert b.resultsFor == "" and b.results == []
+
+
+def test_an_app_opens_by_its_name_only(qt, monkeypatch, tmp_path):
+    monkeypatch.setenv("BOMBADIL_BRAIN_SOCKET", str(tmp_path / "none.sock"))
+    mod = load_backend()
+    b = mod.Backend()
+    started = []
+    monkeypatch.setattr(mod.shutil, "which", lambda name: "/bin/bombadil-app")
+    monkeypatch.setattr(mod.QProcess, "startDetached",
+                        staticmethod(lambda p, a: started.append((p, a)) or (True, 1)))
+    assert b.openApp("app:brain") and b.openApp("brain")
+    assert started == [("/bin/bombadil-app", ["run", "brain"])] * 2
+    for bad in ("", "app:", "-x", "../x", "a/b", "app:--help"):
+        assert not b.openApp(bad)
+    assert len(started) == 2
+
+
+def test_a_pdf_page_is_drawn_once_kept_by_size_and_mtime_and_a_failure_is_said(qt, monkeypatch, tmp_path):
+    monkeypatch.setenv("BOMBADIL_BRAIN_SOCKET", str(tmp_path / "none.sock"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "pdftoppm"   # a stand-in that "draws" a picture named by its last argument
+    fake.write_text('#!/bin/sh\nfor a; do last="$a"; done\ncase "$*" in *broken*) exit 1;; esac\n'
+                    'echo picture > "$last.png"\n')
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    mod = load_backend()
+    b = mod.Backend()
+    ready, failed = [], []
+    b.previewReady.connect(ready.append)
+    b.previewFailed.connect(failed.append)
+    pdf = tmp_path / "lease #1 100%.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    assert b.pdfPage(str(pdf)) == ""
+    assert b.pdfPage(str(pdf)) == ""   # still drawing: not started twice
+    assert wait_until(lambda: ready == [str(pdf)])
+    url = b.pdfPage(str(pdf))
+    assert url.startswith("file:///") and url.endswith(".png")
+    assert not list((tmp_path / "cache" / "bombadil" / "brain").glob("*.part*"))
+    pdf.write_bytes(b"%PDF-1.4 changed")   # a new file under the same name is drawn again
+    assert b.pdfPage(str(pdf)) == ""
+    assert wait_until(lambda: len(ready) == 2)
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"x")
+    assert b.pdfPage(str(broken)) == ""
+    assert wait_until(lambda: failed == [str(broken)])
+    assert b.pdfPage(str(broken)) == ""   # remembered: it says so again without another try
+    assert wait_until(lambda: len(failed) == 2)
+    assert b.pdfPage(str(tmp_path / "missing.pdf")) == ""
+    assert wait_until(lambda: len(failed) == 3)
+    assert b.fileBytes(str(pdf)) == len(b"%PDF-1.4 changed")
+    assert b.fileBytes(str(tmp_path / "missing.pdf")) == 0
+
+
+def test_the_cache_of_pdf_pages_keeps_only_the_newest(qt, monkeypatch, tmp_path):
+    monkeypatch.setenv("BOMBADIL_BRAIN_SOCKET", str(tmp_path / "none.sock"))
+    mod = load_backend()
+    monkeypatch.setattr(mod, "PREVIEWS_KEPT", 3)
+    for i in range(6):
+        f = tmp_path / f"{i}.png"
+        f.write_text("x")
+        os.utime(f, (100 + i, 100 + i))
+    mod.Backend._prune(tmp_path)
+    assert sorted(p.name for p in tmp_path.glob("*.png")) == ["3.png", "4.png", "5.png"]
+
+
+def test_layouts_that_rebuild_their_children_say_they_take_no_free_height():
+    """Qt segfaulted on most moves to another thing (8 of 8 offscreen runs) when the kit's Panel
+    and AppWindow `_grows` asked a layout for its size limits while its Repeater was replacing
+    its children. `_grows` asks only layouts with Layout.fillHeight, so these say false."""
+    for name, opener in (("Trail.qml", "RowLayout {"), ("Slot.qml", "GridLayout {"),
+                         ("Changes.qml", "RowLayout {")):
+        src = (APP_PY.parent / name).read_text()
+        head = src[src.index(opener):src.index("Repeater {")]
+        assert "Layout.fillHeight: false" in head, name
+
+
+def test_what_the_brain_said_about_itself_goes_when_it_goes(brain, qt):
+    fake = brain({"ref": "/p/Bombadil/a.py", "seq": 1})
+    b = load_backend().Backend()
+    assert wait_until(lambda: b.connected and b.status != "")
+    fake.close()
+    assert wait_until(lambda: not b.connected)
+    assert b.status == "" and b.focus is not None   # the last thing stays for when it comes back

@@ -161,7 +161,8 @@ def brain(args: list[str]) -> int:
         elif sub == "find" and rest:
             result = client.request("search", q=words, limit=20)
             items = (result or {}).get("items") or []
-            lines = [" · ".join(b for b in (i.get("title"), i.get("where"), i.get("when")) if b) for i in items]
+            lines = [" · ".join(b for b in (i.get("title"), i.get("where"), i.get("when")) if b)
+                     for i in items]
             if not items and not as_json:
                 print(f"Nothing matches “{words}” yet.", file=sys.stderr)
                 return 1

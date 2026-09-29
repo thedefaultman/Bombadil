@@ -1,6 +1,9 @@
 [Unit]
 Description=Bombadil brain: an index of this machine that nobody writes
 Documentation=file:///usr/share/bombadil/src/bombadil/brain/service.py
+# Nothing depends on the brain, so it is never given up on: without this, five quick failures
+# (a locked disk at login, say) leave it stopped until the next login.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

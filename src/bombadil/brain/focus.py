@@ -37,7 +37,7 @@ TOGETHER_S = 20 * 60
 BUSY_S = 15 * 60
 CHILDREN_LIMIT = 200
 # A folder of a million generated files is listed by its first entries, not stat'ed whole.
-SCAN_LIMIT = 20000
+SCAN_LIMIT = 5000
 # How far back a thing's history is read for its lines; older events only count.
 HISTORY_CAP = 2000
 OCCASIONS = 60

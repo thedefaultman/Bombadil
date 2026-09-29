@@ -40,6 +40,7 @@ Rectangle {
                 id: title
                 Layout.fillWidth: true
                 text: row.line.title || ""
+                textFormat: Text.PlainText   // a page title or a prompt is words, never markup
                 color: Theme.fg
                 font.pixelSize: Theme.textSize
                 font.family: Theme.fontFamily
@@ -47,6 +48,7 @@ Rectangle {
             }
             Text {
                 text: row.line.when || ""
+                textFormat: Text.PlainText
                 color: Theme.faint
                 font.pixelSize: Theme.captionSize
                 font.family: Theme.fontFamily
@@ -56,6 +58,7 @@ Rectangle {
         Text {
             Layout.fillWidth: true
             text: row.line.why || ""
+            textFormat: Text.PlainText
             visible: text !== ""
             color: row.amber ? Theme.warn : Theme.muted
             font.pixelSize: Theme.captionSize

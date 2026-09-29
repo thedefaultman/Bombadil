@@ -264,8 +264,8 @@ class Store:
             if have is None:
                 return self.add(kind, title, key=key, **fields)
             changes = {k: v for k, v in fields.items() if v is not None}
-            if title:
-                changes["title"] = title
+            if title and title != have["title"]:
+                changes["title"] = title   # update() re-indexes it for search
             if changes:
                 self.update(have["id"], **changes)
             return have["id"]

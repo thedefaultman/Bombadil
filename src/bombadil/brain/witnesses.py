@@ -58,8 +58,12 @@ FOLLOW_KEEP_S = 2 * 86400
 FOLLOW_MAX = 500
 # A copy left behind by a brain that died mid-import is on tmpfs, so it is RAM.
 STALE_COPY_S = 300.0
-# Page transitions (Chromium's ui/base/page_transition_types.h). Subframes are ads and
-# embeds, and the first hops of a redirect chain are pages nobody saw.
+# Page transitions, as in Chromium's ui/base/page_transition_types.h (the values are stored in
+# every History file, so Chromium cannot renumber them). The low byte is the core type, the rest
+# are qualifiers. Subframes are ads and embeds, and the first hops of a redirect chain are pages
+# nobody saw: a chain has CHAIN_START on its first visit, a redirect qualifier on the ones it led
+# to and CHAIN_END on the last, which is the page you landed on (that is how Chromium's
+# history backend writes a chain: assumed from its source, not from a live History file).
 CORE_MASK = 0xFF
 SUBFRAMES = (3, 4)
 CHAIN_START, CHAIN_END = 0x10000000, 0x20000000
@@ -72,10 +76,11 @@ WAITING_KEEP_S = 7 * 86400
 # Room to leave on the runtime tmpfs beyond the copy itself.
 TMP_SPARE = 16 * 1024 * 1024
 
-PACMAN_LINE = re.compile(r"^\[(?P<ts>[^\]]+)\] \[ALPM\] (?P<verb>installed|upgraded|downgraded|reinstalled|removed) "
+PACMAN_LINE = re.compile(r"^\[(?P<ts>[^\]]+)\] \[ALPM\] "
+                         r"(?P<verb>installed|upgraded|downgraded|reinstalled|removed) "
                          r"(?P<name>[^\s()]+) \((?P<ver>[^()]*)\)$")
-PACMAN_OPS = {"installed": "install", "upgraded": "upgrade", "downgraded": "upgrade", "reinstalled": "upgrade",
-              "removed": "remove"}
+PACMAN_OPS = {"installed": "install", "upgraded": "upgrade", "downgraded": "upgrade",
+              "reinstalled": "upgrade", "removed": "remove"}
 # pacman keeps its log open for a whole transaction, so the write the watcher saw can carry
 # lines from well before it; older than this, a line is attributed by the turns' times.
 LIVE_WINDOW_S = 3600.0
@@ -123,8 +128,9 @@ def _each(store, fn):
 
 def _turn_at(store, t: float, via: str) -> Who | None:
     """The turn that was running at time t, when nobody saw who did it."""
-    row = store.one("SELECT thing FROM turns WHERE thing IS NOT NULL AND started IS NOT NULL AND started - 1 <= ? "
-                    "AND COALESCE(ended, started + 3600) + 1 >= ? ORDER BY started DESC LIMIT 1", (t, t))
+    row = store.one("SELECT thing FROM turns WHERE thing IS NOT NULL AND started IS NOT NULL "
+                    "AND started - 1 <= ? AND COALESCE(ended, started + 3600) + 1 >= ? "
+                    "ORDER BY started DESC LIMIT 1", (t, t))
     return Who("turn", row["thing"], via) if row else None
 
 
@@ -263,7 +269,8 @@ def _clean_turn(row: dict) -> dict:
         del out["snapshot"]
     files = out.get("files")
     if isinstance(files, dict):
-        out["files"] = {k: v[:TURN_FILES] for k, v in files.items() if k in ("wrote", "read") and isinstance(v, list)}
+        out["files"] = {k: v[:TURN_FILES] for k, v in files.items()
+                        if k in ("wrote", "read") and isinstance(v, list)}
     else:
         out.pop("files", None)
     return out
@@ -320,7 +327,8 @@ class History:
         times = []
         for hist in self.histories():
             last = self._last.get(hist)
-            times.append(last + HISTORY_GAP_S if last is not None and 0 <= now - last < HISTORY_GAP_S else now)
+            soon = last is not None and 0 <= now - last < HISTORY_GAP_S
+            times.append(last + HISTORY_GAP_S if soon else now)
         return min(times, default=now)
 
     def import_new(self, now: float | None = None) -> int:
@@ -360,7 +368,8 @@ class History:
             # and a read-only connection refuses to roll it back (SQLITE_READONLY_ROLLBACK).
             # The copy is ours alone, and query_only keeps everything else from writing.
             db = sqlite3.connect(copy, isolation_level=None)
-            db.text_factory = lambda b: b.decode("utf-8", errors="replace")   # one bad title is not a stuck import
+            # One title that is not UTF-8 must not make the import fail forever.
+            db.text_factory = lambda b: b.decode("utf-8", errors="replace")
             try:
                 db.execute("PRAGMA query_only=1")
                 profile = os.path.dirname(hist)
@@ -441,7 +450,8 @@ class History:
                     if not t or not _read_by_you(url, transition, hidden):
                         continue
                     title = title if isinstance(title, str) else ""
-                    if _each(store, lambda: self.ingest.visit(url, title, t, max(_int(duration), 0) / 1e6)) is not None:
+                    seconds = max(_int(duration), 0) / 1e6
+                    if _each(store, lambda: self.ingest.visit(url, title, t, seconds)) is not None:
                         n += 1
                         if not _int(duration) > 0 or not title:
                             fresh.append([_int(vid), _int(vt)])
@@ -450,7 +460,8 @@ class History:
                 store.set_meta(f"{key}.follow", json.dumps((before + fresh)[-FOLLOW_MAX:]))
         if before:
             with store.tx():
-                store.set_meta(f"{key}.follow", json.dumps((self._follow(db, before, now) + fresh)[-FOLLOW_MAX:]))
+                left = self._follow(db, before, now)
+                store.set_meta(f"{key}.follow", json.dumps((left + fresh)[-FOLLOW_MAX:]))
         return n
 
     def _follow(self, db: sqlite3.Connection, follow: list, now: float) -> list:
@@ -488,8 +499,8 @@ class History:
             self.ingest.page(url, title, t)
             self.ingest.changed.add(page["id"])
         if seconds > 0:
-            ev = store.one("SELECT id, detail FROM events WHERE thing = ? AND kind = 'visit' AND t = ? LIMIT 1",
-                           (page["id"], t))
+            ev = store.one("SELECT id, detail FROM events "
+                           "WHERE thing = ? AND kind = 'visit' AND t = ? LIMIT 1", (page["id"], t))
             if ev is not None and (ev["detail"] or {}).get("duration") != round(seconds, 1):
                 store.x("UPDATE events SET detail = ? WHERE id = ?",
                         (json.dumps({**(ev["detail"] or {}), "duration": round(seconds, 1)}), ev["id"]))
@@ -511,7 +522,8 @@ class History:
         def col(name: str) -> str:
             return f"d.{name}" if name in cols else "NULL"
 
-        chain = ("(SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id ORDER BY c.chain_index DESC LIMIT 1)"
+        chain = ("(SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id "
+                 "ORDER BY c.chain_index DESC LIMIT 1)"
                  if {"id", "chain_index", "url"} <= _columns(db, "downloads_url_chains") else "NULL")
         # New by id or by start time: ids start again after "clear browsing data".
         new = "d.id > ?" + (" OR d.start_time > ?" if "start_time" in cols else "")
@@ -679,7 +691,8 @@ def _package_line(raw: bytes) -> tuple[str, str, str, float] | None:
 
 def _known(store, name: str, op: str, t: float) -> bool:
     return store.one("SELECT 1 FROM events e JOIN things th ON th.id = e.thing "
-                     "WHERE th.key = ? AND e.kind = ? AND e.t = ? LIMIT 1", (f"package:{name}", op, t)) is not None
+                     "WHERE th.key = ? AND e.kind = ? AND e.t = ? LIMIT 1",
+                     (f"package:{name}", op, t)) is not None
 
 
 def parse_pacman(line: str) -> tuple[str, str, str, float] | None:
@@ -698,7 +711,8 @@ def parse_pacman(line: str) -> tuple[str, str, str, float] | None:
 def pacman_time(ts: str) -> float | None:
     """'2026-09-27T10:00:00+0200' (pacman 5.2 and later), or '2019-01-01 10:00' in local time
     as older logs have it."""
-    if len(ts) == 24 and ts[4] == ts[7] == "-" and ts[10] == "T" and ts[13] == ts[16] == ":" and ts[19] in "+-":
+    if len(ts) == 24 and ts[4] == ts[7] == "-" and ts[10] == "T" and ts[13] == ts[16] == ":" \
+            and ts[19] in "+-":
         # The usual shape, without strptime's cost: a log of years has a hundred thousand of them.
         try:
             off = (int(ts[20:22]) * 3600 + int(ts[22:24]) * 60) * (1 if ts[19] == "+" else -1)
@@ -728,7 +742,8 @@ class Memory:
         if self._files is not None:
             return self._files
         home = Path(self.ingest.home)
-        return [home / ".bombadil" / "memory.md", home / ".claude" / "CLAUDE.md", home / ".codex" / "AGENTS.md"]
+        return [home / ".bombadil" / "memory.md", home / ".claude" / "CLAUDE.md",
+                home / ".codex" / "AGENTS.md"]
 
     def files(self) -> list[str]:
         """Every name a write to memory.md can arrive under, for ingest.specials: the watcher
@@ -760,7 +775,8 @@ class Memory:
             if who is None or who.kind in ("unknown", "before"):
                 who = _turn_at(self.ingest.store, st.st_mtime, "memory") or UNKNOWN
             self.ingest.facts(lines, st.st_mtime, who, str(path))
-            return self.ingest.store.one("SELECT COUNT(*) AS n FROM things WHERE kind = 'fact' AND deleted IS NULL")["n"]
+            return self.ingest.store.one(
+                "SELECT COUNT(*) AS n FROM things WHERE kind = 'fact' AND deleted IS NULL")["n"]
         except Exception as e:  # noqa: BLE001 - a witness never takes the brain down
             _log("reading memory.md", e)
             return 0

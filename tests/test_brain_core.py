@@ -622,3 +622,84 @@ def test_what_is_inside_a_moved_folder_moves_to_its_area(brain):
     ing.apply([ev("rename", f"{home}/Projects", 300, old=f"{home}/Old", dir=True)])
     m = store.by_path(f"{home}/Projects/x/m.py")
     assert m is not None and store.get(m["area"])["title"] == "x"
+
+
+def test_a_turn_with_no_prompt_gets_the_title_turn_n(brain):
+    store, ing, _home = brain
+    tid = ing.turn_thing_for_unit("bombadil-turn-99-3-1727429990")
+    assert store.get(tid)["title"] == "a turn now running"
+    assert ing.turn(5, unit="bombadil-turn-99-3-1727429990.scope") == tid
+    assert store.get(tid)["title"] == "turn 5"
+    assert [t["id"] for t in store.search("turn 5")] == [tid]
+    assert store.search("running") == []
+    other = store.upsert_key("turn", "turn:6", "turn")   # a bare "turn" is no title either
+    assert ing.turn(6) == other
+    assert store.get(other)["title"] == "turn 6"
+
+
+def test_upsert_key_sets_a_title_only_when_it_changed_and_search_follows():
+    s = Store()
+    a = s.upsert_key("page", "url:https://x.org/", "Lease renewal", url="https://x.org/")
+    before = s.q("SELECT rowid, title FROM search")
+    assert s.upsert_key("page", "url:https://x.org/", "Lease renewal") == a
+    assert s.q("SELECT rowid, title FROM search") == before
+    assert s.upsert_key("page", "url:https://x.org/", "Rent increase") == a
+    assert s.get(a)["title"] == "Rent increase"
+    assert [t["id"] for t in s.search("increase")] == [a]
+    assert s.search("renewal") == []
+    assert s.upsert_key("page", "url:https://x.org/") == a   # no title given: the title stays
+    assert s.get(a)["title"] == "Rent increase"
+
+
+# -- a shell turn's writer can be gone before the watcher reads it --
+
+UNIT = "bombadil-turn-99-9-1727429990"
+AGENTD = [[3, "python3", "/usr/bin/python3 /usr/local/bin/agentd"], [2, "systemd", "systemd --user"]]
+
+
+def gone(op, path, t, chain=AGENTD, **extra):
+    """A save whose writer had exited: the watcher names its nearest live ancestor, outside the scope."""
+    return ev(op, path, t, YOU_CG, chain, gone=True, **extra)
+
+
+def test_a_save_by_a_writer_that_left_is_the_running_turns_when_the_ancestor_is_agentd(brain):
+    store, ing, home = brain
+    tid = ing.turn_started(9, UNIT + ".scope", "!echo hi > x.txt", 1000.0)
+    ing.apply([gone("create", f"{home}/x.txt", 1003.0, chain=AGENTD, comm="python3")])
+    f = store.by_path(f"{home}/x.txt")
+    assert (f["made_by"], f["made_by_thing"], f["made_via"]) == ("turn", tid, "")
+    assert store.get(tid)["key"] == "turn:9"
+
+
+def test_a_late_save_counts_for_the_turn_for_ten_seconds_after_it_ended(brain):
+    store, ing, home = brain
+    ing.turn_started(9, UNIT, "!make", 1000.0)
+    ing.turn_ended(1010.0, n=9)
+    ing.apply([gone("create", f"{home}/late.txt", 1015.0), gone("create", f"{home}/later.txt", 1021.0),
+               gone("create", f"{home}/early.txt", 999.0)])
+    assert store.by_path(f"{home}/late.txt")["made_by"] == "turn"
+    assert store.by_path(f"{home}/later.txt")["made_by"] != "turn"
+    assert store.by_path(f"{home}/early.txt")["made_by"] != "turn"
+
+
+def test_a_write_from_your_terminal_stays_yours_while_a_turn_runs(brain):
+    store, ing, home = brain
+    ing.turn_started(9, UNIT, "!sleep 30", 1000.0)
+    ing.apply([gone("create", f"{home}/a.txt", 1003.0, chain=FOOT),                       # via foot and bash
+               ev("create", f"{home}/b.txt", 1004.0),                                # a live writer, no gone
+               gone("create", f"{home}/c.txt", 1005.0,
+                    chain=[[5, "nvim", "nvim agentd.py"], [4, "bash", "bash"], [2, "Hyprland", "Hyprland"]])])
+    for name in ("a", "b", "c"):
+        f = store.by_path(f"{home}/{name}.txt")
+        assert (f["made_by"], f["made_by_thing"]) == ("you", None), name
+
+
+def test_a_late_save_is_not_a_turns_when_none_ran_or_agentd_says_it_ended(brain):
+    store, ing, home = brain
+    ing.apply([gone("create", f"{home}/none.txt", 1003.0)])
+    assert store.by_path(f"{home}/none.txt")["made_by"] != "turn"
+    ing.turn_started(9, UNIT, "!x", 1000.0)
+    ing.turn_ended(1005.0, n=8)   # another turn's end changes nothing
+    assert ing.running["end"] is None
+    ing.turn_started(10, UNIT + "-2", "!y", 1100.0)
+    assert ing.running["n"] == 10 and ing.running["unit"] == UNIT + "-2"

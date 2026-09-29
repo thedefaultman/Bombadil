@@ -15,6 +15,7 @@ Panel {
 
     RowLayout {
         Layout.fillWidth: true
+        Layout.fillHeight: false   // the strip is as tall as it is; see Trail.qml
         spacing: Theme.pad
 
         ColumnLayout {
@@ -29,6 +30,7 @@ Panel {
             }
             Text {
                 text: strip.week === 0 ? "None this week" : (strip.week === 1 ? "1 this week" : strip.week + " this week")
+                textFormat: Text.PlainText
                 color: Theme.fg
                 font.pixelSize: Theme.headingSize
                 font.family: Theme.fontFamily
@@ -63,6 +65,7 @@ Panel {
                     }
                     Text {
                         text: (modelData.why || modelData.kind || "") + (modelData.when ? ", " + modelData.when : "")
+                        textFormat: Text.PlainText
                         color: index === 0 ? Theme.fg : Theme.muted
                         font.pixelSize: Theme.captionSize
                         font.family: Theme.fontFamily

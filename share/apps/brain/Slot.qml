@@ -34,6 +34,7 @@ Panel {
 
     GridLayout {
         Layout.fillWidth: true
+        Layout.fillHeight: false   // as in Trail.qml: keeps the kit from sizing it mid-rebuild
         columns: slot.columns
         columnSpacing: 4
         rowSpacing: 0

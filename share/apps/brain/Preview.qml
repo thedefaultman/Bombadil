@@ -35,6 +35,7 @@ Panel {
             Layout.fillWidth: true
             level: 1
             text: card.thing.title || ""
+            textFormat: Text.PlainText
             elide: Text.ElideMiddle
             color: card.thing.deleted ? Theme.muted : Theme.fg
         }
@@ -54,6 +55,7 @@ Panel {
                 bits.push(card.children_.total === 1 ? "1 item" : Fmt.number(card.children_.total) + " items")
             return bits.join("  ·  ")
         }
+        textFormat: Text.PlainText
         elide: Text.ElideMiddle
         maximumLineCount: 1
         wrapMode: Text.NoWrap
@@ -62,14 +64,17 @@ Panel {
     // Who made it, in words; the model's one line when there is one (greyed when stale)
     Body {
         text: [card.thing.made || "", card.thing.last || ""].filter(s => s).join(" ")
+        textFormat: Text.PlainText
         visible: text !== ""
         color: Theme.fg
     }
     Body {
         readonly property var d: card.description
         visible: !!d && (!!d.text || !!d.pending)
-        text: !d ? "" : (d.text ? d.text + (d.stale ? "  (out of date, rewriting)" : "")
+        // What a model wrote about it is a sentence, never markup.
+        text: !d ? "" : (d.text ? d.text + (d.stale ? (d.pending ? "  (out of date, rewriting)" : "  (out of date)") : "")
                                  : "Writing a line about it…")
+        textFormat: Text.PlainText
         color: !d || d.stale || !d.text ? Theme.faint : Theme.muted
         font.italic: true
     }
@@ -124,7 +129,7 @@ Panel {
             if (card.thing.deleted) return gone
             if (card.children_ && card.children_.items) return list
             switch (card.preview.type) {
-            case "text": return (card.thing.size || 0) > 2000000 ? tooBig : text
+            case "text": return backend.fileBytes(card.preview.path || card.thing.path || "") > 2000000 ? tooBig : text
             case "image": return image
             case "pdf": return pdf
             case "turn": case "fact": case "package": case "session": case "site": case "page": return words
@@ -149,7 +154,7 @@ Panel {
             Image {
                 anchors.fill: parent
                 anchors.margins: 8
-                source: card.preview.path ? "file://" + card.preview.path : ""
+                source: card.preview.path ? "file://" + card.preview.path.split("/").map(encodeURIComponent).join("/") : ""
                 fillMode: Image.PreserveAspectFit
                 asynchronous: true
                 sourceSize.width: 1600
@@ -163,11 +168,15 @@ Panel {
             id: page
             color: Theme.sunken
             radius: Theme.radiusSmall
-            property string url: backend.pdfPage(card.preview.path || "", card.thing.changed || 0)
+            property string url: backend.pdfPage(card.preview.path || "")
+            property bool failed: false
             Connections {
                 target: backend
                 function onPreviewReady(path) {
-                    if (path === card.preview.path) page.url = backend.pdfPage(path, card.thing.changed || 0)
+                    if (path === card.preview.path) page.url = backend.pdfPage(path)
+                }
+                function onPreviewFailed(path) {
+                    if (path === card.preview.path) page.failed = true
                 }
             }
             Image {
@@ -182,7 +191,9 @@ Panel {
                 anchors.centerIn: parent
                 width: implicitWidth
                 visible: page.url === ""
-                text: "Drawing the first page…"
+                horizontalAlignment: Text.AlignHCenter
+                text: page.failed || !backend.canDrawPdf ? "No picture of this one. Open it to read it."
+                                                         : "Drawing the first page…"
             }
         }
     }
@@ -191,10 +202,12 @@ Panel {
         ScrollPane {
             Body {
                 text: card.preview.text || ""
+                textFormat: Text.PlainText
                 visible: text !== ""
             }
             Mono {
                 text: card.preview.url || ""
+                textFormat: TextEdit.PlainText
                 visible: text !== ""
             }
         }
@@ -203,17 +216,23 @@ Panel {
         id: list
         ColumnLayout {
             spacing: 4
-            ItemList {
+            // A turn is a list of what it changed, and its summary is what it said it did.
+            Body {
+                visible: card.preview.type === "turn" && text !== ""
+                text: card.preview.text || ""
+                textFormat: Text.PlainText
+                color: Theme.muted
+            }
+            BrainList {
                 id: files
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                iconRole: "icon"
-                trailingRole: "trailing"
                 emptyText: card.thing.kind === "turn" ? "It changed no files." : "Nothing in here."
-                model: (card.children_.items || []).map(c => ({
-                    key: c.ref, ref: c.ref, title: c.name,
+                model: ((card.children_ && card.children_.items) || []).map(c => ({
+                    ref: c.ref, title: c.name,
                     subtitle: c.private ? "private" : (c.who || ""),
                     trailing: c.when || "",
+                    actor: c.private ? "" : (c.actor || ""),
                     icon: c.private ? "lock" : Who.icon(c.kind, c.name)
                 }))
                 onActivated: (i, item) => card.picked(item.ref)
@@ -222,16 +241,31 @@ Panel {
                     function onSelectChanged() { files.pick() }
                 }
                 onModelChanged: pick()
+                // Show in folder: the entry the thing in the middle came from.
                 function pick() {
                     if (!backend.select) return
                     for (let i = 0; i < model.length; i++)
-                        if (model[i].ref === backend.select) { currentIndex = i; return }
+                        if (model[i].ref === backend.select) {
+                            select(i)
+                            forceActiveFocus()
+                            backend.settled()
+                            return
+                        }
                 }
             }
-            Caption {
-                visible: card.children_.total > (card.children_.items || []).length
-                text: "Showing " + (card.children_.items || []).length + " of " + Fmt.number(card.children_.total)
-                      + ", newest first."
+            RowLayout {
+                Layout.fillWidth: true
+                visible: !!card.children_ && card.children_.total > (card.children_.items || []).length
+                Caption {
+                    Layout.fillWidth: true
+                    text: "Showing " + ((card.children_ && card.children_.items) || []).length + " of "
+                          + Fmt.number(card.children_ ? card.children_.total : 0) + ", folders first, then newest."
+                }
+                Button {
+                    flat: true
+                    text: "Show more"
+                    onClicked: backend.moreChildren()
+                }
             }
         }
     }

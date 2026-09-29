@@ -20,6 +20,10 @@ Why it is shaped this way:
 - Nothing waits for the brain. It answers from the index in milliseconds, a client that
   stops reading is dropped rather than slowing the others, and while the first index runs
   every question is answered from what is known so far.
+- brain.db is a cache. One that is damaged, at the start or later, is set aside as
+  brain.db.broken and made again from the files and the logs; a stop that may have left
+  saves unread (a kill, or a save just before it) makes the next start walk once the
+  watcher's replay of what it spooled has ended.
 - It never has to be right about what it did not see. What a walk finds without a witness
   is "there before the brain" or "while the brain was not watching", never a guess.
 """
@@ -49,6 +53,7 @@ PUSH_S = 0.25            # "changed" goes out at most four times a second
 RECONNECT_S = 2.0
 HELLO_S = 2.0            # a watcher that has not said hello by then does not hold the start up
 QUIET_S = 1.0            # no line from the watcher for this long: its replay of what it spooled is over
+BUSY_S = 0.5             # a stop this soon after a save may leave saves unread on the socket
 LOOK_S = 60.0            # without a watcher: how often History and the logs are looked at
 STATUS_S = 1.0           # progress pushes, at most once a second
 REQUESTED_S = 120.0      # how long a thing the launcher asked for waits for the Brain app to start
@@ -208,6 +213,7 @@ class Brain:
         self._was: str | None = None         # how the last run ended: "running" means it did not
         self._clean = False
         self._read_at = 0.0                  # loop time of the last bytes from the watcher
+        self._saw_at = -BUSY_S               # ... and of the last save among them
         self._damaged_at = -DAMAGED_S
         self._history_task: asyncio.Task | None = None
         self._history_busy = False
@@ -372,6 +378,9 @@ class Brain:
         return server
 
     async def _close(self, server) -> None:
+        # Saves still on their way from the watcher are lost with the socket; a stop right
+        # after one leaves the next start to walk.
+        busy = self.watched and self.loop.time() - self._saw_at < BUSY_S
         self._stopping.set()
         tasks = list(self._tasks)
         for task in tasks:
@@ -379,11 +388,11 @@ class Brain:
         await asyncio.gather(*tasks, return_exceptions=True)
         # Saves already read from the watcher are ours now: it does not send them again.
         pending, self._batch = self._batch, []
-        self._clean = True
+        self._clean = not busy
         if pending and self.store is not None:
             try:
                 control, _ = await self.job(self._apply, pending)
-                self._clean = not ({"overflow", "caught_up"} & set(control))
+                self._clean = self._clean and not ({"overflow", "caught_up"} & set(control))
             except Exception as e:  # noqa: BLE001 - the next start walks instead
                 log(f"closing: could not apply {len(pending)} saves ({type(e).__name__}: {e})")
                 self._clean = False
@@ -748,6 +757,7 @@ class Brain:
                     if not batch:
                         began = self.loop.time()
                     batch.append(ev)
+                    self._saw_at = self.loop.time()
             if len(buf) > LINE_LIMIT:
                 log("the watcher sent a line too long to be one; skipping it")
                 buf = b""
@@ -850,7 +860,8 @@ class Brain:
         if not failed:
             what = "the first index" if kind == "first" else "catching up"
             took = f"{time.monotonic() - t0:.1f} s"
-            log(f"{what} stopped after {took}" if (result or {}).get("stopped") else f"{what} took {took}: {result}")
+            stopped = (result or {}).get("stopped")
+            log(f"{what} stopped after {took}" if stopped else f"{what} took {took}: {result}")
         self._to_loop(self._walk_done, kind, result, failed)
 
     def _walked(self, walker, done, total) -> None:
@@ -1028,7 +1039,8 @@ class Brain:
         q = req.get("q")
         kind = req.get("kind")
         return await self.job(self._search, q if isinstance(q, str) else "",
-                              kind if isinstance(kind, str) and kind else None, _int(req.get("limit"), 20, 1, 200))
+                              kind if isinstance(kind, str) and kind else None,
+                              _int(req.get("limit"), 20, 1, 200))
 
     async def _op_recent(self, req, conn):
         return await self.job(self._recent, _int(req.get("limit"), 20, 1, 200))
@@ -1061,9 +1073,12 @@ class Brain:
             prompt = req.get("prompt")
             prompt = prompt[:PROMPT_MAX] if isinstance(prompt, str) and prompt.strip() else None
             t = _float(req.get("t")) or time.time()
-            await self.job(self.ingest.turn, n, unit, prompt, t)
+            await self.job(self.ingest.turn_started, n, unit, prompt, t)
             return {"noted": kind, "n": n}
         if kind == "turn_end":
+            n = req.get("n")
+            n = n if isinstance(n, int) and not isinstance(n, bool) else None
+            await self.job(self.ingest.turn_ended, None, n)
             if self.turns is not None:
                 await self.job(self._safely, "turns.jsonl", self.turns.read_new)
             return {"noted": kind}
@@ -1145,8 +1160,9 @@ class Brain:
         return {"items": [self._item(t) for t in rows]}
 
     def _recent(self, limit: int) -> dict:
-        rows = self.store.q("SELECT * FROM things WHERE deleted IS NULL AND forgotten = 0 AND touched IS NOT NULL "
-                            "AND kind NOT IN ('system', 'site') ORDER BY touched DESC LIMIT ?", (limit,))
+        rows = self.store.q("SELECT * FROM things WHERE deleted IS NULL AND forgotten = 0 "
+                            "AND touched IS NOT NULL AND kind NOT IN ('system', 'site') "
+                            "ORDER BY touched DESC LIMIT ?", (limit,))
         return {"items": [self._item(t) for t in rows]}
 
     def _item(self, t: dict) -> dict:
@@ -1154,9 +1170,9 @@ class Brain:
         from . import focus, words
         at = t["touched"] or t["changed"] or t["created"]
         where = self._where(t)
-        return {"id": t["id"], "ref": focus.ref_of(t), "title": focus.title_of(self.store, t), "kind": t["kind"],
-                "path": t["path"], "url": t["url"], "where": where, "why": where, "t": at,
-                "when": words.when(at), "private": bool(t["private"]), "deleted": t["deleted"]}
+        return {"id": t["id"], "ref": focus.ref_of(t), "title": focus.title_of(self.store, t),
+                "kind": t["kind"], "path": t["path"], "url": t["url"], "where": where, "why": where,
+                "t": at, "when": words.when(at), "private": bool(t["private"]), "deleted": t["deleted"]}
 
     def _where(self, t: dict) -> str:
         from . import focus
@@ -1222,7 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
     except AlreadyRunning as e:
         log(str(e))
         return 1
-    except OSError as e:   # no room for brain.db, or nowhere to answer
+    except (OSError, sqlite3.Error) as e:   # no room for brain.db, it is locked, or nowhere to answer
         log(f"cannot start: {e}")
         return 1
     except KeyboardInterrupt:

@@ -12,7 +12,12 @@ Both walks yield to everything else: they run in their own thread at nice 10 and
 priority, commit ~500 entries at a time so the live stream never waits long for the write
 lock, stop between batches when asked, and prune what a person would not call a thing
 (caches, most dot-folders, git-ignored files, node_modules) before reading it. A folder of
-more than MAX_ENTRIES entries is generated data: one thing that says how many files it has.
+more than MAX_ENTRIES entries is generated data: one thing that says how many files it has
+(home itself never is one).
+
+A home that cannot be read (not mounted yet, gone) is an error, not an empty index: the walk
+raises OSError before it writes anything, so "indexed" is never set for a home nobody saw and a
+reconcile never marks everything gone. The service logs it and tries again later.
 """
 
 import ctypes
@@ -155,7 +160,8 @@ class Walker:
                 if is_dir:
                     deferred_dirs.add(path)
                 return True
-            if thing is not None and not is_dir and thing["kind"] == "file" and self._unseen_save(thing, st, started):
+            if thing is not None and not is_dir and thing["kind"] == "file" \
+                    and self._unseen_save(thing, st, started):
                 self.ingest.saw(path, "offline", st.st_mtime, UNKNOWN, size=st.st_size, ino=st.st_ino)
                 counts["changed"] += 1
             tid = self._found(path, st, is_dir, thing is None, indexed)
@@ -253,7 +259,8 @@ class Walker:
                 return same_name[0]
             if same_name:
                 return None
-            known = {os.path.basename(r["path"] or "") for r in self.store.children(thing["id"], live=False, limit=200)}
+            kids = self.store.children(thing["id"], live=False, limit=200)
+            known = {os.path.basename(r["path"] or "") for r in kids}
             fits = []
             for c in cands:
                 try:
@@ -273,8 +280,8 @@ class Walker:
 
         if same_name:
             # A different file made later under the same name has neither.
-            return same_name[0] if len(same_name) == 1 and (unedited(same_name[0]) or same_size(same_name[0])) \
-                else None
+            one = same_name[0] if len(same_name) == 1 else None
+            return one if one is not None and (unedited(one) or same_size(one)) else None
         fits = [c for c in cands if same_size(c) and unedited(c)]
         return fits[0] if len(fits) == 1 else None
 

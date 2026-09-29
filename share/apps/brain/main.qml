@@ -18,8 +18,16 @@ AppWindow {
             id: search
             Layout.preferredWidth: 280; Layout.fillWidth: false
             placeholderText: "Find anything"
-            onTextChanged: backend.search(text)
-            onAccepted: if (backend.results.length > 0) win.pickResult(backend.results[0])
+            onTextChanged: { win.wantFirst = false; backend.search(text) }
+            // Enter opens the first match, once the matches are for what is typed now.
+            onAccepted: {
+                if (backend.resultsFor === text.trim()) {
+                    if (backend.results.length > 0) win.pickResult(backend.results[0])
+                } else if (text.trim() !== "") {
+                    win.wantFirst = true
+                    backend.searchNow()
+                }
+            }
             Keys.onDownPressed: if (found.visible) { results.forceActiveFocus(); results.currentIndex = 0 }
         }
     ]
@@ -29,10 +37,13 @@ AppWindow {
     readonly property var thing: answer ? (answer.thing || {}) : {}
     readonly property bool sides: win.count(slots.came_from) + win.count(slots.read_with) > 0
     readonly property int shown: backend.expanded ? 50 : 5
+    property bool wantFirst: false
 
     function count(slot) { return slot && slot.items ? slot.items.length : 0 }
     function pickResult(item) {
+        win.wantFirst = false
         search.text = ""
+        search.forceActiveFocus()   // the list the pick came from must not keep the drop-down open
         backend.open(item.ref)
     }
 
@@ -40,6 +51,12 @@ AppWindow {
         target: backend
         function onShowRequested() { App.show() }
         function onToast(text, tone) { win.toast(text, tone) }
+        function onResultsChanged() {
+            if (win.wantFirst && backend.resultsFor === search.text.trim()) {
+                win.wantFirst = false
+                if (backend.results.length > 0) win.pickResult(backend.results[0])
+            }
+        }
     }
     Shortcut { sequence: "Alt+Left"; onActivated: backend.back() }
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.refresh() }
@@ -55,9 +72,10 @@ AppWindow {
         Layout.fillWidth: true; Layout.fillHeight: true
         visible: !backend.connected
         icon: "network"
-        title: "The brain is not running yet"
-        text: "It starts with your session and learns from every save, download and turn. "
-              + "This fills in as soon as it answers."
+        title: win.answer ? "The brain went away" : "The brain is not running yet"
+        text: win.answer ? "This comes back where you were as soon as it answers again."
+                         : "It starts with your session and learns from every save, download and turn. "
+                           + "This fills in as soon as it answers."
     }
 
     EmptyState {
@@ -79,13 +97,13 @@ AppWindow {
 
     Changes {
         Layout.fillWidth: true
-        visible: !!win.answer
+        visible: backend.connected && !!win.answer
         changes: win.slots.changes || null
     }
 
     RowLayout {
         Layout.fillWidth: true; Layout.fillHeight: true
-        visible: !!win.answer
+        visible: backend.connected && !!win.answer
         spacing: Theme.gap
 
         Slot {
@@ -118,7 +136,7 @@ AppWindow {
 
     Slot {
         Layout.fillWidth: true
-        visible: !!win.answer && win.count(win.slots.used_with) > 0
+        visible: backend.connected && !!win.answer && win.count(win.slots.used_with) > 0
         label: "Used with"
         columns: 3
         links: win.slots.used_with || null
@@ -138,18 +156,18 @@ AppWindow {
         padding: 8
         visible: search.text !== "" && search.activeFocus || results.activeFocus
         closePolicy: Popup.NoAutoClose
-        ItemList {
+        BrainList {
             id: results
             anchors.fill: parent
-            iconRole: "icon"
-            trailingRole: "trailing"
             emptyText: "Nothing matches “" + search.text + "” yet."
             model: backend.results.map(r => ({
-                key: r.ref, ref: r.ref, title: r.title,
+                ref: r.ref, title: r.title,
                 subtitle: r.why || r.path || "", trailing: r.when || "",
                 icon: Who.icon(r.kind, r.title)
             }))
             onActivated: (i, item) => win.pickResult(item)
+            // Esc would hide the window (the kit binds it) unless the list claims it first.
+            Keys.onShortcutOverride: event => event.accepted = event.key === Qt.Key_Escape
             Keys.onEscapePressed: { search.text = ""; search.forceActiveFocus() }
         }
     }

@@ -10,6 +10,8 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
+import shutil
 import signal
 import socket
 import sqlite3
@@ -246,8 +248,10 @@ def test_search_recent_thing_and_children(home, h):
     with running(make_brain(home)):
         found = ask("search", q="lease")["items"]
         assert [i["title"] for i in found] == ["lease-2026.pdf"]
-        assert found[0]["where"] == "Documents" and found[0]["when"] and found[0]["ref"].endswith("lease-2026.pdf")
-        assert ask("search", q="le")["items"][0]["title"] == "lease-2026.pdf"   # under three letters: a prefix
+        assert found[0]["where"] == "Documents" and found[0]["when"]
+        assert found[0]["ref"].endswith("lease-2026.pdf")
+        # Under three letters: a prefix.
+        assert ask("search", q="le")["items"][0]["title"] == "lease-2026.pdf"
         assert ask("search", q="   ")["items"] == []
         assert ask("search", q='" OR ') == {"items": []}
         thing = ask("thing", ref="~/notes.md")
@@ -314,17 +318,20 @@ def test_logs_are_read_at_start(home, h):
     made = h / "setup-wg.sh"
     made.write_text("#!/bin/sh\n")
     t = time.time() - 60
-    row = {"n": 41, "t": t, "started": t - 5, "prompt": "install the VPN", "unit": TURN_UNIT, "provider": "claude",
-           "ok": True, "summary": "Installed WireGuard.", "files": {"wrote": [str(made)], "read": []}}
+    row = {"n": 41, "t": t, "started": t - 5, "prompt": "install the VPN", "unit": TURN_UNIT,
+           "provider": "claude", "ok": True, "summary": "Installed WireGuard.",
+           "files": {"wrote": [str(made)], "read": []}}
     paths.state_dir().mkdir(parents=True)
     paths.turns_log().write_text(json.dumps(row) + "\n")
-    (home / "pacman.log").write_text("[2026-09-27T10:00:00+0000] [ALPM] installed wireguard-tools (1.0.20210914-3)\n")
+    (home / "pacman.log").write_text(
+        "[2026-09-27T10:00:00+0000] [ALPM] installed wireguard-tools (1.0.20210914-3)\n")
     (h / "memory.md").write_text("- Daniel likes short answers\n")
     with running(make_brain(home)):
         assert ask("thing", ref="turn:41")["title"] == "install the VPN"
         assert ask("why", ref=str(made)).startswith("Made by the machine in turn 41, “install the VPN”")
         assert ask("thing", ref="package:wireguard-tools")["kind"] == "package"
-        assert [i["title"] for i in ask("search", q="short answers")["items"]] == ["Daniel likes short answers"]
+        found = ask("search", q="short answers")["items"]
+        assert [i["title"] for i in found] == ["Daniel likes short answers"]
 
 
 def test_turn_end_reads_the_new_row(home, h):
@@ -361,7 +368,8 @@ def test_watcher_batches_wake_the_witnesses_and_rename_apps(home, h):
             assert ask("thing", ref="app:notes")["title"] == "Notes"
             (app / "app.toml").write_text('title = "Field notes"\n')
             with paths.turns_log().open("a") as f:
-                f.write(json.dumps({"n": 5, "t": time.time(), "prompt": "rename my notes app", "files": {}}) + "\n")
+                row = {"n": 5, "t": time.time(), "prompt": "rename my notes app", "files": {}}
+                f.write(json.dumps(row) + "\n")
             watcher.send(ev("write", app / "app.toml"), ev("write", paths.turns_log(), TURN_CG, SH))
             until(lambda: ask("thing", ref="app:notes")["title"] == "Field notes")
             until(lambda: ask("thing", ref="turn:5")["title"] == "rename my notes app")
@@ -375,10 +383,12 @@ def test_pacman_lines_belong_to_the_turn_that_wrote_them(home, h):
     try:
         with running(make_brain(home, watch_path=watcher.path, walk=False)):
             until(lambda: ask("status")["watching"])
-            ask("note", kind="turn_start", n=9, unit=TURN_UNIT + ".scope", prompt="install qemu", t=time.time())
+            ask("note", kind="turn_start", n=9, unit=TURN_UNIT + ".scope", prompt="install qemu",
+                t=time.time())
             stamp = time.strftime("%Y-%m-%dT%H:%M:%S+0000", time.gmtime())
             (home / "pacman.log").write_text(f"[{stamp}] [ALPM] installed qemu-full (9.1.0-1)\n")
-            watcher.send(ev("write", home / "pacman.log", TURN_CG, [[20, "pacman", "pacman -S qemu-full"]] + SH))
+            chain = [[20, "pacman", "pacman -S qemu-full"]] + SH
+            watcher.send(ev("write", home / "pacman.log", TURN_CG, chain))
             focus = until(lambda: ask("focus", ref="package:qemu-full"))
             assert focus["thing"]["made"].startswith("Installed by the machine in turn 9")
     finally:
@@ -458,7 +468,8 @@ def test_changed_pushes_are_throttled(home, h):
 
 def test_rebuild_starts_over(home, h):
     paths.state_dir().mkdir(parents=True)
-    paths.turns_log().write_text(json.dumps({"n": 3, "t": time.time(), "prompt": "hello", "files": {}}) + "\n")
+    row = {"n": 3, "t": time.time(), "prompt": "hello", "files": {}}
+    paths.turns_log().write_text(json.dumps(row) + "\n")
     with running(make_brain(home)):
         before = ask("thing", ref=str(h / "notes.md"))["id"]
         with client.Connection() as conn:
@@ -517,6 +528,7 @@ def test_a_stop_applies_the_saves_it_had_read(home, h, monkeypatch):
             letter.write_text("hi")
             watcher.send(ev("create", letter))
             until(lambda: brain._batch)   # read from the watcher, which will not send it again
+        assert meta("brain.run") == "running"   # stopped right after a save: the next start walks too
         db = sqlite3.connect(paths.brain_db())
         try:
             assert db.execute("SELECT COUNT(*) FROM things WHERE path = ?", (str(letter),)).fetchone()[0] == 1
@@ -551,6 +563,14 @@ def test_a_run_that_was_cut_off_walks_again_after_the_replay(home, h, monkeypatc
         watcher.close()
 
 
+def test_a_database_that_cannot_be_opened_is_one_line_and_exit_1(home, monkeypatch, capsys):
+    (home / "state" / "brain.db").mkdir(parents=True)   # a folder where the file should be
+    monkeypatch.setenv("BOMBADIL_WATCH_SOCKET", str(home / "none.sock"))
+    assert service.main([]) == 1
+    err = capsys.readouterr().err
+    assert "cannot start:" in err and "Traceback" not in err
+
+
 def test_sigterm_closes_cleanly(home, h):
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src"), "BOMBADIL_WATCH_SOCKET": str(home / "none.sock")}
     proc = subprocess.Popen([sys.executable, str(ROOT / "bin" / "bombadil-brain")], env=env, cwd=str(home),
@@ -564,6 +584,28 @@ def test_sigterm_closes_cleanly(home, h):
             proc.kill()
     assert not paths.brain_socket().exists()
     assert "answering on" in proc.stderr.read()
+
+
+# -- the ISO --
+
+def test_the_iso_starts_the_brain_and_puts_both_programs_on_path():
+    etc = ROOT / "iso" / "airootfs" / "etc" / "systemd" / "user"
+    unit = (etc / "bombadil-brain.service").read_text()
+    assert "\nExecStart=/usr/local/bin/bombadil-brain\n" in unit and "\nWantedBy=default.target\n" in unit
+    link = etc / "default.target.wants" / "bombadil-brain.service"
+    assert link.is_symlink() and os.readlink(link) == "../bombadil-brain.service"
+    assert link.resolve() == (etc / "bombadil-brain.service").resolve()
+    loop = re.search(r"^for b in ([^;]+); do$", (ROOT / "scripts" / "build-iso.sh").read_text(), re.M)
+    assert {"bombadil-brain", "bombadil-brain-watch"} <= set(loop.group(1).split())
+    for name in ("bombadil-brain", "bombadil-brain-watch"):
+        assert os.access(ROOT / "bin" / name, os.X_OK)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_the_smoke_script_parses_and_looks_for_both_programs():
+    smoke = ROOT / "iso" / "airootfs" / "usr" / "local" / "bin" / "bombadil-smoke"
+    assert subprocess.run(["bash", "-n", str(smoke)], capture_output=True, check=False).returncode == 0
+    assert "bombadil-brain bombadil-brain-watch; do command -v" in smoke.read_text()
 
 
 # -- bombadil brain --
@@ -614,17 +656,21 @@ def test_cli_focus_lines():
                    "made": "You made it in the terminal on 3 Sep.",
                    "last": "Last changed by the machine in turn 44, today at 10:02."},
          "description": {"text": "Takes and prunes snapper snapshots.", "stale": True, "pending": True},
-         "slots": {"came_from": {"items": [{"title": "the machine, turn 12", "why": "“drop the old cleanup”, 13:02",
-                                            "when": "13:02"}], "more": 2},
-                   "read_with": {"items": [{"title": "Snapper - ArchWiki", "why": "open while you changed this",
-                                            "when": "Tue 14:02"}], "more": 0},
+         "slots": {"came_from": {"items": [{"title": "the machine, turn 12",
+                                            "why": "“drop the old cleanup”, 13:02", "when": "13:02"}],
+                                 "more": 2},
+                   "read_with": {"items": [{"title": "Snapper - ArchWiki",
+                                            "why": "open while you changed this", "when": "Tue 14:02"}],
+                                 "more": 0},
                    "used_with": {"items": [], "more": 0},
-                   "changes": {"count_week": 7, "items": [{"when": "10:02", "why": "changed by the machine in turn 44"}],
+                   "changes": {"count_week": 7,
+                               "items": [{"when": "10:02", "why": "changed by the machine in turn 44"}],
                                "more": 6}},
          "children": None}
     assert cli().focus_lines(f) == [
-        "snapshots.py", "/home/user/Projects/bombadil/snapshots.py", "You made it in the terminal on 3 Sep.",
-        "Last changed by the machine in turn 44, today at 10:02.", "“Takes and prunes snapper snapshots.” (out of date)",
+        "snapshots.py", "/home/user/Projects/bombadil/snapshots.py",
+        "You made it in the terminal on 3 Sep.", "Last changed by the machine in turn 44, today at 10:02.",
+        "“Takes and prunes snapper snapshots.” (out of date)",
         "", "Came from", "  the machine, turn 12 · “drop the old cleanup”, 13:02", "  and 2 more",
         "", "Read with", "  Snapper - ArchWiki · open while you changed this · Tue 14:02",
         "", "Changes (7 this week)", "  10:02 · changed by the machine in turn 44", "  and 6 more"]
@@ -665,9 +711,10 @@ def test_end_to_end_from_the_watcher_to_the_answers(home, h):
                              ev("create", letter), ev("write", letter))
                 wg_id = until(lambda: ask("thing", ref=str(wg)))["id"]
                 letter_id = until(lambda: ask("thing", ref=str(letter)))["id"]
-                wait_push(conn, "changed", lambda p: {wg_id, letter_id} <= set(p["things"]) or wg_id in p["things"])
+                wait_push(conn, "changed", lambda p: wg_id in p["things"])
 
-                assert ask("why", ref=str(wg)).startswith("Made by the machine in turn 7, “install the VPN”, today at")
+                assert ask("why", ref=str(wg)).startswith(
+                    "Made by the machine in turn 7, “install the VPN”, today at")
                 moved = h / "Documents" / "letter-final.txt"
                 letter.rename(moved)
                 watcher.send(ev("rename", moved, old=str(letter)))
@@ -677,7 +724,8 @@ def test_end_to_end_from_the_watcher_to_the_answers(home, h):
                 assert ask("why", ref=str(moved)).startswith("You made it in the terminal today at")
 
                 found = ask("search", q="setup")["items"]
-                assert [(i["title"], i["where"], i["kind"]) for i in found] == [("setup-wg.sh", "Home", "file")]
+                assert [(i["title"], i["where"], i["kind"]) for i in found] == [
+                    ("setup-wg.sh", "Home", "file")]
                 turn = ask("focus", ref="turn:7")
                 assert turn["thing"]["title"] == "install the VPN"
                 assert "setup-wg.sh" in [c["name"] for c in turn["children"]["items"]]

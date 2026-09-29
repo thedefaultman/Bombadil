@@ -51,7 +51,8 @@ def test_turns_legacy_rows_are_numbered_in_order_and_launcher_rows_skipped(home,
     assert tl.read_new() == 0   # nothing new
 
     # agentd after this change writes "n"; a later legacy-style row never collides with it
-    _write(log, [{"t": NOW - 50, "n": 7, "prompt": "numbered", "started": NOW - 60, "unit": "bombadil-turn-7-1"},
+    _write(log, [{"t": NOW - 50, "n": 7, "prompt": "numbered", "started": NOW - 60,
+                  "unit": "bombadil-turn-7-1"},
                  {"t": NOW - 10, "prompt": "no number"}])
     assert TurnsLog(ing).read_new() == 2
     assert ing.store.turn(7)["unit"] == "bombadil-turn-7-1"
@@ -61,7 +62,8 @@ def test_turns_legacy_rows_are_numbered_in_order_and_launcher_rows_skipped(home,
 
 def test_turns_half_written_line_waits_and_bad_rows_are_skipped(home, ing):
     log = home / "state" / "turns.jsonl"
-    log.write_text('{"t": 1, "n": 1, "prompt": "one"}\nnot json\n[1, 2]\n{"t": "soon", "n": 2, "prompt": "bad t"}\n'
+    log.write_text('{"t": 1, "n": 1, "prompt": "one"}\nnot json\n[1, 2]\n'
+                   '{"t": "soon", "n": 2, "prompt": "bad t"}\n'
                    '{"t": 5, "n": 3, "prompt": "thr')
     tl = TurnsLog(ing)
     assert tl.read_new() == 1
@@ -76,8 +78,9 @@ def test_turns_half_written_line_waits_and_bad_rows_are_skipped(home, ing):
 
 
 def test_turns_row_with_an_absurd_number_is_skipped_not_stuck(home, ing):
-    _write(home / "state" / "turns.jsonl", [{"t": 1, "n": 10**30, "prompt": "corrupt"}, {"t": 2, "prompt": "b"},
-                                            {"t": 3, "n": 9e18, "prompt": "too big for sqlite"}])
+    _write(home / "state" / "turns.jsonl",
+           [{"t": 1, "n": 10**30, "prompt": "corrupt"}, {"t": 2, "prompt": "b"},
+            {"t": 3, "n": 9e18, "prompt": "too big for sqlite"}])
     assert TurnsLog(ing).read_new() == 1
     assert ing.store.turn(2)["prompt"] == "b"
     assert TurnsLog(ing).read_new() == 0
@@ -124,7 +127,8 @@ def test_turns_start_over_when_the_log_is_replaced(home, ing):
     assert tl.read_new() == 1
     assert ing.store.turn(1)["prompt"] == "fresh"
     # same size or longer but a different first line: also a new log
-    log.write_text(json.dumps({"t": 5, "prompt": "other"}) + "\n" + json.dumps({"t": 6, "prompt": "x"}) + "\n")
+    log.write_text(json.dumps({"t": 5, "prompt": "other"}) + "\n" + json.dumps({"t": 6, "prompt": "x"})
+                   + "\n")
     assert tl.read_new() == 2
     assert ing.store.turn(1)["prompt"] == "other"
 
@@ -133,7 +137,8 @@ def test_turns_row_files_make_things(home, ing):
     f = home / "setup-wg.sh"
     f.write_text("#!/bin/sh\n")
     _write(home / "state" / "turns.jsonl",
-           [{"t": NOW, "n": 41, "prompt": "install the VPN", "started": NOW - 30, "files": {"wrote": [str(f)]}}])
+           [{"t": NOW, "n": 41, "prompt": "install the VPN", "started": NOW - 30,
+             "files": {"wrote": [str(f)]}}])
     assert TurnsLog(ing).read_new() == 1
     thing = ing.store.by_path(str(f))
     assert thing["made_by"] == "turn"
@@ -159,7 +164,8 @@ CREATE TABLE urls(id INTEGER PRIMARY KEY AUTOINCREMENT, url LONGVARCHAR, title L
 CREATE TABLE visits(id INTEGER PRIMARY KEY AUTOINCREMENT, url INTEGER NOT NULL, visit_time INTEGER NOT NULL,
   from_visit INTEGER, external_referrer_url TEXT, transition INTEGER DEFAULT 0 NOT NULL, segment_id INTEGER,
   visit_duration INTEGER DEFAULT 0 NOT NULL, incremented_omnibox_typed_score BOOLEAN DEFAULT FALSE NOT NULL,
-  opener_visit INTEGER, originator_cache_guid TEXT, originator_visit_id INTEGER, originator_from_visit INTEGER,
+  opener_visit INTEGER, originator_cache_guid TEXT, originator_visit_id INTEGER,
+  originator_from_visit INTEGER,
   originator_opener_visit INTEGER, is_known_to_sync BOOLEAN DEFAULT FALSE NOT NULL,
   consider_for_ntp_most_visited BOOLEAN DEFAULT FALSE NOT NULL, visited_link_id INTEGER DEFAULT 0 NOT NULL,
   app_id TEXT);
@@ -203,15 +209,17 @@ class FakeChromium:
                                   "VALUES(?, ?, 1, ?, ?)", (url, title, chrome(t), hidden)).lastrowid
         else:
             uid = row[0]
-            self.db.execute("UPDATE urls SET title = ?, last_visit_time = ? WHERE id = ?", (title, chrome(t), uid))
-        return self.db.execute("INSERT INTO visits(url, visit_time, transition, visit_duration) VALUES(?, ?, ?, ?)",
+            self.db.execute("UPDATE urls SET title = ?, last_visit_time = ? WHERE id = ?",
+                            (title, chrome(t), uid))
+        return self.db.execute("INSERT INTO visits(url, visit_time, transition, visit_duration) "
+                               "VALUES(?, ?, ?, ?)",
                                (uid, chrome(t), transition, int(seconds * 1_000_000))).lastrowid
 
     def download(self, target, chain, tab_url, t, state=1, referrer=""):
         did = (self.db.execute("SELECT MAX(id) FROM downloads").fetchone()[0] or 0) + 1
         self.db.execute(
-            "INSERT INTO downloads VALUES(?, ?, ?, ?, ?, 10, 10, ?, 0, 0, x'', ?, 0, 0, 0, ?, '', '', ?, '', 'GET', "
-            "'', '', '', '', 'application/pdf', 'application/pdf')",
+            "INSERT INTO downloads VALUES(?, ?, ?, ?, ?, 10, 10, ?, 0, 0, x'', ?, 0, 0, 0, ?, '', '', ?, '', "
+            "'GET', '', '', '', '', 'application/pdf', 'application/pdf')",
             (did, f"guid-{did}", target + ".crdownload", target, chrome(t - 5), state,
              chrome(t) if state == 1 else 0, referrer, tab_url))
         for i, url in enumerate(chain):
@@ -244,7 +252,7 @@ def test_history_imports_visits_with_times_and_durations(home, ing):
     ch.visit("https://rent-portal.example/lease#terms", "Lease renewal 2026", NOW - 600, seconds=95.5)
     ch.visit("https://www.rent-portal.example/login", "Sign in", NOW - 700, transition=TYPED)
     ch.visit("https://ads.example/frame", "ad", NOW - 650, transition=3 | 0x30000000)        # a subframe
-    ch.visit("https://t.co/abc", "", NOW - 640, transition=0x10000000)                        # redirect's first hop
+    ch.visit("https://t.co/abc", "", NOW - 640, transition=0x10000000)                        # first hop
     ch.visit("https://example.org/landed", "Landed", NOW - 639, transition=0x20000000 | 0x80000000)
     ch.visit("https://hidden.example/", "hidden", NOW - 630, hidden=1)
     ch.visit("chrome://settings/", "Settings", NOW - 620)
@@ -299,7 +307,8 @@ def test_history_first_import_of_a_big_history_starts_a_month_back(home, ing, mo
 
 def test_history_reused_visit_ids_are_still_seen(home, ing):
     ch = _chromium(home)
-    ch.db.executescript("DROP TABLE visits; CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER NOT NULL, "
+    ch.db.executescript("DROP TABLE visits; "
+                        "CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER NOT NULL, "
                         "visit_time INTEGER NOT NULL, transition INTEGER DEFAULT 0 NOT NULL, "
                         "visit_duration INTEGER DEFAULT 0 NOT NULL)")
     ch.visit("https://a.example/", "a", NOW - 100)
@@ -388,12 +397,12 @@ def test_history_download_from_a_chrome_tab_comes_from_its_referrer_and_keeps_no
     dl.mkdir()
     (dl / "chart.png").write_bytes(b"png")
     ch = _chromium(home)
-    ch.download(str(dl / "chart.png"), ["data:image/png;base64," + "A" * 200_000], "chrome://downloads/", NOW - 10,
-                referrer="https://mirror.example/gallery")
+    ch.download(str(dl / "chart.png"), ["data:image/png;base64," + "A" * 200_000], "chrome://downloads/",
+                NOW - 10, referrer="https://mirror.example/gallery")
     assert History(ing).import_new(now=NOW) == 1
     thing = ing.store.by_path(str(dl / "chart.png"))
     ev = _events(ing, thing["id"], "download")[0]
-    assert ev["detail"]["url"] == ""                                        # not stored: it is the file itself
+    assert ev["detail"]["url"] == ""    # not stored: it is the file itself
     assert ev["other"] == _thing(ing, "url:https://mirror.example/gallery")["id"]
 
 
@@ -503,8 +512,8 @@ def test_pacman_times_and_parsing():
     assert witnesses.pacman_time("2026-09-27T10:00:00-0500") == t + 7 * 3600
     assert witnesses.pacman_time("2019-01-05 10:00") == time.mktime((2019, 1, 5, 10, 0, 0, 0, 0, -1))
     assert witnesses.pacman_time("yesterday") is None
-    assert witnesses.parse_pacman("[2026-09-27T10:00:04+0200] [ALPM] upgraded linux (6.10.1-1 -> 6.10.2-1)\n") == \
-        ("linux", "6.10.2-1", "upgrade", t + 4)
+    line = "[2026-09-27T10:00:04+0200] [ALPM] upgraded linux (6.10.1-1 -> 6.10.2-1)\n"
+    assert witnesses.parse_pacman(line) == ("linux", "6.10.2-1", "upgrade", t + 4)
     assert witnesses.parse_pacman("[2026-09-27T10:00:04+0200] [PACMAN] installed x (1)") is None
     assert witnesses.parse_pacman("[2026-09-27T10:00:04+0200] [ALPM-SCRIPTLET] installed x (1)") is None
 
@@ -587,7 +596,8 @@ def test_pacman_first_read_of_a_huge_log_is_quick(home, ing):
     log = home / "pacman.log"
     with log.open("w") as f:
         for i in range(60_000):
-            f.write(_alpm(now - 1000 * 86400 + i * 60, "upgraded", f"pkg-{i % 500}", f"1.{i}-1 -> 1.{i + 1}-1"))
+            f.write(_alpm(now - 1000 * 86400 + i * 60, "upgraded", f"pkg-{i % 500}",
+                          f"1.{i}-1 -> 1.{i + 1}-1"))
     t0 = time.monotonic()
     assert PacmanLog(ing, log).read_new() == 500
     assert time.monotonic() - t0 < 5

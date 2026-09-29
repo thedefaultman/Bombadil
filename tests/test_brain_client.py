@@ -51,7 +51,8 @@ class FakeBrain:
                     self.seen.append(req)
                     for msg in self.reply(req) or []:
                         try:
-                            conn.sendall((msg if isinstance(msg, bytes) else json.dumps(msg).encode()) + b"\n")
+                            data = msg if isinstance(msg, bytes) else json.dumps(msg).encode()
+                            conn.sendall(data + b"\n")
                         except OSError:
                             return
 
@@ -90,8 +91,9 @@ def test_not_running_is_one_sentence(sock):
 
 def test_answer_skips_pushes_and_stale_answers(sock):
     def reply(req):
-        return [{"push": "changed", "things": [1], "t": 1.0}, {"id": req["id"] + 100, "ok": True, "result": "old"},
-                b"not json", b"[1, 2]", {"id": req["id"], "ok": True, "result": {"text": "Knows 3 things."}}]
+        return [{"push": "changed", "things": [1], "t": 1.0},
+                {"id": req["id"] + 100, "ok": True, "result": "old"}, b"not json", b"[1, 2]",
+                {"id": req["id"], "ok": True, "result": {"text": "Knows 3 things."}}]
 
     fake = FakeBrain(sock, reply)
     try:
@@ -120,7 +122,8 @@ def test_pushes_nobody_listens_to_do_not_pile_up(sock):
 
 
 def test_a_no_carries_the_brains_sentence(sock):
-    fake = FakeBrain(sock, lambda req: [{"id": req["id"], "ok": False, "error": "The brain does not know this yet."}])
+    fake = FakeBrain(sock, lambda req: [{"id": req["id"], "ok": False,
+                                         "error": "The brain does not know this yet."}])
     try:
         with pytest.raises(client.BrainError) as e:
             client.request("focus", ref="/nope")

@@ -10,6 +10,10 @@ RowLayout {
     property var steps: []
     signal jumped(int index)
     spacing: 2
+    // A bar never takes free height. Saying so also keeps the kit's Panel/AppWindow `_grows`
+    // from asking this layout for its size limits while the Repeater below is replacing its
+    // steps: that crashed Qt (a segfault on nearly every move to another thing).
+    Layout.fillHeight: false
 
     IconButton {
         icon: "arrow-left"
@@ -34,6 +38,7 @@ RowLayout {
             }
             Text {
                 text: modelData.title || "…"
+                textFormat: Text.PlainText
                 color: parent.last ? Theme.fg : (hover.containsMouse ? Theme.fg : Theme.muted)
                 font.pixelSize: Theme.textSize
                 font.family: Theme.fontFamily

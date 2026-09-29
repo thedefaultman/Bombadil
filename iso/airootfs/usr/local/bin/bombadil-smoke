@@ -109,10 +109,13 @@ if [[ "$mode" == "undo" ]]; then
     check brain-service-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-brain
     check brain-status wait_for 90 as_user bombadil brain status
     check brain-watching wait_for 60 brain_watching
-    # `ask` waits for the turn to end: a turn that never ends must fail this check, not hang the run.
-    check brain-turn-writes as_user timeout 90 bombadil ask '!echo hi > ~/brain-smoke-turn.txt'
+    # The writer stays alive a moment after its save, so the watcher names it and its scope: a
+    # writer that has exited is named by its nearest live ancestor, which for a turn's own shell
+    # is agentd, and for `sudo -u` is root. `ask` waits for the turn to end, so it gets a timeout:
+    # a turn that never ends must fail this check, not hang the run.
+    check brain-turn-writes as_user timeout 90 bombadil ask '!echo hi > ~/brain-smoke-turn.txt; sleep 2'
     check brain-why-turn wait_for 60 brain_says /home/user/brain-smoke-turn.txt "Made by the machine in turn [0-9]"
-    check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt'
+    check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt; sleep 2'
     check brain-why-you wait_for 60 brain_says /home/user/brain-smoke-you.txt "You made it"
     brain_before=$(wait_for 30 brain_id /home/user/brain-smoke-you.txt 2>/dev/null | tail -1)
     check brain-rename as_user mv /home/user/brain-smoke-you.txt /home/user/brain-smoke-moved.txt

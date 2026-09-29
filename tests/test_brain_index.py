@@ -51,7 +51,8 @@ def _tree(home):
 
 
 def _paths(w):
-    return {r["path"] for r in w.store.q("SELECT path FROM things WHERE path IS NOT NULL AND deleted IS NULL")}
+    rows = w.store.q("SELECT path FROM things WHERE path IS NOT NULL AND deleted IS NULL")
+    return {r["path"] for r in rows}
 
 
 def test_first_index_finds_what_a_person_would_call_a_thing(home, monkeypatch):

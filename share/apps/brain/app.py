@@ -14,6 +14,7 @@ the window says so and keeps trying every two seconds.
 import hashlib
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -24,6 +25,11 @@ from PySide6.QtNetwork import QLocalSocket
 TRAIL_MAX = 8
 TIMEOUT_S = 6.0
 MORE_LIMIT = 50   # items per slot once "+N more" was clicked
+CHILDREN_PAGE = 200   # entries of a folder per request
+SEEK_MAX = 2000       # how far down a folder "Show in folder" looks for its entry
+PREVIEWS_KEPT = 200   # first pages of PDFs kept in the cache
+PDF_SECONDS = 20      # a picture of a PDF that takes longer is given up on
+APP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")   # as the brain names apps (brain/actors.py)
 CHECKING = os.environ.get("BOMBADIL_CHECK") == "1"
 
 
@@ -65,6 +71,7 @@ class Backend(QObject):
     errorChanged = Signal()
     selectChanged = Signal()
     previewReady = Signal(str, arguments=["path"])
+    previewFailed = Signal(str, arguments=["path"])
     showRequested = Signal()          # the launcher asked for a thing: slide the window in
     toast = Signal(str, str, arguments=["text", "tone"])
 
@@ -86,8 +93,10 @@ class Backend(QObject):
         self._show_seq = -1
         self._buffer = b""
         self._search_q = ""
-        self._previews: dict[str, str] = {}
+        self._results_q = ""          # the query `results` answers
+        self._paging = False          # a page of a folder's entries is on its way
         self._rendering: set[str] = set()
+        self._failed: set[str] = set()
 
         self._socket = QLocalSocket(self)
         self._socket.connected.connect(self._on_connected)
@@ -146,6 +155,14 @@ class Backend(QObject):
     def select(self):
         return self._select
 
+    @Property(str, notify=resultsChanged)
+    def resultsFor(self):
+        return self._results_q
+
+    @Property(bool, constant=True)
+    def canDrawPdf(self):
+        return shutil.which("pdftoppm") is not None
+
     @Property(bool, notify=trailChanged)
     def canBack(self):
         return len(self._trail) > 1
@@ -182,6 +199,7 @@ class Backend(QObject):
 
     def _on_disconnected(self):
         self._set("_connected", False, self.connectedChanged)
+        self._set("_status", "", self.statusChanged)   # what it said of itself is stale while it is away
         self._set("_loading", False, self.loadingChanged)
         for _t, _op, cb in self._pending.values():
             if cb is not None:
@@ -242,8 +260,12 @@ class Backend(QObject):
         rid = msg.get("id")
         if rid in self._pending:
             _t, _op, cb = self._pending.pop(rid)
-            if cb is not None:
-                cb(msg.get("result"), None) if msg.get("ok") else cb(None, str(msg.get("error") or "Something went wrong."))
+            if cb is None:
+                return
+            if msg.get("ok"):
+                cb(msg.get("result"), None)
+            else:
+                cb(None, str(msg.get("error") or "Something went wrong."))
 
     # ---- status, show -----------------------------------------------------------------
 
@@ -294,7 +316,9 @@ class Backend(QObject):
         ids = set()
         if isinstance(f.get("thing"), dict):
             ids.add(f["thing"].get("id"))
-        for slot in (f.get("slots") or {}).values():
+        for name, slot in (f.get("slots") or {}).items():
+            if name == "changes":
+                continue   # its ids are events, not things
             for it in (slot or {}).get("items") or []:
                 ids.add(it.get("id"))
         for it in ((f.get("children") or {}).get("items") or []):
@@ -351,6 +375,48 @@ class Backend(QObject):
                 self._trail.insert(0, {"ref": area["ref"], "title": area.get("title") or area["ref"]})
         self.trailChanged.emit()
         self.focusChanged.emit()
+        self._seek()
+
+    def _seek(self):
+        """Show in folder: the entry may be further down than the first page of the folder."""
+        f = self._focus if isinstance(self._focus, dict) else {}
+        kids = f.get("children") or {}
+        items = kids.get("items") or []
+        if (self._select and not self._paging and len(items) < int(kids.get("total") or 0)
+                and len(items) < SEEK_MAX and not any(i.get("ref") == self._select for i in items)):
+            self.moreChildren()
+
+    @Slot()
+    def moreChildren(self):
+        """The next page of the folder in the middle (the brain lists 200 entries at a time)."""
+        f = self._focus if isinstance(self._focus, dict) else None
+        kids = (f or {}).get("children") or {}
+        items = kids.get("items") or []
+        thing = (f or {}).get("thing") or {}
+        if not f or self._paging or not thing.get("ref") or len(items) >= int(kids.get("total") or 0):
+            return
+        self._paging = True
+        gen, ref = self._gen, thing["ref"]
+
+        def done(result, err):
+            self._paging = False
+            if gen != self._gen or err is not None or not isinstance(result, dict) or not result.get("items"):
+                return
+            now = self._focus if isinstance(self._focus, dict) else None
+            if now is None or (now.get("thing") or {}).get("ref") != ref:
+                return
+            more = {**(now.get("children") or {}), "items": [*items, *result["items"]],
+                    "total": result.get("total", kids.get("total"))}
+            self._focus = {**now, "children": more}
+            self.focusChanged.emit()
+            self._seek()
+
+        self._request("children", on=done, ref=ref, offset=len(items), limit=CHILDREN_PAGE)
+
+    @Slot()
+    def settled(self):
+        """The selected entry is on screen: a later refresh must not pull the selection back."""
+        self._select = ""
 
     @Slot(str)
     def go(self, ref: str):
@@ -411,18 +477,28 @@ class Backend(QObject):
         self._search_q = q.strip()
         if not self._search_q:
             self._searcher.stop()
-            self._set("_results", [], self.resultsChanged)
+            if self._results or self._results_q:
+                self._results, self._results_q = [], ""
+                self.resultsChanged.emit()
             return
         self._searcher.start()
+
+    @Slot()
+    def searchNow(self):
+        """Enter before the pause is over: ask now instead of waiting for the timer."""
+        self._searcher.stop()
+        if self._search_q:
+            self._search_now()
 
     def _search_now(self):
         q = self._search_q
 
-        def done(result, _err):
+        def done(result, err):
             if q != self._search_q:
                 return
             items = result.get("items") if isinstance(result, dict) else result
-            self._results = items if isinstance(items, list) else []
+            self._results = items if err is None and isinstance(items, list) else []
+            self._results_q = q
             self.resultsChanged.emit()
 
         self._request("search", on=done, q=q, limit=12)
@@ -448,8 +524,9 @@ class Backend(QObject):
     def openApp(self, name: str) -> bool:
         if CHECKING or not name:
             return False
+        name = name.removeprefix("app:")
         prog = shutil.which("bombadil-app")
-        if not prog:
+        if not prog or not APP_NAME.match(name) or ".." in name:
             return False
         ok, _pid = QProcess.startDetached(prog, ["run", name])
         return bool(ok)
@@ -485,30 +562,83 @@ class Backend(QObject):
     def tilde(self, path: str) -> str:
         return tilde(path)
 
-    @Slot(str, float, result=str)
-    def pdfPage(self, path: str, mtime: float) -> str:
-        """The first page of a PDF as a picture (pdftoppm), cached by path and mtime. Returns
-        "" while it is being drawn; previewReady(path) says when to ask again."""
-        if not path:
+    @Slot(str, result=int)
+    def fileBytes(self, path: str) -> int:
+        """How big a file is, so the window does not hand a huge one to the editor."""
+        try:
+            return min(os.stat(path).st_size, 2**31 - 1)
+        except (OSError, ValueError):
+            return 0
+
+    @Slot(str, result=str)
+    def pdfPage(self, path: str) -> str:
+        """The first page of a PDF as a picture (pdftoppm), cached by path, size and mtime.
+        Returns "" while it is being drawn; previewReady(path) says when to ask again and
+        previewFailed(path) that there will be no picture."""
+        if not path or not os.path.isabs(path):
             return ""
-        key = hashlib.sha1(f"{path}\0{mtime}".encode()).hexdigest()
+        try:
+            st = os.stat(path)
+        except (OSError, ValueError):
+            self._give_up(path)
+            return ""
+        key = hashlib.sha1(f"{path}\0{st.st_size}\0{st.st_mtime_ns}".encode()).hexdigest()
         cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "bombadil" / "brain"
         png = cache / f"{key}.png"
         if png.exists():
             return QUrl.fromLocalFile(str(png)).toString()
         prog = shutil.which("pdftoppm")
-        if not prog or key in self._rendering or CHECKING:
+        if key in self._failed or not prog:
+            self._give_up(path)
             return ""
-        cache.mkdir(parents=True, exist_ok=True)
+        if key in self._rendering or CHECKING:
+            return ""
+        try:
+            cache.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self._give_up(path)
+            return ""
         self._rendering.add(key)
+        part = cache / f"{key}.part"   # drawn under this name, so a killed run leaves no half picture
         proc = QProcess(self)
+        settled = []
 
-        def finished(_code, _status):
+        def finished(*_):
+            if settled:
+                return
+            settled.append(True)
             self._rendering.discard(key)
             proc.deleteLater()
-            if png.exists():
+            drawn = Path(f"{part}.png")
+            try:
+                ok = proc.exitCode() == 0 and drawn.exists()
+                if ok:
+                    os.replace(drawn, png)
+            except OSError:
+                ok = False
+            drawn.unlink(missing_ok=True)
+            if ok:
+                self._prune(cache)
                 self.previewReady.emit(path)
+            else:
+                self._failed.add(key)
+                self.previewFailed.emit(path)
 
         proc.finished.connect(finished)
-        proc.start(prog, ["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "1100", path, str(png)[:-4]])
+        proc.errorOccurred.connect(lambda _e: finished())
+        QTimer.singleShot(PDF_SECONDS * 1000, lambda: proc.state() != QProcess.NotRunning and proc.kill())
+        proc.start(prog, ["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "1100", path, str(part)])
         return ""
+
+    def _give_up(self, path: str):
+        QTimer.singleShot(0, lambda: self.previewFailed.emit(path))
+
+    @staticmethod
+    def _prune(cache: Path):
+        """Keep the newest PREVIEWS_KEPT pictures; a cache that only grows is a leak."""
+        try:
+            pics = sorted(cache.glob("*.png"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for old in pics[PREVIEWS_KEPT:]:
+                old.unlink(missing_ok=True)
+        except OSError:
+            pass
