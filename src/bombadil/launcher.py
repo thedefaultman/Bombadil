@@ -44,6 +44,9 @@ UTILITY_COMMANDS = {
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
+# Only while a turn runs: the reason for the step in front of you, answered from what the agent
+# said just before it, with no model. At any other time "why" is a question for the agent.
+WHY_WORDS = {"why"}
 OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "switch to")
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
@@ -124,8 +127,9 @@ def known_apps() -> list:
     return out
 
 
-def match(text: str, app_list: list | None = None) -> Action | None:
-    """The local action for exactly this text, or None to send it to the agent."""
+def match(text: str, app_list: list | None = None, busy: bool = False) -> Action | None:
+    """The local action for exactly this text, or None to send it to the agent. `busy`: a turn
+    is running, so a bare "why" asks about its current step."""
     raw = str(text).strip()
     if not raw or raw.startswith("!"):
         return None   # "!cmd" is a shell command, whatever follows the "!"
@@ -136,6 +140,8 @@ def match(text: str, app_list: list | None = None) -> Action | None:
     # A sentence in another script or with signs in it is for the agent, even when one
     # launcher word is in it; only an app's own title (Café, Recipes 🍲) opens here.
     plain = t.isascii()
+    if busy and plain and t in WHY_WORDS:
+        return Action("why")
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown") and raw.endswith("?"):

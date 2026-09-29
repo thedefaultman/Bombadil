@@ -305,3 +305,12 @@ def test_a_drawer_slow_to_map_still_slides_in(home, monkeypatch):
     lx, _, _ = _drawer(monkeypatch, h)
     lx._focus_drawer(Foot(4242), wait=0.2)
     assert h.calls == [("dispatch", 'hl.dsp.focus({ workspace = "special:details" })')]
+
+
+def test_why_is_a_launcher_word_only_while_a_turn_runs():
+    assert launcher.match("why") is None and launcher.match("why?") is None
+    assert launcher.match("why?", busy=True) == launcher.Action("why")
+    assert launcher.match("  Why  ", busy=True) == launcher.Action("why")
+    # Only the bare word: a sentence, or someone else's word, goes to the agent.
+    assert launcher.match("why is the sky blue", busy=True) is None
+    assert launcher.match("почему", busy=True) is None

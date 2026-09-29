@@ -23,8 +23,13 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
+A step's status may also carry "because": why it happens, in the agent's own words from just before
+it acted (at most 140 characters), and "after": {"label", "kind", "text"}, on a system or irreversible
+step that follows something read from outside ("after reading wireguard.com/quickstart"). The tool
+event of the step carries the same two fields for Details.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
-"irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
+"irreversible", "stopped", "line": "Stopped while installing ffmpeg.", "read": [{"label", "kind",
+"outside"}]}; the same list goes into turns.jsonl.
 
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
@@ -42,7 +47,7 @@ from pathlib import Path
 from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
-LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
+LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
 MAX_OUTPUT = 16_000   # characters of one command's output kept in events and the turn's log
 # A client that stops reading (a hung bar) is dropped rather than allowed to hold up the
 # others: its messages wait in a queue of this many, each write gets this long.
@@ -189,7 +194,8 @@ class AgentD:
 
     async def _match(self, text: str) -> launcher.Action | None:
         try:
-            return await asyncio.to_thread(launcher.match, text)
+            # "why" is a launcher word only while a turn runs: then it asks about the step in front of you.
+            return await asyncio.to_thread(launcher.match, text, None, self.current is not None)
         except Exception as e:  # noqa: BLE001 - when in doubt the agent gets the text
             print(f"agentd: launcher match: {type(e).__name__}: {e}", file=sys.stderr)
             return None
@@ -253,6 +259,11 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
+        if action.kind == "why":
+            # The reason the agent gave before this step, from what was recorded: no model, no turn.
+            text = self.narrator.why_text() if self.narrator else "Nothing is running."
+            await self.event("local", turn=None, action="why", phase="done", ok=True, text=text)
+            return
         if action.kind == "stop":
             stopping = await self.stop()
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
@@ -368,6 +379,8 @@ class AgentD:
         shell = prompt.startswith("!")
         started = time.time()
         self.narrator = narrator = narrate.Narrator()
+        if not shell:
+            narrator.note_prompt(prompt)   # a [Screen] block or a coding session's request came in with it
         log = paths.state_dir() / "turns" / f"{int(started * 1000)}-{self.current}.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
         self.turn_logs[self.current] = log
@@ -397,8 +410,8 @@ class AgentD:
             # Stopped while the restore point was saved: the CLI never starts.
             line = self._stopped_line or "Stopped."
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary="", changed=False,
-                             irreversible=False, stopped=True, line=line)
-            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "")
+                             irreversible=False, stopped=True, line=line, read=narrator.read_list())
+            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "", narrator.read_list())
             return
         turn = providers.Turn(prompt=prompt, session_id=self.session_id)
         self.workdir.mkdir(parents=True, exist_ok=True)
@@ -500,8 +513,8 @@ class AgentD:
                 line = summary
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary=summary,
                              changed=bool(narrator.done), irreversible=narrator.irreversible,
-                             stopped=stopped, line=line)
-            self._log(prompt, result, snap, cmd, stopped, summary)
+                             stopped=stopped, line=line, read=narrator.read_list())
+            self._log(prompt, result, snap, cmd, stopped, summary, narrator.read_list())
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
@@ -534,14 +547,19 @@ class AgentD:
             reported_error = True
         if kind == "tool_result" and len(ev.get("output") or "") > MAX_OUTPUT:
             ev = {**ev, "output": ev["output"][:MAX_OUTPUT] + "\n[... cut]"}
+        if kind in ("tool", "file_change") and self.narrator is not None:
+            # The step's reason and what it followed, for Details, next to the step they explain.
+            ev = {**ev, **self.narrator.last_notes}
         await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
         return pending_session, reported_error
 
-    def _log(self, prompt, result, snap, cmd, stopped=False, summary=""):
+    def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None):
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
+                        # What the turn read, yours or outside: the brain's "came from" links use it.
+                        "read": read or [],
                         "details": str(self.turn_logs.get(self.current, ""))})
 
     def _log_line(self, entry: dict):

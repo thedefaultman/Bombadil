@@ -528,3 +528,74 @@ async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
     assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
     w.close()
     server.cancel()
+
+
+WHY_SCRIPT = (
+    "import json, sys, time\n"
+    "sys.stdin.read()\n"
+    "def out(o): print(json.dumps(o), flush=True)\n"
+    "out({'type': 'stream_event', 'event': {'type': 'message_start'}})\n"
+    "out({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'w1', 'name': 'WebFetch',"
+    " 'input': {'url': 'https://user:pw@wireguard.com/quickstart?x=1'}}]}})\n"
+    "out({'type': 'stream_event', 'event': {'type': 'message_start'}})\n"
+    "out({'type': 'assistant', 'message': {'content': [{'type': 'text',"
+    " 'text': 'Let me check the vendor page. The tunnel needs its tools, so installing them first.'}]}})\n"
+    "out({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'b1', 'name': 'Bash',"
+    " 'input': {'command': 'sudo pacman -S --noconfirm wireguard-tools'}}]}})\n"
+    "time.sleep(2)\n"
+    "out({'type': 'result', 'result': 'Installed.', 'session_id': 's1'})\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_step_carries_its_reason_and_what_it_followed_and_the_turn_says_what_it_read(home):
+    d = agentd.AgentD(Scripted(WHY_SCRIPT.replace("time.sleep(2)", "pass")), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "set up the tunnel")
+    msgs = await _read_until(r, "turn_end")
+    step = next(m for m in msgs if m.get("kind") == "status" and m.get("risk") == "system")
+    assert step["text"] == "Installing wireguard-tools"
+    assert step["because"] == "The tunnel needs its tools, so installing them first."
+    assert step["after"] == {"label": "wireguard.com/quickstart", "kind": "web",
+                             "text": "after reading wireguard.com/quickstart"}
+    # The step's own tool event carries them too, for Details.
+    tool = next(m for m in msgs if m.get("kind") == "tool" and m["name"] == "Bash")
+    assert tool["because"] == step["because"] and tool["after"] == step["after"]
+    fetch = next(m for m in msgs if m.get("kind") == "tool" and m["name"] == "WebFetch")
+    assert "because" not in fetch and "after" not in fetch
+    end = msgs[-1]
+    assert end["read"] == [{"label": "wireguard.com/quickstart", "kind": "web", "outside": True}]
+    # Never a credential in what is shown: the raw tool event keeps its input, the line and the list do not.
+    shown = [m for m in msgs if m.get("kind") == "status"] + [end["read"]]
+    assert "user:pw" not in json.dumps(shown) and "x=1" not in json.dumps(shown)
+    row = [json.loads(line) for line in paths.turns_log().read_text().splitlines()][-1]
+    assert row["read"] == end["read"]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_why_during_a_turn_is_answered_from_the_recorded_reason_without_the_model(home):
+    d = agentd.AgentD(Scripted(WHY_SCRIPT), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "set up the tunnel")
+    await _events_until(r, lambda m: m.get("kind") == "status" and m.get("because"))
+    await _ask(w, "Why?")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    assert {"type": "local", "action": "why"} in msgs
+    said = msgs[-1]
+    assert said["action"] == "why" and said["ok"] is True
+    assert said["text"] == ("The tunnel needs its tools, so installing them first. "
+                            "(after reading wireguard.com/quickstart)")
+    # No chip, no second turn: it never reached the queue.
+    assert d.pending == [] and d.next_id == 1
+    await _read_until(r, "turn_end")
+    # Once the turn is over "why" is an ordinary question for the agent again.
+    await _ask(w, "why")
+    msgs = await _events_until(r, lambda m: m.get("type") == "queued")
+    assert msgs[-1] == {"type": "queued", "turn": 2}
+    w.write(b'{"type": "stop"}\n')
+    await w.drain()
+    await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()

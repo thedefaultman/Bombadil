@@ -129,6 +129,9 @@ def test_codex_items_become_steps_and_results():
             {"text": "Install ffmpeg", "completed": True}, {"text": "Open the browser", "completed": False}]}},
     ]
     ev = [e for m in lines for e in p.parse(json.dumps(m))]
+    # Each finished step ends the message its reason belonged to.
+    assert [e["kind"] for e in ev].count("message_start") == 3
+    ev = [e for e in ev if e["kind"] != "message_start"]
     assert ev[0] == {"kind": "thinking", "text": "Installing ffmpeg"}
     assert ev[1]["name"] == "Bash" and "pacman" in ev[1]["input"]["command"]
     assert ev[2] == {"kind": "tool_result", "id": "c", "output": "error: target not found", "error": True, "exit_code": 1}
@@ -146,3 +149,15 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def test_claude_says_where_each_model_message_starts():
+    """The sentence before a step is that message's reason: the Narrator needs its boundaries."""
+    p = providers.Claude("x")
+    ev = _kinds(p, "claude-install-ffmpeg.jsonl")
+    kinds = [e["kind"] for e in ev]
+    assert kinds.count("message_start") >= 1
+    # A message starts before anything it says.
+    assert kinds.index("message_start") < kinds.index("text_delta")
+    assert list(p.parse(json.dumps({"type": "stream_event", "event": {"type": "message_start"}}))) == [
+        {"kind": "message_start"}]

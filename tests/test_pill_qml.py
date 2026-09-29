@@ -411,3 +411,48 @@ def test_hovering_the_line_on_one_screen_keeps_it_on_all(bar):
     QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
     bar.pump(0.8)
     assert bar.pill.property("mode") == "idle"
+
+
+def _hover_line(bar):
+    line = bar.item("statusLine")
+    centre = line.mapToScene(QtCore.QPointF(line.width() / 2, 6)).toPoint()
+    QtTest.QTest.mouseMove(bar.win, centre)
+    bar.pump(0.3)
+
+
+def test_resting_on_the_line_shows_why_and_a_marked_step_always_does(bar):
+    bar.call("submit", "make the tunnel")
+    bar.send(kind="turn_start", turn=3, prompt="make the tunnel")
+    bar.send(kind="status", turn=3, text="Reading wireguard.com", source="step",
+             because="The vendor's page says which port the tunnel needs.")
+    # Quiet until you rest the mouse on it.
+    assert not bar.shown("because")
+    _hover_line(bar)
+    assert bar.shown("because") and bar.text("because") == "The vendor's page says which port the tunnel needs."
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
+    bar.pump(0.3)
+    assert not bar.shown("because")
+    # A step that changes the system shows its reason under the command, and what it followed.
+    bar.send(kind="status", turn=3, text="Writing wg0.conf", source="step", risk="system",
+             command="write /etc/wireguard/wg0.conf", because="Your router hands out 192.168.1.x, so the tunnel uses 10.8.0.x.",
+             after={"label": "wireguard.com/quickstart", "kind": "web", "text": "after reading wireguard.com/quickstart"})
+    assert bar.shown("command") and bar.shown("because") and bar.shown("after")
+    assert bar.text("after") == "after reading wireguard.com/quickstart"
+    bar.snap("4-because-and-after")
+    # The agent's own words replace them, and so does the next step that has no reason.
+    bar.send(kind="status", turn=3, text="Restarting wg-quick", source="step", risk="system", command="systemctl restart wg-quick@wg0")
+    assert not bar.shown("because") and not bar.shown("after")
+    bar.send(kind="turn_end", turn=3, seconds=4, changed=True, summary="Made the tunnel.")
+    assert not bar.shown("because") and bar.pill.property("because") == "" and bar.pill.property("after") == ""
+
+
+def test_why_flashes_the_reason_over_the_running_line_long_enough_to_read_it(bar):
+    bar.call("submit", "install docker")
+    bar.send(kind="turn_start", turn=7, prompt="install docker")
+    bar.send(kind="status", turn=7, text="Installing docker", source="step", risk="system", command="sudo pacman -S docker",
+             because="Docker is not installed yet.")
+    bar.send(kind="local", action="why", phase="done", ok=True, text="Docker is not installed yet.")
+    assert bar.text() == "Docker is not installed yet." and bar.pill.property("flashFor") == 8000
+    assert bar.pill.property("line") == "Installing docker"
+    bar.send(kind="local", action="panel", phase="done", ok=True, text="Opened the browser.")
+    assert bar.pill.property("flashFor") == 3500

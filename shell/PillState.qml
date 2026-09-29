@@ -25,6 +25,8 @@ QtObject {
     property string source: "step"   // step (plain words), agent (its own words), error
     property string risk: ""         // "", "system" (amber) or "irreversible" (red)
     property string command: ""      // the exact command under a marked step
+    property string because: ""      // why this step happens, in the agent's own words from just before it
+    property string after: ""        // "after reading wireguard.com/quickstart", on a marked step after an outside read
     property double startedAt: 0     // for the seconds counter
     property var turn: null
     property bool optimistic: false  // "On it" shown before agentd confirmed a turn
@@ -36,6 +38,7 @@ QtObject {
     property int fadeAfter: 12000    // how long a closing or local line stays (ms)
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
+    property int flashFor: 3500      // how long it stays (ms); the reason for "why" stays longer
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
     // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
     readonly property bool stoppable: busy || optimistic
@@ -63,7 +66,7 @@ QtObject {
             if (ev.busy && mode !== "working" && ev.turn !== undefined && ev.turn !== null) {
                 // The bar (re)connected in the middle of a turn.
                 mode = "working"; turn = ev.turn; line = "Working"; source = "step"
-                risk = ""; command = ""; startedAt = _now()
+                risk = ""; command = ""; because = ""; after = ""; startedAt = _now()
             }
             return
         }
@@ -93,7 +96,7 @@ QtObject {
             if (!optimistic || mode !== "working") startedAt = _now()
             optimistic = false
             mode = "working"; turn = ev.turn; busy = true
-            line = "On it"; source = "step"; risk = ""; command = ""
+            line = "On it"; source = "step"; risk = ""; command = ""; because = ""; after = ""
             changed = false; irreversible = false; stopped = false; sticky = false
             _result = ""; _resultOk = true; _error = ""
             break
@@ -103,10 +106,12 @@ QtObject {
             source = ev.source || "step"
             risk = ev.risk || ""
             command = ev.command || ""
+            because = ev.because || ""
+            after = (ev.after && ev.after.text) || ""
             break
         case "error":
             if (ev.turn === null || ev.turn === undefined) {
-                if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now() }
+                if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now(); flashFor = 3500 }
                 else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; sticky = false; lineAt = _now() }
             } else if (ev.turn === turn) {
                 _error = ev.text || ""
@@ -124,11 +129,11 @@ QtObject {
             stopped = !!ev.stopped
             changed = !!ev.changed
             irreversible = !!ev.irreversible
-            risk = ""; command = ""
+            risk = ""; command = ""; because = ""; after = ""
             if (stopped) {
                 line = ev.line || "Stopped."; source = "step"
                 // A queued prompt starts at once; still say what was stopped for a moment.
-                flash = line; flashAt = _now()
+                flash = line; flashAt = _now(); flashFor = 3500
             }
             else if (_error && !_resultOk || (_error && !_result)) { line = _firstLines(_error, 2); source = "error" }
             else if (_result) { line = _result.trim(); source = "agent" }
@@ -140,7 +145,8 @@ QtObject {
             break
         case "local":
             if (mode === "working" && !optimistic) {
-                flash = ev.text || ""; flashAt = _now()
+                // "why" answered from the reason the agent gave: long enough to read it.
+                flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
             } else {
                 optimistic = false
                 mode = "local"; line = ev.text || ""; source = ev.ok === false ? "error" : "step"
@@ -187,7 +193,7 @@ QtObject {
     // Nothing reaches agentd while the socket is down: say so, and keep what is on screen.
     function _offline() {
         if (connected) return false
-        flash = "Not connected to the agent yet."; flashAt = _now()
+        flash = "Not connected to the agent yet."; flashAt = _now(); flashFor = 3500
         return true
     }
 

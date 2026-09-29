@@ -974,6 +974,191 @@ def partial_step(name: str, partial: str) -> Step | None:
     return None
 
 
+# -- why, and after reading what --
+
+# The reason for a step is the sentence the agent wrote just before acting, kept instead of
+# thrown away. Nothing here asks a model: it is the agent's own words from that moment, cleaned.
+MAX_BECAUSE = 140
+_FILLER_RE = re.compile(
+    r"^(?:(?:ok|okay|great|good|perfect|alright|all right|excellent|nice|cool|sure|right|so|now|first|next|"
+    r"then|also|finally|got it|understood|done|yes|well)\b[,.!:;\s]*)+", re.I)
+_LEAD_RE = re.compile(
+    r"^(?:let me|let's|let us|i'll|i will|i'm going to|i am going to|i'm gonna|i need to|i should|i want to|"
+    r"i'd like to|i can|going to)\s+", re.I)
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
+_MARKDOWN = re.compile(r"[`*]{1,3}|^\s*(?:[-*>]|#{1,6})\s+", re.M)
+
+
+def reason_from(text: str) -> str:
+    """The reason in what the agent said before a step: its last sentence, without the
+    filler in front ("Now", "Great", "Let me"), at most MAX_BECAUSE characters. "" if none."""
+    t = str(text or "").replace("’", "'")
+    t = re.sub(r"```.*?(?:```|$)", " ", t, flags=re.S)
+    t = _MARKDOWN.sub("", t)
+    sentences = [s.strip() for s in _SENTENCE_END.split(t) if s.strip()]
+    if not sentences:
+        return ""
+    s = sentences[-1].rstrip(":;,").strip()
+    s = _FILLER_RE.sub("", s).strip()
+    lead = _LEAD_RE.match(s)
+    if lead:
+        rest = s[lead.end():].strip()
+        first, _, more = rest.partition(" ")
+        s = (gerund(first).capitalize() + (" " + more if more else "")) if first.lower() in _VERBS else _cap(rest)
+    else:
+        s = _cap(s)
+    s = s.rstrip("!").strip()
+    if len(s) < 4 or not re.search(r"[A-Za-z]", s):
+        return ""
+    if len(s) > MAX_BECAUSE:
+        cut = s[:MAX_BECAUSE - 1].rsplit(" ", 1)[0] or s[:MAX_BECAUSE - 1]
+        s = cut.rstrip(" ,;:.") + "…"
+    return s
+
+
+@dataclass
+class Read:
+    """Something the turn read, and whether it came from outside the machine's own files."""
+    label: str            # "wireguard.com/quickstart", "notes.txt", "coding session api on Latchkey"
+    kind: str             # web, file, search, screen, session, app
+    outside: bool         # a web page, a downloaded file, the page on screen, a request from a session or app
+    origin: str = ""      # for a downloaded file, the host it came from
+
+    def as_dict(self) -> dict:
+        d = {"label": self.label, "kind": self.kind, "outside": self.outside}
+        if self.origin:
+            d["origin"] = self.origin
+        return d
+
+    def after(self) -> dict:
+        """What the status carries on a system step that follows this read."""
+        text = {
+            "web": f"after reading {self.label}",
+            "file": f"after reading {self.label}" + (f" from {self.origin}" if self.origin else ""),
+            "search": f"after searching the web for {self.label}",
+            "screen": "after reading the page on screen" if self.label == "the screen"
+                      else f"after reading {self.label} on screen",
+            "session": f"after a request from {self.label}",
+            "app": f"after a request from {self.label}",
+        }.get(self.kind, f"after reading {self.label}")
+        return {"label": self.label, "kind": self.kind, "text": text}
+
+
+MAX_READS = 50
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+_READ_PROGS = {"cat", "less", "more", "head", "tail", "bat", "batcat", "zcat", "xxd", "hexdump"}
+
+
+def _web_label(url: str) -> str:
+    """'https://user:pw@wireguard.com/quickstart?x=1' -> 'wireguard.com/quickstart'. Never a credential."""
+    host = _host(url)
+    if not host:
+        return ""
+    path = re.sub(r"^\w+://[^/]*", "", str(url)).split("?")[0].split("#")[0]
+    path = "" if path in ("", "/") else path.rstrip("/")
+    label = host + path
+    return label if len(label) <= 60 else label[:59] + "…"
+
+
+def _is_local(label: str) -> bool:
+    host = label.split("/")[0]
+    return host.rsplit(":", 1)[0].strip("[]") in {h.strip("[]") for h in _LOCAL_HOSTS} or host in _LOCAL_HOSTS
+
+
+def web_read(url: str) -> Read | None:
+    label = _web_label(url)
+    if not label:
+        return None
+    return Read(label, "web", not _is_local(label))
+
+
+def _origin(path: str) -> str:
+    """The host a file was downloaded from: Chromium and curl write it into the file's origin
+    attribute. "" for files made here, or on a filesystem without attributes."""
+    p = _expand_home(path)
+    if not p.startswith("/"):
+        p = os.path.join(str(paths.home()), p)
+    try:
+        raw = os.getxattr(p, "user.xdg.origin.url")
+    except (OSError, AttributeError, ValueError):
+        return ""
+    return _host(raw.decode(errors="replace"))
+
+
+def file_read(path: str) -> Read:
+    origin = _origin(path)
+    return Read(_name(path) or str(path)[:60], "file", bool(origin), origin)
+
+
+def command_reads(command: str) -> list[Read]:
+    """What a shell command reads: files it prints, the addresses it downloads from."""
+    out: list[Read] = []
+    for argv in _segments(_unwrap(command)):
+        words, _ = _strip_redirects(argv)
+        words, _sudo = _strip_wrappers(words)
+        if not words:
+            continue
+        prog = PurePosixPath(words[0]).name
+        script = _shell_script(words)
+        if script is not None:
+            out += command_reads(script)
+        elif prog in _READ_PROGS:
+            files = [a for a in _args(words) if not re.fullmatch(r"[+-]?\d+", a)]
+            out += [file_read(f) for f in files[:3]]
+        elif prog in ("curl", "wget", "aria2c", "xh", "http", "https"):
+            r = web_read(_url_arg(words))
+            if r:
+                out.append(r)
+        elif prog == "git" and _git_sub(words)[0] == "clone":
+            rest = [a for a in _git_sub(words)[1] if not a.startswith("-")]
+            r = web_read(rest[0]) if rest and "://" in rest[0] else None
+            if r:
+                out.append(r)
+    return out
+
+
+def tool_reads(name: str, a: dict | None) -> list[Read]:
+    """What a tool call reads (Read, WebFetch, WebSearch, cat and curl in a command)."""
+    a = a if isinstance(a, dict) else {}
+    name = str(name or "")
+    if name in ("Read", "NotebookRead"):
+        p = a.get("file_path") or a.get("notebook_path")
+        return [file_read(str(p))] if p else []
+    if name == "WebFetch":
+        r = web_read(str(a.get("url", "")))
+        return [r] if r else []
+    if name == "WebSearch":
+        return [Read(_quote(a["query"], 50), "search", True)] if a.get("query") else []
+    if name == "Bash":
+        return command_reads(str(a.get("command", "")))
+    return []
+
+
+_ASKED_RE = re.compile(r"^\[asked by ([^\]]*?),\s*untrusted\]", re.M)
+_URL_RE = re.compile(r"https?://[^\s\]\"'<>)]+")
+
+
+def prompt_reads(prompt: str) -> list[Read]:
+    """What came in with the prompt: the [Screen] block of the "this" chip (its page and
+    selection are outside words) and requests marked "[asked by coding session …, untrusted]"."""
+    out: list[Read] = []
+    text = str(prompt or "")
+    m = re.search(r"^\[Screen\]", text, re.M)
+    if m:
+        block = text[m.end():].split("\n\n", 1)[0]
+        url = _URL_RE.search(block)
+        label = _web_label(url.group(0)) if url else ""
+        outside = bool(label or re.search(r"selection", block, re.I))
+        out.append(Read(label or "the screen", "screen", outside))
+    for m in _ASKED_RE.finditer(text):
+        who = " ".join(m.group(1).split())
+        if who.lower().startswith("app "):
+            out.append(Read(who[4:] or "an app", "app", True))
+        else:
+            out.append(Read(who, "session", True))
+    return out
+
+
 # -- the turn --
 
 def _lower_first(s: str) -> str:
@@ -993,6 +1178,11 @@ class Narrator:
         self._creating: dict[str, str] = {}   # TaskCreate tool id -> its present-tense form
         self._tasks: dict[str, str] = {}      # task id -> its present-tense form
         self._shown: dict | None = None       # the line last returned
+        self._said_msg = ""      # the agent's last text block in the current model message
+        self._block = ""         # the text block being streamed
+        self.because = ""        # why the current step happens: the sentence written just before it
+        self.reads: list[Read] = []   # what the turn read, in order (yours and outside)
+        self.last_notes: dict = {}    # because and after of the step the last tool event started
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
 
@@ -1006,10 +1196,56 @@ class Narrator:
         elif step.risk == SYSTEM:
             self.system = True
         self.step = step
-        return {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
+        line = {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
+        line.update(self.step_notes(step))
+        return line
+
+    # -- why, and after reading what --
+
+    def step_notes(self, step: Step | None = None) -> dict:
+        """The reason for the current step and, on a system or irreversible one after an outside
+        read, that read. Only the keys that have something to say."""
+        step = step or self.step
+        out: dict = {}
+        if self.because:
+            out["because"] = self.because
+        latest = next((r for r in reversed(self.reads) if r.outside), None)
+        if step is not None and step.risk and latest is not None:
+            out["after"] = latest.after()
+        return out
+
+    def _reason(self, fallback: str | None = None) -> None:
+        """Keep the sentence before a step as its reason: what the agent said in this message,
+        else the command's own description."""
+        self.because = reason_from(self._said_msg)
+        if not self.because and fallback:
+            self.because = reason_from(from_description(fallback) or fallback)
+
+    def _read(self, read: Read) -> None:
+        self.reads = [r for r in self.reads if (r.kind, r.label) != (read.kind, read.label)] + [read]
+        del self.reads[:-MAX_READS]
+
+    def note_prompt(self, prompt: str) -> None:
+        for r in prompt_reads(prompt):
+            self._read(r)
+
+    def read_list(self) -> list[dict]:
+        return [r.as_dict() for r in self.reads]
+
+    def why_text(self) -> str:
+        """The answer to "why" while a turn runs, from what the machine recorded: no model."""
+        if self.step is None:
+            return "Nothing has started yet."
+        if not self.because:
+            return f"It did not say why for this step: {_lower_first(self.step.text.split(',')[0])}."
+        after = self.step_notes().get("after")
+        return self.because + (f" ({after['text']})" if after else "")
 
     def on_event(self, ev: dict) -> dict | None:
+        self.last_notes = {}
         line = self._line(ev)
+        if line is not None and ev.get("kind") in ("tool", "file_change"):
+            self.last_notes = {k: line[k] for k in ("because", "after") if k in line}
         # The complete message repeats what its stream already showed; say each line once.
         if line is None or line == self._shown:
             return None
@@ -1018,6 +1254,10 @@ class Narrator:
 
     def _line(self, ev: dict) -> dict | None:
         kind = ev.get("kind")
+        if kind == "message_start":
+            # A new model message: what it said before its steps is its own reason, not the last one's.
+            self._said_msg = self._block = self.because = ""
+            return None
         if kind == "tool_result" and ev.get("id") in self._creating:
             m = re.search(r"#?(\d+)", str(ev.get("output", "")))
             if m:
@@ -1025,6 +1265,9 @@ class Narrator:
             return None
         if kind == "tool":
             a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+            for r in tool_reads(ev.get("name", ""), a):
+                self._read(r)
+            self._reason(a.get("description") if ev.get("name") == "Bash" else None)
             if ev.get("name") == "TaskCreate" and ev.get("id"):
                 form = a.get("activeForm") or from_description(a.get("subject", "")) or a.get("subject")
                 if form:
@@ -1040,8 +1283,10 @@ class Narrator:
             self.said = ""
             return self._set(step)
         if kind == "file_change":
+            self._reason()
             return self._set(file_change_step(ev.get("changes") or []))
         if kind == "tool_start":
+            self._reason()
             self._partial[ev.get("index", 0)] = {"name": ev.get("name", ""), "json": ""}
             step = partial_step(ev.get("name", ""), "") or tool_step(ev.get("name", ""), {})
             if step is not None and step.changes:
@@ -1059,6 +1304,8 @@ class Narrator:
                 return None
             return self._set(Step(step.text))
         if kind == "text_delta":
+            self._block += str(ev.get("text") or "")
+            self._said_msg = self._block
             self.said += str(ev.get("text") or "")
             line = self.said.strip().splitlines()[-1].strip() if self.said.strip() else ""
             if not line:
@@ -1066,6 +1313,8 @@ class Narrator:
             return {"text": line[-200:], "risk": None, "command": None, "source": "agent"}
         if kind == "text":
             self.said = ""
+            self._block = ""
+            self._said_msg = str(ev.get("text") or "")
             text = str(ev.get("text") or "").strip()
             if not text:
                 return None
