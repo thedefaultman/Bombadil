@@ -514,22 +514,6 @@ async def test_a_narration_bug_costs_a_line_not_the_turn(home, monkeypatch):
     server.cancel()
 
 
-@pytest.mark.asyncio
-async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
-    class Missing(providers.Claude):
-        @property
-        def installed(self):
-            return False
-    d = agentd.AgentD(Missing("x"), agentd._NoSnapshots())
-    server, r, w = await _start(d)
-    await _ask(w, "hello")
-    msgs = await _read_until(r, "turn_end")
-    kinds = [m.get("kind") for m in msgs if m["type"] == "event"]
-    assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
-    w.close()
-    server.cancel()
-
-
 # -- the desk --
 
 async def _say(w, msg):
@@ -928,5 +912,21 @@ async def test_the_real_os_mcp_server_reaches_the_desk_from_inside_a_turn(home):
     msgs = await _read_until(r, "turn_end")
     said = json.loads(next(m["text"] for m in msgs if m.get("kind") == "text"))
     assert said["isError"] is True and said["content"][0]["text"].startswith("The person did not ask for the desk")
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
+    class Missing(providers.Claude):
+        @property
+        def installed(self):
+            return False
+    d = agentd.AgentD(Missing("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    kinds = [m.get("kind") for m in msgs if m["type"] == "event"]
+    assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
     w.close()
     server.cancel()

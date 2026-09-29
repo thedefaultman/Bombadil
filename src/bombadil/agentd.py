@@ -510,13 +510,13 @@ class AgentD:
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
         env = dict(os.environ)
-        # The os-mcp `desk` tool says which turn it speaks for, and where agentd listens.
-        env["BOMBADIL_TURN"] = str(self.current)
-        env["BOMBADIL_SOCKET"] = str(self.socket_path)
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
             env["BOMBADIL_TURN_SNAPSHOT"] = str(snap.number)
+        # The os-mcp `desk` tool says which turn it speaks for, and where agentd listens.
+        env["BOMBADIL_TURN"] = str(self.current)
+        env["BOMBADIL_SOCKET"] = str(self.socket_path)
         unit = f"bombadil-turn-{os.getpid()}-{self.current}-{int(started)}"
         self._unit = unit if procs.scope_supported() else None
         self.proc = proc = await asyncio.create_subprocess_exec(
