@@ -69,19 +69,29 @@ def _hypr(h: hypr.Hyprland | None) -> hypr.Hyprland:
     return h if h is not None else hypr.Hyprland()
 
 
+# What hypr.request raises before it has sent anything: no socket, or nobody listening.
+_NOT_SENT = (RuntimeError, ConnectionRefusedError, FileNotFoundError)
+
+
 def _send(h: hypr.Hyprland, command: str, tries: int = 3) -> str:
-    """One IPC request; a busy compositor sometimes drops one, so retry briefly."""
+    """One IPC request. Only a failed connect is tried again: Hyprland runs a request it has
+    read even after the client gave up on the answer, so one that was sent is never sent twice
+    (a second toggle_special would undo the first). The wait for the answer is hypr's own."""
     err: Exception | None = None
     for attempt in range(tries):
         try:
-            reply = h.request(command, timeout=2).strip()
-        except (OSError, RuntimeError) as e:
+            reply = h.request(command).strip()
+        except _NOT_SENT as e:
+            err = e
+            time.sleep(0.1 * (attempt + 1))
+            continue
+        except OSError as e:
             err = e
         else:
             if reply and "timed out" not in reply:
                 return reply
             err = RuntimeError(reply or "no reply")
-        time.sleep(0.1 * (attempt + 1))
+        break
     raise RuntimeError(f"Hyprland did not take {command[:60]!r}: {err}")
 
 
@@ -93,10 +103,13 @@ def _dispatch(h: hypr.Hyprland, expr: str) -> str:
     return reply
 
 
-def _monitors(h: hypr.Hyprland) -> list[dict]:
+def _monitors(h: hypr.Hyprland, strict: bool = False) -> list[dict]:
+    """The monitors; [] when Hyprland does not answer (raises then, when strict)."""
     try:
         return json.loads(_send(h, "j/monitors"))
     except (RuntimeError, ValueError):
+        if strict:
+            raise
         return []
 
 
@@ -191,7 +204,8 @@ def hide(name: str, h: hypr.Hyprland | None = None) -> str:
     ws = workspace(name)
     if not h.available:
         return f"{NO_HYPRLAND}; nothing to hide"
-    on = [m for m in _monitors(h) if m.get("specialWorkspace", {}).get("name") == ws]
+    # Strict: no answer is not "not on screen", the drawer may well be.
+    on = [m for m in _monitors(h, strict=True) if m.get("specialWorkspace", {}).get("name") == ws]
     if not on:
         return f"{name} is not on screen"
     # toggle_special acts on the focused monitor; elsewhere it would move the drawer here.
