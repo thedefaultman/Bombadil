@@ -91,6 +91,8 @@ FocusScope {
     property var _selected: null
     // Delegates whose clicked() already selects their row.
     property var _hooked: []
+    // The row a press selected and the selection it replaced, for a press that turns into a scroll.
+    property var _pressed: null
     onModelChanged: _sync()
     Component.onCompleted: _sync()
 
@@ -137,10 +139,12 @@ FocusScope {
                 positionViewAtIndex(currentIndex, ListView.Contain)
         }
 
-        // A tap selects the row under it (and activates it).
+        // A press selects the row under it, a tap activates it.
         TapHandler {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onTapped: (point, button) => root._tap(view.indexAt(point.position.x, point.position.y), button)
+            onPressedChanged: if (pressed) root._press(view.indexAt(point.position.x, point.position.y))
+            onCanceled: root._cancelPress()
+            onTapped: (point, button) => root._tapped(button, tapCount)
         }
 
         // A delegate that is a button (ItemDelegate, CheckDelegate) takes the press, so the
@@ -154,16 +158,11 @@ FocusScope {
                     if (!(c instanceof T.AbstractButton))
                         continue
                     if (root._hooked.indexOf(c) < 0) {
-                        // Selected on press: the row's own onClicked runs first and may move or
-                        // remove its item, and the selection follows the item, not the row.
                         c.pressedChanged.connect(() => {
-                            if (!c.pressed)
-                                return
-                            view.forceActiveFocus()
-                            const i = view.indexAt(c.x + c.width / 2, c.y + c.height / 2)
-                            if (i >= 0)
-                                view.currentIndex = i
+                            if (c.pressed)
+                                root._press(view.indexAt(c.x + c.width / 2, c.y + c.height / 2))
                         })
+                        c.canceled.connect(() => root._cancelPress())
                         c.clicked.connect(() => root._activateCurrent())
                     }
                     hooked.push(c)
@@ -185,14 +184,33 @@ FocusScope {
         }
     }
 
-    function _tap(i, button) {
+    // Selected on press: the row's own onClicked runs first and may move or remove its item,
+    // and the selection follows the item, not the row. A press that turns into a touch scroll
+    // gives the selection back.
+    function _press(i) {
         view.forceActiveFocus()
-        if (i < 0)
+        _pressed = i >= 0 ? { row: i, before: view.currentIndex } : null
+        if (i >= 0)
+            view.currentIndex = i
+    }
+
+    function _cancelPress() {
+        const p = _pressed
+        _pressed = null
+        if (p && view.currentIndex === p.row)
+            view.currentIndex = p.before < view.count ? p.before : -1
+    }
+
+    // A double-click activates on its first click only.
+    function _tapped(button, count) {
+        const pressed = _pressed !== null
+        _pressed = null
+        const i = view.currentIndex
+        if (!pressed || i < 0)
             return
-        view.currentIndex = i
         if (button === Qt.RightButton)
             contextRequested(i, _itemAt(i))
-        else
+        else if (count === 1)
             activated(i, _itemAt(i))
     }
 

@@ -31,9 +31,10 @@ FocusScope {
         if (Array.isArray(rs))
             return rs
         if (typeof rs.get === "function" && typeof rs.count === "number") {
+            // Copies: a removed element's live object reads as the one that took its place.
             const out = []
             for (let i = 0; i < rs.count; i++)
-                out.push(rs.get(i))
+                out.push(Object.assign({}, rs.get(i)))
             return out
         }
         if (typeof rs.length === "number")
@@ -230,6 +231,36 @@ FocusScope {
         }
     }
 
+    // A press selects its row at once, so a refresh that moves the row before the click lands
+    // takes the selection along. A press that turns into a touch scroll gives it back.
+    property var _pressed: null
+
+    function _press(i) {
+        view.forceActiveFocus()
+        _pressed = i >= 0 ? { row: i, before: view.currentIndex } : null
+        if (i >= 0)
+            view.currentIndex = i
+    }
+
+    function _cancelPress() {
+        const p = _pressed
+        _pressed = null
+        if (p && view.currentIndex === p.row)
+            view.currentIndex = p.before < view.count ? p.before : -1
+    }
+
+    function _tapped(button, count) {
+        const pressed = _pressed !== null
+        _pressed = null
+        const row = current
+        if (!pressed || !row)
+            return
+        if (button === Qt.RightButton)
+            contextRequested(row)
+        else if (count === 2)
+            activated(row)
+    }
+
     function _move(delta) {
         if (view.count === 0)
             return
@@ -354,17 +385,9 @@ FocusScope {
 
         TapHandler {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
-            onTapped: (point, button) => {
-                const i = view.indexAt(point.position.x, point.position.y)
-                view.forceActiveFocus()
-                if (i < 0)
-                    return
-                view.currentIndex = i
-                if (button === Qt.RightButton)
-                    root.contextRequested(root._sorted[i])
-                else if (tapCount === 2)
-                    root.activated(root._sorted[i])
-            }
+            onPressedChanged: if (pressed) root._press(view.indexAt(point.position.x, point.position.y))
+            onCanceled: root._cancelPress()
+            onTapped: (point, button) => root._tapped(button, tapCount)
         }
 
         Keys.onReturnPressed: if (root.current) root.activated(root.current)

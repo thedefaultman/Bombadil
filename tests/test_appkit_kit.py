@@ -55,6 +55,28 @@ def hexa(color):
 
 def click(x, y):
     QTest.mouseClick(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+
+def press(x, y):
+    QTest.mousePress(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+
+def release(x, y):
+    QTest.mouseRelease(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+
+def double_click(x, y):
+    QTest.mouseDClick(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
+
+# One finger down at (x, y), dragged dy pixels and lifted (dy 0 is a tap).
+def swipe(x, y, dy):
+    dev = QTest.createTouchDevice()
+    def step(kind, at):
+        seq = QTest.touchEvent(root, dev)
+        getattr(seq, kind)(0, QPoint(x, at), root)
+        seq.commit()
+        spin(16)
+    step("press", y)
+    for i in range(1, 21):
+        step("move", y + dy * i // 20)
+    step("release", y + dy)
 """
 
 
@@ -143,8 +165,16 @@ out["ownClicks"] = root.property("ownClicks")
     assert out == {"first": True, "second": True, "log": [1, "two", 0, "one"], "ownClicks": 2}
 
 
-def test_item_list_button_rows_that_move_their_item_keep_it_selected(home):
+MOVING_ROWS = {
+    "buttons": ("ItemDelegate", "CheckDelegate", "text: modelData.title"),
+    "list_rows": ("ListRow", "ListRow", "title: modelData.title; selected: ListView.isCurrentItem"),
+}
+
+
+@pytest.mark.parametrize("rows", MOVING_ROWS.values(), ids=MOVING_ROWS.keys())
+def test_item_list_rows_that_move_their_item_keep_it_selected(home, rows):
     """The row's own onClicked runs first: the click is about its item, wherever it went."""
+    mail_row, todo_row, label = rows
     out = run(home, """
 import QtQuick.Controls
 Window {
@@ -162,11 +192,11 @@ Window {
         id: mailList
         x: 0; width: 300; height: 300
         model: mail.slice().sort((p, q) => (p.read - q.read) || (p.id - q.id))
-        delegate: ItemDelegate {
+        delegate: MAIL_ROW {
             required property var modelData
             width: ListView.view.width
             height: 40
-            text: modelData.title
+            LABEL
             onClicked: mail = mail.map(m => m.id === modelData.id ? Object.assign({}, m, { read: true }) : m)
         }
         onActivated: (i, item) => log = log.concat(["mail", i, item.title])
@@ -175,16 +205,16 @@ Window {
         id: todoList
         x: 300; width: 300; height: 300
         model: todos.filter(t => !t.done)
-        delegate: CheckDelegate {
+        delegate: TODO_ROW {
             required property var modelData
             width: ListView.view.width
             height: 40
-            text: modelData.title
+            LABEL
             onClicked: todos = todos.map(t => t.id === modelData.id ? Object.assign({}, t, { done: true }) : t)
         }
         onActivated: (i, item) => log = log.concat(["todo", i, item.title])
     }
-}""", """
+}""".replace("MAIL_ROW", mail_row).replace("TODO_ROW", todo_row).replace("LABEL", label), """
 QTest.qWaitForWindowExposed(root)
 mail, todo = root.property("mailList"), root.property("todoList")
 click(100, 15)
@@ -220,6 +250,110 @@ spin(50)
 out["log"] = js(root.property("log"))
 """)
     assert out == {"selected": True, "log": [1]}
+
+
+def test_item_list_a_tap_is_about_the_item_pressed_when_the_model_changes_under_it(home):
+    """A poller replaces the array between press and release: not whatever moved under the pointer."""
+    out = run(home, """
+Window {
+    width: 300; height: 300; visible: true
+    property Item list: il
+    property var log: []
+    ItemList {
+        id: il
+        anchors.fill: parent
+        model: [{ id: 1, title: "one" }, { id: 2, title: "two" }, { id: 3, title: "three" },
+                { id: 4, title: "four" }]
+        onActivated: (i, item) => log = log.concat([[i, item.title]])
+    }
+}""", """
+QTest.qWaitForWindowExposed(root)
+il = root.property("list")
+items = {t: {"id": i, "title": t} for i, t in enumerate(["one", "two", "three", "four"], 1)}
+def pick(*names):
+    return [items[n] for n in names]
+state = lambda: [il.property("currentIndex"), js(il.property("current")), js(root.property("log"))]
+press(100, 60)   # "two", which then moves to the end
+il.setProperty("model", pick("one", "three", "four", "two"))
+release(100, 60)
+spin(50)
+out["moved"] = state()
+root.setProperty("log", [])
+press(100, 15)   # "one", which then goes away
+il.setProperty("model", pick("three", "four", "two"))
+release(100, 15)
+spin(50)
+out["removed"] = state()
+""")
+    assert out == {"moved": [3, {"id": 2, "title": "two"}, [[3, "two"]]], "removed": [-1, None, []]}
+
+
+ACTIVATING_ROWS = {"default": "", "list_rows": "delegate: ListRow { required property var modelData; "
+                   "width: ListView.view.width; title: modelData.title; selected: ListView.isCurrentItem }"}
+
+
+@pytest.mark.parametrize("delegate", ACTIVATING_ROWS.values(), ids=ACTIVATING_ROWS.keys())
+def test_item_list_a_double_click_activates_once(home, delegate):
+    out = run(home, """
+import QtQuick.Controls
+Window {
+    width: 300; height: 300; visible: true
+    property Item list: il
+    property var log: []
+    ItemList {
+        id: il
+        anchors.fill: parent
+        model: [{ id: 1, title: "one" }, { id: 2, title: "two" }]
+        DELEGATE
+        onActivated: (i, item) => log = log.concat([i])
+    }
+}""".replace("DELEGATE", delegate), """
+QTest.qWaitForWindowExposed(root)
+double_click(100, 60)
+spin(300)
+out["log"] = js(root.property("log"))
+out["index"] = root.property("list").property("currentIndex")
+""")
+    assert out == {"log": [1], "index": 1}
+
+
+def _scrolling_list(delegate):
+    return """
+import QtQuick.Controls
+Window {
+    width: 300; height: 300; visible: true
+    property Item list: il
+    property var log: []
+    ItemList {
+        id: il
+        anchors.fill: parent
+        model: Array.from({ length: 50 }, (_, i) => ({ id: i, title: "row " + i }))
+        DELEGATE
+        onActivated: (i, item) => log = log.concat([i])
+    }
+}""".replace("DELEGATE", delegate)
+
+
+TOUCH_ROWS = {"default": "", "buttons": "delegate: ItemDelegate { required property var modelData; "
+              "width: ListView.view.width; height: 40; text: modelData.title }"}
+
+
+@pytest.mark.parametrize("delegate", TOUCH_ROWS.values(), ids=TOUCH_ROWS.keys())
+def test_item_list_a_touch_scroll_selects_nothing_but_a_tap_does(home, delegate):
+    out = run(home, _scrolling_list(delegate), """
+QTest.qWaitForWindowExposed(root)
+il = root.property("list")
+view = next(c for c in il.childItems() if c.metaObject().className().startswith("QQuickListView"))
+swipe(100, 230, -190)
+spin(300)
+out["scrolled"] = view.property("contentY") > 100
+out["after"] = [il.property("currentIndex"), js(root.property("log"))]
+view.setProperty("contentY", 0)
+swipe(100, 15, 0)
+spin(300)
+out["tap"] = [il.property("currentIndex"), js(root.property("log"))]
+""")
+    assert out == {"scrolled": True, "after": [-1, []], "tap": [0, [0]]}
 
 
 def test_item_list_drops_the_selection_when_its_item_is_gone(home):
@@ -266,6 +400,98 @@ root.setProperty("rows", [{"name": "A", "cpu": 1}, {"name": "B", "cpu": 5}])
 out["edited"] = js(root.property("current"))
 """)
     assert out == {"before": {"pid": 20, "name": "B"}, "gone": [-1, None], "edited": {"name": "B", "cpu": 5}}
+
+
+def test_data_table_a_tap_is_about_the_row_pressed_when_a_refresh_reorders_it(home):
+    """The memory table re-sorts on every refresh: a click that straddles one keeps its row."""
+    out = run(home, """
+Window {
+    width: 400; height: 300; visible: true
+    property Item table: dt
+    property real rowY: Theme.controlHeight + 4 + Theme.rowHeight * 1.5
+    DataTable {
+        id: dt
+        anchors.fill: parent
+        columns: [{ key: "pid" }, { key: "name" }, { key: "mem" }]
+        sortKey: "mem"; sortDescending: true
+        rows: [{ pid: 10, name: "A", mem: 300 }, { pid: 20, name: "B", mem: 200 }, { pid: 30, name: "C", mem: 100 }]
+    }
+}""", """
+QTest.qWaitForWindowExposed(root)
+dt = root.property("table")
+y = int(root.property("rowY"))   # "B"
+press(100, y)
+dt.setProperty("rows", [{"pid": 10, "name": "A", "mem": 300}, {"pid": 20, "name": "B", "mem": 50},
+                        {"pid": 30, "name": "C", "mem": 100}])
+release(100, y)
+spin(50)
+out["current"] = [dt.property("currentIndex"), js(dt.property("current"))["name"]]
+""")
+    assert out == {"current": [2, "B"]}
+
+
+def test_data_table_a_double_click_activates_once_and_a_touch_scroll_selects_nothing(home):
+    out = run(home, """
+Window {
+    width: 400; height: 300; visible: true
+    property Item table: dt
+    property var log: []
+    property real rowY: Theme.controlHeight + 4 + Theme.rowHeight * 1.5
+    DataTable {
+        id: dt
+        anchors.fill: parent
+        columns: [{ key: "pid" }, { key: "name" }]
+        rows: Array.from({ length: 60 }, (_, i) => ({ pid: i, name: "p" + i }))
+        onActivated: row => log = log.concat([row.pid])
+    }
+}""", """
+QTest.qWaitForWindowExposed(root)
+dt = root.property("table")
+y = int(root.property("rowY"))
+double_click(100, y)
+spin(300)
+out["double"] = [dt.property("currentIndex"), js(root.property("log"))]
+dt.setProperty("currentIndex", -1)
+root.setProperty("log", [])
+swipe(100, y + 100, -90)
+spin(300)
+out["scroll"] = [dt.property("currentIndex"), js(root.property("log"))]
+""")
+    assert out == {"double": [1, [1]], "scroll": [-1, []]}
+
+
+def test_data_table_drops_the_selection_when_its_row_leaves_a_list_model(home):
+    """The removed element's live object reads as the one that took its place."""
+    out = run(home, """
+Item {
+    width: 400; height: 300
+    property Item table: dt
+    readonly property string who: dt.current ? dt.current.name : "none"
+    function removeFirst() { lm.remove(0) }
+    function removeSelected() { lm.remove(dt.currentIndex) }
+    ListModel {
+        id: lm
+        ListElement { pid: 10; name: "A" }
+        ListElement { pid: 20; name: "B" }
+        ListElement { pid: 30; name: "C" }
+        ListElement { pid: 40; name: "D" }
+    }
+    DataTable {
+        id: dt
+        anchors.fill: parent
+        columns: [{ key: "pid" }, { key: "name" }]
+        rows: lm
+    }
+}""", """
+dt = root.property("table")
+state = lambda: [dt.property("currentIndex"), root.property("who")]
+dt.setProperty("currentIndex", 2)
+QMetaObject.invokeMethod(root, "removeFirst")   # C moves up and stays selected
+out["before"] = state()
+QMetaObject.invokeMethod(root, "removeSelected")
+out["removed"] = state()
+""")
+    assert out == {"before": [1, "C"], "removed": [-1, "none"]}
 
 
 # -- Theme --
