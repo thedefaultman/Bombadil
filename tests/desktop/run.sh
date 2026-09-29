@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The bar, agentd and the real Claude Code CLI in a headless sway session, driven by keystrokes
 # against a scripted Anthropic API (fake_api.py). Screenshots, logs and a pass/fail list land in
-# out/desktop. Covers what runs without Hyprland; the Super binds and drawers need a real session.
+# out/desktop. Covers what runs without Hyprland; the Super binds and how Hyprland focuses the drawer
+# need a real session (the VM smoke).
 #
 #   tests/desktop/run.sh     needs docker and a self-contained `claude` binary (CLAUDE_BIN=...)
 set -euo pipefail

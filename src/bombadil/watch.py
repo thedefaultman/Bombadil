@@ -8,10 +8,12 @@ without the model (open, undo), newest last.
 
 import json
 import os
+import select
 import socket
 import sys
 import time
 from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from . import narrate, paths
@@ -128,8 +130,27 @@ def _terminal() -> tuple[bool, int]:
     return tty, width
 
 
-def follow(turn_file: Path, out=sys.stdout) -> None:
-    """Print new events of a running turn as agentd sends them, until it ends."""
+@contextmanager
+def _keys():
+    """The terminal's keys one at a time, without Enter or echo (None without a terminal), so
+    Esc closes the drawer while it still follows a turn."""
+    if not sys.stdin.isatty():
+        yield None
+        return
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        yield fd
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def follow(turn_file: Path, out=sys.stdout, keys: int | None = None) -> bool:
+    """Print new events of a running turn as agentd sends them, until it ends. Returns True
+    when a key on `keys` (a file descriptor) closed it first."""
     tty, width = _terminal()
     r = Renderer(color=tty, width=width)
     seen = len(read_log(turn_file))
@@ -144,33 +165,52 @@ def follow(turn_file: Path, out=sys.stdout) -> None:
         try:
             s.connect(str(paths.socket_path()))
         except OSError:
-            return
+            return False
         # Anything written between reading the file and connecting is in the file now.
         for line in r.lines(read_log(turn_file)[seen:]):
-            print(line, file=out)
-        for raw in s.makefile("r"):
-            try:
-                ev = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if ev.get("type") != "event" or ev.get("turn") != turn or ev.get("kind") in ("status", "turn_start"):
-                continue
-            for line in r.one(ev):
-                print(line, file=out, flush=True)
-            if ev.get("kind") == "turn_end":
-                return
+            print(line, file=out, flush=True)
+        buf = b""
+        while True:
+            ready, _, _ = select.select([s] + ([keys] if keys is not None else []), [], [])
+            if keys is not None and keys in ready:
+                os.read(keys, 64)
+                return True
+            chunk = s.recv(65536)
+            if not chunk:
+                return False
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                try:
+                    ev = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("type") != "event" or ev.get("turn") != turn or ev.get("kind") in ("status", "turn_start"):
+                    continue
+                for line in r.one(ev):
+                    print(line, file=out, flush=True)
+                if ev.get("kind") == "turn_end":
+                    return False
 
 
-def show(turn_file: Path | None, live: bool = False, out=sys.stdout) -> int:
+def show(turn_file: Path | None, live: bool = False, out=sys.stdout, wait: bool = False) -> int:
+    """A turn's details; with wait, the drawer then stays until a key closes it. Esc (any key)
+    also closes it while it still follows a running turn."""
     if turn_file is None or not turn_file.exists():
         print("No turns yet.", file=out)
+        if wait:
+            wait_for_key()
         return 1
     if live:
-        follow(turn_file, out)
+        with _keys() as fd:
+            if follow(turn_file, out, keys=fd if wait else None):
+                return 0
     else:
         tty, width = _terminal()
         for line in Renderer(color=tty, width=width).lines(read_log(turn_file)):
             print(line, file=out)
+    if wait:
+        wait_for_key()
     return 0
 
 
@@ -197,7 +237,7 @@ def history_lines(limit: int = 40, color: bool = False) -> list[str]:
     return out or ["Nothing yet."]
 
 
-def wait_for_key(prompt: str = "Press any key to close.") -> None:
+def wait_for_key(prompt: str = "Press Esc to close.") -> None:
     """Keep the drawer open until a key is pressed (only when there is a terminal)."""
     if not sys.stdin.isatty():
         return
