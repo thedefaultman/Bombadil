@@ -209,15 +209,102 @@ def test_an_app_title_in_any_script_still_opens(home):
     assert launcher.match("open Café").verb == "open"
 
 
-def test_details_drawer_runs_in_foot_and_slides_in(home, monkeypatch):
-    h = FakeHypr()
+class Foot:
+    """A drawer's foot process: `pid`, and poll() says whether it has exited."""
+    def __init__(self, pid, exited=None):
+        self.pid, self.exited = pid, exited
+
+    def poll(self):
+        return self.exited
+
+
+class Ran:
+    def __init__(self, returncode):
+        self.returncode = returncode
+
+
+def _drawer(monkeypatch, h, foot=None, open_=False):
+    """A Launcher whose drawer is foot (pid 4242), and whether pgrep finds one open."""
     spawned, ran = [], []
     monkeypatch.setattr(launcher.shutil, "which", lambda b: f"/usr/bin/{b}")
-    lx = launcher.Launcher(hyprland=h, snaps=Snaps(0), runner=lambda *a, **k: ran.append(a[0]),
-                           spawn=lambda argv, **k: spawned.append(argv))
-    lx.details(["bombadil", "watch"])
+
+    def runner(argv, **k):
+        ran.append(argv)
+        return Ran(0 if open_ or argv[0] == "pkill" else 1)
+
+    def spawn(argv, **k):
+        spawned.append(argv)
+        return foot or Foot(4242)
+
+    return launcher.Launcher(hyprland=h, snaps=Snaps(0), runner=runner, spawn=spawn), spawned, ran
+
+
+class MappingHypr(FakeHypr):
+    """Hyprland whose clients list shows the drawer's window only after a few asks, as a
+    window maps a moment after its process starts."""
+    def __init__(self, after=3):
+        super().__init__()
+        self.asks, self.after = 0, after
+
+    def clients(self):
+        self.asks += 1
+        return [{"class": "bombadil-details", "pid": 4242}] if self.asks > self.after else []
+
+
+def test_details_drawer_runs_in_foot_and_slides_in_with_the_keyboard(home, monkeypatch):
+    h = MappingHypr()
+    lx, spawned, ran = _drawer(monkeypatch, h)
+    assert lx.details(["bombadil", "watch"]) == "shown"
     assert spawned == [["/usr/bin/foot", "--app-id=bombadil-details", "--title=Details", "bombadil", "watch"]]
     assert ran == [["pkill", "-f", "--", "--app-id=bombadil-details"]]
+    # Its rule is silent and showing the workspace before the window maps leaves the keyboard
+    # on the bar: wait for the window, then focus it, which shows the drawer with the keyboard.
+    assert h.asks == 4
+    assert h.calls == [("dispatch", 'hl.dsp.focus({ window = "pid:4242" })')]
+
+
+def test_details_again_closes_the_drawer_it_shows(home, monkeypatch):
+    h = MappingHypr(after=0)
+    lx, spawned, ran = _drawer(monkeypatch, h, open_=True)
+    lx.details(["bombadil", "watch", "--file", "/t/1.jsonl", "--follow"], toggle=True)
+    ran.clear()
+    # The turn ended meanwhile, so the second click has no --follow: still the same drawer.
+    assert lx.details(["bombadil", "watch", "--file", "/t/1.jsonl"], toggle=True) == "hidden"
+    assert ran == [["pgrep", "-f", "--", "--app-id=bombadil-details"], ["pkill", "-f", "--", "--app-id=bombadil-details"]]
+    assert len(spawned) == 1
+    # Another turn's details, or the history, replace what the drawer shows instead.
+    assert lx.details(["bombadil", "watch", "--file", "/t/2.jsonl"], toggle=True) == "shown"
+    assert lx.details(["bombadil", "history"], toggle=True) == "shown"
+    assert len(spawned) == 3
+
+
+def test_details_again_opens_it_when_a_key_closed_it_meanwhile(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, MappingHypr(after=0), open_=False)
+    lx.details(["bombadil", "watch"], toggle=True)
+    assert lx.details(["bombadil", "watch"], toggle=True) == "shown"   # pgrep finds none open
+    assert len(spawned) == 2
+
+
+def test_close_details_puts_the_drawer_away(home, monkeypatch):
+    lx, _, ran = _drawer(monkeypatch, MappingHypr(after=0))
+    lx.details(["bombadil", "watch"])
+    ran.clear()
+    assert lx.close_details() is True
+    assert ran == [["pkill", "-f", "--", "--app-id=bombadil-details"]]
+    assert lx.details(["bombadil", "watch"], toggle=True) == "shown"   # nothing to toggle off now
+
+
+def test_a_drawer_closed_before_its_window_maps_is_not_shown_empty(home, monkeypatch):
+    h = MappingHypr(after=10 ** 6)
+    lx, _, _ = _drawer(monkeypatch, h, foot=Foot(4242, exited=-15))
+    lx.details(["bombadil", "watch"])
+    assert h.calls == []
+
+
+def test_a_drawer_slow_to_map_still_slides_in(home, monkeypatch):
+    h = MappingHypr(after=10 ** 6)
+    lx, _, _ = _drawer(monkeypatch, h)
+    lx._focus_drawer(Foot(4242), wait=0.2)
     assert h.calls == [("dispatch", 'hl.dsp.focus({ workspace = "special:details" })')]
 
 

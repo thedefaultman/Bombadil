@@ -33,11 +33,13 @@ Window {
     property var sent: []
     property int screens: 1
     property var summons: []
+    property int handOffs: 0
     PillState {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
         onSummoned: text => w.summons = w.summons.concat([text])
+        onHandOff: w.handOffs += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
@@ -195,6 +197,27 @@ def test_undo_on_the_line_does_not_also_open_details(bar):
     assert bar.sent[before:] == [{"type": "local", "action": "undo"}]
     bar.click("detailsButton")
     assert bar.sent[-1] == {"type": "details", "turn": 1}
+
+
+def test_details_hands_the_keyboard_to_the_drawer_and_esc_closes_it(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    # A summoned pill holds the keyboard exclusively, and Hyprland then refuses to focus the
+    # drawer: the bar lets go before it asks for the drawer.
+    bar.click("detailsButton")
+    assert bar.win.property("handOffs") == 1 and bar.sent[-1] == {"type": "details", "turn": 1}
+    bar.click("line")   # a click on the finished line itself opens (or closes) them too
+    assert bar.win.property("handOffs") == 2 and bar.sent[-1] == {"type": "details", "turn": 1}
+    bar.call("closeDetails")
+    assert bar.sent[-1] == {"type": "close_details"}
+    before = len(bar.sent)
+    bar.send(type="status", busy=False, provider="claude", queue=[])
+    QtCore.QMetaObject.invokeMethod(bar.pill, "lost")
+    bar.pump()
+    bar.call("closeDetails")
+    bar.call("details")
+    assert bar.sent[before:] == []   # nothing reaches agentd while the socket is down
 
 
 def test_an_irreversible_step_is_red_and_says_so_after(bar):

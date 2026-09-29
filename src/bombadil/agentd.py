@@ -9,7 +9,9 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "cancel"}                   the same as stop
                    {"type": "unqueue", "turn": n}       drop a prompt still waiting its turn
                    {"type": "local", "action": "undo"}  a launcher action by name (the Undo button)
-                   {"type": "details", "turn": n}       show a turn's commands and output (drawer)
+                   {"type": "details", "turn": n}       show a turn's commands and output (drawer);
+                                                        again while it shows closes it
+                   {"type": "close_details"}            put the drawer away (Esc in the pill)
                    {"type": "summon", "text"?: "..."}   ask the bar to take the keyboard (Super), with
                                                         words to finish in the pill (the Brain's Ask)
                    {"type": "status"}
@@ -185,6 +187,8 @@ class AgentD:
                 self._background(self.local(action, str(msg.get("action"))))
         elif t == "details":
             self._background(self.details(msg.get("turn")))
+        elif t == "close_details":
+            self._background(asyncio.to_thread(self.launcher.close_details))
         elif t == "summon":
             text = _pill_words(msg.get("text"))
             await self.broadcast({"type": "summon", **({"text": text} if text else {})})
@@ -315,7 +319,7 @@ class AgentD:
         if turn is not None and turn == self.current:
             argv.append("--follow")
         try:
-            await asyncio.to_thread(self.launcher.details, argv)
+            await asyncio.to_thread(self.launcher.details, argv, True)
         except Exception as e:  # noqa: BLE001
             await self.event("local", turn=None, action="details", phase="done", ok=False,
                              text=f"Could not show the details: {e}")

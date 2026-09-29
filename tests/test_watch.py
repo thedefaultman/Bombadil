@@ -48,3 +48,59 @@ def test_history_lists_turns_and_launcher_actions(home):
     assert any("install ffmpeg" in x and "Installed ffmpeg." in x and "restore point 4" in x for x in out)
     assert any("passwords: Opened Passwords." in x for x in out)
     assert any("set up docker" in x and "Stopped." in x for x in out)
+
+
+def _agentd(home, events):
+    """A socket where agentd would be; it sends `events` to whoever connects, then stays open."""
+    import socket
+    import threading
+    path = paths.socket_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(str(path))
+    srv.listen(1)
+    conns = []
+
+    def serve():
+        c, _ = srv.accept()
+        conns.append(c)
+        for ev in events:
+            c.sendall((json.dumps(ev) + "\n").encode())
+
+    threading.Thread(target=serve, daemon=True).start()
+    return srv, conns
+
+
+def _turn_file(home, turn=3):
+    f = home / "state" / "turns" / f"1000-{turn}.jsonl"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"kind": "turn_start", "turn": turn, "prompt": "set up docker", "t": 0}) + "\n")
+    return f
+
+
+def test_following_a_turn_ends_with_it(home):
+    import io
+    srv, _ = _agentd(home, [
+        {"type": "event", "kind": "tool", "turn": 3, "name": "Bash", "input": {"command": "sudo pacman -S docker"}},
+        {"type": "event", "kind": "tool", "turn": 4, "name": "Bash", "input": {"command": "ls"}},
+        {"type": "event", "kind": "turn_end", "turn": 3, "seconds": 4, "summary": "Installed docker."},
+    ])
+    out = io.StringIO()
+    assert watch.follow(_turn_file(home), out) is False
+    text = out.getvalue()
+    assert "set up docker" in text and "sudo pacman -S docker" in text and "Installed docker." in text
+    assert "$ ls" not in text   # another turn's events
+    srv.close()
+
+
+def test_a_key_closes_the_drawer_while_it_still_follows(home):
+    import io
+    import os
+    srv, _ = _agentd(home, [])   # the turn never ends
+    r, w = os.pipe()
+    os.write(w, b"\x1b")               # Esc
+    out = io.StringIO()
+    assert watch.follow(_turn_file(home), out, keys=r) is True
+    assert "set up docker" in out.getvalue()
+    os.close(r), os.close(w)
+    srv.close()

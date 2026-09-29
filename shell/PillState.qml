@@ -10,6 +10,8 @@ QtObject {
     // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
     // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
     signal summoned(string text)
+    // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
+    signal handOff()
 
     property bool connected: false
     property bool busy: false
@@ -207,7 +209,15 @@ QtObject {
         outgoing({ type: "local", action: "undo" }); sticky = false
     }
 
-    function details() { outgoing({ type: "details", turn: turn }) }
+    // Details opens the drawer, and closes it when it already shows this turn.
+    function details() {
+        if (_offline()) return
+        handOff()
+        outgoing({ type: "details", turn: turn })
+    }
+
+    // Esc in the pill with nothing to stop or clear: put the drawer away too.
+    function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
     function dismiss() {
         if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
