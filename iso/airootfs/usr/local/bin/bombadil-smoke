@@ -40,6 +40,12 @@ has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
+active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
+# No details window and no drawer showing (a failed hyprctl never counts as gone).
+drawer_gone() {
+  local c m; c=$(hypr_json clients) && m=$(hypr_json monitors) || return 1
+  python3 -c 'import json,sys; c, m = json.loads(sys.argv[1]), json.loads(sys.argv[2]); sys.exit(any(x["class"] == "bombadil-details" for x in c) or any((x.get("specialWorkspace") or {}).get("name") == "special:details" for x in m))' "$c" "$m"
+}
 grab() { as_user grim /tmp/smoke.png && test -s /tmp/smoke.png; }
 # Ask the host (scripts/test-vm.sh) for a screenshot of the VM screen.
 shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
@@ -86,7 +92,22 @@ check super-escape-stops wait_for 30 bash -c '! pgrep -f -x "sleep 300"'
 check stop-in-history history_has "sleep 300.*Stopped"
 check details-drawer agentd_send '{"type": "details"}'
 check details-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+# The drawer takes the keyboard as it slides in, and every way out closes it: Esc in the
+# drawer, Details again, and Esc in the pill.
+check details-has-keyboard wait_for 30 active_is bombadil-details
 shot details
+keys esc
+check details-esc-closes wait_for 30 drawer_gone
+check details-reopen agentd_send '{"type": "details"}'
+check details-reopen-shown wait_for 60 active_is bombadil-details
+check details-again agentd_send '{"type": "details"}'
+check details-again-closes wait_for 30 drawer_gone
+check details-third agentd_send '{"type": "details"}'
+check details-third-shown wait_for 60 active_is bombadil-details
+keys meta_l
+keys esc
+check pill-esc-closes-details wait_for 30 drawer_gone
+shot details-closed
 
 
 # Signing in (the live system has no provider picked and no login). agentd asks which AI in the

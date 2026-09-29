@@ -23,6 +23,7 @@ ShellRoot {
         id: pillState
         onOutgoing: msg => root.write(msg)
         onSummoned: root.summon()
+        onHandOff: root.release()
     }
 
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
@@ -224,11 +225,12 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
+                                // Esc stops a running turn; otherwise it clears, then puts the line and
+                                // the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""
-                                    else { pillState.dismiss(); root.release() }
+                                    else { pillState.dismiss(); pillState.closeDetails(); root.release() }
                                 }
                             }
 

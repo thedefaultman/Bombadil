@@ -306,7 +306,9 @@ async def test_a_bang_runs_a_shell_command(home):
 async def test_details_show_the_turns_own_log(home, monkeypatch):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     opened = []
-    monkeypatch.setattr(d.launcher, "details", lambda argv: opened.append(argv))
+    closed = []
+    monkeypatch.setattr(d.launcher, "details", lambda argv, toggle=False: opened.append((argv, toggle)))
+    monkeypatch.setattr(d.launcher, "close_details", lambda: closed.append(True))
     server, r, w = await _start(d)
     await _ask(w, "!echo hi")
     await _read_until(r, "turn_end")
@@ -316,10 +318,19 @@ async def test_details_show_the_turns_own_log(home, monkeypatch):
         if opened:
             break
         await asyncio.sleep(0.02)
-    argv = opened[0]
+    argv, toggle = opened[0]
     assert argv[1:3] == ["watch", "--file"]
+    assert toggle   # Details again closes the drawer it shows
     kinds = [json.loads(line)["kind"] for line in open(argv[3])]
     assert kinds[0] == "turn_start" and kinds[-1] == "turn_end" and "tool_result" in kinds
+    # Esc in the pill puts the drawer away.
+    w.write(b'{"type": "close_details"}\n')
+    await w.drain()
+    for _ in range(50):
+        if closed:
+            break
+        await asyncio.sleep(0.02)
+    assert closed == [True]
     w.close()
     server.cancel()
 
