@@ -100,6 +100,14 @@ class Provider:
         """Signed in? None when it cannot tell (the CLI is missing or said nothing useful)."""
         return None
 
+    credentials: Path | None = None   # where the CLI keeps its login (a new login changes it)
+
+    def login_stamp(self) -> float | None:
+        try:
+            return self.credentials.stat().st_mtime_ns if self.credentials else None
+        except OSError:
+            return None
+
     def signed_out(self, text: str) -> bool:
         """Does this error say the login is gone (expired, revoked, never made)?"""
         return bool(text) and any(re.search(p, text, re.I | re.M) for p in self.SIGNED_OUT)
@@ -121,7 +129,7 @@ class Provider:
         (r"timed? ?out", "the sign-in server did not answer"),
     )
 
-    def _status(self, argv: list[str], timeout: float = 20) -> subprocess.CompletedProcess | None:
+    def _status(self, argv: list[str], timeout: float = 60) -> subprocess.CompletedProcess | None:
         if not self.installed:
             return None
         try:
@@ -241,6 +249,10 @@ class Claude(Provider):
     # comes back to the CLI by itself; the printed one ends at platform.claude.com's code page,
     # whose address holds code and state, typed in as "code#state". It waits forever; success
     # is "Login successful." and exit 0. Credentials: ~/.claude/.credentials.json (0600).
+
+    @property
+    def credentials(self):
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".credentials.json"
 
     AUTH_HOSTS = ("claude.com", "claude.ai", "platform.claude.com", "console.anthropic.com")
     CODE_PAGES = ("platform.claude.com", "console.anthropic.com")
@@ -380,6 +392,10 @@ class Codex(Provider):
     # no code to paste: only the page coming back finishes it. It waits forever; success is
     # "Successfully logged in" and exit 0, which a stray visit to its /success page also
     # produces, so `codex login status` has the last word. Credentials: ~/.codex/auth.json.
+
+    @property
+    def credentials(self):
+        return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
 
     def signin_url_kind(self, url):
         u, q = _query(url)

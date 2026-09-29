@@ -118,12 +118,13 @@ async def test_esc_calls_off_the_sign_in_and_the_prompts_that_waited(signed_out,
     assert setup["actions"][0] == {"id": "signin", "label": "Sign in", "style": "primary"}
     await _send(w, {"type": "prompt", "text": "hello"})   # asked while signed out: signs in
     await _until(r, lambda m: m.get("type") == "setup" and m.get("phase") == "waiting")
-    assert d.signin is not None and d.signin.url and panel.visible
+    running = d.signin
+    assert running is not None and running.url and panel.visible
     await _send(w, {"type": "stop"})
     msgs = await _until(r, _setup("signed_out"))
     assert msgs[-1]["line"] == "Sign-in cancelled."
     assert any(m.get("kind") == "unqueued" for m in msgs) and not d.pending
-    assert d.signin.proc.returncode is not None and not panel.visible
+    assert running.proc.returncode is not None and not panel.visible
     w.close()
     server.cancel()
 
@@ -332,5 +333,127 @@ async def test_typing_the_name_answers_which_ai(signed_out, monkeypatch):
     msgs = await _until(r, _setup("ready"))
     assert msgs[-1]["line"] == "Fake is ready. Ask me for anything."
     assert config.load().provider == "codex" and d.provider.name == "fake"
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_double_tap_on_sign_in_starts_one_login(signed_out, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "never")
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    probe.listen()
+    # The sign-in server answers, so start_signin waits on the check before it starts the login.
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN_HOST", f"127.0.0.1:{probe.getsockname()[1]}")
+    starts = []
+
+    class Counting(signin.SignIn):
+        def __init__(self, *a, **kw):
+            starts.append(1)
+            super().__init__(*a, **kw)
+    monkeypatch.setattr(signin, "SignIn", Counting)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), panel=FakePanel(follow=False))
+    server, r, w, _ = await _start(d)
+    for _ in range(2):
+        await _send(w, {"type": "setup_action", "id": "signin"})
+    await _until(r, lambda m: m.get("type") == "setup" and m.get("phase") == "waiting")
+    await asyncio.sleep(0.5)
+    assert len(starts) == 1
+    d.signin.cancel()
+    await _until(r, _setup("signed_out"))
+    probe.close()
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_login_is_watched_after_the_pill_sign_in_was_called_off(signed_out, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "never")
+    panel = FakePanel(follow=False)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), auto_signin=True, panel=panel)
+    server, r, w, _ = await _start(d)
+    await _until(r, lambda m: m.get("type") == "setup" and m.get("phase") == "waiting")
+    d.signin.cancel()
+    await _until(r, _setup("signed_out"))
+    assert d.signin is None   # nothing is signing in
+    await _send(w, {"type": "open_url", "url": "http://127.0.0.1:1/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1%2Fcallback"})
+    await _until(r, _setup("signing_in"))
+    (Path.home() / ".fake-signin").write_text("signed in")
+    await _until(r, _setup("ready"))
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_calling_off_a_sign_in_that_was_not_needed_keeps_the_login_and_the_queue(signed_out, monkeypatch):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "never")
+    panel = FakePanel(follow=False)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), panel=panel)
+    server, r, w, setup = await _start(d)
+    assert setup["state"] == "ready"
+    await _send(w, {"type": "prompt", "text": "!sleep 1"})     # a turn is running...
+    await _until(r, lambda m: m.get("kind") == "turn_start")
+    await _send(w, {"type": "prompt", "text": "hello"})        # ...and this waits behind it
+    await _send(w, {"type": "prompt", "text": "sign in"})      # sign in again although signed in
+    await _until(r, lambda m: m.get("type") == "setup" and m.get("phase") == "waiting")
+    d.signin.cancel()
+    await _until(r, _setup("ready"))                            # still signed in: ready, not signed out
+    msgs = await _until(r, lambda m: m.get("kind") == "result" and "hello" in m.get("text", ""))
+    assert not any(m.get("kind") == "unqueued" for m in msgs)  # "hello" was kept, and ran
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_picking_an_ai_that_needs_signing_in_never_shows_signed_out_first(signed_out, monkeypatch):
+    monkeypatch.setitem(providers.PROVIDERS, "claude", Browsing)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), chosen=False, panel=FakePanel())
+    server, r, w, _ = await _start(d)
+    await _send(w, {"type": "setup_action", "id": "provider:claude"})
+    msgs = await _until(r, _setup("ready"))
+    states = [m["state"] for m in msgs if m.get("type") == "setup"]
+    assert "signed_out" not in states and "signing_in" in states   # `bombadil provider` follows this
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_launcher_words_about_signing_in_answer_like_the_rest(signed_out, monkeypatch):
+    monkeypatch.setitem(providers.PROVIDERS, "codex", Browsing)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), panel=FakePanel())
+    server, r, w, _ = await _start(d)
+    await _send(w, {"type": "prompt", "text": "use codex"})
+    msgs = await _until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    assert msgs[-1]["ok"] and msgs[-1]["action"] == "provider"   # `bombadil ask "use codex"` ends
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_the_user_stopped_is_not_run_again_after_a_sign_in(signed_out):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    d = agentd.AgentD(RetryingLogin("x"), agentd._NoSnapshots(), panel=FakePanel())
+    server, r, w, _ = await _start(d)
+    (Path.home() / ".fake-signin").unlink()
+    await _send(w, {"type": "prompt", "text": "hello"})
+    await _until(r, lambda m: m.get("kind") == "turn_start")
+    await _send(w, {"type": "stop"})
+    await _until(r, lambda m: m.get("kind") == "turn_end")
+    await asyncio.sleep(1)
+    assert d.turns == 1 and not d.pending   # the stopped ask is gone, not queued behind the sign-in
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_bar_that_connects_later_is_not_told_about_a_sign_in_from_long_ago(signed_out, monkeypatch):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), panel=FakePanel())
+    server, r, w, setup = await _start(d)
+    await d._set_access("ready", "Signed in to Fake. Ask me for anything.", "done")
+    assert d._setup_msg()["line"] == "Signed in to Fake. Ask me for anything."
+    monkeypatch.setattr(agentd, "READY_LINE_SECONDS", -1)
+    assert d._setup_msg()["line"] == ""
     w.close()
     server.cancel()

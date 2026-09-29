@@ -40,8 +40,12 @@ def main() -> int:
         print(__doc__.strip().splitlines()[0], file=sys.stderr)
         return 2
     for url in urls:
-        if "://" not in url and Path(url).exists():
-            url = Path(url).resolve().as_uri()
+        if "://" not in url:
+            if Path(url).exists():
+                url = Path(url).resolve().as_uri()
+            elif not url.startswith(("about:", "data:", "javascript:", "mailto:")):
+                host = url.split("/", 1)[0].split(":", 1)[0]
+                url = ("http://" if host in ("localhost", "127.0.0.1") else "https://") + url   # "example.com"
         if tell_agentd(url):
             continue
         from bombadil import browser

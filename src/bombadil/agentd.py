@@ -65,6 +65,7 @@ SEND_TIMEOUT = 5.0
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
 OFFLINE_POLL = 5.0   # while there is no way to the sign-in page, look again this often
+READY_LINE_SECONDS = 120.0   # how long "Signed in to Claude" is worth saying
 
 
 class AgentD:
@@ -106,6 +107,10 @@ class AgentD:
         self._offline_task: asyncio.Task | None = None
         self._external = False                       # a sign-in started in a terminal is being watched
         self._signed_out = False                     # the running turn found the login gone
+        self._starting = False                       # start_signin is between its check and its SignIn
+        self._login_gone = False                     # a turn found the stored login dead; signed_in() would not say
+        self._access_at = 0.0                        # when the setup state last changed
+        self._turn_provider = None                   # the provider the running turn belongs to
         self._retried: set[int] = set()              # turns already run again after a sign-in
         self.panel = panel or browser.Panel()
 
@@ -297,11 +302,14 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
-        if action.kind == "signin":
-            await self.start_signin()
-            return
-        if action.kind == "provider":
-            await self.choose(action.target)
+        if action.kind in ("signin", "provider"):
+            if action.kind == "signin":
+                await self.start_signin()
+            else:
+                await self.choose(action.target)
+            line, _, _ = self._describe()
+            await self.event("local", turn=None, action=action.kind, target=action.target, phase="done",
+                             ok=self.access not in ("offline",), text=line or "Done.")
             return
         if action.kind == "stop":
             stopping = await self.stop()
@@ -396,6 +404,8 @@ class AgentD:
 
     def _setup_msg(self) -> dict:
         line, tone, actions = self._describe()
+        if self.access == "ready" and time.monotonic() - self._access_at > READY_LINE_SECONDS:
+            line = ""   # "Signed in" is news for a moment, not for a bar that restarts hours later
         s = self.signin
         return {"type": "setup", "state": self.access, "provider": self.provider.name, "title": self._title(),
                 "line": line, "tone": tone, "actions": actions,
@@ -439,6 +449,7 @@ class AgentD:
 
     async def _set_access(self, state: str, line: str = "", tone: str = "step"):
         self.access = state
+        self._access_at = time.monotonic()
         self._access_line = (line, tone)
         await self.broadcast(self._setup_msg())
         await self.broadcast(self._status())
@@ -453,15 +464,19 @@ class AgentD:
         if not self.provider.installed:
             await self._set_access("ready")   # its turns say it is missing
             return
+        asked = self.provider
         try:
-            ok = await asyncio.to_thread(self.provider.signed_in)
+            ok = await asyncio.to_thread(asked.signed_in)
         except Exception as e:  # noqa: BLE001 - cannot tell: let the turns find out
             print(f"agentd: sign-in check: {type(e).__name__}: {e}", file=sys.stderr)
             ok = None
+        if self.provider is not asked:
+            return   # picked another while this one was asked: that pick has its own check
         if ok is False:
-            await self._set_access("signed_out")
             if start:
-                await self.start_signin()
+                await self.start_signin()   # says signing_in (or offline) itself: no flash of signed_out
+            else:
+                await self._set_access("signed_out")
         else:
             await self._set_access("ready", f"{self._title()} is ready. Ask me for anything." if announce else "",
                                    "done")
@@ -475,17 +490,27 @@ class AgentD:
             await self.signin.show()
             await self.broadcast(self._setup_msg())
             return
-        host = self.provider.signin_host
-        if host and not await asyncio.to_thread(signin.reachable, *host):
-            await self._set_access("offline")
-            if self._offline_task is None:
-                self._offline_task = self._background(self._wait_online())
-            return
-        s = signin.SignIn(self.provider, self._signin_changed, panel=self.panel,
-                          env={"BROWSER": _bombadil_browser()})
-        self.signin = s
-        await self._set_access("signing_in")
-        self._signin_task = self._background(self._run_signin(s))
+        if self._starting:
+            return   # a double tap, or two causes at once: one sign-in
+        self._starting = True
+        try:
+            provider = self.provider
+            host = provider.signin_host
+            if host and not await asyncio.to_thread(signin.reachable, *host):
+                if self.provider is provider:
+                    await self._set_access("offline")
+                    if self._offline_task is None:
+                        self._offline_task = self._background(self._wait_online())
+                return
+            if self.provider is not provider or (self.signin is not None and self.signin.running):
+                return   # picked another meanwhile
+            s = signin.SignIn(provider, self._signin_changed, panel=self.panel,
+                              env={"BROWSER": _bombadil_browser()})
+            self.signin = s
+            await self._set_access("signing_in")
+            self._signin_task = self._background(self._run_signin(s))
+        finally:
+            self._starting = False
 
     async def _wait_online(self):
         try:
@@ -509,10 +534,17 @@ class AgentD:
                         "reason": s.reason})
         if self.signin is not s:
             return   # replaced: the provider changed meanwhile
+        self.signin = None
         t = self._title()
         if phase == "done":
+            self._login_gone = False
             await self._set_access("ready", f"Signed in to {t}. Ask me for anything.", "done")
-        elif phase == "timeout":
+            return
+        if not self._login_gone and await self._still_signed_in():
+            # Called off, but the login it was for is fine (`sign in` typed while signed in).
+            await self._set_access("ready")
+            return
+        if phase == "timeout":
             await self._set_access("signed_out", f"The {t} sign-in timed out.", "error")
         elif phase == "cancelled":
             await self._drop_waiting()
@@ -520,6 +552,12 @@ class AgentD:
         else:
             reason = (s.reason or "it did not finish").rstrip(". ")
             await self._set_access("signed_out", f"Could not sign in to {t}: {reason}.", "error")
+
+    async def _still_signed_in(self) -> bool:
+        try:
+            return await asyncio.to_thread(self.provider.signed_in) is True
+        except Exception:  # noqa: BLE001
+            return False
 
     async def _drop_waiting(self):
         """Sign-in was called off: the prompts that waited for it go too."""
@@ -554,6 +592,7 @@ class AgentD:
         if name not in config.PROVIDERS:
             return
         await self._end_signin()
+        self._login_gone = False
         model = self.provider.model if name == self.provider.name else None
         await asyncio.to_thread(config.save_user, name, model)
         if name != self.provider.name:
@@ -577,6 +616,7 @@ class AgentD:
     async def open_url(self, url: str, signin_id=None):
         """A link for the browser panel, from bombadil-browser ($BROWSER, xdg-open)."""
         if urllib.parse.urlsplit(url).scheme not in ("http", "https", "file"):
+            await self.event("error", turn=None, text=f"Not opening {url[:80]!r}: only web pages and files open here.")
             return
         s = self.signin
         if s is not None and s.running and (signin_id == s.id or (
@@ -588,7 +628,8 @@ class AgentD:
         except Exception as e:  # noqa: BLE001
             await self.event("error", turn=None, text=f"Could not open the link: {e}")
             return
-        if self.provider.signin_url_kind(url) and self.access != "ready" and self.signin is None:
+        if (self.provider.signin_url_kind(url) and self.chosen and self.access not in ("ready", "choose")
+                and not (self.signin is not None and self.signin.running)):
             # Someone ran the CLI's own login in a terminal (/login): it gets its page back and
             # saves the login; agentd watches for it to land.
             self._background(self._watch_external())
@@ -597,27 +638,39 @@ class AgentD:
         if self._external:
             return
         self._external = True
+        provider = self.provider
+        # A login that is known dead is still stored: only a new one (the file changing) counts.
+        before = provider.login_stamp() if self._login_gone else None
         await self._set_access("signing_in")
         try:
             deadline = time.monotonic() + signin.TIMEOUT
-            while self._external and self.signin is None and time.monotonic() < deadline:
+            while self._external and not self._signin_live() and time.monotonic() < deadline:
                 await asyncio.sleep(2)
                 try:
-                    ok = await asyncio.to_thread(self.provider.signed_in)
+                    ok = await asyncio.to_thread(provider.signed_in)
+                    fresh = before is None or provider.login_stamp() != before
                 except Exception:  # noqa: BLE001
-                    ok = None
-                if ok and self._external and self.signin is None:
+                    ok, fresh = None, False
+                if provider is not self.provider:
+                    return   # picked another; that pick decides the state
+                if ok and fresh and self._external and not self._signin_live():
+                    self._login_gone = False
                     await asyncio.to_thread(self.panel.hide)
                     await self._set_access("ready", f"Signed in to {self._title()}. Ask me for anything.", "done")
                     return
-            if self._external and self.signin is None:
+            if self._external and not self._signin_live():
                 await self._set_access("signed_out")
         finally:
             self._external = False
 
-    async def _signed_out_turn(self, turn_id: int, prompt: str):
-        """The turn found the login gone: sign in again, and run the prompt once more after."""
-        if turn_id not in self._retried and not self.stopping:
+    def _signin_live(self) -> bool:
+        return self.signin is not None and self.signin.running
+
+    async def _signed_out_turn(self, turn_id: int, prompt: str, stopped: bool = False):
+        """The turn found the login gone: sign in again, and run the prompt once more after
+        (unless the user had stopped it: that ask is called off)."""
+        self._login_gone = True
+        if turn_id not in self._retried and not stopped:
             self._retried.add(turn_id)
             self.pending.insert(0, (turn_id, prompt))
             await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
@@ -650,19 +703,22 @@ class AgentD:
             self._unit = None
             self.current = turn_id
             self._signed_out = False
+            self._turn_provider = self.provider
+            stopped = False
             try:
                 await self.turn(prompt)
             except Exception as e:  # noqa: BLE001 - keep the daemon alive whatever a turn does
                 await self.event("error", text=f"{type(e).__name__}: {e}")
                 await self.event("turn_end", seconds=0, stopped=self.stopping)
             finally:
+                stopped = self.stopping
                 self.current = None
                 self.narrator = None
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
             if self._signed_out:
-                await self._signed_out_turn(turn_id, prompt)
+                await self._signed_out_turn(turn_id, prompt, stopped)
 
     async def event(self, kind: str, **fields):
         fields.setdefault("turn", self.current)
@@ -843,7 +899,8 @@ class AgentD:
             result.update(text=ev.get("text", ""), ok=ev.get("ok", True))
             if ev.get("ok", True):
                 # Adopt a session id only from a turn that worked, so a dead one is not kept.
-                self.session_id = ev.get("session_id") or pending_session or self.session_id
+                if self._turn_provider in (None, self.provider):   # (not after "use codex" mid-turn)
+                    self.session_id = ev.get("session_id") or pending_session or self.session_id
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")

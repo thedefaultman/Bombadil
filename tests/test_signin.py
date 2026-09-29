@@ -25,9 +25,16 @@ class FakePanel:
         self.opened = []
         self.closed = []
         self.running = True
+        self.fail_opens = 0   # the next opens raise, without opening anything
+        self.delay = 0.0      # a slow browser
         self._n = 0
 
     def open(self, url):
+        if self.delay:
+            time.sleep(self.delay)
+        if self.fail_opens:
+            self.fail_opens -= 1
+            raise RuntimeError("hyprctl dispatch: didn't respond in time")
         self._n += 1
         tab = {"id": f"t{self._n}", "url": url, "type": "page"}
         self.tabs_.insert(0, tab)
@@ -223,3 +230,75 @@ def test_reachable():
     srv.close()
     assert not signin.reachable("127.0.0.1", port, 1)
     assert not signin.reachable("no-such-host.invalid", 443, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_would_not_open_is_offered_again_and_the_sign_in_still_finishes(fake, tmp_path):
+    cmd, log = _browser_script(tmp_path)
+    panel = FakePanel()
+    panel.fail_opens = 1   # a busy compositor: the first open raises
+    changes = []
+    s = signin.SignIn(fake("auto"), lambda x: changes.append((x.phase, x.view)), panel=panel,
+                      env={"BROWSER": cmd}, poll=0.1)
+    run = asyncio.create_task(_run(s, log))
+    for _ in range(100):
+        if s.phase == "waiting":
+            break
+        await asyncio.sleep(0.05)
+    # Not stuck on "Opening the sign-in": the pill can say the page is not there and offer it again.
+    assert (s.phase, s.view) == ("waiting", "closed") and "didn't respond" in s.hiccup
+    await s.show()
+    assert await run == "done"
+    assert len(panel.opened) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_browser_error_does_not_replace_the_reason_the_cli_gave(fake):
+    class Wobbly(FakePanel):
+        def tabs(self):
+            raise RuntimeError("devtools went away")
+    panel = Wobbly(follow=False)
+    s = signin.SignIn(fake("manual"), panel=panel, grace=0.2, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    for _ in range(100):
+        if s.hiccup:
+            break
+        await asyncio.sleep(0.05)
+    s.type("not a code\r")   # the CLI turns it down and ends
+    assert await run == "failed"
+    assert s.reason.startswith("Invalid code") and "devtools went away" in s.hiccup
+
+
+@pytest.mark.asyncio
+async def test_a_code_page_left_in_the_browser_is_not_typed_into_the_next_sign_in(fake):
+    panel = FakePanel(follow=False)
+    # An earlier manual sign-in ended on its code page, in the browser's only tab.
+    panel.tabs_.append({"id": "old", "type": "page",
+                        "url": "http://127.0.0.1:1/code?code=OLDCODE&state=OLDSTATE"})
+    s = signin.SignIn(fake("manual"), panel=panel, grace=0.3, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    for _ in range(100):
+        if s.phase == "waiting":
+            break
+        await asyncio.sleep(0.05)
+    await asyncio.sleep(0.5)
+    assert not s._pasted   # the old code is not this page's
+    s.cancel()
+    assert await run == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_calling_it_off_while_the_browser_is_still_opening_puts_the_page_away(fake):
+    panel = FakePanel(follow=False)
+    panel.delay = 1.5   # a cold start of Chromium
+    panel.tabs_.append({"id": "other", "type": "page", "url": "about:blank"})
+    s = signin.SignIn(fake("never"), panel=panel, grace=0.2, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    for _ in range(100):
+        if s.url:
+            break
+        await asyncio.sleep(0.05)
+    s.cancel()
+    assert await run == "cancelled"
+    assert not panel.visible                                   # not slid back in after the run
+    assert [t["id"] for t in panel.tabs_] == ["other"]        # and its tab is closed

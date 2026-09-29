@@ -26,6 +26,7 @@ import secrets
 import signal
 import socket
 import struct
+import sys
 import termios
 import time
 import urllib.parse
@@ -122,6 +123,7 @@ class SignIn:
         self.phase = "starting"
         self.view = "shown"
         self.reason = ""           # why it failed, in the CLI's words
+        self.hiccup = ""           # the last trouble with the browser (the reason, if the CLI said nothing)
         self.url: str | None = None   # the sign-in page, as opened
         self.tab: str | None = None   # its tab in the browser, when the debugging port said
         self.text = ""             # what the CLI printed, plain
@@ -135,6 +137,9 @@ class SignIn:
         self._wake = asyncio.Event()
         self._eof = asyncio.Event()
         self._cancelled = False
+        self._state: str | None = None          # the page's OAuth state: a code must carry it
+        self._opening: asyncio.Future | None = None
+        self._lost = False                      # the page failed to open and no tab shows it
 
     # -- what agentd tells it --
 
@@ -154,8 +159,8 @@ class SignIn:
         if self.url is None or self.phase not in ("waiting", "finishing"):
             return
         if self.view == "closed":
-            tab = await asyncio.to_thread(self.panel.open, self.url)
-            self.tab = tab.get("id") if isinstance(tab, dict) else None
+            await self._open(self.url)
+            self._lost = False
         else:
             await asyncio.to_thread(self.panel.show)
         self._set(view="shown")
@@ -194,7 +199,7 @@ class SignIn:
                     phase = await self._confirm()
                 else:
                     phase = "failed"
-                    self.reason = self.reason or self.provider.signin_error(self.text) or \
+                    self.reason = self.provider.signin_error(self.text) or self.hiccup or \
                         f"{self.provider.binary} exited with {self.proc.returncode}"
             elif ended in done:
                 phase = "cancelled"
@@ -206,6 +211,7 @@ class SignIn:
             await self._end_process()
             exited.cancel()
             self._close_terminal()
+        await self._settle()
         if phase in ("done", "cancelled", "timeout"):
             # Finished or given up: the page slides back out, and its tab goes if others remain.
             await asyncio.to_thread(self._put_away)
@@ -283,7 +289,7 @@ class SignIn:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001 - a browser hiccup never ends the sign-in
-                self.reason = self.reason or f"{type(e).__name__}: {e}"
+                self._trouble("watching the page", e)
 
     def _pick(self) -> str | None:
         """The page to open: one handed to $BROWSER at once; a printed one once the CLI had its
@@ -296,21 +302,64 @@ class SignIn:
         ripe.sort(key=lambda u: self.provider.signin_url_kind(u) != "auto")
         return ripe[0]
 
+    def _trouble(self, doing: str, e: Exception) -> None:
+        self.hiccup = f"{type(e).__name__}: {e}"
+        print(f"signin: {doing}: {self.hiccup}", file=sys.stderr, flush=True)
+
+    async def _open(self, url: str):
+        """Open `url` in the browser panel. The thread notes the tab itself, so a run that is
+        called off while the browser is still opening it knows what to put away."""
+        def work():
+            tab = self.panel.open(url)
+            if isinstance(tab, dict):
+                self.tab = tab.get("id")
+            return tab
+        fut = self._opening = asyncio.ensure_future(asyncio.to_thread(work))
+        fut.add_done_callback(lambda f: f.cancelled() or f.exception())   # (seen: the awaiter raises it)
+        return await asyncio.shield(fut)
+
+    async def _settle(self):
+        """Wait for a page that is still being opened (a slow browser), so it can be put away."""
+        fut = self._opening
+        if fut is not None and not fut.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(fut), 30)
+            except Exception:  # noqa: BLE001 - it is over either way
+                pass
+
     async def _maybe_open(self):
         url = self._pick()
         if url is None:
             return
         self.url = url
-        tab = await asyncio.to_thread(self.panel.open, url)
-        self.tab = tab.get("id") if isinstance(tab, dict) else None
-        self._set("waiting", view="shown")
+        self._state = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query)).get("state")
+        view = "shown"
+        try:
+            await self._open(url)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - the panel would not slide in, or the browser was slow
+            # The page may be open anyway. The sign-in waits for it in any case (the CLI does):
+            # `_look` tells the pill whether it is shown, hidden or gone, and it can be opened again.
+            self._trouble("opening the page", e)
+            tabs = await asyncio.to_thread(self.panel.tabs) or []
+            mine = next((t for t in tabs if browser.same_url(t.get("url", ""), url)), None)
+            if mine is not None:
+                self.tab = mine.get("id")
+            else:
+                view, self._lost = "closed", True
+        self._set("waiting", view=view)
 
     async def _look(self):
         tabs = await asyncio.to_thread(self.panel.tabs)
+        if tabs is not None and self.tab is None and self.url is not None:
+            mine = next((t for t in tabs if browser.same_url(t.get("url", ""), self.url)), None)
+            if mine is not None:   # (it opened after all, slowly)
+                self.tab, self._lost = mine.get("id"), False
         if tabs is not None:
             for t in tabs:
                 code = self.provider.code_from_url(t.get("url", ""))
-                if code and code not in self._pasted:
+                if code and code not in self._pasted and self._is_mine(code):
                     # The page ended on a code for the CLI's prompt: type it in for the user.
                     self._pasted.add(code)
                     self.type(code + "\r")
@@ -321,12 +370,17 @@ class SignIn:
                 self._set("finishing")   # the page came back to the CLI's own server
         if self.phase != "waiting":
             return
-        if tabs is not None and (not tabs or (self.tab and not any(t.get("id") == self.tab for t in tabs))):
+        if tabs is not None and (not tabs or self._lost
+                                 or (self.tab and not any(t.get("id") == self.tab for t in tabs))):
             view = "closed"
         else:
             shown = await asyncio.to_thread(self.panel.shown)
             view = "hidden" if shown is False else "shown"
         self._set(view=view)
+
+    def _is_mine(self, code: str) -> bool:
+        """A code from this sign-in's page (its state), not a leftover tab's, and typeable."""
+        return code.isprintable() and (not self._state or code.endswith("#" + self._state))
 
     def _set(self, phase: str | None = None, view: str | None = None):
         changed = False

@@ -168,7 +168,7 @@ QtObject {
     }
 
     function _setup(ev) {
-        const was = setupState
+        const was = setupState, wasLine = setupLine
         setupState = ev.state || ""
         setupLine = ev.line || ""
         setupTone = ev.tone || "step"
@@ -177,8 +177,9 @@ QtObject {
         if (!ready && setupLine) {
             optimistic = false
             _showSetup()
-        } else if (setupState === "ready" && setupLine && was !== "ready") {
-            // "Signed in to Claude. Ask me for anything.": said once, then it fades.
+        } else if (setupState === "ready" && setupLine && was !== "" && (was !== "ready" || setupLine !== wasLine)) {
+            // "Signed in to Claude. Ask me for anything.": said once, then it fades. (Not said
+            // again to a bar that has just started: it was not there for it.)
             optimistic = false
             mode = "local"; line = setupLine; source = "step"; risk = ""; command = ""
             sticky = false; lineAt = _now(); fadeAfter = 8000
@@ -202,7 +203,12 @@ QtObject {
         }
         outgoing({ type: "prompt", text: t })
         if (!ready && !t.startsWith("!")) {
-            // No AI to answer yet: the prompt waits in the queue, the setup line stays.
+            // No AI to answer yet: the prompt waits in the queue, the setup line stays (or
+            // comes back over a finished line that would hide it).
+            if (mode === "closing" || mode === "local") {
+                sticky = false
+                if (setupLine) _showSetup()
+            }
             return true
         }
         if (!busy && mode !== "working") {

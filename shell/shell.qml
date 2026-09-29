@@ -92,7 +92,7 @@ ShellRoot {
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
-                Region { item: setupChips }
+                Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: pillBox }
             }

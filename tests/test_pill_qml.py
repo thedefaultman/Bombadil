@@ -484,3 +484,28 @@ def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
     assert bar.text() == "Apps  Documents"
     bar.call("dismiss")
     assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
+
+
+READY = dict(type="setup", state="ready", tone="done", actions=[])
+
+
+def test_switching_to_another_ai_says_so(bar):
+    bar.send(**READY, line="")
+    bar.send(**READY, line="Codex is ready. Ask me for anything.")
+    assert bar.text() == "Codex is ready. Ask me for anything." and bar.pill.property("mode") == "local"
+
+
+def test_a_bar_that_starts_later_does_not_announce_an_old_sign_in(bar):
+    bar.send(**READY, line="Signed in to Claude. Ask me for anything.")   # the greeting of a restarted bar
+    assert bar.pill.property("mode") == "idle"
+
+
+def test_a_prompt_before_the_ai_is_ready_brings_the_setup_line_back_over_a_finished_one(bar):
+    bar.send(**CHOOSE)
+    bar.call("submit", "!echo hi")
+    bar.send(kind="turn_start", turn=1, prompt="!echo hi")
+    bar.send(kind="result", turn=1, ok=True, text="hi")
+    bar.send(kind="turn_end", turn=1, seconds=0.1, changed=True, summary="Ran it")
+    assert bar.pill.property("mode") == "closing"
+    bar.call("submit", "make me an app")
+    assert bar.pill.property("mode") == "setup" and [label for label, _ in bar.chips()] == ["Claude", "Codex"]

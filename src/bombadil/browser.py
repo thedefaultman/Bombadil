@@ -11,9 +11,11 @@ through Chromium's debugging port (the HTTP side of the DevTools protocol, no we
 that is how the sign-in finds its tab, notices it was closed, and reads a code from its address.
 """
 
+import http.client
 import json
 import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -24,6 +26,8 @@ from . import paths
 
 CLASS = "bombadil-browser"
 DEBUG_PORT = 9222
+# Not answering: closed, not up yet, or something else on the port that is not Chromium.
+DOWN = (OSError, urllib.error.URLError, ValueError, http.client.HTTPException)
 
 
 def profile_dir() -> Path:
@@ -49,7 +53,7 @@ class DevTools:
     def __init__(self, port: int = DEBUG_PORT, host: str = "127.0.0.1"):
         self.base = f"http://{host}:{port}"
 
-    def _get(self, path: str, method: str = "GET", timeout: float = 2.0):
+    def _get(self, path: str, method: str = "GET", timeout: float = 5.0):
         req = urllib.request.Request(self.base + path, method=method)
         # The debugging port is on localhost; never send it through a proxy.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -63,8 +67,8 @@ class DevTools:
     @property
     def up(self) -> bool:
         try:
-            return isinstance(self._get("/json/version", timeout=1.0), dict)
-        except (OSError, urllib.error.URLError, ValueError):
+            return isinstance(self._get("/json/version", timeout=3.0), dict)
+        except DOWN:
             return False
 
     def tabs(self) -> list[dict]:
@@ -76,7 +80,8 @@ class DevTools:
     def new_tab(self, url: str) -> dict:
         # Chromium only takes PUT here, keeps the query up to its first "&" and unescapes it:
         # the whole URL goes percent-encoded, or a sign-in page loses all but its first field.
-        return self._get("/json/new?" + urllib.parse.quote(url, safe=""), method="PUT")
+        # (Opening a tab is slow on a slow machine: an emulated CPU takes seconds.)
+        return self._get("/json/new?" + urllib.parse.quote(url, safe=""), method="PUT", timeout=20.0)
 
     def activate(self, tab_id: str) -> None:
         self._get(f"/json/activate/{tab_id}")
@@ -85,46 +90,74 @@ class DevTools:
         self._get(f"/json/close/{tab_id}")
 
 
+def same_url(a: str, b: str) -> bool:
+    """The address as given and as Chromium shows it ("https://example.com" is ".../")."""
+    def norm(u: str):
+        x = urllib.parse.urlsplit(u)
+        return (x.scheme, x.netloc, x.path or "/", x.query, x.fragment)
+    return norm(a) == norm(b)
+
+
+def _new_tab(devtools: DevTools, url: str) -> dict | None:
+    """A new tab on `url`. When the browser is too slow to answer in time, the tab may exist
+    anyway: look before opening a second."""
+    for _ in range(2):
+        try:
+            tab = devtools.new_tab(url)
+        except DOWN:
+            tab = find_tab(devtools, lambda u: same_url(u, url))
+        if isinstance(tab, dict) and tab.get("id"):
+            return tab
+    return None
+
+
 def open_url(url: str, hyprland=None, devtools: DevTools | None = None, spawn=subprocess.Popen,
              wait: float = 20.0) -> dict | None:
     """Open `url` in the browser panel and slide the panel in. Returns the tab ({"id", "url"})
-    when the debugging port could say which it is, else None."""
+    when the debugging port could say which it is, else None. Sliding the panel in can fail
+    (a busy compositor); the page is open then, and the panel offers itself again (`show`)."""
     from . import hypr
 
     hyprland = hyprland or hypr.Hyprland()
     devtools = devtools or DevTools()
     tab = None
+    if not devtools.up and running():
+        # Starting (or slow): it takes the page as a new tab once its port is up. Starting a
+        # second Chromium with the URL would only hand the URL to this one.
+        deadline = time.monotonic() + wait
+        while not devtools.up and running() and time.monotonic() < deadline:
+            time.sleep(0.25)
     if devtools.up:
-        tab = devtools.new_tab(url)
-        if isinstance(tab, dict) and tab.get("id"):
+        tab = _new_tab(devtools, url)
+        if tab is not None:
             try:
                 devtools.activate(tab["id"])
-            except OSError:
+            except DOWN:
                 pass
-        else:
-            tab = None
-    else:
+    elif not running():
         if shutil.which(binary()) is None:
             raise RuntimeError("chromium is not installed")
-        # A Chromium already running on this profile (still starting, its port not up yet)
-        # takes the URL as a new tab; otherwise this starts it on that page alone.
+        # A fresh start opens that page alone.
         spawn([*command(), url], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
               stderr=subprocess.DEVNULL, start_new_session=True)
         # The page may redirect at once (a sign-in page to its login form), so its tab is the
-        # one showing when the port comes up: a fresh start opens that page alone.
+        # one showing when the port comes up.
         deadline = time.monotonic() + wait
         while tab is None and time.monotonic() < deadline:
             time.sleep(0.25)
             tab = find_tab(devtools, lambda u: True)
     if hyprland.available:
-        hyprland.panel("browser", show=True, wait=wait)
+        try:
+            hyprland.panel("browser", show=True, wait=wait)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            print(f"browser: could not slide the panel in: {e}", file=sys.stderr)
     return tab
 
 
 def find_tab(devtools: DevTools, match) -> dict | None:
     try:
         return next((t for t in devtools.tabs() if match(t.get("url", ""))), None)
-    except (OSError, urllib.error.URLError, ValueError):
+    except DOWN:
         return None
 
 
@@ -144,7 +177,7 @@ class Panel:
         say (its debugging port is not up yet)."""
         try:
             return self.devtools.tabs()
-        except (OSError, urllib.error.URLError, ValueError):
+        except DOWN:
             return None if running() else []
 
     def shown(self) -> bool | None:
