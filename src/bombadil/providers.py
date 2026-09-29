@@ -14,18 +14,36 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SYSTEM_PROMPT = (
-    "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
-    "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
-    "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML, hot "
-    "reloaded, no web servers), take screenshots to check your work, and use rollback when the user says "
-    "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
-    "permission. The user sees your work on screen and your final reply as at most four lines above the "
-    "bar: one or two plain sentences saying what you did, no markdown, no lists. "
-    "When a request takes three or more steps, write the plan first with your task tool, in short plain "
-    "words the user will read (no file names, commands or tool names), and keep it updated. "
-    "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action."
-)
+from . import paths
+
+
+def kit_paths() -> tuple[Path, Path]:
+    """(the QML kit's folder, the bombadil-apps skill's folder), where they are on this system."""
+    for share in (Path(__file__).resolve().parents[2] / "share", paths.share_dir() / "share", paths.share_dir()):
+        if (share / "qml" / "Bombadil").is_dir():
+            return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+    share = Path("/usr/share/bombadil/share")
+    return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+
+
+def system_prompt() -> str:
+    """What both CLIs get on every turn, fresh or resumed."""
+    kit, skill = kit_paths()
+    return (
+        "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
+        "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
+        "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML with the "
+        "Bombadil kit, hot reloaded, no web servers). The kit is the QML module `Bombadil`: write "
+        f"`import Bombadil` and it resolves; its files are in {kit}/ (Theme.qml, AppWindow.qml, ...). "
+        f"Read {skill}/SKILL.md first, or call app_guide, and never search the disk for the kit. "
+        "Take screenshots to check your work, and use rollback when the user says "
+        "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
+        "permission. The user sees your work on screen and your final reply as at most four lines above the "
+        "bar: one or two plain sentences saying what you did, no markdown, no lists. "
+        "When a request takes three or more steps, write the plan first with your task tool, in short plain "
+        "words the user will read (no file names, commands or tool names), and keep it updated. "
+        "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action."
+    )
 
 
 @dataclass
@@ -103,7 +121,7 @@ class Claude(Provider):
                "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--permission-mode", "bypassPermissions", "--dangerously-skip-permissions",
                "--mcp-config", str(mcp_config(workdir / "claude-mcp.json", self.mcp_command)),
-               "--append-system-prompt", SYSTEM_PROMPT]
+               "--append-system-prompt", system_prompt()]
         if self.model:
             cmd += ["--model", self.model]
         if turn.session_id:
@@ -185,7 +203,7 @@ class Codex(Provider):
         # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
-                     "-c", f"developer_instructions={json.dumps(SYSTEM_PROMPT)}",
+                     "-c", f"developer_instructions={json.dumps(system_prompt())}",
                      "--skip-git-repo-check"]
         if self.model:
             overrides += ["--model", self.model]

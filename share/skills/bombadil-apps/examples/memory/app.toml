@@ -1,0 +1,3 @@
+title = "Memory"
+description = "Live RAM use: headline numbers, history, where memory goes and the processes using it."
+icon = "memory-stick"

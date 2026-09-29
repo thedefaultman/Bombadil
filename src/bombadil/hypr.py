@@ -43,11 +43,14 @@ class Hyprland:
         p = _socket_path()
         return p is not None and p.exists()
 
-    def request(self, command: str) -> str:
+    def request(self, command: str, timeout: float = 10) -> str:
+        """A hung compositor raises TimeoutError (an OSError) after `timeout` s. The default is
+        above hyprctl's own 5 s: a busy one (software emulation) can take that long to answer."""
         path = _socket_path()
         if path is None or not path.exists():
             raise RuntimeError("Hyprland is not running")
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout)
             s.connect(str(path))
             s.sendall(command.encode())
             chunks = []

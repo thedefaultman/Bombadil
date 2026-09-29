@@ -118,6 +118,9 @@ class OsTools:
             subprocess.run(["notify-send", a["title"], a.get("body", "")], check=False)
             return "shown"
 
+        from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
+        app_tools.register(self)
+
     # MCP plumbing
 
     def handle(self, msg: dict) -> dict | None:
@@ -161,6 +164,8 @@ class OsTools:
 
 
 def _content(out) -> list[dict]:
+    if getattr(out, "is_mcp_content", False):  # appkit.tools.Blocks: already text/image blocks
+        return list(out)
     if isinstance(out, dict) and "image" in out:
         return [{"type": "image", "data": out["image"], "mimeType": out["mimeType"]}]
     if isinstance(out, str):

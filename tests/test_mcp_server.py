@@ -2,6 +2,7 @@ import io
 import json
 
 from bombadil import hypr, mcp_server, snapshots
+from bombadil.appkit import tools as app_tools
 
 
 class FakeHypr(hypr.Hyprland):
@@ -78,11 +79,18 @@ def test_tool_errors_are_reported_not_fatal():
 
 def test_create_app_writes_files(home, monkeypatch):
     monkeypatch.setattr(mcp_server.apps, "run", lambda name: None)
+    monkeypatch.setattr(app_tools, "run_check", lambda name: {"ok": True})
     s = make()
     r = call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
     assert "todo" in r["content"][0]["text"] and (home / "Apps/todo/main.qml").exists()
     listed = json.loads(call(s, "list_apps")["content"][0]["text"])
     assert listed[0]["name"] == "todo"
+
+
+def test_content_blocks_pass_through():
+    blocks = app_tools.Blocks([{"type": "text", "text": "hi"}, {"type": "image", "data": "", "mimeType": "image/png"}])
+    assert mcp_server._content(blocks) == list(blocks)
+    assert json.loads(mcp_server._content([{"type": "x"}])[0]["text"]) == [{"type": "x"}]
 
 
 def test_snapshot_and_undo(monkeypatch):
