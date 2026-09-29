@@ -616,9 +616,19 @@ def test_show_hide_and_prepare_send_the_right_requests(monkeypatch):
 
 def test_requests_retry_and_errors_are_reported(monkeypatch):
     monkeypatch.setattr(placement.time, "sleep", lambda s: None)
-    h = FakeHypr(replies=["", "ok"])
+
+    class Refused(FakeHypr):   # nobody listening on the socket yet: nothing was sent, so try again
+        def request(self, command, timeout=10):
+            if not self.sent:
+                self.sent.append(command)
+                raise ConnectionRefusedError("refused")
+            return super().request(command, timeout)
+    h = Refused()
     assert placement.prepare("notes", 1, 2, h).startswith("notes opens")
     assert len(h.sent) == 2
+    h = FakeHypr(replies=["", "ok"])   # an empty reply came from a request Hyprland read: never resend
+    assert "opens as a plain window" in placement.prepare("notes", 1, 2, h)
+    assert len(h.sent) == 1
     h = FakeHypr(replies=["error: bad rule"])
     assert "bad rule" in placement.prepare("notes", 1, 2, h)
     monkeypatch.setattr(placement, "running", lambda: {"notes": [42]})
@@ -631,10 +641,12 @@ def test_prepare_says_what_went_wrong_instead_of_raising(monkeypatch):
 
     class Hung(FakeHypr):
         def request(self, command, timeout=10):
+            self.sent.append(command)
             raise TimeoutError(f"timed out after {timeout} s")
-    said = placement.prepare("notes", 1, 2, Hung())
+    hung = Hung()
+    said = placement.prepare("notes", 1, 2, hung)
     assert said.startswith("could not add the window rule for notes, it opens as a plain window: Hyprland did not")
-    assert said.endswith("timed out after 2 s")   # placement retries, so each try gives up fast
+    assert said.endswith("timed out after 10 s") and len(hung.sent) == 1   # hypr's own wait; sent once
     assert "opens as a plain window" in placement.prepare("notes", 1, 2, FakeHypr(replies=["", "", ""]))
 
 
