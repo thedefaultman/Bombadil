@@ -260,7 +260,8 @@ def test_the_title_the_line_uses():
 
 
 @pytest.mark.parametrize("prompt", [
-    "show me the desk", "what is on my desk?", "Fold the DESK", "put widgets on the right", "make a widget for my streak",
+    "show me the desk", "what is on my desk?", "Fold the DESK", "put widgets on the right",
+    "make a widget for my streak",
     "hide machine", "show alive", "put watching on the right", "keep needs you where it is",
     "pin my batch. also bring the machine card back", "move now to the right rail",
     "Show my batch on the desk", "the widget is in the way",
@@ -312,7 +313,8 @@ def test_the_line_says_what_the_desk_tool_did(args, text, done):
 def test_the_closing_sentence_names_what_was_done_to_the_desk():
     from bombadil import narrate
     n = narrate.Narrator()
-    line = n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": {"op": "hide", "widget": "machine"}})
+    hide = {"op": "hide", "widget": "machine"}
+    line = n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": hide})
     assert line["text"] == "Putting Machine away" and line["risk"] is None
     n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": {"op": "fold"}})
     assert n.summary() == "Put Machine away and folded the desk."

@@ -371,7 +371,8 @@ def _lx(home, **k):
     (["show now"], [(True, "Now is already on the desk.")]),
     (["hide needs you"], [(False, "Needs you cannot be hidden.")]),
     (["hide needs"], [(False, "Needs you cannot be hidden.")]),
-    (["desk", "desk", "desk"], [(True, "Folded the desk."), (True, "Unfolded the desk."), (True, "Folded the desk.")]),
+    (["desk", "desk", "desk"],
+     [(True, "Folded the desk."), (True, "Unfolded the desk."), (True, "Folded the desk.")]),
 ])
 def test_the_desk_words_change_the_desk_and_say_what_they_did(home, words, want):
     lx = _lx(home)

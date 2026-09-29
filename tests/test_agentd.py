@@ -654,7 +654,8 @@ async def test_a_gesture_at_the_desk_is_told_to_the_agent_and_kept_in_the_histor
     await _ask(w, "hello")
     msgs = await _read_until(r, "turn_end")
     said = next(m["text"] for m in msgs if m.get("kind") == "result")   # the whole prompt, echoed
-    assert said == "echo: [Done by the user without you since your last turn: at the desk: Put Machine away.] hello"
+    assert said == ("echo: [Done by the user without you since your last turn: at the desk: Put Machine away.]"
+                    " hello")
     assert not [m for m in msgs if m.get("kind") == "local"]   # a gesture is not said on the line
     log = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
     assert [(x["kind"], x["prompt"], x["result"]) for x in log if x.get("kind") == "local"] == [
@@ -734,7 +735,8 @@ async def test_the_desk_button_and_a_sentence_about_the_desk(home):
     assert json.loads(await r.readline()) == {"type": "queued", "turn": 1}
     msgs = await _read_until(r, "turn_end")
     assert next(m for m in msgs if m.get("kind") == "turn_start")["prompt"] == "what is on my desk?"
-    assert next(m for m in msgs if m.get("kind") == "result")["text"].endswith("what is on my desk?")   # the agent had it
+    # The agent had it.
+    assert next(m for m in msgs if m.get("kind") == "result")["text"].endswith("what is on my desk?")
     assert d.desk.folded is True   # and the desk was not touched by it
     w.close()
     server.cancel()
@@ -762,7 +764,8 @@ DESK_TURN = (
     "import json, os, sys, time\n"
     "prompt = sys.stdin.read()\n"
     "seen = os.environ['BOMBADIL_TURN'] + ' ' + os.environ['BOMBADIL_SOCKET'] + ' ' + prompt\n"
-    "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': seen}]}}), flush=True)\n"
+    "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': seen}]}}),"
+    " flush=True)\n"
     "time.sleep(60)\n"
 )
 
@@ -804,7 +807,8 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "fold"}, True, "Folded the desk."),
         ({"op": "fold"}, True, "The desk is already folded."),
         ({"op": "unfold"}, True, "Unfolded the desk."),
-        ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True, "Moved Watching to the right rail."),
+        ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True,
+         "Moved Watching to the right rail."),
         ({"op": "show", "widget": "Machine"}, True, "Put Machine on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
@@ -861,8 +865,9 @@ async def test_earlier_desk_words_in_the_notes_do_not_open_the_gate(home):
     await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
     await _ask(w, "tell me a joke")
     text = (await _events_until(r, lambda m: m.get("kind") == "text"))[-1]["text"]
-    assert "'hide machine': Put Machine away." in text and text.endswith("tell me a joke")   # the CLI has it
-    assert d.turn_prompt == "tell me a joke"                                                # the gate does not
+    # The CLI has the notes in front of the prompt; the gate does not.
+    assert "'hide machine': Put Machine away." in text and text.endswith("tell me a joke")
+    assert d.turn_prompt == "tell me a joke"
     await _say(tool_w, {"type": "desk-tool", "id": "z", "turn": 1, "op": "show", "widget": "machine"})
     res = await _desk_result(tool_r)
     assert res["ok"] is False and "did not ask for the desk" in res["text"]

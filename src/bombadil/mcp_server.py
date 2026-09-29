@@ -130,8 +130,8 @@ class OsTools:
         @t("desk",
            "Arrange the desk: the widgets in the two rails beside the pill (now, watching, needs, away, "
            "machine, alive). This works ONLY when the person asked for the desk or a widget in their own "
-           "words this turn (\"put watching on the right\", \"hide machine\", \"fold the desk\"). In any other "
-           "turn it is refused and nothing changes; never rearrange the desk on your own. Ops: show and "
+           "words this turn (\"put watching on the right\", \"hide machine\", \"fold the desk\"). In any "
+           "other turn it is refused and nothing changes; never rearrange the desk on your own. Ops: show and "
            "hide a widget (needs cannot be hidden); move a widget to a rail (left or right) and a rank "
            "(0 is nearest the pill, and without a rank it goes last); fold and unfold every widget to a "
            "chip beside the pill and back; state says what is where.",
@@ -233,7 +233,8 @@ def _desk(a: dict) -> str:
     started this process in (BOMBADIL_TURN)."""
     turn = os.environ.get("BOMBADIL_TURN", "")
     if not turn.isdigit():
-        raise ToolError("The desk can only be changed from inside a turn, and this process was not told which.")
+        raise ToolError("The desk can only be changed from inside a turn, and this process was not told "
+                        "which.")
     msg = {"type": "desk-tool", "id": uuid.uuid4().hex, "turn": int(turn),
            **{k: a[k] for k in ("op", "widget", "rail", "rank") if a.get(k) is not None}}
     reply = _ask_agentd(msg, "desk-result", DESK_TIMEOUT)
@@ -271,7 +272,8 @@ def _ask_agentd(msg: dict, answer: str, timeout: float) -> dict:
         raise ToolError(f"agentd did not answer within {timeout:g} seconds, so the desk may be unchanged; "
                         "the `state` op says what it is now.") from None
     except OSError as e:
-        raise ToolError(f"agentd is not answering on {path} ({e.strerror or e}), so the desk is unchanged.") from None
+        raise ToolError(f"agentd is not answering on {path} ({e.strerror or e}), so the desk is unchanged."
+                        ) from None
 
 
 def main() -> None:

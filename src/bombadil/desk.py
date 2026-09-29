@@ -216,7 +216,8 @@ class Desk:
             except FileNotFoundError:
                 data = {}
             except (OSError, ValueError) as e:   # TOMLDecodeError and UnicodeDecodeError are ValueErrors
-                print(f"desk: {self.path} is not usable ({e}); starting with the default desk", file=sys.stderr)
+                print(f"desk: {self.path} is not usable ({e}); starting with the default desk",
+                      file=sys.stderr)
                 data = {}
             self._adopt(data)
         return self

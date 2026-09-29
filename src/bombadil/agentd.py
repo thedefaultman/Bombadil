@@ -27,7 +27,8 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "summon"}
                    {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
-                   {"type": "desk-result", "id": s, "ok": bool, "text": "..."}   to the desk-tool's sender only
+                   {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
+                                                        the answer to a desk-tool, to its sender only
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
