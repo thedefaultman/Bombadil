@@ -385,8 +385,8 @@ class AgentD:
         when another turn has started."""
         if before is None or narrator.drew:
             return
-        kinds = [k for k in dict.fromkeys(k for k, _ in narrator.touched) if k != "service"]
-        services = [u for k, u in narrator.touched if k == "service"][:2]
+        kinds = [k for k in dict.fromkeys(k for k, _ in narrator.parts) if k != "service"]
+        services = [u for k, u in narrator.parts if k == "service"][:2]
         if not kinds and not services:
             return
         try:
@@ -659,7 +659,7 @@ class AgentD:
             # Not logged: only the finished card is (see _show).
             await self.broadcast({"type": "event", "kind": "card", "turn": self.current, "card": partial})
         if kind == "tool" and self.narrator is not None and self.explain != "brief":
-            for k, unit in self.narrator.touched:
+            for k, unit in self.narrator.parts:
                 if k == "service" and unit not in self._befores and len(self._befores) < 3:
                     # As the step is read, before it has run; a state already changing is dropped later.
                     self._befores[unit] = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot_service, unit))

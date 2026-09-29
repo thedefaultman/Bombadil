@@ -782,7 +782,7 @@ def service_exists(name: str, run_: Run = run, budget: float = BUDGET) -> bool:
 # ---------------------------------------------------------------- receipts
 
 # What a turn can change in each part, checked before and after it. Only what a turn's steps
-# touched is compared (narrate.touched), so a Wi-Fi drop is never blamed on the agent.
+# touched is compared (narrate.parts), so a Wi-Fi drop is never blamed on the agent.
 BEFORE_KINDS = ("network", "disks", "sound", "screens")
 
 

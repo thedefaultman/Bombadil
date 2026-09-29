@@ -7,6 +7,9 @@ the system (sudo, pacman, /etc, a service) is marked "system" and carries the ex
 command; a step no restore point can undo (formatting a disk, deleting files in your home
 folder) is marked "irreversible". Nothing here pauses or asks: the marks are only shown.
 
+The narrator also keeps the plan the agent writes for itself (Claude's task list, Codex's plan)
+as one table for the desk, and counts what the turn has changed so far.
+
 Pure functions over the events, no I/O except checking whether an app folder exists, so the
 rule table is cheap to test and to extend.
 """
@@ -15,7 +18,7 @@ import json
 import os
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from . import paths
@@ -30,6 +33,8 @@ class Step:
     done: str | None = None    # past tense for the closing sentence: "Installed ffmpeg"; None = not a change
     risk: str | None = None    # None, SYSTEM or IRREVERSIBLE
     command: str | None = None  # the exact command, shown under a marked step
+    # What a change touches, by kind (package, service, file, app), for the turn's running count.
+    touched: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @property
     def changes(self) -> bool:
@@ -350,7 +355,7 @@ def _pkg_step(prog: str, argv: list[str]) -> Step | None:
         return Step(f"Looking up {what}")
     if op in ("S", "U") and names:
         n = _names(names)
-        return Step(f"Installing {n}{aur}", f"Installed {n}")
+        return Step(f"Installing {n}{aur}", f"Installed {n}", touched={"package": tuple(names)})
     if op == "S" and "u" in flags:
         return Step("Updating the system", "Updated the system")
     if op == "S" and "y" in flags:
@@ -359,7 +364,7 @@ def _pkg_step(prog: str, argv: list[str]) -> Step | None:
         return Step("Clearing the package cache", "Cleared the package cache")
     if op == "R" and names:
         n = _names(names)
-        return Step(f"Removing {n}", f"Removed {n}")
+        return Step(f"Removing {n}", f"Removed {n}", touched={"package": tuple(names)})
     if op in ("Q", "F", "T", "D"):
         return Step("Checking installed packages")
     if not op and prog in ("yay", "paru") and not pkgs:
@@ -397,7 +402,8 @@ def _systemctl_step(argv: list[str]) -> Step | None:
         return Step("Reloading service settings", "Reloaded service settings")
     if verb in words and n:
         now_w, past = words[verb]
-        return Step(f"{now_w} {n}", f"{past} {n}", None if user else SYSTEM)
+        return Step(f"{now_w} {n}", f"{past} {n}", None if user else SYSTEM,
+                    touched={"service": tuple(units)})
     if verb in ("status", "is-active", "is-enabled", "list-units", "list-unit-files", "show", "cat"):
         return Step(f"Checking {n}" if n else "Checking services")
     return None
@@ -485,11 +491,11 @@ def _command_step(argv: list[str], segment: str, description: str | None) -> Ste
                 pk = [p.split(".")[-1] for p in pk if p not in ("flathub",)]
             if pk:
                 n = _names(pk)
-                return Step(f"Installing {n}", f"Installed {n}")
+                return Step(f"Installing {n}", f"Installed {n}", touched={"package": tuple(pk)})
             return Step("Installing dependencies", "Installed dependencies")
         if rest[:1] in (["uninstall"], ["remove"], ["rm"]) and rest[1:]:
             n = _names(rest[1:])
-            return Step(f"Removing {n}", f"Removed {n}")
+            return Step(f"Removing {n}", f"Removed {n}", touched={"package": tuple(rest[1:])})
         if rest[:2] == ["run", "build"] or rest[:1] == ["build"]:
             return Step("Building", "Built it")
         if rest[:1] == ["test"] or rest[:2] == ["run", "test"]:
@@ -738,6 +744,23 @@ def _changed_paths(prog: str, argv: list[str]) -> list[str]:
     return []
 
 
+def _touched_files(prog: str, argv: list[str]) -> list[str]:
+    """The files a command that changes files touches, for the turn's count: what it makes,
+    moves, deletes or edits, never the mode or owner it sets or the place a move ends up."""
+    args = _args(argv)
+    if prog in ("chmod", "chown", "chgrp", "setfacl"):
+        found = args[1:]
+    elif prog == "mv":
+        found = args[:-1] if len(args) > 1 else args
+    elif prog in ("trash", "trash-put"):
+        found = args
+    elif prog == "gio":
+        found = args[1:]
+    else:
+        found = _changed_paths(prog, argv)
+    return [p for p in found if not p.startswith("/dev/")]
+
+
 def shell_step(command: str, description: str | None = None) -> Step:
     """The step for a shell command, from the main command in it."""
     inner = _unwrap(command)
@@ -745,6 +768,7 @@ def shell_step(command: str, description: str | None = None) -> Step:
     sudo_any = False
     system = False
     irreversible = False
+    touched: dict[str, list[str]] = {}   # every segment's, not only the one the line names
     cwd: str | None = None      # after a `cd`, where relative paths point
     for segment_argv in _segments(inner):
         words, writes = _strip_redirects(segment_argv)
@@ -783,9 +807,17 @@ def shell_step(command: str, description: str | None = None) -> Step:
             system = system or step.risk == SYSTEM
         else:
             step = _command_step(argv, segment, description)
+            if step is not None and step.changes and "file" not in step.touched:
+                found = _touched_files(prog, argv)
+                if found:
+                    step.touched = {**step.touched, "file": tuple(found)}
         if files and (prog in ("cat", "echo", "printf") or step is None):
             # `cat > notes.txt <<EOF`: the command is writing that file.
-            step = Step(f"Writing {_name(files[-1])}", f"Wrote {_name(files[-1])}")
+            step = Step(f"Writing {_name(files[-1])}", f"Wrote {_name(files[-1])}",
+                        touched={"file": tuple(files)})
+        if step is not None:
+            for kind, things in step.touched.items():
+                touched.setdefault(kind, []).extend(things)
         if step is not None and (best is None or (step.changes and not best.changes)):
             best = step
             if step.risk == SYSTEM:
@@ -806,6 +838,8 @@ def shell_step(command: str, description: str | None = None) -> Step:
         best.risk = SYSTEM
     if best.risk:
         best.command = " ".join(inner.split())[:300]
+    if best.changes and touched:
+        best.touched = {kind: tuple(dict.fromkeys(things)) for kind, things in touched.items()}
     return best
 
 
@@ -831,7 +865,8 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         n = _lines(a.get("qml"), a.get("python"), *files.values())
         again = _app_exists(raw) if raw else False
         now, past = ("Changing", "Changed") if again else ("Building", "Made")
-        return Step(f"{now} {title}" + (f", {n} lines" if n > 1 else ""), f"{past} {title}")
+        return Step(f"{now} {title}" + (f", {n} lines" if n > 1 else ""), f"{past} {title}",
+                    touched={"app": (title,)})
     if tool in ("open_app", "show_app"):
         return Step(f"Opening {a.get('name') or 'an app'}")
     if tool == "hide_app":
@@ -883,14 +918,15 @@ def tool_step(name: str, a: dict | None) -> Step | None:
         n = _lines(a.get("content"))
         p = str(a.get("file_path") or "")
         what = _name(p) if p else "a file"
-        step = Step(f"Writing {what}" + (f", {n} lines" if n > 1 else ""), f"Wrote {what}")
+        step = Step(f"Writing {what}" + (f", {n} lines" if n > 1 else ""), f"Wrote {what}",
+                    touched={"file": (p,)} if p else {})
         if _is_system_path(p):
             step.risk, step.command = SYSTEM, f"write {p}"
         return step
     if name in ("Edit", "MultiEdit", "NotebookEdit"):
         p = str(a.get("file_path") or a.get("notebook_path") or "")
         what = _name(p) if p else "a file"
-        step = Step(f"Editing {what}", f"Edited {what}")
+        step = Step(f"Editing {what}", f"Edited {what}", touched={"file": (p,)} if p else {})
         if _is_system_path(p):
             step.risk, step.command = SYSTEM, f"edit {p}"
         return step
@@ -907,9 +943,13 @@ def tool_step(name: str, a: dict | None) -> Step | None:
         return Step(f"Searching the web for {_quote(a['query'])}" if a.get("query") else "Searching the web")
     if name == "TodoWrite":
         todos = a.get("todos") if isinstance(a.get("todos"), list) else []
-        active = next((t for t in todos if isinstance(t, dict) and t.get("status") == "in_progress"), None)
+        # The model can leave several under way; the last one listed is the current step.
+        active = next((t for t in reversed(todos)
+                       if isinstance(t, dict) and t.get("status") == "in_progress"), None)
         if active and (active.get("activeForm") or active.get("content")):
             return Step(str(active.get("activeForm") or from_description(active["content"]) or active["content"])[:90])
+        if todos and all(isinstance(t, dict) and t.get("status") == "completed" for t in todos):
+            return None   # the last one ticked off says nothing new
         return Step("Planning the steps")
     if name == "TaskCreate":
         return Step("Planning the steps")
@@ -947,6 +987,7 @@ def file_change_step(changes: list) -> Step:
     else:
         verb = ("Deleting", "Deleted") if kinds == {"delete"} else ("Editing", "Edited")
         step = Step(f"{verb[0]} {len(changes)} files", f"{verb[1]} {len(changes)} files")
+    step.touched = {"file": tuple(str(c["path"]) for c in changes if c.get("path"))}
     sys_paths = [c.get("path", "") for c in changes if _is_system_path(str(c.get("path", "")))]
     if sys_paths:
         step.risk, step.command = SYSTEM, "edit " + " ".join(sys_paths)[:280]
@@ -1049,7 +1090,7 @@ def _touch_segment(argv: list[str]) -> list[tuple[str, str]]:
     prog = PurePosixPath(words[0]).name
     script = _shell_script(words)
     if script is not None:
-        return out + touched_command(script)
+        return out + parts_command(script)
     args = _args(words)
     a0 = args[0] if args else ""
     for path in _changed_paths(prog, words):
@@ -1102,7 +1143,7 @@ def _touch_segment(argv: list[str]) -> list[tuple[str, str]]:
     return out
 
 
-def touched_command(command: str) -> list[tuple[str, str]]:
+def parts_command(command: str) -> list[tuple[str, str]]:
     """The parts of the machine a shell command changes, as (kind, target), in order."""
     out: list[tuple[str, str]] = []
     for argv in _segments(_unwrap(command)):
@@ -1112,12 +1153,12 @@ def touched_command(command: str) -> list[tuple[str, str]]:
     return out
 
 
-def touched(name: str, a: dict | None) -> list[tuple[str, str]]:
+def parts_touched(name: str, a: dict | None) -> list[tuple[str, str]]:
     """What a tool call changes: kind is network, service (target: the unit), sound, screens or disks."""
     a = a if isinstance(a, dict) else {}
     name = str(name or "")
     if name == "Bash":
-        return touched_command(str(a.get("command", "")))
+        return parts_command(str(a.get("command", "")))
     if name in ("Write", "Edit", "MultiEdit"):
         edits = a.get("edits") if isinstance(a.get("edits"), list) else []
         text = " ".join(str(x) for x in [a.get("content"), a.get("new_string"), *(e.get("new_string") for e in edits
@@ -1126,7 +1167,7 @@ def touched(name: str, a: dict | None) -> list[tuple[str, str]]:
     return []
 
 
-def touched_changes(changes: list) -> list[tuple[str, str]]:
+def parts_changes(changes: list) -> list[tuple[str, str]]:
     """Codex's file_change item."""
     out: list[tuple[str, str]] = []
     for c in changes if isinstance(changes, list) else []:
@@ -1322,10 +1363,51 @@ def prompt_reads(prompt: str) -> list[Read]:
     return out
 
 
+# -- the plan --
+
+PLAN_STATUSES = ("pending", "in_progress", "completed")
+MAX_PLAN = 24          # steps kept; a longer list could not be shown on the desk anyway
+MAX_TASK_TEXT = 90     # characters of one step's words
+TOUCH_KINDS = ("package", "service", "file", "app")
+
+_TASK_CREATED = re.compile(r"\s*Task #(\S+) created successfully")
+_TASK_LINE = re.compile(r"^#(\S+) \[(pending|in_progress|completed)\] (.+?)( \(.*\))?( \[blocked by .*\])?$")
+
+
+@dataclass
+class _Task:
+    id: str | None             # None until the result of the TaskCreate that made it names it
+    subject: str               # "Install ffmpeg"
+    active: str | None         # "Installing ffmpeg": the agent's own words, or the subject read as a verb
+    status: str = "pending"
+    call: str | None = None    # the TaskCreate call this row is waiting on
+
+
+def _task_text(text) -> str:
+    return " ".join(str(text or "").split())[:MAX_TASK_TEXT]
+
+
+def _active_form(form, subject: str) -> str | None:
+    return _task_text(form) or from_description(subject)
+
+
+def _task_id(a: dict) -> str | None:
+    """The task a TaskUpdate names. Claude's own reducer takes `id` and `task_id` for `taskId` too."""
+    for key in ("taskId", "id", "task_id"):
+        if a.get(key) not in (None, ""):
+            return str(a[key])
+    return None
+
+
 # -- the turn --
 
 def _lower_first(s: str) -> str:
     return s[:1].lower() + s[1:] if s[:2] != s[:2].upper() else s
+
+
+def _touched_file(path: str) -> str:
+    """One name for a file however the turn spelled it (~/a.txt, $HOME/a.txt, ./a.txt)."""
+    return os.path.normpath(_expand_home(path))
 
 
 class Narrator:
@@ -1336,17 +1418,19 @@ class Narrator:
         self.done: list[str] = []
         self.irreversible = False
         self.system = False
+        self.touched: dict[str, set[str]] = {}   # what the turn has changed, by kind
         self.said = ""           # the agent's words in the current text block
         self._partial: dict[int, dict] = {}
-        self._creating: dict[str, str] = {}   # TaskCreate tool id -> its present-tense form
-        self._tasks: dict[str, str] = {}      # task id -> its present-tense form
+        self._plan: list[_Task] = []
+        self._listing: set[str] = set()       # TaskList calls whose result is the whole table
+        self._sent: list[dict] = []           # the plan take_plan gave last
         self._shown: dict | None = None       # the line last returned
         self._said_msg = ""      # the agent's last text block in the current model message
         self._block = ""         # the text block being streamed
         self.because = ""        # why the current step happens: the sentence written just before it
         self.reads: list[Read] = []   # what the turn read, in order (yours and outside)
         self.last_notes: dict = {}    # because and after of the step the last tool event started
-        self.touched: list[tuple[str, str]] = []   # parts of the machine the turn changed, in order
+        self.parts: list[tuple[str, str]] = []   # parts of the machine the turn changed, in order
         self.drew = False        # the agent drew a picture itself (show_card, system_map)
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
@@ -1356,6 +1440,10 @@ class Narrator:
             return None
         if step.changes and step.done not in self.done:
             self.done.append(step.done)
+        if step.changes:
+            for kind, things in step.touched.items():
+                self.touched.setdefault(kind, set()).update(
+                    _touched_file(t) if kind == "file" else t for t in things)
         if step.risk == IRREVERSIBLE:
             self.irreversible = True
         elif step.risk == SYSTEM:
@@ -1408,6 +1496,7 @@ class Narrator:
 
     def on_event(self, ev: dict) -> dict | None:
         self.last_notes = {}
+        self._track_plan(ev)
         line = self._line(ev)
         if line is not None and ev.get("kind") in ("tool", "file_change"):
             self.last_notes = {k: line[k] for k in ("because", "after") if k in line}
@@ -1417,45 +1506,169 @@ class Narrator:
         self._shown = line
         return line
 
+    def touched_counts(self) -> dict[str, int]:
+        """How many things of each kind the turn has changed so far; kinds with none are left out."""
+        return {kind: len(self.touched[kind]) for kind in TOUCH_KINDS if self.touched.get(kind)}
+
+    def touched_text(self) -> str:
+        """The counts in words: "1 package and 3 files so far", "" when nothing changed."""
+        parts = [f"{n} {kind}{'' if n == 1 else 's'}" for kind, n in self.touched_counts().items()]
+        if not parts:
+            return ""
+        return (", ".join(parts[:-1]) + " and " if len(parts) > 1 else "") + parts[-1] + " so far"
+
+    # -- the plan: Claude's TaskCreate/TaskUpdate/TaskList and TodoWrite, Codex's list as TodoWrite --
+
+    @property
+    def plan(self) -> list[dict]:
+        """The steps in order, {id, subject, active, status}. Rows the CLI has not confirmed yet
+        come last, as in its own list. When several are in progress the last one is the current step."""
+        rows = sorted(self._plan, key=lambda t: t.id is None)
+        return [{"id": t.id, "subject": t.subject, "active": t.active, "status": t.status} for t in rows]
+
+    def take_plan(self) -> list[dict] | None:
+        """The whole plan if it differs from the one given last, else None. Apart from on_event's
+        answer because ticking a step off changes the plan and not the line."""
+        plan = self.plan
+        if plan == self._sent:
+            return None
+        self._sent = plan
+        return [dict(row) for row in plan]
+
+    def _task(self, tid: str | None) -> _Task | None:
+        return next((t for t in self._plan if tid is not None and t.id == tid), None)
+
+    def _track_plan(self, ev: dict):
+        kind = ev.get("kind")
+        # A subagent's list is its own; it never enters the turn's.
+        if kind not in ("tool", "tool_result") or ev.get("parent"):
+            return
+        call = ev.get("id") if isinstance(ev.get("id"), str) else None
+        if kind == "tool_result":
+            self._plan_result(call, str(ev.get("output") or ""), bool(ev.get("error")))
+            return
+        a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+        name = ev.get("name")
+        if name == "TaskCreate":
+            self._plan_create(call, a)
+        elif name == "TaskUpdate":
+            self._plan_update(a)
+        elif name == "TaskList" and call:
+            self._listing.add(call)
+        elif name == "TodoWrite":
+            self._plan_todos(a.get("todos"))
+
+    def _plan_create(self, call: str | None, a: dict):
+        subject = _task_text(a.get("subject"))
+        # Without the call's id its result could never name the row; without a subject there is
+        # nothing to show.
+        if not call or not subject or len(self._plan) >= MAX_PLAN:
+            return
+        form = a.get("activeForm") or a.get("active_form")
+        self._plan.append(_Task(None, subject, _active_form(form, subject), call=call))
+
+    def _plan_result(self, call: str | None, output: str, error: bool):
+        if call is None:
+            return
+        if call in self._listing:
+            self._plan_reseed(output)
+            return
+        row = next((t for t in self._plan if t.call == call), None)
+        if row is None:
+            return
+        m = None if error else _TASK_CREATED.match(output) or re.search(r"#(\d+)", output)
+        if m is None:
+            self._plan.remove(row)   # it failed, or made a task nobody can name later
+            return
+        # A number seen again is the task made last, not two.
+        self._plan = [t for t in self._plan if t is row or t.id != m.group(1)]
+        row.id, row.call = m.group(1), None
+
+    def _plan_update(self, a: dict):
+        tid = _task_id(a)
+        if tid is None:
+            return
+        row = self._task(tid)
+        status = a.get("status")
+        if status == "deleted":
+            if row is not None:
+                self._plan.remove(row)
+            return
+        status = status if status in PLAN_STATUSES else None
+        subject = _task_text(a.get("subject"))
+        form = a.get("activeForm") or a.get("active_form")
+        if row is None:
+            # Made in an earlier turn, or never seen: with no subject there is nothing to show,
+            # and the bare number is not a step.
+            if subject and len(self._plan) < MAX_PLAN:
+                self._plan.append(_Task(tid, subject, _active_form(form, subject), status or "pending"))
+            return
+        if subject:
+            row.subject, row.active = subject, _active_form(form, subject)
+        elif _task_text(form):
+            row.active = _task_text(form)
+        if status:
+            row.status = status
+
+    def _plan_reseed(self, output: str):
+        """A TaskList result is the whole list: `#3 [in_progress] Install ffmpeg (owner) [blocked by #1]`."""
+        rows = []
+        for line in output.splitlines():
+            m = _TASK_LINE.match(line.strip())
+            if m is None:
+                continue
+            known = self._task(m.group(1))
+            subject = known.subject if known else _task_text(m.group(3))
+            rows.append(_Task(m.group(1), subject, known.active if known else from_description(subject),
+                              m.group(2)))
+        if not rows and not output.strip().lower().startswith("no tasks"):
+            return   # not a list at all (an error, say): keep what is known
+        self._plan = (rows + [t for t in self._plan if t.id is None])[:MAX_PLAN]
+
+    def _plan_todos(self, todos):
+        """TodoWrite carries the whole list every time; a step's id is its place in it."""
+        if not isinstance(todos, list):
+            return
+        rows = []
+        for t in todos:
+            subject = _task_text(t.get("content")) if isinstance(t, dict) else ""
+            if not subject:
+                continue
+            status = t.get("status") if t.get("status") in PLAN_STATUSES else "pending"
+            rows.append(_Task(str(len(rows) + 1), subject, _active_form(t.get("activeForm"), subject),
+                              status))
+        self._plan = rows[:MAX_PLAN]
+
     def _line(self, ev: dict) -> dict | None:
         kind = ev.get("kind")
         if kind == "message_start":
             # A new model message: what it said before its steps is its own reason, not the last one's.
             self._said_msg = self._block = self.because = ""
             return None
-        if kind == "tool_result" and ev.get("id") in self._creating:
-            m = re.search(r"#?(\d+)", str(ev.get("output", "")))
-            if m:
-                self._tasks[m.group(1)] = self._creating.pop(ev["id"])
-            return None
         if kind == "tool":
             a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
             for r in tool_reads(ev.get("name", ""), a):
                 self._read(r)
-            for t in touched(ev.get("name", ""), a):
-                if t not in self.touched:
-                    self.touched.append(t)
+            for t in parts_touched(ev.get("name", ""), a):
+                if t not in self.parts:
+                    self.parts.append(t)
             if str(ev.get("name", "")).endswith(("__show_card", "__system_map")):
                 self.drew = True
             self._reason(a.get("description") if ev.get("name") == "Bash" else None)
-            if ev.get("name") == "TaskCreate" and ev.get("id"):
-                form = a.get("activeForm") or from_description(a.get("subject", "")) or a.get("subject")
-                if form:
-                    self._creating[ev["id"]] = str(form)[:90]
             if ev.get("name") == "TaskUpdate" and a.get("status") == "in_progress" and not a.get("activeForm"):
-                known = self._tasks.get(str(a.get("taskId", "")))
-                if known:
+                row = None if ev.get("parent") else self._task(_task_id(a))
+                if row is not None:
                     self.said = ""
-                    return self._set(Step(known))
+                    return self._set(Step(row.active or row.subject))
             step = tool_step(ev.get("name", ""), ev.get("input"))
             if step is None:
                 return None
             self.said = ""
             return self._set(step)
         if kind == "file_change":
-            for t in touched_changes(ev.get("changes") or []):
-                if t not in self.touched:
-                    self.touched.append(t)
+            for t in parts_changes(ev.get("changes") or []):
+                if t not in self.parts:
+                    self.parts.append(t)
             self._reason()
             return self._set(file_change_step(ev.get("changes") or []))
         if kind == "tool_start":
