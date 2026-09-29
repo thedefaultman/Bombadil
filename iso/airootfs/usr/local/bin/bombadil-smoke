@@ -54,6 +54,10 @@ shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
 nkeys=0
 keys() { nkeys=$((nkeys+1)); say "KEYS $nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
 history_has() { as_user bombadil history | grep -q "$1"; }
+# Launcher actions read "  HH:MM  <word you typed>: <what it did>". Match the word at the start of
+# the line, so "open the browser: Opened the browser." from an earlier test cannot stand in for it.
+launcher_done() { as_user bombadil history | grep -Ec "^ +[0-9]{2}:[0-9]{2} +$1: $2"; }
+launcher_ran() { [[ $(launcher_done "$1" "$2") -gt $3 ]]; }
 agentd_send() { as_user python3 -c 'import json, socket, sys; s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall((sys.argv[2] + "\n").encode()); s.shutdown(socket.SHUT_WR); s.recv(1 << 20)' "$sock" "$1"; }
 
 check agentd-socket wait_for 90 test -S "$sock"
@@ -78,10 +82,11 @@ check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
+before=$(launcher_done browser "Opened the browser")
 keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
-check launcher-without-model history_has "browser: Opened the browser"
+check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
