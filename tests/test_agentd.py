@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from bombadil import agentd, paths, providers
+from bombadil import agentd, desk, launcher, paths, providers
 
 
 async def _client(path):
@@ -526,5 +526,402 @@ async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
     msgs = await _read_until(r, "turn_end")
     kinds = [m.get("kind") for m in msgs if m["type"] == "event"]
     assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
+    w.close()
+    server.cancel()
+
+
+# -- the desk --
+
+async def _say(w, msg):
+    w.write((json.dumps(msg) + "\n").encode())
+    await w.drain()
+
+
+async def _another(d):
+    """A second client, past its greeting."""
+    r, w = await _client(d.socket_path)
+    await r.readline()   # status
+    await r.readline()   # entries
+    return r, w
+
+
+async def _silent(r, seconds=0.3):
+    """Does nothing arrive for a while?"""
+    try:
+        await asyncio.wait_for(r.readline(), seconds)
+    except TimeoutError:
+        return True
+    return False
+
+
+async def _all_of(r, *preds, timeout=5):
+    """Read until each predicate has matched a message (in any order); return every message."""
+    out, left = [], list(preds)
+    while left:
+        out.append(json.loads(await asyncio.wait_for(r.readline(), timeout)))
+        left = [p for p in left if not p(out[-1])]
+    return out
+
+
+def _is_done(m):
+    return m.get("kind") == "local" and m.get("phase") == "done"
+
+
+async def _desk_state(r):
+    return (await _events_until(r, lambda m: m.get("type") == "desk", 5))[-1]
+
+
+async def _desk_result(r):
+    return (await _events_until(r, lambda m: m.get("type") == "desk-result", 5))[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    other_r, other_w = await _another(d)
+    assert await _silent(r) and await _silent(other_r)   # the greeting is still status and entries
+    await _say(w, {"type": "desk", "op": "get"})
+    state = json.loads(await asyncio.wait_for(r.readline(), 5))
+    assert state == d.desk.snapshot() and state["type"] == "desk" and state["folded"] is False
+    assert state["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+    assert await _silent(r) and await _silent(other_r)
+    w.close()
+    other_w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_bar_that_restarts_mid_turn_gets_the_route_again(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    plan = {"type": "event", "kind": "plan", "turn": 3,
+            "steps": [{"id": "1", "subject": "Install ffmpeg", "active": None, "status": "in_progress"}]}
+    d.current, d.plan_msg = 3, plan
+    await _say(w, {"type": "desk", "op": "get"})
+    assert json.loads(await asyncio.wait_for(r.readline(), 5))["type"] == "desk"
+    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == plan
+    d.current = None   # no turn runs: a plan left over is not the route of anything
+    await _say(w, {"type": "desk", "op": "get"})
+    assert json.loads(await asyncio.wait_for(r.readline(), 5))["type"] == "desk"
+    assert await _silent(r)
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_shell_changes_the_desk_and_everyone_is_told(home):
+    import tomllib
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    other_r, other_w = await _another(d)
+    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})
+    for rd in (r, other_r):
+        assert (await _desk_state(rd))["hidden"] == ["alive", "machine"]
+    assert tomllib.loads(paths.desk_file().read_text())["hidden"] == ["alive", "machine"]
+    await _say(w, {"type": "desk", "op": "fold"})
+    assert (await _desk_state(r))["folded"] is True
+    await _say(w, {"type": "desk", "op": "fold"})
+    assert (await _desk_state(r))["folded"] is False
+    await _say(w, {"type": "desk", "op": "move", "widget": "watching", "rail": "right", "rank": 0})
+    moved = await _desk_state(r)
+    assert moved["rails"]["watching"] == "right" and moved["order"]["right"][0] == "watching"
+    await _say(w, {"type": "desk", "op": "show", "widget": "machine"})
+    assert (await _desk_state(r))["hidden"] == ["alive"]
+    # What changes nothing, what is refused and what is not the shell's to ask says nothing.
+    for msg in ({"op": "hide", "widget": "needs"}, {"op": "show", "widget": "now"},
+                {"op": "move", "widget": "watching", "rail": "right", "rank": 0},
+                {"op": "unfold"}, {"op": "state"}, {"op": "make", "widget": "batch"}, {"op": "hide"}, {}):
+        await _say(w, {"type": "desk", **msg})
+    assert await _silent(r)
+    for _ in range(4):   # the other client heard every change too, and nothing else
+        await _desk_state(other_r)
+    assert await _silent(other_r)
+    assert d.desk.snapshot()["hidden"] == ["alive"]
+    for x in (w, other_w):
+        x.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_gesture_at_the_desk_is_told_to_the_agent_and_kept_in_the_history(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})
+    await _desk_state(r)
+    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})   # again: nothing changed, nothing noted
+    await _say(w, {"type": "desk", "op": "hide", "widget": "needs"})     # refused
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    said = next(m["text"] for m in msgs if m.get("kind") == "result")   # the whole prompt, echoed
+    assert said == "echo: [Done by the user without you since your last turn: at the desk: Put Machine away.] hello"
+    assert not [m for m in msgs if m.get("kind") == "local"]   # a gesture is not said on the line
+    log = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
+    assert [(x["kind"], x["prompt"], x["result"]) for x in log if x.get("kind") == "local"] == [
+        ("local", "at the desk", "Put Machine away.")]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_changes_made_in_a_thread_reach_every_client_once_they_settle(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    other_r, other_w = await _another(d)
+    # The launcher's worker thread is one of these; the shell's messages another.
+    await asyncio.to_thread(d.desk.apply, "hide", "watching")
+    await asyncio.to_thread(d.desk.apply, "hide", "away")
+    await _say(w, {"type": "desk", "op": "fold"})
+    seen = []
+    while not seen or seen[-1]["hidden"] != ["watching", "alive", "away"] or not seen[-1]["folded"]:
+        seen.append(await _desk_state(r))
+    assert len(seen) <= 3
+    assert (await _desk_state(other_r)) is not None
+    await asyncio.sleep(0.2)
+    d.desk.apply("hide", "needs")   # refused: no broadcast
+    assert await _silent(r)
+    for x in (w, other_w):
+        x.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_desk_word_changes_the_desk_says_so_and_is_told_to_the_next_turn(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hide machine")
+    assert json.loads(await r.readline()) == {"type": "local", "action": "widget"}
+    msgs = await _all_of(r, _is_done, lambda m: m.get("type") == "desk")
+    local = [m for m in msgs if m.get("kind") == "local"]
+    assert [(m["phase"], m["text"]) for m in local] == [("start", "Putting Machine away"),
+                                                        ("done", "Put Machine away.")]
+    assert local[1]["ok"] is True and local[0]["target"] == "machine"
+    state = next(m for m in msgs if m.get("type") == "desk")
+    assert state["hidden"] == ["alive", "machine"] and state == d.desk.snapshot()
+    await _ask(w, "desk")
+    msgs = await _all_of(r, _is_done, lambda m: m.get("type") == "desk")
+    assert next(m for m in msgs if m.get("type") == "desk")["folded"] is True
+    assert d.turns == 0
+    # "hide needs you" is refused in the words the line shows, and nothing changes.
+    await _ask(w, "hide needs you")
+    done = (await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done"))[-1]
+    assert (done["ok"], done["text"]) == (False, "Needs you cannot be hidden.")
+    assert await _silent(r)
+    # What happened without the model reaches its next prompt; the refused one does not.
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    said = next(m["text"] for m in msgs if m.get("kind") == "result")
+    assert said == ("echo: [Done by the user without you since your last turn: 'hide machine': Put Machine away.; "
+                    "'desk': Folded the desk.] hello")
+    log = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
+    assert [(x["prompt"], x["action"], x["target"], x["ok"]) for x in log if x.get("kind") == "local"] == [
+        ("hide machine", "widget", "machine", True), ("desk", "desk", "", True),
+        ("hide needs you", "widget", "needs", False)]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_desk_button_and_a_sentence_about_the_desk(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _say(w, {"type": "local", "action": "desk"})
+    msgs = await _all_of(r, _is_done, lambda m: m.get("type") == "desk")
+    assert next(m for m in msgs if _is_done(m))["text"] == "Folded the desk."
+    assert next(m for m in msgs if m.get("type") == "desk")["folded"] is True
+    # A sentence with the word in it is for the agent, not the desk.
+    await _ask(w, "what is on my desk?")
+    assert json.loads(await r.readline()) == {"type": "queued", "turn": 1}
+    msgs = await _read_until(r, "turn_end")
+    assert next(m for m in msgs if m.get("kind") == "turn_start")["prompt"] == "what is on my desk?"
+    assert next(m for m in msgs if m.get("kind") == "result")["text"].endswith("what is on my desk?")   # the agent had it
+    assert d.desk.folded is True   # and the desk was not touched by it
+    w.close()
+    server.cancel()
+
+
+def test_there_is_one_desk_for_the_launcher_the_shell_and_the_tool(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    assert d.launcher.desk_state is d.desk and d.desk.on_change == d._desk_changed
+    mine = desk.Desk()
+    assert agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), desk=mine).launcher.desk_state is mine
+    lx = launcher.Launcher(snaps=agentd._NoSnapshots(), desk=desk.Desk())
+    assert agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), launch=lx).desk is lx.desk_state
+
+
+def test_agentd_starts_with_the_desk_that_was_saved(home):
+    saved = desk.Desk()
+    saved.apply("hide", "machine")
+    saved.apply("toggle")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    assert d.desk.snapshot() == saved.snapshot()
+
+
+# What the CLI of a turn is told about it, and what it asks the desk while it runs.
+DESK_TURN = (
+    "import json, os, sys, time\n"
+    "prompt = sys.stdin.read()\n"
+    "seen = os.environ['BOMBADIL_TURN'] + ' ' + os.environ['BOMBADIL_SOCKET'] + ' ' + prompt\n"
+    "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': seen}]}}), flush=True)\n"
+    "time.sleep(60)\n"
+)
+
+
+async def _in_a_turn(d, prompt):
+    """A running turn whose CLI waits, and a second client standing in for its os-mcp server."""
+    server, r, w = await _start(d)
+    tool_r, tool_w = await _another(d)
+    await _ask(w, prompt)
+    msgs = await _events_until(r, lambda m: m.get("kind") == "text")
+    return server, r, w, tool_r, tool_w, msgs[-1]["text"]
+
+
+async def _stop(r, w, server, *more):
+    await _say(w, {"type": "stop"})
+    msgs = await _read_until(r, "turn_end")
+    for x in (w, *more):
+        x.close()
+    server.cancel()
+    return msgs
+
+
+@pytest.mark.asyncio
+async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w, tool_r, tool_w, seen = await _in_a_turn(d, "please hide the machine widget")
+    # The CLI (and so its os-mcp server) is told the turn and where agentd listens; agentd keeps
+    # the words as they were typed.
+    assert seen.startswith(f"1 {d.socket_path} ") and d.turn_prompt == "please hide the machine widget"
+    tool = {"type": "desk-tool", "id": "a", "turn": 1, "op": "hide", "widget": "machine"}
+    await _say(tool_w, tool)
+    assert await _desk_result(tool_r) == {"type": "desk-result", "id": "a", "ok": True, "text": "Put Machine away."}
+    assert (await _desk_state(r))["hidden"] == ["alive", "machine"]   # the shell sees it
+    assert (await _desk_state(tool_r))["hidden"] == ["alive", "machine"]
+    for i, (msg, ok, text) in enumerate([
+        ({"op": "state"}, True, ("The desk is open. Left rail, nearest the pill first: Now, Watching, "
+                                 "Alive (put away). Right rail: Needs you, Away, Machine (put away).")),
+        ({"op": "fold"}, True, "Folded the desk."),
+        ({"op": "fold"}, True, "The desk is already folded."),
+        ({"op": "unfold"}, True, "Unfolded the desk."),
+        ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True, "Moved Watching to the right rail."),
+        ({"op": "show", "widget": "Machine"}, True, "Put Machine on the desk."),
+        ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
+        ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
+                                                    "Watching, Alive, Needs you, Away and Machine.")),
+        ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, move, fold, unfold "
+                                                    "and say its state.")),
+        ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, move, fold, "
+                                                      "unfold and say its state.")),
+        ({}, False, "The desk cannot do that. It can show, hide, move, fold, unfold and say its state."),
+    ]):
+        await _say(tool_w, {"type": "desk-tool", "id": f"q{i}", "turn": 1, **msg})
+        got = await _desk_result(tool_r)
+        assert (got["id"], got["ok"], got["text"]) == (f"q{i}", ok, text)
+    msgs = await _stop(r, w, server, tool_w)
+    # Only the one that asked got an answer; the shell did not.
+    assert not [m for m in msgs if m.get("type") == "desk-result"]
+
+
+@pytest.mark.asyncio
+async def test_the_desk_tool_refuses_a_turn_that_is_not_the_running_one(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "hide machine now please, in the desk")
+    no = "That turn is over, so the desk stays as it is."
+    for turn in (0, 2, None, "1", 99):
+        await _say(tool_w, {"type": "desk-tool", "id": "x", "turn": turn, "op": "hide", "widget": "machine"})
+        assert await _desk_result(tool_r) == {"type": "desk-result", "id": "x", "ok": False, "text": no}
+    await _say(tool_w, {"type": "desk-tool", "id": "y", "op": "hide", "widget": "machine"})   # no turn at all
+    assert (await _desk_result(tool_r))["text"] == no
+    assert d.desk.snapshot()["hidden"] == ["alive"]
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_the_desk_tool_refuses_a_turn_that_did_not_ask_for_the_desk(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "install htop")
+    for op in ({"op": "hide", "widget": "machine"}, {"op": "state"}, {"op": "fold"}):
+        await _say(tool_w, {"type": "desk-tool", "id": "n", "turn": 1, **op})
+        res = await _desk_result(tool_r)
+        assert res["ok"] is False and res["text"].startswith("The person did not ask for the desk in this turn")
+    assert d.desk.snapshot() == desk.Desk().snapshot()
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_earlier_desk_words_in_the_notes_do_not_open_the_gate(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w = await _start(d)
+    tool_r, tool_w = await _another(d)
+    await _ask(w, "hide machine")            # a launcher word: it reaches the next prompt as a note
+    await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    await _ask(w, "tell me a joke")
+    text = (await _events_until(r, lambda m: m.get("kind") == "text"))[-1]["text"]
+    assert "'hide machine': Put Machine away." in text and text.endswith("tell me a joke")   # the CLI has it
+    assert d.turn_prompt == "tell me a joke"                                                # the gate does not
+    await _say(tool_w, {"type": "desk-tool", "id": "z", "turn": 1, "op": "show", "widget": "machine"})
+    res = await _desk_result(tool_r)
+    assert res["ok"] is False and "did not ask for the desk" in res["text"]
+    assert "machine" in d.desk.snapshot()["hidden"]
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_has_ended_cannot_use_the_desk_tool(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "put the desk away")
+    await _read_until(r, "turn_end")
+    await _say(w, {"type": "desk-tool", "id": "late", "turn": 1, "op": "fold"})
+    res = await _desk_result(r)
+    assert res == {"type": "desk-result", "id": "late", "ok": False,
+                   "text": "That turn is over, so the desk stays as it is."}
+    assert d.desk.folded is False
+    w.close()
+    server.cancel()
+
+
+def _mcp_turn(arguments):
+    """A CLI that starts the real os-mcp server as a child, as Claude Code does, and calls its
+    `desk` tool once."""
+    from pathlib import Path
+    mcp = Path(__file__).resolve().parents[1] / "bin" / "bombadil-os-mcp"
+    return (
+        "import json, subprocess, sys\n"
+        "sys.stdin.read()\n"
+        f"p = subprocess.Popen([sys.executable, {str(mcp)!r}], stdin=subprocess.PIPE, stdout=subprocess.PIPE,"
+        " text=True)\n"
+        "def rpc(m):\n"
+        "    p.stdin.write(json.dumps(m) + '\\n')\n"
+        "    p.stdin.flush()\n"
+        "    return json.loads(p.stdout.readline())\n"
+        "rpc({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}})\n"
+        "r = rpc({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',"
+        f" 'params': {{'name': 'desk', 'arguments': {arguments!r}}}}})\n"
+        "p.stdin.close()\n"
+        "p.wait()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text',"
+        " 'text': json.dumps(r['result'])}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done'}), flush=True)\n")
+
+
+@pytest.mark.asyncio
+async def test_the_real_os_mcp_server_reaches_the_desk_from_inside_a_turn(home):
+    d = agentd.AgentD(Scripted(_mcp_turn({"op": "hide", "widget": "machine"})), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "please hide the machine widget")
+    msgs = await _read_until(r, "turn_end")
+    said = json.loads(next(m["text"] for m in msgs if m.get("kind") == "text"))
+    assert said == {"content": [{"type": "text", "text": "Put Machine away."}]}
+    assert d.desk.snapshot()["hidden"] == ["alive", "machine"]
+    # The next turn's words did not ask for the desk: the same call is refused, in words.
+    await _ask(w, "install htop")
+    msgs = await _read_until(r, "turn_end")
+    said = json.loads(next(m["text"] for m in msgs if m.get("kind") == "text"))
+    assert said["isError"] is True and said["content"][0]["text"].startswith("The person did not ask for the desk")
     w.close()
     server.cancel()

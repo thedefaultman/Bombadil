@@ -13,6 +13,11 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         again while it shows closes it
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
                    {"type": "summon"}                   ask the bar to take the keyboard (Super)
+                   {"type": "desk", "op": "get"}        the desk's state (and the plan of a running turn)
+                   {"type": "desk", "op": "fold"|"hide"|"show"|"move", "widget": "machine",
+                    "rail": "left"|"right", "rank": 0}  change the desk; the state comes back to everyone
+                   {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
+                                                        the os-mcp `desk` tool; answered with desk-result
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
@@ -20,11 +25,17 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "summon"}
+                   {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
+                    "screen": ""}                       the desk's state: to whoever asks, and on every change
+                   {"type": "desk-result", "id": s, "ok": bool, "text": "..."}   to the desk-tool's sender only
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
+
+The desk-tool changes the desk only in the turn that is running, and only when that turn's own
+typed words asked for the desk (desk.asked_for_desk); otherwise it is refused.
 
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
@@ -40,6 +51,7 @@ import time
 from pathlib import Path
 
 from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
+from .desk import Desk, asked_for_desk
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
@@ -51,16 +63,20 @@ SEND_TIMEOUT = 5.0
 # After a turn's process exits, how long its output may take to drain. Longer means a job it
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
+# Changes to the desk that come close together go out as the state they end in.
+DESK_DEBOUNCE = 0.03
 
 
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None):
+                 stopper: procs.Stopper | None = None, desk: Desk | None = None):
         self.provider = provider
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
-        self.launcher = launch or launcher.Launcher(snaps=self.snaps)
+        # One desk: the launcher's words, the shell and the agent's tool all change this one.
+        self.desk = desk or getattr(launch, "desk_state", None) or Desk().load()
+        self.launcher = launch or launcher.Launcher(snaps=self.snaps, desk=self.desk)
         self.stopper = stopper or procs.Stopper()
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
@@ -81,6 +97,12 @@ class AgentD:
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.turn_prompt: str | None = None         # what the person typed for the running turn, as typed
+        self.plan_msg: dict | None = None           # the running turn's latest plan event
+        self._desk_dirty = False
+        self._desk_last = self.desk.snapshot()      # what the shell was last told
+        self.desk.on_change = self._desk_changed
 
     # -- socket --
 
@@ -90,6 +112,7 @@ class AgentD:
             self.socket_path.unlink()
         # Probe for systemd scopes now, not on the first Enter.
         await asyncio.to_thread(procs.scope_supported)
+        self._loop = asyncio.get_running_loop()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
         worker = asyncio.create_task(self._worker())
         watcher = asyncio.create_task(self._watch_apps())
@@ -169,6 +192,10 @@ class AgentD:
             self._background(asyncio.to_thread(self.launcher.close_details))
         elif t == "summon":
             await self.broadcast({"type": "summon"})
+        elif t == "desk":
+            await self._desk_op(msg, writer)
+        elif t == "desk-tool":
+            await self._send(writer, await self._desk_tool(msg))
         elif t == "status":
             await self._send(writer, self._status())
 
@@ -249,6 +276,73 @@ class AgentD:
                 print(f"agentd: {type(e).__name__}: {e}", file=sys.stderr)
         task.add_done_callback(done)
         return task
+
+    # -- the desk --
+
+    def _desk_changed(self):
+        """Desk.on_change. The launcher changes the desk in a worker thread, so hop to the loop."""
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._desk_soon)
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
+    def _desk_soon(self):
+        if not self._desk_dirty:
+            self._desk_dirty = True
+            self._background(self._desk_broadcast())
+
+    async def _desk_broadcast(self):
+        await asyncio.sleep(DESK_DEBOUNCE)
+        self._desk_dirty = False
+        state = await asyncio.to_thread(self.desk.snapshot)
+        if state != self._desk_last:
+            self._desk_last = state
+            await self.broadcast(state)
+
+    async def _desk_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the desk, or changes it (a click on a strip, a drag later)."""
+        op = str(msg.get("op", ""))
+        if op == "get":
+            await self._send(writer, await asyncio.to_thread(self.desk.snapshot))
+            # A bar that restarts mid-turn still has the route.
+            if self.current is not None and self.plan_msg is not None:
+                await self._send(writer, self.plan_msg)
+            return
+        if op not in ("fold", "hide", "show", "move"):
+            return
+
+        def change():
+            before = self.desk.snapshot()
+            ok, text = self.desk.apply("toggle" if op == "fold" else op, msg.get("widget"),
+                                       msg.get("rail"), msg.get("rank"))
+            return ok, text, self.desk.snapshot() != before
+        ok, text, changed = await asyncio.to_thread(change)
+        if ok and changed:
+            # Not said on the line (a gesture is its own answer), but the agent should know.
+            self.notes = [*self.notes, f"at the desk: {text}"][-10:]
+            self._log_line({"t": time.time(), "kind": "local", "prompt": "at the desk", "action": "desk",
+                            "target": str(msg.get("widget") or ""), "result": text, "ok": True})
+
+    async def _desk_tool(self, msg: dict) -> dict:
+        """The os-mcp `desk` tool. It works in the turn that is running, and only when that
+        turn's own words asked for the desk: a widget that appears unasked is a popup by another
+        name. The answer goes to the one client that asked."""
+        def result(ok: bool, text: str) -> dict:
+            return {"type": "desk-result", "id": msg.get("id"), "ok": ok, "text": text}
+        if self.current is None or msg.get("turn") != self.current:
+            return result(False, "That turn is over, so the desk stays as it is.")
+        # The raw prompt, not the turn's: that one has notes in front, which quote earlier desk words.
+        if not asked_for_desk(self.turn_prompt or ""):
+            return result(False, "The person did not ask for the desk in this turn, so it stays as it is. "
+                                 "Rearrange it only when they ask.")
+        op = str(msg.get("op", ""))
+        if op not in ("show", "hide", "move", "fold", "unfold", "state"):
+            return result(False, f"The desk cannot {op or 'do that'}. It can show, hide, move, fold, unfold "
+                                 "and say its state.")
+        ok, text = await asyncio.to_thread(self.desk.apply, op, msg.get("widget"), msg.get("rail"),
+                                           msg.get("rank"))
+        return result(ok, text)
 
     # -- things that never wait for the model --
 
@@ -366,6 +460,7 @@ class AgentD:
 
     async def turn(self, prompt: str):
         shell = prompt.startswith("!")
+        self.turn_prompt = prompt
         started = time.time()
         self.narrator = narrator = narrate.Narrator()
         log = paths.state_dir() / "turns" / f"{int(started * 1000)}-{self.current}.jsonl"
@@ -414,6 +509,9 @@ class AgentD:
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
         env = dict(os.environ)
+        # The os-mcp `desk` tool says which turn it speaks for, and where agentd listens.
+        env["BOMBADIL_TURN"] = str(self.current)
+        env["BOMBADIL_SOCKET"] = str(self.socket_path)
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
