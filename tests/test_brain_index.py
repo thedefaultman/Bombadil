@@ -226,6 +226,35 @@ def test_reconcile_does_not_take_a_new_file_on_an_old_inode_for_a_rename(home):
     w.close()
 
 
+def test_reconcile_does_not_take_a_different_file_with_the_same_name_for_a_move(home):
+    (home / "Docs").mkdir()
+    (home / "Other").mkdir()
+    old = home / "Docs" / "report.odt"
+    old.write_text("the Q3 report, version one")
+    os.utime(old, (time.time() - 86400, time.time() - 86400))
+    w = Walker(_db(home), str(home))
+    w.first_index()
+    thing = w.store.by_path(str(old))
+    old.unlink()
+    new = home / "Other" / "report.odt"
+    new.write_text("a different letter, written later and longer than the report")
+    w.store.x("UPDATE things SET ino = ? WHERE id = ?", (os.stat(new).st_ino, thing["id"]))   # ext4 does this
+    counts = w.reconcile()
+    assert (counts["moved"], counts["gone"], counts["found"]) == (0, 1, 1)
+    assert w.store.get(thing["id"])["deleted"] is not None
+    assert w.store.by_path(str(new))["id"] != thing["id"]
+    # the same file moved (even resized: same name, one candidate, unedited) is still the same thing
+    moved = home / "Docs" / "kept.odt"
+    moved.write_text("kept")
+    os.utime(moved, (time.time() - 86400, time.time() - 86400))
+    w.reconcile()
+    kept = w.store.by_path(str(moved))
+    os.rename(moved, home / "Other" / "kept.odt")
+    assert w.reconcile()["moved"] == 1
+    assert w.store.get(kept["id"])["path"] == str(home / "Other" / "kept.odt")
+    w.close()
+
+
 def test_moves_to_where_the_brain_does_not_look_are_deletions(home):
     _tree(home)
     w = Walker(_db(home), str(home))
@@ -237,20 +266,91 @@ def test_moves_to_where_the_brain_does_not_look_are_deletions(home):
     w.close()
 
 
-def test_missing_home_and_unreadable_folders_do_not_raise(home):
+def test_a_home_that_is_not_there_is_an_error_not_a_finished_index(home):
     w = Walker(_db(home), str(home / "nobody"))
-    assert w.first_index()["found"] == 0
+    with pytest.raises(OSError):
+        w.first_index()
+    assert w.store.get_meta("indexed") is None   # it would never be indexed if this said it was
+    with pytest.raises(OSError):
+        w.reconcile()
     w.close()
-    locked = home / "locked"
-    (locked / "inner").mkdir(parents=True)
-    os.chmod(locked, 0)
-    try:
-        w = Walker(_db(home), str(home))
-        assert w.first_index()["stopped"] is False
-        assert w.store.by_path(str(locked)) is not None
-        w.close()
-    finally:
-        os.chmod(locked, 0o755)
+
+
+def test_a_home_that_cannot_be_listed_is_an_error_but_a_folder_in_it_is_just_empty(home, monkeypatch):
+    (home / "locked" / "inner").mkdir(parents=True)
+    w = Walker(_db(home), str(home))
+    real = os.scandir
+
+    def scandir(path):
+        if str(path) == f"{home}/locked":
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(index.os, "scandir", scandir)
+    assert w.first_index()["stopped"] is False
+    assert w.store.by_path(f"{home}/locked") is not None and w.store.by_path(f"{home}/locked/inner") is None
+
+    def home_scandir(path):
+        if str(path) == str(home):
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(index.os, "scandir", home_scandir)
+    w.store.x("DELETE FROM meta WHERE key = 'indexed'")
+    with pytest.raises(PermissionError):
+        w.first_index()
+    assert w.store.get_meta("indexed") is None
+    w.close()
+
+
+def test_reconcile_of_a_home_that_looks_empty_deletes_nothing(home):
+    """An encrypted home that is not mounted yet is an empty folder; that is not everything gone."""
+    (home / "Documents").mkdir()
+    for i in range(5):
+        (home / "Documents" / f"f{i}.txt").write_text("x")
+    w = Walker(_db(home), str(home))
+    w.first_index()
+    live = w.store.counts()["live"]
+    assert live >= 7
+    away = home.parent / (home.name + "-away")
+    (home / "Documents").rename(away)
+    with pytest.raises(OSError, match="looks empty"):
+        w.reconcile()
+    assert w.store.counts()["live"] == live
+    away.rename(home / "Documents")
+    assert w.reconcile()["gone"] == 0
+    w.close()
+
+
+def test_a_home_with_more_entries_than_the_cap_is_still_indexed(home, monkeypatch):
+    monkeypatch.setattr(index, "MAX_ENTRIES", 20)
+    for i in range(25):
+        (home / f"note-{i}.txt").write_text("x")
+    w = Walker(_db(home), str(home))
+    w.first_index()
+    assert w.store.by_path(f"{home}/note-24.txt") is not None
+    assert w.store.by_path(str(home))["meta"] == {}   # only other folders are "a folder of N files"
+    w.close()
+
+
+def test_symlinks_are_never_followed_out_of_home_and_a_loop_ends(home):
+    outside = home / "outside"
+    outside.mkdir()
+    (outside / "elsewhere.txt").write_text("not mine")
+    h = home / "h"
+    (h / "Docs").mkdir(parents=True)
+    (h / "Docs" / "a.txt").write_text("a")
+    (h / "Docs" / "up").symlink_to("..")                 # a loop
+    (h / "Docs" / "self").symlink_to(".")
+    (h / "out").symlink_to(outside)                      # out of home
+    (h / "out-file").symlink_to(outside / "elsewhere.txt")
+    (h / "dangling").symlink_to(home / "gone")
+    w = Walker(_db(home), str(h))
+    assert w.first_index()["stopped"] is False
+    assert _paths(w) == {str(h), f"{h}/Docs", f"{h}/Docs/a.txt"}
+    w.reconcile()
+    assert _paths(w) == {str(h), f"{h}/Docs", f"{h}/Docs/a.txt"}
+    w.close()
 
 
 def test_lower_priority_is_per_thread(monkeypatch):

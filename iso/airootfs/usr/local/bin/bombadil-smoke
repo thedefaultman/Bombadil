@@ -16,6 +16,8 @@ say "START mode=${mode:-live}"
 
 check user-exists id user
 check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
+# `command -v a b` succeeds when either is found, so the brain's two are looked for one by one.
+check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
@@ -104,9 +106,11 @@ if [[ "$mode" == "undo" ]]; then
     brain_id() { as_user bombadil brain focus --json "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["thing"]["id"])'; }
     same_id() { [[ -n "$brain_before" && "$(brain_id "$1" 2>/dev/null)" == "$brain_before" ]]; }
     check brain-watch-active wait_for 60 systemctl is-active --quiet bombadil-brain-watch
+    check brain-service-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-brain
     check brain-status wait_for 90 as_user bombadil brain status
     check brain-watching wait_for 60 brain_watching
-    check brain-turn-writes as_user bombadil ask '!echo hi > ~/brain-smoke-turn.txt'
+    # `ask` waits for the turn to end: a turn that never ends must fail this check, not hang the run.
+    check brain-turn-writes as_user timeout 90 bombadil ask '!echo hi > ~/brain-smoke-turn.txt'
     check brain-why-turn wait_for 60 brain_says /home/user/brain-smoke-turn.txt "Made by the machine in turn [0-9]"
     check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt'
     check brain-why-you wait_for 60 brain_says /home/user/brain-smoke-you.txt "You made it"

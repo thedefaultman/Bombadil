@@ -83,6 +83,37 @@ def test_turns_row_with_an_absurd_number_is_skipped_not_stuck(home, ing):
     assert TurnsLog(ing).read_new() == 0
 
 
+def test_turns_row_with_a_field_of_the_wrong_type_does_not_stop_the_rows_after_it(home, ing, capsys):
+    log = home / "state" / "turns.jsonl"
+    log.write_text(
+        json.dumps({"t": NOW - 40, "n": 1, "prompt": "fine"}) + "\n"
+        + json.dumps({"t": NOW - 30, "n": 2, "prompt": {"text": "an object"}, "summary": ["x"], "unit": 5,
+                      "ok": "yes", "snapshot": "4", "files": "none"}) + "\n"
+        + '{"t": Infinity, "n": 3, "prompt": "time has no end"}\n'
+        + json.dumps({"t": NOW - 10, "n": 4, "prompt": "after"}) + "\n")
+    assert TurnsLog(ing).read_new() == 3
+    assert ing.store.turn(4)["prompt"] == "after"
+    assert ing.store.turn(3) is None                 # its time is nonsense: the row is skipped
+    assert ing.store.turn(2)["prompt"] is None       # a prompt that is not words is dropped, the turn stays
+    assert _thing(ing, "turn:2")["meta"] == {}       # nor the summary, ok and snapshot that were not right
+    assert capsys.readouterr().err.count("\n") == 1
+    assert TurnsLog(ing).read_new() == 0             # and it is not read again, stuck on the same row
+
+
+def test_turns_a_row_cut_by_a_crash_then_the_row_agentd_writes_after_the_restart(home, ing):
+    log = home / "state" / "turns.jsonl"
+    log.write_bytes(json.dumps({"t": 1, "n": 1, "prompt": "one"}).encode() + b"\n"
+                    + b'{"t": 5, "n": 2, "prompt": "cut sho')
+    tl = TurnsLog(ing)
+    assert tl.read_new() == 1
+    with log.open("ab") as f:   # agentd: the file does not end in a newline, so a newline comes first
+        f.write(b"\n" + json.dumps({"t": 6, "n": 3, "prompt": "three"}).encode() + b"\n")
+    assert tl.read_new() == 1
+    assert ing.store.turn(2) is None and ing.store.turn(3)["prompt"] == "three"
+    log.write_bytes(log.read_bytes() + b'\xff\xfe{"t": 7, "n": 4}\n')   # bytes that are not UTF-8 either
+    assert tl.read_new() == 0
+
+
 def test_turns_start_over_when_the_log_is_replaced(home, ing):
     log = home / "state" / "turns.jsonl"
     _write(log, [{"t": 1, "prompt": "a"}, {"t": 2, "prompt": "b"}, {"t": 3, "prompt": "c"}])
@@ -313,6 +344,91 @@ def test_history_downloads_come_from_the_page_you_were_on(home, ing):
     assert ev["t"] == pytest.approx(NOW + 30, abs=1e-3)
 
 
+def _touch(path, seconds):
+    """A commit in the same clock tick as the last one leaves size and mtime as they were; move it on."""
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + int(seconds * 1e9)))
+
+
+def test_history_titles_and_durations_that_chromium_writes_later_are_filled_in(home, ing):
+    ch = _chromium(home)
+    vid = ch.visit("https://rent-portal.example/lease", "", NOW - 300)        # loaded, not yet titled
+    ch.visit("https://docs.example/a", "Docs", NOW - 200)                     # titled, still open
+    h = History(ing)
+    assert h.import_new(now=NOW) == 2
+    page = _thing(ing, "url:https://rent-portal.example/lease")
+    assert page["title"] == "https://rent-portal.example/lease"
+    docs = _thing(ing, "url:https://docs.example/a")
+    assert "duration" not in (_events(ing, docs["id"], "visit")[0]["detail"] or {})
+
+    ch.db.execute("UPDATE urls SET title = 'Lease renewal 2026' WHERE id = 1")
+    ch.db.execute("UPDATE visits SET visit_duration = ? WHERE id = ?", (95_500_000, vid))
+    ch.db.execute("UPDATE visits SET visit_duration = 30000000 WHERE id = 2")
+    _touch(ch.path, 5)
+    assert h.import_new(now=NOW + 61) == 0        # no new visit, but what was missing is there now
+    assert _thing(ing, "url:https://rent-portal.example/lease")["title"] == "Lease renewal 2026"
+    assert _events(ing, page["id"], "visit")[0]["detail"]["duration"] == 95.5
+    assert _events(ing, docs["id"], "visit")[0]["detail"]["duration"] == 30.0
+    assert len(_events(ing, page["id"], "visit")) == 1
+    # done with: not looked at again, so an id used by another visit later is not mistaken for it
+    assert json.loads(ing.store.get_meta(f"history.{ch.path.parent}.follow")) == []
+
+
+def test_history_visits_synced_from_another_device_are_not_pages_you_read_here(home, ing):
+    ch = _chromium(home)
+    ch.visit("https://here.example/", "Here", NOW - 20)
+    ch.visit("https://phone.example/", "Phone", NOW - 10)
+    ch.db.execute("UPDATE visits SET originator_cache_guid = 'my-phone' WHERE id = 2")
+    assert History(ing).import_new(now=NOW) == 1
+    assert _thing(ing, "url:https://phone.example/") is None
+
+
+def test_history_download_from_a_chrome_tab_comes_from_its_referrer_and_keeps_no_data_url(home, ing):
+    dl = home / "Downloads"
+    dl.mkdir()
+    (dl / "chart.png").write_bytes(b"png")
+    ch = _chromium(home)
+    ch.download(str(dl / "chart.png"), ["data:image/png;base64," + "A" * 200_000], "chrome://downloads/", NOW - 10,
+                referrer="https://mirror.example/gallery")
+    assert History(ing).import_new(now=NOW) == 1
+    thing = ing.store.by_path(str(dl / "chart.png"))
+    ev = _events(ing, thing["id"], "download")[0]
+    assert ev["detail"]["url"] == ""                                        # not stored: it is the file itself
+    assert ev["other"] == _thing(ing, "url:https://mirror.example/gallery")["id"]
+
+
+def test_history_downloads_are_seen_again_after_clear_browsing_data(home, ing):
+    dl = home / "Downloads"
+    dl.mkdir()
+    for name in ("old.pdf", "new.pdf"):
+        (dl / name).write_bytes(b"%PDF")
+    ch = _chromium(home)
+    for i in range(5):
+        ch.download(str(dl / "old.pdf"), ["https://a.example/old.pdf"], "https://a.example/", NOW - 900 + i)
+    h = History(ing)
+    assert h.import_new(now=NOW) == 5
+    ch.db.execute("DELETE FROM downloads")          # ids start again at 1
+    ch.db.execute("DELETE FROM downloads_url_chains")
+    ch.download(str(dl / "new.pdf"), ["https://b.example/new.pdf"], "https://b.example/", NOW - 20)
+    _touch(ch.path, 5)
+    assert h.import_new(now=NOW + 100) == 1
+    assert _events(ing, ing.store.by_path(str(dl / "new.pdf"))["id"], "download")
+
+
+def test_history_copy_left_behind_by_a_crashed_import_is_swept(home, ing):
+    ch = _chromium(home)
+    ch.visit("https://a.example/", "a", NOW - 10)
+    work = home / "tmpwork"
+    stale, fresh = work / "history-crashed", work / "history-running"
+    for d in (stale, fresh):
+        d.mkdir(parents=True)
+        (d / "History").write_bytes(b"x" * 1000)
+    os.utime(stale, (time.time() - 3600, time.time() - 3600))
+    assert History(ing, workdir=work).import_new(now=NOW) == 1
+    assert not stale.exists() and fresh.exists()    # only what nobody could be using
+    assert sorted(p.name for p in work.iterdir()) == ["history-running"]
+
+
 def test_history_is_read_while_chromium_holds_it_locked_mid_transaction(home, ing):
     ch = _chromium(home)
     ch.visit("https://committed.example/", "committed", NOW - 100)
@@ -432,6 +548,61 @@ def test_pacman_log_reads_only_what_was_added_and_uses_the_writer_seen(home, ing
     log.write_text("[2026-09-28T09:00:00+0000] [ALPM] installed zellij (0.41-1)\n")
     assert pl.read_new() == 1
     assert _pk(ing, "zellij") is not None
+
+
+def _alpm(t, verb, name, version):
+    stamp = datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    return f"[{stamp}] [ALPM] {verb} {name} ({version})\n"
+
+
+def test_pacman_first_read_of_a_long_log_keeps_one_line_per_package_still_installed(home, ing):
+    now = time.time()
+    year = 400 * 86400
+    log = home / "pacman.log"
+    log.write_text(
+        _alpm(now - year, "installed", "alpha", "1.0-1") + _alpm(now - year + 5, "installed", "beta", "1.0-1")
+        + _alpm(now - year + 10, "upgraded", "alpha", "1.0-1 -> 2.0-1")
+        + _alpm(now - year + 20, "removed", "beta", "1.0-1")
+        + _alpm(now - year + 30, "upgraded", "alpha", "2.0-1 -> 3.0-1")
+        + "[2026-09-27T10:00:01+0000] [ALPM] transaction started\n"
+        + _alpm(now - 86400, "upgraded", "alpha", "3.0-1 -> 4.0-1")
+        + _alpm(now - 60, "installed", "gamma", "1.0-1") + _alpm(now, "installed", "cut", "1-1")[:-20])
+    pl = PacmanLog(ing, log)
+    assert pl.read_new() == 3          # alpha as it was, and what happened in the last 90 days
+    assert _pk(ing, "beta") is None    # installed and removed long ago: not there to be described
+    alpha = _pk(ing, "alpha")
+    assert alpha["meta"]["version"] == "4.0-1"
+    assert [e["detail"]["version"] for e in ing.store.events(alpha["id"])] == ["4.0-1", "3.0-1"]
+    assert _pk(ing, "gamma") is not None
+    assert pl.read_new() == 0
+    with log.open("a") as f:
+        f.write("\n" + _alpm(now + 1, "removed", "gamma", "1.0-1"))
+    assert pl.read_new() == 1 and _pk(ing, "gamma")["deleted"] is not None
+
+
+def test_pacman_first_read_of_a_huge_log_is_quick(home, ing):
+    """A machine that has run for years has a log of a hundred thousand lines; the brain must not
+    be busy with it for minutes at start."""
+    now = time.time()
+    log = home / "pacman.log"
+    with log.open("w") as f:
+        for i in range(60_000):
+            f.write(_alpm(now - 1000 * 86400 + i * 60, "upgraded", f"pkg-{i % 500}", f"1.{i}-1 -> 1.{i + 1}-1"))
+    t0 = time.monotonic()
+    assert PacmanLog(ing, log).read_new() == 500
+    assert time.monotonic() - t0 < 5
+
+
+def test_pacman_log_that_was_trimmed_is_read_again_without_counting_twice(home, ing):
+    now = time.time()
+    log = home / "pacman.log"
+    lines = [_alpm(now - 300 + i, "installed", f"p{i}", "1-1") for i in range(4)]
+    log.write_text("".join(lines))
+    pl = PacmanLog(ing, log)
+    assert pl.read_new() == 4
+    log.write_text("".join(lines[2:]) + _alpm(now, "installed", "fresh", "1-1"))   # someone cut the top off
+    assert pl.read_new() == 1
+    assert len(ing.store.events(_pk(ing, "p3")["id"])) == 1
 
 
 def test_pacman_log_missing_is_quiet(home, ing, capsys):

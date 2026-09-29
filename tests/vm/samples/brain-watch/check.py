@@ -173,7 +173,8 @@ def main() -> int:
         theirs = []
     ok = (h is not None and h.get("watching") is True and h.get("fs") == "btrfs" and bool(theirs)
           and "subvolid=5" in theirs[0] and " ro," in theirs[0] and "/run/bombadil-brain/top" not in ours)
-    result(3, ok, f"mark on a fresh subvolid=5 read-only mount in the watcher's own mount namespace: hello={short(h)}; "
+    result(3, ok, "mark on a fresh subvolid=5 read-only mount in the watcher's own mount namespace: "
+           f"hello={short(h)}; "
            f"watcher's mountinfo: {theirs[0].strip() if theirs else 'no top mount'}; "
            f"visible outside its namespace: {'/run/bombadil-brain/top' in ours}")
     if not ok:
@@ -189,14 +190,17 @@ def main() -> int:
         wr = user.wait(saved(path, "write"), 60)
         r = root.wait(saved(path, "write"), 30)
         e = wr[0] if wr else None
-        ok = bool(c) and e is not None and e["pid"] == pid and e["uid"] == UID and e["gone"] is False and bool(r)
-        result(n, ok, f"{where}: create={bool(c)}, write={short(e)} (writer pid {pid}); root client too: {bool(r)}")
+        ok = bool(c) and e is not None and e["pid"] == pid and e["uid"] == UID
+        ok = ok and e["gone"] is False and bool(r)
+        result(n, ok, f"{where}: create={bool(c)}, write={short(e)} (writer pid {pid}); "
+               f"root client too: {bool(r)}")
         p.kill()
         p.wait()
 
     check_write(4, f"{HOME}/check4.txt", "a save by uid 1000 in /home/user (subvolume @home)")
     # 5: the nested subvolume.
-    check_write(5, f"{HOME}/Projects/check5.txt", "a save by uid 1000 in /home/user/Projects (nested subvolume)")
+    check_write(5, f"{HOME}/Projects/check5.txt",
+                "a save by uid 1000 in /home/user/Projects (nested subvolume)")
 
     # 6: one rename event with both real paths; a delete.
     a, b = f"{HOME}/check4.txt", f"{HOME}/check6-renamed.txt"
@@ -207,7 +211,8 @@ def main() -> int:
     # A directory tree removed: the directory's own delete must come through (its files'
     # deletes may be skipped if the directory is gone before they are read).
     d = f"{HOME}/check6-dir"
-    subprocess.run([*AS_USER, "sh", "-c", f"mkdir -p {d}/sub && echo x > {d}/sub/f && rm -rf {d}"], check=True)
+    subprocess.run([*AS_USER, "sh", "-c", f"mkdir -p {d}/sub && echo x > {d}/sub/f && rm -rf {d}"],
+                   check=True)
     ddel = user.wait(lambda e: e.get("op") == "delete" and e.get("path") == d and e.get("dir") is True, 60)
     inside = user.find(lambda e: e.get("op") == "delete" and e.get("path", "").startswith(d + "/"))
     ok = len(ren) == 1 and ren[0].get("old") == a and bool(dele) and bool(ddel)
@@ -243,8 +248,9 @@ def main() -> int:
     ok = (e_live is not None and e_live["cgroup"] == scope and e_live["pid"] == pid and not e_live["gone"]
           and e_short is not None and e_short["cgroup"] == scope and e_short["gone"] is True
           and e_short["pid"] == outer.pid)
-    result(7, ok, f"turn cgroup: live writer {short(e_live)}; short-lived writer (reaped before its event was "
-           f"read, outer shell pid {outer.pid}): {short(e_short)}; same without stopping the watcher: {short(e_nat)}")
+    result(7, ok, f"turn cgroup: live writer {short(e_live)}; short-lived writer (reaped before its "
+           f"event was read, outer shell pid {outer.pid}): {short(e_short)}; "
+           f"same without stopping the watcher: {short(e_nat)}")
     try:
         os.rmdir(CG)
     except OSError:
@@ -256,7 +262,8 @@ def main() -> int:
     os.chown(bench, UID, UID)
     n = 20000
     code = ("import sys, time\nt0 = time.time()\nfor i in range(%d):\n"
-            "    with open(f'%s/f{i}', 'w') as f: f.write('x')\nprint('%%.2f' %% (time.time() - t0))\n") % (n, bench)
+            "    with open(f'%s/f{i}', 'w') as f: f.write('x')\n"
+            "print('%%.2f' %% (time.time() - t0))\n") % (n, bench)
     c0 = cpu(w.pid)
     t0 = time.monotonic()
     wt = subprocess.run([*AS_USER, PY, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
@@ -277,9 +284,10 @@ def main() -> int:
     c1 = cpu(w.pid)
     over = user.find(lambda e: e.get("op") in ("overflow", "unparsable"))
     took = max(0.0, last - t0)
-    result(8, got == n and not over, f"throughput: one process wrote {n} files in {wt}s; {got} saves arrived, "
-           f"the last {took:.1f}s after it started ({got / took if took else 0:.0f} saves/s); lost {n - got}; "
-           f"overflow lines {len(over)}; watcher CPU {c1 - c0:.1f}s")
+    result(8, got == n and not over,
+           f"throughput: one process wrote {n} files in {wt}s; {got} saves arrived, "
+           f"the last {took:.1f}s after it started ({got / took if took else 0:.0f} saves/s); "
+           f"lost {n - got}; overflow lines {len(over)}; watcher CPU {c1 - c0:.1f}s")
 
     # 10 (before 9, which restarts the watcher): /etc is routed to every user; other homes are not.
     subprocess.run(["sh", "-c", "echo x > /etc/bombadil-check10; echo y > /var/tmp/bombadil-check10; "
@@ -313,7 +321,8 @@ def main() -> int:
     before = all(e["_at"] <= at for e in offs if e["path"] in offline) if at else False
     ok = bool(caught) and all(p in paths for p in offline) and before
     sample = [short(e) for e in offs if e["path"] in offline]
-    result(9, ok, f"offline catch-up: {len(offs)} offline events ({len(paths & set(offline))} of the 3 new files), "
+    result(9, ok, f"offline catch-up: {len(offs)} offline events "
+           f"({len(paths & set(offline))} of the 3 new files), "
            f"then caught_up={short(caught[0] if caught else None)}; {sample}")
     user.close()
     stop_watcher(w)

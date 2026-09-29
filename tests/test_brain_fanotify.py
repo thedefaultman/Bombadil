@@ -53,7 +53,8 @@ def test_constants_match_the_uapi_header():
         "FAN_REPORT_NAME": fan.FAN_REPORT_NAME, "FAN_MARK_ADD": fan.FAN_MARK_ADD,
         "FAN_MARK_FILESYSTEM": fan.FAN_MARK_FILESYSTEM, "FAN_EVENT_INFO_TYPE_FID": fan.INFO_FID,
         "FAN_EVENT_INFO_TYPE_DFID_NAME": fan.INFO_DFID_NAME, "FAN_EVENT_INFO_TYPE_DFID": fan.INFO_DFID,
-        "FAN_EVENT_INFO_TYPE_PIDFD": fan.INFO_PIDFD, "FAN_EVENT_INFO_TYPE_OLD_DFID_NAME": fan.INFO_OLD_DFID_NAME,
+        "FAN_EVENT_INFO_TYPE_PIDFD": fan.INFO_PIDFD,
+        "FAN_EVENT_INFO_TYPE_OLD_DFID_NAME": fan.INFO_OLD_DFID_NAME,
         "FAN_EVENT_INFO_TYPE_NEW_DFID_NAME": fan.INFO_NEW_DFID_NAME, "FAN_EPIDFD": fan.FAN_EPIDFD,
         "FANOTIFY_METADATA_VERSION": fan.METADATA_VERSION,
     }
@@ -74,7 +75,8 @@ def test_create_with_dir_handle_name_and_pidfd():
 
 def test_rename_carries_old_and_new():
     buf = event(fan.FAN_RENAME | fan.FAN_ONDIR, 9,
-                fid(fan.INFO_OLD_DFID_NAME, HANDLE, b"old"), fid(fan.INFO_NEW_DFID_NAME, HANDLE2, b"new-name"),
+                fid(fan.INFO_OLD_DFID_NAME, HANDLE, b"old"),
+                fid(fan.INFO_NEW_DFID_NAME, HANDLE2, b"new-name"),
                 pidfd(fan.FAN_NOPIDFD))
     [e] = fan.parse(buf)
     assert (e.old_dir, e.old_name, e.new_dir, e.new_name) == (HANDLE, b"old", HANDLE2, b"new-name")
@@ -83,7 +85,8 @@ def test_rename_carries_old_and_new():
 
 
 def test_several_events_merged_mask_and_names_that_are_not_utf8():
-    buf = (event(fan.FAN_CREATE | fan.FAN_CLOSE_WRITE, 1, fid(fan.INFO_DFID_NAME, name=b"bad\xff\nname"), pidfd(3))
+    bad = fid(fan.INFO_DFID_NAME, name=b"bad\xff\nname")
+    buf = (event(fan.FAN_CREATE | fan.FAN_CLOSE_WRITE, 1, bad, pidfd(3))
            + event(fan.FAN_DELETE, 2, fid(fan.INFO_DFID_NAME, name=b"x"), pidfd(fan.FAN_EPIDFD))
            + event(fan.FAN_Q_OVERFLOW, 0))
     a, b, c = fan.parse(buf)
@@ -140,8 +143,8 @@ def test_real_kernel_events_parse(tmp_path):
              | fan.FAN_REPORT_PIDFD)
     try:
         fd = fan.init(flags)
-        fan.mark(fd, fan.FAN_MARK_ADD | fan.FAN_MARK_FILESYSTEM,
-                 fan.FAN_CREATE | fan.FAN_DELETE | fan.FAN_RENAME | fan.FAN_CLOSE_WRITE | fan.FAN_ONDIR, tmp_path)
+        mask = fan.FAN_CREATE | fan.FAN_DELETE | fan.FAN_RENAME | fan.FAN_CLOSE_WRITE | fan.FAN_ONDIR
+        fan.mark(fd, fan.FAN_MARK_ADD | fan.FAN_MARK_FILESYSTEM, mask, tmp_path)
     except OSError as e:
         pytest.skip(f"fanotify not usable here: {e}")
     mount_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)

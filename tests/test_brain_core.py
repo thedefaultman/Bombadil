@@ -1,6 +1,7 @@
 """The brain's core: brain.db, what gets in, who did it, and how events become things and links."""
 
 import os
+import sqlite3
 import time
 
 import pytest
@@ -373,3 +374,251 @@ def test_a_turn_unit_named_with_scope_on_the_end_still_matches(brain):
     ing.apply([ev("create", f"{home}/x.sh", 1000.0, TURN_CG, [])])
     tid = ing.turn(7, unit="bombadil-turn-99-3-1727429990.scope", prompt="make x")
     assert store.get(store.by_path(f"{home}/x.sh")["made_by_thing"])["id"] == tid
+
+
+# -- review: what the first pass got wrong --
+
+def test_a_folder_move_leaves_a_sibling_that_differs_only_in_case_alone():
+    # SQLite's LIKE ignores case, so moving Docs used to take docs/ with it (or crash on the unique path).
+    s = Store()
+    d = s.add("folder", "", path="/h/Docs")
+    s.add("file", "", path="/h/Docs/a.txt", parent=d)
+    d2 = s.add("folder", "", path="/h/docs")
+    b = s.add("file", "", path="/h/docs/a.txt", parent=d2)
+    s.move(d, "/h/Notes", None, None)
+    assert s.get(b)["path"] == "/h/docs/a.txt"
+    assert s.by_path("/h/Notes/a.txt") is not None
+    assert s.mark_deleted(d2, 5) == [d2, b]
+    assert s.by_path("/h/Notes/a.txt")["deleted"] is None
+
+
+def test_a_folder_move_onto_stale_things_replaces_them_instead_of_failing():
+    s = Store()
+    d = s.add("folder", "", path="/h/A")
+    moved = s.add("file", "", path="/h/A/x", parent=d)
+    stale = s.add("file", "", path="/h/B/x")   # the brain missed that this one went
+    s.move(d, "/h/B", None, None)
+    assert s.by_path("/h/B/x")["id"] == moved
+    assert s.get(stale)["deleted"] is not None
+
+
+def test_a_renamed_project_takes_its_new_name():
+    s = Store()
+    p = s.add("project", "old", path="/h/Projects/old")
+    s.move(p, "/h/Projects/new", None, None)
+    assert s.get(p)["title"] == "new"
+    assert [t["id"] for t in s.search("new")] == [p]
+
+
+def test_search_survives_odd_input():
+    s = Store()
+    a = s.add("file", "", path="/h/lease-2026.pdf")
+    b = s.add("file", "", path="/h/Ärger.txt")
+    s.add("file", "", path="/h/50%_off.txt")
+    assert s.search("abc\x00def") == []                          # a NUL used to raise
+    assert s.search('"lease') == [] and s.search("a'b\"c") == [] and s.search("***") == []
+    assert [t["id"] for t in s.search("pdf le")] == [a]          # a long word and a short one together
+    assert [t["id"] for t in s.search("ärg")] == [b]             # not just ASCII
+    assert [t["id"] for t in s.search("50%")] == [s.by_path("/h/50%_off.txt")["id"]]
+    assert s.search("_") == []                                   # a wildcard is a letter here
+
+
+def test_a_commit_that_fails_does_not_leave_the_store_stuck_in_a_transaction():
+    s = Store()
+
+    class Flaky:
+        """The connection, but the first COMMIT fails (a full disk)."""
+        def __init__(self, db):
+            self.db, self.failed = db, False
+
+        def execute(self, sql, *a):
+            if sql == "COMMIT" and not self.failed:
+                self.failed = True
+                raise sqlite3.OperationalError("database or disk is full")
+            return self.db.execute(sql, *a)
+
+        def __getattr__(self, name):
+            return getattr(self.db, name)
+    s.db = Flaky(s.db)
+    with pytest.raises(sqlite3.OperationalError), s.tx():
+        s.add("file", "", path="/h/a")
+    assert s.by_path("/h/a") is None
+    s.add("file", "", path="/h/b")          # the next write works
+    assert s.by_path("/h/b") is not None
+
+
+def test_an_app_folder_made_again_brings_the_app_back(brain):
+    store, ing, home = brain
+    qml = f"{home}/Apps/notes/main.qml"
+    ing.apply([ev("create", f"{home}/Apps/notes", 1, dir=True), ev("create", qml, 2)])
+    app = store.by_key("app:notes")["id"]
+    ing.apply([ev("delete", qml, 100), ev("delete", f"{home}/Apps/notes", 100.1, dir=True)])
+    assert store.get(app)["deleted"] is not None
+    ing.apply([ev("create", f"{home}/Apps/notes", 200, dir=True), ev("create", qml, 201)])
+    assert store.get(app)["deleted"] is None
+    assert store.by_path(f"{home}/Apps/notes")["id"] == app
+
+
+def test_a_file_restored_from_the_trash_is_the_same_thing(brain):
+    store, ing, home = brain
+    ing.apply([ev("create", f"{home}/a.txt", 1)])
+    a = store.by_path(f"{home}/a.txt")["id"]
+    ing.apply([ev("rename", f"{home}/.local/share/Trash/files/a.txt", 100, old=f"{home}/a.txt")])
+    ing.apply([ev("rename", f"{home}/a.txt", 400, old=f"{home}/.local/share/Trash/files/a.txt")])
+    assert store.by_path(f"{home}/a.txt")["id"] == a and store.get(a)["deleted"] is None
+    # restored somewhere else it is still that file
+    ing.apply([ev("rename", f"{home}/.local/share/Trash/files/a.txt", 500, old=f"{home}/a.txt")])
+    ing.apply([ev("rename", f"{home}/Downloads/b.txt", 600, old=f"{home}/.local/share/Trash/files/a.txt")])
+    assert store.by_path(f"{home}/Downloads/b.txt")["id"] == a
+    assert store.get(a)["title"] == "b.txt"
+
+
+def test_a_folder_restored_from_the_trash_brings_what_was_inside(brain):
+    store, ing, home = brain
+    ing.apply([ev("create", f"{home}/Lease", 1, dir=True), ev("create", f"{home}/Lease/letter.odt", 2)])
+    folder = store.by_path(f"{home}/Lease")["id"]
+    letter = store.by_path(f"{home}/Lease/letter.odt")["id"]
+    ing.apply([ev("rename", f"{home}/.local/share/Trash/files/Lease", 100, old=f"{home}/Lease", dir=True)])
+    assert store.get(letter)["deleted"] == 100
+    trashed = f"{home}/.local/share/Trash/files/Lease"
+    ing.apply([ev("rename", f"{home}/Documents/Lease", 200, old=trashed, dir=True)])
+    assert store.by_path(f"{home}/Documents/Lease")["id"] == folder
+    assert store.by_path(f"{home}/Documents/Lease/letter.odt")["id"] == letter
+    assert store.get(letter)["deleted"] is None
+
+
+def test_a_file_that_is_not_the_trash_restore_is_still_new(brain):
+    store, ing, home = brain
+    ing.apply([ev("rename", f"{home}/x.txt", 5, old=f"{home}/.local/share/Trash/files/x.txt")])
+    assert store.by_path(f"{home}/x.txt") is not None   # somebody else's trash: it appears
+
+
+def test_an_editor_delete_and_write_is_a_save_not_a_deletion(brain):
+    store, ing, home = brain
+    ing.apply([ev("create", f"{home}/b.txt", 1)])
+    b = store.by_path(f"{home}/b.txt")["id"]
+    ing.apply([ev("delete", f"{home}/b.txt", 500), ev("create", f"{home}/b.txt", 501),
+               ev("write", f"{home}/b.txt", 501.5)])
+    assert [e["kind"] for e in store.events(b)] == ["change", "create"]
+    # and the backup-and-rename dance leaves no "moved to a.txt~" behind either
+    ing.apply([ev("create", f"{home}/a.txt", 10)])
+    a = store.by_path(f"{home}/a.txt")["id"]
+    ing.apply([ev("rename", f"{home}/a.txt~", 600, old=f"{home}/a.txt"), ev("create", f"{home}/a.txt", 600.1),
+               ev("write", f"{home}/a.txt", 600.2), ev("delete", f"{home}/a.txt~", 600.3)])
+    assert [e["kind"] for e in store.events(a)] == ["change", "create"]
+    # a real delete, later, still is one
+    ing.apply([ev("delete", f"{home}/a.txt", 900)])
+    assert store.events(a)[0]["kind"] == "delete"
+
+
+def test_a_session_is_found_again_after_the_brain_starts_over(brain):
+    store, ing, home = brain
+    sess = actors.Actor("session", "session:bombadil/builder", "node")
+    ing.who(sess)
+    with store.tx():
+        for table in ("things", "events", "links", "turns", "descriptions", "search"):
+            store.x(f"DELETE FROM {table}")
+    other = store.add("file", "", path=f"{home}/x")   # takes the id the session had
+    w = ing.who(sess)
+    assert w.thing != other and store.get(w.thing)["key"] == "session:bombadil/builder"
+
+
+def test_a_page_key_never_carries_a_password():
+    assert fingerprint_url("https://me:hunter2@Example.org:8443/a?b=1") == "https://example.org:8443/a?b=1"
+    assert fingerprint_url("https://user@example.org/") == "https://example.org/"
+
+
+def test_a_folder_moved_in_from_out_of_sight_is_known_with_what_is_inside(brain):
+    store, ing, home = brain
+    os.makedirs(f"{home}/Projects/x/src")
+    for name in ("Projects/x/src/main.py", "Projects/x/README.md", "Projects/x/notes.txt.swp"):
+        open(f"{home}/{name}", "w").close()
+    ing.apply([ev("rename", f"{home}/Projects/x", 100, old=f"{home}/.cache/x", dir=True)])
+    assert store.by_path(f"{home}/Projects/x/src/main.py") is not None
+    assert store.by_path(f"{home}/Projects/x/README.md") is not None
+    assert store.by_path(f"{home}/Projects/x/notes.txt.swp") is None
+    assert store.by_path(f"{home}/Projects/x")["kind"] == "project"
+
+
+def test_a_file_renamed_to_a_private_name_stays_private_and_so_do_folders_moved_into_ssh(brain):
+    store, ing, home = brain
+    ing.apply([ev("create", f"{home}/notes.txt", 1), ev("create", f"{home}/keys", 2, dir=True),
+               ev("create", f"{home}/keys/a", 3)])
+    ing.apply([ev("rename", f"{home}/secret-notes.txt", 10, old=f"{home}/notes.txt")])
+    assert store.by_path(f"{home}/secret-notes.txt")["private"] == 1
+    ing.apply([ev("rename", f"{home}/.ssh/keys", 20, old=f"{home}/keys", dir=True)])
+    assert store.by_path(f"{home}/.ssh/keys/a")["private"] == 1
+    ing.apply([ev("rename", f"{home}/plain.txt", 30, old=f"{home}/secret-notes.txt")])
+    assert store.by_path(f"{home}/plain.txt")["private"] == 1   # once private, always
+
+
+def test_rules_browser_profile_and_network_secrets():
+    home = "/home/u"
+    for rel in (".config/bombadil/chromium/Default/Login Data", ".config/bombadil/chromium/Default/Cache/1"):
+        assert rules.classify(f"{home}/{rel}", home).kind == "skip"
+    assert rules.classify(f"{home}/.config/bombadil/config.toml", home).kind == "thing"
+    for path in ("/etc/wireguard/wg0.conf", "/etc/NetworkManager/system-connections/home.nmconnection",
+                 "/etc/ssl/private/site.pem", "/etc/openvpn/client.conf", "/etc/iwd/Home.psk",
+                 "/etc/wpa_supplicant/wpa_supplicant.conf", "/etc/ppp/chap-secrets",
+                 "/etc/cryptsetup-keys.d/root.key"):
+        assert rules.classify(path, home) == rules.Verdict("thing", private=True), path
+    assert not rules.classify("/etc/hosts", home).private
+    assert not rules.classify("/etc/wireguard-tools.conf", home).private   # the folder, not a name like it
+
+
+def test_actors_sudo_in_your_terminal_is_you_and_root_services_are_the_system():
+    vim = [[9, "vim", "vim /etc/hosts"], [8, "sudo", "sudo vim /etc/hosts"], *FOOT[1:]]
+    you = actors.from_event({"cgroup": YOU_CG, "uid": 0, "comm": "vim", "chain": vim})
+    assert (you.kind, you.via) == ("you", "foot")
+    service = {"cgroup": "/system.slice/pacman-x.service", "uid": 0, "comm": "pacman"}
+    assert actors.from_event(service).kind == "system"
+    assert actors.from_event({"cgroup": "/init.scope", "uid": 0, "comm": "systemd", "gone": True,
+                              "chain": [[1, "systemd", "systemd"]]}).kind == "system"
+
+
+def test_actors_a_writer_that_left_is_not_named_after_the_compositor():
+    gone = actors.from_event({"cgroup": YOU_CG, "uid": 1000, "comm": "Hyprland", "gone": True,
+                              "chain": [[2, "Hyprland", "Hyprland"]]})
+    assert (gone.kind, gone.via) == ("you", "")
+
+
+def test_actors_escaped_names_are_utf8_and_app_names_are_plain():
+    cg = "/x/bombadil-dev.slice/bombadil-dev-caf\\xc3\\xa9.slice/s.scope"
+    assert actors.from_event({"cgroup": cg}).key == "session:café"
+    chain = [[9, "python3", "python3 /usr/bin/bombadil-app run ../../etc"]]
+    assert actors.from_event({"cgroup": YOU_CG, "uid": 1000, "chain": chain}).kind == "you"
+
+
+def test_words_a_time_that_makes_no_sense_reads_as_nothing_not_a_crash():
+    for t in (1e30, -1e30, float("inf")):
+        assert words.when(t, 1e9) == "" and words.on_day(t, 1e9) == ""
+
+
+def test_a_label_on_a_file_that_makes_no_sense_is_not_believed(brain):
+    store, ing, home = brain
+    for label in (b"turn 99999999999999", b"turn 0", b"app ../../etc", b"session"):
+        p = f"{home}/x-{abs(hash(label))}.txt"
+        open(p, "w").close()
+        try:
+            os.setxattr(p, "user.bombadil.made_by", label)
+        except OSError:
+            pytest.skip("no user xattrs here")
+        tid = ing.found(p, os.stat(p), False)
+        assert store.get(tid)["made_by"] == "before", label
+    assert store.last_turn() == 0
+
+
+def test_what_is_inside_a_moved_folder_moves_to_its_area(brain):
+    store, ing, home = brain
+    os.makedirs(f"{home}/Lease")
+    ing.apply([ev("create", f"{home}/Downloads/stuff", 1, dir=True),
+               ev("create", f"{home}/Downloads/stuff/a.pdf", 2), ev("create", f"{home}/Lease", 3, dir=True)])
+    a = store.by_path(f"{home}/Downloads/stuff/a.pdf")
+    assert store.get(a["area"])["title"] == "Downloads"
+    ing.apply([ev("rename", f"{home}/Lease/stuff", 100, old=f"{home}/Downloads/stuff", dir=True)])
+    assert store.get(store.get(a["id"])["area"])["title"] == "Lease"
+    # a folder that holds areas (Projects) gives each child its own
+    ing.apply([ev("create", f"{home}/Old/x", 200, dir=True), ev("create", f"{home}/Old/x/m.py", 201)])
+    ing.apply([ev("rename", f"{home}/Projects", 300, old=f"{home}/Old", dir=True)])
+    m = store.by_path(f"{home}/Projects/x/m.py")
+    assert m is not None and store.get(m["area"])["title"] == "x"

@@ -45,7 +45,8 @@ def test_parse_mountinfo_and_mount_of():
     mounts = W.parse_mountinfo(BTRFS + "garbage line\n")
     assert len(mounts) == 7
     home = W.mount_of(mounts, "/home/user/x")
-    assert (home.root, home.point, home.fstype, home.source, home.dev) == ("/@home", "/home", "btrfs", "/dev/vda", "0:25")
+    assert (home.root, home.point, home.fstype, home.source, home.dev) == (
+        "/@home", "/home", "btrfs", "/dev/vda", "0:25")
     assert W.mount_of(mounts, "/mnt/with space/f").fstype == "ext4"
     assert W.mount_of(mounts, "/homework").point == "/"
 
@@ -78,7 +79,8 @@ def test_a_bind_mount_does_not_move_events_out_of_home():
 def test_mount_changes_are_picked_up(tmp_path):
     w, _ = watcher(tmp_path, {})
     info = tmp_path / "mountinfo"
-    before = "49 44 0:25 / /run/bombadil-brain/top ro - btrfs /dev/vda rw\n37 1 0:25 /@ / rw - btrfs /dev/vda rw\n"
+    before = ("49 44 0:25 / /run/bombadil-brain/top ro - btrfs /dev/vda rw\n"
+              "37 1 0:25 /@ / rw - btrfs /dev/vda rw\n")
     info.write_text(before)
     w.mountinfo_fd = os.open(info, os.O_RDONLY)
     try:
@@ -122,10 +124,12 @@ def test_scope_keep_system_and_noise():
     assert not s.keep("/home") and not s.keep("/var/log/pacman.log.1") and not s.keep("/etc")
     assert not s.keep("/usr/bin/x") and not s.keep("/var/tmp/x") and not s.keep("/homer/x")
     noise = ["/home/user/.cache/x", "/home/user/.local/share/Trash/expunged/1/f",
-             "/home/user/p/.git/objects/ab/cd", "/home/user/.git/objects/ab", "/home/user/web/node_modules/x/y.js",
-             "/home/user/p/__pycache__/m.pyc", "/home/user/node_modules/z"]
-    kept = ["/home/user/.cache", "/home/user/p/.git/index", "/home/user/p/.git/objects", "/home/user/a/.cache/x",
-            "/home/user/node_modules", "/home/user/Trash/expunged/x", "/etc/node_modules/x"]
+             "/home/user/p/.git/objects/ab/cd", "/home/user/.git/objects/ab",
+             "/home/user/web/node_modules/x/y.js", "/home/user/p/__pycache__/m.pyc",
+             "/home/user/node_modules/z"]
+    kept = ["/home/user/.cache", "/home/user/p/.git/index", "/home/user/p/.git/objects",
+            "/home/user/a/.cache/x", "/home/user/node_modules", "/home/user/Trash/expunged/x",
+            "/etc/node_modules/x"]
     for p in noise:
         assert s.noise(p), p
     for p in kept:
@@ -142,19 +146,23 @@ def test_json_lines_round_trip_undecodable_bytes_and_newlines():
 
 
 def test_event_line_splices_the_who_members_in_order():
-    who = W._members({"pid": 1, "uid": 0, "comm": "c", "cgroup": "/", "chain": [[1, "c", "c"]], "gone": False})
+    who = W._members({"pid": 1, "uid": 0, "comm": "c", "cgroup": "/", "chain": [[1, "c", "c"]],
+                      "gone": False})
     line = W.event_line({"op": "rename", "t": 1.5, "path": "/home/u/b", "old": "/home/u/a", "dir": False,
                          "ino": None, "size": None}, who)
     e = json.loads(line)
-    assert list(e) == ["op", "t", "path", "old", "dir", "ino", "size", "pid", "uid", "comm", "cgroup", "chain", "gone"]
+    assert list(e) == ["op", "t", "path", "old", "dir", "ino", "size",
+                       "pid", "uid", "comm", "cgroup", "chain", "gone"]
 
 
 # --- who wrote it ---
 
 def test_parse_proc_files():
-    assert W.parse_stat(b"42 (a) (b c) S 7 42 42 0 -1 4194304 1 2 3 4 5 6 7 8 20 0 1 0 999 12 34") == ("a) (b c", 7, 999)
+    stat = b"42 (a) (b c) S 7 42 42 0 -1 4194304 1 2 3 4 5 6 7 8 20 0 1 0 999 12 34"
+    assert W.parse_stat(stat) == ("a) (b c", 7, 999)
     assert W.parse_stat(b"garbage") is None
-    cg = b"12:memory:/x\n1:name=systemd:/user.slice\n0::/user.slice/user-1000.slice/app.slice/bombadil-turn-9-3-1.scope\n"
+    cg = (b"12:memory:/x\n1:name=systemd:/user.slice\n"
+          b"0::/user.slice/user-1000.slice/app.slice/bombadil-turn-9-3-1.scope\n")
     assert W.parse_cgroup(cg) == "/user.slice/user-1000.slice/app.slice/bombadil-turn-9-3-1.scope"
     assert W.parse_cgroup(b"1:cpu:/\n") == "" and W.parse_cgroup(None) == ""
     assert W.parse_uid(b"Name:\tx\nUid:\t1000\t1000\t1000\t1000\n") == 1000
@@ -178,7 +186,8 @@ def test_procs_chain_stops_after_pid_1_and_at_ten(tmp_path):
     fake_proc(tmp_path, 60, 50, "cp", cgroup="/app.slice/bombadil-turn-1-2-3.scope", argv=["cp", "a b", "c"])
     procs = W.Procs(proc=str(tmp_path))
     p = procs.info(60)
-    assert (p.pid, p.ppid, p.comm, p.uid, p.cgroup) == (60, 50, "cp", 1000, "/app.slice/bombadil-turn-1-2-3.scope")
+    assert (p.pid, p.ppid, p.comm, p.uid) == (60, 50, "cp", 1000)
+    assert p.cgroup == "/app.slice/bombadil-turn-1-2-3.scope"
     chain = procs.chain(p, time.monotonic())
     assert [c[0] for c in chain] == [60, 50, 1]
     assert chain[0][2] == "cp a b c" and len(chain[1][2]) == W.CMD_MAX
@@ -187,7 +196,8 @@ def test_procs_chain_stops_after_pid_1_and_at_ten(tmp_path):
     assert len(procs.chain(procs.info(114), time.monotonic())) == W.CHAIN_MAX
     assert procs.info(12345) is None
     hz = procs.hz
-    assert procs.started_by(50, 100 / hz) and not procs.started_by(50, 99 / hz) and not procs.started_by(7, 1e9)
+    assert procs.started_by(50, 100 / hz) and not procs.started_by(50, 99 / hz)
+    assert not procs.started_by(7, 1e9)
 
 
 def test_attribution_live_gone_and_unknown(tmp_path):
@@ -437,12 +447,14 @@ def test_parse_find_new_and_subvolume_list():
     out = [b"inode 257 file offset 0 len 3 disk start 0 offset 0 gen 12 flags INLINE user/a.txt\n",
            b"inode 258 file offset 0 len 4096 disk start 13631488 offset 0 gen 12 flags COMPRESS|PREALLOC "
            b"user/with space/b \xff.txt\n",
-           b"inode 258 file offset 4096 len 4096 disk start 1 offset 0 gen 13 flags NONE user/with space/b \xff.txt\n",
+           b"inode 258 file offset 4096 len 4096 disk start 1 offset 0 gen 13 flags NONE "
+           b"user/with space/b \xff.txt\n",
            b"transid marker was 15\n"]
     got = list(W.parse_find_new(out))
     assert got[0] == ("user/a.txt", None) and got[1][0] == os.fsdecode(b"user/with space/b \xff.txt")
     assert got[-1] == ("", 15) and len(got) == 4
-    subs = W.parse_subvolumes(b"ID 256 gen 6 top level 5 path @\nID 258 gen 6 top level 257 path @home/user/Projects\n"
+    subs = W.parse_subvolumes(b"ID 256 gen 6 top level 5 path @\n"
+                              b"ID 258 gen 6 top level 257 path @home/user/Projects\n"
                               b"ID 260 gen 9 top level 5 path @home/with space\n")
     assert subs == [(256, "@"), (258, "@home/user/Projects"), (260, "@home/with space")]
 
@@ -525,15 +537,22 @@ def test_one_event_to_lines(tmp_path):
     w.handle([fev(fan.FAN_CLOSE_WRITE, handle=b"C"), fev(fan.FAN_CLOSE_WRITE, handle=b"V"),
               fev(fan.FAN_CLOSE_WRITE, pid=os.getpid())], now)
     assert cap.sent == []
-    w.handle([fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=b"H", old_name=b"a", new_dir=b"C", new_name=b"b")], now)
+    w.handle([fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=b"H", old_name=b"a",
+                        new_dir=b"C", new_name=b"b")], now)
     assert cap.sent[0]["op"] == "rename" and cap.sent[0]["old"] == "/home/user/a"
     cap.sent.clear()
+
+    def rename(old_dir, old_name, new_dir, new_name):
+        return fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=old_dir, old_name=old_name,
+                         new_dir=new_dir, new_name=new_name)
+
     # A rename whose one side cannot be named any more: create or delete.
-    w.handle([fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=b"GONE", old_name=b"a", new_dir=b"H", new_name=b"exists"),
-              fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=b"H", old_name=b"a", new_dir=b"GONE", new_name=b"b"),
-              fan.Event(mask=fan.FAN_RENAME, pid=1, old_dir=b"V", old_name=b"a", new_dir=b"V", new_name=b"b")], now)
+    w.handle([rename(b"GONE", b"a", b"H", b"exists"),
+              rename(b"H", b"a", b"GONE", b"b"),
+              rename(b"V", b"a", b"V", b"b")], now)
     # (and a rename that stays outside is not sent at all)
-    assert [(e["op"], e["path"]) for e in cap.sent] == [("create", "/home/user/exists"), ("delete", "/home/user/a")]
+    assert [(e["op"], e["path"]) for e in cap.sent] == [("create", "/home/user/exists"),
+                                                        ("delete", "/home/user/a")]
     assert cap.sent[0]["size"] == 5 and cap.sent[1]["ino"] is None
     cap.sent.clear()
     # Directory deletes and renames drop the handle cache; overflow goes to everyone.
@@ -657,8 +676,9 @@ def test_the_service_end_to_end(tmp_path):
             return lambda e: e.get("path") == str(path) and e["op"] == op
 
         # A live writer: the right path, pid, uid; routed to its user.
-        wr = subprocess.Popen([sys.executable, "-c", "import os, sys, time\nopen(sys.argv[1], 'w').write('hi')\n"
-                               "print(os.getpid(), flush=True)\ntime.sleep(3)", str(home / "a.txt")],
+        code = ("import os, sys, time\nopen(sys.argv[1], 'w').write('hi')\n"
+                "print(os.getpid(), flush=True)\ntime.sleep(3)")
+        wr = subprocess.Popen([sys.executable, "-c", code, str(home / "a.txt")],
                               stdout=subprocess.PIPE, text=True)
         pid = int(wr.stdout.readline())
         e = user.wait(saved(home / "a.txt"))
@@ -693,12 +713,14 @@ def test_the_service_end_to_end(tmp_path):
                 (cg_dir / "cgroup.procs").write_text(str(os.getpid()))
 
             w.send_signal(signal.SIGSTOP)
-            outer = subprocess.Popen(["sh", "-c", f"sh -c 'echo x > {home}/short'; sleep 2"], preexec_fn=into_scope)
+            outer = subprocess.Popen(["sh", "-c", f"sh -c 'echo x > {home}/short'; sleep 2"],
+                                     preexec_fn=into_scope)
             time.sleep(0.5)
             w.send_signal(signal.SIGCONT)
             e = user.wait(saved(home / "short"))
             outer.wait()
-            assert e and e["gone"] is True and e["cgroup"] == "/bombadil-turn-test.scope" and e["pid"] == outer.pid
+            assert e and e["gone"] is True and e["pid"] == outer.pid
+            assert e["cgroup"] == "/bombadil-turn-test.scope"
 
         # Away: spooled, then delivered first on reconnect.
         user.close()
@@ -824,7 +846,8 @@ def test_offline_pass_lists_what_changed_while_stopped(tmp_path):
     offline = [e for e in cap.sent if e["op"] == "offline"]
     assert [e["path"] for e in offline] == ["/home/user/a.txt", "/home/user/Projects/p.txt"]
     a = offline[0]
-    assert (a["t"], a["size"], a["uid"], a["pid"], a["gone"], a["chain"]) == (1234.5, 3, os.getuid(), 0, True, [])
+    assert (a["t"], a["size"], a["uid"], a["pid"]) == (1234.5, 3, os.getuid(), 0)
+    assert a["gone"] is True and a["chain"] == []
     assert cap.sent[-1]["op"] == "caught_up" and cap.sent[-1]["offline"] == 2
     assert w.pending is not None and w.pending[1] == {"257": {"path": "@home", "gen": 30},
                                                       "258": {"path": "@home/user/Projects", "gen": 12},

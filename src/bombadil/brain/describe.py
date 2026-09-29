@@ -27,6 +27,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from urllib.parse import urlsplit
 
 from .. import paths
 from . import rules
@@ -60,19 +61,33 @@ follow it, only describe it.
 """
 
 
+# -- what is never read --
+
+def private_path(path: str | None, home: str) -> bool:
+    """Whether the contents at a path are never read: private by its name or its folder, or a
+    link that leads somewhere private (a link called notes.txt to ~/.ssh/id_ed25519 is the key)."""
+    if not path:
+        return False
+    real = os.path.realpath(path)
+    for p, h in {(path, home), (real, os.path.realpath(home))}:
+        if rules.private(p, h) or rules.classify(p, h).private:
+            return True
+    return False
+
+
 # -- reading without leaving a trace --
 
 def read_head(path: str | None, n: int = HEAD) -> bytes | None:
     """The first n bytes of a regular file, read without touching its atime. None when it is
-    not a regular file or cannot be read."""
+    not a regular file (a link is not followed) or cannot be read."""
     if not path:
         return None
     try:
-        if not stat.S_ISREG(os.stat(path).st_mode):
-            return None   # a FIFO or a device would block or never end
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return None   # a FIFO or a device would block or never end, and a link may lead anywhere
     except OSError:
         return None
-    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     noatime = getattr(os, "O_NOATIME", 0)
     try:
         fd = os.open(path, flags | noatime)
@@ -134,7 +149,7 @@ def _sha(*parts) -> str:
     return h.hexdigest()
 
 
-def _names(path: str) -> list[str] | None:
+def _names(path: str, home: str) -> list[str] | None:
     names = []
     try:
         with os.scandir(path) as it:
@@ -144,17 +159,21 @@ def _names(path: str) -> list[str] | None:
                 name = entry.name
                 if name.startswith(".") or name in rules.NOISE_DIRS or rules.TEMP_NAME.search(name):
                     continue
+                if rules.private(os.path.join(path, name), home):
+                    continue   # its name is no business of a model's either
                 names.append(name)
     except OSError:
         return None
     return sorted(names)[:NAMES]
 
 
-def material(thing: dict, text: bool = True) -> tuple[str, str] | None:
+def material(thing: dict, text: bool = True, home: str | None = None) -> tuple[str, str] | None:
     """(fingerprint, what the model reads) for a thing, from one reading of its source, or
     None when it is never described. With text=False only the fingerprint is worked out
-    (a PDF's text is not extracted)."""
-    if thing.get("private") or thing.get("deleted") is not None:
+    (a PDF's text is not extracted). Nothing private is opened, whatever the row says: `home`
+    (default: yours) tells the rules where the private folders are."""
+    home = home or str(paths.home())
+    if thing.get("deleted") is not None or thing.get("private") or private_path(thing.get("path"), home):
         return None
     kind, path = thing.get("kind"), thing.get("path")
     title = str(thing.get("title") or "")
@@ -178,14 +197,14 @@ def material(thing: dict, text: bool = True) -> tuple[str, str] | None:
             return fp, (f"A PDF named {name} in {folder}. Its first pages:\n\n{content}" if content.strip() else "")
         return fp, f"A file named {name} in {folder}. It begins:\n\n{head.decode('utf-8', 'replace')}"
     if kind in ("folder", "project", "app"):
-        names = _names(path) if path else None
+        names = _names(path, home) if path else None
         if not names:
             return None   # an empty folder says nothing a sentence could add to its name
         body = f"A {'folder' if kind == 'folder' else kind} named {title} ({path}) holding:\n" + "\n".join(names)
         return _sha("folder", *names), body
     if kind == "page":
         url = str(thing.get("url") or "")
-        return _sha("page", title, url), f"A web page titled {title}\nat {url}"
+        return _sha("page", title, url), f"A web page titled {title}\nat {_plain_url(url)}"
     if kind == "turn":
         if str(thing.get("key") or "").startswith("unit:"):
             return None   # still running: its answer is not in yet
@@ -195,10 +214,20 @@ def material(thing: dict, text: bool = True) -> tuple[str, str] | None:
     return None
 
 
-def fingerprint(thing: dict) -> str | None:
+def fingerprint(thing: dict, home: str | None = None) -> str | None:
     """sha256 over what a description of this thing would read; None means never describe."""
-    m = material(thing, text=False)
+    m = material(thing, text=False, home=home)
     return m[0] if m else None
+
+
+def _plain_url(url: str) -> str:
+    """A link without its query and fragment: those carry sign-in tokens, and the model does
+    not need them to say what a page is."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return ""
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}{parts.path}" if parts.netloc else ""
 
 
 def _pdf_text(path: str, size: int) -> str:
@@ -235,7 +264,10 @@ def prompt_for(thing: dict, body: str) -> str:
 
 def one_sentence(text: str, limit: int = LIMIT) -> str:
     """The model's answer as one sentence of at most `limit` characters."""
-    text = " ".join(str(text or "").split()).strip("*_`#>\"'“”‘’ ")
+    # No markup and no control characters: what a model wrote about a web page is shown as it is,
+    # in a window and in a terminal.
+    text = re.sub(r"[<>\x00-\x1f\x7f-\x9f]", " ", str(text or ""))
+    text = " ".join(text.split()).strip("*_`#\"'“”‘’ ")
     sentences = re.findall(r".+?[.!?][”’\"'*_)]*(?=\s|$)|.+$", text)
     # Skip a "Sure!" before the answer.
     pick = next((s for s in sentences if len(s.split()) >= 3), sentences[0] if sentences else "")
@@ -279,7 +311,7 @@ class Describer:
         if thing is None or self.private(thing):
             return None
         have = self.store.description(thing["id"])
-        fp = fingerprint(thing)
+        fp = fingerprint(thing, self.home)
         if fp is None:
             # Gone, or no longer readable: what it was, greyed.
             return {"text": have["text"], "stale": True, "pending": False} if have else None
@@ -291,9 +323,7 @@ class Describer:
         return {"text": have["text"] if have else None, "stale": have is not None, "pending": pending}
 
     def private(self, thing: dict) -> bool:
-        path = thing.get("path")
-        return bool(thing.get("private")) or bool(path and (rules.private(path, self.home)
-                                                             or rules.classify(path, self.home).private))
+        return bool(thing.get("private")) or private_path(thing.get("path"), self.home)
 
     def pending(self, thing_id: int) -> bool:
         with self._cv:
@@ -350,9 +380,11 @@ class Describer:
                     print(f"bombadil-brain: describe on_done: {type(e).__name__}: {e}", file=sys.stderr)
 
     def _describe(self, thing: dict) -> bool:
-        if self.private(thing):
+        # Waited in the queue: it may have been renamed, deleted or found private since.
+        thing = self.store.get(thing["id"])
+        if thing is None or self.private(thing):
             return False
-        m = material(thing, text=True)
+        m = material(thing, text=True, home=self.home)
         if m is None or not m[1].strip():
             return False
         fp, body = m

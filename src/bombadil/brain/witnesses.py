@@ -15,6 +15,7 @@ where Chromium's History is copied because Chromium keeps the original locked.
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -22,7 +23,7 @@ import sqlite3
 import sys
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import paths
@@ -32,13 +33,16 @@ from .ingest import UNKNOWN, Ingest, Who, fingerprint_url
 # Lines applied per transaction, with the witness's place saved in the same one: short
 # enough that the walker and the live stream never wait long for the write lock.
 CHUNK = 500
-# A malformed row is skipped whole. Anything else (the disk is full, the database is
-# locked) stops the read, and the same rows are tried again next time.
+# A malformed row is skipped whole, and reading goes on. Anything else (the disk is full,
+# the database is locked) stops the read, and the same rows are tried again next time.
 ROW_ERRORS = (ValueError, TypeError, KeyError, AttributeError, IndexError, OverflowError, RecursionError,
-              sqlite3.IntegrityError)
+              sqlite3.IntegrityError, sqlite3.ProgrammingError, sqlite3.InterfaceError, sqlite3.DataError)
 
 # A turn number past this is a corrupt row, not a turn.
 MAX_TURN = 10**9
+# Longest prompt and summary kept, and files per row: agentd cuts them too, so more is a corrupt row.
+PROMPT_MAX = 4000
+TURN_FILES = 200
 
 # Chromium keeps time as microseconds since 1601-01-01 UTC.
 CHROME_EPOCH_S = 11644473600
@@ -48,6 +52,12 @@ HISTORY_GAP_S = 60.0
 FIRST_DAYS = 30
 FIRST_BIG = 2000
 MAX_URL = 4096
+# Chromium writes a visit when the page loads and fills in its title and how long you stayed
+# later (when you leave it), so a visit with either still missing is looked at again this long.
+FOLLOW_KEEP_S = 2 * 86400
+FOLLOW_MAX = 500
+# A copy left behind by a brain that died mid-import is on tmpfs, so it is RAM.
+STALE_COPY_S = 300.0
 # Page transitions (Chromium's ui/base/page_transition_types.h). Subframes are ads and
 # embeds, and the first hops of a redirect chain are pages nobody saw.
 CORE_MASK = 0xFF
@@ -69,6 +79,9 @@ PACMAN_OPS = {"installed": "install", "upgraded": "upgrade", "downgraded": "upgr
 # pacman keeps its log open for a whole transaction, so the write the watcher saw can carry
 # lines from well before it; older than this, a line is attributed by the turns' times.
 LIVE_WINDOW_S = 3600.0
+# The first read of a log that has grown for years is bounded: what happened before this many
+# days back becomes one line per package still installed, not thousands of upgrades.
+FIRST_PACMAN_DAYS = 90
 
 MEMORY_MAX = 256 * 1024
 
@@ -99,9 +112,10 @@ def _each(store, fn):
     store.x("SAVEPOINT witness_row")
     try:
         out = fn()
-    except ROW_ERRORS:
+    except ROW_ERRORS as e:
         store.x("ROLLBACK TO witness_row")
         store.x("RELEASE witness_row")
+        _log("skipped a row", e)
         return None
     store.x("RELEASE witness_row")
     return out
@@ -195,7 +209,7 @@ class TurnsLog:
                             count = max(count + 1, n or 0)
                             if n is None:
                                 continue
-                        if _each(store, lambda: self.ingest.turn_row(row, n)) is not None:
+                        if _each(store, lambda: self.ingest.turn_row(_clean_turn(row), n)) is not None:
                             applied += 1
                     tail.save()
                     store.set_meta("turns.legacy", count)
@@ -211,6 +225,48 @@ def _turn_number(value) -> int | None:
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     return value if isinstance(value, int) and 0 < value < MAX_TURN else None
+
+
+def _moment(value) -> float:
+    """A time in a row: a real number of seconds, not infinity, not a string, not the year 5000."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+            or not 0 < value < 1e11:
+        raise ValueError(f"not a time: {str(value)[:40]}")
+    return float(value)
+
+
+def _clean_turn(row: dict) -> dict:
+    """The row with only what the brain can use: times that are times and words that are
+    words. A row whose own time is nonsense raises ValueError and is skipped; a field that is
+    wrong on its own (a prompt that is an object) is dropped and the turn still counts."""
+    out = dict(row)
+    if out.get("t") is not None:
+        out["t"] = _moment(out["t"])
+    for key in ("started",):
+        if key in out:
+            try:
+                out[key] = _moment(out[key])
+            except ValueError:
+                del out[key]
+    if "started" in out and "t" in out and out["started"] > out["t"]:
+        out["started"] = out["t"]
+    for key in ("prompt", "unit", "summary", "provider", "this"):
+        if key in out and not isinstance(out[key], str):
+            del out[key]
+    for key in ("prompt", "summary"):
+        if key in out:
+            out[key] = out[key][:PROMPT_MAX]
+    for key in ("ok", "stopped"):
+        if key in out and not (out[key] is None or isinstance(out[key], bool)):
+            del out[key]
+    if "snapshot" in out and (isinstance(out["snapshot"], bool) or not isinstance(out["snapshot"], int)):
+        del out["snapshot"]
+    files = out.get("files")
+    if isinstance(files, dict):
+        out["files"] = {k: v[:TURN_FILES] for k, v in files.items() if k in ("wrote", "read") and isinstance(v, list)}
+    else:
+        out.pop("files", None)
+    return out
 
 
 class History:
@@ -292,6 +348,7 @@ class History:
 
     def _import(self, hist: str, now: float) -> int | None:
         self.workdir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._sweep()
         tmp = tempfile.mkdtemp(prefix="history-", dir=self.workdir)
         try:
             copy = self._copy(hist, tmp)
@@ -312,6 +369,18 @@ class History:
                 db.close()
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _sweep(self) -> None:
+        """Copies a crashed import left behind: each is as big as a History, in RAM."""
+        try:
+            for p in self.workdir.glob("history-*"):
+                try:
+                    if time.time() - p.stat().st_mtime > STALE_COPY_S:
+                        shutil.rmtree(p, ignore_errors=True)
+                except OSError:
+                    continue
+        except OSError:
+            pass
 
     def _copy(self, hist: str, into: str) -> str | None:
         """History and its journal or WAL, copied as one consistent moment. The database goes
@@ -353,14 +422,18 @@ class History:
             "v.id", "v.visit_time", "v.visit_duration" if "visit_duration" in vcols else "0",
             "v.transition" if "transition" in vcols else "0", "u.hidden" if "hidden" in ucols else "0",
             "u.url", "u.title" if "title" in ucols else "''"))
+        # Visits synced from your other devices are not pages you read here.
+        here = " AND COALESCE(v.originator_cache_guid, '') = ''" if "originator_cache_guid" in vcols else ""
         cur = db.execute(f"SELECT {cols} FROM visits v JOIN urls u ON u.id = v.url "
-                         "WHERE (v.id > ? OR v.visit_time > ?) AND v.visit_time >= ? ORDER BY v.id",
+                         f"WHERE (v.id > ? OR v.visit_time > ?) AND v.visit_time >= ?{here} ORDER BY v.id",
                          (last_id, last_t, floor))
+        before = _following(store.get_meta(f"{key}.follow"))
+        fresh: list = []
         n = 0
         while True:
             rows = cur.fetchmany(CHUNK)
             if not rows:
-                return n
+                break
             with store.tx():
                 for vid, vt, duration, transition, hidden, url, title in rows:
                     last_id, last_t = max(last_id, _int(vid)), max(last_t, _int(vt))
@@ -370,8 +443,57 @@ class History:
                     title = title if isinstance(title, str) else ""
                     if _each(store, lambda: self.ingest.visit(url, title, t, max(_int(duration), 0) / 1e6)) is not None:
                         n += 1
+                        if not _int(duration) > 0 or not title:
+                            fresh.append([_int(vid), _int(vt)])
                 store.set_meta(f"{key}.visit", last_id)
                 store.set_meta(f"{key}.visit_t", last_t)
+                store.set_meta(f"{key}.follow", json.dumps((before + fresh)[-FOLLOW_MAX:]))
+        if before:
+            with store.tx():
+                store.set_meta(f"{key}.follow", json.dumps((self._follow(db, before, now) + fresh)[-FOLLOW_MAX:]))
+        return n
+
+    def _follow(self, db: sqlite3.Connection, follow: list, now: float) -> list:
+        """Visits imported earlier whose title or duration was still missing: fill them in now
+        that Chromium has written them. Returns the ones still to look at."""
+        store = self.ingest.store
+        vcols = _columns(db, "visits")
+        dur = "v.visit_duration" if "visit_duration" in vcols else "0"
+        keep = []
+        for i in range(0, len(follow), 200):
+            part = follow[i:i + 200]
+            marks = ", ".join("?" for _ in part)
+            found = {r[0]: r for r in db.execute(
+                f"SELECT v.id, v.visit_time, {dur}, u.url, u.title FROM visits v JOIN urls u ON u.id = v.url "
+                f"WHERE v.id IN ({marks})", [v for v, _ in part])}
+            with store.tx():
+                for vid, vt in part:
+                    row = found.get(vid)
+                    if row is None or _int(row[1]) != vt:
+                        continue   # cleared since, or the id was given to another visit
+                    seconds = max(_int(row[2]), 0) / 1e6
+                    title = row[4] if isinstance(row[4], str) else ""
+                    _each(store, lambda: self._fill(row[3], title, _unix(vt), seconds))
+                    if (not seconds or not title) and _unix(vt) > now - FOLLOW_KEEP_S:
+                        keep.append([vid, vt])
+        return keep
+
+    def _fill(self, url: str, title: str, t: float, seconds: float) -> None:
+        store = self.ingest.store
+        key = fingerprint_url(url)
+        page = store.by_key(f"url:{key}") if key else None
+        if page is None:
+            return
+        if title and title != page["title"]:
+            self.ingest.page(url, title, t)
+            self.ingest.changed.add(page["id"])
+        if seconds > 0:
+            ev = store.one("SELECT id, detail FROM events WHERE thing = ? AND kind = 'visit' AND t = ? LIMIT 1",
+                           (page["id"], t))
+            if ev is not None and (ev["detail"] or {}).get("duration") != round(seconds, 1):
+                store.x("UPDATE events SET detail = ? WHERE id = ?",
+                        (json.dumps({**(ev["detail"] or {}), "duration": round(seconds, 1)}), ev["id"]))
+                self.ingest.changed.add(page["id"])
 
     def _downloads(self, db: sqlite3.Connection, profile: str, now: float) -> int:
         cols = _columns(db, "downloads")
@@ -380,6 +502,7 @@ class History:
         store = self.ingest.store
         key = f"history.{profile}"
         last = _int(store.get_meta(f"{key}.download"))
+        last_t = _int(store.get_meta(f"{key}.download_t"))
         try:
             waiting = [int(i) for i in json.loads(store.get_meta(f"{key}.download_waiting") or "[]")]
         except (ValueError, TypeError):
@@ -390,15 +513,18 @@ class History:
 
         chain = ("(SELECT c.url FROM downloads_url_chains c WHERE c.id = d.id ORDER BY c.chain_index DESC LIMIT 1)"
                  if {"id", "chain_index", "url"} <= _columns(db, "downloads_url_chains") else "NULL")
-        where = "d.id > ?" + (f" OR d.id IN ({', '.join('?' for _ in waiting)})" if waiting else "")
+        # New by id or by start time: ids start again after "clear browsing data".
+        new = "d.id > ?" + (" OR d.start_time > ?" if "start_time" in cols else "")
+        where = new + (f" OR d.id IN ({', '.join('?' for _ in waiting)})" if waiting else "")
+        args = (last, last_t, *waiting) if "start_time" in cols else (last, *waiting)
         rows = db.execute(f"SELECT d.id, d.target_path, d.state, {col('end_time')}, {col('start_time')}, "
                           f"{col('tab_url')}, {col('referrer')}, {chain}, {col('url')} FROM downloads d "
-                          f"WHERE {where} ORDER BY d.id", (last, *waiting)).fetchall()
+                          f"WHERE {where} ORDER BY d.id", args).fetchall()
         n = 0
         still = []
         with store.tx():
             for did, target, state, end, start, tab, referrer, chain_url, url in rows:
-                last = max(last, _int(did))
+                last, last_t = max(last, _int(did)), max(last_t, _int(start))
                 if state in DOWNLOAD_WAITING:
                     if _unix(start or end) > now - WAITING_KEEP_S:
                         still.append(_int(did))
@@ -406,12 +532,29 @@ class History:
                 if state != DOWNLOAD_COMPLETE or not isinstance(target, str) or not target.startswith("/"):
                     continue
                 t = _unix(end) or _unix(start) or now
-                src, page = str(chain_url or url or ""), str(tab or referrer or "")
+                # The page is the tab you were on, else the referrer; a chrome:// tab or a blob is
+                # no page, and a data: URL can be megabytes.
+                page = next((u for u in (tab, referrer) if _web(u)), "")
+                src = next((u for u in (chain_url, url) if _web(u)), "")
+                target = os.path.normpath(target)
                 if _each(store, lambda: self.ingest.download(target, src, page, t)) is not None:
                     n += 1
             store.set_meta(f"{key}.download", last)
+            store.set_meta(f"{key}.download_t", last_t)
             store.set_meta(f"{key}.download_waiting", json.dumps(still[-100:]))
         return n
+
+
+def _web(url) -> bool:
+    """A web page address short enough to keep."""
+    return isinstance(url, str) and 0 < len(url) <= MAX_URL and fingerprint_url(url) is not None
+
+
+def _following(raw: str | None) -> list:
+    try:
+        return [[int(v), int(t)] for v, t in json.loads(raw or "[]")][-FOLLOW_MAX:]
+    except (ValueError, TypeError):
+        return []
 
 
 def _signature(hist: str) -> tuple:
@@ -466,15 +609,19 @@ class PacmanLog:
         live = who if who is not None and who.kind not in ("unknown", "before") else None
         applied = 0
         try:
+            if store.get_meta("pacman.offset") is None:
+                applied += self._first_look()
             tail = _Tail(store, self.path, "pacman")
             for chunk in tail.chunks():
                 now = time.time()
                 with store.tx():
                     for raw in chunk:
-                        parsed = parse_pacman(raw.decode("utf-8", errors="replace"))
+                        parsed = _package_line(raw)
                         if parsed is None:
                             continue
                         name, version, op, t = parsed
+                        if tail.restarted and _known(store, name, op, t):
+                            continue   # a log that was trimmed is read again from the top
                         by = live if live is not None and t >= now - LIVE_WINDOW_S else None
                         by = by or _turn_at(store, t, "pacman") or Who("system", None, "pacman")
                         if _each(store, lambda: self.ingest.package(name, version, op, t, by)) is not None:
@@ -484,6 +631,55 @@ class PacmanLog:
             _log(f"reading {self.path}", e)
             return 0
         return applied
+
+    def _first_look(self) -> int:
+        """The first read of a log that has grown for years would keep the brain busy for
+        minutes, so what is older than FIRST_PACMAN_DAYS becomes one line per package that is
+        still installed (its last word), and the log is read from there in the usual way."""
+        horizon = time.time() - FIRST_PACMAN_DAYS * 86400
+        old: dict[str, tuple[str, str, float]] = {}
+        offset, head = 0, ""
+        try:
+            f = self.path.open("rb")
+        except FileNotFoundError:
+            return 0
+        with f:
+            for i, line in enumerate(f):
+                if not line.endswith(b"\n"):
+                    break   # still being written
+                if i == 0:
+                    head = hashlib.sha1(line).hexdigest()
+                parsed = _package_line(line)
+                if parsed is not None:
+                    name, version, op, t = parsed
+                    if t >= horizon:
+                        break
+                    if op == "remove":
+                        old.pop(name, None)
+                    else:
+                        old[name] = (version, op, t)
+                offset += len(line)
+        applied = 0
+        store = self.ingest.store
+        with store.tx():
+            for name, (version, op, t) in sorted(old.items(), key=lambda kv: kv[1][2]):
+                by = _turn_at(store, t, "pacman") or Who("system", None, "pacman")
+                if _each(store, lambda: self.ingest.package(name, version, op, t, by)) is not None:
+                    applied += 1
+            store.set_meta("pacman.offset", offset)
+            store.set_meta("pacman.head", head)
+        return applied
+
+
+def _package_line(raw: bytes) -> tuple[str, str, str, float] | None:
+    if b"] [ALPM] " not in raw:
+        return None   # most of the log is transaction and hook lines
+    return parse_pacman(raw.decode("utf-8", errors="replace"))
+
+
+def _known(store, name: str, op: str, t: float) -> bool:
+    return store.one("SELECT 1 FROM events e JOIN things th ON th.id = e.thing "
+                     "WHERE th.key = ? AND e.kind = ? AND e.t = ? LIMIT 1", (f"package:{name}", op, t)) is not None
 
 
 def parse_pacman(line: str) -> tuple[str, str, str, float] | None:
@@ -502,6 +698,14 @@ def parse_pacman(line: str) -> tuple[str, str, str, float] | None:
 def pacman_time(ts: str) -> float | None:
     """'2026-09-27T10:00:00+0200' (pacman 5.2 and later), or '2019-01-01 10:00' in local time
     as older logs have it."""
+    if len(ts) == 24 and ts[4] == ts[7] == "-" and ts[10] == "T" and ts[13] == ts[16] == ":" and ts[19] in "+-":
+        # The usual shape, without strptime's cost: a log of years has a hundred thousand of them.
+        try:
+            off = (int(ts[20:22]) * 3600 + int(ts[22:24]) * 60) * (1 if ts[19] == "+" else -1)
+            return datetime(int(ts[:4]), int(ts[5:7]), int(ts[8:10]), int(ts[11:13]), int(ts[14:16]),
+                            int(ts[17:19]), tzinfo=timezone.utc).timestamp() - off
+        except ValueError:
+            return None
     try:
         return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S%z").timestamp()
     except ValueError:

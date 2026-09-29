@@ -23,7 +23,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from . import rules, words
+from . import describe, rules, words
 from .ingest import fingerprint_url, site_of
 from .store import COALESCE_S, Store
 
@@ -41,11 +41,20 @@ SCAN_LIMIT = 20000
 # How far back a thing's history is read for its lines; older events only count.
 HISTORY_CAP = 2000
 OCCASIONS = 60
+# A burst of saves can run on for hours as one event. Looking for events that overlap a moment,
+# only those that began this long before it are looked at, so the index answers in a few rows
+# instead of every event since the brain began.
+SPAN_S = 6 * 3600
+# Past SCAN_LIMIT entries a folder is only counted, so its size is honest but the walk stays short.
+COUNT_LIMIT = 2_000_000
 UNKNOWN = "The brain does not know this yet."
 NOT_OPENED = "Nothing has opened it since."
 MOUNTS = Path("/proc/self/mounts")
 
 ACTORS = ("turn", "session", "app", "you", "system")
+# Who a line is about, as the Brain window colours its dot: white you, orange the machine's turns,
+# blue coding sessions. Events written while nobody watched, or before the brain, are unknown.
+KINDS = ("you", "turn", "session", "app", "system", "unknown")
 # What happened, as (verb, what follows "it"): "moved" + "to the Trash".
 VERBS = {"create": ("made", ""), "change": ("changed", ""), "move": ("moved", ""), "delete": ("deleted", ""),
          "trash": ("moved", "to the Trash"), "download": ("downloaded", ""), "visit": ("read", ""),
@@ -59,22 +68,31 @@ SLDS = {"co", "com", "org", "net", "ac", "gov", "edu", "or", "ne", "go"}
 
 def resolve(store: Store, ref) -> dict | None:
     """The thing a ref names: an id (int or digits), an absolute path (the living thing
-    there, else the one that went last), an http(s) URL, or a key ("turn:41", "system")."""
+    there, else the one that went last), an http(s) URL, or a key ("turn:41", "system").
+    A ref that could never be stored (too big an id, a name that is not UTF-8) names nothing."""
     if ref is None or isinstance(ref, bool):
         return None
     if isinstance(ref, int):
-        return _visible(store.get(ref))
+        return _by_id(store, ref)
     ref = str(ref).strip()
-    if not ref:
+    if not ref or "\0" in ref:
         return None
+    try:
+        ref.encode("utf-8")
+    except UnicodeEncodeError:
+        return None   # the brain skips names like that, and sqlite would refuse to look for one
     if ref.isascii() and ref.isdigit():
-        return _visible(store.get(int(ref)))
+        return _by_id(store, int(ref)) if len(ref) <= 19 else None
     if ref.startswith("/"):
         return _visible(store.by_path(os.path.normpath(ref), deleted=True))
     if ref.lower().startswith(("http://", "https://")):
         key = fingerprint_url(ref)
         return _visible(store.by_key(f"url:{key}")) if key else None
     return _visible(store.by_key(ref))
+
+
+def _by_id(store: Store, n: int) -> dict | None:
+    return _visible(store.get(n)) if 0 < n < 2 ** 63 else None   # sqlite integers stop at 2**63
 
 
 def _visible(thing: dict | None) -> dict | None:
@@ -187,15 +205,21 @@ def sentence(verb: str, tail: str, w: words.Who, t: float | None, now: float | N
     head = verb[0].upper() + verb[1:] + (" " + tail if tail else "")
     if w.kind in ("unknown", "before"):
         return f"{head} while the brain was not watching{', ' + day if day else ''}."
-    after = (", " if w.kind == "turn" and w.prompt else " ") + day if day else ""
-    return f"{head} {words.by(w)}{after}."
+    return f"{head} {words.by(w)}{words._then(w, day)}."
+
+
+def actor_kind(actor) -> str:
+    """An event's actor as one of the six the Brain window colours."""
+    return actor if actor in KINDS else "unknown"
 
 
 def line_for_thing(store: Store, thing: dict, why: str, t: float | None = None, now: float | None = None,
-                   tone: str = "normal", title: str | None = None) -> dict:
-    """One line in a slot: a thing the app can focus next, and why it is there."""
+                   tone: str = "normal", title: str | None = None, actor: str | None = None) -> dict:
+    """One line in a slot: a thing the app can focus next, and why it is there. `actor` is who
+    the line is about, or, for a page or a file, who acted to link it here."""
     return {"id": thing["id"], "ref": ref_of(thing), "title": title or title_of(store, thing),
-            "kind": thing["kind"], "why": why, "t": t, "when": words.when(t, now), "tone": tone}
+            "kind": thing["kind"], "why": why, "t": t, "when": words.when(t, now), "tone": tone,
+            "actor": actor_kind(actor)}
 
 
 def title_of(store: Store, thing: dict) -> str:
@@ -244,11 +268,6 @@ def opened_since_change(path: str | None) -> bool | None:
     return st.st_atime_ns > st.st_mtime_ns
 
 
-def _preview_type(path: str) -> str:
-    from .describe import file_type
-    return file_type(path)
-
-
 # -- focus --
 
 def focus(store: Store, ref, home: str, now: float | None = None, limit: int = 5,
@@ -258,10 +277,13 @@ def focus(store: Store, ref, home: str, now: float | None = None, limit: int = 5
     not "someone else changing it now".
 
     Every list item in a slot is a LINE:
-        {"id", "ref", "title", "kind", "why", "t", "when", "tone": "normal" | "amber"}
+        {"id", "ref", "title", "kind", "why", "t", "when", "tone": "normal" | "amber", "actor"}
     where ref is the path, URL, key or id to pass back to focus, why is a short clause
     without the title ("open while builder edited this"; the came_from lines end with their
-    time: "“drop the old cleanup”, 13:02"), and when is words.when(t).
+    time: "“drop the old cleanup”, 13:02"), when is words.when(t), and actor is the kind of
+    whoever the line is about ("you", "turn", "session", "app", "system" or "unknown"); for a
+    line about a page or a thing rather than a person it is whoever acted to link it: who was
+    editing for read_with, who changed both for used_with, who downloaded or read for came_from.
 
         {"thing": {"id", "ref", "kind", "title", "path", "url",
                    "area": {"id", "ref", "title", "kind"} | None,
@@ -279,9 +301,10 @@ def focus(store: Store, ref, home: str, now: float | None = None, limit: int = 5
                    "read_with": {"items": [LINE], "more": n},   # pages open while it changed
                    "used_with": {"items": [LINE], "more": n},   # changed with it, made from it
                    "changes": {"count_week": n, "days": [7 ints, oldest first, today last],
-                               "items": [{"id", "kind", "t", "when", "why"}], "more": n}},
-         "children": {"items": [{"id" | None, "ref", "name", "kind", "t", "when", "who", "private"}],
-                      "total": n} | None,
+                               "items": [{"id": event id, "kind", "t", "when", "why", "actor"}],
+                               "more": n}},
+         "children": {"items": [{"id" | None, "ref", "name", "kind", "t", "when", "who", "actor",
+                                 "private"}], "total": n} | None,   # actor: who changed it last
          "description": None}                                   # the service fills it in
 
     Each slot holds at most `limit` lines and "more" counts the rest.
@@ -294,11 +317,13 @@ def focus(store: Store, ref, home: str, now: float | None = None, limit: int = 5
 
 def children(store: Store, ref, home: str, offset: int = 0, limit: int = CHILDREN_LIMIT,
              now: float | None = None) -> dict | None:
-    """A page of what is inside a folder, project, app, site, turn or session (see focus)."""
+    """A page of what is inside a folder, project, app, site, turn or session (see focus).
+    None only for a ref the brain does not know; a file holds nothing."""
     thing = resolve(store, ref)
     if thing is None:
         return None
-    return _Focus(store, home, now).children(thing, max(0, int(offset)), max(0, min(int(limit), 1000)))
+    page = _Focus(store, home, now).children(thing, max(0, int(offset)), max(0, min(int(limit), 1000)))
+    return page if page is not None else {"items": [], "total": 0}
 
 
 def why(store: Store, ref, home: str, now: float | None = None) -> str:
@@ -347,8 +372,14 @@ class _Focus:
     def when(self, t: float | None) -> str:
         return words.when(t, self.now)
 
-    def line(self, thing: dict, why: str, t: float | None, tone: str = "normal", title: str | None = None) -> dict:
-        return line_for_thing(self.store, thing, why, t, self.now, tone, title)
+    def line(self, thing: dict, why: str, t: float | None, tone: str = "normal", title: str | None = None,
+             actor: str | None = None) -> dict:
+        return line_for_thing(self.store, thing, why, t, self.now, tone, title, actor)
+
+    def private(self, thing: dict) -> bool:
+        """Never read, previewed or described: the brain's own flag, or the rules for its path,
+        or where a link at that path really leads."""
+        return bool(thing["private"]) or describe.private_path(thing["path"], self.home)
 
     # -- history --
 
@@ -401,25 +432,34 @@ class _Focus:
         path = thing["path"]
         exists = thing["deleted"] is None and (os.path.lexists(path) if path else True)
         area = self.get(thing["area"]) if thing["area"] != thing["id"] else None
+        size = thing["size"]
+        if thing["kind"] == "file" and exists and path:
+            # What is there now: a save the watcher did not see (a turn's own record) has no size, and
+            # the window decides from it whether a file is too big to show.
+            try:
+                size = os.lstat(path).st_size
+            except OSError:
+                pass
         return {"id": thing["id"], "ref": ref_of(thing), "kind": thing["kind"], "title": title_of(self.store, thing),
                 "path": path, "url": thing["url"],
                 "area": {"id": area["id"], "ref": ref_of(area), "title": title_of(self.store, area),
                          "kind": area["kind"]} if area else None,
-                "size": thing["size"], "created": thing["created"], "changed": thing["changed"],
-                "deleted": thing["deleted"], "private": bool(thing["private"]),
+                "size": size, "created": thing["created"], "changed": thing["changed"],
+                "deleted": thing["deleted"], "private": self.private(thing),
                 "made": self.made(thing, hist), "last": self.last(thing, hist),
                 "opened": opened_since_change(path) if thing["kind"] == "file" and exists else None,
                 "exists": exists}
 
     def preview(self, thing: dict) -> dict:
         kind, path = thing["kind"], thing["path"]
-        if thing["private"] or (path and rules.private(path, self.home)):
+        if self.private(thing):
             return {"type": "none", "private": True}
         gone = thing["deleted"] is not None
         if kind == "file":
-            if gone or not path or not os.path.isfile(path):
+            kind_of_file = "none" if gone or not path else describe.file_type(path)
+            if kind_of_file == "none":
                 return {"type": "none", "private": False}
-            return {"type": _preview_type(path), "path": path, "private": False}
+            return {"type": kind_of_file, "path": path, "private": False}
         if kind in ("folder", "project"):
             return {"type": "folder", "path": path, "private": False} if path and not gone and os.path.isdir(path) \
                 else {"type": "none", "private": False}
@@ -448,15 +488,19 @@ class _Focus:
             day = words.on_day(thing["created"], self.now)
             if n is None:
                 return "The machine is working on it now."
-            asked = f"the machine {words.quoted(prompt)}" if prompt else f"for turn {n}"
-            return f"You asked {asked}{' ' + day if day else ''}."
+            if not prompt:
+                return f"That was the machine's turn {n}{' ' + day if day else ''}."
+            return f"You asked the machine {words.quoted(prompt)}{' ' + day if day else ''}."
         if kind == "session":
             first = self.store.one("SELECT MIN(t) AS t FROM events WHERE actor_thing = ?", (thing["id"],))["t"]
             return f"First seen {words.on_day(first, self.now)}." if first else ""
         if kind == "page":
-            first = next((e for e in reversed(hist) if e["kind"] == "visit"), None)
+            # Asked of the events, not of the newest ones read: a page you open daily has more
+            # visits than a focus reads.
+            first = self.store.one("SELECT MIN(t) AS t FROM events WHERE thing = ? AND kind = 'visit'",
+                                   (thing["id"],))["t"]
             if first is not None:
-                return f"You first read it {words.on_day(first['t'], self.now)}."
+                return f"You first read it {words.on_day(first, self.now)}."
             dl = self.store.one("SELECT MIN(t) AS t FROM events WHERE kind = 'download' AND other = ?", (thing["id"],))
             return f"A download came from it {words.on_day(dl['t'], self.now)}." if dl["t"] else ""
         if kind == "site":
@@ -490,11 +534,17 @@ class _Focus:
         page = self.get(dl["other"])
         url = (page or {}).get("url") or (dl["detail"] or {}).get("url") or ""
         site = site_name(url) if url else ""
-        day = words.on_day(dl["t"], self.now)
+        day = self.download_day(dl["t"])
         s = "Downloaded" + (f" from {site}" if site else "") + (f" {day}" if day else "")
         if page is not None and page["title"] and page["title"] != page["url"]:
             s += f" while you read {words.quoted(page['title'])}"
         return s + "."
+
+    def download_day(self, t: float | None) -> str:
+        """'on Tue 14:02' within the week, as the brief says a download's answer reads; else
+        the day as everywhere else ('today at 14:02', 'on 3 Sep')."""
+        when = words.when(t, self.now)
+        return f"on {when}" if when.split(" ")[0] in words.DAYS else words.on_day(t, self.now)
 
     def last(self, thing: dict, hist: list[dict]) -> str:
         """Who changed it last, when that was someone other than whoever made it."""
@@ -566,7 +616,7 @@ class _Focus:
         lines: list[tuple[float, int, dict]] = []
         downloaded = any(e["kind"] == "download" and e["other"] for e in hist)
         actors: dict[tuple, dict] = {}
-        for e in hist:
+        for e in hist:   # newest first
             actor = e["actor"] or "unknown"
             if actor not in ACTORS or e["kind"] not in VERBS or e["kind"] in ("visit", "download"):
                 continue
@@ -574,7 +624,9 @@ class _Focus:
                 continue   # the browser writing a download: the page's line says it better
             key = (actor, e["actor_thing"] if actor in ("turn", "session", "app") else None)
             a = actors.setdefault(key, {"t": e["te"], "kind": e["kind"], "via": e["via"], "made": False, "n": 0})
-            a["made"] = a["made"] or e["kind"] in ("create", "install")
+            if e["kind"] in ("create", "install"):
+                # Whoever made it is told by when they made it, not by their last save.
+                a.update(made=True, t=e["t"], via=e["via"])
             a["n"] += e["kind"] == "change"
         made_by = thing["made_by"]
         if made_by in ACTORS:
@@ -596,11 +648,11 @@ class _Focus:
             why = f"{what}, {when}" if when else what
             title = words.who(replace(w, prompt="")) if actor == "turn" else words.who(w)
             actor_row = self.get(actor_thing)
-            if actor_row is not None:
-                line = self.line(actor_row, why, a["t"], title=title)
+            if actor_row is not None and not actor_row["forgotten"]:
+                line = self.line(actor_row, why, a["t"], title=title, actor=actor)
             else:
                 line = {"id": None, "ref": None, "title": title, "kind": actor, "why": why, "t": a["t"],
-                        "when": when, "tone": "normal"}
+                        "when": when, "tone": "normal", "actor": actor_kind(actor)}
             lines.append((a["t"] or 0, 0, line))
         for link in self.store.links_from(thing["id"], ("came_from",)):
             src = self.get(link["dst"])
@@ -612,12 +664,14 @@ class _Focus:
                 what = f"downloaded from {site_name(src['url'] or '')}"
                 if dl and src["title"] and src["title"] != src["url"]:
                     what += " while you read it"
+                actor = "you"   # a download is something you did in the browser
             else:
                 t = link["last"]
                 n = self.turn_ended_at(link["last"])
                 what = f"read by turn {n} before writing this" if n else "this was made from it"
+                actor = "turn"   # only a turn's row links a file to what it read
             when = self.when(t)
-            lines.append((t or 0, 1, self.line(src, f"{what}, {when}" if when else what, t)))
+            lines.append((t or 0, 1, self.line(src, f"{what}, {when}" if when else what, t, actor=actor)))
         lines.sort(key=lambda x: (x[0], x[1]), reverse=True)
         return [x[2] for x in lines]
 
@@ -653,7 +707,7 @@ class _Focus:
             if page is None or page["forgotten"]:
                 continue
             e = p["e"]
-            out.append(self.line(page, f"open while {self.editing(e)} this", p["t"]))
+            out.append(self.line(page, f"open while {self.editing(e)} this", p["t"], actor=e["actor"]))
         return out
 
     def editing(self, e: dict) -> str:
@@ -673,8 +727,8 @@ class _Focus:
             if duration:
                 end = min(end, v["t"] + duration + STILL_OPEN_S)
             seen = set()
-            for e in self.store.q("SELECT * FROM events WHERE kind IN ('create', 'change') AND t <= ? "
-                                  "AND COALESCE(t_end, t) >= ? ORDER BY t DESC", (end, v["t"])):
+            for e in self.store.q("SELECT * FROM events WHERE kind IN ('create', 'change') AND t BETWEEN ? AND ? "
+                                  "AND COALESCE(t_end, t) >= ? ORDER BY t DESC", (v["t"] - SPAN_S, end, v["t"])):
                 if e["thing"] in seen:
                     continue
                 seen.add(e["thing"])
@@ -687,7 +741,8 @@ class _Focus:
             thing = rows.get(tid)
             if thing is None or thing["forgotten"] or thing["kind"] in ("turn", "session", "page", "site"):
                 continue
-            out.append(self.line(thing, f"{self.editing(f['e'])} it while this was open", f["t"]))
+            out.append(self.line(thing, f"{self.editing(f['e'])} it while this was open", f["t"],
+                                 actor=f["e"]["actor"]))
         return out
 
     # -- below: used with --
@@ -726,11 +781,13 @@ class _Focus:
                                     (occ["thing"], tid))
             else:
                 rows = self.store.q("SELECT thing, MAX(COALESCE(t_end, t)) AS te FROM events WHERE actor = ? "
-                                    "AND actor_thing IS ? AND kind IN ('create', 'change') AND t <= ? "
+                                    "AND actor_thing IS ? AND kind IN ('create', 'change') AND t BETWEEN ? AND ? "
                                     "AND COALESCE(t_end, t) >= ? AND thing != ? GROUP BY thing",
-                                    (occ["actor"], occ["thing"], occ["t1"] + TOGETHER_S, occ["t0"] - TOGETHER_S, tid))
+                                    (occ["actor"], occ["thing"], occ["t0"] - TOGETHER_S - SPAN_S,
+                                     occ["t1"] + TOGETHER_S, occ["t0"] - TOGETHER_S, tid))
             for r in rows:
-                s = shared.setdefault(r["thing"], {"n": 0, "turns": 0, "t": 0.0})
+                # Occasions run newest first, so the first to share it names who changed both.
+                s = shared.setdefault(r["thing"], {"n": 0, "turns": 0, "t": 0.0, "actor": occ["actor"]})
                 s["n"] += 1
                 s["turns"] += occ["actor"] == "turn"
                 s["t"] = max(s["t"], r["te"] or 0)
@@ -751,7 +808,9 @@ class _Focus:
                     maker = self.get(src["made_by_thing"]) if src["made_by"] == "turn" else None
                     n = _turn_words(self.store, maker["id"])[0] if maker else None
                 what = f"made from this in turn {n}" if n else "made from this"
-            lines.append(((1, link["last"] or 0, 0), self.busy(src, what, link["last"])))
+            # A download is yours; a file made from another was made by a turn (only its row links them).
+            lines.append(((1, link["last"] or 0, 0),
+                          self.busy(src, what, link["last"], "you" if thing["kind"] == "page" else "turn")))
         for co, s in shared.items():
             other = rows.get(co)
             if s["n"] < 2 or other is None or other["forgotten"] or co in done:
@@ -760,36 +819,46 @@ class _Focus:
                 continue
             what = (f"changed in the same {words.count(s['n'], 'turn')}" if s["turns"] == s["n"]
                     else f"changed with this {s['n']} times")
-            lines.append(((0, s["n"], s["t"]), self.busy(other, what, s["t"])))
+            lines.append(((0, s["n"], s["t"]), self.busy(other, what, s["t"], s["actor"])))
         # Someone at work on it right now first, then what was made from this, then the
         # most shared.
         lines.sort(key=lambda x: (x[1]["tone"] == "amber", *x[0]), reverse=True)
         return [x[1] for x in lines]
 
-    def busy(self, other: dict, why: str, t: float | None) -> dict:
-        """The line, in amber when another turn or session changed it in the last 15 minutes."""
+    def busy(self, other: dict, why: str, t: float | None, actor: str | None = None) -> dict:
+        """The line, in amber when another turn or session changed it in the last 15 minutes
+        (then it is about them); else about `actor`, who acted to link it."""
         row = self.store.one(
             "SELECT actor, actor_thing, via, MAX(COALESCE(t_end, t)) AS te FROM events WHERE thing = ? "
             "AND actor IN ('turn', 'session') AND actor_thing IS NOT NULL AND actor_thing != ? "
             "AND COALESCE(t_end, t) >= ?", (other["id"], self.looking or -1, self.now - BUSY_S))
         if row is None or row["te"] is None:
-            return self.line(other, why, t)
+            return self.line(other, why, t, actor=actor)
         w = self.who(row["actor"], row["actor_thing"], row["via"])
-        return self.line(other, f"also being changed by {short(w)}", row["te"], tone="amber")
+        return self.line(other, f"also being changed by {short(w)}", row["te"], tone="amber", actor=row["actor"])
 
     # -- top: changes --
 
-    def changes(self, thing: dict, hist: list[dict], total: int, limit: int) -> dict:
+    def days(self, tid: int, hist: list[dict], total: int) -> list[int]:
+        """Events per day over the last seven days, oldest first, today last."""
         lt = time.localtime(self.now)
         starts = [time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - k, 0, 0, 0, 0, 0, -1)) for k in range(7)]
+        ends = [e["te"] for e in hist]
+        if total > len(hist):
+            # More history than a focus reads: count the week from the events themselves.
+            ends = [r["te"] for r in self.store.q(
+                "SELECT COALESCE(t_end, t) AS te FROM events WHERE thing = ? AND COALESCE(t_end, t) >= ? "
+                "AND t >= ?", (tid, starts[6], starts[6] - SPAN_S))]
         days = [0] * 7
-        for e in hist:
+        for te in ends:
             for k, start in enumerate(starts):
-                if e["te"] >= start:
+                if te >= start:
                     days[6 - k] += 1
                     break
-            else:
-                break   # newest first: everything after this is older than the week
+        return days
+
+    def changes(self, thing: dict, hist: list[dict], total: int, limit: int) -> dict:
+        days = self.days(thing["id"], hist, total)
         items = []
         for e in hist[:limit]:
             w = self.who(e["actor"], e["actor_thing"], e["via"])
@@ -798,7 +867,7 @@ class _Focus:
                 tail = f"to {os.path.basename(str(e['detail'].get('to') or '').rstrip('/'))}"
             by = words.by(w) or "while the brain was not watching"
             items.append({"id": e["id"], "kind": e["kind"], "t": e["te"], "when": self.when(e["te"]),
-                          "why": " ".join(b for b in (verb, tail, by) if b)})
+                          "why": " ".join(b for b in (verb, tail, by) if b), "actor": actor_kind(e["actor"])})
         return {"count_week": sum(days), "days": days, "items": items, "more": max(0, total - len(items))}
 
     # -- the middle, for things that hold others --
@@ -819,13 +888,17 @@ class _Focus:
         """The folder as it is on disk now, folders first then newest first, with who made or
         last changed each entry when the brain saw it."""
         path = thing["path"].rstrip("/") or "/"
-        private = bool(thing["private"]) or rules.private(path, self.home)
+        private = self.private(thing)
         entries = []
+        more = 0   # what a huge folder holds beyond what is listed: counted, not looked at
         try:
             with os.scandir(path) as it:
                 for entry in it:
                     if len(entries) >= SCAN_LIMIT:
-                        break
+                        more += 1
+                        if more >= COUNT_LIMIT:
+                            break
+                        continue
                     full = os.path.join(path, entry.name)
                     verdict = rules.classify(full, self.home)
                     if entry.name.startswith(".") or verdict.kind == "skip":
@@ -854,20 +927,21 @@ class _Focus:
             kind = t["kind"] if t else ("folder" if is_dir else "file")
             if private:
                 items.append({"id": t["id"] if t else None, "ref": full, "name": name, "kind": kind, "t": None,
-                              "when": "", "who": "", "private": True})
+                              "when": "", "who": "", "actor": "unknown", "private": True})
                 continue
-            who = ""
+            who, actor = "", "unknown"
             if t is not None and is_dir:
                 if t["made_by"] in ACTORS:
-                    who = short(self.who(t["made_by"], t["made_by_thing"], t["made_via"]))
+                    who, actor = short(self.who(t["made_by"], t["made_by_thing"], t["made_via"])), t["made_by"]
             elif t is not None:
                 last = writers.get(t["id"])
                 # Only when the brain saw the write that left the file as it is now.
                 if last is not None and last["te"] >= mtime - 5:
-                    who = short(self.who(last["actor"], last["actor_thing"], last["via"]))
+                    who, actor = short(self.who(last["actor"], last["actor_thing"], last["via"])), last["actor"]
             items.append({"id": t["id"] if t else None, "ref": full, "name": name, "kind": kind, "t": mtime,
-                          "when": self.when(mtime), "who": who, "private": item_private})
-        return {"items": items, "total": len(entries)}
+                          "when": self.when(mtime), "who": who, "actor": actor_kind(actor),
+                          "private": item_private})
+        return {"items": items, "total": len(entries) + more}
 
     def last_writers(self, ids: list[int]) -> dict[int, dict]:
         out = {}
@@ -875,8 +949,8 @@ class _Focus:
             chunk = ids[n:n + 500]
             for row in self.store.q(
                     f"SELECT thing, actor, actor_thing, via, MAX(COALESCE(t_end, t)) AS te FROM events "
-                    f"WHERE thing IN ({', '.join('?' for _ in chunk)}) AND kind IN ('create', 'change', 'download') "
-                    f"GROUP BY thing", chunk):
+                    f"WHERE thing IN ({', '.join('?' for _ in chunk)}) AND kind IN ('create', 'change', 'download', "
+                    f"'install', 'upgrade', 'remove') GROUP BY thing", chunk):
                 out[row["thing"]] = row
         return out
 
@@ -886,14 +960,16 @@ class _Focus:
         live = "AND deleted IS NULL" if thing["deleted"] is None else ""
         total = self.store.one(f"SELECT COUNT(*) AS n FROM things WHERE parent = ? AND forgotten = 0 {live}",
                                (thing["id"],))["n"]
-        private = bool(thing["private"])
+        private = self.private(thing)
         items = []
         for r in rows:
             t = r["changed"] or r["created"]
-            who = short(self.who(r["made_by"], r["made_by_thing"], r["made_via"])) if r["made_by"] in ACTORS else ""
+            known = r["made_by"] in ACTORS
+            who = short(self.who(r["made_by"], r["made_by_thing"], r["made_via"])) if known else ""
             items.append({"id": r["id"], "ref": ref_of(r), "name": title_of(self.store, r), "kind": r["kind"],
                           "t": None if private else t, "when": "" if private else self.when(t),
-                          "who": "" if private else who, "private": private or bool(r["private"])})
+                          "who": "" if private else who, "actor": "unknown" if private else actor_kind(r["made_by"]),
+                          "private": private or self.private(r)})
         return {"items": items, "total": total}
 
     def area_things(self, thing: dict, offset: int, limit: int) -> dict:
@@ -904,31 +980,41 @@ class _Focus:
                             (thing["id"], thing["id"], limit, offset))
         total = self.store.one(f"SELECT COUNT(*) AS n FROM things WHERE area = ? AND id != ? AND forgotten = 0 "
                                f"{extra}", (thing["id"], thing["id"]))["n"]
+        writers = self.last_writers([r["id"] for r in rows if r["kind"] != "page"])
         items = []
         for r in rows:
             t = r["touched"] or r["changed"] or r["created"]
+            last = writers.get(r["id"])
+            who, actor = "", "you" if r["kind"] == "page" else r["made_by"]   # pages are read by you
+            if last is not None:
+                who, actor = short(self.who(last["actor"], last["actor_thing"], last["via"])), last["actor"]
             items.append({"id": r["id"], "ref": ref_of(r), "name": title_of(self.store, r), "kind": r["kind"],
-                          "t": t, "when": self.when(t), "who": "", "private": bool(r["private"])})
+                          "t": t, "when": self.when(t), "who": who, "actor": actor_kind(actor),
+                          "private": self.private(r)})
         return {"items": items, "total": total}
 
     def done_by(self, actor: dict, offset: int, limit: int) -> dict:
         """What a turn, session or app made or changed, newest first; who says what it did."""
-        rows = self.store.q("SELECT thing, kind, MAX(COALESCE(t_end, t)) AS te, "
-                            "SUM(kind IN ('create', 'install')) AS made FROM events WHERE actor_thing = ? "
-                            "GROUP BY thing ORDER BY te DESC", (actor["id"],))
+        who = actor_kind(actor["kind"])
+        where = "e.actor_thing = ? AND e.thing != ? AND t.forgotten = 0"
+        args = (actor["id"], actor["id"])   # an app changing its own data is not something it made
+        rows = self.store.q(
+            "SELECT e.thing AS thing, e.kind AS kind, MAX(COALESCE(e.t_end, e.t)) AS te, "
+            "SUM(e.kind IN ('create', 'install')) AS made FROM events e JOIN things t ON t.id = e.thing "
+            f"WHERE {where} GROUP BY e.thing ORDER BY te DESC LIMIT ? OFFSET ?", (*args, limit, offset))
+        total = self.store.one("SELECT COUNT(DISTINCT e.thing) AS n FROM events e JOIN things t ON t.id = e.thing "
+                               f"WHERE {where}", args)["n"]
         things = self.many([r["thing"] for r in rows])
-        # An app changing its own data is recorded on the app itself: not something it made.
-        rows = [r for r in rows if r["thing"] in things and r["thing"] != actor["id"]
-                and not things[r["thing"]]["forgotten"]]
         items = []
-        for r in rows[offset:offset + limit]:
+        for r in rows:
             t = things[r["thing"]]
             verb = "made" if r["made"] else _phrase(r["kind"], t["kind"])[0]
             if t["kind"] == "package" and r["made"]:
                 verb = "installed"
             items.append({"id": t["id"], "ref": ref_of(t), "name": title_of(self.store, t), "kind": t["kind"],
-                          "t": r["te"], "when": self.when(r["te"]), "who": verb, "private": bool(t["private"])})
-        return {"items": items, "total": len(rows)}
+                          "t": r["te"], "when": self.when(r["te"]), "who": verb, "actor": who,
+                          "private": self.private(t)})
+        return {"items": items, "total": total}
 
 
 def _slot(lines: list[dict], limit: int) -> dict:

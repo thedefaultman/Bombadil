@@ -266,13 +266,32 @@ def test_show_pushes_and_is_remembered_for_a_while(home, h, monkeypatch):
         with client.Connection() as conn:
             assert conn.request("subscribe") == {"subscribed": True}
             shown = ask("show", ref=str(h / "notes.md"))
-            assert shown["seq"] == 1 and shown["title"] == "notes.md" and shown["id"] is None
+            assert shown["title"] == "notes.md" and shown["id"] is None
             p = wait_push(conn, "show")
-            assert p["ref"] == str(h / "notes.md") and p["seq"] == 1
+            assert p["ref"] == str(h / "notes.md") and p["seq"] == shown["seq"]
         assert ask("requested")["ref"] == str(h / "notes.md")
-        assert ask("show", ref="turn:41")["seq"] == 2
+        assert ask("show", ref="turn:41")["seq"] == shown["seq"] + 1
         monkeypatch.setattr(service, "REQUESTED_S", -1)
         assert ask("requested") is None   # stale: the Brain app opens on what it had instead
+
+
+def test_show_numbers_never_go_back_when_the_brain_restarts(home, h):
+    # The Brain app ignores a "show" whose number it has already seen, and it outlives the brain.
+    with running(make_brain(home, walk=False)):
+        first = ask("show", ref="turn:1")["seq"]
+    time.sleep(0.01)
+    with running(make_brain(home, walk=False)):
+        assert ask("show", ref="turn:1")["seq"] > first
+
+
+def test_refs_that_cannot_be_things_are_not_known(home, h):
+    with running(make_brain(home, walk=False)):
+        for ref in (10**30, "9" * 30, "\udcff/x"):   # past SQLite's integers; not UTF-8
+            assert ask("why", ref=ref) == "The brain does not know this yet."
+            for op in ("focus", "thing", "show", "describe"):
+                with pytest.raises(client.BrainError, match="^The brain does not know this yet.$"):
+                    ask(op, ref=ref)
+        assert ask("status")["text"]
 
 
 def test_focus_brings_a_description_but_never_for_private_things(home, h):
@@ -453,6 +472,24 @@ def test_rebuild_starts_over(home, h):
         assert before is not None
 
 
+def test_a_database_that_is_damaged_inside_is_replaced(home, h):
+    for i in range(400):
+        (h / "Documents" / f"file-{i:03}.txt").write_text("x" * i)
+    with running(make_brain(home)):
+        pass
+    db = paths.brain_db()
+    size = db.stat().st_size
+    assert size > 4096 * 8
+    with open(db, "r+b") as f:   # the first pages (the header and the schema) read fine; the rest does not
+        f.seek(4096 * 3)
+        f.write(b"\xff" * (size - 4096 * 3))
+    with running(make_brain(home)):
+        assert ask("status")["things"] >= 400
+        assert ask("thing", ref=str(h / "notes.md"))["path"] == str(h / "notes.md")
+        assert ask("search", q="file-01")["items"]
+    assert Path(f"{db}.broken").stat().st_size == size
+
+
 def test_one_brain_per_database(home, h):
     with running(make_brain(home, walk=False)):
         with pytest.raises(service.AlreadyRunning):
@@ -467,6 +504,51 @@ def test_a_database_it_cannot_read_is_set_aside(home, h):
     with running(make_brain(home)):
         assert ask("status")["things"] >= 3
     assert Path(f"{db}.broken").read_bytes().startswith(b"this is not sqlite")
+
+
+def test_a_stop_applies_the_saves_it_had_read(home, h, monkeypatch):
+    monkeypatch.setattr(service, "BATCH_S", 30.0)   # the batch is still waiting when the stop comes
+    watcher = FakeWatcher(home / "watch.sock")
+    letter = h / "Documents" / "letter.txt"
+    try:
+        brain = make_brain(home, watch_path=watcher.path)
+        with running(brain):
+            until(lambda: ask("status")["watching"])
+            letter.write_text("hi")
+            watcher.send(ev("create", letter))
+            until(lambda: brain._batch)   # read from the watcher, which will not send it again
+        db = sqlite3.connect(paths.brain_db())
+        try:
+            assert db.execute("SELECT COUNT(*) FROM things WHERE path = ?", (str(letter),)).fetchone()[0] == 1
+        finally:
+            db.close()
+    finally:
+        watcher.close()
+
+
+def test_a_run_that_was_cut_off_walks_again_after_the_replay(home, h, monkeypatch):
+    monkeypatch.setattr(service, "QUIET_S", 0.5)
+    watcher = FakeWatcher(home / "watch.sock")
+    late, lost = h / "Documents" / "late.txt", h / "Documents" / "lost.txt"
+    try:
+        with running(make_brain(home, watch_path=watcher.path)):
+            until(lambda: ask("status")["watching"])
+            assert meta("brain.run") == "running"
+        assert meta("brain.run") == "stopped"
+        late.write_text("x")
+        lost.write_text("x")
+        db = sqlite3.connect(paths.brain_db())   # what a kill leaves behind
+        db.execute("UPDATE meta SET value = 'running' WHERE key = 'brain.run'")
+        db.commit()
+        db.close()
+        with running(make_brain(home, watch_path=watcher.path), settle=False):
+            until(lambda: ask("status")["watching"])
+            watcher.send(ev("create", late), ev("write", late))   # the spool, replayed after hello
+            # Nobody ever saw `lost`; the walk finds it, after the replay so `late` keeps its maker.
+            until(lambda: ask("thing", ref=str(lost)))
+            assert ask("why", ref=str(late)).startswith("You made it in the terminal")
+    finally:
+        watcher.close()
 
 
 def test_sigterm_closes_cleanly(home, h):

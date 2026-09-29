@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+APP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TURN_SCOPE = re.compile(r"^bombadil-turn-(.+)\.scope$")
 DEV_SLICE = re.compile(r"^bombadil-dev-(.+)\.slice$")
 APP_UNIT = re.compile(r"^(?:app-)?bombadil(?:-|\\x2d)app(?:-|\\x2d)([a-z0-9][a-z0-9-]*?)(?:@[^.]*)?\.(?:scope|service)$")
@@ -48,8 +49,10 @@ SYSTEM = Actor("system")
 
 
 def _unescape(s: str) -> str:
-    """systemd unit name escaping: \\x2d is "-"."""
-    return re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), s)
+    """systemd unit name escaping: \\x2d is "-", and a name that is not ASCII is its UTF-8 bytes."""
+    def run(m):
+        return bytes(int(h, 16) for h in re.findall(r"[0-9a-fA-F]{2}", m.group(0))).decode("utf-8", "replace")
+    return re.sub(r"(?:\\x[0-9a-fA-F]{2})+", run, s)
 
 
 def _argv(entry) -> list[str]:
@@ -63,7 +66,8 @@ def _app_from_chain(chain: list) -> str | None:
         argv = _argv(entry)
         for i, a in enumerate(argv[:3]):
             if a.rsplit("/", 1)[-1] == "bombadil-app" and argv[i + 1:i + 2] == ["run"] and len(argv) > i + 2:
-                return argv[i + 2]
+                # the name becomes a folder under ~/Apps in the brain's keys: plain names only
+                return argv[i + 2] if APP_NAME.match(argv[i + 2]) and ".." not in argv[i + 2] else None
     return None
 
 
@@ -135,11 +139,13 @@ def from_event(ev: dict, sessions: Sessions | None = None) -> Actor:
     app = _app_from_chain(chain)
     if app:
         return Actor("app", f"app:{app}", comm)
-    if ev.get("uid") == 0:
-        return Actor("system", "", comm)
+    if ev.get("uid") == 0 and not cgroup.startswith("/user.slice/"):
+        return Actor("system", "", comm)   # a root service; `sudo vim` in your terminal stays yours
     if not cgroup and not chain:
         return UNKNOWN
-    return Actor("you", "", _window(chain) or comm, comm)
+    # A writer that left is named by its nearest live ancestor: when that is the compositor
+    # itself, nothing says which window it was.
+    return Actor("you", "", _window(chain) or ("" if comm in SESSION_ROOTS else comm), comm)
 
 
 def window_title(prog: str) -> str:

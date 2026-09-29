@@ -157,6 +157,124 @@ def test_private_things_never_reach_the_model(store, home):
     assert model.prompts == []
 
 
+def test_nothing_private_is_opened_even_when_its_row_says_it_is_not(store, home, monkeypatch):
+    key, _ = thing_at(store, home, ".ssh/id_ed25519", "not a key, but its name says it is one")
+    ssh = store.by_path(str(home / ".ssh"))
+    (home / "Apps/passwords/data").mkdir(parents=True)
+    (home / "Apps/passwords/main.qml").write_text("x")
+    app = {"id": 90, "kind": "app", "path": str(home / "Apps/passwords"), "title": "Passwords", "private": 0}
+    opened = []
+    real_open, real_scandir = os.open, os.scandir
+    monkeypatch.setattr(os, "open", lambda path, *a, **k: (opened.append(str(path)), real_open(path, *a, **k))[1])
+    monkeypatch.setattr(os, "scandir", lambda path=".": (opened.append(str(path)), real_scandir(path))[1])
+    for row in ({**key, "private": 0}, {**ssh, "private": 0}, app):
+        assert fingerprint(row) is None and describe.material(row) is None
+        assert fingerprint(row, str(home)) is None
+    assert opened == []
+    d = Describer(store, str(home), run=Model())
+    assert d.get({**key, "private": 0}) is None and d.get(app) is None
+
+
+def test_a_link_is_never_followed(store, home):
+    key, _ = thing_at(store, home, ".ssh/id_ed25519", "not a key, but its name says it is one")
+    plain, _ = thing_at(store, home, "plain.txt", "hello\n")
+    (home / "Documents").mkdir()
+    (home / "Documents/vault").symlink_to(home / ".ssh")
+    (home / "notes.txt").symlink_to(home / ".ssh/id_ed25519")
+    (home / "hello.txt").symlink_to(home / "plain.txt")
+    assert describe.read_head(str(home / "notes.txt")) is None and describe.read_head(str(home / "hello.txt")) is None
+    assert describe.file_type(str(home / "notes.txt")) == "none" and describe.file_type(str(home / "hello.txt")) == "none"
+    assert describe.read_head(str(home / "plain.txt")) == b"hello\n"
+    # Nor when the folder on the way is the link.
+    rows = [{"id": 91, "kind": "file", "path": str(home / "notes.txt"), "private": 0},
+            {"id": 92, "kind": "file", "path": str(home / "hello.txt"), "private": 0},
+            {"id": 93, "kind": "file", "path": str(home / "Documents/vault/id_x"), "private": 0}]
+    (home / ".ssh/id_x").write_text("x")
+    model = Model()
+    d = Describer(store, str(home), run=model)
+    assert [fingerprint(r) for r in rows] == [None, None, None]
+    assert [d.get(r) for r in rows] == [None, None, None]
+    d.wait()
+    assert model.prompts == [] and key and plain
+
+
+def test_a_thing_that_turned_private_while_it_waited_is_not_described(store, home):
+    gate = threading.Event()
+    a, _ = thing_at(store, home, "a.txt", "first note\n")
+    b, _ = thing_at(store, home, "b.txt", "second note\n")
+    c, _ = thing_at(store, home, "c.txt", "third note\n")
+    model = Model("A note.", gate=gate)
+    d = Describer(store, str(home), run=model)
+    d.get(a)
+    for _ in range(100):
+        if d.pending(a["id"]) and not d._queue:
+            break
+        time.sleep(0.01)
+    d.get(b)
+    d.get(c)
+    store.update(b["id"], private=1)             # flagged while it waited
+    store.mark_deleted(c["id"], time.time())     # gone while it waited
+    gate.set()
+    assert d.wait()
+    assert len(model.prompts) == 1 and "first note" in model.prompts[0]
+    assert store.description(b["id"]) is None and store.description(c["id"]) is None
+    d.close()
+
+
+def test_what_a_folder_lists_leaves_private_names_out(store, home):
+    (home / "Lease").mkdir()
+    for name in ("lease-2026.pdf", "letter.odt", "passwords.txt"):
+        (home / "Lease" / name).write_text("x")
+    folder = thing_at(store, home, "Lease/letter.odt", "x")[0]
+    lease = store.get(folder["parent"])
+    before = fingerprint(lease)
+    (home / "Lease" / "my-secret-notes.txt").write_text("x")
+    assert fingerprint(lease) == before
+    model = Model("A folder holding the lease.")
+    d = Describer(store, str(home), run=model)
+    d.get(lease)
+    assert d.wait()
+    assert "lease-2026.pdf" in model.prompts[0] and "letter.odt" in model.prompts[0]
+    assert "passwords" not in model.prompts[0] and "secret" not in model.prompts[0]
+    d.close()
+
+
+def test_a_huge_or_oddly_named_folder_is_read_a_little(store, home, monkeypatch):
+    monkeypatch.setattr(describe, "NAMES_SCAN", 8)
+    monkeypatch.setattr(describe, "NAMES", 4)
+    (home / "data").mkdir()
+    for i in range(30):
+        (home / "data" / f"f{i:02}.txt").write_text("x")
+    os.close(os.open(os.path.join(os.fsencode(home), b"data", b"caf\xe9.txt"), os.O_CREAT | os.O_WRONLY))
+    folder = thing_at(store, home, "data/f00.txt", "x")[0]
+    data = store.get(folder["parent"])
+    fp, body = describe.material(data)
+    assert len(fp) == 64 and body.count(".txt") <= 4
+    prompt = describe.prompt_for(data, body)
+    prompt.encode("utf-8")      # whatever the names held, it can be sent
+
+
+def test_a_page_is_described_without_its_query_or_fragment(store, home):
+    ing = Ingest(store, str(home), xattrs=False)
+    pid = ing.visit("https://example.org/account/reset?code=one-time-value#top", "Reset your access", time.time())
+    page = store.get(pid)
+    model = Model("A page for resetting access to an account.")
+    d = Describer(store, str(home), run=model)
+    d.get(page)
+    assert d.wait()
+    prompt = model.prompts[0]
+    assert "https://example.org/account/reset" in prompt and "Reset your access" in prompt
+    assert "one-time-value" not in prompt and "#top" not in prompt
+    d.close()
+
+
+def test_a_sentence_never_holds_markup_or_terminal_escapes():
+    out = one_sentence("A page that says <img src=x> and <b>bold</b> things here.")
+    assert "<" not in out and ">" not in out and out.startswith("A page that says")
+    out = one_sentence("A note\x1b]0;owned\x07 about btrfs snapshots\x9b31m today.")
+    assert all(c.isprintable() for c in out) and out.startswith("A note") and out.endswith("today.")
+
+
 def test_failures_are_not_retried_on_every_look(store, home, capsys):
     f, _ = thing_at(store, home, "notes.txt", "some notes\n")
     model = Model(RuntimeError("claude exited 1"))
@@ -200,6 +318,8 @@ def test_describe_commands_answer_once_with_nothing_else_to_do():
     assert claude[:2] == ["claude", "-p"] and claude[claude.index("--model") + 1] == "haiku"
     assert claude[claude.index("--tools") + 1] == "" and "--strict-mcp-config" in claude
     assert claude[claude.index("--output-format") + 1] == "text"
+    # Not the user's memory, hooks or skills: the model only reads what it is shown.
+    assert "--safe-mode" in claude
     assert "--mcp-config" not in claude and "--dangerously-skip-permissions" not in claude
     assert providers.Claude("x", model="opus").describe_command(model="sonnet")[3] == "sonnet"
     assert providers.Codex("x").describe_command() == ["codex", "exec", "--skip-git-repo-check", "--sandbox",

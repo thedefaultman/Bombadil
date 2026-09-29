@@ -154,6 +154,9 @@ class Store:
         if self.path != ":memory:":
             self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
+        # SQLite's lower() and LIKE only fold ASCII: "Ärger" must be found by "ärg".
+        self.db.create_function("fold", 1, lambda s: s.casefold() if isinstance(s, str) else s,
+                                deterministic=True)
         self.db.executescript(SCHEMA)
         if self.get_meta("schema") is None:
             self.set_meta("schema", str(SCHEMA_VERSION))
@@ -183,7 +186,16 @@ class Store:
                 self.db.execute("ROLLBACK")
                 raise
             self._depth = 0
-            self.db.execute("COMMIT")
+            try:
+                self.db.execute("COMMIT")
+            except BaseException:
+                # A full disk fails the commit and leaves the transaction open: every later
+                # BEGIN would then fail too.
+                try:
+                    self.db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
 
     def q(self, sql: str, args=()) -> list[dict]:
         with self._lock:
@@ -294,15 +306,17 @@ class Store:
             if old is None:
                 return
             old_path = old["path"]
-            self.update(thing_id, path=new_path, title=_name(new_path) if old["kind"] in ("file", "folder")
-                        else old["title"], parent=parent, area=area)
+            renamed = old["kind"] in ("file", "folder", "project")   # an app's title is in its app.toml
+            self.update(thing_id, path=new_path, title=_name(new_path) if renamed else old["title"],
+                        parent=parent, area=area)
             if old_path and old["kind"] in ("folder", "project", "app"):
                 prefix = old_path.rstrip("/") + "/"
-                inside = self.q("SELECT id, path FROM things WHERE deleted IS NULL AND path LIKE ? ESCAPE '\\'",
-                                (_like_prefix(prefix),))
-                for row in inside:
-                    self.x("UPDATE things SET path = ? WHERE id = ?",
-                           (new_path.rstrip("/") + "/" + row["path"][len(prefix):], row["id"]))
+                for row in self.inside(prefix):
+                    dest = new_path.rstrip("/") + "/" + row["path"][len(prefix):]
+                    stale = self.by_path(dest)
+                    if stale is not None and stale["id"] != row["id"]:
+                        self.mark_deleted(stale["id"], time.time())   # the disk has the moved one there now
+                    self.x("UPDATE things SET path = ? WHERE id = ?", (dest, row["id"]))
                     self._index(row["id"])
 
     def mark_deleted(self, thing_id: int, t: float) -> list[int]:
@@ -313,12 +327,17 @@ class Store:
                 return []
             ids = [thing_id]
             if thing["path"] and thing["kind"] in ("folder", "project", "app"):
-                prefix = thing["path"].rstrip("/") + "/"
-                ids += [r["id"] for r in self.q(
-                    "SELECT id FROM things WHERE deleted IS NULL AND path LIKE ? ESCAPE '\\'", (_like_prefix(prefix),))]
+                ids += [r["id"] for r in self.inside(thing["path"].rstrip("/") + "/")]
             for i in ids:
                 self.x("UPDATE things SET deleted = ? WHERE id = ?", (t, i))
             return ids
+
+    def inside(self, prefix: str, live: bool = True, deleted_at: float | None = None) -> list[dict]:
+        """The things whose path starts with `prefix` (which ends in "/"). A range, not LIKE:
+        LIKE ignores case, so /h/Docs would take /h/docs with it."""
+        extra = "AND deleted IS NULL" if live else ("AND deleted = ?" if deleted_at is not None else "")
+        args = (prefix, prefix[:-1] + "0", *((deleted_at,) if extra.endswith("?") else ()))
+        return self.q(f"SELECT id, path FROM things WHERE path >= ? AND path < ? {extra}", args)
 
     def revive(self, thing_id: int) -> bool:
         """An editor that deletes and writes again keeps the same thing. False when another
@@ -330,6 +349,47 @@ class Store:
             return False
         self.x("UPDATE things SET deleted = NULL WHERE id = ?", (thing_id,))
         return True
+
+    def revive_tree(self, thing_id: int, new_path: str | None = None) -> bool:
+        """A thing that came back from the Trash, at its old path or at `new_path`, with what
+        went with it if it is a folder (the things marked at the same moment). Anything that
+        has been made again at one of those paths since stays as it is."""
+        with self.tx():
+            thing = self.get(thing_id)
+            if thing is None or thing["deleted"] is None:
+                return False
+            target = new_path or thing["path"]
+            if target and self.by_path(target) is not None:
+                return False
+            if thing["path"] and thing["kind"] in ("folder", "project", "app"):
+                old = thing["path"].rstrip("/") + "/"
+                for row in self.inside(old, live=False, deleted_at=thing["deleted"]):
+                    dest = target.rstrip("/") + "/" + row["path"][len(old):]
+                    if self.by_path(dest) is None:
+                        self.x("UPDATE things SET path = ?, deleted = NULL WHERE id = ?", (dest, row["id"]))
+                        self._index(row["id"])
+            fields = {"deleted": None}
+            if target != thing["path"]:
+                fields["path"] = target
+                if thing["kind"] in ("file", "folder", "project"):
+                    fields["title"] = _name(target)
+            self.update(thing_id, **fields)
+            return True
+
+    def forget_gone(self, thing_id: int, t: float) -> None:
+        """The delete (or the move out of sight) at time t was half of a save: an editor
+        that removes a file and writes it again has not deleted anything."""
+        self.x("DELETE FROM events WHERE thing = ? AND t = ? AND (kind = 'delete' OR "
+               "(kind = 'move' AND instr(detail, '\"hidden\": true') > 0))", (thing_id, t))
+
+    def tag_inside(self, prefix: str, **fields) -> None:
+        """Set fields (area, private) on everything under a folder's path in one statement."""
+        bad = set(fields) - {"area", "private"}
+        if bad or not fields:
+            raise ValueError(f"cannot tag {sorted(bad) or 'nothing'}")
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        self.x(f"UPDATE things SET {sets} WHERE path >= ? AND path < ?",
+               (*fields.values(), prefix, prefix[:-1] + "0"))
 
     def children(self, parent: int, live: bool = True, limit: int = 500, offset: int = 0) -> list[dict]:
         extra = "AND deleted IS NULL" if live else ""
@@ -370,8 +430,9 @@ class Store:
 
     def search(self, query: str, kind: str | None = None, limit: int = 20, live: bool = True) -> list[dict]:
         """Things whose title, name or path contain the words, most alive first. Trigrams need
-        three letters; shorter words match the start of a name instead."""
-        words = [w for w in query.split() if w]
+        three letters, so with only short words the first must start the title, and with a
+        long word beside them a short one may sit anywhere in the title."""
+        words = [w for w in query.replace("\0", " ").split() if w]
         if not words:
             return []
         filters, args = [], []
@@ -381,20 +442,24 @@ class Store:
         if live:
             filters.append("things.deleted IS NULL")
         filters.append("things.forgotten = 0")
-        where = " AND ".join(filters)
-        if all(len(w) >= 3 for w in words):
-            match = " AND ".join('"' + w.replace('"', '""') + '"' for w in words)
-            sql = (f"SELECT things.* FROM search JOIN things ON things.id = search.rowid "
-                   f"WHERE search MATCH ? AND {where} "
-                   f"ORDER BY things.pinned DESC, COALESCE(things.touched, things.changed, things.created, 0) DESC "
-                   f"LIMIT ?")
-            return self.q(sql, (match, *args, limit))
-        conds = " AND ".join("lower(things.title) LIKE ? ESCAPE '\\'" for _ in words)
-        likes = [_like_prefix(words[0].lower())] + [f"%{_like_escape(w.lower())}%" for w in words[1:]]
-        sql = (f"SELECT things.* FROM things WHERE {conds} AND {where} "
+        long_ = [w for w in words if len(w) >= 3]
+        short = [w for w in words if len(w) < 3]
+        conds, params = [], []
+        if long_:
+            conds.append("search MATCH ?")
+            params.append(" AND ".join('"' + w.replace('"', '""') + '"' for w in long_))
+        for i, w in enumerate(short):
+            conds.append("fold(things.title) LIKE ? ESCAPE '\\'")
+            first = i == 0 and not long_
+            params.append(_like_prefix(w.casefold()) if first else f"%{_like_escape(w.casefold())}%")
+        source = "search JOIN things ON things.id = search.rowid" if long_ else "things"
+        sql = (f"SELECT things.* FROM {source} WHERE {' AND '.join(conds + filters)} "
                f"ORDER BY things.pinned DESC, COALESCE(things.touched, things.changed, things.created, 0) DESC "
                f"LIMIT ?")
-        return self.q(sql, (*likes, *args, limit))
+        try:
+            return self.q(sql, (*params, *args, limit))
+        except sqlite3.OperationalError:
+            return []   # a word FTS5 cannot take, even quoted: nothing matches it
 
     # -- events --
 

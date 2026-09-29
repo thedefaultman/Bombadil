@@ -48,6 +48,7 @@ BATCH_S = 0.25
 PUSH_S = 0.25            # "changed" goes out at most four times a second
 RECONNECT_S = 2.0
 HELLO_S = 2.0            # a watcher that has not said hello by then does not hold the start up
+QUIET_S = 1.0            # no line from the watcher for this long: its replay of what it spooled is over
 LOOK_S = 60.0            # without a watcher: how often History and the logs are looked at
 STATUS_S = 1.0           # progress pushes, at most once a second
 REQUESTED_S = 120.0      # how long a thing the launcher asked for waits for the Brain app to start
@@ -55,15 +56,21 @@ SEND_CAP = 4 << 20       # bytes queued for a client that stopped reading before
 LINE_LIMIT = 1 << 20
 READ_SIZE = 1 << 16
 WALK_RETRY_S = 30.0
+DAMAGED_S = 60.0         # a database found damaged is replaced at most once in this long
 PROMPT_MAX = 4000
 HISTORY_NAMES = ("History", "History-journal", "History-wal")
 UNKNOWN = "The brain does not know this yet."
+ID_LIMIT = 1 << 63       # SQLite integers are signed 64 bits
 OPS = ("status", "thing", "focus", "children", "why", "search", "recent", "show", "requested", "describe",
        "note", "subscribe", "rebuild")
 
 
 class Refusal(Exception):
     """A request the brain answers with no: str() is the sentence the client shows."""
+
+
+class Unknown(Refusal):
+    """A ref the brain cannot know: not a thing it could ever have stored."""
 
 
 class AlreadyRunning(Exception):
@@ -91,13 +98,31 @@ def _int(value, default: int, low: int, high: int) -> int:
         return default
 
 
+def _corrupt(e: BaseException) -> bool:
+    """Is the database itself damaged (not busy, locked or out of room, which are not that)?"""
+    if not isinstance(e, sqlite3.DatabaseError) or isinstance(e, sqlite3.OperationalError):
+        return False
+    name = getattr(e, "sqlite_errorname", None)
+    if name is not None:
+        return name == "SQLITE_NOTADB" or name.startswith("SQLITE_CORRUPT")   # FTS says _VTAB
+    return "malformed" in str(e) or "not a database" in str(e)
+
+
 def _ref(req: dict, home: str):
     """The thing a request names: an id, a path (~ is home), a URL or a key."""
     ref = req.get("ref")
     if isinstance(ref, int) and not isinstance(ref, bool):
+        if not 0 <= ref < ID_LIMIT:
+            raise Unknown(UNKNOWN)   # no row has that id, and SQLite cannot even be asked
         return ref
     if isinstance(ref, str) and ref.strip() and "\0" not in ref:
         ref = ref.strip()
+        try:
+            ref.encode("utf-8")
+        except UnicodeEncodeError:
+            raise Unknown(UNKNOWN) from None   # a name that is not UTF-8 is never stored
+        if ref.isascii() and ref.isdigit() and int(ref) >= ID_LIMIT:
+            raise Unknown(UNKNOWN)
         if ref == "~" or ref.startswith("~/"):
             ref = home + ref[1:]
         return ref
@@ -176,7 +201,14 @@ class Brain:
         self._walk_next: str | None = None
         self._walk_retry = WALK_RETRY_S
         self._rebuilding = False
-        self._show_seq = 0
+        # Counts up from the start time, so a Brain app that outlives a restart of the brain
+        # (it ignores a "show" whose seq it has seen) never sees the numbers go back.
+        self._show_seq = int(time.time() * 1000)
+        self._batch: list[dict] = []         # watcher lines read and not applied yet
+        self._was: str | None = None         # how the last run ended: "running" means it did not
+        self._clean = False
+        self._read_at = 0.0                  # loop time of the last bytes from the watcher
+        self._damaged_at = -DAMAGED_S
         self._history_task: asyncio.Task | None = None
         self._history_busy = False
         self._history_again = False
@@ -208,15 +240,35 @@ class Brain:
             except TimeoutError:
                 pass
             if self.walk and not self._stopping.is_set():
-                indexed = await self.job(self.store.get_meta, "indexed")
-                if not indexed:
+                try:
+                    indexed = await self.job(self.store.get_meta, "indexed")
+                except sqlite3.DatabaseError:
+                    indexed = None   # damaged: `job` has said so, and a new database starts its own walk
+                if self._rebuilding:
+                    pass
+                elif not indexed:
                     self.want_walk("first")
                 elif not self.watched:
                     self.want_walk("reconcile")   # nobody saw what happened while we were away
+                elif self._was == "running":
+                    # The last run was cut off with saves not yet written down.
+                    self._spawn(self._reconcile_when_quiet())
             await self._refresh_known()
             await self._stopping.wait()
         finally:
             await self._close(server)
+
+    async def _reconcile_when_quiet(self) -> None:
+        """What the watcher spooled while we were away is replayed right after hello. A walk
+        that found a file before its save was applied would call it "made while nobody
+        watched", so this walk waits for the replay to end."""
+        while not self._stopping.is_set():
+            left = self._read_at + QUIET_S - self.loop.time()
+            if left <= 0 or not self.watched:
+                break
+            await self._sleep(left)
+        await self.job(bool)   # everything read so far is applied
+        self.want_walk("reconcile")
 
     def stop(self) -> None:
         """Close cleanly (SIGTERM). Call on the loop, or through call_soon_threadsafe."""
@@ -234,6 +286,9 @@ class Brain:
     def _run(self, fn, args):
         try:
             return fn(*args)
+        except sqlite3.DatabaseError as e:
+            self._check(e)
+            raise
         finally:
             ing = self.ingest
             if ing is not None and ing.changed:
@@ -249,6 +304,32 @@ class Brain:
             self.loop.call_soon_threadsafe(fn, *args)
         except RuntimeError:
             pass   # the loop is gone: we are shutting down
+
+    def _check(self, e: BaseException) -> None:
+        """Any thread: note an error that means brain.db is damaged."""
+        if _corrupt(e):
+            self._to_loop(self._damaged, e)
+
+    def _damaged(self, e: BaseException) -> None:
+        if self._rebuilding or self._stopping.is_set() or time.monotonic() - self._damaged_at < DAMAGED_S:
+            return
+        self._damaged_at = time.monotonic()
+        self._rebuilding = True   # at once: what asks next must not start a walk on the damaged file
+        self._spawn(self._replace_database(e))
+
+    async def _replace_database(self, e: BaseException) -> None:
+        """brain.db is a cache: one that went bad while running is set aside like one that
+        was bad at the start, and made again from the files and the logs."""
+        log(f"{self.db_path} is damaged ({e}); setting it aside and starting over")
+        try:
+            await self._stop_walk()
+            await self.job(self._start_over)
+            await self.job(self._witnesses)
+            if self.walk:
+                self.want_walk("first")
+        finally:
+            self._rebuilding = False
+        await self._refresh_known(push=True)
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -292,8 +373,20 @@ class Brain:
 
     async def _close(self, server) -> None:
         self._stopping.set()
-        for task in list(self._tasks):
+        tasks = list(self._tasks)
+        for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # Saves already read from the watcher are ours now: it does not send them again.
+        pending, self._batch = self._batch, []
+        self._clean = True
+        if pending and self.store is not None:
+            try:
+                control, _ = await self.job(self._apply, pending)
+                self._clean = not ({"overflow", "caught_up"} & set(control))
+            except Exception as e:  # noqa: BLE001 - the next start walks instead
+                log(f"closing: could not apply {len(pending)} saves ({type(e).__name__}: {e})")
+                self._clean = False
         if server is not None:
             server.close()
         for conn in list(self.conns):
@@ -324,24 +417,49 @@ class Brain:
         except sqlite3.DatabaseError as e:
             # brain.db is a cache: one that is not a database any more is set aside and made
             # again. Locked, unreadable or a full disk is not that: it stays, and we fail.
-            if isinstance(e, sqlite3.OperationalError) or \
-                    getattr(e, "sqlite_errorname", "SQLITE_NOTADB") not in ("SQLITE_NOTADB", "SQLITE_CORRUPT"):
+            if not _corrupt(e):
                 raise
             log(f"{self.db_path} cannot be read ({e}); setting it aside and starting over")
-            for suffix in ("", "-wal", "-shm"):
-                try:
-                    os.replace(f"{self.db_path}{suffix}", f"{self.db_path}{suffix}.broken")
-                except OSError:
-                    pass
+            self._set_aside()
             self.store = Store(self.db_path)
         sessions = actors.Sessions(paths.state_dir() / "dev" / "sessions.json")
         self.ingest = Ingest(self.store, self.home, sessions, xattrs=self.xattrs)
         self._make_witnesses()
         self._make_describer()
+        self._was = self.store.get_meta("brain.run")
+        self.store.set_meta("brain.run", "running")
+
+    def _set_aside(self) -> None:
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.replace(f"{self.db_path}{suffix}", f"{self.db_path}{suffix}.broken")
+            except OSError:
+                pass
+
+    def _start_over(self) -> None:
+        """Worker: close everything that holds the damaged file, set it aside, open a new one."""
+        if self.describer is not None:
+            self.describer.close()
+            self.describer = None
+        for store in (self._describe_store, self.store):
+            if store is not None:
+                try:
+                    store.close()
+                except sqlite3.Error:
+                    pass
+        self._describe_store = self.store = None
+        self._set_aside()
+        self._dirty, self._stamps = {}, {}
+        self._open()
 
     def _shut(self) -> None:
         if self.describer is not None:
             self.describer.close()
+        if self.store is not None:
+            try:
+                self.store.set_meta("brain.run", "stopped" if self._clean else "running")
+            except sqlite3.Error:
+                pass
         for store in (self._describe_store, self.store):
             if store is not None:
                 store.close()
@@ -379,6 +497,7 @@ class Brain:
         try:
             return fn(*args)
         except Exception as e:  # noqa: BLE001
+            self._check(e)
             log(f"{what}: {type(e).__name__}: {e}")
             return None
 
@@ -438,6 +557,9 @@ class Brain:
                 else:
                     time.sleep(0.5)
             except Exception as e:  # noqa: BLE001 - one bad event must not cost the batch
+                if _corrupt(e):
+                    self._check(e)   # the database is replaced; going event by event would not help
+                    return [], False
                 log(f"a batch failed ({type(e).__name__}: {e}); applying it one event at a time")
                 control = []
                 for ev in events:
@@ -539,7 +661,7 @@ class Brain:
         with self.store.tx():
             for table in ("things", "events", "links", "turns", "descriptions", "search"):
                 self.store.x(f"DELETE FROM {table}")
-            self.store.x("DELETE FROM meta WHERE key != 'schema'")
+            self.store.x("DELETE FROM meta WHERE key NOT IN ('schema', 'brain.run')")
         self.ingest.changed.clear()
         self.ingest.specials.clear()
         self._dirty, self._stamps = {}, {}
@@ -589,12 +711,13 @@ class Brain:
     async def _follow(self, reader: asyncio.StreamReader) -> None:
         """Batches of up to 500 lines or 250 ms, applied in one transaction each."""
         buf = b""
-        batch: list[dict] = []
+        batch = self._batch = []   # on self: a stop applies what was read, the watcher will not resend it
         began = 0.0
         hello_by = self.loop.time() + HELLO_S
         while not self._stopping.is_set():
             if batch and (len(batch) >= BATCH_LINES or self.loop.time() - began >= BATCH_S):
-                now, batch = batch[:BATCH_LINES], batch[BATCH_LINES:]
+                now = batch[:BATCH_LINES]
+                del batch[:BATCH_LINES]
                 await self._flush(now)
                 began = self.loop.time()
                 continue
@@ -612,6 +735,7 @@ class Brain:
                 continue
             if not data:
                 break
+            self._read_at = self.loop.time()
             *lines, buf = (buf + data).split(b"\n")
             for raw in lines:
                 ev = _event(raw)
@@ -628,12 +752,14 @@ class Brain:
                 log("the watcher sent a line too long to be one; skipping it")
                 buf = b""
         while batch and not self._stopping.is_set():
-            now, batch = batch[:BATCH_LINES], batch[BATCH_LINES:]
+            now = batch[:BATCH_LINES]
+            del batch[:BATCH_LINES]
             await self._flush(now)
 
     def _hello(self, ev: dict) -> None:
         self.watching = bool(ev.get("watching"))
         self.watch_reason = str(ev.get("reason") or "")
+        self._read_at = self.loop.time()
         if not self.watching:
             log(f"the watcher is not watching here{': ' + self.watch_reason if self.watch_reason else ''}")
         self._watch_ready.set()
@@ -719,6 +845,7 @@ class Brain:
                 walker.close()
         except Exception as e:  # noqa: BLE001 - a walk that fails is tried again later
             failed = True
+            self._check(e)
             log(f"{'the first index' if kind == 'first' else 'catching up'} failed: {type(e).__name__}: {e}")
         if not failed:
             what = "the first index" if kind == "first" else "catching up"
@@ -891,7 +1018,11 @@ class Brain:
                               _int(req.get("limit"), 200, 1, 1000))
 
     async def _op_why(self, req, conn):
-        return await self.job(self._why, _ref(req, self.home))
+        try:
+            ref = _ref(req, self.home)
+        except Unknown:
+            return UNKNOWN   # the pill's line: what the brain says of anything it has not seen
+        return await self.job(self._why, ref)
 
     async def _op_search(self, req, conn):
         q = req.get("q")

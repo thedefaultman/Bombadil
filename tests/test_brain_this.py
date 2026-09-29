@@ -278,3 +278,67 @@ def test_resolve_asks_hyprland_for_the_active_window(home):
     assert this.resolve(Hypr(RuntimeError("Hyprland is not running"))) is None
     assert this.resolve(Hypr("{}", available=False)) is None
     assert this.resolve() is None     # no Hyprland here at all
+
+
+def test_a_process_that_vanishes_or_cannot_be_read_mid_scan_costs_only_itself(home, proc, monkeypatch):
+    lease = _file(home / "Documents" / "lease.pdf", mtime=1_700_000_000)
+    letter = _file(home / "Documents" / "letter.odt", mtime=1_700_000_500)
+    proc.add(200, 1, 10, fds=[])
+    proc.add(201, 200, 20, fds=[letter])         # gone by the time its files are listed
+    proc.add(202, 200, 30, fds=[lease, letter])  # one link gone between listing and reading it
+    proc.add(203, 200, 40, fds=[letter])
+    real_listdir, real_readlink = os.listdir, os.readlink
+
+    def listdir(path="."):
+        if str(path).endswith("/201/fd"):
+            raise FileNotFoundError(path)
+        if str(path).endswith("/203/fd"):
+            raise PermissionError(path)         # somebody else's process: not ours to look at
+        return real_listdir(path)
+
+    def readlink(path, *a, **k):
+        if str(path).endswith("/202/fd/4"):
+            raise FileNotFoundError(path)
+        return real_readlink(path, *a, **k)
+    monkeypatch.setattr(this.os, "listdir", listdir)
+    monkeypatch.setattr(this.os, "readlink", readlink)
+    win = {"class": "org.pwmt.zathura", "pid": 200, "title": "x"}
+    assert _ref(win, proc, home) == lease
+
+
+def test_entries_that_are_not_what_the_kernel_would_show_are_skipped(home, proc):
+    project = home / "Projects" / "bombadil"
+    project.mkdir(parents=True)
+    notes = _file(project / "notes.md")
+    proc.add(100, 1, 10, argv=["foot"], cwd=home)
+    proc.add(101, 100, 20, argv=["bash"], tpgid=104, cwd=project)
+    proc.add(102, 100, 30, argv=["less"], tpgid=104, pgrp=102, fds=[notes])   # a job in the background
+    # A stat that is a directory. And what runs in front, whose fd, cmdline and cwd are
+    # not what the kernel would show (a file, a directory, no link at all).
+    (proc.root / "103").mkdir()
+    (proc.root / "103" / "stat").mkdir()
+    proc.add(104, 100, 40, argv=["broken"], tpgid=104, pgrp=104)
+    (proc.root / "104" / "fd").rmdir()
+    (proc.root / "104" / "fd").write_text("not a directory")
+    (proc.root / "104" / "cmdline").unlink()
+    (proc.root / "104" / "cmdline").mkdir()
+    assert _ref({"class": "foot", "pid": 100}, proc, home) == str(project)
+    # An unreadable working folder leaves nothing to name.
+    d3 = proc.add(300, 1, 10, argv=["foot"])
+    (d3 / "cwd").write_text("a file, not a link")
+    assert _ref({"class": "foot", "pid": 300}, proc, home) is None
+
+
+def test_files_that_are_deleted_or_kept_out_by_the_brains_rules_are_never_this(home, proc):
+    gone = _file(home / "Documents" / "gone.pdf")
+    kept = _file(home / "Documents" / "kept.pdf", mtime=1_600_000_000)
+    os.remove(gone)
+    app_data = _file(home / "Apps" / "tracker" / "data" / "runs.json", mtime=1_800_000_000)
+    trashed = _file(home / ".local" / "share" / "Trash" / "files" / "old.pdf", mtime=1_800_000_000)
+    build = _file(home / "Projects" / "rs" / "target" / "debug" / "x.rlib", mtime=1_800_000_000)
+    lock = _file(home / "Documents" / ".~lock.letter.odt#", mtime=1_800_000_000)
+    # The kernel names a file that was unlinked while open by adding " (deleted)" to its path.
+    proc.add(200, 1, 10, fds=[gone + " (deleted)", app_data, trashed, build, lock, kept])
+    assert _ref({"class": "evince", "pid": 200}, proc, home) == kept
+    proc.add(201, 1, 10, fds=[gone + " (deleted)", app_data, trashed, build, lock])
+    assert _ref({"class": "evince", "pid": 201}, proc, home) is None

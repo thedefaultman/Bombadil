@@ -107,6 +107,18 @@ def test_answer_skips_pushes_and_stale_answers(sock):
         fake.close()
 
 
+def test_pushes_nobody_listens_to_do_not_pile_up(sock):
+    pushes = [{"push": "changed", "things": [i], "t": 1.0} for i in range(client.PUSH_KEEP * 3)]
+    fake = FakeBrain(sock, lambda req: [*pushes, {"id": req["id"], "ok": True, "result": "done"}])
+    try:
+        with client.Connection() as conn:
+            assert conn.request("status") == "done"
+            assert len(conn.pushes) == client.PUSH_KEEP
+            assert conn.push(0.1)["things"] == [client.PUSH_KEEP * 2]   # the newest are kept
+    finally:
+        fake.close()
+
+
 def test_a_no_carries_the_brains_sentence(sock):
     fake = FakeBrain(sock, lambda req: [{"id": req["id"], "ok": False, "error": "The brain does not know this yet."}])
     try:

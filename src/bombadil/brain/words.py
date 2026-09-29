@@ -23,12 +23,15 @@ class Who:
     via: str = ""             # program or window app
 
 
-def _local(t: float) -> time.struct_time:
-    return time.localtime(t)
+def _local(t: float) -> time.struct_time | None:
+    try:
+        return time.localtime(t)
+    except (OverflowError, OSError, ValueError):
+        return None   # a time from a corrupt row: say nothing rather than fail
 
 
 def _days_apart(t: float, now: float) -> int:
-    a, b = _local(t), _local(now)
+    a, b = time.localtime(t), time.localtime(now)
     # round, not floor: the day the clocks go forward is 23 hours long.
     return round((time.mktime((b.tm_year, b.tm_mon, b.tm_mday, 0, 0, 0, 0, 0, -1))
                   - time.mktime((a.tm_year, a.tm_mon, a.tm_mday, 0, 0, 0, 0, 0, -1))) / 86400)
@@ -39,7 +42,9 @@ def when(t: float | None, now: float | None = None) -> str:
     if not t:
         return ""
     now = time.time() if now is None else now
-    lt = _local(t)
+    lt, ln = _local(t), _local(now)
+    if lt is None or ln is None:
+        return ""
     hm = f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
     days = _days_apart(t, now)
     if days <= 0:
@@ -48,7 +53,7 @@ def when(t: float | None, now: float | None = None) -> str:
         return f"yesterday {hm}"
     if days < 7:
         return f"{DAYS[lt.tm_wday]} {hm}"
-    if lt.tm_year == _local(now).tm_year:
+    if lt.tm_year == ln.tm_year:
         return f"{lt.tm_mday} {MONTHS[lt.tm_mon - 1]}"
     return f"{lt.tm_mday} {MONTHS[lt.tm_mon - 1]} {lt.tm_year}"
 
@@ -58,7 +63,9 @@ def on_day(t: float | None, now: float | None = None) -> str:
     if not t:
         return ""
     now = time.time() if now is None else now
-    lt = _local(t)
+    lt, ln = _local(t), _local(now)
+    if lt is None or ln is None:
+        return ""
     hm = f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
     days = _days_apart(t, now)
     if days <= 0:

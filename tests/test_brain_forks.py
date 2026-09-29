@@ -35,7 +35,8 @@ def test_threads_exec_and_other_messages_are_skipped():
     assert forks.parse(exit_(14, 10)) == []             # a thread ending
     assert forks.parse(msg(forks.PROC_EVENT_EXEC, struct.pack("=ii", 5, 5))) == []
     assert forks.parse(msg(forks.PROC_EVENT_FORK, struct.pack("=iiii", 1, 1, 2, 2), idx=7)) == []
-    assert forks.parse(msg(forks.PROC_EVENT_FORK, struct.pack("=iiii", 1, 1, 2, 2), ntype=forks.NLMSG_ERROR)) == []
+    err = msg(forks.PROC_EVENT_FORK, struct.pack("=iiii", 1, 1, 2, 2), ntype=forks.NLMSG_ERROR)
+    assert forks.parse(err) == []
 
 
 def test_several_messages_in_one_buffer_and_short_input():

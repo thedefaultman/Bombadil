@@ -19,6 +19,7 @@ from .. import paths
 
 NOTIFY_S = 0.3
 READ_SIZE = 65536
+PUSH_KEEP = 1000   # pushes kept for a caller that asks and never listens: the newest
 # A focus of a big folder is a few hundred KB; anything past this is not an answer.
 MAX_LINE = 64 << 20
 
@@ -43,7 +44,7 @@ class Connection:
     def __init__(self, path=None, timeout: float = 2.0):
         self.path = str(path or paths.brain_socket())
         self.timeout = timeout
-        self.pushes: deque[dict] = deque()
+        self.pushes: deque[dict] = deque(maxlen=PUSH_KEEP)
         self._buf = b""
         self._next = 0
         try:

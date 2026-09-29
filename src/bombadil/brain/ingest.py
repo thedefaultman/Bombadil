@@ -17,6 +17,7 @@ rebuild of brain.db.
 """
 
 import hashlib
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -30,6 +31,9 @@ REVIVE_S = 10.0
 # A file that lived this briefly with one writer was scaffolding (a build's temp file with an
 # ordinary name): when it goes, it goes from the brain too.
 EPHEMERAL_S = 30.0
+# A folder that appears by a rename (moved in from out of sight) is looked into this far; a
+# walk finishes the rest.
+ADOPT_MAX = 2000
 XATTR_MADE_BY = "user.bombadil.made_by"
 XATTR_ORIGIN = "user.bombadil.origin"
 # Special files that feed witnesses rather than being things themselves.
@@ -57,7 +61,9 @@ def fingerprint_url(url: str) -> str | None:
         return None
     if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
         return None
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, ""))
+    # user:password@ in a URL is a secret, and never part of which page it is
+    return urlunsplit((parts.scheme.lower(), parts.netloc.rpartition("@")[2].lower(), parts.path or "/",
+                       parts.query, ""))
 
 
 def site_of(url: str) -> str:
@@ -135,7 +141,8 @@ class Ingest:
             return Who("turn", self.turn_thing_for_unit(actor.key.removeprefix("unit:")), actor.via)
         if actor.kind == "session":
             tid = self._sessions.get(actor.key)
-            if tid is None or self.store.get(tid) is None:
+            have = self.store.get(tid) if tid is not None else None
+            if have is None or have["key"] != actor.key:   # gone, or its id went to another thing
                 rest = actor.key.removeprefix("session:")
                 project, _, name = rest.partition("/")
                 title = f"{name} on {project}" if name else f"a coding session on {project}"
@@ -188,7 +195,8 @@ class Ingest:
             name = os.path.basename(path)
             have = self.store.by_key(f"app:{name}")
             if have is not None:
-                self.store.update(have["id"], path=path, parent=parent)
+                # An app folder made again (rm -rf, then written anew) is the same app.
+                self.store.update(have["id"], path=path, parent=parent, deleted=None)
                 tid = have["id"]
             else:
                 tid = self.store.add("app", _app_title(path, name), key=f"app:{name}", path=path, parent=parent)
@@ -230,6 +238,7 @@ class Ingest:
             dead = self.store.by_path(path, deleted=True)
             if dead is not None and dead["deleted"] and 0 <= t - dead["deleted"] <= REVIVE_S \
                     and self.store.revive(dead["id"]):
+                self.store.forget_gone(dead["id"], dead["deleted"])
                 thing = self.store.get(dead["id"])
         if thing is None:
             if op == "offline":
@@ -291,13 +300,19 @@ class Ingest:
                 self.changed.add(thing["id"])
             return
         new_ok = vn.kind in ("thing", "rollup") and new not in self._ignored
+        if thing is None and vo.kind == "trash" and new_ok and self._restored(old, new, t, who, is_dir):
+            return
         if thing is None or vo.kind != "thing":
             if new_ok:
                 # A temp file renamed into place, a download finishing, a move in from out of
                 # sight: to the brain it is the file appearing (or being saved) at `new`.
-                self.saw(new, "write" if self.store.by_path(new) else "create", t, who, is_dir,
-                         size=(ev or {}).get("size"), ino=(ev or {}).get("ino"))
+                fresh = self.store.by_path(new) is None
+                tid = self.saw(new, "create" if fresh else "write", t, who, is_dir,
+                               size=(ev or {}).get("size"), ino=(ev or {}).get("ino"))
+                if fresh and is_dir and tid is not None:
+                    self._adopt(new)
             return
+        is_dir = is_dir or thing["kind"] in ("folder", "project", "app")
         if not new_ok:
             # Moved out of sight (a backup name like file~, into node_modules): gone for now.
             # An editor writing the file again right after revives it.
@@ -312,7 +327,12 @@ class Ingest:
             self.saw(new, "write", t, who, is_dir, size=(ev or {}).get("size"), ino=(ev or {}).get("ino"))
             return
         parent = self.folder(os.path.dirname(new))
-        self.store.move(thing["id"], new, parent, self.area(new, is_dir))
+        area = self.area(new, is_dir, self_id=thing["id"])
+        self.store.move(thing["id"], new, parent, area)
+        if is_dir:
+            self._settle_inside(thing["id"], new, area)
+        if vn.private and not thing["private"]:
+            self.store.update(thing["id"], private=1)   # renamed to a private name: private from now on
         if thing["kind"] in ("folder", "project", "app"):
             kind = rules.kind_of_folder(new, self.home)
             if kind != thing["kind"] and kind != "app" and thing["kind"] != "app":
@@ -321,6 +341,65 @@ class Ingest:
         self.store.touch(thing["id"], t)
         self._changed_by(thing["id"], who, t, e)
         self.changed.add(thing["id"])
+
+    def _settle_inside(self, tid: int, new: str, area: int | None) -> None:
+        """A folder moved: what is inside is in its area now, and private if it went into a
+        private place. A folder that holds areas (Projects) has each child looked at."""
+        prefix = new.rstrip("/") + "/"
+        rel = new[len(self.home) + 1:] if new.startswith(self.home + "/") else None
+        if rel in ("Projects", "Apps", "Documents", "Desktop"):
+            for row in self.store.q("SELECT id, path, kind FROM things WHERE deleted IS NULL "
+                                    "AND path >= ? AND path < ?", (prefix, prefix[:-1] + "0")):
+                is_dir = row["kind"] in ("folder", "project", "app")
+                self.store.update(row["id"], area=self.area(row["path"], is_dir))
+        elif area is not None:
+            self.store.tag_inside(prefix, area=area)
+        if rules.private(prefix + "x", self.home):
+            self.store.tag_inside(prefix, private=1)
+
+    def _restored(self, old: str, new: str, t: float, who: Who, is_dir: bool) -> bool:
+        """Something taken back out of the Trash is the thing that went in, wherever it goes."""
+        row = self.store.one("SELECT thing FROM events WHERE kind = 'trash' AND instr(detail, ?) > 0 "
+                             "ORDER BY t DESC LIMIT 1", ('"to": ' + json.dumps(old),))
+        dead = self.store.get(row["thing"]) if row else None
+        if dead is None or dead["deleted"] is None or not self.store.revive_tree(dead["id"], new):
+            return False
+        area = self.area(new, is_dir or dead["kind"] in ("folder", "project", "app"), self_id=dead["id"])
+        self.store.update(dead["id"], parent=self.folder(os.path.dirname(new)), area=area)
+        if dead["kind"] in ("folder", "project", "app"):
+            self._settle_inside(dead["id"], new, area)
+        e = self.store.event(t, "move", dead["id"], who.kind, who.thing, who.via,
+                             detail={"from": old, "restored": True})
+        self.store.touch(dead["id"], t)
+        self._changed_by(dead["id"], who, t, e)
+        self.changed.add(dead["id"])
+        return True
+
+    def _adopt(self, root: str) -> None:
+        """A folder that came by a rename never had a create for what is inside it, so look
+        a little way in now rather than wait for the next walk."""
+        todo, seen = [root], 0
+        while todo and seen < ADOPT_MAX:
+            try:
+                with os.scandir(todo.pop()) as it:
+                    entries = [e for _, e in zip(range(ADOPT_MAX), it)]
+            except OSError:
+                continue
+            things = [e.path for e in entries if rules.classify(e.path, self.home).kind == "thing"]
+            skip = self.git.ignored(things, stop=self.home) if things else set()
+            for e in entries:
+                if seen >= ADOPT_MAX:
+                    break
+                if e.path not in things or e.path in skip:
+                    continue
+                try:
+                    is_dir = e.is_dir(follow_symlinks=False)
+                    st = e.stat(follow_symlinks=False)
+                except OSError:
+                    continue
+                seen += 1
+                if self.found(e.path, st, is_dir) is not None and is_dir:
+                    todo.append(e.path)
 
     def deleted(self, path: str, t: float, who: Who) -> None:
         thing = self.store.by_path(path)
@@ -403,7 +482,7 @@ class Ingest:
     def _who_from_label(self, label: str) -> Who:
         """The inverse of _label: 'turn 41', 'session bombadil/builder', 'app passwords', 'you'."""
         kind, _, rest = label.partition(" ")
-        if kind == "turn" and rest.isdigit():
+        if kind == "turn" and rest.isdigit() and 0 < int(rest) < 10**9:   # a copied file can say anything
             n = int(rest)
             row = self.store.turn(n)
             tid = row["thing"] if row else self.store.upsert_key("turn", f"turn:{n}", f"turn {n}")
@@ -414,7 +493,7 @@ class Ingest:
             project, _, name = rest.partition("/")
             return Who("session", self.store.upsert_key("session", f"session:{rest}",
                                                          f"{name} on {project}" if name else project))
-        if kind == "app" and rest:
+        if kind == "app" and actors.APP_NAME.match(rest) and ".." not in rest:
             return Who("app", self.app_thing(rest))
         if kind == "you":
             return Who("you")

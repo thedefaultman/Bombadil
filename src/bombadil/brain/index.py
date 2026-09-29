@@ -96,6 +96,7 @@ class Walker:
         # brain.db itself, wherever it is kept (it lives in a skipped folder on a real system).
         self._own = {self.db_path + s for s in ("", "-wal", "-shm", "-journal")}
         self._caps: list[tuple[str, int | None]] = []
+        self._entries = 0   # what the last walk found in home to look at
 
     def close(self) -> None:
         self.store.close()
@@ -164,6 +165,9 @@ class Walker:
 
         if not self._walk(visit, progress, stop):
             return {**counts, "stopped": True}
+        if gone and not self._entries:
+            # A home that is not mounted yet is an empty folder, and everything in it "gone".
+            raise OSError(f"{self.home} looks empty, so nothing that was in it is marked as gone")
         now = time.time()
         # Moves first, shortest paths first: a folder that moved takes what is inside it
         # along, and a file moved out of a folder is safe before that folder is deleted.
@@ -236,18 +240,19 @@ class Walker:
         """The new path with the missing thing's inode, when it is the same thing. Inode
         numbers come back at once on ext4 (and repeat across btrfs subvolumes), so the inode
         alone is not enough: a file keeps its name (a move) or its size and age (a rename
-        nobody edited since); a folder keeps its name or something the brain knew was in it.
+        nobody edited since), and even under its own name it is not edited or resized into
+        something else; a folder keeps its name or something the brain knew was in it.
         Anything less certain is a deletion and a new thing, which only splits a history
         where a wrong match would join two."""
         is_dir = thing["kind"] != "file"
         name = os.path.basename(thing["path"])
         cands = [c for c in cands if c[2] == is_dir and c[0] not in used]
         same_name = [c for c in cands if os.path.basename(c[0]) == name]
-        if len(same_name) == 1:
-            return same_name[0]
-        if same_name:
-            return None
         if is_dir:
+            if len(same_name) == 1:
+                return same_name[0]
+            if same_name:
+                return None
             known = {os.path.basename(r["path"] or "") for r in self.store.children(thing["id"], live=False, limit=200)}
             fits = []
             for c in cands:
@@ -257,9 +262,20 @@ class Walker:
                     continue
                 if (known & inside) or (not known and not inside):
                     fits.append(c)
-        else:
-            seen = max(thing.get("changed") or 0, thing.get("touched") or 0, thing.get("created") or 0)
-            fits = [c for c in cands if c[1].st_size == thing.get("size") and c[1].st_mtime <= seen + CHANGED_SLACK_S]
+            return fits[0] if len(fits) == 1 else None
+        seen = max(thing.get("changed") or 0, thing.get("touched") or 0, thing.get("created") or 0)
+
+        def unedited(c):
+            return c[1].st_mtime <= seen + CHANGED_SLACK_S
+
+        def same_size(c):
+            return c[1].st_size == thing.get("size")
+
+        if same_name:
+            # A different file made later under the same name has neither.
+            return same_name[0] if len(same_name) == 1 and (unedited(same_name[0]) or same_size(same_name[0])) \
+                else None
+        fits = [c for c in cands if same_size(c) and unedited(c)]
         return fits[0] if len(fits) == 1 else None
 
     def _unseen_save(self, thing: dict, st: os.stat_result, started: float) -> bool:
@@ -317,16 +333,24 @@ class Walker:
         except OSError:
             return None   # gone since it was listed, or not ours to look at
 
+    def _capped(self, d: str, n: int) -> bool:
+        """Too many entries to be worth walking into. Home is never one: what is in it is all there is."""
+        return n > MAX_ENTRIES and d != self.home
+
     def _list(self, d: str) -> tuple[list[os.DirEntry], int]:
-        """A folder's entries and how many there are; past MAX_ENTRIES only counted."""
+        """A folder's entries and how many there are; past MAX_ENTRIES only counted (home
+        excepted). A folder that cannot be read has none, but home that cannot be read is an
+        error: an index that says "done" about a home that was not there is worse than none."""
         entries, n = [], 0
         try:
             with os.scandir(d) as it:
                 for e in it:
                     n += 1
-                    if n <= MAX_ENTRIES:
+                    if n <= MAX_ENTRIES or d == self.home:
                         entries.append(e)
         except OSError:
+            if d == self.home:
+                raise
             return [], 0
         return entries, n
 
@@ -341,7 +365,7 @@ class Walker:
             d = queue.popleft()
             n += 1
             entries, size = self._list(d)
-            if size > MAX_ENTRIES:
+            if self._capped(d, size):
                 continue
             for e in entries:
                 try:
@@ -354,15 +378,13 @@ class Walker:
     def _walk(self, visit, progress=None, stop=None) -> bool:
         """Breadth first from home, so a folder is always found before what is inside it.
         visit(path, stat, is_dir, verdict) -> whether to go into a folder. False if stopped."""
-        try:
-            st = os.stat(self.home)
-        except OSError:
-            return True   # no home to walk
+        st = os.stat(self.home)   # raises when there is no home: the service tries again later
         total = self._count(self.home, stop)
         if total is None:
             return False
         done = 0
         self._caps = []
+        self._entries = 0
         with self.store.tx():
             go = visit(self.home, st, True, THING)
         queue = deque([(self.home, THING)] if go else [])
@@ -372,11 +394,14 @@ class Walker:
                 d, verdict = queue.popleft()
                 done += 1
                 entries, n = self._list(d)
+                capped = self._capped(d, n)
                 if verdict == THING:
-                    self._caps.append((d, n if n > MAX_ENTRIES else None))
-                if n > MAX_ENTRIES:
+                    self._caps.append((d, n if capped else None))
+                if capped:
                     continue
-                pending += [j for j in map(self._judge, entries) if j is not None]
+                judged = [j for j in map(self._judge, entries) if j is not None]
+                self._entries += sum(1 for j in judged if j[3] == THING)
+                pending += judged
             if stop is not None and stop():
                 return False
             ignored = self.ingest.git.ignored([p for p, _, _, v in pending if v == THING], stop=self.home)

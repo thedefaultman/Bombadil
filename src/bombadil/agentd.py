@@ -30,10 +30,11 @@ the os-mcp server attached in its own scope, stream its events, log the turn. La
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
 
 The log (turns.jsonl) is what the brain learns turns from: each row has the turn's number,
-which goes on across restarts, its scope, when it began, and the files it wrote and read
-by its own tool calls. The brain is also told when a turn starts and ends, so it can name
-the turn's writes while they happen. That is a courtesy: it is sent from a thread, never
-waited for, and a brain that is slow, down or broken costs the turn nothing.
+its scope, when it began, and the files it wrote and read by its own tool calls. Numbers go
+on across restarts, also past a turn a crash cut off before its row (the last one begun is
+kept in the state folder's "turn"). The brain is also told when a turn starts and ends, so
+it can name the turn's writes while they happen. That is a courtesy: it is sent from a
+thread, never waited for, and a brain that is slow, down or broken costs the turn nothing.
 """
 
 import asyncio
@@ -65,6 +66,8 @@ POKE_TIMEOUT = 2.0
 # Claude Code's tools that write a file, and the input that names it.
 WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
                "NotebookEdit": "notebook_path"}
+# What the next turn is told for the brain's words, in place of the brain's own line.
+BRAIN_NOTES = {"brain": "opened the Brain", "why": "the brain answered in the line"}
 
 
 class AgentD:
@@ -78,7 +81,8 @@ class AgentD:
         self.stopper = stopper or procs.Stopper()
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
-        self.turns = _last_turn(paths.turns_log())   # turn numbers go on across restarts
+        # Turn numbers go on across restarts, past a turn a crash cut off before its row.
+        self.turns = max(_last_turn(paths.turns_log()), _begun())
         self.proc: asyncio.subprocess.Process | None = None
         self.pending: list[tuple[int, str]] = []   # prompts waiting for the running turn
         self._wake = asyncio.Event()
@@ -182,8 +186,8 @@ class AgentD:
         elif t == "details":
             self._background(self.details(msg.get("turn")))
         elif t == "summon":
-            text = msg.get("text")
-            await self.broadcast({"type": "summon", **({"text": text[:500]} if isinstance(text, str) and text else {})})
+            text = _pill_words(msg.get("text"))
+            await self.broadcast({"type": "summon", **({"text": text} if text else {})})
         elif t == "status":
             await self._send(writer, self._status())
 
@@ -297,7 +301,10 @@ class AgentD:
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
                          text=text)
         if ok:
-            self.notes.append(f"{typed!r}: {text}")
+            # The brain's answers quote page titles, which whoever made the page wrote: the
+            # model hears that it was asked, not what it said.
+            said = BRAIN_NOTES.get(action.kind, text)
+            self.notes.append(f"{typed!r}: {said}")
             self.notes = self.notes[-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
                         "target": action.target, "result": text, "ok": ok})
@@ -400,6 +407,7 @@ class AgentD:
             return
         self.turns += 1
         n = self.turns
+        _mark_begun(n)   # before snapper and the brain hear of it
         self._files = files = TurnFiles(paths.home())
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
@@ -575,7 +583,8 @@ class AgentD:
                         "session": self.session_id, "stopped": stopped, "summary": summary,
                         "details": str(self.turn_logs.get(self.current, "")),
                         "n": n, "unit": unit, "started": started,
-                        "files": files.row() if files is not None else {"wrote": [], "read": []}})
+                        "files": (files.row(settled=result["ok"] is True and not stopped) if files is not None
+                                  else {"wrote": [], "read": []})})
 
     def _log_line(self, entry: dict):
         log = paths.turns_log()
@@ -628,12 +637,10 @@ class TurnFiles:
             for change in ev.get("changes") if isinstance(ev.get("changes"), list) else []:
                 if isinstance(change, dict):
                     self._add(self.wrote, change.get("path"), ev.get("id"))
-        elif kind == "tool_result" and ev.get("error") and ev.get("id") in self._calls:
-            for bucket, path in self._calls.pop(ev["id"]):
-                if path in bucket:
-                    bucket[path] -= 1
-                    if bucket[path] <= 0:
-                        del bucket[path]
+        elif kind == "tool_result" and isinstance(ev.get("id"), str):
+            calls = self._calls.pop(ev["id"], [])
+            if ev.get("error"):
+                self._take_back(calls)
 
     def _add(self, bucket: dict, path, call_id) -> None:
         if not isinstance(path, str) or not path.strip() or "\0" in path:
@@ -645,7 +652,20 @@ class TurnFiles:
         if isinstance(call_id, str) and call_id:
             self._calls.setdefault(call_id, []).append((bucket, path))
 
-    def row(self) -> dict:
+    def _take_back(self, calls: list) -> None:
+        for bucket, path in calls:
+            if path in bucket:
+                bucket[path] -= 1
+                if bucket[path] <= 0:
+                    del bucket[path]
+
+    def row(self, settled: bool = True) -> dict:
+        """What to log. A turn that was stopped or died has calls that never got a result,
+        such as an edit queued behind a long command: those are not known to have run."""
+        if not settled:
+            for calls in self._calls.values():
+                self._take_back(calls)
+            self._calls.clear()
         return {"wrote": list(self.wrote), "read": list(self.read)}
 
 
@@ -655,6 +675,15 @@ def _action(msg: dict) -> launcher.Action | None:
     if kind in launcher.CORE_COMMANDS or kind in launcher.BRAIN_COMMANDS or kind in launcher.UTILITY_COMMANDS:
         return launcher.Action(kind)
     return None
+
+
+def _pill_words(text) -> str:
+    """Words for the pill, as one line: a file name can hold a line break or a mark that
+    turns text around, and what the pill shows is what the agent gets."""
+    if not isinstance(text, str):
+        return ""
+    line = "".join(ch if ch.isprintable() else " " for ch in text)[:500]
+    return line if line.strip() else ""
 
 
 def _turn_number(value) -> int | None:
@@ -690,6 +719,30 @@ def _last_turn(log: Path) -> int:
     except OSError:
         return count
     return count
+
+
+def _begun_file() -> Path:
+    return paths.state_dir() / "turn"
+
+
+def _begun() -> int:
+    """The number of the last turn begun. A turn cut off by a crash, or by the reboot it
+    ran, leaves no row, yet its restore point and the brain already carry its number."""
+    try:
+        return _turn_number(int(_begun_file().read_text().strip())) or 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _mark_begun(n: int) -> None:
+    path = _begun_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(".turn.tmp")
+        tmp.write_text(f"{n}\n")
+        os.replace(tmp, path)
+    except OSError as e:   # the turn runs anyway; only a crash in it could reuse its number
+        print(f"agentd: keeping the turn number: {e}", file=sys.stderr)
 
 
 def _ends_a_line(path: Path) -> bool:

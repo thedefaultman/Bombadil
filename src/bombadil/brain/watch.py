@@ -802,7 +802,9 @@ class Hub:
 
 # --- btrfs --------------------------------------------------------------------------------
 
-FIND_NEW_LINE = re.compile(rb"^inode \d+ file offset \d+ len \d+ disk start \d+ offset \d+ gen \d+ flags \S+ (.*)$")
+FIND_NEW_LINE = re.compile(
+    rb"^inode \d+ file offset \d+ len \d+ disk start \d+ offset \d+ gen \d+ flags \S+ (.*)$"
+)
 MARKER = re.compile(rb"^transid marker was (\d+)$")
 SUBVOL_LINE = re.compile(rb"^ID (\d+) gen \d+ top level \d+ path (.*)$")
 
@@ -1120,15 +1122,17 @@ class Watcher:
                 return
             who = self.attr.who_json(ev.pid, ev.pidfd, mono)
             if o is not None and n is not None:
-                self._send({"op": "rename", "t": now, "path": n, "old": o, "dir": isdir, "ino": None, "size": None},
-                           who, (n, o))
+                head = {"op": "rename", "t": now, "path": n, "old": o, "dir": isdir}
+                self._send({**head, "ino": None, "size": None}, who, (n, o))
             elif n is not None and not scope.noise(n):
                 # Moved in from somewhere we cannot name any more: it simply appeared.
                 assert new is not None
                 st = _lstat(new[0])
-                self._send({"op": "create", "t": now, "path": n, "dir": isdir, **_idsize(st, isdir)}, who, (n,))
+                head = {"op": "create", "t": now, "path": n, "dir": isdir}
+                self._send({**head, **_idsize(st, isdir)}, who, (n,))
             elif o is not None and not scope.noise(o):
-                self._send({"op": "delete", "t": now, "path": o, "dir": isdir, "ino": None, "size": None}, who, (o,))
+                head = {"op": "delete", "t": now, "path": o, "dir": isdir}
+                self._send({**head, "ino": None, "size": None}, who, (o,))
             return
         p = self.resolver.path(ev.dir, ev.name)
         if isdir and m & fan.FAN_DELETE:

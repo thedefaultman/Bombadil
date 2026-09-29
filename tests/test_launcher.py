@@ -403,3 +403,35 @@ def test_the_line_while_the_brain_works(home):
     assert launcher.Launcher.doing(launcher.Action("why")) == "Looking it up"
     assert launcher.Launcher.failed(launcher.Action("brain")) == "Could not open the Brain"
     assert launcher.Launcher.failed(launcher.Action("why")) == "Could not look it up"
+
+
+def test_a_stalled_compositor_makes_the_request_raise_instead_of_hanging(home, monkeypatch, tmp_path):
+    """"this" asks Hyprland from the launcher's thread: a compositor that accepts and never
+    answers must cost a raised TimeoutError, not that thread for good."""
+    import socket
+    import time
+
+    from bombadil import hypr
+
+    real_socket, waits = socket.socket, []
+
+    class Quick(real_socket):
+        def settimeout(self, value):
+            waits.append(value)
+            super().settimeout(min(value, 0.3) if value else value)   # the test is not to take 5 s
+
+    run = tmp_path / "x"
+    (run / "hypr" / "s").mkdir(parents=True)
+    server = real_socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(run / "hypr" / "s" / ".socket.sock"))
+    server.listen(1)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(run))
+    monkeypatch.setenv("HYPRLAND_INSTANCE_SIGNATURE", "s")
+    monkeypatch.setattr(hypr.socket, "socket", Quick)
+    try:
+        t0 = time.monotonic()
+        with pytest.raises(TimeoutError):
+            hypr.Hyprland().request("j/activewindow")
+        assert time.monotonic() - t0 < 2 and waits and all(0 < w <= 10 for w in waits)
+    finally:
+        server.close()

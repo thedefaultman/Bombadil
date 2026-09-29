@@ -33,8 +33,13 @@ DOT_ALLOWED = (
     ".config/hypr", ".config/bombadil", ".config/quickshell", ".config/foot", ".config/git",
     ".ssh", ".gnupg", ".password-store", ".local/share/keyrings",
 )
+# The browser's profile (cookies, saved logins, caches) is not something a person made.
+DOT_SKIPPED = (".config/bombadil/chromium",)
 # Whose contents are never read: names only.
 PRIVATE_DIRS = (".ssh", ".gnupg", ".password-store", ".local/share/keyrings", ".local/share/kwalletd")
+# The same under /etc: keys, saved Wi-Fi and VPN passwords.
+ETC_PRIVATE_DIRS = ("/etc/wireguard", "/etc/NetworkManager/system-connections", "/etc/ssl/private",
+                    "/etc/openvpn", "/etc/iwd", "/etc/wpa_supplicant", "/etc/cryptsetup-keys.d", "/etc/ppp")
 PRIVATE_SUFFIXES = (".kdbx", ".kdb", ".key", ".pem", ".p12", ".pfx", ".gpg", ".pgp", ".asc", ".jks",
                     ".keystore", ".vault", ".age")
 PRIVATE_NAME = re.compile(r"(^id_[a-z0-9]+(\.pub)?$)|password|passwd|secret|credential|\.env(\..*)?$|^\.netrc$",
@@ -81,7 +86,8 @@ def private(path: str, home: str) -> bool:
     if rel is not None and any(rel == d or rel.startswith(d + "/") for d in PRIVATE_DIRS):
         return True
     if path.startswith("/etc/") and (name in ("shadow", "gshadow", "shadow-", "gshadow-")
-                                     or path.startswith("/etc/sudoers") or path.startswith("/etc/ssh/ssh_host_")):
+                                     or path.startswith(("/etc/sudoers", "/etc/ssh/ssh_host_"))
+                                     or any(path == d or path.startswith(d + "/") for d in ETC_PRIVATE_DIRS)):
         return True
     return name.lower().endswith(PRIVATE_SUFFIXES) or bool(PRIVATE_NAME.search(name))
 
@@ -111,6 +117,8 @@ def classify(path: str, home: str) -> Verdict:
     if rel.startswith(".local/state/bombadil") or rel.startswith(".bombadil-smoke"):
         return SKIP
     if any(p.startswith(".") for p in parts) and not _allowed_dot(rel):
+        return SKIP
+    if any(rel == d or rel.startswith(d + "/") for d in DOT_SKIPPED):
         return SKIP
     if TEMP_NAME.search(parts[-1]):
         return SKIP
