@@ -289,3 +289,37 @@ def test_the_state_file_is_the_one_paths_names(home):
     assert paths.desk_file() == home / "state" / "desk.toml"
     fresh(home).apply("toggle")
     assert tomllib.loads((home / "state" / "desk.toml").read_text())["folded"] is True
+
+
+@pytest.mark.parametrize("args, text, done", [
+    ({"op": "hide", "widget": "machine"}, "Putting Machine away", "Put Machine away"),
+    ({"op": "show", "widget": "needs"}, "Putting Needs you on the desk", "Put Needs you on the desk"),
+    ({"op": "show", "widget": "while you were away"}, "Putting Away on the desk", "Put Away on the desk"),
+    ({"op": "move", "widget": "watching", "rail": "right", "rank": 0},
+     "Moving Watching to the right rail", "Moved Watching to the right rail"),
+    ({"op": "move", "widget": "now", "rank": 1}, "Moving Now", "Moved Now"),
+    ({"op": "fold"}, "Folding the desk", "Folded the desk"),
+    ({"op": "unfold"}, "Unfolding the desk", "Unfolded the desk"),
+    ({"op": "state"}, "Looking at the desk", None),
+    ({}, "Looking at the desk", None),
+])
+def test_the_line_says_what_the_desk_tool_did(args, text, done):
+    from bombadil import narrate
+    step = narrate.tool_step("mcp__bombadil-os__desk", args)
+    assert (step.text, step.done) == (text, done)
+
+
+def test_the_closing_sentence_names_what_was_done_to_the_desk():
+    from bombadil import narrate
+    n = narrate.Narrator()
+    line = n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": {"op": "hide", "widget": "machine"}})
+    assert line["text"] == "Putting Machine away" and line["risk"] is None
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": {"op": "fold"}})
+    assert n.summary() == "Put Machine away and folded the desk."
+
+
+@pytest.mark.parametrize("args", [{"op": ["hide"], "widget": ["machine"]}, {"op": 5, "widget": {"a": 1}},
+                                  {"op": "move", "widget": "now", "rail": ["left"]}, {"widget": None}])
+def test_odd_desk_arguments_never_break_the_line(args):
+    from bombadil import narrate
+    assert narrate.tool_step("mcp__bombadil-os__desk", args).text
