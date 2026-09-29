@@ -4,7 +4,8 @@ Runs as the user, started by Hyprland at login. Listens on a Unix socket for new
 delimited JSON. Any number of clients (the Quickshell bar, `bombadil ask`, a generated
 app) can connect; every event is broadcast to all of them.
 
-Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher word ("browser", "undo")
+Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher word ("browser", "undo");
+                                                        "asked_by": "builder" says a coding session asks
                    {"type": "stop"}                     end the running turn and all it started
                    {"type": "cancel"}                   the same as stop
                    {"type": "unqueue", "turn": n}       drop a prompt still waiting its turn
@@ -18,7 +19,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
-                    "local"|"card", "turn": n, ...}
+                    "local"|"card"|"plan", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "summon"}
@@ -29,6 +30,14 @@ A step's status may also carry "because": why it happens, in the agent's own wor
 it acted (at most 140 characters), and "after": {"label", "kind", "text"}, on a system or irreversible
 step that follows something read from outside ("after reading wireguard.com/quickstart"). The tool
 event of the step carries the same two fields for Details.
+A "step" status also says what the turn has changed so far: "touched": {"package": 1, "file": 2}
+(kinds package, service, file, app; only those there are) and "touched_text": "1 package and 2
+files so far" ("" when nothing).
+"plan" events are the agent's own step list, the whole table on every change:
+{"steps": [{"id": "1", "subject": "Install ffmpeg", "active": "Installing ffmpeg" | null, "status":
+"pending" | "in_progress" | "completed"}]}. A step the agent has only just made has "id": null and
+comes last. When several are in progress the last one is the current step.
+turn_start carries "asked_by": "builder" when the turn was started for a coding session, else null.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg.", "read": [{"label", "kind",
 "outside"}]}; the same list goes into turns.jsonl.
@@ -89,6 +98,8 @@ class AgentD:
         self.workdir = paths.state_dir()
         self.stopping = False
         self.narrator: narrate.Narrator | None = None
+        self.plan_msg: dict | None = None           # the running turn's latest plan event
+        self.asked_by: dict[int, str] = {}          # queued turn -> who asked, when not the person typing
         self.notes: list[str] = []                 # what happened without the model since its last turn
         self.turn_logs: dict[int, Path] = {}
         self._entries_key = None
@@ -165,6 +176,8 @@ class AgentD:
                 self._background(self.local(action, text))
                 return
             self.next_id += 1
+            if msg.get("asked_by") == "builder":
+                self.asked_by[self.next_id] = "builder"
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
             if self.current is not None or self.pending:
@@ -480,6 +493,7 @@ class AgentD:
             finally:
                 self.current = None
                 self.narrator = None
+                self.plan_msg = None
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
@@ -503,8 +517,11 @@ class AgentD:
         self.turn_logs[self.current] = log
         for old in sorted(self.turn_logs)[:-50]:
             self.turn_logs.pop(old, None)
+        # Turns run in the order they were asked, so a mark left by one that was unqueued is dead.
+        asked_by = self.asked_by.pop(self.current, None)
+        self.asked_by = {i: who for i, who in self.asked_by.items() if i > self.current}
         # Something true on screen before snapper, which can take a second.
-        await self.event("turn_start", prompt=prompt, snapshot=None)
+        await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)
         await self.broadcast(self._status())
         if not shell and not self.provider.installed:
             await self.event("error", text=f"{self.provider.binary} is not installed yet: press Super+Return "
@@ -550,7 +567,7 @@ class AgentD:
                 self.notes = []
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
-        env = dict(os.environ)
+        env = {**os.environ, **source.env()}
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
@@ -653,6 +670,10 @@ class AgentD:
             print(f"agentd: narrate {kind}: {type(e).__name__}: {e}", file=sys.stderr)
             line = None
         if line is not None and not self.stopping:
+            if line.get("source") == "step":
+                # What the turn has changed so far, for the desk's "1 package and 2 files so far".
+                line = {**line, "touched": self.narrator.touched_counts(),
+                        "touched_text": self.narrator.touched_text()}
             await self.event("status", **line)
         partial = self._stream_card(ev) if kind in ("tool_start", "tool_input") else None
         if partial is not None and not self.stopping:
@@ -665,6 +686,10 @@ class AgentD:
                     self._befores[unit] = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot_service, unit))
         if kind == "tool_result" and ev.get("id"):
             await self._clear_streams(f"stream-{ev['id']}")   # a show_card call that failed drew nothing
+        plan = self.narrator.take_plan() if self.narrator else None
+        if plan is not None and not self.stopping:
+            self.plan_msg = {"type": "event", "kind": "plan", "turn": self.current, "steps": plan}
+            await self.event("plan", steps=plan)
         if kind in LINE_ONLY:
             return pending_session, reported_error
         if kind == "result":

@@ -577,6 +577,93 @@ async def test_a_step_carries_its_reason_and_what_it_followed_and_the_turn_says_
     assert "user:pw" not in json.dumps(shown) and "x=1" not in json.dumps(shown)
     row = [json.loads(line) for line in paths.turns_log().read_text().splitlines()][-1]
     assert row["read"] == end["read"]
+
+
+# What Claude prints for a turn that keeps a task list: two tasks made, the first done under a
+# command that changes the system and a file it writes.
+PLANNED = (
+    "import json, sys, time\n"
+    "sys.stdin.read()\n"
+    "def call(id, name, **inp):\n"
+    "    print(json.dumps({'type': 'assistant', 'message': {'content': [\n"
+    "        {'type': 'tool_use', 'id': id, 'name': name, 'input': inp}]}}), flush=True)\n"
+    "def result(id, text):\n"
+    "    print(json.dumps({'type': 'user', 'message': {'content': [\n"
+    "        {'type': 'tool_result', 'tool_use_id': id, 'content': text}]}}), flush=True)\n"
+    "call('t1', 'TaskCreate', subject='Install ffmpeg', description='d', activeForm='Installing ffmpeg')\n"
+    "call('t2', 'TaskCreate', subject='Open the browser', description='d')\n"
+    "result('t1', 'Task #1 created successfully: Install ffmpeg')\n"
+    "result('t2', 'Task #2 created successfully: Open the browser')\n"
+    "call('u1', 'TaskUpdate', taskId='1', status='in_progress')\n"
+    "call('b1', 'Bash', command='sudo pacman -S --noconfirm ffmpeg')\n"
+    "result('b1', 'installed')\n"
+    "call('w1', 'Write', file_path='/home/u/notes.md', content='hi')\n"
+    "call('u2', 'TaskUpdate', taskId='1', status='completed')\n"
+)
+
+
+def _planned(then):
+    """The planned turn, then what the CLI does next (a line of Python)."""
+    return PLANNED + then + "\n"
+
+
+WORKING_THEN_DONE = (
+    "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'Working.'}]}}),"
+    " flush=True)\n"
+    "time.sleep(%s)\n"
+    "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)")
+
+
+def _steps(msg):
+    return [(s["id"], s["status"]) for s in msg["steps"]]
+
+
+@pytest.mark.asyncio
+async def test_the_plan_reaches_every_client_stamped_with_its_turn_and_whole_each_time(home):
+    d = agentd.AgentD(Scripted(_planned(WORKING_THEN_DONE % 0)), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    other_r, other_w = await _client(d.socket_path)   # a second bar hears the same
+    await other_r.readline()
+    await other_r.readline()
+    await _ask(w, "install ffmpeg and open the browser")
+    msgs = await _read_until(r, "turn_end")
+    plans = [m for m in msgs if m.get("kind") == "plan"]
+    assert all(m["type"] == "event" and m["turn"] == 1 for m in plans)
+    assert [_steps(m) for m in plans] == [
+        [(None, "pending")],
+        [(None, "pending"), (None, "pending")],
+        [("1", "pending"), (None, "pending")],
+        [("1", "pending"), ("2", "pending")],
+        [("1", "in_progress"), ("2", "pending")],
+        [("1", "completed"), ("2", "pending")]]
+    assert plans[-1]["steps"] == [
+        {"id": "1", "subject": "Install ffmpeg", "active": "Installing ffmpeg", "status": "completed"},
+        {"id": "2", "subject": "Open the browser", "active": "Opening the browser", "status": "pending"}]
+    heard = await _read_until(other_r, "turn_end")
+    assert [m for m in heard if m.get("kind") == "plan"] == plans
+    # It is in the turn's log too, where the details drawer reads from.
+    log = [json.loads(line) for line in d.turn_logs[1].read_text().splitlines()]
+    assert [e["kind"] for e in log].count("plan") == len(plans)
+    w.close()
+    other_w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_status_lines_of_a_step_say_what_the_turn_has_touched_so_far(home):
+    d = agentd.AgentD(Scripted(_planned(WORKING_THEN_DONE % 0)), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "install ffmpeg")
+    msgs = await _read_until(r, "turn_end")
+    steps = [m for m in msgs if m.get("kind") == "status" and m.get("source") == "step"]
+    assert [(m["text"], m["touched"], m["touched_text"]) for m in steps] == [
+        ("Planning the steps", {}, ""),
+        ("Installing ffmpeg", {}, ""),
+        ("Installing ffmpeg", {"package": 1}, "1 package so far"),
+        ("Writing notes.md", {"package": 1, "file": 1}, "1 package and 1 file so far")]
+    # The agent's own words carry no counts: the desk keeps what it last had.
+    said = [m for m in msgs if m.get("kind") == "status" and m.get("source") == "agent"]
+    assert said and all("touched" not in m and "touched_text" not in m for m in said)
     w.close()
     server.cancel()
 
@@ -604,6 +691,41 @@ async def test_why_during_a_turn_is_answered_from_the_recorded_reason_without_th
     w.write(b'{"type": "stop"}\n')
     await w.drain()
     await _read_until(r, "turn_end")
+
+
+@pytest.mark.asyncio
+async def test_a_bar_that_joins_mid_turn_can_be_given_the_latest_plan(home):
+    d = agentd.AgentD(Scripted(_planned(WORKING_THEN_DONE % 1.5)), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    assert d.plan_msg is None
+    await _ask(w, "install ffmpeg")
+    await _events_until(r, lambda m: m.get("kind") == "text" and m.get("text") == "Working.")
+    # Held for the turn as the message the clients got, whole.
+    assert d.plan_msg == {"type": "event", "kind": "plan", "turn": 1, "steps": [
+        {"id": "1", "subject": "Install ffmpeg", "active": "Installing ffmpeg", "status": "completed"},
+        {"id": "2", "subject": "Open the browser", "active": "Opening the browser", "status": "pending"}]}
+    await _events_until(r, lambda m: m["type"] == "status" and not m["busy"])
+    assert d.plan_msg is None   # a turn's plan is not the next turn's
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_turn_sends_no_more_plan(home):
+    from bombadil import procs
+    # Stop (SIGINT) finds it waiting; it writes one more step change on its way out.
+    then = ("try:\n    time.sleep(60)\n"
+            "except KeyboardInterrupt:\n    call('u3', 'TaskUpdate', taskId='2', status='in_progress')")
+    d = agentd.AgentD(Scripted(_planned(then)), agentd._NoSnapshots(), stopper=procs.Stopper(grace=2.0))
+    server, r, w = await _start(d)
+    await _ask(w, "install ffmpeg")
+    await _events_until(r, lambda m: m.get("kind") == "plan" and _steps(m) == [("1", "completed"), ("2", "pending")])
+    w.write(b'{"type": "stop"}\n')
+    await w.drain()
+    msgs = await _read_until(r, "turn_end")
+    assert msgs[-1]["stopped"] is True
+    assert any(m.get("kind") == "tool" and m.get("id") == "u3" for m in msgs)   # it did write it
+    assert not [m for m in msgs if m.get("kind") == "plan"]
     w.close()
     server.cancel()
 
@@ -645,6 +767,44 @@ async def test_a_card_from_os_mcp_is_checked_and_drawn_by_every_bar(home):
     # Not a card: nothing reaches the bar, and the sender is told what to fix.
     bad = await _send_card(d.socket_path, {"shape": "chain", "title": "", "nodes": [{"label": "x" * 40}]})
     assert bad["shown"] is False and any("title is required" in e for e in bad["errors"])
+
+
+@pytest.mark.asyncio
+async def test_the_turn_says_who_asked_for_it(home):
+    slow = ("import json, sys, time\nsys.stdin.read()\ntime.sleep(1.0)\n"
+            "print(json.dumps({'type': 'result', 'result': 'ok'}))\n")
+    d = agentd.AgentD(Scripted(slow), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+
+    async def ask(text, **extra):
+        w.write((json.dumps({"type": "prompt", "text": text, **extra}) + "\n").encode())
+        await w.drain()
+    await ask("first", asked_by="builder")
+    await ask("second", asked_by="builder")     # waits, and is taken back before it runs
+    await ask("third")                          # typed by the person
+    await ask("fourth", asked_by="somebody")    # a name nobody knows
+    seen = await _events_until(r, lambda m: m.get("kind") == "queued" and m.get("prompt") == "fourth")
+    second = next(m for m in seen if m.get("kind") == "queued" and m["prompt"] == "second")
+    w.write((json.dumps({"type": "unqueue", "turn": second["turn"]}) + "\n").encode())
+    await w.drain()
+    for _ in range(3):
+        seen += await _read_until(r, "turn_end")
+    starts = {m["prompt"]: m["asked_by"] for m in seen if m.get("kind") == "turn_start"}
+    assert starts == {"first": "builder", "third": None, "fourth": None}
+    assert d.asked_by == {}   # nothing left over from the turn that was taken back
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_launcher_word_from_a_coding_session_is_still_a_launcher_word(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    w.write(b'{"type": "prompt", "text": "stop", "asked_by": "builder"}\n')
+    await w.drain()
+    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "local", "action": "stop"}
+    await _events_until(r, lambda m: m.get("phase") == "done")
+    assert d.asked_by == {} and d.turns == 0
     w.close()
     server.cancel()
 
@@ -912,5 +1072,25 @@ async def test_a_before_caught_while_the_service_was_already_restarting_is_no_be
     msgs = await _read_until(r, "turn_end")
     await _quiet(d)
     assert not any(m.get("kind") == "card" for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_the_cli_is_started_with_the_plan_tools_switched_on(home, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_ENABLE_TODO_TOOLS", raising=False)
+    script = (
+        "import json, os, sys\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text',"
+        " 'text': 'todo=' + os.environ.get('CLAUDE_CODE_ENABLE_TODO_TOOLS', 'unset')}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'ok'}))\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert next(m["text"] for m in msgs if m.get("kind") == "text") == "todo=1"
+    # A typed "!command" is not the agent's: it gets the daemon's environment as it is.
+    await _ask(w, "!echo todo=${CLAUDE_CODE_ENABLE_TODO_TOOLS:-unset}")
+    msgs = await _read_until(r, "turn_end")
+    assert [m["text"] for m in msgs if m.get("kind") == "output"] == ["todo=unset"]
     w.close()
     server.cancel()
