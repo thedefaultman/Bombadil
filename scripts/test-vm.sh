@@ -29,7 +29,7 @@ if [[ "$mode" == "install" ]]; then rm -f "$disk"; qemu-img create -q -f qcow2 "
 boot() {
   local name=$1 done=$2; shift 2
   local log="$out/$name.serial.log" qmp="$out/$name.qmp.sock"
-  : > "$log"; rm -f "$qmp" "$out/$name".keys.*
+  : > "$log"; rm -f "$qmp" "$out/$name".keys.* "$out/$name"-*.png "$out/$name"-*.png.ppm
   qemu-system-x86_64 "${accel[@]}" -m 4G -smp "$(nproc)" \
     -drive if=pflash,format=raw,readonly=on,file="$ovmf" \
     -device virtio-vga -display none -vnc "${VNC:-127.0.0.1:99}" \
