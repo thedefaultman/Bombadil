@@ -10,6 +10,15 @@ using the Bombadil kit, created with the `create_app` tool of the `bombadil-os` 
 server. It opens as a real window that slides in over the desktop within a second. Never
 build a web page, a local server, a port, an Electron app or a terminal UI for this.
 
+## Where things are
+
+The kit is the QML module `Bombadil`, in `/usr/share/bombadil/share/qml/Bombadil/`. `import
+Bombadil` in `main.qml` finds it; there is nothing to install, copy or search for, and you
+do not need to read its QML files: `references/components.md` documents every component,
+property and signal. This skill is in `/usr/share/bombadil/share/skills/bombadil-apps/`
+(also `~/.claude/skills/bombadil-apps` and `~/.agents/skills/bombadil-apps`). Never
+`find /` or `grep -r` the disk for `Theme.qml` or any other kit file.
+
 ## The loop
 
 1. Pick the closest pattern below. For a complete app, read the example folders next to
