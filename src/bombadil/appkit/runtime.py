@@ -32,6 +32,7 @@ SKIP_DIRS = {"__pycache__", "node_modules"}
 DEBOUNCE_MS = 150
 DEFAULT_SIZE = (560, 680)
 LOG_MAX = 1_000_000   # bytes; past this the log is moved to .log.1
+THREAD_WAIT_MS = 2000  # how long a replaced Backend's QThreads get to stop
 _modules = itertools.count(1)
 
 # Shown in place of an app that has never loaded, until an edit makes it load.
@@ -177,6 +178,7 @@ class Host:
         self.attempts = 0
         self.loaded = False         # the latest load succeeded
         self.backend = None
+        self._retired: list = []      # replaced Backends whose QThread would not stop: never destroyed
         self._backend_failed = False  # app.py did not load: try it again on every reload
         self._module_name = ""
         self._next_backend = None     # (module name, Backend) from app.py, used once its QML compiles
@@ -248,7 +250,8 @@ class Host:
         if not comp.isReady():
             self.collector.add_qml_errors(comp.errors(), fatal=True)
             return None
-        self._use_backend()
+        if not self._use_backend():
+            return None
         obj = comp.beginCreate(self.engine.rootContext())
         if obj is None:
             self.collector.add_qml_errors(comp.errors(), fatal=True)
@@ -293,7 +296,10 @@ class Host:
         self._discard(obj)
         return False
 
-    def _discard(self, obj) -> None:
+    def _discard(self, obj, now: bool = False) -> None:
+        """now: destroy it here rather than when the event loop next runs, so nothing in it
+        evaluates again (App.reloads is about to change)."""
+        from PySide6.QtCore import QCoreApplication, QEvent
         from PySide6.QtQuick import QQuickItem, QQuickWindow
 
         if isinstance(obj, QQuickItem):
@@ -301,6 +307,8 @@ class Host:
         elif isinstance(obj, QQuickWindow):
             obj.hide()
         obj.deleteLater()
+        if now:
+            QCoreApplication.sendPostedEvents(obj, QEvent.Type.DeferredDelete)
         self._components.pop(id(obj), None)
 
     def _install(self, obj) -> None:
@@ -308,6 +316,12 @@ class Host:
 
         old = [o for o in (self.root, self.error_view) if o is not None]
         self.root, self.error_view = obj, None
+        # The old UI is on the new Backend by now: what it reports as it goes (a focus loss
+        # calling a renamed slot, a binding on App.reloads) is not about the new UI.
+        said = self.collector.errors[:], self.collector.warnings[:]
+        for o in old:
+            self._discard(o, now=True)
+        self.collector.errors, self.collector.warnings = said
         if isinstance(obj, QQuickItem):
             self._fit()
             self._follow_title(obj)
@@ -318,8 +332,6 @@ class Host:
             obj.heightChanged.connect(self._resized)
             if self.window is not None and self.window.isVisible():
                 self.window.hide()
-        for o in old:
-            self._discard(o)
 
     def _show_errors(self, errors: list[str]) -> None:
         """The built-in error list, for an app that has never loaded."""
@@ -355,6 +367,7 @@ class Host:
         self._backend_failed = False
         if self._next_backend is not None:   # from an edit whose QML never compiled
             sys.modules.pop(self._next_backend[0], None)
+            self._release(self._next_backend[1])
             self._next_backend = None
         if not py.exists():
             if self.backend is not None:
@@ -365,31 +378,61 @@ class Host:
         module.__file__ = str(py)
         sys.modules[name] = module
         try:
+            from shiboken6 import isValid
+
             # compile() rather than import: no stale __pycache__, nothing written into the app.
             exec(compile(py.read_text(), str(py), "exec"), module.__dict__)
             backend = module.Backend() if hasattr(module, "Backend") else None
+            if backend is not None and not isValid(backend):   # QML could not use it
+                raise TypeError("Backend is not usable: its __init__ never calls super().__init__()")
         except Exception as e:  # noqa: BLE001 - any error in the app's Python is the app's error
-            sys.modules.pop(name, None)
-            if self.collector.echo:
-                traceback.print_exc()
-            self.collector.add("error", python_error(self.ctx, e))
-            self._backend_failed = True
+            self._backend_error(name, e)
             return False
         self._next_backend = (name, backend)
         return True
 
-    def _use_backend(self) -> None:
+    def _backend_error(self, name: str, e: Exception) -> None:
+        sys.modules.pop(name, None)
+        if self.collector.echo:
+            traceback.print_exc()
+        self.collector.add("error", python_error(self.ctx, e))
+        self._backend_failed = True
+
+    def _use_backend(self) -> bool:
         """Point `backend` at the Backend app.py made, then let the old one go. The old UI
         re-evaluates on its way out, against the new Backend or against an old one it kept
         that is now deleted: what it says then is not about the new UI, so it is not counted."""
         if self._next_backend is None:
-            return
+            return True
         (name, backend), self._next_backend = self._next_backend, None
         said = self.collector.errors[:], self.collector.warnings[:]
-        self.engine.rootContext().setContextProperty("backend", backend)
+        try:
+            self.engine.rootContext().setContextProperty("backend", backend)
+        except Exception as e:  # noqa: BLE001 - as when app.py itself fails to load
+            self._backend_error(name, e)
+            return False
         sys.modules.pop(self._module_name, None)
+        self._release(self.backend)
         self._module_name, self.backend = name, backend   # the old Backend is deleted here
         self.collector.errors, self.collector.warnings = said
+        return True
+
+    def _release(self, backend) -> None:
+        """Before a Backend is dropped: Qt aborts the whole process when a QThread is
+        destroyed while it runs, so its threads are asked to stop. One that will not keeps
+        its Backend alive."""
+        from PySide6.QtCore import QThread
+        from shiboken6 import isValid
+
+        if backend is None or not isValid(backend):
+            return
+        threads = backend.findChildren(QThread) + [t for t in vars(backend).values() if isinstance(t, QThread)]
+        threads = [t for t in threads if isValid(t)]
+        for t in threads:
+            t.quit()
+        if not all(t.wait(THREAD_WAIT_MS) for t in threads):
+            _log("app.py: a QThread of the replaced Backend did not stop when asked; it is kept")
+            self._retired.append(backend)
 
     def _refresh_meta(self) -> None:
         title = apps.read_meta(self.ctx.dir).get("title")
@@ -707,9 +750,19 @@ class _Lossy:
         except OSError:
             return len(text)
 
+    def writelines(self, lines) -> None:
+        for line in lines:
+            self.write(line)
+
     def flush(self) -> None:
         try:
             self._stream.flush()
+        except OSError:
+            pass
+
+    def reconfigure(self, **kwargs) -> None:   # flushes first
+        try:
+            self._stream.reconfigure(**kwargs)
         except OSError:
             pass
 
@@ -723,6 +776,7 @@ def _log_to_file(ctx: AppContext) -> None:
     if os.isatty(2):
         return
     sys.stdout, sys.stderr = _Lossy(sys.stdout), _Lossy(sys.stderr)
+    sys.stdout.reconfigure(line_buffering=True)   # an app's print() shows in the log as it happens
     try:
         _open_log(ctx.log_path)
     except OSError as e:

@@ -1,6 +1,7 @@
 """The runtime across edits that swap app.py, remove the app folder, fill the disk or
 flood the log. Qt runs in a child process per test, like in test_appkit_runtime."""
 
+import contextlib
 import errno
 import os
 import subprocess
@@ -25,6 +26,8 @@ class Backend(QObject):
     def count(self):
         return 7
 """
+
+NOSUPER_PY = COUNT_PY + "\n    def __init__(self):\n        self.n = 1\n"   # never calls super().__init__()
 
 
 def test_a_new_backend_does_not_make_the_old_ui_report_errors(home):
@@ -269,3 +272,256 @@ def test_an_app_whose_log_is_on_a_full_disk_still_runs(home):
                 p.kill()
                 p.wait(timeout=10)
     assert {name: p.returncode for name, p in procs.items()} == dict.fromkeys(names, 0)
+
+
+def test_a_backend_that_skips_qobject_init_is_an_app_error(home):
+    pytest.importorskip("PySide6")
+    make_app("counter", {"main.qml": COUNT_QML, "app.py": COUNT_PY})
+    out = drive("counter", """
+        qml, py = (d / "main.qml").read_text(), (d / "app.py").read_text()
+        def result():
+            st = status()
+            return [host.loaded, label(), host.app.property("lastError"), st["ok"], st["showing"], st["errors"], reloads()]
+        out["start"] = [host.start(), label()]
+
+        write("app.py", NOSUPER)
+        wait_for(lambda: host.attempts == 2)
+        out["nosuper"] = result()
+
+        # The error stays while app.py is broken, also across an edit of QML only.
+        write("main.qml", qml.replace('"count "', '"n "'))
+        wait_for(lambda: host.attempts == 3)
+        out["qml_only"] = result()
+
+        write("app.py", py.replace("return 7", "return 8"))
+        wait_for(lambda: host.attempts == 4)
+        out["fixed"] = result()
+    """.replace("NOSUPER", repr(NOSUPER_PY)))
+    assert out["start"] == [True, "count 7"]
+    loaded, text, error, ok, showing, errors, reloads = out["nosuper"]
+    assert (loaded, text, ok, showing, reloads) == (False, "count 7", False, "previous", 0)
+    assert "super().__init__()" in error and errors == [error]
+    assert out["qml_only"] == [False, "count 7", error, False, "previous", [error], 0]
+    assert out["fixed"] == [True, "n 8", "", True, "current", [], 1]
+
+
+def test_a_backend_that_skips_qobject_init_at_startup_shows_the_error(home):
+    pytest.importorskip("PySide6")
+    make_app("counter", {"main.qml": COUNT_QML, "app.py": NOSUPER_PY})
+    out = drive("counter", """
+        out["start"] = [host.start(), host.loaded, host.error_view is not None]
+        st = status()
+        out["status"] = [st["loaded"], st["showing"], st["errors"]]
+    """)
+    assert out["start"] == [False, False, True]
+    loaded, showing, errors = out["status"]
+    assert (loaded, showing) == (False, "errors")
+    assert len(errors) == 1 and "super().__init__()" in errors[0]
+
+
+def test_a_backend_that_qml_refuses_is_an_app_error_too(home):
+    pytest.importorskip("PySide6")
+    make_app("counter", {"main.qml": COUNT_QML, "app.py": COUNT_PY})
+    out = drive("counter", """
+        class Refusing:   # a context whose next setContextProperty raises
+            def __init__(self, real):
+                self.real = real
+            def setContextProperty(self, *args):
+                raise RuntimeError("refused")
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+        real, refuse = host.engine.rootContext, []
+        host.engine.rootContext = lambda: Refusing(real()) if refuse and refuse.pop() else real()
+        py = (d / "app.py").read_text()
+        out["start"] = [host.start(), label()]
+        refuse.append(True)
+        write("app.py", py.replace("return 7", "return 8"))
+        wait_for(lambda: host.attempts == 2)
+        st = status()
+        out["refused"] = [host.loaded, label(), st["ok"], st["errors"]]
+        write("app.py", py.replace("return 7", "return 9"))
+        wait_for(lambda: host.attempts == 3)
+        out["fixed"] = [host.loaded, label(), status()["errors"]]
+    """)
+    assert out["start"] == [True, "count 7"]
+    assert out["refused"] == [False, "count 7", False, ["RuntimeError: refused"]]
+    assert out["fixed"] == [True, "count 9", []]
+
+
+SAVE_PY = """\
+from PySide6.QtCore import Property, QObject, Slot
+
+
+class Backend(QObject):
+    @Property(int, constant=True)
+    def count(self):
+        return 7
+
+    @Slot(str)
+    def save(self, text):
+        pass
+"""
+LEAVING = {
+    # The old UI's focus loss calls a slot the new Backend no longer has.
+    "focus": (SAVE_PY, """\
+        import QtQuick
+        import Bombadil
+        AppWindow {
+            Text { objectName: "label"; text: "count " + backend.count }
+            TextInput { objectName: "field"; y: 40; width: 200; text: "draft"
+                onActiveFocusChanged: if (!activeFocus) backend.save(text) }
+        }
+        """, [("save", "store"), ("return 7", "return 8"), ("count 7", "count 8")]),
+    # The old UI's binding on App.reloads runs once the reload is counted.
+    "reloads": (COUNT_PY, """\
+        import QtQuick
+        import Bombadil
+        AppWindow {
+            Text { objectName: "label"; text: "r" + App.reloads + " count " + backend.count.toFixed(0) }
+        }
+        """, [("count", "total"), ("return 7", "return 8")]),
+}
+
+
+@pytest.mark.parametrize("how", sorted(LEAVING))
+def test_what_the_old_ui_does_as_it_leaves_is_not_counted(home, how):
+    pytest.importorskip("PySide6")
+    py, qml, renames = LEAVING[how]
+    make_app("leaver", {"main.qml": textwrap.dedent(qml), "app.py": py})
+    out = drive("leaver", """
+        py, qml = (d / "app.py").read_text(), (d / "main.qml").read_text()
+        out["start"] = [host.start(), label()]
+        field = host.root.findChild(QQuickItem, "field")
+        if field is not None:
+            field.forceActiveFocus()
+            pump(100)
+            out["focused"] = field.hasActiveFocus()
+        for old, new in RENAMES:
+            py, qml = py.replace(old, new), qml.replace(old, new)
+        write("app.py", py)
+        write("main.qml", qml)
+        wait_for(lambda: host.attempts == 2)
+        pump(500)
+        st = status()
+        out["edited"] = [host.loaded, st["ok"], st["errors"], host.app.property("lastError"), reloads()]
+    """.replace("RENAMES", repr(renames)))
+    assert out["start"][0]
+    assert out.get("focused", True)
+    assert out["edited"] == [True, True, [], "", 1]
+
+
+def test_reloading_app_py_does_not_abort_on_a_backend_thread(home):
+    pytest.importorskip("PySide6")
+    py = """\
+import sys
+from PySide6.QtCore import Property, QObject, QThread
+
+
+class Worker(QThread):
+    def run(self):
+        self.exec()
+        sys.__dict__.setdefault("stopped", []).append(1)
+
+
+class Backend(QObject):
+    def __init__(self):
+        super().__init__()
+        self.worker = Worker(self) if PARENTED else Worker()
+        self.worker.start()
+
+    @Property(int, constant=True)
+    def count(self):
+        return 7
+"""
+    for parented in (True, False):
+        name = f"threads{int(parented)}"
+        make_app(name, {"main.qml": COUNT_QML, "app.py": py.replace("PARENTED", repr(parented))})
+        out = drive(name, """
+            import sys
+            out["start"] = [host.start(), label()]
+            write("app.py", (d / "app.py").read_text().replace("return 7", "return 8"))
+            wait_for(lambda: host.attempts == 2)
+            out["edited"] = [host.loaded, label(), status()["ok"], len(getattr(sys, "stopped", []))]
+            host.backend.worker.quit()
+            host.backend.worker.wait()
+        """)
+        assert out["start"] == [True, "count 7"]
+        assert out["edited"] == [True, "count 8", True, 1]   # the old thread was stopped, not leaked
+
+
+def test_a_backend_thread_that_will_not_stop_is_kept_not_destroyed(home):
+    pytest.importorskip("PySide6")
+    make_app("stuck", {"main.qml": COUNT_QML, "app.py": """\
+from PySide6.QtCore import Property, QObject, QThread
+
+
+class Slow(QThread):
+    def run(self):
+        self.msleep(700)   # does not look at quit()
+
+
+class Backend(QObject):
+    def __init__(self):
+        super().__init__()
+        self.worker = Slow(self)
+        self.worker.start()
+
+    @Property(int, constant=True)
+    def count(self):
+        return 7
+"""})
+    out = drive("stuck", """
+        runtime.THREAD_WAIT_MS = 50
+        out["start"] = [host.start(), label()]
+        write("app.py", (d / "app.py").read_text().replace("return 7", "return 8"))
+        wait_for(lambda: host.attempts == 2)
+        out["edited"] = [host.loaded, label(), len(host._retired)]
+        for b in [host.backend, *host._retired]:
+            b.worker.wait()
+    """)
+    assert out["start"] == [True, "count 7"]
+    assert out["edited"] == [True, "count 8", 1]
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/full"), reason="no /dev/full")
+@pytest.mark.parametrize("how", ["writelines", "reconfigure"])
+def test_a_lossy_stream_drops_every_write_the_disk_cannot_take(how):
+    stream = open("/dev/full", "w", buffering=1 if how == "writelines" else -1)
+    try:
+        lossy = runtime._Lossy(stream)
+        if how == "writelines":
+            lossy.writelines(["a\n", "b\n"])     # line buffered: every newline flushes
+        else:
+            stream.write("x")                    # held until something flushes it
+            lossy.reconfigure(line_buffering=True)
+    finally:
+        with contextlib.suppress(OSError):
+            stream.close()
+
+
+def test_a_launched_app_prints_to_its_log_as_it_runs(home):
+    """stdout is the log, and a pipe or file makes Python block-buffer it: an app's print()
+    would only show once the app quits."""
+    pytest.importorskip("PySide6")
+    make_app("printer", {"main.qml": COUNT_QML, "app.py": COUNT_PY.replace(
+        "    @Property", "    def __init__(self):\n        super().__init__()\n"
+                         "        print('hello from app.py')\n\n    @Property")})
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONUNBUFFERED"}
+    env.update({"QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software", "PYTHONPATH": str(ROOT / "src")})
+    log = apps.log_path("printer")
+    proc = subprocess.Popen([sys.executable, str(ROOT / "bin" / "bombadil-app"), "run", "printer"], env=env,
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 30
+        while not (log.exists() and "window: " in log.read_text()):   # it is up and has logged
+            assert proc.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        time.sleep(0.5)
+        assert "hello from app.py" in log.read_text()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
