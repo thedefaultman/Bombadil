@@ -16,6 +16,9 @@ class AppContext:
 
     @property
     def data_dir(self) -> Path:
+        # A built-in app's folder is read-only; its state lives with the other apps' state.
+        if apps.is_builtin(self.dir):
+            return self.state_dir / self.name / "data"
         return self.dir / "data"
 
     @property

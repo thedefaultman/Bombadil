@@ -43,10 +43,30 @@ def slug(title: str) -> str:
     return s
 
 
-def app_dir(name: str) -> Path:
+def builtin_dir() -> Path:
+    """Apps that ship with Bombadil (the Brain): share/apps beside this package, so a checkout
+    runs its own and the ISO runs /usr/share/bombadil/share/apps."""
+    return Path(__file__).resolve().parents[2] / "share" / "apps"
+
+
+def own_dir(name: str) -> Path:
+    """Where an app of yours lives, and where create() writes."""
     if not NAME_RE.match(name):
         raise ValueError(f"bad app name {name!r}")
     return paths.apps_dir() / name
+
+
+def app_dir(name: str) -> Path:
+    """The app to run: yours, else a built-in one of that name. Making an app with a built-in
+    app's name (the agent rewriting the Brain for you) takes its place."""
+    own = own_dir(name)
+    if not (own / "main.qml").exists() and (builtin_dir() / name / "main.qml").exists():
+        return builtin_dir() / name
+    return own
+
+
+def is_builtin(d: Path) -> bool:
+    return d.resolve().parent == builtin_dir()
 
 
 def _toml_str(s: str) -> str:
@@ -82,7 +102,7 @@ def create(title: str, qml: str, python: str | None = None, description: str = "
            files: dict[str, str] | None = None, icon: str = "") -> App:
     """Write the app files. The agent calls this (via os-mcp) with QML it wrote."""
     name = slug(title)
-    d = app_dir(name)
+    d = own_dir(name)
     extra = {_extra_path(rel): text for rel, text in (files or {}).items()}
     for rel, text in extra.items():
         if not isinstance(text, str):

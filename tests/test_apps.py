@@ -66,3 +66,30 @@ def test_run_logs_to_the_state_dir(home, monkeypatch):
     apps.run("notes")
     assert seen["cmd"][-2:] == ["run", "notes"] and seen["cmd"][-3].endswith("bin/bombadil-app")
     assert seen["out"].name == str(apps.log_path("notes")) == str(home / "state/apps/notes.log")
+
+
+def test_a_built_in_app_runs_unless_you_have_one_of_that_name(home, tmp_path, monkeypatch):
+    built = tmp_path / "builtin"
+    (built / "brain").mkdir(parents=True)
+    (built / "brain" / "main.qml").write_text("import QtQuick\nItem {}\n")
+    (built / "brain" / "app.toml").write_text('title = "Brain"\n')
+    monkeypatch.setattr(apps, "builtin_dir", lambda: built)
+    assert apps.load("brain").path == built / "brain"
+    assert apps.load("brain").title == "Brain"
+    assert "brain" not in [a.name for a in apps.list_apps()]   # yours are listed, not the OS's
+    mine = apps.create("Brain", "import QtQuick\nRectangle {}\n")
+    assert mine.path == home / "Apps" / "brain"
+    assert apps.load("brain").path == home / "Apps" / "brain"
+    assert (built / "brain" / "main.qml").read_text() == "import QtQuick\nItem {}\n"
+
+
+def test_a_built_in_apps_saved_state_lives_with_the_other_apps_state(home, tmp_path, monkeypatch):
+    from bombadil.appkit import context
+    built = tmp_path / "builtin"
+    (built / "brain").mkdir(parents=True)
+    (built / "brain" / "main.qml").write_text("import QtQuick\nItem {}\n")
+    monkeypatch.setattr(apps, "builtin_dir", lambda: built)
+    ctx = context.for_app("brain")
+    assert ctx.dir == built / "brain"
+    assert ctx.data_dir == home / "state" / "apps" / "brain" / "data"
+    assert context.for_app("brain").resolve("notes.md") == ctx.data_dir / "notes.md"
