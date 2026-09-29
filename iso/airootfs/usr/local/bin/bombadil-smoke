@@ -38,6 +38,8 @@ mcp_call() {
 hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl $1: $o"; return 1; }
 has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any($1 for c in json.load(sys.stdin)))"; }
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
+# A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
+virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -64,6 +66,7 @@ check agentd-socket wait_for 90 test -S "$sock"
 check quickshell-running wait_for 60 pgrep -x quickshell
 check hypr-config-ok no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
+check virtual-display-size virtual_display_size
 check agentd-status as_user bombadil status
 check claude-cli as_user claude --version
 check codex-cli as_user codex --version
