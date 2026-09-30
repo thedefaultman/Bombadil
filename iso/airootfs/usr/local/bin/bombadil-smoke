@@ -71,6 +71,7 @@ check hypr-config-ok no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
 check virtual-display-size virtual_display_size
 check audio-output wait_for 60 audio_sink
+check pacman-mirror grep -q '^Server = ' /etc/pacman.d/mirrorlist
 check agentd-status as_user bombadil status
 check claude-cli as_user claude --version
 check codex-cli as_user codex --version
