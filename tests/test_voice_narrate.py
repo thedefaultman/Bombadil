@@ -96,6 +96,120 @@ def test_a_simple_shell_edit_of_persona_toml_is_no_change(home, command):
     assert is_talk(narrate.shell_step(command.format(p=persona_path())))
 
 
+@pytest.mark.parametrize("command", [
+    # a relative path is the file in the folder a `cd` went to
+    "cd {cfg} && sed -i 's/merry/plain/' persona.toml",
+    "cd {cfg} && sed -i 's/merry/plain/' ./persona.toml",
+    "cd {cfg} && echo 'voice = \"plain\"' > persona.toml",
+    "cd {cfg} ; printf 'x' | tee persona.toml",
+    "cd {cfg}; cat > persona.toml <<EOF\nvoice = \"plain\"\nEOF",
+    "cd ~ && cd config && sed -i 's/merry/plain/' persona.toml",
+    "cd /tmp && cd {cfg} && sed -i 's/merry/plain/' persona.toml",
+    "cd {cfg}/sub && sed -i 's/merry/plain/' ../persona.toml",
+    "cd {cfg} && sed -i -e 's/merry/plain/' persona.toml",
+    "cd {cfg} && sed -ie 's/merry/plain/' persona.toml",
+    # sed reads its script from -e or -f, which is not a file it edits
+    "sed -i -e 's/a/b/' -e 's/c/d/' {p}",
+    "sed -i --expression='s/a/b/' {p}",
+    "sed -i -f /tmp/x.sed {p}",
+    "sed -i.bak 's/a/b/' {p}",
+    "sed --in-place 's/a/b/' {p}",
+    "sed 's/a/b/' {p} > {p}.tmp && mv {p}.tmp {p}",
+    # what goes to /dev/null is not a change
+    "echo 'x' > {p} 2>/dev/null",
+    "echo 'x' | tee {p} > /dev/null",
+    "echo 'x' | tee {p} /dev/null",
+    # a copy, a move and an install into it, and the atomic replace
+    "cp /tmp/new.toml {p}",
+    "cp -f /tmp/new.toml {p}",
+    "mv /tmp/new.toml {p}",
+    "mv -f /tmp/a.toml /tmp/b.toml {p}",
+    "install /tmp/new.toml {p}",
+    "install -m 644 /tmp/new.toml {p}",
+    "echo 'x' > {p}.tmp && mv {p}.tmp {p}",
+    "echo 'x' > {p}.4321.tmp && mv {p}.4321.tmp {p}",
+    "cd {cfg} && printf 'x' > persona.toml.tmp && mv persona.toml.tmp persona.toml",
+    "cat /tmp/new.toml > {p}.tmp && mv -f {p}.tmp {p} && cat {p}",
+])
+def test_the_same_file_by_another_route_is_no_change_either(home, command):
+    assert is_talk(narrate.shell_step(command.format(p=persona_path(), cfg=paths.config_dir())))
+
+
+@pytest.mark.parametrize("command, text, done", [
+    # not the file: another folder, no folder known, another name
+    ("cd /tmp && sed -i 's/a/b/' persona.toml", "Editing persona.toml", "Edited persona.toml"),
+    ("cd {cfg}/.. && sed -i 's/a/b/' persona.toml", "Editing persona.toml", "Edited persona.toml"),
+    ("sed -i 's/a/b/' persona.toml", "Editing persona.toml", "Edited persona.toml"),
+    ("cd {cfg} && sed -i 's/a/b/' config.toml", "Editing config.toml", "Edited config.toml"),
+    ("cd {cfg} && sed -i 's/a/b/' persona.toml.bak", "Editing persona.toml.bak", "Edited persona.toml.bak"),
+    ("cd {cfg} && echo hi > notes.txt", "Writing notes.txt", "Wrote notes.txt"),
+    ("echo x > /tmp/persona.toml.tmp && mv /tmp/persona.toml.tmp /tmp/persona.toml", "Writing persona.toml.tmp",
+     "Wrote persona.toml.tmp"),
+    ("cp {p} /tmp/persona.toml", "Copying persona.toml", "Copied persona.toml"),
+    ("cp /tmp/new.toml {cfg}/config.toml", "Copying new.toml", "Copied new.toml"),
+    ("mv {p} /tmp/old.toml", "Moving persona.toml", "Moved persona.toml"),
+])
+def test_a_relative_path_is_only_the_file_where_the_cd_went(home, command, text, done):
+    step = narrate.shell_step(command.format(p=persona_path(), cfg=paths.config_dir()))
+    assert (step.text, step.done) == (text, done)
+
+
+@pytest.mark.parametrize("command, text, risk", [
+    # persona.toml in the segment does not take its own flags, its command or its Undo away
+    ("mkfs.ext4 /dev/sdb1 >{p}", "Formatting /dev/sdb1", narrate.IRREVERSIBLE),
+    ("mkfs.ext4 /dev/sdb1 > persona.toml", "Formatting /dev/sdb1", narrate.IRREVERSIBLE),
+    ("dd if=/dev/zero of=/dev/sda > {p}", "Writing to /dev/sda", narrate.IRREVERSIBLE),
+    ("rm -rf ~/Documents > {p}", "Deleting Documents", narrate.IRREVERSIBLE),
+    ("shred -u ~/notes.txt >> {p}", "Wiping notes.txt", narrate.IRREVERSIBLE),
+    ("tee {p} /etc/fstab", "Writing fstab", narrate.SYSTEM),
+    ("tee /etc/fstab {p}", "Writing fstab", narrate.SYSTEM),
+    ("sed -i s/a/b/ {p} /etc/pacman.conf", "Editing pacman.conf", narrate.SYSTEM),
+    ("sed -i -e s/a/b/ /etc/pacman.conf {p}", "Editing pacman.conf", narrate.SYSTEM),
+    ("echo x > /etc/hosts > {p}", "Writing hosts", narrate.SYSTEM),
+    ("sudo pacman -S ffmpeg > {p}", "Installing ffmpeg", narrate.SYSTEM),
+    ("sudo tee {p}", "Writing persona.toml", narrate.SYSTEM),
+    ("sudo sed -i s/a/b/ {p}", "Editing persona.toml", narrate.SYSTEM),
+    ("sudo cp /tmp/new.toml {p}", "Copying new.toml", narrate.SYSTEM),
+    ("echo x | sudo tee {p}", "Writing persona.toml", narrate.SYSTEM),
+    ("mv /etc/fstab {p}", "Moving fstab", narrate.SYSTEM),
+])
+def test_a_persona_redirect_does_not_hide_the_segments_own_risk(home, command, text, risk):
+    command = command.format(p=persona_path())
+    step = narrate.shell_step(command)
+    assert step.text == text and step.risk == risk and step.changes
+    assert (step.command is not None) == (risk is not None)
+    if risk:
+        assert step.command == " ".join(command.split())
+
+
+@pytest.mark.parametrize("command, text, touched", [
+    # another file in the same segment is narrated as if persona.toml were not there
+    ("sed -i 's/x/y/' {p} ~/notes.txt", "Editing notes.txt", ("~/notes.txt",)),
+    ("sed -i 's/x/y/' ~/notes.txt {p}", "Editing notes.txt", ("~/notes.txt",)),
+    ("echo x | tee {p} ~/notes.txt", "Writing notes.txt", ("~/notes.txt",)),
+    ("echo x | tee ~/notes.txt {p}", "Writing notes.txt", ("~/notes.txt",)),
+    ("echo x | tee -a ~/notes.txt {p} ~/more.txt", "Writing more.txt", ("~/notes.txt", "~/more.txt")),
+    ("echo x > ~/notes.txt > {p}", "Writing notes.txt", ("~/notes.txt",)),
+    ("echo x > {p} > ~/notes.txt", "Writing notes.txt", ("~/notes.txt",)),
+    ("cat /tmp/a > {p} > ~/notes.txt", "Writing notes.txt", ("~/notes.txt",)),
+])
+def test_another_file_in_the_segment_keeps_its_own_entry_and_undo(home, command, text, touched):
+    step = narrate.shell_step(command.format(p=persona_path()))
+    assert step.text == text and step.changes and step.risk is None and step.command is None
+    assert step.done == text.replace("Editing", "Edited").replace("Writing", "Wrote")
+    assert step.touched == {"file": touched}
+
+
+@pytest.mark.parametrize("command", [
+    "python3 gen.py > {p}", "curl -s https://example.com/voice.toml > {p}", "jq . /tmp/x.json > {p}",
+    "sort /tmp/x > {p}", "ln -sf /tmp/x {p}", "touch {p}", "rm {p}", "truncate -s 0 {p}", "chmod 600 {p}",
+])
+def test_only_echo_printf_cat_tee_sed_and_the_copies_are_called_talking(home, command):
+    # Anything else that writes the file says what it is, as it always did.
+    step = narrate.shell_step(command.format(p=persona_path()))
+    assert step.text != WORDS
+
+
 @pytest.mark.parametrize("command, text, done", [
     ("cat {p}", "Reading persona.toml", None),
     ("grep voice {p}", "Searching for “voice”", None),
@@ -132,6 +246,30 @@ def test_the_narrator_says_it_plainly_and_records_nothing_to_undo(home):
     c = narrate.Narrator()
     c.on_event({"kind": "file_change", "changes": [{"path": persona_path(), "kind": "update"}]})
     assert c.done == []
+
+
+def test_a_cd_into_the_default_location(home, monkeypatch):
+    monkeypatch.delenv("BOMBADIL_CONFIG")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    for command in ("cd ~/.config/bombadil && sed -i 's/merry/plain/' persona.toml",
+                    "cd $HOME/.config/bombadil && echo 'voice = \"plain\"' > persona.toml",
+                    'cd "${HOME}/.config/bombadil" ; printf x | tee persona.toml',
+                    "cd ~/.config && cd bombadil && sed -i 's/plain/quiet/' persona.toml"):
+        assert is_talk(narrate.shell_step(command)), command
+    assert narrate.shell_step("cd ~/.config && sed -i 's/a/b/' persona.toml").changes
+
+
+def test_the_narrator_keeps_the_risk_and_the_receipt_of_a_command_that_also_writes_the_file(home):
+    n = narrate.Narrator()
+    line = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": f"mkfs.ext4 /dev/sdb1 >{persona_path()}"}})
+    assert line["text"] == "Formatting /dev/sdb1" and line["risk"] == narrate.IRREVERSIBLE and line["command"]
+    assert n.irreversible is True and n.done == ["Formatted /dev/sdb1"]
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": f"echo x | tee {persona_path()} /etc/fstab"}})
+    assert n.system is True and n.done == ["Wrote fstab"] and n.summary() == "Wrote fstab."
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": f"sed -i 's/a/b/' {persona_path()} ~/notes.txt"}})
+    assert n.done == ["Edited notes.txt"] and n.touched == {"file": {str(home / "notes.txt")}}
 
 
 def test_it_does_not_hide_the_turns_other_changes(home):

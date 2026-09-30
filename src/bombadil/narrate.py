@@ -802,10 +802,18 @@ def shell_step(command: str, description: str | None = None) -> Step:
             else:
                 cwd = None
             continue
-        edited = _changed_paths(prog, argv) if prog in ("tee", "sed") else []
-        if any(_is_persona(p) for p in writes + edited):
-            talk = True
-            continue
+        if prog in _PERSONA_PROGS:
+            targets = _shell_targets(prog, argv, writes)
+            mine = [t for t in targets if _is_persona(t, cwd, tmp=True)]
+            if mine and len(mine) == len(targets) and not sudo:
+                talk = True   # it changes nothing but how Bombadil talks
+                continue
+            if mine and len(mine) < len(targets):
+                # It changes something else too: that is narrated as if persona.toml were not there,
+                # with its own words, flags, command and Undo.
+                writes = [w for w in writes if w not in mine]
+                if prog in ("tee", "sed"):
+                    argv = [a for a in argv if a not in mine]
         if _irreversible(prog, argv, segment, cwd):
             irreversible = True
         if prog in _PKG and any(a.startswith(("-S", "-R", "-U", "--sync", "--remove", "--upgrade"))
@@ -940,13 +948,70 @@ def _os_tool(tool: str, a: dict) -> Step | None:
 # Undo, no summary entry, no Details row (a Step with no `done`), just a plain line while it happens.
 PERSONA_STEP = "Changing how I talk to you"
 
+# What a shell says "call me Dan" with, and the scratch file an atomic replace writes before the move.
+_PERSONA_PROGS = ("echo", "printf", "cat", "tee", "sed", "cp", "mv", "install")
+_PERSONA_TMP = re.compile(r"persona\.toml(\.[\w-]+)?\.tmp")
 
-def _is_persona(p) -> bool:
-    """Is this path the user's persona.toml? Compared as written, with no I/O (the agent is told the path)."""
+
+def _is_persona(p, cwd: str | None = None, tmp: bool = False) -> bool:
+    """Is this path the user's persona.toml (with tmp, or its scratch file beside it)? Compared as written,
+    with no I/O (the agent is told the path). A relative path starts at cwd, where a `cd` went, and with
+    no cwd it has no place to compare."""
     try:
-        return os.path.normpath(_expand_home(str(p))) == os.path.normpath(str(paths.persona_file()))
+        p = _expand_home(str(p))
+        if cwd and not p.startswith("/"):
+            p = os.path.join(cwd, p)
+        p, mine = os.path.normpath(p), os.path.normpath(str(paths.persona_file()))
+        return p == mine or (tmp and os.path.dirname(p) == os.path.dirname(mine)
+                             and _PERSONA_TMP.fullmatch(os.path.basename(p)) is not None)
     except (TypeError, ValueError):
         return False
+
+
+def _sed_files(argv: list[str]) -> list[str]:
+    """The files `sed -i` edits: its operands less the script, which is the first one unless -e or -f
+    gave it. A sed that only prints edits nothing."""
+    if not any(a == "--in-place" or a.startswith("--in-place=") or _short(a, "i") for a in argv[1:]):
+        return []
+    operands, scripted, i = [], False, 1
+    while i < len(argv):
+        a = argv[i]
+        i += 1
+        if a in ("-e", "-f", "--expression", "--file"):
+            scripted, i = True, i + 1   # the next word is the script (or the file it is in)
+        elif a.startswith(("--expression=", "--file=")):
+            scripted = True
+        elif a.startswith("--") or a == "-":
+            continue
+        elif a.startswith("-"):
+            for k, letter in enumerate(a[1:], 1):
+                if letter == "i":
+                    break               # the rest of the word is the backup suffix
+                if letter in "ef":
+                    scripted = True
+                    if k == len(a) - 1:
+                        i += 1          # the script is the next word, not the rest of this one
+                    break
+        else:
+            operands.append(a)
+    return operands if scripted else operands[1:]
+
+
+def _shell_targets(prog: str, argv: list[str], writes: list[str]) -> list[str]:
+    """What a shell command changes, as written: where its output goes, and what tee, sed -i, cp, mv and
+    install write. Never /dev/null and its kind, nor a file a move takes from /tmp (a scratch file)."""
+    args = _args(argv)
+    found: list[str] = []
+    if prog == "tee":
+        found = args
+    elif prog == "sed":
+        found = _sed_files(argv)
+    elif prog in ("cp", "install"):
+        found = _changed_paths(prog, argv)
+    elif prog == "mv":
+        found = [a for i, a in enumerate(args)
+                 if i == len(args) - 1 or not os.path.normpath(_expand_home(a)).startswith("/tmp/")]
+    return [p for p in writes + found if p not in _DEV_SAFE]
 
 
 def tool_step(name: str, a: dict | None) -> Step | None:

@@ -93,6 +93,7 @@ night = "Good night"
 day = "See you"
 none = "{bye}{n}."
 stop = "{bye}{n}. {stop} and waits for you."
+stops = "{bye}{n}. {stop}. They wait for you."    # two or more sessions: {stop} names two and counts the rest
 
 [plain]
 installed = "Installed. Undo works from here."
@@ -182,3 +183,10 @@ running = "claude {project}"
 watching = "Tell me if my disk gets nearly full"
 know = "Remember that…"
 apps = "Make me a password manager"
+
+# The closing sentence of one sample answer ("which app uses the most memory?") in each voice, under
+# each row of the setup card next to its welcome. Merry's ends with an aside from a fact of the turn.
+[reply]
+merry = "Chromium uses the most memory, 2.1 GB across 14 tabs. That's a lot of reading."
+plain = "Chromium uses the most memory: 2.1 GB across 14 tabs."
+quiet = "Chromium uses the most: 2.1 GB."

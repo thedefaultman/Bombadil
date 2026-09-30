@@ -7,20 +7,22 @@ away are all one fast test.
 import asyncio
 import contextlib
 import json
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bombadil import agentd, apps, greet, paths, persona, providers, voice
+from bombadil import agentd, apps, greet, greet_sources, paths, persona, providers, voice
 
 FIRST_LINE = "Signed in to Claude. What should I call you?"
 
 
 class Clock:
-    """Epoch seconds for agentd, an aware datetime for the words, both moved by advance()."""
+    """Epoch seconds for agentd, an aware datetime for the words and a monotonic clock for the waits, all
+    moved by advance(). step() moves the wall clock alone: NTP, a resumed VM, someone setting the time."""
 
     def __init__(self, start: datetime):
-        self.start, self.elapsed = start, 0.0
+        self.start, self.elapsed, self.ticks = start, 0.0, 0.0
 
     def __call__(self) -> float:
         return self.start.timestamp() + self.elapsed
@@ -28,7 +30,14 @@ class Clock:
     def now(self) -> datetime:
         return self.start + timedelta(seconds=self.elapsed)
 
+    def monotonic(self) -> float:
+        return 5000.0 + self.ticks
+
     def advance(self, seconds: float) -> None:
+        self.elapsed += seconds
+        self.ticks += seconds
+
+    def step(self, seconds: float) -> None:
         self.elapsed += seconds
 
 
@@ -46,10 +55,23 @@ def clock(home, monkeypatch):
     return Clock(datetime(2026, 9, 30, 8, 40, tzinfo=UTC))
 
 
-def make(clock, provider=None) -> agentd.AgentD:
-    d = agentd.AgentD(provider or providers.Fake("x"), agentd._NoSnapshots())
-    d.voice = voice.Voice(d, clock=clock, now=clock.now)
+class _Undo(agentd._NoSnapshots):
+    available = True
+
+
+def make(clock, provider=None, undo=False) -> agentd.AgentD:
+    """`undo`: the machine has snapshots, so it can say that undo works."""
+    d = agentd.AgentD(provider or providers.Fake("x"), _Undo() if undo else agentd._NoSnapshots())
+    d.voice = voice.Voice(d, clock=clock, now=clock.now, mono=clock.monotonic)
     return d
+
+
+def still_checking(d) -> None:
+    """Sign-in has not answered yet: serve() leaves the setup state where the test put it, instead of
+    finding the fake provider signed in and turning ready (which asks the card by itself)."""
+    async def wait(**_):
+        pass
+    d.check_access = wait
 
 
 class Client:
@@ -360,7 +382,7 @@ async def test_sign_in_asks_with_its_own_line_and_only_while_there_is_no_persona
     d = make(clock)
     async with running(d) as connect:
         bar = await hello(connect)
-        await bar.get("persona_ask")   # main has no sign-in state: the hello itself asked
+        await bar.get("persona_ask")   # serve() found the fake provider signed in: ready asked the card
         await bar.send("persona_skip")
         await bar.get("persona")
         assert await d.ask_persona(FIRST_LINE) is False   # there is a persona now
@@ -378,6 +400,35 @@ async def test_sign_in_asks_with_its_own_line_and_only_while_there_is_no_persona
 
 
 @pytest.mark.asyncio
+async def test_the_first_sign_in_turning_ready_asks_the_name_and_keeps_the_pills_own_line_quiet(clock):
+    d = make(clock)
+    still_checking(d)
+    async with running(d) as connect:
+        bar = await hello(connect)
+        await bar.none("persona_ask")   # not signed in yet: nothing to ask
+        await d._set_access("ready", "Signed in to Fake. Ask me for anything.", "done")
+        ask = await bar.get("persona_ask")
+        assert ask["line"] == "Signed in to Fake. What should I call you?" and ask["current"] is False
+        # The card says "Signed in" itself, so the pill's line stays empty for that once.
+        assert (await bar.get("setup", state="ready"))["line"] == ""
+        assert persona.exists()
+
+
+@pytest.mark.asyncio
+async def test_sign_in_turning_ready_with_a_persona_keeps_its_line_and_asks_nothing(clock):
+    known()
+    d = make(clock)
+    still_checking(d)
+    async with running(d) as connect:
+        bar = await hello(connect)
+        await d._set_access("ready", "Signed in to Fake. Ask me for anything.", "done")
+        setup = await bar.get("setup", state="ready")
+        assert setup["line"] == "Signed in to Fake. Ask me for anything." and setup["tone"] == "done"
+        await bar.none("persona_ask")
+        assert (await bar.get("welcome"))["text"].startswith("Good morning")   # the boot line it waited for
+
+
+@pytest.mark.asyncio
 async def test_the_card_waits_for_sign_in_a_chosen_provider_and_an_installed_cli(clock):
     class Missing(providers.Fake):
         @property
@@ -385,17 +436,19 @@ async def test_the_card_waits_for_sign_in_a_chosen_provider_and_an_installed_cli
             return False
 
     d = make(clock)
-    d.access = "checking"
+    still_checking(d)
     async with running(d) as connect:
         bar = await hello(connect)
         await bar.none("persona_ask")
         d.access = "ready"
         await d.voice.on_ready(FIRST_LINE)
         assert (await bar.get("persona_ask"))["line"] == FIRST_LINE
-    for nothing in (lambda x: setattr(x, "configured", False), lambda x: setattr(x, "provider", Missing("x"))):
+    for nothing in (lambda x: setattr(x, "chosen", False), lambda x: setattr(x, "provider", Missing("x"))):
         paths.persona_file().unlink(missing_ok=True)
         d = make(clock)
+        still_checking(d)
         nothing(d)
+        d.access = "ready"   # signed in as far as the state goes: the pick and the CLI are what is missing
         async with running(d) as connect:
             bar = await hello(connect)
             await bar.none("persona_ask")
@@ -558,6 +611,29 @@ async def test_a_login_that_went_unwelcomed_for_a_quarter_of_an_hour_stays_silen
 
 
 @pytest.mark.asyncio
+async def test_the_wall_clock_stepping_forward_does_not_close_the_boot_window(clock):
+    known()
+    d = make(clock)
+    async with running(d) as connect:
+        clock.step(3600)   # NTP or a resumed VM: no time passed for the daemon
+        await (await hello(connect)).get("welcome")
+
+
+@pytest.mark.asyncio
+async def test_the_wall_clock_stepping_back_does_not_hold_a_dropped_welcome_for_ever(clock):
+    known()
+    d = make(clock)
+    async with running(d) as connect:
+        bar = await hello(connect)
+        first = await bar.get("welcome")
+        clock.step(-3600)
+        clock.advance(voice.ACK_WAIT + 1)   # it was dropped; the wall clock is still an hour behind
+        again = await hello(connect)
+        second = await again.get("welcome")
+        assert second["text"] == first["text"] and second["id"] != first["id"]
+
+
+@pytest.mark.asyncio
 async def test_the_window_can_be_set(clock, monkeypatch):
     known()
     monkeypatch.setenv("BOMBADIL_GREET_WINDOW", "30")
@@ -647,6 +723,7 @@ async def test_a_welcomed_that_is_not_the_bars_own_counts_for_nothing(clock):
 @pytest.mark.asyncio
 async def test_a_client_that_never_said_bar_is_never_greeted_or_asked(clock):
     d = make(clock)
+    still_checking(d)   # once sign-in is ready the daemon asks the card itself, for whichever bar comes
     async with running(d) as connect:
         ask = await connect()                                 # like `bombadil ask`
         await ask.send("presence", idle=True)
@@ -716,7 +793,7 @@ async def test_a_corrupt_ledger_or_persona_file_is_no_reason_for_silence_or_a_cr
 async def test_the_first_boot_of_an_installed_system_says_so_once(clock, monkeypatch):
     monkeypatch.setenv("BOMBADIL_LIVE", "0")
     persona.save("Daniel", "merry")   # copied over by the installer; the ledger is not
-    async with running(make(clock)) as connect:
+    async with running(make(clock, undo=True)) as connect:
         bar = await hello(connect)
         welcome = await bar.get("welcome")
         assert welcome["text"] == "Welcome home, Daniel. Undo works from here."
@@ -725,9 +802,24 @@ async def test_the_first_boot_of_an_installed_system_says_so_once(clock, monkeyp
         ledger = greet.load_ledger()
         assert "installed" in ledger.said and ledger.last_boot_day == "2026-09-30" and ledger.setup_day
     paths.greeted_marker().unlink()
-    async with running(make(clock)) as connect:
+    async with running(make(clock, undo=True)) as connect:
         bar = await hello(connect)
         assert "home" not in (await bar.get("welcome"))["text"]
+
+
+@pytest.mark.asyncio
+async def test_an_installed_system_without_snapshots_is_not_told_that_undo_works(clock, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_LIVE", "0")
+    persona.save("Daniel", "merry")
+    async with running(make(clock)) as connect:   # no snapper, or its config failed: undo is not there
+        bar = await hello(connect)
+        welcome = await bar.get("welcome")
+        assert welcome["text"].startswith("Good morning, Daniel.")
+        assert "home" not in welcome["text"] and "Undo" not in welcome["text"]
+        await bar.send("welcomed", id=welcome["id"])
+        await asyncio.sleep(0.1)
+        ledger = greet.load_ledger()
+        assert "installed" not in ledger.said and ledger.last_boot_day == "2026-09-30"
 
 
 @pytest.mark.asyncio
@@ -828,6 +920,74 @@ async def test_a_week_away_brings_the_updates_with_the_return(clock, home):
         await bar.send("presence", idle=False)
         assert (await bar.get("welcome"))["text"] == \
             "Welcome back, Daniel. 214 updates are waiting, 4 of them security fixes."
+
+
+@pytest.mark.asyncio
+async def test_a_return_said_lately_does_not_read_the_log_and_one_that_may_be_said_does(clock, monkeypatch):
+    known()
+    greeted()
+    reads = []
+    real = greet_sources.read_rows
+    monkeypatch.setattr(greet_sources, "read_rows", lambda *a: (reads.append(1), real(*a))[1])
+    d = make(clock)
+    async with running(d) as connect:
+        bar = await away(connect, clock, 40 * 60)
+        greet.save_ledger(greet.Ledger(setup_day="2026-09-29", last_return_at=clock() - 10 * 60))
+        turn_row(clock, 10 * 60)
+        await bar.send("presence", idle=False)
+        await bar.none("welcome")
+        assert reads == []   # half an hour has not passed: nothing to read the log for
+        await bar.send("presence", idle=True)
+        await asyncio.sleep(0.05)
+        clock.advance(31 * 60)
+        turn_row(clock, 60)
+        await bar.send("presence", idle=False)
+        assert (await bar.get("welcome"))["text"] == "While you were away: installed ffmpeg."
+        assert reads == [1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("way", ["boot", "back"])
+async def test_a_slow_log_read_does_not_hold_up_the_bars_connection(clock, monkeypatch, way):
+    known()
+    if way == "back":
+        greeted()
+    real = greet_sources.read_rows
+
+    def slow(*a):
+        time.sleep(0.6)
+        return real(*a)
+
+    d = make(clock)
+    async with running(d) as connect:
+        if way == "boot":
+            d.current = 4   # the boot line waits for the user to come back, then reads the log
+            bar = await hello(connect)
+            d.current = None
+            await bar.send("presence", idle=True)
+            await asyncio.sleep(0.05)
+            clock.advance(6 * 60)
+        else:
+            bar = await away(connect, clock, 40 * 60)
+            turn_row(clock, 10 * 60)
+        monkeypatch.setattr(greet_sources, "read_rows", slow)
+        await bar.send("presence", idle=False)
+        await bar.send("status")
+        await bar.get("status", timeout=0.4)   # answered while the log is still being read
+        assert (await bar.get("welcome", timeout=3))["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_return_time_in_the_future_is_a_clock_that_stepped_back_not_a_recent_return(clock):
+    known()
+    greeted()
+    greet.save_ledger(greet.Ledger(setup_day="2026-09-29", last_return_at=clock() + 10 * 86400))
+    d = make(clock)
+    async with running(d) as connect:
+        bar = await away(connect, clock, 3 * 3600)
+        turn_row(clock, 600)
+        await bar.send("presence", idle=False)
+        assert (await bar.get("welcome"))["text"] == "While you were away: installed ffmpeg."
 
 
 @pytest.mark.asyncio
@@ -950,10 +1110,99 @@ async def test_a_failed_shutdown_says_why_and_a_restart_and_an_unknown_user_keep
         assert (await bar.get("event", kind="local", phase="start", action="restart"))["text"] == "Restarting"
     paths.persona_file().unlink()   # before anyone chose a voice
     d = make(clock)
+    still_checking(d)   # and before sign-in turned ready, which saves the defaults the moment it asks
     shutdown_with(monkeypatch, d)
     async with running(d) as connect:
         _, start, done = await shut_down(connect)
         assert start["text"] == "Shutting down" and done["text"] == "Shutting down."
+
+
+RESTARTING = "restarting"   # under the state dir, which a reboot does not empty
+
+
+def restart_note(d, monkeypatch, ok=True):
+    """launcher.run for a restart that says whether the note was written by the time the machine would go."""
+    seen = []
+    monkeypatch.setattr(d.launcher, "run", lambda action: (
+        seen.append((action.kind, (paths.state_dir() / RESTARTING).exists())),
+        (ok, "Restarting." if ok else "Could not restart"))[1])
+    return seen
+
+
+async def boots_after(clock, expect):
+    """A new daemon after the reboot (the runtime dir, and with it the greeted marker, is gone)."""
+    paths.greeted_marker().unlink(missing_ok=True)
+    clock.advance(90)
+    async with running(make(clock)) as connect:
+        bar = await hello(connect)
+        await expect(bar)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_the_user_asked_for_gets_no_hello_at_the_next_boot_and_the_one_after_does(
+        clock, monkeypatch):
+    known("Dan")
+    greeted()
+    d = make(clock)
+    seen = restart_note(d, monkeypatch)
+    async with running(d) as connect:
+        bar = await hello(connect)
+        await bar.send("prompt", text="restart")
+        assert (await bar.get("event", kind="local", phase="done", action="restart"))["ok"] is True
+    assert seen == [("restart", True)]   # written before the reboot, not after
+    assert float((paths.state_dir() / RESTARTING).read_text()) == pytest.approx(clock(), abs=1)
+
+    async def silent(bar):
+        await bar.none("welcome")
+        assert not (paths.state_dir() / RESTARTING).exists()   # the note is used up
+        assert [r["greeted"] for r in boot_rows()] == [False]   # still this login's boot
+        assert paths.greeted_marker().exists() and greet.load_ledger().last_boot_day == "2026-09-30"
+    await boots_after(clock, silent)
+
+    async def hello_again(bar):
+        assert (await bar.get("welcome"))["text"]
+    await boots_after(clock, hello_again)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("note", ["not a time", "", "nan"])
+async def test_an_unreadable_restart_note_is_no_reason_for_silence(clock, note):
+    known("Dan")
+    (paths.state_dir() / RESTARTING).write_text(note)
+
+    async def welcomed(bar):
+        assert (await bar.get("welcome"))["text"]
+        assert not (paths.state_dir() / RESTARTING).exists()
+    await boots_after(clock, welcomed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ago", [16 * 60, 3 * 86400])
+async def test_a_restart_note_from_long_ago_is_one_that_never_happened(clock, ago):
+    known("Dan")
+    (paths.state_dir() / RESTARTING).write_text(f"{clock() - ago:.0f}\n")
+
+    async def welcomed(bar):
+        assert (await bar.get("welcome"))["text"]
+        assert not (paths.state_dir() / RESTARTING).exists()
+    await boots_after(clock, welcomed)
+
+
+@pytest.mark.asyncio
+async def test_a_restart_that_failed_leaves_no_note_and_only_a_restart_writes_one(clock, monkeypatch):
+    known("Dan")
+    d = make(clock)
+    seen = restart_note(d, monkeypatch, ok=False)
+    async with running(d) as connect:
+        bar = await connect()
+        await bar.send("prompt", text="restart")
+        assert (await bar.get("event", kind="local", phase="done", action="restart"))["ok"] is False
+        assert seen == [("restart", True)] and not (paths.state_dir() / RESTARTING).exists()
+        for text, kind in (("shut down", "shutdown"), ("undo", "undo")):   # an undo waits for a restart
+            await bar.send("prompt", text=text)
+            await bar.get("event", kind="local", phase="done", action=kind)
+        assert [kind for kind, _ in seen] == ["restart", "shutdown", "undo"]
+        assert not (paths.state_dir() / RESTARTING).exists()
 
 
 @pytest.mark.asyncio
@@ -964,7 +1213,8 @@ async def test_a_hostile_session_title_cannot_make_a_long_goodbye(clock):
               "progress": {"done": 1, "total": 2}}, BATCH, {"state": "working", "title": ""})
     d = make(clock)
     text = await d.voice.goodbye()
-    assert len(text) <= 100 and "\n" not in text and text.startswith("Good night, Dan. ")
+    # The name is what goes first when the sessions do not fit around it (greet.goodbye), so it may be absent.
+    assert len(text) <= 100 and "\n" not in text and text.startswith("Good night") and "yyy" not in text
 
 
 @pytest.mark.asyncio
@@ -1027,9 +1277,11 @@ async def test_the_word_voice_reopens_the_card_with_what_is_saved(clock):
         assert (ask["current"], ask["name"], ask["voice"]) == (True, "Dan", "plain")
         assert ask["line"] == voice.CARD_LINE and [v["id"] for v in ask["voices"]] == ["merry", "plain", "quiet"]
         done = await bar.get("event", kind="local", phase="done")
-        assert done["ok"] is True and done["text"] == "Pick a voice, or press Esc."
+        # Still true once the card has closed, which is when the history and the pill's last line are read.
+        assert done["ok"] is True and done["text"] == "Opened the voice card."
         assert d.turns == 0 and d.pending == []   # it is a word, never a turn
-        assert [r["prompt"] for r in rows() if r.get("action") == "voice"] == ["voice"]
+        assert [(r["prompt"], r["result"], r["ok"]) for r in rows() if r.get("action") == "voice"] == \
+            [("voice", "Opened the voice card.", True)]
         await bar.send("persona", name="Dana", voice="quiet")
         assert (await bar.get("persona"))["voice"] == "quiet"
         await bar.none("welcome")   # changing is not a greeting
@@ -1075,14 +1327,18 @@ async def test_the_voice_button_and_a_card_nobody_answered(clock):
 
 
 @pytest.mark.asyncio
-async def test_bombadil_ask_voice_gets_its_done_event_even_with_no_bar(clock):
+async def test_bombadil_ask_voice_with_no_bar_gets_its_done_event_and_it_says_nothing_opened(clock):
     known("Dan")
     d = make(clock)
     async with running(d) as connect:
         ask = await connect()   # `bombadil ask voice`: a client that is not a bar
         await ask.send("prompt", text="voice")
-        assert (await ask.get("event", kind="local", phase="done"))["text"] == "Pick a voice, or press Esc."
+        assert (await ask.get("event", kind="local", phase="start"))["text"] == "Opening the voice card"
+        done = await ask.get("event", kind="local", phase="done")
+        assert done["ok"] is False and done["text"] == "No bar is open to show the voice card."
         assert d.voice.asking is None
+        assert [(r["prompt"], r["result"], r["ok"]) for r in rows() if r.get("action") == "voice"] == \
+            [("voice", "No bar is open to show the voice card.", False)]
 
 
 # -- turns.jsonl --

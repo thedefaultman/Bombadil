@@ -6,7 +6,6 @@ so a source that has not landed yet is simply absent. The clauses are worded in 
 """
 
 import json
-import math
 from datetime import datetime
 from pathlib import Path
 
@@ -15,10 +14,23 @@ from .greet import Fact
 
 MANY = 2  # more finished requests than this are said as one count
 NAMES = 3  # app names shown in "Since last time you built ..."
+TITLE = 40  # characters of a session's name in a line, as the goodbye cuts it
+RESTART = "Stopped by a restart"  # what the dev registry writes into `last` of a session a restart cut off
+BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
+# What json.loads and the number checks raise on a hand-damaged file: a bad line or value is skipped.
+ODD = (ValueError, OverflowError, RecursionError)
 
 
 def _num(x) -> float | None:
-    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) else None
+    return greet.num(x)
+
+
+def boot_id() -> str:
+    """This boot's id, as the dev registry records it in each session. "" when the kernel does not say."""
+    try:
+        return BOOT_ID.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _ts(now) -> float:
@@ -32,7 +44,7 @@ def read_rows(path: Path | None = None) -> list[dict]:
         for line in (path or paths.turns_log()).read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 row = json.loads(line)
-            except ValueError:
+            except ODD:
                 continue
             if isinstance(row, dict):
                 rows.append(row)
@@ -104,7 +116,7 @@ def updates(path: Path | None = None) -> list[Fact]:
     try:
         data = json.loads((path or paths.updates_file()).read_text(encoding="utf-8"))
         count, security = data.get("count"), data.get("security", 0)
-    except (OSError, ValueError, AttributeError):
+    except (OSError, AttributeError, *ODD):
         return []
     if not isinstance(count, int) or isinstance(count, bool) or count < 1:
         return []
@@ -126,25 +138,36 @@ def _title(s: dict) -> str:
     return next((v for v in (role, project, s.get("key")) if isinstance(v, str) and v), "")
 
 
-def dev(path: Path | None, now, since_ts: float) -> list[Fact]:
+def dev(path: Path | None, now, since_ts: float, boot: str | None = None) -> list[Fact]:
     """The coding sessions in the dev registry: stopped by a restart, finished or failed since `since_ts`.
     Never a waiting fact, because the placeholder already says who is waiting. [] when the registry does
-    not exist, as on main today."""
+    not exist, as on main today.
+
+    A restart cuts a session off in two ways the registry shows. It records the stop itself (asleep, "Stopped
+    by a restart") but only when something else makes it save, and then only `since_ts`, the previous boot,
+    tells a stop of this restart from one of months ago. Until it saves, the file still says the session is
+    alive with the boot id of the run before, so a session that is not yours, is alive and has another boot
+    id than `boot` (this boot's, read from the kernel unless given) was cut off by this restart."""
     if path is None:
         path = (paths.dev_dir() if hasattr(paths, "dev_dir") else paths.state_dir() / "dev") / "sessions.json"
     try:
         sessions = json.loads(path.read_text(encoding="utf-8")).get("sessions")
-    except (OSError, ValueError, AttributeError):
+    except (OSError, AttributeError, *ODD):
         return []
-    end = _ts(now)
+    end, here = _ts(now), boot_id() if boot is None else boot
     facts = []
     for s in sessions if isinstance(sessions, list) else []:
-        if not isinstance(s, dict) or not (title := _title(s)):
+        if not isinstance(s, dict) or not (title := " ".join(_title(s).split())[:TITLE].rstrip()):
             continue
         state, since = s.get("state"), _num(s.get("since"))
         ident = f"dev:{s.get('key') or title}"
         value = "" if since is None else str(since)
-        if state == "asleep" and s.get("last") == "Stopped by a restart":
+        recorded = (state == "asleep" and s.get("last") == RESTART and since is not None
+                    and since_ts < since <= end)
+        was = s.get("boot")  # a session with no boot id, or no boot id to compare it with, is not judged
+        cut = (s.get("alive", True) and not s.get("yours") and state != "asleep" and isinstance(was, str)
+               and was != "" and here != "" and was != here)
+        if recorded or cut:
             progress = s.get("progress") if isinstance(s.get("progress"), dict) else {}
             done, total = _num(progress.get("done")), _num(progress.get("total"))
             if done is not None and total is not None and done >= 0 and total > 0:

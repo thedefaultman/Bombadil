@@ -67,7 +67,7 @@ async def test_bombadil_ask_voice_prints_its_done_text_and_opens_the_card(home, 
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         out, err = await asyncio.wait_for(proc.communicate(), 10)
         assert proc.returncode == 0, err
-        assert out.decode() == "Pick a voice, or press Esc.\n"
+        assert out.decode() == "Opened the voice card.\n"
         seen = []
         while True:
             msg = json.loads(await asyncio.wait_for(r.readline(), 3))
@@ -76,6 +76,28 @@ async def test_bombadil_ask_voice_prints_its_done_text_and_opens_the_card(home, 
                 break
         assert (msg["current"], msg["name"], msg["voice"]) == (True, "Dan", "plain")
         w.close()
+    finally:
+        server.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await server
+
+
+@pytest.mark.asyncio
+async def test_bombadil_ask_voice_with_no_bar_says_so_and_fails(home, monkeypatch):
+    persona.save("Dan", "plain")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    try:
+        for _ in range(100):
+            if d.socket_path.exists():
+                break
+            await asyncio.sleep(0.02)
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(ROOT / "bin" / "bombadil"), "ask", "voice", env=dict(os.environ),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), 10)
+        assert proc.returncode == 1 and out == b""
+        assert err.decode() == "No bar is open to show the voice card.\n"
     finally:
         server.cancel()
         with contextlib.suppress(asyncio.CancelledError):

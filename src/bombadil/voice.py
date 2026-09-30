@@ -19,8 +19,11 @@ dir, the boot row in turns.jsonl and the ledger. So a line the bar dropped is tr
 hello, and restarting agentd (which the marker survives) never replays one.
 
 The card: persona.toml gets its defaults the moment the card is asked, so any way out of it leaves a valid
-setting and it is never asked again. Sign-in (PR #5) calls `AgentD.ask_persona(line)` when it turns ready,
-and `Voice.on_ready()` on any other change to ready, so a greeting held back by sign-in is said then.
+setting and it is never asked again. When sign-in turns ready, `AgentD._set_access` asks `Voice.due()` and
+hands the card's line to `Voice.on_ready()`, which asks the card or says the boot line a bar was waiting for.
+
+A restart the user asked for (the word `restart`) is no arrival: `note_restart()` leaves a note in the state
+dir before the reboot, and the boot after it is committed without a hello.
 """
 
 import asyncio
@@ -37,6 +40,7 @@ from . import greet, greet_sources, paths, persona
 TYPES = frozenset({"bar", "presence", "persona", "persona_skip", "welcomed"})
 
 WINDOW = 15 * 60       # a boot greeting is this login's only within this long after agentd started
+RESTART_WINDOW = 15 * 60   # a restart the user asked for is what the boot is, this long after they asked
 DELAY = 1.0            # the boot line comes this long after the bar said hello, beside its reader
 ACK_WAIT = 10.0        # a welcome the bar never answered counts as dropped after this long
 IDLE_SECONDS = 300.0   # the bar's IdleMonitor timeout: it reports idle this long after the last input
@@ -47,7 +51,10 @@ KEEP_SENT = 16
 ASK_LINE = "What should I call you?"
 CARD_LINE = "What should I call you, and how should I sound?"
 OPEN_TEXT = "Opening the voice card"
-DONE_TEXT = "Pick a voice, or press Esc."
+# The done line is read after the card has closed too (the history, the pill's last line): it says what
+# was done, not what to do.
+OPENED_TEXT = "Opened the voice card."
+NO_BAR_TEXT = "No bar is open to show the voice card."
 BAD_NAME = "Names are one to three words of letters, 24 characters at most."
 BAD_VOICE = "The voices are merry, plain and quiet."
 # A coding session a shutdown will stop. The words belong in lines.toml [fact] with the others.
@@ -61,6 +68,11 @@ def _seconds(var: str, default: float) -> float:
     except ValueError:
         return default
     return value if math.isfinite(value) and value >= 0 else default
+
+
+def _restart_marker():
+    # In the state dir, not the runtime dir: the reboot empties that one, and the note has to outlive it.
+    return paths.state_dir() / "restarting"
 
 
 def _safe(read, *args, **kw) -> list:
@@ -87,11 +99,12 @@ class _Sent:
 
 
 class Voice:
-    def __init__(self, agentd, clock=time.time, now=None):
+    def __init__(self, agentd, clock=time.time, now=None, mono=time.monotonic):
         self.agentd = agentd
-        self.clock = clock   # epoch seconds: uptime, time away, the ack wait
-        self._now = now or (lambda: datetime.fromtimestamp(clock()).astimezone())   # the wall clock for words
-        self.started = clock()
+        self.clock = clock   # epoch seconds: the ledger, the time away, the log's rows
+        self._now = now or (lambda: datetime.fromtimestamp(clock()).astimezone())   # wall clock, for words
+        self.mono = mono     # for waits: a wall clock that steps (NTP, a resumed VM) must not move a window
+        self.started = mono()
         self.bars: dict = {}                    # writer -> _Bar, for the connections that said "bar"
         self.asking: dict | None = None         # the card while it is up: {line, current, first}
         self._sent: dict[int, _Sent] = {}       # welcomes the bar has not answered yet
@@ -146,10 +159,12 @@ class Voice:
         bar.idle = False
         # The bar says idle only after the timeout, so the user left that long before it said so.
         away = now - bar.idle_at + _seconds("BOMBADIL_IDLE_SECONDS", IDLE_SECONDS)
+        # Both read the log, so they run beside the reader like _boot_after: a stop or a prompt sent right
+        # after the user is back is handled at once, not after the log.
         if self._boot_open():
-            await self._boot(writer)   # the boot line that did not land, now that someone is here
+            self.agentd._background(self._boot(writer))   # the boot line that did not land
         else:
-            await self._back(writer, away)
+            self.agentd._background(self._back(writer, away))
 
     def _welcomed(self, msg: dict, writer) -> None:
         wid = msg.get("id")
@@ -279,12 +294,41 @@ class Voice:
         """The launcher word `voice`: reopen the card with what is saved."""
         a = self.agentd
         await a.event("local", turn=None, action="voice", target="", phase="start", text=OPEN_TEXT)
-        await self.ask(current=True)
-        await a.event("local", turn=None, action="voice", target="", phase="done", ok=True, text=DONE_TEXT)
+        opened = await self.ask(current=True)   # False when no bar has said hello: nothing was shown
+        text = OPENED_TEXT if opened else NO_BAR_TEXT
+        await a.event("local", turn=None, action="voice", target="", phase="done", ok=opened, text=text)
         a._log_line({"t": self.clock(), "kind": "local", "prompt": typed, "action": "voice", "target": "",
-                     "result": DONE_TEXT, "ok": True})
+                     "result": text, "ok": opened})
 
     # -- welcomes --
+
+    def note_restart(self) -> None:
+        """The user asked for a restart: the boot after it is no arrival and gets no hello. Written before
+        the reboot and read after it, so it holds the wall clock, the only one that goes on across it."""
+        path = _restart_marker()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{self.clock():.0f}\n")
+        except OSError as e:
+            print(f"agentd: voice: could not note the restart: {e}", file=sys.stderr)
+
+    def forget_restart(self) -> None:
+        """The restart did not happen."""
+        try:
+            _restart_marker().unlink(missing_ok=True)
+        except OSError as e:
+            print(f"agentd: voice: could not remove the restart note: {e}", file=sys.stderr)
+
+    def _restart_asked(self) -> bool:
+        """Did the user ask for the restart this boot is the end of? The note is used up either way. A time
+        far from now in either direction is a note from another day, or one nobody can read."""
+        path = _restart_marker()
+        try:
+            at = float(path.read_text().strip())
+        except (OSError, ValueError):
+            at = None
+        self.forget_restart()
+        return at is not None and abs(self.clock() - at) < RESTART_WINDOW
 
     def _busy(self) -> bool:
         return self.agentd.current is not None or bool(self.agentd.pending)
@@ -297,11 +341,11 @@ class Voice:
                 and a._setup_ready() and persona.exists())
 
     def _pending(self, moments) -> bool:
-        now = self.clock()
+        now = self.mono()
         return any(s.greeting.moment in moments and now - s.at < ACK_WAIT for s in self._sent.values())
 
     def _boot_open(self) -> bool:
-        if self.clock() - self.started >= _seconds("BOMBADIL_GREET_WINDOW", WINDOW):
+        if self.mono() - self.started >= _seconds("BOMBADIL_GREET_WINDOW", WINDOW):
             return False
         if self._pending(BOOT_MOMENTS):
             return False
@@ -312,7 +356,7 @@ class Voice:
 
     async def _welcome(self, writer, g: greet.Greeting) -> None:
         self._seq += 1
-        self._sent[self._seq] = _Sent(writer, g, self.clock())
+        self._sent[self._seq] = _Sent(writer, g, self.mono())
         while len(self._sent) > KEEP_SENT:
             del self._sent[next(iter(self._sent))]
         await self.agentd._send(writer, {"type": "welcome", "id": self._seq, "text": g.text,
@@ -333,7 +377,15 @@ class Voice:
         async with self._lock:
             if not self._boot_open() or not self._can_greet(writer):
                 return
-            installed = not greet.is_live() and "installed" not in greet.load_ledger().said
+            if self._restart_asked():
+                # No hello for a restart you asked for, but it is still this login's boot: the day's marker
+                # and row are written, so nothing speaks up later in its place.
+                self._commit(greet.Greeting("", moment="boot"))
+                return
+            # "Undo works from here" is said only where it is true: an install whose snapshots failed, or a
+            # dev box without them, gets the ordinary boot line.
+            installed = (not greet.is_live() and "installed" not in greet.load_ledger().said
+                         and bool(self.agentd.snaps.available))
             rows = [] if installed else await asyncio.to_thread(greet_sources.read_rows)
             if not self._boot_open() or not self._can_greet(writer):
                 return   # something happened while the log was read
@@ -362,15 +414,17 @@ class Voice:
             return
         moments = ("return", *BOOT_MOMENTS)
         async with self._lock:
-            if not self._can_greet(writer) or self._pending(moments):
+            # The half hour is tested before the log is read: a return that will be skipped costs nothing.
+            if (not self._can_greet(writer) or self._pending(moments)
+                    or self._returned_lately(greet.load_ledger())):
                 return
             rows = await asyncio.to_thread(greet_sources.read_rows)
             if not self._can_greet(writer) or self._pending(moments):
                 return
             tz, now, dt = greet.tz_set(), self.clock(), self._now()
             ledger = greet.load_ledger()
-            if now - ledger.last_return_at < greet.SHORT_AWAY:
-                return   # at most one return line in half an hour
+            if self._returned_lately(ledger):
+                return   # a bar showed one while the log was read
             since = now - away
             facts = _safe(greet_sources.turns, rows, since, now=now)
             facts += [f for f in _safe(greet_sources.dev, None, dt, since)
@@ -381,6 +435,11 @@ class Voice:
                             day=greet.days_since(ledger, dt))
             if g is not None and g.text:
                 await self._welcome(writer, g)
+
+    def _returned_lately(self, ledger: greet.Ledger) -> bool:
+        """At most one return line in half an hour. A time after now is a clock that stepped back, not a
+        return that is still recent: it would silence every return line until the clock caught up."""
+        return 0 <= self.clock() - ledger.last_return_at < greet.SHORT_AWAY
 
     async def _first(self, writer) -> None:
         """The hello right after the card, in the voice that was just chosen."""

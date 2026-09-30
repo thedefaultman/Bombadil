@@ -10,12 +10,12 @@ import contextlib
 import json
 import math
 import os
+import re
 import string
 import time
 import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from functools import cache
 from pathlib import Path
 
 from . import paths
@@ -24,6 +24,7 @@ from .persona import DEFAULT_VOICE, VOICES, Persona, clean_name
 LIMIT = 100
 SHORT_AWAY = 30 * 60        # a return greeting needs at least this long a break
 LONG_AWAY = 4 * 3600
+NIGHT_AWAY = 2 * 3600       # a break that crosses midnight is "overnight" from this long
 WEEK_AWAY = 3 * 86400
 STANDING_DAYS = 7
 KEEP_DAYS = 120
@@ -52,6 +53,18 @@ def _text(v) -> str:
     return v if isinstance(v, str) else ""
 
 
+def num(x) -> float | None:
+    """x as a float when it is a finite number (never a bool), else None. A whole number too big for a
+    float is not one: it would raise OverflowError in isfinite and in float()."""
+    if not isinstance(x, (int, float)) or isinstance(x, bool):
+        return None
+    try:
+        x = float(x)
+    except OverflowError:
+        return None
+    return x if math.isfinite(x) else None
+
+
 @dataclass
 class Ledger:
     said: dict[str, dict] = field(default_factory=dict)  # key -> {"value", "day"}
@@ -63,10 +76,9 @@ class Ledger:
     def from_dict(cls, d) -> "Ledger":
         if not isinstance(d, dict):
             return cls()
-        said, at = d.get("said"), d.get("last_return_at")
+        said, at = d.get("said"), num(d.get("last_return_at"))
         said = {k: v for k, v in said.items() if isinstance(v, dict)} if isinstance(said, dict) else {}
-        ok = isinstance(at, (int, float)) and not isinstance(at, bool) and math.isfinite(at)
-        return cls(said, _text(d.get("setup_day")), _text(d.get("last_boot_day")), float(at) if ok else 0.0)
+        return cls(said, _text(d.get("setup_day")), _text(d.get("last_boot_day")), at or 0.0)
 
     def to_dict(self) -> dict:
         return {"said": self.said, "setup_day": self.setup_day, "last_boot_day": self.last_boot_day,
@@ -95,18 +107,27 @@ def say(template: str, **slots) -> str:
     return _Say().vformat(template, (), slots)
 
 
-@cache
+_loaded: dict[str, dict] = {}
+
+
 def _table(path: str) -> dict:
-    try:
-        with open(path, "rb") as f:
-            return tomllib.load(f)
-    except (OSError, ValueError):
-        return {}
+    """The table at `path`, read once. A read that failed is not kept, so a file that was missing or half
+    written when agentd started is read again at the next line and not missed until agentd restarts."""
+    table = _loaded.get(path)
+    if table is None:
+        try:
+            with open(path, "rb") as f:
+                table = tomllib.load(f)
+        except (OSError, ValueError, RecursionError):
+            return {}
+        if table:
+            _loaded[path] = table
+    return table
 
 
 def lines() -> dict:
-    """The parsed share/voice/lines.toml, cached. Empty when the file is missing or broken, and every
-    function here then says nothing."""
+    """The parsed share/voice/lines.toml, cached once it has been read. Empty when the file is missing or
+    broken, and every function here then says nothing."""
     return _table(str(paths.voice_lines()))
 
 
@@ -176,17 +197,23 @@ def days_since(ledger: Ledger, now) -> int:
 
 
 def tz_set() -> bool:
-    """Whether a time zone was chosen: /etc/localtime names a zone that is not UTC or GMT. Until then
-    no line says "morning" or "night", because a wrong hour is worse than none. Reading the zone again
-    with tzset means the clock that is read next follows a zone set while agentd was running."""
+    """Whether a time zone was chosen: /etc/localtime names a zone that is not UTC or GMT and opens, and
+    the environment has no TZ of its own. Until then no line says "morning" or "night", because a wrong
+    hour is worse than none: the C library runs on UTC when it cannot open the zone, and follows TZ and
+    not /etc/localtime when there is one. Reading the zone again with tzset means the clock that is read
+    next follows a zone set while agentd was running."""
     if hasattr(time, "tzset"):
         time.tzset()
+    if "TZ" in os.environ:
+        return False
+    link = paths.localtime_link()
     try:
-        target = os.readlink(paths.localtime_link())
+        target = os.readlink(link)
     except OSError:
         return False
     zone = target.rpartition("zoneinfo/")[2] if "zoneinfo/" in target else ""
-    return zone != "" and zone not in UTC_LIKE
+    zone = zone.removeprefix("posix/").removeprefix("right/")  # the same zones, in other folders
+    return zone != "" and zone not in UTC_LIKE and os.path.isfile(link)
 
 
 def is_live() -> bool:
@@ -209,7 +236,41 @@ def _fresh(ledger: Ledger, fact: Fact, today: date) -> bool:
 
 
 def _sentence(text: str) -> str:
-    return text if text.endswith((".", "?", "!")) else text + "."
+    return text if text.endswith((".", "?", "!", "…")) else text + "."
+
+
+def _tidy(text: str) -> str:
+    """One full stop where a name that ends in one meets the template's; an ellipsis stays as it is."""
+    return re.sub(r"(?<!\.)\.\.(?!\.)", ".", text)
+
+
+def _more_tail() -> re.Pattern | None:
+    """The table's "and N more" at the end of a sentence, as a pattern."""
+    table = lines()
+    names, more = table.get("join", {}).get("names"), table.get("fact", {}).get("more")
+    if not names or not more or "{n}" not in more:
+        return None
+    return re.compile(re.escape(names) + re.escape(more).replace(re.escape("{n}"), r"\d+") + r"(?=[.?!]?$)")
+
+
+def shorten(text: str, limit: int = LIMIT) -> str:
+    """`text` as a sentence of at most `limit` characters. A trailing "and N more" goes first; what is
+    still too long is cut after a whole word and ends with an ellipsis in place of the full stop."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    tail = _more_tail()
+    if tail:
+        text = tail.sub("", text)
+        if len(text) <= limit:
+            return text
+    text = text.rstrip(".?!")
+    head = text[:limit - 1]
+    if len(text) >= limit and text[limit - 1] != " ":
+        at = head.rfind(" ")
+        if at >= limit // 2:  # a cut that leaves half the line or less is not worth a word
+            head = head[:at]
+    return head.rstrip(" ,;:.-") + "…"
 
 
 def _clause(fact: Fact, first: bool, clause: dict) -> str:
@@ -267,7 +328,7 @@ def build(moment: str, persona: Persona, now, *, facts=(), ledger: Ledger | None
     if moment == "installed":
         if not persona.greet or "installed" not in voice_table:
             return None
-        return Greeting(say(voice_table["installed"], n=n), moment=moment)
+        return Greeting(_tidy(say(voice_table["installed"], n=n)), moment=moment)
 
     seen: set[str] = set()
     fresh = []
@@ -289,7 +350,8 @@ def build(moment: str, persona: Persona, now, *, facts=(), ledger: Ledger | None
         fresh = [f for f in fresh if f.kind != "made"]
 
     if fresh and fresh[0].kind in ALONE:
-        return Greeting(_sentence(fresh[0].text.strip()), (fresh[0],), first=moment == "first", moment=moment)
+        line = shorten(_sentence(fresh[0].text.strip()))
+        return Greeting(line, (fresh[0],), first=moment == "first", moment=moment)
     if not persona.greet:
         return None
 
@@ -300,7 +362,9 @@ def build(moment: str, persona: Persona, now, *, facts=(), ledger: Ledger | None
     else:
         if not fresh:
             return None
-        crossed = (dt - timedelta(seconds=away)).date() != today
+        # overnight is a break that crosses midnight and is long enough to be a night: 35 minutes at 00:25 is
+        # a coffee break and is said like one
+        crossed = away >= NIGHT_AWAY and (dt - timedelta(seconds=away)).date() != today
         ctx = "long" if long else "back" if away >= LONG_AWAY or crossed else "away"
     section = voice_table.get(ctx)
     if not section:
@@ -318,16 +382,18 @@ def build(moment: str, persona: Persona, now, *, facts=(), ledger: Ledger | None
     for used, named in tries:
         text = say(template, opener=opener, n=n if named else "", invite=invite,
                    body=_body(used, moment, table) if used else "")
-        candidates.append((text, used))
-    if fresh:  # last resort: the bare fact, which may still be long but has nothing left to drop
+        candidates.append((_tidy(text), used))
+    if fresh:  # last resort: the bare fact, which is cut if it is still too long
         candidates.append((_body(chosen[:1], moment, table), chosen[:1]))
     text, used = next((c for c in candidates if len(c[0]) <= LIMIT), candidates[-1])
-    return Greeting(text, tuple(used), first=moment == "first", moment=moment) if text else None
+    return Greeting(shorten(text), tuple(used), first=moment == "first", moment=moment) if text else None
 
 
 def goodbye(persona: Persona, now, *, stopping=(), tz_set: bool = True) -> str:
     """The start text of a shutdown. `stopping` are clauses like "batch stops at 14 of 20". "" means there is
-    nothing to say and the caller keeps its own text. With greeting off the words are Plain's."""
+    nothing to say and the caller keeps its own text. With greeting off the words are Plain's. Two sessions
+    are both named, more are counted ("a, b and 2 more"), and the tail of a voice that has a plural one
+    ("stops") says it in the plural."""
     table = lines()
     voice = persona.voice if persona.voice in VOICES else DEFAULT_VOICE
     if not persona.greet:
@@ -339,17 +405,20 @@ def goodbye(persona: Persona, now, *, stopping=(), tz_set: bool = True) -> str:
     word = bye.get("night" if tz_set and (dt.hour >= BYE_NIGHT or dt.hour < NIGHT_END) else "day", "")
     name = clean_name(persona.name)
     clauses = [s.strip().rstrip(".") for s in stopping if isinstance(s, str) and s.strip()]
-    join = table.get("join", {}).get("names", "")
-    tries = [(clauses[:2], True), (clauses[:1], True), (clauses[:1], False), ([], True), ([], False)]
+
+    def said(n: int) -> str:  # the first n clauses, then a count of the rest
+        return join_names([*clauses[:n], *([phrase("more", n=len(clauses) - n)] if len(clauses) > n else [])])
+
+    tries = [(said(2), True), (said(1), True), (said(1), False), ("", True), ("", False)]
     text = ""
-    for used, named in tries:
-        key = "stop" if used else "none"
+    for stop, named in tries:
+        key = ("stops" if len(clauses) > 1 and "stops" in bye else "stop") if stop else "none"
         if key not in bye:
             continue
-        text = say(bye[key], bye=word, n=f", {name}" if name and named else "", stop=join.join(used))
+        text = _tidy(say(bye[key], bye=word, n=f", {name}" if name and named else "", stop=stop))
         if len(text) <= LIMIT:
             break
-    return text
+    return shorten(text) if text else text
 
 
 def commit(ledger: Ledger, greeting: Greeting, now) -> None:
@@ -374,7 +443,7 @@ def commit(ledger: Ledger, greeting: Greeting, now) -> None:
 def load_ledger() -> Ledger:
     try:
         return Ledger.from_dict(json.loads(paths.ledger_file().read_text(encoding="utf-8")))
-    except (OSError, ValueError, RecursionError):
+    except (OSError, ValueError, OverflowError, RecursionError):
         return Ledger()
 
 

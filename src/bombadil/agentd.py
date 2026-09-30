@@ -647,7 +647,11 @@ class AgentD:
                          text=bye or doing)
         if action.kind in ("restart", "shutdown"):
             await self.voice.flush()   # bounded: a dead client never holds the power button
+        if action.kind == "restart":
+            self.voice.note_restart()   # the boot after a restart you asked for gets no hello
         ok, text = await asyncio.to_thread(self.launcher.run, action)
+        if action.kind == "restart" and not ok:
+            self.voice.forget_restart()
         if ok and bye:
             text = bye
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
@@ -679,9 +683,10 @@ class AgentD:
         return self.access == "ready"
 
     async def ask_persona(self, line: str | None = None, current: bool = False) -> bool:
-        """Show the name and voice card. `_set_access` calls it when sign-in turns ready, with the line
-        "Signed in to Claude. What should I call you?"; it asks only while persona.toml is missing. The word
-        `voice` asks with current=True. False when nothing was asked."""
+        """Show the name and voice card; it asks only while persona.toml is missing. `_set_access` does the
+        same through `voice.due()` and `voice.on_ready()` when sign-in turns ready, with the line "Signed in
+        to Claude. What should I call you?". The word `voice` asks with current=True. False when nothing was
+        asked."""
         return await self.voice.ask(line, current)
 
     async def stop(self) -> bool:

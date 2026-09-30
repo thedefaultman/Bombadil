@@ -27,6 +27,11 @@ def not_live(monkeypatch):
     monkeypatch.setenv("BOMBADIL_LIVE", "0")
 
 
+@pytest.fixture(autouse=True)
+def no_zone_in_the_environment(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)   # a TZ in agentd's environment makes tz_set() false
+
+
 def person(voice="merry", name="Daniel", greet_on=True) -> Persona:
     return Persona(name, voice, greet_on)
 
@@ -256,7 +261,7 @@ def test_every_goodbye_obeys_the_brief():
     for voice, name, zone, hour, stopping in itertools.product(
             VOICES, NAMES, (True, False), range(24),
             ([], ["batch stops at 14 of 20"], ["a stops at 1 of 2", "b stops at 3 of 4", "c stops at 5 of 6"],
-             ["x" * 60, "y" * 60], ["z" * 120])):
+             ["x" * 60, "y" * 60], ["z" * 120], stops(2), stops(4), ["w" * 40] * 4)):
         t = goodbye(person(voice, name), at(hour), stopping=stopping, tz_set=zone)
         where = (voice, name, zone, hour, stopping, t)
         assert 0 < len(t) <= 100 and "{" not in t and "—" not in t and "–" not in t and "\n" not in t, where
@@ -285,7 +290,9 @@ def test_the_shipped_table_has_every_cell():
     assert set(table["opener"]) == {"welcome", "back", "morning", "afternoon", "evening", "late"}
     assert len(table["invite"]["pool"]) == 7 and table["invite"]["walk"] == "Let's go for a walk!"
     for voice in VOICES:
-        assert "installed" in table[voice] and set(table[voice]["bye"]) == {"night", "day", "none", "stop"}
+        # only Merry has a plural tail ("They wait for you."): Plain's and Quiet's read the same for any number
+        assert "installed" in table[voice] and set(table[voice]["bye"]) == (
+            {"night", "day", "none", "stop"} | ({"stops"} if voice == "merry" else set()))
         for ctx in ("first", "boot", "night", "long", "back", "away"):
             assert "facts" in table[voice][ctx], (voice, ctx)
     for key in ("updates", "security", "stopped", "stopped_at", "finished", "failed", "requests_finished",
@@ -414,10 +421,27 @@ def test_four_hours_or_a_night_is_welcome_back_but_not_for_quiet():
     assert text("return", "merry", 15, facts=[BATCH], away=4 * 3600) == want
     assert text("return", "plain", 15, facts=[BATCH], away=4 * 3600) == want
     assert text("return", "quiet", 15, facts=[BATCH], away=4 * 3600) == "While you were away: " + BATCH.text + "."
-    # two hours, but across midnight
+    # two hours or more, across midnight
     assert text("return", "merry", 1, facts=[BATCH], away=2 * 3600, ledger=Ledger()) == want
     assert text("return", "merry", 1, facts=[BATCH], away=50 * 60) == "While you were away: " + BATCH.text + "."
-    assert text("return", "merry", 0, facts=[BATCH], away=50 * 60 * 2) == want  # 22:20 the evening before
+    assert text("return", "merry", 0, facts=[BATCH], away=130 * 60) == want  # 21:50 the evening before
+
+
+def test_a_short_break_that_only_crosses_midnight_is_not_a_night_away():
+    news = "While you were away: " + BATCH.text + "."
+    back = "Welcome back, Daniel. " + news
+    for voice in ("merry", "plain"):
+        def line(h, m, away, voice=voice):
+            return build("return", person(voice), at(h, m), facts=[BATCH], away=away, ledger=first_of_day()).text
+        assert line(0, 25, 35 * 60) == news            # a coffee break after midnight is not "back"
+        assert line(0, 10, 90 * 60) == news            # 22:40 the evening before
+        assert line(0, 0, 2 * 3600 - 1) == news
+        assert line(1, 0, 2 * 3600) == back            # from two hours, a night that crosses midnight is back
+        assert line(2, 30, 3 * 3600 + 1800) == back    # 23:00 the evening before
+        assert line(15, 0, 2 * 3600) == news           # the same length within one day has no opener
+        assert line(3, 59, 238 * 60) == news           # 00:01 the same day: no midnight in between
+        assert line(3, 59, 4 * 3600 - 1) == back       # 23:59:01 the evening before
+        assert line(1, 10, 2 * 3600 - 1) == news       # 23:10:01 the evening before, but under two hours
 
 
 def test_three_days_or_more_is_welcome_back_for_every_voice_and_adds_what_you_made():
@@ -539,6 +563,43 @@ def test_a_name_that_fails_the_check_is_never_said():
         assert goodbye(Persona(bad, "merry"), at(14)) == "See you."
 
 
+DOUBLE_STOP = re.compile(r"(?<!\.)\.\.(?!\.)")   # two full stops, not the three of an ellipsis
+
+
+@pytest.mark.parametrize("voice", VOICES)
+def test_a_name_that_ends_in_a_dot_does_not_make_two_full_stops(voice):
+    for name in ("Daniel Z.", "Dan Smith Jr.", "J."):
+        p = person(voice, name)
+        lines_ = [build("first", p, NOW, ledger=Ledger(), day=d) for d in (0, 1)]
+        lines_ += [build("boot", p, at(h), ledger=first_of_day(), day=d) for h in (2, 8) for d in (1, 4)]
+        lines_ += [build("boot", p, NOW, ledger=booted_today(), facts=[UPDATES])]
+        lines_ += [build("return", p, NOW, facts=[BATCH], away=5 * 3600, ledger=first_of_day()),
+                   build("return", p, NOW, facts=[MADE], away=8 * 86400, ledger=first_of_day()),
+                   build("installed", p, NOW)]
+        texts = [g.text for g in lines_ if g] + [goodbye(p, at(h), stopping=x) for h in (14, 22)
+                                                    for x in ([], stops(1), stops(2))]
+        assert len(texts) > 10
+        for t in texts:
+            assert not DOUBLE_STOP.search(t) and len(t) <= 100, t
+            assert t.count(name) <= 1, t
+    assert build("first", person("merry", "Daniel Z."), NOW, ledger=Ledger(), day=0).text == (
+        "Welcome, Daniel Z. Let's go for a walk!")
+    assert build("boot", person("merry", "Daniel Z."), NOW, ledger=first_of_day(), day=1).text == (
+        "Good morning, Daniel Z. Where to today?")
+    assert build("boot", person("plain", "Daniel Z."), NOW, ledger=first_of_day()).text == "Good morning, Daniel Z."
+    assert build("installed", person("merry", "Daniel Z."), NOW).text == "Welcome home, Daniel Z. Undo works from here."
+    assert goodbye(person("merry", "Daniel Z."), at(14)) == "See you, Daniel Z."
+    assert goodbye(person("merry", "Daniel Z."), at(22), stopping=stops(1)) == (
+        "Good night, Daniel Z. a stops at 1 of 9 and waits for you.")
+
+
+def test_an_ellipsis_is_left_as_it_is_where_a_name_or_a_fact_has_one():
+    assert build("boot", person("plain", "Dan.."), NOW, ledger=first_of_day()).text == "Good morning, Dan..."
+    assert goodbye(person("merry", "Dan..."), at(14)) == "See you, Dan...."
+    t = text("return", facts=[fact("the build... is done")], away=3600)
+    assert t == "While you were away: the build... is done."
+
+
 def test_a_name_with_braces_in_a_fact_is_left_alone():
     f = Fact("k", "finished", "{title} finished {0} {x}")
     assert text("return", facts=[f], away=3600) == "While you were away: {title} finished {0} {x}."
@@ -634,6 +695,20 @@ def test_a_table_that_is_not_toml_says_nothing(monkeypatch, tmp_path):
     assert greet.lines() == {} and build("boot", person(), NOW, ledger=first_of_day()) is None
 
 
+def test_a_table_that_could_not_be_read_is_read_again_when_it_is_back(monkeypatch, tmp_path):
+    shipped = paths.voice_lines().read_text(encoding="utf-8")
+    path = tmp_path / "lines.toml"
+    monkeypatch.setenv("BOMBADIL_VOICE_LINES", str(path))
+    assert greet.lines() == {} and build("boot", person(), NOW, ledger=first_of_day()) is None  # no file yet
+    path.write_text("this is [not toml")
+    assert greet.lines() == {}                                                                  # half written
+    path.write_text(shipped, encoding="utf-8")                                                  # and now it is there
+    assert build("boot", person(), NOW, ledger=first_of_day(), day=1).text == "Good morning, Daniel. Where to today?"
+    assert greet.empty("needs_you") == "Nothing needs you."
+    path.unlink()                                                                               # a table that was read is kept
+    assert build("boot", person(), NOW, ledger=first_of_day(), day=1).text == "Good morning, Daniel. Where to today?"
+
+
 def test_an_unknown_voice_reads_as_merry():
     assert build("boot", Persona("Daniel", "shouting"), NOW, ledger=first_of_day(), day=1).text == (
         "Good morning, Daniel. Where to today?")
@@ -683,13 +758,78 @@ def test_the_budget_picks_the_fullest_line_that_fits():
     assert g.text == f"Welcome, {NAME24}. {'a' * 30}." and len(g.facts) == 1
 
 
-def test_a_fact_too_long_for_a_line_leads_bare_and_what_was_left_out_is_not_recorded():
-    f = fact("z" * 120, "z")
+def test_a_fact_too_long_for_a_line_leads_bare_is_cut_and_what_was_left_out_is_not_recorded():
+    f = fact("z" * 120, "z")  # no word to cut at: the cut is at the limit, and the line ends with the ellipsis
     g = build("boot", person("merry", NAME24), NOW, facts=[f, fact("w", "w")], ledger=booted_today())
-    assert g.text == "z" * 120 + "." and g.facts == (f,)
+    assert g.text == "z" * 99 + "…" and len(g.text) == 100 and g.facts == (f,)
     led = booted_today()
     commit(led, g, NOW)
     assert "z" in led.said and "w" not in led.said  # the dropped fact is said next time
+
+
+def test_a_long_fact_is_cut_at_a_word_and_ends_with_an_ellipsis():
+    long = fact("installed " + " ".join(["package"] * 20), "long")
+    for voice in VOICES:
+        g = build("boot", person(voice), NOW, facts=[long], ledger=booted_today())
+        assert g.text == "installed " + " ".join(["package"] * 11) + "…" and g.facts == (long,)
+    g = build("return", person(), NOW, facts=[long], away=3600, ledger=booted_today())
+    assert g.text == "While you were away: installed " + " ".join(["package"] * 8) + "…" and len(g.text) <= 100
+    # the ellipsis replaces the full stop, and no comma or space is left before it
+    g = build("boot", person("plain", ""), NOW, facts=[fact("a" * 90 + ", " + "b" * 20, "c")], ledger=booted_today())
+    assert g.text == "a" * 90 + "…"
+
+
+def test_an_and_n_more_tail_goes_before_a_fact_is_cut():
+    tail = fact("a" * 55 + ", " + "b" * 15 + " and 4 more", "t")
+    g = build("return", person(), NOW, facts=[tail], away=3600, ledger=booted_today())
+    assert g.text == "While you were away: " + "a" * 55 + ", " + "b" * 15 + "." and g.facts == (tail,)
+    made = Fact("made", "made", "A" * 40 + ", " + "B" * 40 + ", " + "C" * 30 + " and 2 more", "v")
+    g = build("return", person("plain", ""), NOW, facts=[made], away=8 * 86400, ledger=booted_today())
+    assert g.text == "Since last time you built " + "A" * 40 + "…"  # the tail went, then the cut at the last word
+
+
+def test_a_long_summary_from_a_turn_is_one_row():
+    summary = ("installed visual-studio-code-bin, removed libreoffice-fresh-de and changed the wifi settings "
+               "and 4 more")
+    g = build("return", person(), NOW, facts=[fact(summary, "s")], away=3600, ledger=booted_today())
+    assert g.text == "While you were away: installed visual-studio-code-bin, removed libreoffice-fresh-de and changed the…"
+    assert len(g.text) == 100
+
+
+def test_what_failed_or_was_put_back_is_one_row_too():
+    sentence = ("That change cut the network and the printer and the shared folders on the other computer, "
+                "so I put it back. Redo it?")
+    g = build("boot", person(), NOW, facts=[Fact("putback:1", "putback", sentence)], ledger=first_of_day())
+    assert g.text == "That change cut the network and the printer and the shared folders on the other computer, so I put…"
+    assert len(g.text) <= 100
+    g = build("return", person(), NOW, facts=[Fact("f", "failed", "x" * 130)], away=3600, ledger=first_of_day())
+    assert g.text == "x" * 99 + "…"
+    short = Fact("putback:2", "putback", "x" * 99)
+    assert build("boot", person(), NOW, facts=[short], ledger=first_of_day()).text == "x" * 99 + "."
+
+
+def test_no_line_is_ever_over_a_hundred_characters():
+    def bodies(n):  # words, one long word, and words that end in a tail of the narrator's
+        spaced = ("word " * n)[:n].strip()
+        return spaced, "w" * n, spaced[:max(n - 11, 1)] + " and 4 more"
+    count = 0
+    for n, kind, moment_, voice, name, zone, away in itertools.product(
+            (1, 30, 60, 79, 80, 90, 95, 99, 100, 101, 105, 120, 200), ("finished", "waiting", "stopped", "made",
+                                                                      "updates", "putback", "failed"),
+            ("first", "boot", "return"), VOICES, ("", "Daniel", NAME24), (True, False), (3600, 5 * 3600, 8 * 86400)):
+        for body in bodies(n):
+            f = Fact("k", kind, body, "v")
+            g = build(moment_, person(voice, name), at(8), facts=[f, Fact("k2", "finished", "x" * 50, "v")],
+                      ledger=first_of_day(), tz_set=zone, away=away if moment_ == "return" else None)
+            if g is None:
+                continue
+            count += 1
+            where = (n, kind, moment_, voice, name, body, g.text)
+            assert 0 < len(g.text) <= 100 and "\n" not in g.text, where
+            assert g.text.endswith((".", "?", "!", "…")), where
+            assert not re.search(r"(?<!\.)\.\.(?!\.)|…\.|[ ,]…| $", g.text), where
+            assert all(x in (f, Fact("k2", "finished", "x" * 50, "v")) for x in g.facts), where  # the facts as given
+    assert count > 2000
 
 
 def test_a_return_prefix_stays_until_the_fact_stands_alone():
@@ -700,10 +840,12 @@ def test_a_return_prefix_stays_until_the_fact_stands_alone():
     assert g.text == "While you were away: " + "q" * 70 + "." and len(g.text) <= 100
 
 
-def test_the_goodbye_budget_drops_the_second_clause_then_the_name_then_the_clause():
+def test_the_goodbye_budget_counts_the_second_session_then_drops_the_name_then_the_clause():
     p = person("merry", NAME24)
     one, two = "a" * 25 + " stops at 1 of 2", "b" * 25 + " stops at 3 of 4"
-    t = goodbye(p, at(22), stopping=[one, two])
+    t = goodbye(p, at(22), stopping=[one, two])  # the second session is counted, so the name goes
+    assert t == f"Good night. {one} and 1 more. They wait for you." and len(t) <= 100
+    t = goodbye(p, at(22), stopping=[one])
     assert t == f"Good night, {NAME24}. {one} and waits for you." and len(t) <= 100
     t = goodbye(person("merry", NAME24), at(22), stopping=["c" * 60])
     assert t == "Good night. " + "c" * 60 + " and waits for you." and len(t) <= 100
@@ -711,7 +853,7 @@ def test_the_goodbye_budget_drops_the_second_clause_then_the_name_then_the_claus
     assert t == f"Good night, {NAME24}."
     short = ["a stops at 1 of 2", "b stops at 3 of 4"]
     assert goodbye(person("plain", NAME24), at(22), stopping=short) == "Shutting down. a stops at 1 of 2 and b stops at 3 of 4."
-    assert goodbye(person("plain", NAME24), at(22), stopping=[one, two]) == f"Shutting down. {one}."
+    assert goodbye(person("plain", NAME24), at(22), stopping=[one, two]) == f"Shutting down. {one} and 1 more."
 
 
 # goodbyes
@@ -739,8 +881,48 @@ def test_good_night_is_only_a_goodbye_after_eight_before_five_with_a_zone_set():
 
 def test_a_goodbye_clause_is_tidied_and_several_are_joined():
     t = goodbye(person("plain"), at(14), stopping=["a stops at 1 of 2.", "  ", 7, None, "b stops at 3 of 4", "c stops"])
-    assert t == "Shutting down. a stops at 1 of 2 and b stops at 3 of 4."
+    assert t == "Shutting down. a stops at 1 of 2, b stops at 3 of 4 and 1 more."  # the third is counted, not dropped
+    assert goodbye(person("plain"), at(14), stopping=["a stops at 1 of 2.", "  ", 7, "b stops at 3 of 4"]) == (
+        "Shutting down. a stops at 1 of 2 and b stops at 3 of 4.")
     assert goodbye(person("merry"), at(14), stopping=[" ", ""]) == "See you, Daniel."
+
+
+def stops(n):
+    return [f"{c} stops at {i} of 9" for i, c in enumerate("abcd"[:n], 1)]
+
+
+def test_a_goodbye_with_several_sessions_is_plural_and_counts_the_ones_it_does_not_name():
+    merry = {
+        1: "Good night, Daniel. a stops at 1 of 9 and waits for you.",
+        2: "Good night, Daniel. a stops at 1 of 9 and b stops at 2 of 9. They wait for you.",
+        3: "Good night, Daniel. a stops at 1 of 9, b stops at 2 of 9 and 1 more. They wait for you.",
+        4: "Good night, Daniel. a stops at 1 of 9, b stops at 2 of 9 and 2 more. They wait for you."}
+    plain = {
+        1: "Shutting down. a stops at 1 of 9.", 2: "Shutting down. a stops at 1 of 9 and b stops at 2 of 9.",
+        3: "Shutting down. a stops at 1 of 9, b stops at 2 of 9 and 1 more.",
+        4: "Shutting down. a stops at 1 of 9, b stops at 2 of 9 and 2 more."}
+    for n in (1, 2, 3, 4):
+        assert goodbye(person("merry"), at(22), stopping=stops(n)) == merry[n]
+        assert goodbye(person("plain"), at(22), stopping=stops(n)) == plain[n]
+        assert goodbye(person("quiet"), at(22), stopping=stops(n)) == "Shutting down."
+        assert goodbye(person("merry", "Daniel", False), at(22), stopping=stops(n)) == plain[n]
+        assert goodbye(person("merry", ""), at(14), stopping=stops(n)) == merry[n].replace("Good night, Daniel", "See you")
+    assert all("waits" not in merry[n] for n in (2, 3, 4))   # the verb agrees with "a and b"
+
+
+def test_a_goodbye_that_is_squeezed_drops_the_name_before_it_stops_counting_sessions():
+    four = [f"{c * 25} stops at {i} of 9" for i, c in enumerate("abcd", 1)]
+    t = goodbye(person("merry", NAME24), at(22), stopping=four)
+    assert t == f"Good night. {four[0]} and 3 more. They wait for you." and len(t) <= 100
+    t = goodbye(person("merry", NAME24), at(22), stopping=four[:3])
+    assert t == f"Good night. {four[0]} and 2 more. They wait for you."
+    # each session is named or counted whenever the line has room for the clause at all
+    for n, name, hour, voice in itertools.product((1, 2, 3, 4), ("", "Daniel", NAME24), (14, 22), ("merry", "plain")):
+        clauses = [f"{c * 20} stops at {i} of 9" for i, c in enumerate("abcd"[:n], 1)]
+        t = goodbye(person(voice, name), at(hour), stopping=clauses)
+        named = sum(c in t for c in clauses)
+        counted = sum(int(m) for m in re.findall(r"(\d+) more", t))
+        assert named + counted == n and len(t) <= 100, (n, name, hour, voice, t)
 
 
 def test_with_greeting_off_the_goodbye_is_plain():
@@ -952,6 +1134,17 @@ def test_a_broken_ledger_file_is_an_empty_ledger(home):
     assert greet.load_ledger().setup_day == "2026-09-28"
 
 
+def test_a_number_too_big_for_a_float_costs_the_ledger_that_number_only(home):
+    big = int("1" + "0" * 400)
+    got = Ledger.from_dict({"said": {"a": {"value": "1", "day": "d"}}, "setup_day": "s", "last_return_at": big})
+    assert got == Ledger({"a": {"value": "1", "day": "d"}}, "s")
+    paths.state_dir().mkdir(parents=True)
+    paths.ledger_file().write_text('{"setup_day": "2026-09-01", "last_return_at": 1' + "0" * 400 + "}")
+    assert greet.load_ledger() == Ledger(setup_day="2026-09-01")
+    paths.ledger_file().write_text('{"said": ' + "[" * 200_000 + "}")  # nested deeper than the parser goes
+    assert greet.load_ledger() == Ledger()
+
+
 def test_saving_the_ledger_never_raises(home):
     paths.state_dir().parent.mkdir(parents=True, exist_ok=True)
     paths.state_dir().write_text("a file where the folder belongs")
@@ -960,19 +1153,37 @@ def test_saving_the_ledger_never_raises(home):
 
 # the clock and the machine
 
+def zone_link(tmp_path, target):
+    """/etc/localtime of a pretend root under tmp_path, a link to `target` as written in that root, with a
+    file at its far end so the zone opens: these tests do not depend on the tzdata of the machine."""
+    link = tmp_path / "etc" / "localtime"
+    link.parent.mkdir(exist_ok=True)
+    link.unlink(missing_ok=True)
+    absolute = target.startswith("/")
+    goal = tmp_path / target.lstrip("/") if absolute else Path(os.path.normpath(link.parent / target))
+    if target.endswith("/"):
+        goal.mkdir(parents=True, exist_ok=True)
+    else:
+        goal.parent.mkdir(parents=True, exist_ok=True)
+        goal.write_bytes(b"TZif2")
+    link.symlink_to(f"{tmp_path}{target}" if absolute else target)
+    return link
+
+
 @pytest.mark.parametrize(("target", "expect"), [
     ("/usr/share/zoneinfo/Europe/Berlin", True), ("/usr/share/zoneinfo/America/New_York", True),
     ("../usr/share/zoneinfo/Asia/Tokyo", True), ("/usr/share/zoneinfo/Etc/GMT+5", True),
     ("/usr/share/zoneinfo/Europe/London", True), ("/usr/share/zoneinfo/Africa/Abidjan", True),
+    ("/usr/share/zoneinfo/posix/Europe/Berlin", True), ("/usr/share/zoneinfo/right/Asia/Tokyo", True),
     ("/usr/share/zoneinfo/UTC", False), ("/usr/share/zoneinfo/Etc/UTC", False), ("/usr/share/zoneinfo/UCT", False),
     ("/usr/share/zoneinfo/Etc/UCT", False), ("/usr/share/zoneinfo/Universal", False),
     ("/usr/share/zoneinfo/Etc/Universal", False), ("/usr/share/zoneinfo/Zulu", False),
     ("/usr/share/zoneinfo/Etc/Zulu", False), ("/usr/share/zoneinfo/GMT", False), ("/usr/share/zoneinfo/Etc/GMT", False),
     ("/usr/share/zoneinfo/Greenwich", False), ("/usr/share/zoneinfo/Etc/Greenwich", False),
+    ("/usr/share/zoneinfo/posix/UTC", False), ("/usr/share/zoneinfo/right/Etc/UTC", False),
     ("../usr/share/zoneinfo/UTC", False), ("/usr/share/zoneinfo/", False), ("/somewhere/else", False)])
 def test_the_time_zone_is_set_when_localtime_names_a_real_zone(tmp_path, monkeypatch, target, expect):
-    link = tmp_path / "localtime"
-    link.symlink_to(target)
+    link = zone_link(tmp_path, target)
     monkeypatch.setenv("BOMBADIL_LOCALTIME", str(link))
     assert paths.localtime_link() == link
     assert greet.tz_set() is expect
@@ -987,15 +1198,37 @@ def test_the_time_zone_is_not_set_without_a_link(tmp_path, monkeypatch):
     assert greet.tz_set() is False  # a copy has no name to read: no time-of-day word
 
 
+def test_a_link_to_a_zone_that_cannot_be_opened_is_not_a_zone(tmp_path, monkeypatch):
+    link = tmp_path / "localtime"  # the C library runs on UTC when it cannot open the file
+    link.symlink_to(tmp_path / "nonexistent" / "zoneinfo" / "Europe" / "Paris")
+    monkeypatch.setenv("BOMBADIL_LOCALTIME", str(link))
+    assert greet.tz_set() is False
+    folder = tmp_path / "zones" / "zoneinfo" / "Europe"
+    folder.mkdir(parents=True)
+    link.unlink()
+    link.symlink_to(folder)  # a folder is not a zone either
+    assert greet.tz_set() is False
+    monkeypatch.setenv("BOMBADIL_LOCALTIME", str(zone_link(tmp_path, "/usr/share/zoneinfo/Europe/Paris")))
+    assert greet.tz_set() is True
+
+
+def test_a_time_zone_in_the_environment_is_the_clock_and_localtime_is_not(tmp_path, monkeypatch):
+    monkeypatch.setattr(time, "tzset", lambda: None)  # this test must not move the clock of the whole run
+    monkeypatch.setenv("BOMBADIL_LOCALTIME", str(zone_link(tmp_path, "/usr/share/zoneinfo/America/New_York")))
+    assert greet.tz_set() is True
+    for value in ("UTC", "", "Europe/Paris"):  # agentd's own clock then differs from /etc/localtime
+        monkeypatch.setenv("TZ", value)
+        assert greet.tz_set() is False, value
+    monkeypatch.delenv("TZ")
+    assert greet.tz_set() is True
+
+
 def test_tz_set_reads_the_zone_again_before_the_clock_is_used(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(time, "tzset", lambda: calls.append(1))
-    link = tmp_path / "localtime"
-    link.symlink_to("/usr/share/zoneinfo/Europe/Berlin")
-    monkeypatch.setenv("BOMBADIL_LOCALTIME", str(link))
+    monkeypatch.setenv("BOMBADIL_LOCALTIME", str(zone_link(tmp_path, "/usr/share/zoneinfo/Europe/Berlin")))
     assert greet.tz_set() is True and calls == [1]
-    link.unlink()
-    link.symlink_to("/usr/share/zoneinfo/Etc/UTC")
+    zone_link(tmp_path, "/usr/share/zoneinfo/Etc/UTC")
     assert greet.tz_set() is False and calls == [1, 1]  # a zone set with timedatectl shows without a restart
 
 

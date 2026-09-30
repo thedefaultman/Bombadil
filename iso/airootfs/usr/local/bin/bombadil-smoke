@@ -141,7 +141,7 @@ persona_has() { grep -q "$1" "$persona_file"; }
 check no-persona-before-voice bash -c "! test -e $persona_file"
 keys meta_l
 keys v o i c e ret
-check voice-word-answered wait_for 30 history_has "voice: Pick a voice"
+check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
 shot voice-card
 keys shift+d a n i e l ret
 check voice-name-saved wait_for 30 persona_has '^name = "Daniel"'

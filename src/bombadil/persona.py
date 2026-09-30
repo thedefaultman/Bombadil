@@ -13,6 +13,7 @@ import re
 import tomllib
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import paths
 
@@ -20,6 +21,12 @@ VOICES = ("merry", "plain", "quiet")
 DEFAULT_VOICE = "merry"
 MAX_NAME = 24
 MAX_WORDS = 3
+MAX_MARKS = 3   # combining marks on one letter: Vietnamese and Arabic use two or three, more is a glitch
+
+# Letters and marks that draw nothing: the Hangul and Khitan fillers, the grapheme joiner, the Khmer
+# inherent vowels, and every variation selector. They pass isalpha() or category M, so they are named.
+_BLANK = re.compile("[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0"
+                    "\U00016fe4\U000e0100-\U000e01ef]")
 
 # The name clause, then what each voice asks of the model's own closing sentence.
 _CALLED = "The user goes by {name}; use it only when greeting or asking."
@@ -41,14 +48,27 @@ class Persona:
 def clean_name(s) -> str:
     """The name as it would be stored, or "" when it is not a valid one: one to three words of at most
     24 characters in all, made of letters, combining marks, hyphens, apostrophes and dots, and starting
-    with a letter. Only plain spaces separate words, so no control character or line break gets through."""
+    with a letter. Only plain spaces separate words, so no control character or line break gets through.
+    What would draw nothing or a glitch is no name either: a blank letter, a mark with no letter under it,
+    or more than three marks on one letter."""
     if not isinstance(s, str):
         return ""
     name = re.sub(" +", " ", s.strip(" "))
     if not name or len(name) > MAX_NAME or name.count(" ") >= MAX_WORDS or not name[0].isalpha():
         return ""
+    if _BLANK.search(name):
+        return ""
+    marks, based = 0, False   # the marks run so far, and whether a letter is under them
     for ch in name:
-        if not (ch.isalpha() or ch in " -'’." or unicodedata.category(ch).startswith("M")):
+        if unicodedata.category(ch).startswith("M"):
+            marks += 1
+            if not based or marks > MAX_MARKS:
+                return ""
+        elif ch.isalpha():
+            marks, based = 0, True
+        elif ch in " -'’.":
+            marks, based = 0, False
+        else:
             return ""
     return name
 
@@ -64,6 +84,7 @@ def load() -> Persona:
     except (OSError, ValueError, RecursionError):
         return Persona()
     voice, greet = data.get("voice"), data.get("greet")
+    voice = voice.strip().lower() if isinstance(voice, str) else None   # the agent may write "Plain"
     return Persona(clean_name(data.get("name")), voice if voice in VOICES else DEFAULT_VOICE,
                    greet if isinstance(greet, bool) else True)
 
@@ -84,7 +105,9 @@ def save(name: str = "", voice: str = DEFAULT_VOICE, greet: bool = True) -> Pers
         raise ValueError(f"not a voice: {voice!r}")
     if greet is not True and greet is not False:
         raise ValueError(f"greet must be true or false, not {greet!r}")
-    path = paths.persona_file()
+    # A link (a dotfiles manager keeps the real file) stays a link: write to what it points at, with the
+    # temp file next to that, because replacing the link itself would leave the real copy stale.
+    path = Path(os.path.realpath(paths.persona_file()))
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     text = (f"name = {json.dumps(cleaned, ensure_ascii=False)}\n"
@@ -119,9 +142,11 @@ def note(p: Persona | None = None) -> str:
     """What goes into the system prompt: the voice sentence (none before persona.toml exists) and always
     where and how the agent changes it."""
     where = (f"The user's name and voice are kept in {paths.persona_file()}, a TOML file with the keys "
-             'name (text of one to three words, at most 24 characters), voice = "merry" | "plain" | '
-             '"quiet", and greet = true | false. Edit it when the user asks to be called something else, '
-             "to be less chatty (plain), to be quieter (quiet) or to stop the greetings (greet = false). "
+             "name (letters, hyphens, apostrophes and dots only, starting with a letter, one to three "
+             "words, at most 24 characters; if it does not fit, say so and leave the file alone), "
+             'voice = "merry" | "plain" | "quiet" in lower case, and greet = true | false. '
+             "Edit it when the user asks to be called something else, to be less chatty (plain), to be "
+             "quieter (quiet) or to stop the greetings (greet = false). "
              "Keep it valid TOML, and say what you changed in one short sentence.")
     if p is None:
         p = load() if exists() else None
@@ -129,9 +154,10 @@ def note(p: Persona | None = None) -> str:
 
 
 def templates() -> list[dict]:
-    """The rows of the setup card: {"id", "name", "card"}. A card string holds {n}, which the card
-    fills with ", Name" or nothing."""
+    """The rows of the setup card: {"id", "name", "card", "reply"}. A card string holds {n}, which the card
+    fills with ", Name" or nothing; the reply is the closing sentence of a sample answer in that voice."""
     from . import greet  # greet needs this module, so the import waits for the call
     table = greet.lines()
-    names, cards = table.get("voices", {}), table.get("card", {})
-    return [{"id": v, "name": names.get(v, v.capitalize()), "card": cards.get(v, "")} for v in VOICES]
+    names, cards, replies = table.get("voices", {}), table.get("card", {}), table.get("reply", {})
+    return [{"id": v, "name": names.get(v, v.capitalize()), "card": cards.get(v, ""),
+             "reply": replies.get(v, "")} for v in VOICES]

@@ -1,3 +1,4 @@
+import os
 import tomllib
 
 import pytest
@@ -26,6 +27,20 @@ def test_load_takes_each_field_on_its_own(home):
     assert persona.load() == Persona("", "quiet", True)
     write("name = 7\nvoice = 3\ngreet = 1\n")
     assert persona.load() == Persona("", "merry", True)
+
+
+@pytest.mark.parametrize("spelling, voice", [
+    ("Plain", "plain"), ("PLAIN", "plain"), (" quiet ", "quiet"), ("Merry", "merry"), ("qUiEt", "quiet")])
+def test_load_takes_the_voice_in_any_case(home, spelling, voice):
+    # The card and the agent's own reply spell it "Plain", so an edit that writes it so must still work.
+    write(f'name = "Dan"\nvoice = "{spelling}"\n')
+    assert persona.load() == Persona("Dan", voice, True)
+
+
+def test_load_still_refuses_a_voice_that_is_not_one(home):
+    for bad in ('"shouting"', '"plain voice"', '""', "7", "true", "[\"plain\"]", '"pl\\nain"'):
+        write(f"voice = {bad}\n")
+        assert persona.load().voice == "merry", bad
 
 
 @pytest.mark.parametrize("junk", [
@@ -72,6 +87,24 @@ def test_names_that_fail(name):
     assert persona.clean_name(name) == ""
 
 
+@pytest.mark.parametrize("name", [
+    # letters and marks that draw nothing: the Hangul fillers, the grapheme joiner, every variation selector
+    "ㅤ", "Danㅤ", "Dan ㅤ", "ᅟ", "ᅠ", "ﾠ", "Danﾠ", "D͏an", "Dan͏",
+    "Dan️", "Dan︀", "Dan\U000e0100", "Dan\U000e01ef", "Dan᠋", "Dan឴", "Dan\U00016fe4",
+    # a tall glitch of stacked marks, and a mark with no letter under it
+    "a" + "́" * 23, "Dan" + "́" * 4, "Dań̂̃̄", "Dan ́", "Dan -́",
+    "Dan.́"])
+def test_names_that_draw_nothing_or_a_glitch_fail(name):
+    assert not persona.valid_name(name) and persona.clean_name(name) == ""
+
+
+@pytest.mark.parametrize("name", [
+    "Zoë", "Nguyễn", "สวัสดี", "कृष्ण", "مُحَمَّد", "ཀྱི", "a" + "́" * 3,
+    "Dań̂̃ Smith", "Mary-Jane O'Neil Jr.", "Dr. Who", "Søren", "田中", "𐐨𐐩𐐪", "Åsa", "Łukasz"])
+def test_the_names_of_real_scripts_keep_their_marks(name):
+    assert persona.clean_name(name) == name
+
+
 def test_the_name_limit_counts_what_is_stored():
     assert persona.valid_name("   " + "N" * 24 + "   ")  # spaces around it do not count
     assert persona.valid_name("A" + " " * 40 + "B")  # runs of spaces collapse to one
@@ -99,6 +132,44 @@ def test_save_creates_the_folder_and_leaves_no_temp_file(home):
     assert not paths.config_dir().exists()
     persona.save("Dan")
     assert [p.name for p in paths.config_dir().iterdir()] == ["persona.toml"]
+
+
+def test_save_writes_through_a_symlinked_file(home):
+    # A dotfiles manager links persona.toml to its own copy: the link stays, and the copy is what changes.
+    real = home / "dotfiles" / "persona.toml"
+    real.parent.mkdir()
+    real.write_text('name = "Old"\nvoice = "quiet"\ngreet = true\n')
+    paths.persona_file().parent.mkdir(parents=True)
+    paths.persona_file().symlink_to(real)
+    assert persona.save("Dan", "plain") == Persona("Dan", "plain", True)
+    assert paths.persona_file().is_symlink() and paths.persona_file().resolve() == real.resolve()
+    assert real.read_text() == 'name = "Dan"\nvoice = "plain"\ngreet = true\n'
+    assert persona.load() == Persona("Dan", "plain", True)
+    assert [p.name for p in real.parent.iterdir()] == ["persona.toml"]          # no temp file left in either folder
+    assert [p.name for p in paths.config_dir().iterdir()] == ["persona.toml"]
+
+
+def test_save_writes_a_relative_link_to_its_target(home):
+    (home / "dotfiles").mkdir()
+    (home / "dotfiles" / "persona.toml").write_text("")
+    paths.persona_file().parent.mkdir(parents=True)
+    paths.persona_file().symlink_to(os.path.relpath(home / "dotfiles" / "persona.toml", paths.config_dir()))
+    persona.save("Dan", "quiet", False)
+    assert paths.persona_file().is_symlink()
+    assert tomllib.loads((home / "dotfiles" / "persona.toml").read_text()) == {
+        "name": "Dan", "voice": "quiet", "greet": False}
+
+
+def test_save_gives_a_dangling_link_its_target(home):
+    target = home / "dotfiles" / "persona.toml"
+    target.parent.mkdir()
+    paths.persona_file().parent.mkdir(parents=True)
+    paths.persona_file().symlink_to(target)
+    assert not persona.exists()
+    assert persona.ensure_defaults() is True
+    assert paths.persona_file().is_symlink() and target.is_file()
+    assert persona.load() == Persona() and persona.exists()
+    assert [p.name for p in target.parent.iterdir()] == ["persona.toml"]
 
 
 @pytest.mark.parametrize("args", [
@@ -173,6 +244,23 @@ def test_the_note_with_no_file_is_only_the_clause_on_how_to_change_it(home):
         assert word in n
 
 
+def test_the_note_says_what_a_name_and_a_voice_may_be(home):
+    # An agent that is not told writes "R2-D2" or "Plain", answers "R2-D2 it is." and load() drops it unheard.
+    n = persona.note()
+    for words in ("letters, hyphens, apostrophes and dots only", "starting with a letter", "one to three words",
+                  "at most 24 characters", "say so and leave the file alone",
+                  'voice = "merry" | "plain" | "quiet" in lower case'):
+        assert words in n, words
+    assert len(n.split()) <= 110   # still a short clause in a system prompt every turn carries
+
+
+@pytest.mark.parametrize("name", ["R2-D2", "Dan2", "DJ Dan!", "Boss 🙂", "Dr. J. Smith Jr"])
+def test_what_the_note_rules_out_is_what_load_drops(home, name):
+    # The other half of the clause: a name that does not fit is ignored, so the agent must not write it.
+    write(f'name = "{name}"\nvoice = "quiet"\n')
+    assert persona.load() == Persona("", "quiet", True)
+
+
 def test_the_note_with_a_file_is_the_sentence_then_the_clause(home):
     clause = persona.note()
     persona.save("Dan", "plain")
@@ -205,21 +293,36 @@ def test_note_has_no_dash_and_no_braces(home):
         assert "—" not in n and "–" not in n and "{" not in n.replace('"name"', "")
 
 
-def test_templates_are_the_three_voices_with_the_card_strings(home):
+def test_templates_are_the_three_voices_with_a_welcome_and_a_reply(home):
     t = persona.templates()
     assert [x["id"] for x in t] == ["merry", "plain", "quiet"]
     assert [x["name"] for x in t] == ["Merry", "Plain", "Quiet"]
     assert t[0]["card"] == "Welcome{n}. Let's go for a walk!"
     assert t[1]["card"] == "Welcome{n}."
     assert t[2]["card"] == "Nothing on an ordinary morning, only news."
+    # The closing sentence of the same answer, said three ways: the brief's page data.
+    assert t[0]["reply"] == "Chromium uses the most memory, 2.1 GB across 14 tabs. That's a lot of reading."
+    assert t[1]["reply"] == "Chromium uses the most memory: 2.1 GB across 14 tabs."
+    assert t[2]["reply"] == "Chromium uses the most: 2.1 GB."
     for x in t:
-        assert set(x) == {"id", "name", "card"}
+        assert set(x) == {"id", "name", "card", "reply"}
         rendered = x["card"].replace("{n}", ", Daniel")
         assert "{" not in rendered and len(rendered) <= 100 and "—" not in rendered
+        assert x["reply"] and "{" not in x["reply"] and len(x["reply"]) <= 100
+        assert "—" not in x["reply"] and "–" not in x["reply"] and "\n" not in x["reply"]
+    assert all("!" not in x["reply"] for x in t)
 
 
 def test_templates_survive_a_missing_table(home, monkeypatch, tmp_path):
     monkeypatch.setenv("BOMBADIL_VOICE_LINES", str(tmp_path / "nope.toml"))
     t = persona.templates()
     assert [x["id"] for x in t] == ["merry", "plain", "quiet"]
-    assert all(x["name"] and x["card"] == "" for x in t)
+    assert all(x["name"] and x["card"] == "" and x["reply"] == "" for x in t)
+
+
+def test_templates_survive_a_table_without_replies(home, monkeypatch, tmp_path):
+    lines = tmp_path / "lines.toml"
+    lines.write_text('[voices]\nmerry = "Merry"\n[card]\nmerry = "Welcome{n}."\n')
+    monkeypatch.setenv("BOMBADIL_VOICE_LINES", str(lines))
+    t = persona.templates()
+    assert t[0] == {"id": "merry", "name": "Merry", "card": "Welcome{n}.", "reply": ""}
