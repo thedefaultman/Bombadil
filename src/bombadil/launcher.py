@@ -41,6 +41,10 @@ CORE_COMMANDS = {
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
     "sound": ["sound", "volume", "audio"],
+    "volume_up": ["volume up", "louder", "turn it up", "turn the volume up", "turn up the volume"],
+    "volume_down": ["volume down", "quieter", "turn it down", "turn the volume down", "turn down the volume"],
+    "mute": ["mute", "mute the sound", "mute the volume"],
+    "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
@@ -48,7 +52,8 @@ OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "sw
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
 # Not offered as completions: Tab should never land on these by accident.
-NO_COMPLETE = {"restart", "shutdown", "lock", "stop"}
+NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute"}
+VOLUME_STEP = "5%"
 
 DETAILS_CLASS = "bombadil-details"
 
@@ -208,7 +213,9 @@ class Launcher:
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
-                "battery": "Checking the battery", "stop": "Stopping"}.get(action.kind, "On it")
+                "battery": "Checking the battery", "stop": "Stopping", "volume_up": "Turning the volume up",
+                "volume_down": "Turning the volume down", "mute": "Muting the sound",
+                "unmute": "Unmuting the sound"}.get(action.kind, "On it")
 
     @staticmethod
     def failed(action: Action) -> str:
@@ -219,6 +226,8 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
+                "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 }.get(action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
@@ -452,6 +461,27 @@ class Launcher:
             return False, "No sound output found."
         muted = ", muted" if "MUTED" in r.stdout else ""
         return True, f"Volume {round(float(m.group(1)) * 100)}%{muted}."
+
+    def _volume(self, args: list[str], a: Action) -> tuple[bool, str]:
+        if shutil.which("wpctl") is None:
+            return False, "Sound settings need PipeWire, which is not running."
+        # Never past 100%: the level where it stops sounding clean.
+        r = self._run(["wpctl", *args], capture_output=True, text=True, timeout=3, check=False)
+        if r.returncode != 0:
+            return False, f"{self.failed(a)}: no sound output found."
+        return self._sound(a)
+
+    def _volume_up(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{VOLUME_STEP}+"], a)
+
+    def _volume_down(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-volume", "@DEFAULT_AUDIO_SINK@", f"{VOLUME_STEP}-"], a)
+
+    def _mute(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-mute", "@DEFAULT_AUDIO_SINK@", "1"], a)
+
+    def _unmute(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-mute", "@DEFAULT_AUDIO_SINK@", "0"], a)
 
     # -- the session --
 
