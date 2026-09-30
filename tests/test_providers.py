@@ -100,6 +100,15 @@ def test_claude_stopped_mid_tool_ends_with_its_reason():
     assert any(e["kind"] == "tool_result" and e["error"] for e in ev)
 
 
+def test_claude_raw_diagnostics_after_a_stop_are_not_the_result():
+    p = providers.Claude("x")
+    diag = "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+    ev = list(p.events([json.dumps({"type": "result", "result": diag, "is_error": False, "session_id": "s1"})]))
+    assert ev[0]["kind"] == "result" and ev[0]["text"] == "" and ev[0]["ok"] is True
+    ev = list(p.events([json.dumps({"type": "result", "result": "Done.", "is_error": False})]))
+    assert ev[0]["text"] == "Done."
+
+
 def test_claude_tool_results_as_text_blocks():
     p = providers.Claude("x")
     line = json.dumps({"type": "user", "message": {"content": [{

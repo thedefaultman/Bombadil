@@ -151,6 +151,9 @@ class Claude(Provider):
         elif t == "result":
             ok = not m.get("is_error", False)
             text = m.get("result") or ""
+            if text.startswith("[ede_diagnostic]"):
+                # What the CLI prints when its turn was cut short (Stop): not words for the user.
+                text = ""
             if not ok and not text:
                 errs = m.get("errors") or []
                 text = "\n".join(e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errs)
