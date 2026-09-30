@@ -102,6 +102,12 @@ check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
+# Alt+Space opens the pill too, for hosts that keep Super.
+before=$(launcher_done browser "Opened the browser")
+keys alt+spc
+keys b r o w s e r ret
+check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
+check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
 check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
 shot pill-working
