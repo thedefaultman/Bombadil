@@ -32,6 +32,11 @@ def config_dir() -> Path:
     return _env_path("BOMBADIL_CONFIG", Path(base) / "bombadil")
 
 
+def data_dir() -> Path:
+    base = os.environ.get("XDG_DATA_HOME") or str(home() / ".local" / "share")
+    return _env_path("BOMBADIL_DATA", Path(base) / "bombadil")
+
+
 def apps_dir() -> Path:
     return _env_path("BOMBADIL_APPS", home() / "Apps")
 

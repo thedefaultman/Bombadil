@@ -28,16 +28,15 @@ async def _read_until(r, kind):
 async def test_turn_round_trip(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
-            break
-        await asyncio.sleep(0.02)
+    await _ready(d)
     r, w = await _client(d.socket_path)
     first = json.loads(await r.readline())
-    assert first == {"type": "status", "busy": False, "provider": "fake", "turns": 0,
+    assert first == {"type": "status", "busy": False, "provider": "fake", "setup": "ready", "turns": 0,
                      "snapshots": False, "queued": 0, "turn": None, "queue": []}
     entries = json.loads(await r.readline())
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
+    setup = json.loads(await r.readline())
+    assert setup["type"] == "setup" and setup["state"] == "ready" and setup["actions"] == []
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
     await w.drain()
     msgs = await _read_until(r, "turn_end")
@@ -67,16 +66,26 @@ class Scripted(providers.Claude):
         self.seen_sessions.append(turn.session_id)
         return ["python3", "-c", self.script]
 
+    def signed_in(self):
+        return True
 
-async def _start(d):
-    server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
+
+async def _ready(d, state="ready"):
+    """Wait for the socket, and for agentd to know whether its provider is signed in."""
+    for _ in range(250):
+        if d.socket_path.exists() and d.access != "checking":
             break
         await asyncio.sleep(0.02)
+    assert d.access == state
+
+
+async def _start(d, state="ready"):
+    server = asyncio.create_task(d.serve())
+    await _ready(d, state)
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     return server, r, w
 
 
@@ -208,7 +217,8 @@ async def test_the_line_says_what_runs_and_stop_ends_it_all(home):
     d = agentd.AgentD(Scripted(SLOW_INSTALL), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
     server, r, w = await _start(d)
     await _ask(w, "install docker")
-    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step"
+                               and m.get("text") != "Waiting for Claude")
     step = msgs[-1]
     assert (step["text"], step["risk"], step["command"]) == ("Installing docker", "system", "sudo pacman -S docker")
     pgid = d.proc.pid
@@ -529,6 +539,7 @@ async def _another(d):
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     return r, w
 
 
@@ -1048,6 +1059,7 @@ async def test_status_lines_of_a_step_say_what_the_turn_has_touched_so_far(home)
     msgs = await _read_until(r, "turn_end")
     steps = [m for m in msgs if m.get("kind") == "status" and m.get("source") == "step"]
     assert [(m["text"], m["touched"], m["touched_text"]) for m in steps] == [
+        ("Waiting for Claude", {}, ""),
         ("Planning the steps", {}, ""),
         ("Installing ffmpeg", {}, ""),
         ("Installing ffmpeg", {"package": 1}, "1 package so far"),
@@ -1579,5 +1591,245 @@ async def test_the_real_os_mcp_job_tool_starts_lists_and_stops_a_job_from_inside
     assert d.jobs.snapshot()["jobs"] == [] and sd.of("stop")
     said = await call(Scripted(_mcp_turn({"op": "stop", "id": job_id}, "job")), "stop it again")
     assert said["isError"] is True and said["content"][0]["text"].startswith(f"There is no job '{job_id}'")
+    w.close()
+    server.cancel()
+
+
+def _step_texts(msgs):
+    return [m["text"] for m in msgs if m.get("kind") == "status" and m.get("source") == "step"]
+
+
+def _quiet_watch(monkeypatch):
+    # A generous threshold, so a loaded runner's late scheduling cannot read as silence; the scripts
+    # that must be called silent stay quiet for twice that.
+    monkeypatch.setattr(agentd, "NO_PROGRESS_SECS", 1.5)
+    monkeypatch.setattr(agentd, "WATCHDOG_TICK", 0.1)
+
+
+@pytest.mark.asyncio
+async def test_the_line_says_waiting_once_the_cli_is_up(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted("import sys, time\nsys.stdin.read()\ntime.sleep(60)\n"), agentd._NoSnapshots(),
+                      stopper=procs.Stopper(grace=1.0))
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step")
+    assert _step_texts(msgs) == ["Waiting for Claude"]
+    w.write(b'{"type": "stop"}\n')
+    await w.drain()
+    await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_goes_quiet_is_named_once_and_thinking_returns_with_it(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\ntime.sleep(3.0)\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'back'}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'back', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    steps = _step_texts(msgs)
+    assert steps[:3] == ["Waiting for Claude", "Claude is not answering; check the connection", "Thinking"]
+    assert steps.count("Claude is not answering; check the connection") == 1
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_long_tool_is_not_a_silent_provider(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1',"
+        " 'name': 'Bash', 'input': {'command': 'sudo pacman -S docker'}}]}}), flush=True)\n"
+        "time.sleep(3.0)\n"
+        "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
+        " 'content': 'ok'}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "install docker")
+    msgs = await _read_until(r, "turn_end")
+    assert "Installing docker" in _step_texts(msgs)
+    assert not [t for t in _step_texts(msgs) if "not answering" in t]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_silent_provider_after_its_tool_finished_is_named(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1',"
+        " 'name': 'Bash', 'input': {'command': 'ls'}}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
+        " 'content': 'ok'}]}}), flush=True)\n"
+        "time.sleep(3.0)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "list files")
+    msgs = await _read_until(r, "turn_end")
+    assert "Claude is not answering; check the connection" in _step_texts(msgs)
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_typed_command_has_no_watchdog(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "!sleep 1")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _step_texts(msgs) if "not answering" in t or t.startswith("Waiting for")]
+    w.close()
+    server.cancel()
+
+
+def _failing(text):
+    return (
+        "import json, sys\nsys.stdin.read()\n"
+        f"print(json.dumps({{'type': 'result', 'is_error': True, 'result': {text!r}, 'session_id': 's'}}))\n"
+    )
+
+
+async def _errors_for(prompt, script, provider=Scripted):
+    d = agentd.AgentD(provider(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, prompt)
+    msgs = await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink(missing_ok=True)
+    return [m["text"] for m in msgs if m.get("kind") == "error"]
+
+
+@pytest.mark.asyncio
+async def test_a_limit_is_said_plainly_with_the_providers_reset_time_after_it(home):
+    said = "You've hit your usage limit. Resets at 5pm.\nUpgrade to keep going."
+    assert await _errors_for("hello", _failing(said)) == [
+        agentd.LIMIT_TEXT + "\nYou've hit your usage limit. Resets at 5pm."]
+    assert await _errors_for("hello", _failing("Credit balance is too low")) == [
+        agentd.LIMIT_TEXT + "\nCredit balance is too low"]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_rate_limit_is_a_busy_moment_not_the_account(home):
+    assert await _errors_for("hello", _failing("429 rate limit exceeded, retry later")) == [agentd.RATE_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_other_errors_are_left_alone(home):
+    assert await _errors_for("hello", _failing("API Error: 500 overloaded")) == ["API Error: 500 overloaded"]
+
+
+@pytest.mark.asyncio
+async def test_a_typed_command_that_fails_is_never_told_it_hit_the_account_limit(home):
+    # `!docker pull` and `!gh api` print "rate limit" too; the failure is theirs, not the account's.
+    errors = await _errors_for("!echo you hit the rate limit; false", "", provider=lambda _s: providers.Shell())
+    assert errors and all("account" not in e and e != agentd.RATE_TEXT for e in errors)
+    assert any("rate limit" in e for e in errors)
+
+
+def _thinking(every, count):
+    return (
+        "import json, sys, time\nsys.stdin.read()\n"
+        f"for _ in range({count}):\n"
+        "    print(json.dumps({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'index': 0,"
+        " 'delta': {'type': 'thinking_delta', 'thinking': '...'}}}), flush=True)\n"
+        f"    time.sleep({every})\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_long_think_is_not_a_dead_connection(home, monkeypatch):
+    # The CLI prints thinking deltas that show as nothing; for longer than the threshold.
+    _quiet_watch(monkeypatch)
+    d = agentd.AgentD(Scripted(_thinking(0.2, 15)), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hard question")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _step_texts(msgs) if "not answering" in t]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_clis_retry_notices_are_not_progress(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "for n in range(1, 16):\n"
+        "    print(json.dumps({'type': 'system', 'subtype': 'api_retry', 'attempt': n}), flush=True)\n"
+        "    time.sleep(0.2)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert "Claude is not answering; check the connection" in _step_texts(msgs)
+    w.close()
+    server.cancel()
+
+
+class ScriptedCodex(providers.Codex):
+    def __init__(self, script):
+        super().__init__("x")
+        self.script = script
+
+    @property
+    def installed(self):
+        return True
+
+    def command(self, turn, workdir):
+        return ["python3", "-c", self.script]
+
+
+@pytest.mark.asyncio
+async def test_codex_may_reason_silently_for_longer_before_the_line_says_so(home, monkeypatch):
+    # Codex streams nothing while it reasons, so the same silence is normal for it.
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\ntime.sleep(3.0)\n"
+        "print(json.dumps({'type': 'turn.completed'}), flush=True)\n"
+    )
+    d = agentd.AgentD(ScriptedCodex(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _step_texts(msgs) if "not answering" in t]
+    assert providers.Codex.quiet_factor > providers.Claude.quiet_factor
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_nothing_answers_does_not_switch_the_watchdog_off(home, monkeypatch):
+    # Codex reports web_search once, already done, with no result after it.
+    _quiet_watch(monkeypatch)
+    monkeypatch.setattr(providers.Codex, "quiet_factor", 1.0)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'id': 'w1', 'type': 'web_search', 'query': 'x'}}), flush=True)\n"
+        "time.sleep(3.0)\n"
+        "print(json.dumps({'type': 'turn.completed'}), flush=True)\n"
+    )
+    d = agentd.AgentD(ScriptedCodex(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "look it up")
+    msgs = await _read_until(r, "turn_end")
+    assert "Codex is not answering; check the connection" in _step_texts(msgs)
     w.close()
     server.cancel()

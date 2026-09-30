@@ -4,14 +4,11 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- the preferred mode and never moves off it. 1920x1080 is always in the virtual display's list.
 hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", scale = 1 })
 
+-- The agent daemon, the bar and the notifications run as user services, so systemd starts any of
+-- them again if it dies (Restart=always). They need the session's environment first.
 hl.on("hyprland.start", function()
-    -- agentd and the bar are user units with Restart=always, so a crash is a restart and the loop
-    -- can see it. They need this session's environment (display, instance signature, PATH), so
-    -- import it first; if systemd's user manager is not there, start them the old way.
-    hl.exec_cmd("systemctl --user import-environment && systemctl --user start bombadil-agentd.service bombadil-shell.service"
-        .. " || { agentd & quickshell -p /usr/share/bombadil/shell/shell.qml & }")
-    hl.exec_cmd("mako")
-    hl.exec_cmd("bombadil-setup --first-run")
+    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
+    -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
 hl.config({
@@ -53,11 +50,13 @@ hl.bind("SUPER + Return", hl.dsp.exec_cmd("foot"))
 -- release, and Hyprland drops it when another key, a click or a drag happened meanwhile.
 hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })
 hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("bombadil pill"), { release = true })
+-- Alt+Space does the same where Super never arrives: a VM window on Windows keeps the Windows key
+-- for its Start menu.
+hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
-hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell.service"
-    .. " || { pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml; }"))
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({

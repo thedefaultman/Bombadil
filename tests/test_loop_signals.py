@@ -424,6 +424,7 @@ async def _start(d):
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     return server, r, w
 
 
@@ -445,7 +446,7 @@ async def test_ping_is_answered_to_whoever_asked_and_nobody_else(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
     r2, w2 = await _client(d.socket_path)
-    await r2.readline(), await r2.readline()
+    await r2.readline(), await r2.readline(), await r2.readline()
     await _say(w, type="ping")
     pong = json.loads(await asyncio.wait_for(r.readline(), 5))
     assert pong["type"] == "pong" and pong["pid"] == os.getpid() and abs(pong["t"] - time.time()) < 5
@@ -473,7 +474,7 @@ async def test_what_the_bar_says_is_written_down_and_its_hangup_is_noted(home):
     w.close()
     await _wait(lambda: d._bar is None)
     r2, w2 = await _client(d.socket_path)
-    await r2.readline(), await r2.readline()
+    await r2.readline(), await r2.readline(), await r2.readline()
     await _say(w2, type="hello", client="bar", pid=4400, build="abc1234")
     await _wait(lambda: len(signals.read_events()) >= 4)
     assert [e["kind"] for e in signals.read_events()][2:] == ["hello", "restart"]
@@ -491,7 +492,7 @@ async def test_a_new_bar_that_says_hello_before_the_old_one_hangs_up_is_one_rest
     await _say(w, type="hello", client="bar", pid=1, build="b")
     await _wait(lambda: d._bar is not None)
     r2, w2 = await _client(d.socket_path)
-    await r2.readline(), await r2.readline()
+    await r2.readline(), await r2.readline(), await r2.readline()
     await _say(w2, type="hello", client="bar", pid=2, build="b")
     await _wait(lambda: len(signals.read_events()) >= 3)
     w.close()                                   # the old connection ends after the new hello

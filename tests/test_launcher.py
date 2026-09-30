@@ -180,7 +180,12 @@ def test_undo_without_restore_points_says_so(home):
 class FakeHypr:
     def __init__(self):
         self.calls = []
+        self.placed = []
         self.available = True
+
+    def place_app(self, name):
+        self.placed.append(name)
+        return ""
 
     def panel(self, name, show=True):
         self.calls.append(("panel", name, show))
@@ -221,6 +226,7 @@ def test_an_open_app_comes_forward_instead_of_starting_twice(home, monkeypatch):
     lx.run(launcher.match("passwords"))
     assert started == ["passwords"]
     assert h.calls == [("dispatch", 'hl.dsp.focus({ window = "class:^(bombadil-app-passwords)$" })')]
+    assert h.placed == ["passwords"]   # only the open that starts it picks a spot; the re-open just focuses
 
 
 def test_failures_are_one_plain_line(home):

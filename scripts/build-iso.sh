@@ -15,7 +15,7 @@ cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/iso/packages.x8
 # Which build this is: the loop's reports say it, and so does `bombadil doctor`.
 { git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown; } > "$dest/VERSION"
 mkdir -p "$profile/airootfs/usr/local/bin"
-for b in agentd bombadil bombadil-app bombadil-os-mcp; do
+for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp; do
   ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
 done
 # Bake the provider CLIs in, so the first-run picker only has to log in.
