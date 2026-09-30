@@ -632,24 +632,49 @@ async def test_a_typed_command_has_no_watchdog(home, monkeypatch):
     server.cancel()
 
 
+def _failing(text):
+    return (
+        "import json, sys\nsys.stdin.read()\n"
+        f"print(json.dumps({{'type': 'result', 'is_error': True, 'result': {text!r}, 'session_id': 's'}}))\n"
+    )
+
+
+async def _errors_for(prompt, script, provider=Scripted):
+    d = agentd.AgentD(provider(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, prompt)
+    msgs = await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink(missing_ok=True)
+    return [m["text"] for m in msgs if m.get("kind") == "error"]
+
+
 @pytest.mark.asyncio
-async def test_a_limit_is_said_plainly_and_other_errors_are_left_alone(home):
-    def failing(text):
-        return (
-            "import json, sys\nsys.stdin.read()\n"
-            f"print(json.dumps({{'type': 'result', 'is_error': True, 'result': {text!r}, 'session_id': 's'}}))\n"
-        )
-    for said, shown in (("You've hit your usage limit. Resets at 5pm.", agentd.LIMIT_TEXT),
-                        ("Credit balance is too low", agentd.LIMIT_TEXT),
-                        ("API Error: 500 overloaded", "API Error: 500 overloaded")):
-        d = agentd.AgentD(Scripted(failing(said)), agentd._NoSnapshots())
-        server, r, w = await _start(d)
-        await _ask(w, "hello")
-        msgs = await _read_until(r, "turn_end")
-        assert [m["text"] for m in msgs if m.get("kind") == "error"] == [shown]
-        w.close()
-        server.cancel()
-        d.socket_path.unlink(missing_ok=True)
+async def test_a_limit_is_said_plainly_with_the_providers_reset_time_after_it(home):
+    said = "You've hit your usage limit. Resets at 5pm.\nUpgrade to keep going."
+    assert await _errors_for("hello", _failing(said)) == [
+        agentd.LIMIT_TEXT + "\nYou've hit your usage limit. Resets at 5pm."]
+    assert await _errors_for("hello", _failing("Credit balance is too low")) == [
+        agentd.LIMIT_TEXT + "\nCredit balance is too low"]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_rate_limit_is_a_busy_moment_not_the_account(home):
+    assert await _errors_for("hello", _failing("429 rate limit exceeded, retry later")) == [agentd.RATE_TEXT]
+
+
+@pytest.mark.asyncio
+async def test_other_errors_are_left_alone(home):
+    assert await _errors_for("hello", _failing("API Error: 500 overloaded")) == ["API Error: 500 overloaded"]
+
+
+@pytest.mark.asyncio
+async def test_a_typed_command_that_fails_is_never_told_it_hit_the_account_limit(home):
+    # `!docker pull` and `!gh api` print "rate limit" too; the failure is theirs, not the account's.
+    errors = await _errors_for("!echo you hit the rate limit; false", "", provider=lambda _s: providers.Shell())
+    assert errors and all("account" not in e and e != agentd.RATE_TEXT for e in errors)
+    assert any("rate limit" in e for e in errors)
 
 
 def _thinking(every, count):

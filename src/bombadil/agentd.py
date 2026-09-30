@@ -55,10 +55,13 @@ OUTPUT_GRACE = 1.0
 # for this long, the line says so instead of staying on its last words; the watchdog looks every tick.
 NO_PROGRESS_SECS = 30.0
 WATCHDOG_TICK = 5.0
-# What a failed result says when the account, not the request, is the problem. Anything else is
-# passed through as it came.
-LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "rate limit")
+# What a failed result says when the account, not the request, is the problem (then the provider's
+# own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
+# Anything else is passed through as it came.
+LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit")
 LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
+RATE_WORDS = ("rate limit", "rate_limit", "too many requests")
+RATE_TEXT = "The provider is rate limiting requests; try again in a minute."
 
 
 class AgentD:
@@ -566,8 +569,8 @@ class AgentD:
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
-                if any(w in text.lower() for w in LIMIT_WORDS):
-                    text = LIMIT_TEXT
+                if not turn.prompt.startswith("!"):   # a typed command's failure is its own, not the account's
+                    text = _limit_text(text)
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
@@ -592,6 +595,18 @@ class AgentD:
         paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
         with paths.turns_log().open("a") as f:
             f.write(json.dumps(entry) + "\n")
+
+
+def _limit_text(text: str) -> str:
+    """A failed result that names the account's limit says so plainly, then the provider's first
+    line (it holds the reset time); a bare rate limit is a busy moment, not the account."""
+    low = text.lower()
+    if any(w in low for w in LIMIT_WORDS):
+        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        return LIMIT_TEXT + (f"\n{first[:200]}" if first else "")
+    if any(w in low for w in RATE_WORDS):
+        return RATE_TEXT
+    return text
 
 
 def _action(msg: dict) -> launcher.Action | None:
