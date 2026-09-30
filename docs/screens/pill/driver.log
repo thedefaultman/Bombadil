@@ -1,0 +1,19 @@
+PASS bar connects to agentd
+PASS turn_start arrives within 200 ms of Enter  (0.006)
+PASS step reads Installing ffmpeg, marked system, with the exact command  ({'type': 'event', 'kind': 'status', 'text': 'Installing ffmpeg', 'risk': 'system', 'command': 'sudo pacman -S --noconfirm --print ffmpeg; sleep 4', 'source': 'step', 'turn': 1, '_t': 8022.543702554})
+PASS ffmpeg turn ends changed, with a summary  ({'type': 'event', 'kind': 'turn_end', 'seconds': 7.6, 'summary': 'Installed ffmpeg.', 'changed': True, 'irreversible': False, 'stopped': False, 'line': 'Installed ffmpeg.', 'turn': 1, '_t': 8027.518224941})
+PASS app building line counts up while streaming  (['Building an app', 'Building Passwords', 'Building Passwords, 2 lines', 'Building Passwords, 11 lines', 'Building Passwords, 12 lines'])
+PASS Passwords window opened
+PASS quit passwords answered locally  ({'type': 'event', 'kind': 'local', 'turn': None, 'action': 'app', 'target': 'passwords', 'phase': 'done', 'ok': True, 'text': 'Closed Passwords.', '_t': 8042.064482792})
+PASS passwords opened by name with no model call  (({'type': 'event', 'kind': 'local', 'turn': None, 'action': 'app', 'target': 'passwords', 'phase': 'done', 'ok': True, 'text': 'Opened Passwords.', '_t': 8044.568076042}, 0))
+PASS launcher answered in under 0.5 s  (0.011)
+PASS docker step is amber with its command  ({'type': 'event', 'kind': 'status', 'text': 'Installing docker', 'risk': 'system', 'command': "sudo sh -c 'echo installing docker; sleep 120'", 'source': 'step', 'turn': 3, '_t': 8049.302606864})
+PASS root sleep running under sudo  (['    213 u        /usr/bin/bash -c source /home/u/.claude/shell-snapshots/snapshot-bash-1790505786090-vdw26f.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- \'unsetenv\'; \\builtin unset -f -- \'unsetenv\'; } >/dev/null 2>&1 || true && eval \'sudo sh -c \'"\'"\'echo installing docker; sleep 120\'"\'"\'\' < /dev/null && pwd -P >| /tmp/claude-a7fc-cwd', '    215 root     sudo sh -c echo installing docker; sleep 120', '    217 root     sleep 120'])
+PASS second prompt waits as a chip  ({'type': 'event', 'kind': 'queued', 'turn': 4, 'prompt': 'tell me a joke', '_t': 8051.685124291})
+PASS Esc stopped the turn and said what it stopped  (Stopped while installing docker.)
+PASS no sleep 120 left, root one included
+PASS queued prompt ran after the stop
+PASS ! command ran without the model  ({'type': 'event', 'kind': 'turn_end', 'seconds': 0.0, 'summary': '', 'changed': False, 'irreversible': False, 'stopped': False, 'line': '', 'turn': 5, '_t': 8057.24850206})
+PASS undo answers plainly without restore points here  (Undo is off here: this system keeps no restore points.)
+PASS details drawer opened
+DONE pass=18 fail=0
