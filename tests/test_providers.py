@@ -232,3 +232,8 @@ def test_the_answer_after_an_odd_line_is_still_read():
              json.dumps({"type": "result", "result": "Done.", "is_error": False, "session_id": "s1"})]
     ev = list(p.events(lines))
     assert [e["kind"] for e in ev] == ["result"] and ev[0]["text"] == "Done."
+
+
+def test_the_agent_is_told_how_to_set_the_time_zone():
+    # There is no installer question for it; the user just says where they are.
+    assert "sudo timedatectl set-timezone <Area/City>" in providers.SYSTEM_PROMPT
