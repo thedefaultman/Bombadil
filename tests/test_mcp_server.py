@@ -267,6 +267,121 @@ def test_an_agentd_that_hangs_up_is_a_clear_error(home, monkeypatch):
     srv.close()
 
 
+def test_the_job_tool_is_listed_with_what_it_can_do_and_when_to_use_it():
+    tool = next(t for t in rpc(make(), "tools/list")["result"]["tools"] if t["name"] == "job")
+    props = tool["inputSchema"]["properties"]
+    assert tool["inputSchema"]["required"] == ["op"]
+    assert props["op"]["enum"] == ["start", "list", "stop"]
+    assert props["kind"]["enum"] == ["job", "watch"]         # a timer is `seconds`, not a kind
+    assert props["seconds"]["type"] == "integer" and props["seconds"]["minimum"] == 1
+    assert {"title", "command", "id"} <= set(props)
+    # It tells the agent to use it instead of the shell's ways of leaving something running, and why.
+    text = tool["description"]
+    for words in ("instead of `&`, `nohup` or a long `sleep`", "more than a few seconds", "hear about later",
+                  "Watching card", "says so in one line when it ends", "stops it when the person asks",
+                  "keeps running after your turn"):
+        assert words in text, words
+    # And what a watcher is, and that a timer takes seconds.
+    assert "one-shot watcher" in text and "`seconds` instead of a command" in text
+    # It is not gated on the person's words, unlike the desk.
+    assert "ONLY" not in text
+
+
+def test_the_job_tool_asks_agentd_for_its_turn_and_returns_its_words(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TURN", "4")
+
+    def answer(msg):
+        return [{"type": "jobs", "jobs": []},                                                # a broadcast
+                {"type": "job-result", "id": "someone-elses", "ok": False, "text": "not mine"},
+                {"type": "job-result", "id": msg["id"], "ok": True, "text": "Started Build as job abcdef."}]
+    srv, got = _agentd(answer)
+    r = call(make(), "job", op="start", title="Build", command="make", kind="watch")
+    assert _said(r) == "Started Build as job abcdef." and "isError" not in r
+    assert len(got[0].pop("id")) == 32
+    assert got == [{"type": "job-tool", "turn": 4, "op": "start", "title": "Build", "command": "make",
+                    "kind": "watch"}]
+    srv.close()
+    srv, more = _agentd(lambda m: [{"type": "job-result", "id": m["id"], "ok": True, "text": "done"}])
+    call(make(), "job", op="start", title="Timer, 10 min", seconds=600)
+    srv.close()
+    srv, last = _agentd(lambda m: [{"type": "job-result", "id": m["id"], "ok": True, "text": "done"}])
+    call(make(), "job", op="list")
+    srv.close()
+    # Only what was given is sent.
+    assert [{k: v for k, v in m.items() if k != "id"} for m in got + more + last] == [
+        {"type": "job-tool", "turn": 4, "op": "start", "title": "Build", "command": "make", "kind": "watch"},
+        {"type": "job-tool", "turn": 4, "op": "start", "title": "Timer, 10 min", "seconds": 600},
+        {"type": "job-tool", "turn": 4, "op": "list"}]
+
+
+def test_the_jobs_id_travels_as_job_since_id_names_the_request(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TURN", "4")
+    srv, got = _agentd(lambda m: [{"type": "job-result", "id": m["id"], "ok": True, "text": "Stopped Build."}])
+    call(make(), "job", op="stop", id="abcdef")
+    srv.close()
+    assert len(got[0]["id"]) == 32 and got[0]["id"] != "abcdef"
+    assert {k: v for k, v in got[0].items() if k != "id"} == {"type": "job-tool", "turn": 4, "op": "stop",
+                                                              "job": "abcdef"}
+
+
+def test_a_job_refusal_reaches_the_agent_as_an_error_in_agentds_own_words(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TURN", "2")
+    no = "That turn is over, so nothing was started."
+    srv, _ = _agentd(lambda m: [{"type": "job-result", "id": m["id"], "ok": False, "text": no}])
+    r = call(make(), "job", op="start", title="Build", command="make")
+    assert r["isError"] is True and _said(r) == no
+    srv.close()
+    srv, _ = _agentd(lambda m: [{"type": "job-result", "id": m["id"], "ok": False, "text": ""}])
+    assert _said(call(make(), "job", op="list")) == "Nothing was changed."
+    srv.close()
+
+
+def test_without_a_turn_the_job_tool_says_so_and_asks_nobody(home, monkeypatch):
+    monkeypatch.delenv("BOMBADIL_TURN", raising=False)
+    srv, got = _agentd(lambda m: [])
+    r = call(make(), "job", op="list")
+    assert r["isError"] is True and "from inside a turn" in _said(r) and "jobs" in _said(r).lower()
+    time.sleep(0.1)
+    assert got == []
+    srv.close()
+
+
+def test_the_job_tools_errors_name_the_job_table_not_the_desk(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TURN", "1")
+    r = call(make(), "job", op="list")      # no agentd
+    assert r["isError"] is True and "agentd is not answering" in _said(r)
+    assert "the job table is unchanged" in _said(r) and "desk" not in _said(r)
+    monkeypatch.setattr(mcp_server, "JOB_TIMEOUT", 0.3)
+    srv, got = _agentd(lambda m: [{"type": "job-result", "id": "not-this-one", "ok": True, "text": "no"}])
+    t0 = time.monotonic()
+    r = call(make(), "job", op="start", title="Build", command="make")
+    assert time.monotonic() - t0 < 2
+    assert r["isError"] is True and "did not answer within 0.3 seconds, so the job table may be unchanged" in _said(r)
+    assert "`list` says what is running." in _said(r) and "desk" not in _said(r) and got
+    srv.close()
+    path = paths.socket_path()
+    path.unlink(missing_ok=True)
+    hung = socket.socket(socket.AF_UNIX)
+    hung.bind(str(path))
+    hung.listen(1)
+
+    def serve():
+        conn, _ = hung.accept()
+        conn.recv(65536)
+        conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    r = call(make(), "job", op="list")
+    assert r["isError"] is True and "hung up before it answered, so the job table may be unchanged" in _said(r)
+    hung.close()
+
+
+def test_the_desks_errors_still_say_the_desk(home, monkeypatch):
+    # The plumbing is shared; what it says it could not change is the caller's.
+    monkeypatch.setenv("BOMBADIL_TURN", "1")
+    r = call(make(), "desk", op="state")
+    assert "so the desk is unchanged" in _said(r)
+
+
 def test_codex_hands_the_turn_to_the_tool_too():
     # Codex starts MCP servers with an allow-list of the environment.
     assert "BOMBADIL_TURN" in providers.MCP_ENV and "BOMBADIL_SOCKET" in providers.MCP_ENV

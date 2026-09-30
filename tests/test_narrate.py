@@ -646,3 +646,58 @@ def test_the_count_in_words():
     n.on_event(_tool("mcp__bombadil-os__create_app", "a", title="Passwords", qml="Item {}"))
     assert n.touched_text() == "3 packages, 1 service, 1 file and 1 app so far"
     assert n.touched_counts() == {"package": 3, "service": 1, "file": 1, "app": 1}
+
+
+# -- the job tool: the line says what it did --
+
+JOB = "mcp__bombadil-os__job"
+
+
+@pytest.mark.parametrize("args, text", [
+    ({"op": "start", "title": "Ubuntu 26.04 ISO", "command": "curl -O https://x/y.iso"}, "Watching Ubuntu 26.04 ISO"),
+    ({"op": "start", "title": "the build", "command": "tail --pid=1 -f /dev/null", "kind": "watch"},
+     "Watching the build"),
+    ({"op": "start", "title": "  Two   words\n", "command": "x"}, "Watching Two words"),
+    ({"op": "start", "seconds": 600}, "Watching Timer, 10 min"),
+    ({"op": "start", "title": "Tea", "seconds": 300}, "Watching Tea"),
+    ({"op": "start", "command": "sleep 100"}, "Starting a background job"),
+    ({"op": "start", "seconds": 0, "command": "x"}, "Starting a background job"),
+    ({"op": "start", "title": "x" * 80, "command": "x"}, "Watching " + "x" * 40),
+    ({"op": "list"}, "Checking the background jobs"),
+    ({}, "Checking the background jobs"),
+])
+def test_the_line_says_what_the_job_tool_did(home, args, text):
+    step = narrate.tool_step(JOB, args)
+    # A background job is nothing a restore point could undo, so it is no change and has no closing sentence.
+    assert (step.text, step.done, step.risk, step.command) == (text, None, None, None)
+
+
+def test_a_stop_names_the_job_it_stops(home):
+    from bombadil import jobs
+    j = jobs.Jobs(runner=lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    rec = j.start("Ubuntu 26.04 ISO", "curl -O https://x/y.iso")
+    step = narrate.tool_step(JOB, {"op": "stop", "id": rec["id"]})
+    assert (step.text, step.done) == ("Stopped Ubuntu 26.04 ISO", None)
+    # A job that is not there, or an id that is not one, is still said plainly and reads nothing odd.
+    for a in ({"op": "stop", "id": "ffffff"}, {"op": "stop"}, {"op": "stop", "id": "../../etc/passwd"},
+              {"op": "stop", "id": ["x"]}, {"op": "stop", "id": 5}):
+        assert narrate.tool_step(JOB, a).text == "Stopped a background job"
+
+
+def test_the_job_line_goes_to_the_pill_and_leaves_no_undo_behind(home):
+    n = narrate.Narrator()
+    line = n.on_event({"kind": "tool", "name": JOB, "input": {"op": "start", "title": "Ubuntu 26.04 ISO",
+                                                              "command": "curl"}})
+    assert line == {"text": "Watching Ubuntu 26.04 ISO", "risk": None, "command": None, "source": "step"}
+    n.on_event({"kind": "tool", "name": JOB, "input": {"op": "list"}})
+    assert n.summary() == "" and n.done == [] and n.touched_counts() == {} and not n.system
+    assert n.stopped_line() == "Stopped while checking the background jobs."
+
+
+@pytest.mark.parametrize("args", [
+    {"op": ["start"], "title": ["x"], "seconds": ["5"]}, {"op": 5, "title": {"a": 1}},
+    {"op": "start", "title": None, "seconds": True}, {"op": "start", "seconds": "soon"},
+    {"op": "start", "seconds": float("inf")}, {"op": "start", "seconds": "1e999"}, {"op": "stop", "id": None},
+])
+def test_odd_job_arguments_never_break_the_line(home, args):
+    assert narrate.tool_step(JOB, args).text
