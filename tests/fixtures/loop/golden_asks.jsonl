@@ -1,0 +1,180 @@
+{"id": "wx1", "day": 0, "at": "07:30", "text": "what's the weather", "group": "weather", "events": ["curl -s wttr.in/Lisbon?format=3"], "seconds": 7}
+{"id": "net1", "day": 0, "at": "08:30", "text": "am I online", "group": "network", "events": ["ping -c 1 1.1.1.1"], "seconds": 6}
+{"id": "pw1", "day": 0, "at": "09:12", "text": "show me my passwords", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 7}
+{"id": "mem1", "day": 0, "at": "09:20", "text": "what's eating my ram", "group": "memory", "events": ["free -h", "ps aux --sort=-%mem | head -10"], "seconds": 12}
+{"id": "tm1", "day": 0, "at": "10:00", "text": "set a timer for 25 minutes", "group": "timers", "events": ["systemd-run --user --on-active=25m notify-send 'Timer done'"], "seconds": 6, "changed": true}
+{"id": "s01", "day": 0, "at": "13:05", "text": "explain what a mutex is", "group": "single", "events": [], "seconds": 12}
+{"id": "lr1", "day": 1, "at": "07:45", "text": "log my run: 5k in 28 minutes", "group": "log-run", "events": ["echo '2026-09-08,5,28' >> ~/Apps/runs/log.csv"], "seconds": 10, "changed": true}
+{"id": "disk1", "day": 1, "at": "09:05", "text": "how much disk space is left", "group": "disk", "events": ["df -h"], "seconds": 6}
+{"id": "sty1", "day": 1, "at": "10:10", "text": "shorter answers please", "group": "short-answers", "events": [], "seconds": 3}
+{"id": "mem2", "day": 1, "at": "14:30", "text": "memory hog?", "group": "memory", "events": ["ps aux --sort=-%mem | head"], "seconds": 9}
+{"id": "gs1", "day": 1, "at": "15:05", "text": "git status", "group": "git-status", "events": ["git status --short"], "seconds": 5}
+{"id": "td1", "day": 1, "at": "18:10", "text": "clean up my downloads folder", "group": "tidy-downloads", "events": ["ls ~/Downloads", "mv ~/Downloads/*.pdf ~/Documents/"], "seconds": 45, "changed": true}
+{"id": "ff1", "day": 1, "at": "20:10", "text": "install ffmpeg", "group": "install-ffmpeg", "events": ["sudo pacman -S --noconfirm ffmpeg"], "seconds": 45, "changed": true}
+{"id": "bri1", "day": 1, "at": "21:30", "text": "make the screen dimmer", "group": "brightness", "events": ["brightnessctl set 30%"], "seconds": 5, "changed": true}
+{"id": "wx2", "day": 2, "at": "08:10", "text": "will it rain today", "group": "weather", "events": ["curl -s 'wttr.in/Lisbon?format=%C+%p'"], "seconds": 7}
+{"id": "br1", "day": 2, "at": "09:50", "text": "can you open the browser", "group": "open-browser", "events": [["mcp__bombadil-os__show_panel", {"name": "browser"}]], "seconds": 5}
+{"id": "bj1", "day": 2, "at": "11:30", "text": "how's the batch job going", "group": "batch-job", "events": ["tail -n 5 ~/jobs/batch.log"], "seconds": 8}
+{"id": "dc1", "day": 2, "at": "12:05", "text": "what containers are running", "group": "docker-ps", "events": ["docker ps"], "seconds": 6}
+{"id": "cpu1", "day": 2, "at": "13:10", "text": "is something eating the cpu", "group": "cpu", "events": ["uptime", "ps aux --sort=-%cpu | head"], "seconds": 11}
+{"id": "tm2", "day": 2, "at": "14:00", "text": "timer 10 min", "group": "timers", "events": ["systemd-run --user --on-active=10m notify-send Done"], "seconds": 5, "changed": true}
+{"id": "ip1", "day": 2, "at": "16:20", "text": "what's my ip address", "group": "my-ip", "events": ["curl -s ifconfig.me"], "seconds": 7}
+{"id": "pw2", "day": 2, "at": "18:40", "text": "can you open passwords please", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 6}
+{"id": "bat1", "day": 2, "at": "18:50", "text": "how much battery do I have left", "group": "battery", "events": ["upower -i /org/freedesktop/UPower/devices/battery_BAT0"], "seconds": 7}
+{"id": "s02", "day": 2, "at": "19:10", "text": "what's the difference between tcp and udp", "group": "single", "events": [], "seconds": 14}
+{"id": "vol1", "day": 2, "at": "21:00", "text": "turn the volume down", "group": "volume", "events": ["wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.3"], "seconds": 5, "changed": true}
+{"id": "gl1", "day": 3, "at": "09:45", "text": "what did I commit yesterday", "group": "git-log", "events": ["git log --since=yesterday --oneline"], "seconds": 7}
+{"id": "mem3", "day": 3, "at": "10:05", "text": "which process is using the most memory", "group": "memory", "events": ["ps aux --sort=-%mem | head -5"], "seconds": 10}
+{"id": "fd1", "day": 3, "at": "11:50", "text": "find my tax pdf", "group": "find-document", "events": ["find ~/Documents -iname '*tax*.pdf'"], "seconds": 9}
+{"id": "net2", "day": 3, "at": "12:45", "text": "is the wifi working", "group": "network", "events": ["nmcli general status"], "seconds": 7}
+{"id": "ld1", "day": 3, "at": "13:20", "text": "what's in my downloads folder", "group": "list-downloads", "events": ["ls ~/Downloads"], "seconds": 6}
+{"id": "ss1", "day": 3, "at": "14:20", "text": "take a screenshot", "group": "screenshot", "events": ["grim ~/Pictures/shot.png"], "seconds": 6}
+{"id": "bj2", "day": 3, "at": "15:45", "text": "batch job progress", "group": "batch-job", "events": ["tail -n 3 ~/jobs/batch.log"], "seconds": 7}
+{"id": "dk1", "day": 3, "at": "19:45", "text": "install docker", "group": "install-docker", "events": ["sudo pacman -S --noconfirm docker"], "seconds": 50, "changed": true}
+{"id": "s03", "day": 3, "at": "21:40", "text": "write a haiku about rain", "group": "single", "events": [], "seconds": 8}
+{"id": "lr2", "day": 4, "at": "07:40", "text": "add a run: 8.2 km, 47 min", "group": "log-run", "events": ["echo '2026-09-11,8.2,47' >> ~/Apps/runs/log.csv"], "seconds": 11, "changed": true}
+{"id": "x01", "day": 4, "at": "10:12", "text": "what's my wifi password", "group": "none", "events": ["nmcli -s -g 802-11-wireless-security.psk connection show home"], "seconds": 9, "expect": "private"}
+{"id": "s04", "day": 4, "at": "12:00", "text": "convert 72 fahrenheit to celsius", "group": "single", "events": [], "seconds": 4}
+{"id": "temp1", "day": 4, "at": "15:15", "text": "how hot is my cpu", "group": "temperature", "events": ["sensors"], "seconds": 6}
+{"id": "bd1", "day": 4, "at": "16:30", "text": "how's the build going", "group": "build-progress", "events": ["tail -n 20 ~/src/site/build.log"], "seconds": 8}
+{"id": "gs2", "day": 4, "at": "16:30", "text": "what's changed in the repo", "group": "git-status", "events": ["git status", "git diff --stat"], "seconds": 8}
+{"id": "bt1", "day": 4, "at": "19:15", "text": "turn on bluetooth", "group": "bluetooth", "events": ["bluetoothctl power on"], "seconds": 6, "changed": true}
+{"id": "disk2", "day": 4, "at": "19:20", "text": "disk usage", "group": "disk", "events": ["df -h /"], "seconds": 5}
+{"id": "bri2", "day": 4, "at": "22:10", "text": "brightness down", "group": "brightness", "events": ["brightnessctl set 10%-"], "seconds": 5, "changed": true}
+{"id": "wx3", "day": 5, "at": "07:20", "text": "weather tomorrow", "group": "weather", "events": [["WebFetch", {"url": "https://wttr.in/Lisbon?1"}]], "seconds": 8}
+{"id": "pw3", "day": 5, "at": "08:03", "text": "open my passwords", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 6}
+{"id": "upd1", "day": 5, "at": "08:20", "text": "update my system", "group": "system-update", "events": ["sudo pacman -Syu --noconfirm"], "seconds": 120, "changed": true}
+{"id": "bj3", "day": 5, "at": "09:10", "text": "is the batch job finished yet", "group": "batch-job", "events": ["tail -1 ~/jobs/batch.log"], "seconds": 7}
+{"id": "dc2", "day": 5, "at": "13:30", "text": "docker ps", "group": "docker-ps", "events": ["docker ps"], "seconds": 5}
+{"id": "s05", "day": 5, "at": "14:35", "text": "summarize https://blog.rust-lang.org/async for me", "group": "single", "events": [["WebFetch", {"url": "https://blog.rust-lang.org/async"}]], "seconds": 25}
+{"id": "tm3", "day": 5, "at": "16:10", "text": "remind me in 20 minutes to stretch", "group": "timers", "events": ["(sleep 1200; notify-send Stretch) &"], "seconds": 6, "changed": true}
+{"id": "cpu2", "day": 5, "at": "17:25", "text": "cpu usage", "group": "cpu", "events": ["mpstat 1 1"], "seconds": 8}
+{"id": "td2", "day": 5, "at": "19:30", "text": "tidy downloads", "group": "tidy-downloads", "events": ["ls -la ~/Downloads", "mkdir -p ~/Downloads/old", "mv ~/Downloads/*.zip ~/Downloads/old/"], "seconds": 50, "changed": true}
+{"id": "tz1", "day": 6, "at": "07:05", "text": "what time is it in Tokyo", "group": "tokyo-time", "events": ["TZ=Asia/Tokyo date"], "seconds": 5}
+{"id": "ff2", "day": 6, "at": "10:25", "text": "can you get ffmpeg installed", "group": "install-ffmpeg", "events": ["sudo pacman -S --noconfirm ffmpeg"], "seconds": 40, "changed": true}
+{"id": "sty2", "day": 6, "at": "11:25", "text": "keep answers short", "group": "short-answers", "events": [], "seconds": 3}
+{"id": "sig1", "day": 6, "at": "14:10", "text": "how strong is my wifi signal", "group": "wifi-signal", "events": ["nmcli -f IN-USE,SIGNAL dev wifi"], "seconds": 7}
+{"id": "mem4", "day": 6, "at": "16:40", "text": "how much RAM do I have free", "group": "memory", "events": ["free -h"], "seconds": 7}
+{"id": "bj4", "day": 6, "at": "17:00", "text": "where is the batch at", "group": "batch-job", "events": ["python ~/bin/batch_status.py"], "seconds": 9}
+{"id": "br2", "day": 6, "at": "19:20", "text": "open a browser window", "group": "open-browser", "events": [["mcp__bombadil-os__show_panel", {"name": "browser"}]], "seconds": 5}
+{"id": "s06", "day": 6, "at": "20:15", "text": "how do I undo my last git commit", "group": "single", "events": [], "seconds": 10}
+{"id": "s28", "day": 6, "at": "22:20", "text": "what ports are open", "group": "single", "events": ["ss -tlnp"], "seconds": 8}
+{"id": "s39", "day": 7, "at": "10:30", "text": "what resolution is my screen", "group": "single", "events": ["hyprctl monitors"], "seconds": 6}
+{"id": "vol2", "day": 7, "at": "11:05", "text": "mute", "group": "volume", "events": ["wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"], "seconds": 4, "changed": true}
+{"id": "s07", "day": 7, "at": "17:20", "text": "rename the tracker app to fitness", "group": "single", "events": ["mv ~/Apps/tracker ~/Apps/fitness"], "seconds": 15, "changed": true}
+{"id": "net3", "day": 7, "at": "18:05", "text": "check my connection", "group": "network", "events": ["ping -c 2 8.8.8.8"], "seconds": 8}
+{"id": "dk2", "day": 8, "at": "09:15", "text": "set up docker", "group": "install-docker", "events": ["sudo pacman -S --noconfirm docker docker-compose", "sudo systemctl enable --now docker.service"], "seconds": 75, "changed": true}
+{"id": "tm4", "day": 8, "at": "09:30", "text": "start a 5 minute timer", "group": "timers", "events": ["systemd-run --user --on-active=5m notify-send Done"], "seconds": 5, "changed": true}
+{"id": "cpu3", "day": 8, "at": "10:50", "text": "what's using all my cpu", "group": "cpu", "events": ["ps aux --sort=-%cpu | head -8"], "seconds": 10}
+{"id": "disk3", "day": 8, "at": "11:11", "text": "am I running out of space", "group": "disk", "events": ["df -h"], "seconds": 7}
+{"id": "gs3", "day": 8, "at": "11:40", "text": "any uncommitted changes?", "group": "git-status", "events": ["git status --porcelain"], "seconds": 6}
+{"id": "bri3", "day": 8, "at": "13:00", "text": "turn the brightness up a bit", "group": "brightness", "events": ["brightnessctl set +15%"], "seconds": 5, "changed": true}
+{"id": "x05", "day": 8, "at": "13:13", "text": "!ls -la ~", "group": "none", "events": [], "seconds": 1, "expect": "shell"}
+{"id": "lr3", "day": 8, "at": "18:30", "text": "log today's run, 10k in 52 minutes", "group": "log-run", "events": ["echo '2026-09-15,10,52' >> ~/Apps/runs/log.csv"], "seconds": 10, "changed": true}
+{"id": "pw4", "day": 8, "at": "21:15", "text": "pull up the password manager", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 8}
+{"id": "s08", "day": 8, "at": "22:00", "text": "add a dark mode toggle to the runs app", "group": "single", "events": [["Read", {"file_path": "~/Apps/runs/main.qml"}], ["Edit", {"file_path": "~/Apps/runs/main.qml"}]], "seconds": 70, "changed": true}
+{"id": "mem5", "day": 9, "at": "08:55", "text": "is my memory ok", "group": "memory", "events": ["free -m"], "seconds": 7}
+{"id": "ip2", "day": 9, "at": "09:55", "text": "what is my public ip", "group": "my-ip", "events": ["curl -s https://icanhazip.com"], "seconds": 7}
+{"id": "ss2", "day": 9, "at": "10:35", "text": "screenshot please", "group": "screenshot", "events": [["mcp__bombadil-os__screenshot", {}]], "seconds": 6}
+{"id": "bj5", "day": 9, "at": "10:40", "text": "how far along is the batch run", "group": "batch-job", "events": ["tail ~/jobs/batch.log"], "seconds": 8}
+{"id": "x02", "day": 9, "at": "11:02", "text": "show me my ssh keys", "group": "none", "events": ["ls ~/.ssh"], "seconds": 6, "expect": "private"}
+{"id": "s09", "day": 9, "at": "13:30", "text": "why did my build fail", "group": "single", "events": ["journalctl -xe --no-pager | tail -40"], "seconds": 20}
+{"id": "fd2", "day": 9, "at": "14:40", "text": "locate the lease agreement pdf", "group": "find-document", "events": ["find ~/Documents -iname '*lease*'"], "seconds": 9}
+{"id": "dc3", "day": 9, "at": "15:50", "text": "show my docker containers", "group": "docker-ps", "events": ["docker ps -a"], "seconds": 6}
+{"id": "wx4", "day": 9, "at": "17:40", "text": "do I need an umbrella", "group": "weather", "events": ["curl -s 'wttr.in?format=%p'"], "seconds": 7}
+{"id": "td3", "day": 9, "at": "20:05", "text": "downloads is a mess, sort it out", "group": "tidy-downloads", "events": ["ls ~/Downloads", "mv ~/Downloads/*.png ~/Pictures/", "mv ~/Downloads/*.pdf ~/Documents/"], "seconds": 60, "changed": true}
+{"id": "bj6", "day": 10, "at": "14:25", "text": "what's the batch progress", "group": "batch-job", "events": ["python ~/bin/batch_status.py"], "seconds": 9}
+{"id": "disk4", "day": 10, "at": "16:00", "text": "what's eating my storage", "group": "disk", "events": ["du -h --max-depth=1 ~ | sort -h | tail"], "seconds": 20}
+{"id": "gl2", "day": 10, "at": "16:05", "text": "show my recent commits", "group": "git-log", "events": ["git log --oneline -10"], "seconds": 6}
+{"id": "s10", "day": 10, "at": "18:45", "text": "what does chmod 755 do", "group": "single", "events": [], "seconds": 6}
+{"id": "rr1", "day": 10, "at": "20:00", "text": "how far did I run this week", "group": "read-runs", "events": ["cat ~/Apps/runs/log.csv"], "seconds": 9}
+{"id": "bt2", "day": 10, "at": "20:55", "text": "switch bluetooth on", "group": "bluetooth", "events": ["bluetoothctl power on"], "seconds": 6, "changed": true}
+{"id": "s41", "day": 10, "at": "21:55", "text": "is bluetooth on", "group": "single", "events": ["bluetoothctl show"], "seconds": 6}
+{"id": "s11", "day": 11, "at": "09:25", "text": "translate good morning to portuguese", "group": "single", "events": [], "seconds": 4}
+{"id": "br3", "day": 11, "at": "12:10", "text": "I need a browser", "group": "open-browser", "events": [["mcp__bombadil-os__show_panel", {"name": "browser"}]], "seconds": 5}
+{"id": "bd2", "day": 11, "at": "12:15", "text": "is the build done yet", "group": "build-progress", "events": ["tail -n 5 ~/src/site/build.log"], "seconds": 7}
+{"id": "pw5", "day": 11, "at": "12:30", "text": "I need my passwords", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 7}
+{"id": "bat2", "day": 11, "at": "15:20", "text": "battery level?", "group": "battery", "events": ["acpi -b"], "seconds": 5}
+{"id": "temp2", "day": 11, "at": "20:30", "text": "is the laptop overheating", "group": "temperature", "events": ["sensors"], "seconds": 7}
+{"id": "vol3", "day": 11, "at": "22:30", "text": "volume to 30", "group": "volume", "events": ["wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.3"], "seconds": 5, "changed": true}
+{"id": "lr4", "day": 12, "at": "07:50", "text": "record a run of 6 km", "group": "log-run", "events": ["echo '2026-09-19,6,' >> ~/Apps/runs/log.csv"], "seconds": 9, "changed": true}
+{"id": "upd2", "day": 12, "at": "08:10", "text": "upgrade all packages", "group": "system-update", "events": ["sudo pacman -Syu"], "seconds": 110, "changed": true}
+{"id": "x06", "day": 12, "at": "12:12", "text": "Open Passwords", "group": "none", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 2, "expect": "origin", "origin": "app"}
+{"id": "s12", "day": 12, "at": "16:50", "text": "draft an email to my landlord about the heating", "group": "single", "events": [], "seconds": 18}
+{"id": "gs4", "day": 12, "at": "17:15", "text": "show me the git status", "group": "git-status", "events": ["git status"], "seconds": 6}
+{"id": "net4", "day": 12, "at": "20:20", "text": "why is the internet so slow", "group": "network", "events": ["ping -c 5 1.1.1.1", "nmcli general status"], "seconds": 15}
+{"id": "cpu4", "day": 12, "at": "22:05", "text": "load average?", "group": "cpu", "events": ["uptime"], "seconds": 5}
+{"id": "wx5", "day": 13, "at": "07:35", "text": "how's the weather in Porto", "group": "weather", "events": ["curl -s wttr.in/Porto"], "seconds": 8}
+{"id": "disk5", "day": 13, "at": "08:40", "text": "check free space on the drive", "group": "disk", "events": ["df -h"], "seconds": 6}
+{"id": "s29", "day": 13, "at": "10:50", "text": "how fast is my internet", "group": "single", "events": ["speedtest-cli"], "seconds": 30}
+{"id": "mem6", "day": 13, "at": "11:20", "text": "what is hogging memory right now", "group": "memory", "events": ["free -h", "ps aux --sort=-rss | head"], "seconds": 13}
+{"id": "bri4", "day": 13, "at": "20:45", "text": "it's too bright in here", "group": "brightness", "events": ["brightnessctl set 40%"], "seconds": 6, "changed": true}
+{"id": "s13", "day": 13, "at": "21:05", "text": "make the pill a little bigger", "group": "single", "events": [["Edit", {"file_path": "~/.config/quickshell/pill.qml"}]], "seconds": 40, "changed": true}
+{"id": "s14", "day": 14, "at": "08:15", "text": "how many days until friday", "group": "single", "events": [], "seconds": 3}
+{"id": "fd3", "day": 14, "at": "10:05", "text": "find that receipt pdf", "group": "find-document", "events": ["find ~/Documents ~/Downloads -iname '*receipt*'"], "seconds": 10}
+{"id": "ld2", "day": 14, "at": "10:30", "text": "list my downloads", "group": "list-downloads", "events": ["ls -lt ~/Downloads | head"], "seconds": 6}
+{"id": "tm5", "day": 14, "at": "13:40", "text": "set a pomodoro timer", "group": "timers", "events": ["systemd-run --user --on-active=25m notify-send Break"], "seconds": 6, "changed": true}
+{"id": "x03", "day": 14, "at": "16:41", "text": "what's in my .env file", "group": "none", "events": ["cat ~/src/site/.env"], "seconds": 7, "expect": "private"}
+{"id": "s30", "day": 14, "at": "22:45", "text": "show the last 20 lines of the system log", "group": "single", "events": ["journalctl -n 20 --no-pager"], "seconds": 7}
+{"id": "tz2", "day": 15, "at": "06:55", "text": "time in tokyo?", "group": "tokyo-time", "events": ["TZ=Asia/Tokyo date +%H:%M"], "seconds": 5}
+{"id": "sty3", "day": 15, "at": "09:05", "text": "make answers shorter", "group": "short-answers", "events": [], "seconds": 3}
+{"id": "dc4", "day": 15, "at": "10:15", "text": "is the postgres container up", "group": "docker-ps", "events": ["docker ps --filter name=postgres"], "seconds": 7}
+{"id": "s15", "day": 15, "at": "12:55", "text": "what's 15% of 240", "group": "single", "events": [], "seconds": 3}
+{"id": "sig2", "day": 15, "at": "17:30", "text": "wifi signal strength", "group": "wifi-signal", "events": ["nmcli dev wifi list"], "seconds": 7}
+{"id": "td4", "day": 15, "at": "17:45", "text": "organize my downloads", "group": "tidy-downloads", "events": ["ls ~/Downloads", "mkdir -p ~/Downloads/misc"], "seconds": 48, "changed": true}
+{"id": "ff3", "day": 15, "at": "18:35", "text": "I need ffmpeg", "group": "install-ffmpeg", "events": ["pacman -Q ffmpeg", "sudo pacman -S --noconfirm ffmpeg"], "seconds": 50, "changed": true}
+{"id": "pw6", "day": 15, "at": "19:02", "text": "go to my passwords app", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 6}
+{"id": "cpu5", "day": 16, "at": "09:33", "text": "why is everything so slow", "group": "cpu", "events": ["uptime", "top -bn1 | head -15"], "seconds": 14}
+{"id": "s31", "day": 16, "at": "10:40", "text": "enable the firewall", "group": "single", "events": ["sudo systemctl enable --now ufw.service"], "seconds": 15, "changed": true}
+{"id": "s16", "day": 16, "at": "13:15", "text": "kill firefox", "group": "single", "events": ["pkill firefox"], "seconds": 5, "changed": true}
+{"id": "ss3", "day": 16, "at": "16:45", "text": "grab the screen", "group": "screenshot", "events": ["grim ~/Pictures/screen.png"], "seconds": 6}
+{"id": "rr2", "day": 16, "at": "21:10", "text": "what's my average run pace", "group": "read-runs", "events": ["cat ~/Apps/runs/log.csv"], "seconds": 12}
+{"id": "net5", "day": 17, "at": "07:55", "text": "is my internet down", "group": "network", "events": ["ping -c 1 archlinux.org"], "seconds": 6}
+{"id": "bt3", "day": 17, "at": "08:45", "text": "enable bluetooth", "group": "bluetooth", "events": ["bluetoothctl power on"], "seconds": 6, "changed": true}
+{"id": "s42", "day": 17, "at": "08:50", "text": "connect my headphones", "group": "single", "events": ["bluetoothctl devices", "bluetoothctl connect $(bluetoothctl devices | head -1 | cut -d' ' -f2)"], "seconds": 12}
+{"id": "s40", "day": 17, "at": "14:30", "text": "where is my ssh config", "group": "single", "events": ["ls -a ~/.config"], "seconds": 6}
+{"id": "gl3", "day": 17, "at": "14:55", "text": "git log", "group": "git-log", "events": ["git log --oneline -15"], "seconds": 5}
+{"id": "mem7", "day": 17, "at": "15:02", "text": "ram usage", "group": "memory", "events": ["free -h"], "seconds": 6}
+{"id": "s17", "day": 17, "at": "19:35", "text": "restart networkmanager", "group": "single", "events": ["sudo systemctl restart NetworkManager"], "seconds": 9, "changed": true}
+{"id": "s32", "day": 18, "at": "09:20", "text": "how many files are in my documents folder", "group": "single", "events": ["ls ~/Documents | wc -l"], "seconds": 6}
+{"id": "bat3", "day": 18, "at": "12:40", "text": "is the laptop charging", "group": "battery", "events": ["cat /sys/class/power_supply/BAT0/status"], "seconds": 6}
+{"id": "br4", "day": 18, "at": "15:35", "text": "pull up the web browser", "group": "open-browser", "events": [["mcp__bombadil-os__show_panel", {"name": "browser"}]], "seconds": 5}
+{"id": "s18", "day": 18, "at": "17:10", "text": "show me the journal for sshd", "group": "single", "events": ["journalctl -u sshd --no-pager | tail -50"], "seconds": 9}
+{"id": "lr5", "day": 18, "at": "19:05", "text": "put 5 miles in the run log", "group": "log-run", "events": ["echo '2026-09-25,8,' >> ~/Apps/runs/log.csv"], "seconds": 10, "changed": true}
+{"id": "disk6", "day": 18, "at": "21:50", "text": "how full is my disk", "group": "disk", "events": ["df -h"], "seconds": 6}
+{"id": "x04", "day": 19, "at": "09:59", "text": "what do I have in the password store", "group": "none", "events": ["pass show"], "seconds": 6, "expect": "private"}
+{"id": "gs5", "day": 19, "at": "10:20", "text": "have I committed everything", "group": "git-status", "events": ["git status -sb"], "seconds": 6}
+{"id": "s33", "day": 19, "at": "11:30", "text": "rename all the photos in pictures by date", "group": "single", "events": ["ls ~/Pictures", "for f in ~/Pictures/*.jpg; do mv \"$f\" ~/Pictures/$(date -r \"$f\" +%F)-$(basename \"$f\"); done"], "seconds": 55}
+{"id": "temp3", "day": 19, "at": "13:45", "text": "cpu temperature", "group": "temperature", "events": ["sensors | grep -i core"], "seconds": 6}
+{"id": "vol4", "day": 19, "at": "19:55", "text": "a bit louder", "group": "volume", "events": ["wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+"], "seconds": 5, "changed": true}
+{"id": "s19", "day": 19, "at": "20:25", "text": "create an app that shows the moon phase", "group": "single", "events": [["mcp__bombadil-os__create_app", {"title": "Moon Phase"}]], "seconds": 90, "changed": true}
+{"id": "dk3", "day": 19, "at": "21:00", "text": "get docker going", "group": "install-docker", "events": ["sudo pacman -S --noconfirm docker", "sudo systemctl start docker.service"], "seconds": 60, "changed": true}
+{"id": "ip3", "day": 20, "at": "13:05", "text": "show my local ip", "group": "my-ip", "events": ["ip -4 addr show"], "seconds": 6}
+{"id": "s20", "day": 20, "at": "14:05", "text": "open the wifi settings", "group": "single", "events": [["mcp__bombadil-os__show_panel", {"name": "wifi"}]], "seconds": 5}
+{"id": "fd4", "day": 20, "at": "16:25", "text": "where did I put the insurance pdf", "group": "find-document", "events": ["find ~/Documents -iname '*insurance*'"], "seconds": 10}
+{"id": "tm6", "day": 20, "at": "18:15", "text": "alarm in an hour", "group": "timers", "events": ["systemd-run --user --on-active=1h notify-send Alarm"], "seconds": 6, "changed": true}
+{"id": "wx6", "day": 20, "at": "22:10", "text": "is it going to be cold tonight", "group": "weather", "events": ["curl -s 'wttr.in/Lisbon?format=%t'"], "seconds": 7}
+{"id": "x07", "day": 21, "at": "10:01", "text": "Refresh the tracker", "group": "none", "events": [], "seconds": 2, "expect": "origin", "origin": "routine"}
+{"id": "s21", "day": 21, "at": "11:45", "text": "how do I exit vim", "group": "single", "events": [], "seconds": 4}
+{"id": "cpu6", "day": 21, "at": "14:48", "text": "is the processor maxed out", "group": "cpu", "events": ["top -bn1 | head"], "seconds": 9}
+{"id": "s34", "day": 21, "at": "16:55", "text": "zip up my documents folder", "group": "single", "events": ["zip -r ~/docs.zip ~/Documents"], "seconds": 20, "changed": true}
+{"id": "bri5", "day": 21, "at": "23:00", "text": "dim the screen", "group": "brightness", "events": ["brightnessctl set 20%"], "seconds": 5, "changed": true}
+{"id": "mem8", "day": 22, "at": "09:40", "text": "check memory", "group": "memory", "events": ["free -h"], "seconds": 6}
+{"id": "pw7", "day": 22, "at": "10:45", "text": "Show me passwords", "group": "passwords", "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]], "seconds": 5}
+{"id": "s22", "day": 22, "at": "15:40", "text": "what's the capital of australia", "group": "single", "events": [], "seconds": 3}
+{"id": "dc5", "day": 22, "at": "18:25", "text": "list running containers", "group": "docker-ps", "events": ["docker ps"], "seconds": 6}
+{"id": "rr3", "day": 22, "at": "20:40", "text": "show my runs", "group": "read-runs", "events": ["cat ~/Apps/runs/log.csv"], "seconds": 8}
+{"id": "td5", "day": 22, "at": "21:20", "text": "delete old stuff in downloads", "group": "tidy-downloads", "events": ["find ~/Downloads -mtime +60 -delete"], "seconds": 35, "changed": true}
+{"id": "disk7", "day": 23, "at": "10:10", "text": "which folders are using the most space", "group": "disk", "events": ["du -h --max-depth=1 ~ | sort -h | tail"], "seconds": 22}
+{"id": "s35", "day": 23, "at": "12:20", "text": "open the calculator", "group": "single", "events": ["calculator"], "seconds": 5}
+{"id": "s23", "day": 23, "at": "19:50", "text": "remove libreoffice", "group": "single", "events": ["sudo pacman -Rns --noconfirm libreoffice-fresh"], "seconds": 30, "changed": true}
+{"id": "s36", "day": 24, "at": "09:50", "text": "what's in my clipboard", "group": "single", "events": ["wl-paste"], "seconds": 5}
+{"id": "net6", "day": 24, "at": "19:40", "text": "am I connected to the wifi", "group": "network", "events": ["nmcli general status"], "seconds": 6}
+{"id": "s24", "day": 24, "at": "20:10", "text": "install vlc", "group": "single", "events": ["sudo pacman -S --noconfirm vlc"], "seconds": 35, "changed": true}
+{"id": "sig3", "day": 25, "at": "11:00", "text": "which wifi networks are around", "group": "wifi-signal", "events": ["nmcli dev wifi list"], "seconds": 8}
+{"id": "s25", "day": 25, "at": "18:55", "text": "install htop", "group": "single", "events": ["sudo pacman -S --noconfirm htop"], "seconds": 30, "changed": true}
+{"id": "upd3", "day": 26, "at": "07:50", "text": "run a full system update", "group": "system-update", "events": ["yay -Syu --noconfirm"], "seconds": 140, "changed": true}
+{"id": "s26", "day": 26, "at": "13:50", "text": "restart the postgres container", "group": "single", "events": ["docker restart postgres"], "seconds": 8, "changed": true}
+{"id": "s37", "day": 26, "at": "21:35", "text": "play some jazz", "group": "single", "events": ["playerctl play"], "seconds": 7, "changed": true}
+{"id": "s38", "day": 27, "at": "08:25", "text": "turn on the night light", "group": "single", "events": ["gammastep -O 3500"], "seconds": 6, "changed": true}
+{"id": "s27", "day": 27, "at": "16:15", "text": "tail the web container logs", "group": "single", "events": ["docker logs --tail 50 web"], "seconds": 8}
