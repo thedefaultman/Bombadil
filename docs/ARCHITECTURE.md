@@ -75,6 +75,24 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
 
+## The loop
+
+Bombadil counts what you ask and checks itself; both stay on the machine, call no model and are never on
+a turn's path (contract: `docs/LOOP.md`, parts: `docs/loop/`).
+
+- **Counting.** agentd's loop service reads `turns.jsonl` and the per-turn logs into `loop.db` after a
+  turn, groups asks that are the same request, and when one has been asked 3 times on 2 days puts a single
+  offer in the "noticed" chip beside the pill: a word for a near miss, a new app for a set of asks no app
+  holds. A tap is the ask; nothing is built from a count on its own.
+- **Checking.** `bombadil-probe` is a separate user unit, pulled in by a drop-in on agentd's unit (`Wants=`,
+  not `PartOf=`, so it outlives an agentd crash to see it). It runs read-only probes over `hyprctl`, the
+  bar's reports, crashes and turn outcomes on Hyprland's events, once a minute while you are away, and a
+  doctor once a day. What counts becomes a finding in `loop.db` with evidence that holds none of your words.
+- **Reporting.** What it cannot fix becomes a report you can read in full; Send opens the project's
+  new-issue page in the browser panel, filled in, and you press Submit.
+- **Asking.** `bombadil loop asks|status|replay|report|forget|probe`, `bombadil probe` and
+  `bombadil doctor [--live]` for you; the read-only os-mcp tool `asks` for the agent (`docs/loop/cli.md`).
+
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,

@@ -1,0 +1,17 @@
+[Unit]
+Description=Bombadil looks after itself: checks for trouble and writes up what it finds
+# Not PartOf= or BindsTo= agentd: it has to outlive an agentd crash to see it. A drop-in on
+# bombadil-agentd.service (Wants=) starts it; it restarts itself.
+# Never give up on it. (StartLimitIntervalSec is read from [Unit], not from [Service].)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bombadil-probe
+Restart=always
+RestartSec=5
+# It only looks, and only takes what nothing else wants.
+Nice=15
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+TimeoutStopSec=5

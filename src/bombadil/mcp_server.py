@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from . import apps, hypr, paths, snapshots
 from .desk import RAILS, WIDGETS
@@ -28,6 +30,7 @@ PROTOCOL_VERSION = "2025-06-18"
 Tool = tuple[dict, Callable[[dict], Any]]
 DESK_TIMEOUT = 10.0   # seconds agentd has to answer a desk request
 JOB_TIMEOUT = 25.0    # and a job request: starting one waits for systemd
+ASKS_DEFAULT, ASKS_MOST = 10, 50   # how many of the person's most asked requests `asks` tells
 
 
 class ToolError(Exception):
@@ -167,6 +170,14 @@ class OsTools:
         def job(a):
             return _job(a)
 
+        @t("asks",
+           "What the person asks for most, from their own history on this machine: each request they have "
+           "made more than once, how many times on how many days, and some of their own sentences. Nothing "
+           "else is read, and nothing is changed or sent anywhere.",
+           {"limit": {"type": "integer", "minimum": 1, "maximum": ASKS_MOST}})
+        def asks(a):
+            return _asks(a.get("limit"))
+
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
         app_tools.register(self)
 
@@ -288,6 +299,32 @@ def _job(a: dict) -> str:
     if not reply.get("ok"):
         raise ToolError(str(reply.get("text") or "Nothing was changed."))
     return str(reply.get("text") or "Done.")
+
+
+def _asks(limit) -> str:
+    """The person's most asked requests, from loop.db opened read-only: agentd's loop service keeps the
+    one write connection, and this tool must not change or create anything."""
+    from .loop.store import LoopStore
+
+    class ReadOnly(LoopStore):
+        def _open(self):
+            conn = sqlite3.connect(f"file:{quote(str(self.path))}?mode=ro", uri=True, timeout=2)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+    try:
+        n = min(max(int(limit), 1), ASKS_MOST) if limit is not None else ASKS_DEFAULT
+    except (TypeError, ValueError):
+        n = ASKS_DEFAULT
+    if not paths.loop_db().exists():
+        return "Nothing counted yet."
+    store = ReadOnly(paths.loop_db())
+    try:
+        return "\n".join(store.asks_text(n))
+    except sqlite3.Error:
+        return "Nothing counted yet."     # not a database, or one from before the counting
+    finally:
+        store.close()
 
 
 def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk",

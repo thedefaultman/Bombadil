@@ -11,10 +11,18 @@
   bombadil provider claude|codex       switch provider, signing in to it if needed
   bombadil signin [claude|codex]       sign in (again): the page opens in the browser panel
   bombadil open URL                    open a link in the browser panel (bombadil-browser)
+  bombadil loop asks [-n N] [--json]   what you ask most, counted on this machine from your own history
+  bombadil loop status                 what is counted, what waits, what it found, and who is alive
+  bombadil loop replay [FILE]          count a turns.jsonl over again, in memory: what it would have offered
+  bombadil loop report [FP]            the report for something it found (nothing is sent from here)
+  bombadil loop forget --yes           forget what you asked (what you said no to and your words stay)
+  bombadil loop probe [ID...]          look at Bombadil itself now, one line per check (also: bombadil probe)
+  bombadil doctor [--live]             what the idle doctor last saw, or look now (up to a minute)
 """
 import json
 import socket
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -112,6 +120,407 @@ def send(msg: dict) -> int:
     return 0
 
 
+# The loop: what Bombadil counts of what you ask, what it finds in itself, and its checks on itself.
+# Everything it needs is imported when asked for, since `bombadil pill` runs on a key press and must
+# start fast. A look never writes: loop.db is opened read-only (the service keeps the one write
+# connection) and is never created by looking at it.
+
+NOTHING_COUNTED = "Nothing counted yet."
+
+
+def _read_only_store():
+    """The counts over loop.db as it stands, opened so that it cannot change anything; None when
+    there is no loop.db."""
+    import sqlite3
+    from urllib.parse import quote
+
+    from bombadil.loop.store import LoopStore
+
+    class ReadOnly(LoopStore):
+        def _open(self):
+            conn = sqlite3.connect(f"file:{quote(str(self.path))}?mode=ro", uri=True, timeout=2)
+            conn.row_factory = sqlite3.Row
+            return conn
+
+    path = paths.loop_db()
+    return ReadOnly(path) if path.exists() else None
+
+
+def _from_counts(fn, default=None):
+    """fn(store) over the counts, or `default` when nothing is counted yet. A file that is there and
+    cannot be read costs one line on stderr and counts as nothing, never the command."""
+    import sqlite3
+    store = _read_only_store()
+    if store is None:
+        return default
+    try:
+        return fn(store)
+    except sqlite3.Error as e:
+        if "no such table" not in str(e):
+            print(f"loop.db cannot be read ({e}); counting it as nothing yet", file=sys.stderr)
+        return default
+    finally:
+        store.close()
+
+
+def _findings(store, states=None):
+    """What the prober found, from the same read-only connection; [] when it has found nothing yet."""
+    import sqlite3
+
+    from bombadil.loop.findings import FindingsStore
+    try:
+        return FindingsStore(store.conn).all(states)
+    except sqlite3.OperationalError:
+        return []       # the findings tables are not there yet, and a read cannot make them
+
+
+def _ago(seconds: float) -> str:
+    try:
+        s = max(int(seconds), 0)
+    except (OverflowError, ValueError):     # a time in a file that is not one
+        s = 0
+    if s < 90:
+        return f"{s} s"
+    if s < 5400:
+        return f"{round(s / 60)} min"
+    if s < 172800:
+        return f"{round(s / 3600)} h"
+    return f"{round(s / 86400)} days"
+
+
+def _one_line(text) -> str:
+    return " ".join(str(text).split())
+
+
+def _noticed_do(op: str, timeout: float = 10.0) -> dict | None:
+    """Ask agentd's loop service to do `op` and wait for its answer: the service holds the database
+    connection, so a change goes through it. None when agentd is not running, {} when it did not answer."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        try:
+            s.settimeout(timeout)
+            s.connect(str(paths.socket_path()))
+        except OSError:
+            return None
+        deadline, buf = time.monotonic() + timeout, b""
+        try:
+            s.sendall((json.dumps({"type": "noticed_do", "op": op}) + "\n").encode())
+            while True:
+                s.settimeout(max(deadline - time.monotonic(), 0.001))
+                chunk = s.recv(65536)
+                if not chunk:
+                    return {}
+                *lines, buf = (buf + chunk).split(b"\n")
+                for line in lines:     # agentd greets every client first; those lines are skipped
+                    try:
+                        msg = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(msg, dict) and msg.get("type") == "noticed_result" and msg.get("op") == op:
+                        return msg
+        except OSError:
+            return {}
+
+
+def loop_asks(opts) -> int:
+    if opts.json:
+        print(json.dumps(_from_counts(lambda s: s.asks_report(opts.n), []), indent=2))
+        return 0
+    lines = _from_counts(lambda s: s.asks_text(opts.n))
+    print("\n".join(lines) if lines else NOTHING_COUNTED)
+    return 0
+
+
+def _saved_doctor():
+    """(when, checks) of the idle doctor's last look, which the prober keeps in doctor.json; (None, [])
+    when it has not looked or the file cannot be read."""
+    try:
+        said = json.loads((paths.loop_dir() / "doctor.json").read_text())
+        return float(said["t"]), [c for c in said["checks"] if isinstance(c, dict)]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, []
+
+
+def _failed(checks) -> list[str]:
+    return [str(c.get("name", "?")) for c in checks if not c.get("ok") and not c.get("skipped")]
+
+
+def _doctor_lines(checks) -> list[str]:
+    lines = []
+    for c in checks:
+        detail = _one_line(c.get("detail", ""))
+        if c.get("skipped") and detail.startswith("skipped:"):
+            detail = detail[len("skipped:"):].strip()
+        label = "skipped" if c.get("skipped") else "ok" if c.get("ok") else "failed"
+        lines.append(f"{label:<9}{c.get('name', '?')!s:<13}{detail}".rstrip())
+    return lines
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def _prober_state() -> str:
+    from bombadil.loop import versions
+    done = versions.capture(["systemctl", "--user", "is-active", "bombadil-probe.service"], timeout=3)
+    state = done.out.strip() if done is not None else ""
+    if state == "active":
+        return "running"
+    if state == "activating":
+        return "starting or restarting"
+    return f"not running ({state})" if state else "not known (systemd did not answer)"
+
+
+def loop_status(opts) -> int:
+    from bombadil.loop import runner, versions
+    now = time.time()
+    counts, found = _from_counts(lambda s: (s.status(now), _findings(s, ("open", "reported"))), (None, []))
+    if counts and (counts["requests"] or counts["groups"]):
+        print(f"Counted: {_plural(counts['requests'], 'ask')} read, {counts['counted']} of them count, in "
+              f"{_plural(counts['groups'], 'group')}.")
+    else:
+        print("Counted: nothing yet.")
+    counts = counts or {}
+    resting = f" {counts['resting']}." if counts.get("resting") else ""
+    print(f"Offers: {counts.get('waiting') or 'none'} waiting.{resting}")
+    print(f"Found: {len(found)} to look at." if found else "Found: nothing waiting.")
+    for f in found[:3]:
+        print(f"    {f.title}: {_plural(f.n, 'time')} on {_plural(f.days, 'day')}  ({f.fp})")
+    sys.stdout.flush()
+    print(f"Prober: {_prober_state()}.")
+    when, checks = _saved_doctor()
+    if when is None:
+        print("Doctor: has not looked yet.")
+    elif _failed(checks):
+        print(f"Doctor: looked {_ago(now - when)} ago, {len(_failed(checks))} of {len(checks)} failed "
+              f"({', '.join(_failed(checks))}).")
+    else:
+        print(f"Doctor: looked {_ago(now - when)} ago, all {len(checks)} fine.")
+    live = runner.agentd_liveness()
+    print(f"agentd: answers in {round((live['latency'] or 0) * 1000)} ms." if live["ponged"]
+          else f"agentd: does not answer ({live['error'] or 'no reason given'}).")
+    bar = runner.read_bar()
+    alive = bar.get("alive_at") if bar else None
+    if isinstance(alive, (int, float)) and not isinstance(alive, bool):
+        print(f"Bar: {'alive' if now - alive <= 15 else 'quiet'}, last heard {_ago(now - alive)} ago.")
+    else:
+        print("Bar: has not reported yet.")
+    sys.stdout.flush()
+    v = versions.collect()       # asks each program for its version: up to 4 s
+    print(f"Build: {v.get('build') or 'unknown'}" + (f", {v['machine']}" if v.get("machine") else "") + ".")
+    programs = ("Hyprland", "Quickshell", "Claude Code", "codex-cli", "kit")
+    print("Versions: " + ", ".join(f"{k} {v[k]}" for k in programs if k in v) + ".")
+    return 0
+
+
+def loop_replay(opts) -> int:
+    path = Path(opts.file).expanduser() if opts.file else paths.turns_log()
+    if not path.is_file():
+        print(f"Nothing to replay: there is no {path}.", file=sys.stderr if opts.file else sys.stdout)
+        return 1 if opts.file else 0
+    from bombadil.loop.store import LoopStore
+    try:
+        r = LoopStore.replay(path, corpus_dir=opts.logs, app_names=opts.app, pairs=opts.pairs)
+    except Exception as e:  # noqa: BLE001 - one unreadable ledger costs this command a line
+        print(f"Could not replay {path}: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    if opts.json:
+        print(json.dumps(r, indent=2, default=str))
+        return 0
+    print(f"Replayed {r['rows']} rows of {path} ({r['turns']} turns): {r['counted']} counted.")
+    others = {k: v for k, v in r["reasons"].items() if k != "counted"}
+    if others:
+        print("Not counted: " + ", ".join(f"{v} {k}" for k, v in others.items()) + ".")
+    print(f"Asked more than once: {_plural(len(r['groups']), 'group')}; {r['singles']} asked once.")
+    for g in r["groups"]:
+        print(f"    {g['n']} times on {g['days']} days  ·  {g['label'] or '?'}"
+              + (f"  ·  “{g['sentences'][0]}”" if g["sentences"] else ""))
+    print("Would have offered, if you never answered:" if r["offers"] else "Would have offered nothing.")
+    for o in r["offers"]:
+        print(f"    {o['day']}  {o['label'] or '?'} ({o['n']} times)  ·  {o['what']}")
+    if r["resting"]:
+        print(r["resting"] + ".")
+    if r["pairs"]:
+        print("\nPairs to label: is b the same request as a? Nine in ten of the loop's \"same\" should be "
+              "right.")
+    for i, pair in enumerate(r["pairs"], 1):
+        print(f"\n{i:>3}. the loop said {'same' if pair['same'] else 'apart'} (score {pair['score']})"
+              f"\n       a  “{pair['a']}”\n       b  “{pair['b']}”")
+    return 0
+
+
+def loop_report(opts) -> int:
+    from bombadil.loop import findings, report
+    everything = _from_counts(lambda s: _findings(s), [])
+    if opts.fp:
+        hits = [f for f in everything if f.fp == opts.fp] or [
+            f for f in everything if f.fp.endswith(":" + opts.fp) or f.fp.startswith(opts.fp)]
+        if not hits:
+            print(f"Nothing found called {opts.fp}. `bombadil loop status` lists what waits.",
+                  file=sys.stderr)
+            return 1
+    else:
+        hits = [f for f in everything if f.state in ("open", "reported")]
+        if not hits:
+            print("Nothing found that waits, so there is no report.")
+            return 0
+    if len(hits) > 1:
+        print("Which one? `bombadil loop report FP` with one of:", file=sys.stderr)
+        for f in hits:
+            print(f"    {f.fp}  {f.title}", file=sys.stderr)
+        return 2
+    found = hits[0]
+    held = paths.loop_dir() / "reports" / f"{findings.evidence_dir(found.fp).name}.md"
+    try:
+        print(held.read_text(), end="")
+        return 0
+    except (OSError, UnicodeDecodeError):
+        pass
+    try:
+        print(report.build(found).render(), end="")
+    except Exception as e:  # noqa: BLE001 - a report that cannot be built is one line, not a traceback
+        print(f"Could not build the report for {found.fp}: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    print("Not held and not sent: Send to the project, in the Noticed window, shows this and asks first.",
+          file=sys.stderr)
+    return 0
+
+
+def loop_forget(opts) -> int:
+    if not opts.yes:
+        counts = _from_counts(lambda s: s.status())
+        if not counts or not (counts["requests"] or counts["groups"]):
+            print(f"{NOTHING_COUNTED} There is nothing to forget.")
+            return 0
+        print(f"This would forget what you asked: {_plural(counts['requests'], 'request')}, in "
+              f"{_plural(counts['groups'], 'group')}.\n"
+              "What you said no to, your words and your answers to offers would stay.\n"
+              "Run `bombadil loop forget --yes` to do it.")
+        return 0
+    reply = _noticed_do("forget_asks")
+    if reply == {}:
+        print("agentd did not answer, so nothing is known to have been forgotten.", file=sys.stderr)
+        return 1
+    if reply is not None:
+        print(reply.get("text") or ("Forgotten." if reply.get("ok") else "Nothing was forgotten."),
+              file=sys.stdout if reply.get("ok") else sys.stderr)
+        return 0 if reply.get("ok") else 1
+    # agentd is not running, so nothing else holds the file.
+    import sqlite3
+
+    from bombadil.loop.store import LoopStore
+    if not paths.loop_db().exists():
+        print(f"{NOTHING_COUNTED} There is nothing to forget.")
+        return 0
+    store = LoopStore()
+    try:
+        gone = store.forget_asks()
+    except sqlite3.Error as e:
+        print(f"loop.db cannot be changed ({e}); nothing was forgotten", file=sys.stderr)
+        return 1
+    finally:
+        store.close()
+    print(f"Forgot {_plural(gone['requests'], 'request')}, in {_plural(gone['asks'], 'group')}. "
+          "What you said no to and your words stay.")
+    return 0
+
+
+def loop_probe(opts) -> int:
+    from bombadil.loop import probes, runner
+    unknown = [i for i in opts.ids if probes.get(i) is None]
+    if unknown:
+        print(f"No check called {', '.join(unknown)}. The checks are: {', '.join(probes.ids())}.",
+              file=sys.stderr)
+        return 2
+    runner.adopt_instance()     # a terminal that is not Hyprland's child has no signature either
+    try:
+        results = runner.Runner().check(opts.ids or None)
+    except Exception as e:  # noqa: BLE001 - a look that fails is one line, not a traceback
+        print(f"Could not look: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+    by_probe: dict[str, list] = {}
+    for r in results:
+        by_probe.setdefault(r.id, []).append(r)
+    red = 0
+    for pid, results in by_probe.items():
+        probe = probes.get(pid)
+        bad = [r for r in results if r.ok is False]
+        if bad:
+            red += 1
+            print(f"{'red':<13}{pid:<18}{probe.title if probe else ''}")
+            for r in bad:
+                print(f"{'':<31}expected: {_one_line(r.expected)}\n{'':<31}observed: {_one_line(r.observed)}")
+        elif all(r.ok is None for r in results):
+            why = _one_line(results[0].observed).removeprefix("not checked:").strip()
+            print(f"{'not checked':<13}{pid:<18}{why}")
+        else:
+            print(f"{'ok':<13}{pid:<18}{probe.what if probe else ''}")
+    return 1 if red else 0
+
+
+def doctor(opts) -> int:
+    if opts.live:
+        from bombadil.loop import runner
+        runner.adopt_instance()
+        print("Looking, which can take up to a minute.", file=sys.stderr)
+        checks = runner.doctor_live()
+    else:
+        when, checks = _saved_doctor()
+        if when is None:
+            print("The idle doctor has not looked yet. It looks once a day while you are away; "
+                  "`bombadil doctor --live` looks now.")
+            return 0
+        print(f"The idle doctor looked {_ago(time.time() - when)} ago.")
+    print("\n".join(_doctor_lines(checks)))
+    return 1 if _failed(checks) else 0
+
+
+def _parser(prog: str, about: str):
+    import argparse
+    return argparse.ArgumentParser(prog=prog, description=about, allow_abbrev=False)
+
+
+def _whole(text: str) -> int:
+    import argparse
+    if not text.isdigit() or int(text) < 1:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a whole number of 1 or more")
+    return int(text)
+
+
+def loop(args: list[str]) -> int:
+    p = _parser("bombadil loop", "What Bombadil counts of what you ask, and what it finds in itself.")
+    sub = p.add_subparsers(dest="cmd", metavar="asks|status|replay|report|forget|probe")
+    a = sub.add_parser("asks", help="what you ask most")
+    a.add_argument("-n", type=_whole, default=20, metavar="N", help="at most N (20)")
+    a.add_argument("--json", action="store_true", help="as JSON")
+    a.set_defaults(run=loop_asks)
+    s = sub.add_parser("status", help="what is counted, what waits, what it found, who is alive")
+    s.set_defaults(run=loop_status)
+    r = sub.add_parser("replay", help="count a turns.jsonl over again, in memory, and show what it would "
+                                      "have offered")
+    r.add_argument("file", nargs="?", help="a turns.jsonl (yours when left out)")
+    r.add_argument("--json", action="store_true", help="as JSON")
+    r.add_argument("--logs", metavar="DIR",
+                   help="where the turns' own logs are, if the ledger was copied without them")
+    r.add_argument("--app", action="append", default=[], metavar="NAME",
+                   help="an app the ledger's machine had (repeat), when this is not that machine")
+    r.add_argument("--pairs", type=_whole, default=100, metavar="N", help="pairs to label (100)")
+    r.set_defaults(run=loop_replay)
+    rp = sub.add_parser("report", help="the report for something it found; nothing is sent from here")
+    rp.add_argument("fp", nargs="?", help="its fingerprint, or the last six letters of it")
+    rp.set_defaults(run=loop_report)
+    f = sub.add_parser("forget", help="forget what you asked (what you said no to and your words stay)")
+    f.add_argument("--yes", action="store_true", help="do it; without this it says what it would do")
+    f.set_defaults(run=loop_forget)
+    pr = sub.add_parser("probe", help="look at Bombadil itself now (also: bombadil probe)")
+    pr.add_argument("ids", nargs="*", metavar="ID", help="only these checks")
+    pr.set_defaults(run=loop_probe)
+    opts = p.parse_args(args)
+    if not opts.cmd:
+        p.print_help(sys.stderr)
+        return 2
+    return opts.run(opts)
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -155,6 +564,14 @@ def main() -> int:
             return 2
         import subprocess
         return subprocess.run([str(Path(__file__).resolve().parent / "bombadil-browser"), *args]).returncode
+    elif cmd == "loop":
+        return loop(args)
+    elif cmd == "probe":
+        return loop(["probe", *args])
+    elif cmd == "doctor":
+        p = _parser("bombadil doctor", "What the idle doctor last saw, or (with --live) a look now.")
+        p.add_argument("--live", action="store_true", help="look now, which can take up to a minute")
+        return doctor(p.parse_args(args))
     else:
         print(__doc__)
         return 2
