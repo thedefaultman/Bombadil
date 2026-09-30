@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from qml_theme import THEME
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -197,7 +198,7 @@ def test_a_turn_streams_its_steps_and_closes_with_undo(bar):
              command="sudo pacman -S --noconfirm ffmpeg")
     assert bar.text() == "Installing ffmpeg"
     assert bar.shown("command") and bar.text("command") == "sudo pacman -S --noconfirm ffmpeg"
-    assert bar.item("statusLine").property("edge").name() == "#e8a33d"
+    assert bar.item("statusLine").property("edge").name() == THEME["warn"]
     bar.snap("2-system-step")
     bar.send(kind="status", turn=1, text="and it is ready to use.", source="agent")
     assert not bar.shown("command")
@@ -208,6 +209,32 @@ def test_a_turn_streams_its_steps_and_closes_with_undo(bar):
     assert bar.item("line").property("maximumLineCount") == 4
     assert bar.shown("undoButton") and bar.shown("detailsButton") and not bar.shown("counter")
     bar.snap("3-closing-with-undo")
+
+
+def test_the_bars_text_is_set_in_the_themes_family(bar):
+    # Every Text the bar draws, in every state that shows one: the theme's family, not whatever
+    # fontconfig calls "sans". (The source check is tests/test_theme.py.)
+    def families():
+        found, todo = set(), [bar.win.contentItem()]
+        while todo:
+            it = todo.pop()
+            todo.extend(it.childItems())
+            if it.metaObject().className().startswith("QQuickText") and it.isVisible():
+                found.add((it.property("text"), it.property("font").family()))
+        return found
+
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="status", turn=1, text="Installing ffmpeg", source="step", risk="system",
+             command="sudo pacman -S --noconfirm ffmpeg")
+    bar.pump(1.3)    # the seconds counter shows from the first second
+    working = families()
+    bar.send(kind="turn_end", turn=1, seconds=9, changed=True, summary="Installed ffmpeg.")
+    closing = families()
+    seen = working | closing
+    assert {"Installing ffmpeg", "1s", "Undo", "Details"} <= {t for t, _ in seen}
+    mono = {t for t, f in seen if f == THEME["monoFamily"]}
+    assert mono == {"sudo pacman -S --noconfirm ffmpeg"}
+    assert {f for t, f in seen if t not in mono} == {THEME["fontFamily"]}
 
 
 def test_undo_on_the_line_does_not_also_open_details(bar):
@@ -247,7 +274,7 @@ def test_an_irreversible_step_is_red_and_says_so_after(bar):
     bar.send(kind="turn_start", turn=2, prompt="wipe the usb stick")
     bar.send(kind="status", turn=2, text="Formatting /dev/sdb1", source="step", risk="irreversible",
              command="sudo mkfs.ext4 /dev/sdb1")
-    assert bar.item("statusLine").property("edge").name() == "#e05252"
+    assert bar.item("statusLine").property("edge").name() == THEME["bad"]
     bar.snap("4-irreversible-step")
     bar.send(kind="turn_end", turn=2, seconds=4, changed=True, irreversible=True, summary="Formatted /dev/sdb1.")
     assert bar.text() == "Formatted /dev/sdb1."
@@ -331,7 +358,7 @@ def test_errors_and_lost_connection_read_plainly(bar):
     bar.send(kind="result", turn=9, ok=False, text="")
     bar.send(kind="turn_end", turn=9, seconds=1, changed=False)
     assert bar.text() == "claude is not logged in.\nRun claude auth login."
-    assert bar.item("statusLine").property("edge").name() == "#c04a4a"
+    assert bar.item("statusLine").property("edge").name() == THEME["bad"]
     bar.snap("9-error")
     bar.call("submit", "again")
     bar.call("lost")
@@ -711,7 +738,7 @@ def test_offline_and_failures_read_as_errors(bar):
     bar.send(type="setup", state="offline", line="No internet. Connect to a network to sign in to Claude.",
              tone="error", actions=[{"id": "wifi", "label": "Wi-Fi", "style": "primary"},
                                     {"id": "signin", "label": "Try again", "style": "quiet"}])
-    assert bar.item("statusLine").property("edge").name() == "#c04a4a"
+    assert bar.item("statusLine").property("edge").name() == THEME["bad"]
     assert [label for label, _ in bar.chips()] == ["Wi-Fi", "Try again"]
     bar.snap("setup-5-offline")
     bar.send(type="setup", state="signed_out", line="The Claude sign-in timed out.", tone="error",
