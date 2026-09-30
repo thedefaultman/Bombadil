@@ -99,3 +99,74 @@ def test_the_command_keeps_its_own_profile_and_no_first_run(home):
     cmd = browser.command()
     assert f"--user-data-dir={browser.profile_dir()}" in cmd and "--no-first-run" in cmd
     assert "--class=bombadil-browser" in cmd and "--remote-debugging-port=9222" in cmd
+
+
+class Hyprland:
+    """Records the panel sliding in (True) and out (False)."""
+    available = True
+
+    def __init__(self, on_show=None):
+        self.calls = []
+        self.on_show = on_show
+
+    def panel(self, name, show, wait=None):
+        self.calls.append(show)
+        if show and self.on_show:
+            self.on_show()
+
+
+def test_a_browser_that_runs_but_never_answers_is_an_error_not_a_quiet_success(monkeypatch):
+    monkeypatch.setattr(browser, "running", lambda: True)
+    with pytest.raises(RuntimeError, match="still starting"):
+        browser.open_url(SIGNIN, hyprland=NoHyprland(), devtools=browser.DevTools(port=9), wait=0.3)
+
+
+def test_a_browser_that_will_not_make_the_tab_is_an_error(devtools, monkeypatch):
+    def refuse(url):
+        raise OSError("500")
+    monkeypatch.setattr(devtools, "new_tab", refuse)
+    with pytest.raises(RuntimeError, match="would not open"):
+        browser.open_url(SIGNIN, hyprland=NoHyprland(), devtools=devtools)
+
+
+def test_a_browser_that_closes_as_it_starts_is_an_error(monkeypatch):
+    monkeypatch.setattr(browser, "running", lambda: False)
+    monkeypatch.setattr(browser.shutil, "which", lambda b: "/usr/bin/chromium")
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+    clock = iter(x * 0.6 for x in range(1, 200))
+    monkeypatch.setattr(browser.time, "monotonic", lambda: next(clock))
+    with pytest.raises(RuntimeError, match="closed as it started"):
+        browser.open_url(SIGNIN, hyprland=NoHyprland(), devtools=browser.DevTools(port=9),
+                         spawn=lambda *a, **k: None, wait=20)
+
+
+def test_a_page_nobody_wants_any_more_never_slides_the_panel_in(devtools, monkeypatch):
+    Chromium.tabs = [{"id": "Tother", "type": "page", "url": "about:blank", "title": ""}]
+    abandon = threading.Event()
+    orig = devtools.new_tab
+
+    def slow_new_tab(url):   # the sign-in is called off while the tab is being made
+        tab = orig(url)
+        abandon.set()
+        return tab
+    monkeypatch.setattr(devtools, "new_tab", slow_new_tab)
+    hypr = Hyprland()
+    assert browser.open_url(SIGNIN, hyprland=hypr, devtools=devtools, abandon=abandon) is None
+    assert hypr.calls == []                                       # it never slid in
+    assert [t["id"] for t in devtools.tabs()] == ["Tother"]       # and its tab went again
+
+
+def test_a_panel_that_slid_in_as_the_sign_in_was_called_off_slides_out_again(devtools):
+    Chromium.tabs = [{"id": "Tother", "type": "page", "url": "about:blank", "title": ""}]
+    abandon = threading.Event()
+    hypr = Hyprland(on_show=abandon.set)
+    browser.open_url(SIGNIN, hyprland=hypr, devtools=devtools, abandon=abandon)
+    assert hypr.calls == [True, False]
+    assert [t["id"] for t in devtools.tabs()] == ["Tother"]
+
+
+def test_a_called_off_sign_in_does_not_even_start_opening(devtools):
+    abandon = threading.Event()
+    abandon.set()
+    assert browser.open_url(SIGNIN, hyprland=NoHyprland(), devtools=devtools, abandon=abandon) is None
+    assert devtools.tabs() == []

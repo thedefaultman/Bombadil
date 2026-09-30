@@ -192,6 +192,9 @@ QtObject {
 
     function setupAction(id) {
         if (_offline()) return
+        // The sign-in page and the Wi-Fi list open a window that must take the keyboard (a summoned
+        // pill holds it, and the password would go into the pill); Cancel opens nothing.
+        if (id !== "cancel") handOff()
         outgoing({ type: "setup_action", id: id })
     }
 

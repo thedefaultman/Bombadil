@@ -41,14 +41,22 @@ credentials exactly as it would in a terminal of yours (`signin.py`).
 3. If `$BROWSER` is not used within 2 s, the printed URL opens instead. A Claude page that
    ends on the code page gets `code#state` typed into the CLI, read from the tab's address.
 4. DevTools and Hyprland tell it when the panel slid out or the browser was closed; the
-   pill offers the page again. Esc cancels; 10 minutes without an end times out
-   (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth status` or
-   `codex login status`.
+   pill offers the page again. Esc cancels (the pill says "Cancelling" at once, and a page
+   still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
+   an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
+   status` or `codex login status`. A browser that cannot open the page is an error the pill
+   shows with "Open it again", not a quiet success.
 5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
    Wi-Fi, and the sign-in starts once the host answers.
 6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again
-   and runs the prompt once more. A `/login` typed in a terminal lands in the panel too,
-   and agentd watches for it to finish.
+   and runs the prompt once more, with what you did meanwhile told to the model. If the
+   rerun says it too, the login is not what is wrong (a 403, an API key in the environment):
+   the CLI's own words show and there is no second sign-in. Only the provider whose turn
+   failed is signed in again, even if you switched AI meanwhile. A `/login` typed in a
+   terminal lands in the panel too, and agentd watches for it to finish.
+7. "Sign in" typed while signed in starts a new login, except for a provider whose login
+   signs the stored one out as it starts (`login_replaces`: Codex, even if the new one is
+   then called off): there it answers "already signed in".
 
 `fake_signin.py` plays a provider login on localhost for the tests and the VM smoke test
 (`BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail`).

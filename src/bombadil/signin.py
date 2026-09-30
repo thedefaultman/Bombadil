@@ -28,6 +28,7 @@ import socket
 import struct
 import sys
 import termios
+import threading
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -105,8 +106,10 @@ class SignIn:
     """One run of a provider CLI's login.
 
     phase: starting -> waiting (the page is open) -> finishing (the page came back, or a code
-    was typed in) -> done | failed | timeout | cancelled. While waiting, `view` says whether the
-    page is on screen: shown, hidden (the panel slid out) or closed (its tab or the browser).
+    was typed in) -> done | failed | timeout | cancelled. Called off, it is `ending` until the
+    page is put away, which can take a while behind a slow browser. While waiting, `view` says
+    whether the page is on screen: shown, hidden (the panel slid out) or closed (its tab or
+    the browser).
     """
 
     def __init__(self, provider, on_change: Callable[["SignIn"], None] | None = None, *,
@@ -139,6 +142,7 @@ class SignIn:
         self._cancelled = False
         self._state: str | None = None          # the page's OAuth state: a code must carry it
         self._opening: asyncio.Future | None = None
+        self._over = threading.Event()          # the run is over: a page still opening should not show
         self._lost = False                      # the page failed to open and no tab shows it
 
     # -- what agentd tells it --
@@ -151,7 +155,10 @@ class SignIn:
 
     def cancel(self) -> None:
         self._cancelled = True
+        self._over.set()
         self._ended.set()
+        if self.running:
+            self._set("ending")   # the pill answers at once, however slow the browser is
 
     async def show(self) -> None:
         """Put the sign-in page back on screen: slide the panel in, or open the page again in a
@@ -159,7 +166,16 @@ class SignIn:
         if self.url is None or self.phase not in ("waiting", "finishing"):
             return
         if self.view == "closed":
-            await self._open(self.url)
+            if self._opening is not None and not self._opening.done():
+                return   # a second tap while the first is still opening it
+            self.tab = None   # the old tab is gone: the new one is found by its address if need be
+            try:
+                await self._open(self.url)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - still closed; it can be tried again
+                self._trouble("opening the page again", e)
+                return
             self._lost = False
         else:
             await asyncio.to_thread(self.panel.show)
@@ -167,7 +183,7 @@ class SignIn:
 
     @property
     def running(self) -> bool:
-        return self.phase in ("starting", "waiting", "finishing")
+        return self.phase in ("starting", "waiting", "finishing", "ending")
 
     # -- the run --
 
@@ -206,6 +222,7 @@ class SignIn:
             else:
                 phase = "timeout"
         finally:
+            self._over.set()
             watcher.cancel()
             ended.cancel()
             await self._end_process()
@@ -310,7 +327,7 @@ class SignIn:
         """Open `url` in the browser panel. The thread notes the tab itself, so a run that is
         called off while the browser is still opening it knows what to put away."""
         def work():
-            tab = self.panel.open(url)
+            tab = self.panel.open(url, abandon=self._over)
             if isinstance(tab, dict):
                 self.tab = tab.get("id")
             return tab
@@ -323,7 +340,7 @@ class SignIn:
         fut = self._opening
         if fut is not None and not fut.done():
             try:
-                await asyncio.wait_for(asyncio.shield(fut), 30)
+                await asyncio.wait_for(asyncio.shield(fut), 60)
             except Exception:  # noqa: BLE001 - it is over either way
                 pass
 
@@ -383,6 +400,8 @@ class SignIn:
         return code.isprintable() and (not self._state or code.endswith("#" + self._state))
 
     def _set(self, phase: str | None = None, view: str | None = None):
+        if self.phase == "ending" and phase in ("starting", "waiting", "finishing"):
+            phase = None   # called off: nothing the page does now takes it back
         changed = False
         if phase is not None and phase != self.phase:
             self.phase, changed = phase, True
@@ -423,10 +442,14 @@ class SignIn:
         self._master = None
 
     def _put_away(self):
-        try:
-            if self.tab:
+        # Two separate tidying-up steps: a tab that will not close must not keep the panel on screen.
+        if self.tab:
+            try:
                 self.panel.close_tab(self.tab)
-            if self.url is not None:
+            except Exception:  # noqa: BLE001 - the sign-in itself is decided
+                pass
+        if self.url is not None:
+            try:
                 self.panel.hide()
-        except Exception:  # noqa: BLE001 - tidying up; the sign-in itself is decided
-            pass
+            except Exception:  # noqa: BLE001
+                pass

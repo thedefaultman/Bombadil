@@ -20,6 +20,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from bombadil import config, paths, snapshots, watch  # noqa: E402
 
+NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
+
 
 def talk(msg: dict, until: str | None = "turn_end"):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -64,13 +66,14 @@ def talk(msg: dict, until: str | None = "turn_end"):
 
 
 def follow_setup(msg: dict) -> int:
-    """Send a setup message and print the setup line as it changes, until it settles."""
+    """Send a setup message and print the setup line as it changes, until it settles. Exits 0 when
+    the AI is ready, 1 when the sign-in ended some other way, NO_AGENTD when agentd does not answer."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         try:
             s.connect(str(paths.socket_path()))
         except OSError as e:
             print(f"agentd is not running ({e}); it starts with the Hyprland session", file=sys.stderr)
-            return 1
+            return NO_AGENTD
         s.sendall((json.dumps(msg) + "\n").encode())
         said, greeting = None, True
         for line in s.makefile("r"):

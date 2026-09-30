@@ -114,6 +114,7 @@ class AgentD:
         self._access_at = 0.0                        # when the setup state last changed
         self._turn_provider = None                   # the provider the running turn belongs to
         self._retried: set[int] = set()              # turns already run again after a sign-in
+        self._turn_notes: list[str] = []             # what the running turn was told the user did without it
         self.panel = panel or browser.Panel()
 
     # -- socket --
@@ -220,7 +221,7 @@ class AgentD:
         elif t == "signin":
             name = msg.get("provider")
             self._background(self.choose(str(name)) if name and (name != self.provider.name or not self.chosen)
-                             else self.start_signin())
+                             else self.signin_asked())
         elif t == "open_url":
             self._background(self.open_url(str(msg.get("url", "")), msg.get("signin")))
 
@@ -308,7 +309,7 @@ class AgentD:
     async def local(self, action: launcher.Action, typed: str):
         if action.kind in ("signin", "provider"):
             if action.kind == "signin":
-                await self.start_signin()
+                await self.signin_asked()
             else:
                 await self.choose(action.target)
             line, _, _ = self._describe()
@@ -406,6 +407,14 @@ class AgentD:
     def _title(self) -> str:
         return self.provider.title or self.provider.name
 
+    def _signed_out_text(self, said: str) -> str:
+        """What the pill says when the running turn found its login gone. On the rerun after a
+        sign-in it is the CLI's own words: the login is not what is wrong."""
+        if self.current in self._retried:
+            return said
+        tp = self._turn_provider
+        return f"{tp.title or tp.name} signed you out."
+
     def _setup_msg(self) -> dict:
         line, tone, actions = self._describe()
         if self.access == "ready" and time.monotonic() - self._access_at > READY_LINE_SECONDS:
@@ -436,6 +445,8 @@ class AgentD:
                 return f"Sign in to {t} in the browser", "step", []
             if s.phase == "starting":
                 return f"Opening the {t} sign-in", "step", [cancel]
+            if s.phase == "ending":
+                return f"Cancelling the {t} sign-in", "step", []
             if s.phase == "finishing":
                 return f"Finishing the {t} sign-in", "step", []
             if s.view == "hidden":
@@ -484,6 +495,16 @@ class AgentD:
         else:
             await self._set_access("ready", f"{self._title()} is ready. Ask me for anything." if announce else "",
                                    "done")
+
+    async def signin_asked(self):
+        """The user asked to sign in ("sign in" typed, `bombadil signin`, a chip).
+
+        Not when the login is fine and starting one would end it: a `codex login` signs the stored
+        login out as it starts, even if the new one is then called off."""
+        if self.access == "ready" and self.provider.login_replaces and await self._still_signed_in():
+            await self._set_access("ready", f"You are already signed in to {self._title()}.", "done")
+            return
+        await self.start_signin()
 
     async def start_signin(self):
         """Run the provider CLI's login with its page in the browser panel (signin.py)."""
@@ -545,7 +566,8 @@ class AgentD:
             await self._set_access("ready", f"Signed in to {t}. Ask me for anything.", "done")
             return
         if not self._login_gone and await self._still_signed_in():
-            # Called off, but the login it was for is fine (`sign in` typed while signed in).
+            # Called off, but the login it was for is fine (a `sign in` typed while signed in,
+            # which signin_asked lets through only for a login that a new one does not replace).
             await self._set_access("ready")
             return
         if phase == "timeout":
@@ -609,7 +631,7 @@ class AgentD:
         if action.startswith("provider:"):
             await self.choose(action.split(":", 1)[1])
         elif action == "signin":
-            await self.start_signin()
+            await self.signin_asked()
         elif action == "show" and self.signin is not None:
             await self.signin.show()
         elif action == "cancel":
@@ -673,10 +695,18 @@ class AgentD:
     async def _signed_out_turn(self, turn_id: int, prompt: str, stopped: bool = False):
         """The turn found the login gone: sign in again, and run the prompt once more after
         (unless the user had stopped it: that ask is called off)."""
+        if turn_id in self._retried:
+            # It ran again after a sign-in that worked and got the same answer: the login is not
+            # what is wrong (a 403, an API key in the environment), and another sign-in would only
+            # loop. The turn already showed the CLI's own words.
+            self._login_gone = False
+            return
         self._login_gone = True
-        if turn_id not in self._retried and not stopped:
+        if not stopped:
             self._retried.add(turn_id)
             self.pending.insert(0, (turn_id, prompt))
+            # The rerun starts from the prompt as typed: tell the model what happened without it.
+            self.notes = (self._turn_notes + self.notes)[-10:]
             await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
         await self._set_access("signed_out", f"{self._title()} signed you out.", "error")
         await self.start_signin()
@@ -708,6 +738,7 @@ class AgentD:
             self.current = turn_id
             self._signed_out = False
             self._turn_provider = self.provider
+            self._turn_notes = []
             stopped = False
             try:
                 await self.turn(prompt)
@@ -721,7 +752,8 @@ class AgentD:
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
-            if self._signed_out:
+            if self._signed_out and self._turn_provider is self.provider:
+                # (Not when "use codex" came mid-turn: that login was not the one that failed.)
                 await self._signed_out_turn(turn_id, prompt, stopped)
 
     async def event(self, kind: str, **fields):
@@ -778,7 +810,7 @@ class AgentD:
                 # Open, undo and the rest happened without the model; tell it before it acts.
                 turn.prompt = ("[Done by the user without you since your last turn: "
                                + "; ".join(self.notes) + "]\n\n" + prompt)
-                self.notes = []
+                self._turn_notes, self.notes = self.notes, []
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
         env = dict(os.environ)
@@ -854,9 +886,9 @@ class AgentD:
             if (not reported_error and result["ok"] is not True and not self.stopping
                     and (proc.returncode not in (0, None) or self._signed_out)):
                 # (Ended at the first sign the login is gone, npm's codex wrapper exits 0.)
-                if not shell and (self._signed_out or self.provider.signed_out(err)):
+                if not shell and (self._signed_out or self._turn_provider.signed_out(err)):
                     self._signed_out = True
-                    err = f"{self._title()} signed you out."
+                    err = self._signed_out_text(err)
                 await self.event("error", text=err or f"{source.name} exited with {proc.returncode}")
         finally:
             if proc.returncode is None:
@@ -884,7 +916,7 @@ class AgentD:
             if not turn.prompt.startswith("!"):
                 self._signed_out = True
                 proc = self.proc
-                if self.provider.ends_when_signed_out and proc is not None and proc.returncode is None:
+                if self._turn_provider.ends_when_signed_out and proc is not None and proc.returncode is None:
                     try:
                         os.killpg(proc.pid, signal.SIGTERM)
                     except ProcessLookupError:
@@ -911,9 +943,9 @@ class AgentD:
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
-                if not turn.prompt.startswith("!") and (self._signed_out or self.provider.signed_out(text)):
+                if not turn.prompt.startswith("!") and (self._signed_out or self._turn_provider.signed_out(text)):
                     self._signed_out = True
-                    text = f"{self._title()} signed you out."
+                    text = self._signed_out_text(text)
                 if not self.stopping:
                     await self.event("error", text=text)
                 reported_error = True
@@ -1003,7 +1035,15 @@ def main(argv: list[str] | None = None) -> int:
 
     async def run():
         serving = asyncio.ensure_future(daemon.serve())
-        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, serving.cancel)
+
+        def on_term():
+            # A login goes first. Then the bar's connection: Python 3.12+ waits for every client
+            # before a closing server lets go, and the bar never hangs up on its own.
+            daemon.end_signin_now()
+            for w in list(daemon.clients):
+                w.close()
+            serving.cancel()
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, on_term)
         try:
             await serving
         except asyncio.CancelledError:

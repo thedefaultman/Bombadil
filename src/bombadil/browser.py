@@ -112,28 +112,41 @@ def _new_tab(devtools: DevTools, url: str) -> dict | None:
 
 
 def open_url(url: str, hyprland=None, devtools: DevTools | None = None, spawn=subprocess.Popen,
-             wait: float = 20.0) -> dict | None:
+             wait: float = 20.0, abandon=None) -> dict | None:
     """Open `url` in the browser panel and slide the panel in. Returns the tab ({"id", "url"})
     when the debugging port could say which it is, else None. Sliding the panel in can fail
-    (a busy compositor); the page is open then, and the panel offers itself again (`show`)."""
+    (a busy compositor); the page is open then, and the panel offers itself again (`show`).
+
+    Raises RuntimeError when the page did not open: the browser is missing, never answered, or
+    closed as it started. `abandon` (a threading.Event) says nobody wants the page any more (a
+    sign-in called off while the browser was still slow): it stops short, and a tab opened by
+    then goes again, so the panel never slides in over the desktop for nothing."""
     from . import hypr
 
     hyprland = hyprland or hypr.Hyprland()
     devtools = devtools or DevTools()
+    gone = abandon.is_set if abandon is not None else (lambda: False)
+    if gone():
+        return None
     tab = None
     if not devtools.up and running():
         # Starting (or slow): it takes the page as a new tab once its port is up. Starting a
         # second Chromium with the URL would only hand the URL to this one.
         deadline = time.monotonic() + wait
-        while not devtools.up and running() and time.monotonic() < deadline:
+        while not devtools.up and running() and time.monotonic() < deadline and not gone():
             time.sleep(0.25)
+        if gone():
+            return None
+        if not devtools.up and running():
+            raise RuntimeError("the browser is still starting")
     if devtools.up:
         tab = _new_tab(devtools, url)
-        if tab is not None:
-            try:
-                devtools.activate(tab["id"])
-            except DOWN:
-                pass
+        if tab is None:
+            raise RuntimeError("the browser would not open the page")
+        try:
+            devtools.activate(tab["id"])
+        except DOWN:
+            pass
     elif not running():
         if shutil.which(binary()) is None:
             raise RuntimeError("chromium is not installed")
@@ -142,16 +155,42 @@ def open_url(url: str, hyprland=None, devtools: DevTools | None = None, spawn=su
               stderr=subprocess.DEVNULL, start_new_session=True)
         # The page may redirect at once (a sign-in page to its login form), so its tab is the
         # one showing when the port comes up.
-        deadline = time.monotonic() + wait
-        while tab is None and time.monotonic() < deadline:
+        started = time.monotonic()
+        while tab is None and time.monotonic() - started < wait and not gone():
             time.sleep(0.25)
             tab = find_tab(devtools, lambda u: True)
+            # (Right after the spawn its command line is not Chromium's yet: give it a moment.)
+            if tab is None and time.monotonic() - started > 3 and not running():
+                raise RuntimeError("the browser closed as it started")
+    if gone():
+        if tab is not None:
+            close_spare_tab(devtools, tab.get("id"))
+        return None
     if hyprland.available:
         try:
             hyprland.panel("browser", show=True, wait=wait)
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:
             print(f"browser: could not slide the panel in: {e}", file=sys.stderr)
+        if gone():   # called off while the panel was sliding in
+            try:
+                hyprland.panel("browser", show=False)
+            except (RuntimeError, OSError, subprocess.SubprocessError):
+                pass
+            if tab is not None:
+                close_spare_tab(devtools, tab.get("id"))
     return tab
+
+
+def close_spare_tab(devtools: DevTools, tab_id: str | None) -> None:
+    """Close a tab, but never the last one: that would quit the browser. Best effort."""
+    if not tab_id:
+        return
+    try:
+        tabs = devtools.tabs()
+        if any(t.get("id") == tab_id for t in tabs) and len(tabs) > 1:
+            devtools.close(tab_id)
+    except DOWN:
+        pass
 
 
 def find_tab(devtools: DevTools, match) -> dict | None:
@@ -169,8 +208,8 @@ class Panel:
         self.hypr = hyprland or hypr.Hyprland()
         self.devtools = devtools or DevTools()
 
-    def open(self, url: str) -> dict | None:
-        return open_url(url, self.hypr, self.devtools)
+    def open(self, url: str, abandon=None) -> dict | None:
+        return open_url(url, self.hypr, self.devtools, abandon=abandon)
 
     def tabs(self) -> list[dict] | None:
         """The open pages; [] when the browser is not running; None when it runs but cannot
@@ -200,9 +239,7 @@ class Panel:
 
     def close_tab(self, tab_id: str) -> None:
         """Close a tab, but never the last one: that would quit the browser."""
-        tabs = self.tabs() or []
-        if any(t.get("id") == tab_id for t in tabs) and len(tabs) > 1:
-            self.devtools.close(tab_id)
+        close_spare_tab(self.devtools, tab_id)
 
 
 def running() -> bool:

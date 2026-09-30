@@ -114,6 +114,7 @@ class Provider:
 
     SIGNED_OUT: tuple[str, ...] = ()
     ends_when_signed_out = False   # end the turn at the first sign, rather than let the CLI retry
+    login_replaces = False         # its login signs the stored one out as it starts (even if called off)
 
     def signin_error(self, text: str) -> str:
         """Why a login failed, from what the CLI printed: one short plain line."""
@@ -310,6 +311,7 @@ class Codex(Provider):
     signin_host = ("auth.openai.com", 443)
     # Logged out, `codex exec` retries for about 15 s before it gives up; the first 401 says enough.
     ends_when_signed_out = True
+    login_replaces = True   # `codex login` revokes the stored login first (see login_command)
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         self._last_text = ""

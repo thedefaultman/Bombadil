@@ -12,9 +12,13 @@ case "$provider" in
   claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code ;;
   codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex ;;
 esac
-if bombadil provider "$provider" && bombadil status >/dev/null 2>&1; then
+# agentd does the sign-in (3 from `bombadil provider` means nothing answered, and no config file
+# yet means it only wrote the choice down); anything else it already said in its own words.
+rc=0
+bombadil provider "$provider" || rc=$?
+if [[ $rc -eq 0 ]] && bombadil status >/dev/null 2>&1; then
   echo "Done. Type in the pill at the bottom of the screen."
-else
+elif [[ $rc -eq 0 || $rc -eq 3 ]]; then
   # No agentd to ask: run the CLI's own login, with its page in the browser panel.
   mkdir -p "$(dirname "$cfg")"
   printf 'provider = "%s"\n' "$provider" > "$cfg"
@@ -23,9 +27,10 @@ else
     claude) claude auth login ;;
     codex)  codex login ;;
   esac
-  pkill -x agentd || true
   hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null 2>&1 || true
   echo "Done. Type in the pill at the bottom of the screen."
+else
+  echo "Not signed in yet. Run bombadil-setup again, or type 'sign in' in the pill."
 fi
 [[ -t 0 ]] && read -r -p "Press enter to close."
 exit 0

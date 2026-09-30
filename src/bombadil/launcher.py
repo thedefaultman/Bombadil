@@ -39,7 +39,7 @@ CORE_COMMANDS = {
 }
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
-                "log me in", "reconnect"]
+                "log me in"]
 PROVIDER_WORDS = {"claude": ["claude", "claude code", "anthropic"], "codex": ["codex", "openai codex", "chatgpt"]}
 PROVIDER_VERBS = ("use", "switch to", "change to", "sign in to", "log in to", "sign into", "log into",
                   "sign in with", "log in with")

@@ -27,11 +27,17 @@ class FakePanel:
         self.running = True
         self.fail_opens = 0   # the next opens raise, without opening anything
         self.delay = 0.0      # a slow browser
+        self.unnamed = 0      # the next opens work but cannot say which tab they made
+        self.close_raises = False
+        self.abandoned = 0    # opens that stopped short because the sign-in was over
         self._n = 0
 
-    def open(self, url):
+    def open(self, url, abandon=None):
         if self.delay:
             time.sleep(self.delay)
+        if abandon is not None and abandon.is_set():
+            self.abandoned += 1
+            return None
         if self.fail_opens:
             self.fail_opens -= 1
             raise RuntimeError("hyprctl dispatch: didn't respond in time")
@@ -42,6 +48,9 @@ class FakePanel:
         self.visible = self.running = True
         if self.follow:
             threading.Thread(target=self._browse, args=(tab,), daemon=True).start()
+        if self.unnamed:
+            self.unnamed -= 1
+            return None
         return {"id": tab["id"], "url": url}
 
     def _browse(self, tab):
@@ -72,6 +81,8 @@ class FakePanel:
         self.visible = False
 
     def close_tab(self, tab_id):
+        if self.close_raises:
+            raise OSError("the debugging port did not answer")
         self.closed.append(tab_id)
         if len(self.tabs_) > 1:
             self.tabs_ = [t for t in self.tabs_ if t["id"] != tab_id]
@@ -302,3 +313,57 @@ async def test_calling_it_off_while_the_browser_is_still_opening_puts_the_page_a
     assert await run == "cancelled"
     assert not panel.visible                                   # not slid back in after the run
     assert [t["id"] for t in panel.tabs_] == ["other"]        # and its tab is closed
+
+
+async def _until(pred, n=100):
+    for _ in range(n):
+        if pred():
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_a_page_opened_again_that_the_browser_cannot_name_is_found_by_its_address(fake, tmp_path):
+    cmd, log = _browser_script(tmp_path)
+    panel = FakePanel(follow=False)
+    s = signin.SignIn(fake("never"), panel=panel, env={"BROWSER": cmd}, poll=0.1)
+    run = asyncio.create_task(_run(s, log))
+    assert await _until(lambda: s.phase == "waiting" and s.view == "shown")
+    panel.running = False   # the whole browser was closed
+    panel.tabs_.clear()
+    assert await _until(lambda: s.view == "closed")
+    panel.unnamed = 1       # it opens again, slowly, and cannot say which tab it made
+    panel.delay = 0.4
+    await asyncio.gather(s.show(), s.show())   # a double tap opens one page, not two
+    assert len(panel.opened) == 2 and s.view == "shown"
+    await asyncio.sleep(0.6)                   # a few looks later it is still shown, not "closed" again
+    assert s.view == "shown" and s.tab == "t2"
+    s.cancel()
+    assert await run == "cancelled"
+    assert panel.closed == ["t2"]              # the page that is really there is the one put away (not a stale id)
+
+
+@pytest.mark.asyncio
+async def test_calling_it_off_says_so_at_once_however_slow_the_browser_is(fake):
+    phases = []
+    panel = FakePanel(follow=False)
+    panel.delay = 1.0
+    s = signin.SignIn(fake("never"), lambda x: phases.append(x.phase), panel=panel, grace=0.2, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    assert await _until(lambda: s.url)
+    s.cancel()
+    assert s.phase == "ending" and s.running   # the pill can say "Cancelling" this instant
+    assert await run == "cancelled"
+    assert "waiting" not in phases[phases.index("ending"):]   # the page opening late does not undo it
+    assert panel.abandoned == 1 and not panel.visible and panel.opened == []
+
+
+@pytest.mark.asyncio
+async def test_a_tab_that_will_not_close_does_not_keep_the_panel_on_screen(fake, tmp_path):
+    cmd, log = _browser_script(tmp_path)
+    panel = FakePanel()
+    panel.close_raises = True
+    s = signin.SignIn(fake("auto"), panel=panel, env={"BROWSER": cmd}, poll=0.1)
+    assert await _run(s, log) == "done"
+    assert not panel.visible

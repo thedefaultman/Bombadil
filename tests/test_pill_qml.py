@@ -465,8 +465,14 @@ def test_signing_in_says_where_and_esc_calls_it_off(bar):
                       {"id": "cancel", "label": "Cancel", "style": "quiet"}], phase="waiting", view="hidden")
     assert [label for label, _ in bar.chips()] == ["Show sign-in", "Cancel"]
     bar.snap("setup-4-hidden")
+    before = bar.win.property("handOffs")
     bar.click_item(bar.chips()[0][1])
     assert bar.sent[-1] == {"type": "setup_action", "id": "show"}
+    # The page that slides in takes the keyboard: typed passwords must not land in the pill.
+    assert bar.win.property("handOffs") == before + 1
+    bar.click_item(bar.chips()[1][1])
+    assert bar.sent[-1] == {"type": "setup_action", "id": "cancel"}
+    assert bar.win.property("handOffs") == before + 1   # cancelling opens nothing
 
 
 def test_offline_and_failures_read_as_errors(bar):

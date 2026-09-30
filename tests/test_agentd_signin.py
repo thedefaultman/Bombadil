@@ -457,3 +457,184 @@ async def test_a_bar_that_connects_later_is_not_told_about_a_sign_in_from_long_a
     assert d._setup_msg()["line"] == ""
     w.close()
     server.cancel()
+
+
+def _interpreters():
+    import shutil
+    import sys
+    found = {sys.executable}
+    found.update(p for p in (shutil.which(f"python3.{v}") for v in (12, 13, 14)) if p)
+    return sorted(found)
+
+
+@pytest.mark.parametrize("python", _interpreters())
+def test_agentd_exits_on_sigterm_with_the_bar_connected(home, monkeypatch, python):
+    """Python 3.12+ waits for every client before a closing server lets go, and the bar never
+    hangs up: agentd stayed (a login it started with it) and a fresh agentd ran beside it."""
+    import os
+    import signal
+    import subprocess
+    import time
+    monkeypatch.setenv("BOMBADIL_PROVIDER", "fake")
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "never")
+    monkeypatch.setenv("FAKE_SIGNIN_DELAY", "0.2")
+    (home / "run").mkdir(exist_ok=True)
+    agentd_bin = Path(__file__).resolve().parents[1] / "bin" / "agentd"
+    proc = subprocess.Popen([python, str(agentd_bin)], env=os.environ, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    try:
+        sock = home / "run" / "agentd.sock"
+        for _ in range(200):
+            if sock.exists():
+                break
+            time.sleep(0.1)
+        assert sock.exists()
+        bar = socket.socket(socket.AF_UNIX)
+        bar.connect(str(sock))            # the bar: connected, and it stays
+        time.sleep(1.5)                   # (the sign-in has started by now, waiting for a page)
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=10) == 0
+        bar.close()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_found_the_old_ais_login_gone_leaves_the_new_ai_alone(signed_out, monkeypatch):
+    """"use codex" comes while a Claude turn runs, then Claude reports it is signed out: Codex is
+    signed in and must not be signed out (its login revokes the old one) or get Claude's prompt."""
+    class Old(providers.Fake):
+        title = "Old"
+
+        def command(self, turn, workdir):
+            return ["sh", "-c", "sleep 1; echo 'Invalid API key · Please run /login' >&2; exit 1"]
+        SIGNED_OUT = (r"Please run /login",)
+
+        def finish(self):
+            return iter(())
+
+    monkeypatch.setitem(providers.PROVIDERS, "codex", Browsing)
+    (Path.home() / ".fake-signin").write_text("signed in")
+    panel = FakePanel()
+    d = agentd.AgentD(Old("x"), agentd._NoSnapshots(), panel=panel)
+    server, r, w, setup = await _start(d)
+    assert setup["state"] == "ready"
+    await _send(w, {"type": "prompt", "text": "hello"})
+    await _until(r, lambda m: m.get("kind") == "turn_start")
+    await _send(w, {"type": "setup_action", "id": "provider:codex"})
+    msgs = await _until(r, lambda m: m.get("kind") == "turn_end")
+    assert next(m for m in msgs if m.get("kind") == "error")["text"] == "Old signed you out."
+    await asyncio.sleep(0.5)
+    assert d.access == "ready" and d.signin is None and not d._login_gone
+    assert not d.pending and panel.opened == [] and d.provider.name == "fake"
+    assert config.load().provider == "codex"
+    w.close()
+    server.cancel()
+
+
+class AlwaysGone(providers.Fake):
+    """A login that works but a CLI that keeps saying it is signed out (a 403, an API key in the environment)."""
+    SIGNED_OUT = (r"Please run /login",)
+
+    def command(self, turn, workdir):
+        return ["sh", "-c", "echo 'Invalid API key · Please run /login' >&2; exit 1"]
+
+    def finish(self):
+        return iter(())
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_that_fails_the_same_way_shows_the_cli_error_and_does_not_sign_in_again(signed_out):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    panel = FakePanel()
+    d = agentd.AgentD(AlwaysGone("x"), agentd._NoSnapshots(), panel=panel)
+    server, r, w, _ = await _start(d)
+    (Path.home() / ".fake-signin").unlink()   # the first failure is a real sign-out
+    await _send(w, {"type": "prompt", "text": "hello"})
+    msgs = await _until(r, lambda m: m.get("kind") == "turn_end")
+    assert next(m for m in msgs if m.get("kind") == "error")["text"] == "Fake signed you out."
+    await _until(r, _setup("ready"))          # the sign-in worked...
+    msgs = await _until(r, lambda m: m.get("kind") == "turn_end")   # ...and the prompt ran again
+    assert "Please run /login" in next(m for m in msgs if m.get("kind") == "error")["text"]   # the CLI's words
+    await asyncio.sleep(1)
+    assert d.access == "ready" and d.signin is None and not d._login_gone
+    assert len(panel.opened) == 1 and d.turns == 2 and not d.pending   # one sign-in, not a loop
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_what_the_user_did_without_the_model_reaches_the_rerun(signed_out):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    d = agentd.AgentD(GoneLogin("x"), agentd._NoSnapshots(), panel=FakePanel())
+    server, r, w, _ = await _start(d)
+    (Path.home() / ".fake-signin").unlink()
+    d.notes.append("'open notes': Opened Notes.")
+    await _send(w, {"type": "prompt", "text": "hello"})
+    await _until(r, lambda m: m.get("kind") == "turn_end")
+    await _until(r, _setup("ready"))
+    msgs = await _until(r, lambda m: m.get("kind") == "turn_end")
+    said = next(m for m in msgs if m.get("kind") == "result")["text"]
+    assert "Done by the user without you" in said and "Opened Notes" in said and said.endswith("hello")
+    w.close()
+    server.cancel()
+
+
+class Replacing(Browsing):
+    """Like Codex: signing in again signs the stored login out first."""
+    login_replaces = True
+
+
+@pytest.mark.asyncio
+async def test_sign_in_typed_while_signed_in_leaves_a_login_that_a_new_one_would_replace(signed_out):
+    (Path.home() / ".fake-signin").write_text("signed in")
+    panel = FakePanel()
+    d = agentd.AgentD(Replacing("x"), agentd._NoSnapshots(), panel=panel)
+    server, r, w, setup = await _start(d)
+    assert setup["state"] == "ready"
+    await _send(w, {"type": "prompt", "text": "sign in"})
+    msgs = await _until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    assert msgs[-1]["ok"] and msgs[-1]["text"] == "You are already signed in to Fake."
+    await _send(w, {"type": "signin"})   # `bombadil signin` hears the same, as a setup line
+    msgs = await _until(r, lambda m: m.get("type") == "setup" and "already signed in" in m.get("line", ""))
+    assert msgs[-1]["state"] == "ready"
+    await asyncio.sleep(0.3)
+    assert d.signin is None and panel.opened == [] and (Path.home() / ".fake-signin").exists()
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_dead_login_still_signs_in_when_asked_even_if_a_new_login_replaces_it(signed_out):
+    panel = FakePanel()
+    d = agentd.AgentD(Replacing("x"), agentd._NoSnapshots(), panel=panel, auto_signin=True)
+    server, r, w, _ = await _start(d)
+    await _until(r, _setup("ready")) if d.access != "ready" else None   # signed out at start: signs in by itself
+    (Path.home() / ".fake-signin").unlink()
+    await _send(w, {"type": "prompt", "text": "sign in"})   # the login died: this is not "already"
+    await _until(r, lambda m: m.get("type") == "setup" and m.get("state") == "signing_in")
+    await _until(r, _setup("ready"))
+    assert len(panel.opened) == 2
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_calling_off_a_sign_in_says_cancelling_at_once(signed_out, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "never")
+    panel = FakePanel(follow=False)
+    panel.delay = 1.5   # a cold browser
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), panel=panel, auto_signin=True)
+    server, r, w, _ = await _start(d)
+    for _ in range(100):   # (signed out at start: the sign-in opens by itself, slowly)
+        if d.signin is not None and d.signin.running:
+            break
+        await asyncio.sleep(0.05)
+    await _send(w, {"type": "stop"})
+    msgs = await _until(r, lambda m: m.get("type") == "setup" and m.get("phase") == "ending")
+    assert msgs[-1]["line"] == "Cancelling the Fake sign-in" and msgs[-1]["actions"] == []
+    await _until(r, _setup("signed_out"))
+    assert not panel.visible
+    w.close()
+    server.cancel()
