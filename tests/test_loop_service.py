@@ -1360,6 +1360,41 @@ async def test_a_service_that_was_stopped_or_never_started_raises_nothing(rig_of
     assert not [t for t in service._tasks if not t.done()]
 
 
+@pytest.mark.asyncio
+async def test_starting_the_service_makes_sure_the_prober_is_up_and_never_waits_for_it(rig_of):
+    calls = []
+    rig = rig_of(passwords_asks(), prober=lambda: calls.append(1))
+    await rig.start()
+    await until(lambda: calls)
+    assert calls == [1]
+    # No prober given (tests, a dev session): nothing is started.
+    quiet = rig_of(passwords_asks())
+    await quiet.start()
+    assert quiet.service.prober is None
+
+
+@pytest.mark.asyncio
+async def test_a_prober_that_cannot_be_started_costs_one_line_and_nothing_else(rig_of):
+    def no_systemd():
+        raise FileNotFoundError(2, "No such file or directory", "systemctl")
+
+    rig = rig_of(passwords_asks(), prober=no_systemd)
+    await rig.start()
+    await until(lambda: any(line.startswith("loop: prober: FileNotFoundError") for line in rig.service._said))
+    await rig.settle()
+    state = await rig.ask_state()
+    assert state["count"] == 1                                    # the rest of the loop is unaffected
+
+
+def test_the_real_prober_start_asks_the_users_systemd_for_the_unit_without_waiting(monkeypatch):
+    from bombadil.loop import service as svc
+    seen = {}
+    monkeypatch.setattr(svc.subprocess, "run", lambda argv, **kw: seen.update(argv=argv, **kw))
+    svc.start_prober()
+    assert seen["argv"] == ["systemctl", "--user", "start", "--no-block", "bombadil-probe.service"]
+    assert seen["timeout"] == 10 and seen["check"] is False
+
+
 # -- the window's list --
 
 @pytest.mark.asyncio

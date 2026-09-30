@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 
 // What the loop has noticed, as a card that rises above the chip: 300 px wide, titled "Noticed"
 // with one line of why, at most three rows, then the quiet lines. A row is the offer: his own
@@ -32,10 +33,10 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 12
-        color: "#f51a1d21"
+        radius: Kit.Theme.radius
+        color: Kit.Theme.glassCard
         border.width: 1
-        border.color: "#2a2f36"
+        border.color: Kit.Theme.border
     }
 
     // The pointer may cross the gap between the chip and the card: the loop waits a moment.
@@ -54,16 +55,18 @@ Item {
             Text {
                 objectName: "noticedTitle"
                 text: "Noticed"
-                color: "#e6e8eb"
-                font.pixelSize: 16
+                color: Kit.Theme.fg
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.headingSize
                 font.weight: Font.Medium
             }
             Text {
                 objectName: "noticedWhy"
                 Layout.fillWidth: true
                 text: card.loop.why()
-                color: "#8b939c"
-                font.pixelSize: 12
+                color: Kit.Theme.muted
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.captionSize
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 maximumLineCount: 1
@@ -94,7 +97,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.bottomMargin: 7
                     implicitHeight: 1
-                    color: "#2a2f36"
+                    color: Kit.Theme.border
                 }
 
                 // His own words for an offer.
@@ -102,8 +105,9 @@ Item {
                     objectName: "noticedRowTitle"
                     Layout.fillWidth: true
                     text: String(row.modelData.title || "")
-                    color: "#e6e8eb"
-                    font.pixelSize: 13
+                    color: Kit.Theme.fg
+                    font.family: Kit.Theme.fontFamily
+                    font.pixelSize: Kit.Theme.smallSize
                     font.weight: Font.Medium
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
@@ -118,8 +122,9 @@ Item {
                         objectName: "noticedRowMeta"
                         Layout.fillWidth: true
                         text: String(row.modelData.meta || "")
-                        color: "#8b939c"
-                        font.pixelSize: 12
+                        color: Kit.Theme.muted
+                        font.family: Kit.Theme.fontFamily
+                        font.pixelSize: Kit.Theme.captionSize
                         textFormat: Text.PlainText
                         elide: Text.ElideRight
                         maximumLineCount: 1
@@ -142,8 +147,9 @@ Item {
                     Layout.fillWidth: true
                     visible: text !== ""
                     text: String(row.modelData.what || "")
-                    color: "#c5cad0"
-                    font.pixelSize: 12
+                    color: Kit.Theme.fg
+                    font.family: Kit.Theme.fontFamily
+                    font.pixelSize: Kit.Theme.captionSize
                     textFormat: Text.PlainText
                     wrapMode: Text.Wrap
                     maximumLineCount: 3
@@ -157,10 +163,10 @@ Item {
                     Layout.topMargin: 3
                     visible: row.answer !== null
                     implicitHeight: answerText.implicitHeight + 14
-                    radius: 8
-                    color: "#14171a"
+                    radius: Kit.Theme.radiusSmall
+                    color: Kit.Theme.sunken
                     border.width: 1
-                    border.color: "#2a2f36"
+                    border.color: Kit.Theme.border
                     Text {
                         id: answerText
                         objectName: "noticedResultText"
@@ -168,8 +174,9 @@ Item {
                         y: 7
                         width: parent.width - 20
                         text: row.answer === null ? "" : (row.answer.ok ? row.answer.preview : (row.answer.text || "That did not work."))
-                        color: row.answer !== null && !row.answer.ok ? "#f0a0a0" : "#c5cad0"
-                        font.pixelSize: 12
+                        color: row.answer !== null && !row.answer.ok ? Kit.Theme.badInk : Kit.Theme.fg
+                        font.family: Kit.Theme.fontFamily
+                        font.pixelSize: Kit.Theme.captionSize
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
                     }
@@ -224,7 +231,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: 1
-                color: "#2a2f36"
+                color: Kit.Theme.border
             }
             Text {
                 id: restingText
@@ -232,8 +239,9 @@ Item {
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: card.loop.restingLine()
-                color: "#8b939c"
-                font.pixelSize: 12
+                color: Kit.Theme.muted
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.captionSize
                 textFormat: Text.PlainText
                 wrapMode: Text.Wrap
             }
@@ -246,8 +254,9 @@ Item {
                     objectName: "noticedLately"
                     Layout.fillWidth: true
                     text: card.loop.latelyLine()
-                    color: "#8b939c"
-                    font.pixelSize: 12
+                    color: Kit.Theme.muted
+                    font.family: Kit.Theme.fontFamily
+                    font.pixelSize: Kit.Theme.captionSize
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
                     maximumLineCount: 1

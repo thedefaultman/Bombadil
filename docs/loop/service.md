@@ -62,7 +62,7 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
 
 ### What agentd does for it (`agentd.py`)
 
-- `AgentD(..., loop_service=True)` makes a `LoopService(self)` when the socket listens and starts it;
+- `AgentD(..., loop_service=True)` makes a `LoopService(self, prober=start_prober)` (`prober` starts `bombadil-probe.service` through the user's systemd, once, off the event loop) when the socket listens and starts it;
   `main()` passes it. Left off, or given a `d.loop` of the tests' own, agentd does what it always did (a
   loop that has no `start`/`stop`/`noticed_word` is fine). A service that cannot start costs one line and
   agentd runs without one.

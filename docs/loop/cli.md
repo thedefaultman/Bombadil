@@ -2,8 +2,8 @@
 
 What the user, the agent and systemd touch the loop with. Nothing here is on a turn's path, and nothing
 calls a model. Contract: `docs/LOOP.md`. Files: `bin/bombadil` (the loop, probe and doctor commands),
-`bin/bombadil-probe`, `iso/airootfs/etc/systemd/user/bombadil-probe.service` and
-`bombadil-agentd.service.d/probe.conf`, `src/bombadil/mcp_server.py` (the `asks` tool), the four loop
+`bin/bombadil-probe`, `iso/airootfs/etc/systemd/user/bombadil-probe.service`,
+`start_prober` in `src/bombadil/loop/service.py`, `src/bombadil/mcp_server.py` (the `asks` tool), the four loop
 checks at the end of the loop block of `bombadil-smoke`. Tests: `tests/test_loop_cli.py`,
 `tests/test_mcp_asks.py`, the unit and smoke tests in `tests/test_iso_profile.py`.
 
@@ -53,10 +53,11 @@ programs) at `Nice=15`, idle CPU and idle I/O, `Restart=always`, `RestartSec=5`,
 stops with its process group. It is not `PartOf`, `BindsTo` or ordered against agentd: it has to outlive an
 agentd crash to see it.
 
-To start it without touching the agentd unit, the bar's unit or `hyprland.lua` (owned by another thread),
-`bombadil-agentd.service.d/probe.conf` adds `Wants=bombadil-probe.service` to agentd. `Wants=` only pulls the
-prober in when agentd is started or restarted (`hyprland.lua` restarts it at login) and does not restart it
-with agentd. The drop-in can go if `hyprland.lua` ever starts the prober itself.
+agentd's loop service starts it: when agentd comes up, `start_prober` runs `systemctl --user start
+--no-block bombadil-probe.service` off the event loop (a no-op when it already runs). That leaves `hyprland.lua`
+and any agentd or bar unit alone, whoever owns them, and works the same however agentd was launched. A machine
+with no user systemd (a dev session, the headless test) has no prober; one line on stderr says so and
+`bombadil loop status` reports the prober as not running.
 
 `StartLimitIntervalSec=0` is under `[Unit]`: systemd ignores it under `[Service]` (`systemd-analyze verify`
 says "Unknown key name"), which is where the agentd and bar units have it today.
@@ -89,7 +90,7 @@ allowed) and `loop-asks-tool` (`mcp_call asks '{}'`). They run as the user like 
 
 ## What needs a real machine
 
-- `bombadil-probe.service` starting at login from the drop-in, and `systemctl --user is-active` saying so
+- `bombadil-probe.service` starting when agentd comes up, and `systemctl --user is-active` saying so
   (only `systemd-analyze verify` on the unit file was run, which found no fault in it).
 - `loop status` and `doctor --live` against a real agentd, bar and Hyprland; `doctor --live` inside the VM smoke.
 - `Nice`, `CPUSchedulingPolicy=idle` and `IOSchedulingClass=idle` being accepted in a user manager.

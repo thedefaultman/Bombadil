@@ -22,6 +22,7 @@ import functools
 import json
 import shutil
 import sqlite3
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -121,14 +122,28 @@ def _app_prompt(ask: dict) -> str:
             "from now on. When you are done, say in one sentence what you made.")
 
 
+PROBER_UNIT = "bombadil-probe.service"
+
+
+def start_prober() -> None:
+    """Ask the user's systemd to start the prober (a no-op when it already runs). The prober is its own
+    unit so that it outlives an agentd crash and sees it; agentd only makes sure it is up. A machine
+    with no user systemd (a dev session) simply has no prober, and `bombadil loop status` says so."""
+    subprocess.run(["systemctl", "--user", "start", "--no-block", PROBER_UNIT], timeout=10, check=False,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 class LoopService:
     def __init__(self, agentd, *, loop_dir: Path | str | None = None, clock: Callable[[], float] = time.time,
-                 opener: Callable[[str], str] | None = None, fetcher: Callable | None = None):
+                 opener: Callable[[str], str] | None = None, fetcher: Callable | None = None,
+                 prober: Callable[[], None] | None = None):
         """`agentd` is the daemon this runs beside. `clock` gives epoch seconds for every rule here (the
         cadence is tested with an injected one). `opener(url)` opens the issue page (what
         `report.open_issue_page` does by default) and `fetcher(url, timeout)` searches the project's
-        issues (`report.already_reported`); tests pass their own, so nothing touches the network."""
+        issues (`report.already_reported`); tests pass their own, so nothing touches the network. `prober()`
+        makes sure the prober's unit is up (`start_prober`); the real daemon passes it, tests do not."""
         self.agentd = agentd
+        self.prober = prober
         self.clock = clock
         self.opener = opener
         self.fetcher = fetcher
@@ -178,6 +193,14 @@ class LoopService:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bombadil-loop")
         self._spawn(self._boot())
         self._spawn(self._ticker())
+        if self.prober is not None:
+            self._spawn(self._wake_prober())
+
+    async def _wake_prober(self) -> None:
+        try:
+            await asyncio.to_thread(self.prober)
+        except (OSError, subprocess.SubprocessError) as e:     # no systemctl, no user manager, a slow one
+            self._say("prober", e)
 
     def stop(self) -> None:
         self._stopped = True

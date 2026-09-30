@@ -120,6 +120,7 @@ DeskCard {
 
                     Text {
                         objectName: "nowLabel"
+                        font.family: T.fontFamily
                         x: 38
                         y: Math.round(17 - baselineOffset)
                         width: card.width - x - 14
@@ -154,7 +155,7 @@ DeskCard {
                     width: card.width - x - 14
                     text: card.m.command || ""
                     color: card.red ? T.redText : T.amberText
-                    font.family: "monospace"
+                    font.family: T.monoFamily
                     font.pixelSize: 11
                     textFormat: Text.PlainText
                     elide: Text.ElideRight
@@ -163,6 +164,7 @@ DeskCard {
                 }
                 Text {
                     objectName: "nowCaption"
+                    font.family: T.fontFamily
                     x: 44
                     y: card.commandHeight + 1
                     width: card.width - x - 14

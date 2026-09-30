@@ -80,7 +80,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", ["quickshell", "-p", str(REPO / "shell" / "shell.qml")])
+start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -473,6 +473,12 @@ inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+
+# Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
+# none of the checks above would notice one.
+qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
+              if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
+check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

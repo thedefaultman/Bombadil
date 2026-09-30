@@ -1,4 +1,5 @@
 import QtQuick
+import Bombadil as Kit
 
 // "noticed 2": a small calm chip beside the pill, there only while something waits. It is
 // something that can wait, so it has no dot, no colour and no motion, and the same hairline the
@@ -32,7 +33,7 @@ Rectangle {
     readonly property real reach: shown && !beside ? bottomGap + implicitHeight + 12 : 0
 
     implicitWidth: label.implicitWidth + 24
-    implicitHeight: 28
+    implicitHeight: Kit.Theme.chipHeight
     width: shown ? implicitWidth : 0
     height: shown ? implicitHeight : 0
     visible: shown
@@ -40,17 +41,18 @@ Rectangle {
     anchors.bottom: parent.bottom
     anchors.bottomMargin: bottomGap
     radius: height / 2
-    color: "#d91a1d21"
+    color: Kit.Theme.glassChip
     border.width: 1
-    border.color: hover.hovered || (loop.cardOpen && loop.cardScreen === screenName) ? "#3a414a" : "#2a2f36"
+    border.color: hover.hovered || (loop.cardOpen && loop.cardScreen === screenName) ? Kit.Theme.borderStrong : Kit.Theme.border
 
     Text {
         id: label
         objectName: "noticedChipText"
         anchors.centerIn: parent
         text: "noticed " + chip.loop.count
-        color: "#8b939c"
-        font.pixelSize: 13
+        color: Kit.Theme.muted
+        font.family: Kit.Theme.fontFamily
+        font.pixelSize: Kit.Theme.smallSize
         textFormat: Text.PlainText
     }
 

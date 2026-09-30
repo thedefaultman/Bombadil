@@ -278,7 +278,7 @@ check loop-agentd-json wait_for 30 test -s "$loopdir/agentd.json"
 check loop-bar-hello wait_for 60 bash -c "grep -q '\"hello\"' $loopdir/signals.jsonl"
 check loop-bar-alive wait_for 30 bar_alive_fresh
 check coredump-handler bash -c 'sysctl -n kernel.core_pattern | grep -q systemd-coredump'
-# The prober runs (agentd's unit pulls it in), what the commands say of the loop answers, and the
+# The prober runs (agentd starts its unit), what the commands say of the loop answers, and the
 # doctor's live look, which takes up to a minute, finds nothing wrong. The tool reads the counts.
 check loop-probe-unit-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-probe.service
 check loop-status-answers as_user timeout 60 bombadil loop status

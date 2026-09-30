@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 
 // The line above the pill: what the agent is doing right now, in plain words, and how the
 // turn ended. One line while it works; at most four when it is done. A step that touches the
@@ -10,24 +11,24 @@ Rectangle {
     required property var pill       // a PillState
 
     readonly property bool shown: pill.mode !== "idle" || pill.flash !== ""
-    readonly property color edge: pill.mode === "working" && pill.risk === "irreversible" ? "#e05252"
-                                 : pill.mode === "working" && pill.risk === "system" ? "#e8a33d"
-                                 : pill.source === "error" && pill.mode !== "working" ? "#c04a4a"
+    readonly property color edge: pill.mode === "working" && pill.risk === "irreversible" ? Kit.Theme.bad
+                                 : pill.mode === "working" && pill.risk === "system" ? Kit.Theme.warn
+                                 : pill.source === "error" && pill.mode !== "working" ? Kit.Theme.bad
                                  : "transparent"
     property double now: Date.now()
     readonly property int seconds: Math.max(0, Math.floor((now - pill.startedAt) / 1000))
     readonly property bool hovered: hover.hovered
 
     implicitHeight: shown ? content.implicitHeight + 20 : 0
-    radius: 14
-    color: "#e61a1d21"
+    radius: Kit.Theme.radiusLine
+    color: Kit.Theme.glassLine
     border.width: 1
-    border.color: "#2a2f36"
+    border.color: Kit.Theme.border
     opacity: shown ? 1 : 0
     visible: opacity > 0
     clip: true
-    Behavior on opacity { NumberAnimation { duration: 200 } }
-    Behavior on implicitHeight { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration: Kit.Theme.normal } }
+    Behavior on implicitHeight { NumberAnimation { duration: Kit.Theme.fast; easing.type: Easing.OutCubic } }
 
     // The marked edge: amber for system steps, red for ones that cannot be undone.
     Rectangle {
@@ -75,10 +76,11 @@ Rectangle {
             Text {
                 id: lineText
                 objectName: "line"
+                font.family: Kit.Theme.fontFamily
                 Layout.fillWidth: true
                 text: bar.pill.flash !== "" ? bar.pill.flash : bar.pill.line
-                color: bar.pill.source === "error" && bar.pill.flash === "" ? "#f0a0a0" : "#e6e8eb"
-                font.pixelSize: 15
+                color: bar.pill.source === "error" && bar.pill.flash === "" ? Kit.Theme.badInk : Kit.Theme.fg
+                font.pixelSize: Kit.Theme.lineSize
                 textFormat: Text.PlainText
                 // Working: one line. The agent's own words show their newest end.
                 wrapMode: bar.pill.mode === "working" || bar.pill.flash !== "" ? Text.NoWrap : Text.Wrap
@@ -88,10 +90,11 @@ Rectangle {
 
             Text {
                 objectName: "counter"
+                font.family: Kit.Theme.fontFamily
                 visible: bar.pill.mode === "working" && bar.seconds >= 1
                 text: bar.seconds + "s"
-                color: "#8b939c"
-                font.pixelSize: 13
+                color: Kit.Theme.muted
+                font.pixelSize: Kit.Theme.smallSize
                 font.features: { "tnum": 1 }
             }
         }
@@ -102,9 +105,9 @@ Rectangle {
             Layout.fillWidth: true
             visible: bar.pill.mode === "working" && bar.pill.command !== "" && bar.pill.flash === ""
             text: bar.pill.command
-            color: bar.pill.risk === "irreversible" ? "#f0a0a0" : "#e8c38d"
-            font.family: "monospace"
-            font.pixelSize: 12
+            color: bar.pill.risk === "irreversible" ? Kit.Theme.badInk : Kit.Theme.warnInk
+            font.family: Kit.Theme.monoFamily
+            font.pixelSize: Kit.Theme.captionSize
             textFormat: Text.PlainText
             elide: Text.ElideRight
             maximumLineCount: 1
@@ -119,10 +122,11 @@ Rectangle {
             spacing: 8
 
             Text {
+                font.family: Kit.Theme.fontFamily
                 visible: bar.pill.irreversible
                 text: "can’t be undone"
-                color: "#f0a0a0"
-                font.pixelSize: 12
+                color: Kit.Theme.badInk
+                font.pixelSize: Kit.Theme.captionSize
             }
             Item { Layout.fillWidth: true }
             LineButton {

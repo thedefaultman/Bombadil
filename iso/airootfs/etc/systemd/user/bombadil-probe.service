@@ -1,7 +1,7 @@
 [Unit]
 Description=Bombadil looks after itself: checks for trouble and writes up what it finds
-# Not PartOf= or BindsTo= agentd: it has to outlive an agentd crash to see it. A drop-in on
-# bombadil-agentd.service (Wants=) starts it; it restarts itself.
+# Not PartOf= or BindsTo= agentd: it has to outlive an agentd crash to see it. agentd's loop service
+# starts it (systemctl --user start) when agentd comes up; it restarts itself.
 # Never give up on it. (StartLimitIntervalSec is read from [Unit], not from [Service].)
 StartLimitIntervalSec=0
 

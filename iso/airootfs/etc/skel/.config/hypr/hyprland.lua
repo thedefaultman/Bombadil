@@ -4,10 +4,10 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- the preferred mode and never moves off it. 1920x1080 is always in the virtual display's list.
 hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", scale = 1 })
 
--- The agent daemon, the bar and the notifications run as user services, so systemd starts any of
--- them again if it dies (Restart=always). They need the session's environment first.
 hl.on("hyprland.start", function()
-    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
+    hl.exec_cmd("agentd")
+    hl.exec_cmd("bombadil-shell")
+    hl.exec_cmd("mako")
     -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
@@ -56,7 +56,7 @@ hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
-hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell"))
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; bombadil-shell"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({

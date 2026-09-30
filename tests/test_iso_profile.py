@@ -136,13 +136,13 @@ def test_the_prober_is_not_tied_to_agentd_because_it_has_to_outlive_a_crash_to_s
             assert "agentd" not in unit[section].get(key, ""), f"{section} {key}"
 
 
-def test_agentd_starts_the_prober_through_a_drop_in_that_only_wants_it():
-    # The agentd and bar units and hyprland.lua are owned elsewhere; Wants= pulls the prober in when agentd
-    # starts and ties neither unit's restarts to the other.
-    drop = _unit(USER_UNITS / "bombadil-agentd.service.d" / "probe.conf")
-    assert drop.sections() == ["Unit"] and dict(drop["Unit"]) == {"Wants": "bombadil-probe.service"}
-    assert (USER_UNITS / "bombadil-agentd.service").exists()
-    assert (USER_UNITS / "bombadil-probe.service").exists()
+def test_agentd_starts_the_prober_unit_itself_so_no_other_unit_is_edited():
+    # The agentd and bar launch (hyprland.lua, or units another part adds) is not this part's to edit: the
+    # loop's service asks the user's systemd for the prober's unit when agentd starts.
+    from bombadil.loop.service import PROBER_UNIT
+    assert PROBER_UNIT == "bombadil-probe.service" and (USER_UNITS / PROBER_UNIT).exists()
+    assert "prober=start_prober" in (ROOT / "src/bombadil/agentd.py").read_text()
+    assert not (USER_UNITS / "bombadil-agentd.service.d").exists()
 
 
 def test_the_prober_program_is_shipped_where_its_unit_runs_it():

@@ -1466,8 +1466,8 @@ class AgentD:
         service that cannot start leaves agentd without one, and one line says so."""
         try:
             if self.loop is None and self._loop_service:
-                from .loop.service import LoopService
-                self.loop = LoopService(self)
+                from .loop.service import LoopService, start_prober
+                self.loop = LoopService(self, prober=start_prober)
             start = getattr(self.loop, "start", None)
             if start is not None:
                 start()

@@ -84,8 +84,8 @@ a turn's path (contract: `docs/LOOP.md`, parts: `docs/loop/`).
   turn, groups asks that are the same request, and when one has been asked 3 times on 2 days puts a single
   offer in the "noticed" chip beside the pill: a word for a near miss, a new app for a set of asks no app
   holds. A tap is the ask; nothing is built from a count on its own.
-- **Checking.** `bombadil-probe` is a separate user unit, pulled in by a drop-in on agentd's unit (`Wants=`,
-  not `PartOf=`, so it outlives an agentd crash to see it). It runs read-only probes over `hyprctl`, the
+- **Checking.** `bombadil-probe` is a separate user unit that agentd's loop service starts when agentd comes up (not
+  `PartOf=`, so it outlives an agentd crash to see it). It runs read-only probes over `hyprctl`, the
   bar's reports, crashes and turn outcomes on Hyprland's events, once a minute while you are away, and a
   doctor once a day. What counts becomes a finding in `loop.db` with evidence that holds none of your words.
 - **Reporting.** What it cannot fix becomes a report you can read in full; Send opens the project's
