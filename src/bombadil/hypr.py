@@ -102,6 +102,16 @@ class Hyprland:
             self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
         return f"panel {name} {'shown' if show else 'hidden'}{note}"
 
+    def open_url(self, url: str) -> str:
+        """Show the browser panel with this page: the first tab when the panel's Chromium starts
+        for it, a new tab when it already runs (Chromium hands a second launch to the first)."""
+        cmd = PANELS["browser"]
+        if shutil.which(cmd[0]) is None:
+            raise RuntimeError(f"{cmd[0]} is not installed")
+        subprocess.Popen([cmd[0]] + ([] if _launching(cmd) else cmd[1:]) + [url], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return self.panel("browser", show=True)
+
     def screenshot(self, path: Path) -> Path:
         if shutil.which("grim") is None:
             raise RuntimeError("grim is not installed")

@@ -1094,3 +1094,75 @@ async def test_the_cli_is_started_with_the_plan_tools_switched_on(home, monkeypa
     assert [m["text"] for m in msgs if m.get("kind") == "output"] == ["todo=unset"]
     w.close()
     server.cancel()
+
+
+# -- a click on a box in a picture --
+
+class _Opens:
+    def __init__(self, result=(True, "Showing NetworkManager.service.")):
+        self.calls, self.result = [], result
+
+    def __call__(self, kind, value):
+        self.calls.append((kind, value))
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+async def _open(d, **msg):
+    server, r, w = await _start(d)
+    w.write((json.dumps({"type": "open", **msg}) + "\n").encode())
+    await w.drain()
+    got = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("action") == "open")
+    w.close()
+    server.cancel()
+    return got[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_box_that_names_a_service_opens_it_and_the_line_says_so(home, monkeypatch):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    opens = _Opens()
+    monkeypatch.setattr(d.launcher, "open_thing", opens)
+    ev = await _open(d, kind="unit", value="NetworkManager.service")
+    assert opens.calls == [("unit", "NetworkManager.service")]
+    assert ev["ok"] is True and ev["text"] == "Showing NetworkManager.service." and ev["turn"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("msg", [{"kind": "unit", "value": "x; rm -rf ~"}, {"kind": "path", "value": "relative/file"},
+                                 {"kind": "url", "value": "file:///etc/passwd"}, {"kind": "shell", "value": "ls"},
+                                 {"kind": "package", "value": "a b"}, {}])
+async def test_what_a_box_names_is_checked_again_here(home, monkeypatch, msg):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    opens = _Opens()
+    monkeypatch.setattr(d.launcher, "open_thing", opens)
+    ev = await _open(d, **msg)
+    assert opens.calls == [] and ev["ok"] is False and ev["text"].startswith("Cannot open that: ")
+
+
+@pytest.mark.asyncio
+async def test_something_that_breaks_while_opening_is_one_plain_line(home, monkeypatch):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    monkeypatch.setattr(d.launcher, "open_thing", _Opens(RuntimeError("foot is not installed")))
+    ev = await _open(d, kind="unit", value="sshd.service")
+    assert ev["ok"] is False and "sshd.service" in ev["text"] and "foot is not installed" in ev["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_box_that_names_a_turn_shows_its_details_when_they_are_kept(home, monkeypatch, tmp_path):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    shown = []
+    monkeypatch.setattr(d.launcher, "details", lambda argv, toggle=False: shown.append(argv) or "shown")
+    d.turn_logs[4] = tmp_path / "4.jsonl"
+    server, r, w = await _start(d)
+    w.write(b'{"type": "open", "kind": "turn", "value": "4"}\n')
+    await w.drain()
+    await _quiet(d)
+    assert len(shown) == 1 and shown[0][-2:] == ["--file", str(tmp_path / "4.jsonl")]
+    w.write(b'{"type": "open", "kind": "turn", "value": "9"}\n')
+    await w.drain()
+    got = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("action") == "open")
+    assert got[-1]["ok"] is False and got[-1]["text"] == "The details of turn 9 are not kept." and len(shown) == 1
+    w.close()
+    server.cancel()

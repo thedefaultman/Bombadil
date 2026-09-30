@@ -463,6 +463,40 @@ class Launcher:
         r = self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
         return getattr(r, "returncode", 1) == 0
 
+    # -- what a box in a picture names --
+
+    def open_thing(self, kind: str, value: str) -> tuple[bool, str]:
+        """Open what a picture's box names: a service or a package in the drawer, a folder or a text
+        file in the drawer, any other file with its app, a page in the browser panel. `value` has been
+        checked by cards.check_opens; nothing here runs a shell on it (it is an argument)."""
+        if kind == "unit":
+            self.details(["sh", "-c", 'systemctl status --no-pager -l -- "$1" 2>&1 | less -R', "sh", value])
+            return True, f"Showing {value}."
+        if kind == "package":
+            self.details(["sh", "-c", '(pacman -Qi -- "$1" 2>/dev/null || pacman -Si -- "$1" 2>&1) | less -R',
+                          "sh", value])
+            return True, f"Showing {value}."
+        if kind == "url":
+            self.hypr.open_url(value)
+            return True, "Opened the page in the browser."
+        if kind == "path":
+            path = Path(value).expanduser()
+            name = path.name or str(path)
+            if not path.exists():
+                return False, f"{name} is not there."
+            if path.is_dir():
+                self.details(["sh", "-c", 'ls -la --color=always -- "$1" | less -R', "sh", str(path)])
+                return True, f"Showing {name}."
+            if _is_text(path):
+                self.details(["less", "-R", "--", str(path)])
+                return True, f"Showing {name}."
+            if shutil.which("xdg-open") is None:
+                return False, f"Nothing here opens {name}."
+            self._spawn(["xdg-open", str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
+            return True, f"Opened {name}."
+        return False, f"Nothing here opens a {kind}."
+
     def _history(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "history"])
         return True, "Opened the history."
@@ -520,6 +554,22 @@ class Launcher:
     def _shutdown(self, _a: Action) -> tuple[bool, str]:
         self._run(["systemctl", "poweroff"], capture_output=True, check=True, timeout=10)
         return True, "Shutting down."
+
+
+def _is_text(path: Path) -> bool:
+    """Plain text, going by its first few KB: no NUL byte, and it decodes."""
+    try:
+        with path.open("rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return False
+    if b"\0" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return e.start >= len(head) - 3   # a character cut by the 4 KB edge is still text
+    return True
 
 
 def _boot_id() -> str:

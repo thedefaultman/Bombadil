@@ -132,6 +132,10 @@ class FakeHypr:
         self.calls.append(("panel", name, show))
         return f"panel {name} shown"
 
+    def open_url(self, url):
+        self.calls.append(("open_url", url))
+        return "panel browser shown"
+
     def dispatch(self, lua):
         self.calls.append(("dispatch", lua))
         return "ok"
@@ -408,3 +412,65 @@ def test_picture_actions_have_words_for_the_line(home):
     a = launcher.match("my disks", [])
     assert launcher.Launcher.doing(a) == "Drawing your disks"
     assert launcher.Launcher.failed(a) == "Could not draw your disks"
+
+
+# -- what a box in a picture names --
+
+def _drawn(spawned):
+    """What the drawer was asked to run: foot's own arguments dropped."""
+    return [a[3:] for a in spawned if a[0].endswith("foot")]
+
+
+def test_a_service_and_a_package_open_in_the_drawer_as_arguments_never_as_shell_text(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    assert lx.open_thing("unit", "NetworkManager.service") == (True, "Showing NetworkManager.service.")
+    assert lx.open_thing("package", "wireguard-tools") == (True, "Showing wireguard-tools.")
+    first, second = _drawn(spawned)
+    assert first[:2] == ["sh", "-c"] and "systemctl status" in first[2] and first[-2:] == ["sh", "NetworkManager.service"]
+    assert "NetworkManager" not in first[2]          # the name is $1, not part of the script
+    assert "pacman -Qi" in second[2] and second[-1] == "wireguard-tools"
+
+
+def test_a_folder_a_text_file_and_another_file_each_open_their_own_way(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    (home / "notes").mkdir()
+    (home / "notes" / "todo.txt").write_text("call mum\n")
+    (home / "notes" / "photo.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
+    assert lx.open_thing("path", str(home / "notes")) == (True, "Showing notes.")
+    assert lx.open_thing("path", str(home / "notes" / "todo.txt")) == (True, "Showing todo.txt.")
+    assert lx.open_thing("path", str(home / "notes" / "photo.bin")) == (True, "Opened photo.bin.")
+    folder, text = _drawn(spawned)[:2]
+    assert "ls -la" in folder[2] and folder[-1] == str(home / "notes")
+    assert text == ["less", "-R", "--", str(home / "notes" / "todo.txt")]
+    assert spawned[-1] == ["xdg-open", str(home / "notes" / "photo.bin")]
+
+
+def test_a_path_that_is_gone_or_unopenable_says_so(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    assert lx.open_thing("path", str(home / "nope.txt")) == (False, "nope.txt is not there.")
+    (home / "x.bin").write_bytes(b"\x00\x01")
+    monkeypatch.setattr(launcher.shutil, "which", lambda b: None if b == "xdg-open" else f"/usr/bin/{b}")
+    assert lx.open_thing("path", str(home / "x.bin")) == (False, "Nothing here opens x.bin.")
+    assert lx.open_thing("turn", "3")[0] is False and spawned == []
+
+
+def test_a_tilde_path_opens_in_the_home_folder(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    (home / "a.txt").write_text("hello")
+    assert lx.open_thing("path", "~/a.txt") == (True, "Showing a.txt.")
+    assert _drawn(spawned)[0] == ["less", "-R", "--", str(home / "a.txt")]
+
+
+def test_a_page_opens_in_the_browser_panel(home):
+    h = FakeHypr()
+    lx = launcher.Launcher(hyprland=h, snaps=Snaps(0))
+    assert lx.open_thing("url", "https://www.wireguard.com/quickstart/") == (True, "Opened the page in the browser.")
+    assert h.calls == [("open_url", "https://www.wireguard.com/quickstart/")]
+
+
+def test_text_is_told_from_binary_by_its_first_bytes(tmp_path):
+    (tmp_path / "t").write_text("héllo wörld\n" * 500)           # multi-byte characters may straddle the 4 KB edge
+    (tmp_path / "b").write_bytes(b"MZ\x90\x00\x03")
+    (tmp_path / "l").write_bytes(b"caf\xe9 latin-1")
+    assert launcher._is_text(tmp_path / "t") and not launcher._is_text(tmp_path / "b")
+    assert not launcher._is_text(tmp_path / "l") and not launcher._is_text(tmp_path / "missing")

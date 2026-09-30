@@ -13,6 +13,9 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "details", "turn": n}       show a turn's commands and output (drawer);
                                                         again while it shows closes it
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
+                   {"type": "open", "kind": "path"|"unit"|"package"|"url"|"turn", "value": "..."}
+                                                        open what a box in a picture names; answered
+                                                        by a "local" event with action "open"
                    {"type": "summon"}                   ask the bar to take the keyboard (Super)
                    {"type": "card", "card": {...}}      a picture to draw (os-mcp's show_card and system_map);
                                                         answered with {"type": "card_ack", "shown": bool}
@@ -201,6 +204,8 @@ class AgentD:
             self._background(self.details(msg.get("turn")))
         elif t == "close_details":
             self._background(asyncio.to_thread(self.launcher.close_details))
+        elif t == "open":
+            self._background(self.open_thing(msg.get("kind"), msg.get("value")))
         elif t == "summon":
             await self.broadcast({"type": "summon"})
         elif t == "card":
@@ -369,6 +374,30 @@ class AgentD:
             self.notes = self.notes[-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "picture",
                         "target": action.target, "result": text, "ok": ok})
+
+    async def open_thing(self, kind, value):
+        """A click on a box in a picture. The bar sends what the card said; it is checked again here,
+        since the card may have come from any process that can reach the socket."""
+        target, error = cards.check_opens({"kind": kind, "value": value})
+        if target is None:
+            await self.event("local", turn=None, action="open", phase="done", ok=False, text=f"Cannot open that: {error}.")
+            return
+        if target["kind"] == "turn":
+            turn = int(target["value"])
+            if turn != self.current and turn not in self.turn_logs:
+                await self.event("local", turn=None, action="open", phase="done", ok=False,
+                                 text=f"The details of turn {turn} are not kept.")
+                return
+            await self.details(turn)
+            return
+        ok, text = await asyncio.to_thread(self._open, target)
+        await self.event("local", turn=None, action="open", target=target["value"], phase="done", ok=ok, text=text)
+
+    def _open(self, target: dict) -> tuple[bool, str]:
+        try:
+            return self.launcher.open_thing(target["kind"], target["value"])
+        except Exception as e:  # noqa: BLE001 - one plain line, whatever broke
+            return False, f"Could not open {target['value']}: {launcher._reason(e)}"
 
     def _stream_card(self, ev: dict):
         """Feed a provider event to the show_card follower; the card so far, when it grew."""
