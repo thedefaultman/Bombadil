@@ -719,7 +719,8 @@ QtObject {
             rails: rails, order: order, screen: screen, present: present, faces: faces, covered: covered,
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
-            now: { visible: nowVisible, phase: _phase, model: nowModel }
+            now: { visible: nowVisible, phase: _phase, model: nowModel },
+            watching: watchModel, needs: needsModel
         }
     }
 }

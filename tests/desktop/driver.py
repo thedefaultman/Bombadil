@@ -434,6 +434,46 @@ h = wait(ev("local", phase="done"), 10, n)
 check("Needs you cannot be hidden", h and not h.get("ok") and "cannot be hidden" in (h.get("text") or ""), h and h.get("text"))
 key("Escape")
 
+# 9. Watching and Needs you: the jobs table and the coding sessions agentd sends, injected as the
+# shell would get them (real jobs run under systemd in the VM smoke; no systemd here).
+def inject(msg):
+    desk_ipc("inject", json.dumps(msg))
+
+
+now_s = time.time()
+inject({"type": "jobs", "jobs": [
+    {"id": "a1b2c3", "title": "Ubuntu 26.04 ISO", "kind": "job", "state": "running", "started": now_s - 240,
+     "deadline": None, "ended": None, "pct": 43.0, "last": "12 MB/s", "unit": "bombadil-job-a1b2c3"},
+    {"id": "d4e5f6", "title": "Timer, 10 min", "kind": "timer", "state": "running", "started": now_s - 200,
+     "deadline": now_s + 400, "ended": None, "pct": None, "last": "", "unit": "bombadil-timer-d4e5f6"},
+    {"id": "0a0b0c", "title": "Build the image", "kind": "watch", "state": "failed", "started": now_s - 60,
+     "deadline": None, "ended": now_s - 5, "pct": None, "last": "pacman: could not resolve host",
+     "unit": "bombadil-job-0a0b0c"}]})
+inject({"type": "dev", "sessions": [
+    {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
+     "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
+     "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
+     "lines": []},
+    {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
+     "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
+     "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
+    "attention": ["rev", "bld"], "front": "", "line": ""})
+time.sleep(1.5)
+st = desk_state()
+shot("26-desk-watching-needs")
+w, nd = st.get("watching", {}), st.get("needs", {})
+check("Watching shows the meter, the timer and the failed job", [r["key"] for r in w.get("rows", [])] == ["a1b2c3", "d4e5f6", "0a0b0c"], w.get("rows"))
+check("the meter row carries 43% and a stop", w["rows"][0]["kind"] == "meter" and abs(w["rows"][0]["meter"] - 0.43) < 1e-6 and w["rows"][0]["remove"], w["rows"][0])
+check("the failed row says why in one line, with Why?", w["rows"][2]["button"] == "Why?" and "resolve host" in w["rows"][2]["sub"], w["rows"][2])
+check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
+check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
+      and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
+inject({"type": "jobs", "jobs": []})
+time.sleep(0.8)
+st = desk_state()
+check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
     p.terminate()
