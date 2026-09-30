@@ -80,7 +80,8 @@ your own with the same name takes its place.
   560 × 680 when not set). After that the size the user leaves the window at is kept
   between runs. An edit that changes `width`/`height` resizes the window to the new values.
 - Design for about 1200×760 at most; bigger windows are shrunk to fit the screen (the
-  focused monitor without the bar, less a 24 px margin), so lay out with `Layout`s that
+  focused monitor without the bar, less a 24 px margin and room for the finished line above
+  the prompt), so lay out with `Layout`s that
   can shrink rather than fixed sizes.
 
 ## Where it shows up
