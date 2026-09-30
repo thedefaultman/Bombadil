@@ -334,10 +334,10 @@ async def test_key_binds_reach_the_bar(home):
     bombadil = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
-    for _ in range(5):
+    for n in range(1, 6):
         proc = await asyncio.create_subprocess_exec(sys.executable, str(bombadil), "pill")
         assert await asyncio.wait_for(proc.wait(), 5) == 0
-        assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
+        assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon", "id": n}   # ids count up
     w.close()
     server.cancel()
 
@@ -376,7 +376,7 @@ async def test_a_broken_app_folder_never_costs_a_client(home):
     bombadil = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
     proc = await asyncio.create_subprocess_exec(sys.executable, str(bombadil), "pill")
     assert await asyncio.wait_for(proc.wait(), 5) == 0
-    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
+    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon", "id": 1}
     w.close()
     server.cancel()
 

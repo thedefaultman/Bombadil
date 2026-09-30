@@ -215,26 +215,47 @@ def show(turn_file: Path | None, live: bool = False, out=sys.stdout, wait: bool 
 
 
 def history_lines(limit: int = 40, color: bool = False) -> list[str]:
+    """What the ledger holds, a line each. A row of a kind this does not know, or one with keys
+    missing, is shown as far as it can be or left out; it never costs the rest."""
     c = _color(color)
     rows = read_log(paths.turns_log())[-limit:]
     out = []
     day = None
     for e in rows:
-        t = time.localtime(e.get("t", 0))
-        d = time.strftime("%A %d %B", t)
+        if not isinstance(e, dict):
+            continue
+        t = _localtime(e.get("t"))
+        when = time.strftime("%H:%M", t) if t else "--:--"
+        kind = e.get("kind")
+        if kind == "local":
+            prompt, result = str(e.get("prompt") or ""), str(e.get("result") or "")
+            line = c(DIM, f"  {when}  " + (f"{prompt}: {result}" if prompt and result else prompt or result))
+        elif kind == "improve":
+            # What Bombadil changed about itself, in the plain sentence it wrote.
+            line = c(DIM, f"  {when}  " + str(e.get("title") or "Changed something about itself."))
+        elif kind is None:
+            end = str(e.get("summary") or "") or ("Stopped." if e.get("stopped") else "")
+            if not end and str(e.get("result") or "").strip():
+                end = str(e["result"]).strip().splitlines()[0][:80]
+            snap = f"  (restore point {e['snapshot']})" if e.get("snapshot") else ""
+            line = f"  {when}  {e.get('prompt') or ''}" + (c(DIM, f"  {end}") if end else "") + c(DIM, snap)
+        else:
+            continue   # a kind from a newer Bombadil
+        d = time.strftime("%A %d %B", t) if t else day
         if d != day:
             out.append(c(BOLD, d))
             day = d
-        when = time.strftime("%H:%M", t)
-        if e.get("kind") == "local":
-            out.append(c(DIM, f"  {when}  {e.get('prompt', '')}: {e.get('result', '')}"))
-            continue
-        end = e.get("summary") or ("Stopped." if e.get("stopped") else "")
-        if not end:
-            end = (e.get("result") or "").strip().splitlines()[0][:80] if (e.get("result") or "").strip() else ""
-        snap = f"  (restore point {e['snapshot']})" if e.get("snapshot") else ""
-        out.append(f"  {when}  {e.get('prompt', '')}" + (c(DIM, f"  {end}") if end else "") + c(DIM, snap))
+        out.append(line)
     return out or ["Nothing yet."]
+
+
+def _localtime(t) -> time.struct_time | None:
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        return None
+    try:
+        return time.localtime(t)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def wait_for_key(prompt: str = "Press Esc to close.") -> None:
