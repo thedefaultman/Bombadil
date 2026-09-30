@@ -363,7 +363,7 @@ class AgentD:
                          text=self.launcher.doing(action))
         try:
             card = (await asyncio.to_thread(sysmap.capture, kind, unit, provider=self.provider.name))["card"]
-            text, ok = card.get("say") or card["title"], True
+            text, ok = f"Showing {action.title}.", True   # the picture carries its own sentence
         except sysmap.Unavailable as e:
             card, text, ok = None, str(e), False
         if card is not None:

@@ -39,6 +39,22 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
 
+## Why lines and pictures
+
+Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
+step (`because`) and what the turn read from outside (`after`); the status line shows both on
+hover. A bare "why" during a turn is answered from that record.
+
+`show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
+over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
+service, disks, sound or screens from the real machine in parallel, under half a second). `agentd`
+broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
+agent gets the same picture back in words. A card still being written streams in a box at a time;
+a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
+box that names a file, service, package, page or turn comes back as `{"type":"open"}`.
+`shell/Bombadil` is a symlink to `share/qml/Bombadil`: Quickshell cannot import from outside its
+own folder.
+
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,

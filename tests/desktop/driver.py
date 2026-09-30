@@ -367,15 +367,16 @@ shot("21-details-closed")
 
 # 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
 # the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
-def dark_pixels(x, y, h):
-    """How many pixels of a one-pixel-wide strip are the bar's dark glass rather than the wallpaper."""
+def glass_pixels(x, y, h):
+    """How many pixels of a one-pixel-wide strip are the bar's glass (#e61a1d21 over a dark screen)."""
     r = subprocess.run(["grim", "-g", f"{x},{y} 1x{h}", "-t", "ppm", "-"], env=env, capture_output=True)
     data = r.stdout
     try:
         head, rest = data.split(b"\n255\n", 1)
     except ValueError:
         return -1
-    return sum(1 for i in range(0, len(rest) - 2, 3) if rest[i] < 45 and rest[i + 1] < 48)
+    return sum(1 for i in range(0, len(rest) - 2, 3)
+               if 21 <= rest[i] <= 30 and 24 <= rest[i + 1] <= 34 and 28 <= rest[i + 2] <= 38)
 
 
 m = mark()
@@ -391,8 +392,8 @@ end = wait(ev("turn_end"), 60, m)
 check("the turn that drew it ends plainly", end is not None and not end.get("stopped"), end and end.get("summary"))
 time.sleep(1.0)
 shot("22-picture")
-with_card = dark_pixels(200, 300, 420)
-check("Quickshell draws the picture above the line", with_card > 150, with_card)
+with_card = glass_pixels(200, 300, 420)
+check("Quickshell draws the picture above the line", with_card > 80, with_card)
 qs_log = (OUT / "quickshell.log").read_text() if (OUT / "quickshell.log").exists() else ""
 bad = [ln for ln in qs_log.splitlines() if re.search(r"CardHost|Diagram|Theme\.qml|ReferenceError|TypeError", ln)]
 check("the bar loads the kit's Diagram without QML errors", not bad, bad[:3])
@@ -400,7 +401,7 @@ summon()
 key("Escape")
 time.sleep(0.8)
 shot("22-picture-away")
-without = dark_pixels(200, 300, 420)
+without = glass_pixels(200, 300, 420)
 check("Esc puts the picture away", without < with_card // 2, f"{with_card} -> {without}")
 
 before = api_requests()

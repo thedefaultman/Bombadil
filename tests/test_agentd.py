@@ -930,7 +930,7 @@ async def test_a_picture_word_draws_the_machine_with_no_model_and_no_turn(home, 
     assert kinds == [("local", "start"), ("card", None), ("local", "done")]
     assert msgs[0]["text"] == "Drawing how you're connected"
     assert msgs[1]["turn"] is None and msgs[1]["card"]["source"] == "network"
-    assert msgs[2]["ok"] is True and msgs[2]["text"] == "All of it answers."
+    assert msgs[2]["ok"] is True and msgs[2]["text"] == "Showing how you're connected."
     assert calls == [("network", "")] and d.turns == 0
     # The agent is told at its next turn what the user was shown.
     assert d.notes and "showed a picture" in d.notes[0] and "How you're connected" in d.notes[0]
