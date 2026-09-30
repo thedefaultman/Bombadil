@@ -117,6 +117,21 @@ keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
+# The voice: the word `voice` opens the name and voice card with the keyboard already on it, and a typed
+# name and Enter save it. (The card is asked by itself only at the first sign-in, which the ISO has not
+# been through, so there is no persona.toml yet.)
+persona_file=/home/user/.config/bombadil/persona.toml
+persona_has() { grep -q "$1" "$persona_file"; }
+check no-persona-before-voice bash -c "! test -e $persona_file"
+keys meta_l
+keys v o i c e ret
+check voice-word-answered wait_for 30 history_has "voice: Pick a voice"
+shot voice-card
+keys shift+d a n i e l ret
+check voice-name-saved wait_for 30 persona_has '^name = "Daniel"'
+check voice-default-merry persona_has '^voice = "merry"'
+shot voice-saved
+
 
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'

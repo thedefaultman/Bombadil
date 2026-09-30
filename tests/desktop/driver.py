@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from pathlib import Path
 
 REPO = Path("/repo")
@@ -158,6 +159,15 @@ def api_requests():
         return 0
 
 
+def until(pred, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def sleeps():
     r = run("ps", "-eo", "pid,user,args")
     return [line for line in r.stdout.splitlines() if "sleep 120" in line and "ps -eo" not in line]
@@ -166,6 +176,76 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
+
+# 0. Bombadil says hello. No persona.toml yet, so the first bar to connect gets the card (name and voice),
+# with the keyboard already on it; Enter saves, the greeting follows, and the next turn's system prompt
+# carries the persona. Then the launcher word `voice` reopens it.
+HOME = Path(os.environ["HOME"])
+persona_toml = HOME / ".config" / "bombadil" / "persona.toml"
+said_json = HOME / ".local" / "state" / "bombadil" / "said.json"
+turns_jsonl = HOME / ".local" / "state" / "bombadil" / "turns.jsonl"
+greeted = xdg / "bombadil" / "greeted"
+
+
+def persona_now():
+    try:
+        return tomllib.loads(persona_toml.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def boot_rows():
+    try:
+        rows = [json.loads(line) for line in turns_jsonl.read_text(encoding="utf-8").splitlines()]
+    except (OSError, ValueError):
+        return []
+    return [r for r in rows if r.get("action") == "boot"]
+
+
+check("the card is asked on the first sign-in", until(lambda: persona_now() is not None, 20), persona_now())
+time.sleep(1.5)
+shot("00a-card")
+p0 = persona_now() or {}
+check("defaults are written and this login counts as greeted", p0.get("voice") == "merry" and greeted.exists(), p0)
+typ("Daniel")
+shot("00b-card-typed")
+key("Return")
+check(
+    "Enter on the card saves the name, with no summon first",
+    until(lambda: (persona_now() or {}).get("name") == "Daniel", 10),
+    persona_now(),
+)
+time.sleep(1.2)
+shot("00c-welcome-line")
+check(
+    "the first hello was shown, and logged as a boot row that said something",
+    until(lambda: any(r.get("greeted") for r in boot_rows()), 15),
+    boot_rows(),
+)
+ledger = json.loads(said_json.read_text()) if said_json.exists() else {}
+check("the ledger has the day it began", bool(ledger.get("setup_day")), ledger)
+
+# the word `voice` reopens the card with what is saved; Down picks the next voice, Enter keeps it
+summon()
+typ("voice")
+n = mark()
+key("Return")
+vd = wait(ev("local", action="voice", phase="done"), 10, n)
+time.sleep(1.0)
+shot("00d-voice-word")
+check("the word voice answers locally", vd and vd.get("ok"), vd)
+key("Down")
+time.sleep(0.3)
+shot("00e-voice-plain")
+key("Return")
+check(
+    "Down then Enter picks the Plain voice and keeps the name",
+    until(lambda: (persona_now() or {}).get("voice") == "plain", 10),
+    persona_now(),
+)
+check("the name is unchanged", (persona_now() or {}).get("name") == "Daniel", persona_now())
+time.sleep(0.8)
+shot("00f-after-voice")
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
@@ -197,6 +277,12 @@ end = wait(ev("turn_end"), 40, n)
 time.sleep(0.6)
 shot("04-ffmpeg-done")
 check("ffmpeg turn ends changed, with a summary", end and end.get("changed"), end)
+reqs = [json.loads(x) for x in (OUT / "api-requests.jsonl").read_text().splitlines()]
+check(
+    "the turn's system prompt carried the name and voice",
+    any(r.get("persona") and "install ffmpeg" in r.get("first", "") for r in reqs),
+    [(r.get("persona"), r.get("first", "")[:30]) for r in reqs[:4]],
+)
 
 # 2. make me a password manager: the line counts lines as the QML streams.
 summon()
@@ -336,15 +422,6 @@ def focused_app():
             return node.get("app_id") or node.get("name")
         todo += node.get("nodes", []) + node.get("floating_nodes", [])
     return None
-
-
-def until(pred, timeout=10):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if pred():
-            return True
-        time.sleep(0.1)
-    return False
 
 
 # 7. every way out of the drawer: Esc in it, Details again, Esc in the pill. (Clicks on the line
