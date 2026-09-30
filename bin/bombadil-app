@@ -1,41 +1,12 @@
 #!/usr/bin/env python3
-"""bombadil-app: run, list and create generated native apps."""
+"""bombadil-app: run, check and manage generated native apps (see src/bombadil/appkit/cli.py)."""
 
-import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from bombadil import apps  # noqa: E402
-
-
-def main() -> int:
-    p = argparse.ArgumentParser(prog="bombadil-app")
-    sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="open an app as a native window")
-    r.add_argument("name")
-    sub.add_parser("list", help="list generated apps")
-    c = sub.add_parser("create", help="create an app from a QML file")
-    c.add_argument("title")
-    c.add_argument("qml", type=Path)
-    c.add_argument("--python", type=Path)
-    args = p.parse_args()
-
-    if args.cmd == "run":
-        from bombadil import app_runtime
-        return app_runtime.run(args.name)
-    if args.cmd == "list":
-        for a in apps.list_apps():
-            print(f"{a.name:20} {a.title}  {a.path}")
-        return 0
-    if args.cmd == "create":
-        a = apps.create(args.title, args.qml.read_text(),
-                        args.python.read_text() if args.python else None)
-        print(a.path)
-        return 0
-    return 2
-
+from bombadil.appkit.cli import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())
