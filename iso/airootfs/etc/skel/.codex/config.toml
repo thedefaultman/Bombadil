@@ -1,7 +1,0 @@
-# Codex on Bombadil. `notify` tells the dots beside the pill when a turn is done, and the
-# terminal notification goes out as OSC 9 (zellij passes it on to foot).
-notify = ["bombadil-signal", "codex-notify"]
-check_for_update_on_startup = false
-
-[tui]
-notification_method = "osc9"

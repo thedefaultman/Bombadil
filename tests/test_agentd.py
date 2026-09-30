@@ -28,16 +28,15 @@ async def _read_until(r, kind):
 async def test_turn_round_trip(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
-            break
-        await asyncio.sleep(0.02)
+    await _ready(d)
     r, w = await _client(d.socket_path)
     first = json.loads(await r.readline())
-    assert first == {"type": "status", "busy": False, "provider": "fake", "turns": 0,
+    assert first == {"type": "status", "busy": False, "provider": "fake", "setup": "ready", "turns": 0,
                      "snapshots": False, "queued": 0, "turn": None, "queue": []}
     entries = json.loads(await r.readline())
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
+    setup = json.loads(await r.readline())
+    assert setup["type"] == "setup" and setup["state"] == "ready" and setup["actions"] == []
     sessions = json.loads(await r.readline())
     assert sessions["type"] == "dev" and sessions["sessions"] == [] and sessions["line"] == ""
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
@@ -69,16 +68,26 @@ class Scripted(providers.Claude):
         self.seen_sessions.append(turn.session_id)
         return ["python3", "-c", self.script]
 
+    def signed_in(self):
+        return True
 
-async def _start(d):
-    server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
+
+async def _ready(d, state="ready"):
+    """Wait for the socket, and for agentd to know whether its provider is signed in."""
+    for _ in range(250):
+        if d.socket_path.exists() and d.access != "checking":
             break
         await asyncio.sleep(0.02)
+    assert d.access == state
+
+
+async def _start(d, state="ready"):
+    server = asyncio.create_task(d.serve())
+    await _ready(d, state)
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     await r.readline()   # coding sessions
     return server, r, w
 
@@ -532,6 +541,7 @@ async def _another(d):
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     await r.readline()   # coding sessions
     return r, w
 
@@ -571,7 +581,7 @@ async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
     other_r, other_w = await _another(d)
-    assert await _silent(r) and await _silent(other_r)   # the greeting is still status, entries and the coding sessions
+    assert await _silent(r) and await _silent(other_r)   # the greeting is still status, entries, setup and the coding sessions
     await _say(w, {"type": "desk", "op": "get"})
     state = json.loads(await asyncio.wait_for(r.readline(), 5))
     assert state == d.desk.snapshot() and state["type"] == "desk" and state["folded"] is False

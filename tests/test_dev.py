@@ -446,8 +446,10 @@ def test_managed_hooks_cover_the_events_the_dots_need():
     for ev in ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop", "Interrupt",
                "SessionEnd"):
         assert codex["hooks"][ev][0]["hooks"][0]["command"] == "bombadil-signal codex", ev
-    skel = tomllib.loads((ROOT / "iso/airootfs/etc/skel/.codex/config.toml").read_text())
-    assert skel["notify"] == ["bombadil-signal", "codex-notify"]
+    system = tomllib.loads((ROOT / "iso/airootfs/etc/codex/config.toml").read_text())
+    assert system["notify"] == ["bombadil-signal", "codex-notify"]
+    assert system["check_for_update_on_startup"] is False and system["tui"]["notification_method"] == "osc9"
+    assert not (ROOT / "iso/airootfs/etc/skel/.codex").exists()   # a skel copy is never updated on an install
 
 
 def test_paths_default_to_the_projects_folder(home):

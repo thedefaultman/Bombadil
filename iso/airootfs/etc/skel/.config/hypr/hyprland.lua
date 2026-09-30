@@ -10,7 +10,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("mako")
     -- One foot server for the coding sessions' windows, so a session's window rises at once.
     hl.exec_cmd("foot --server")
-    hl.exec_cmd("bombadil-setup --first-run")
+    -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
 hl.config({
