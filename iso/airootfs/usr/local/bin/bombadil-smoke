@@ -119,6 +119,15 @@ keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
+# A tap that did nothing: was it the bind (Hyprland never ran `bombadil pill`) or the pill? Say which
+# in the log: ask for the pill by hand and type the word again.
+if ! launcher_ran browser "Opened the browser" "$before"; then
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1)"
+  as_user bombadil pill; sleep 3
+  keys b r o w s e r ret
+  if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
+  else say "DIAG by hand the pill did not take the word either"; fi
+fi
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 # Alt+Space opens the pill too, for hosts that keep Super.
