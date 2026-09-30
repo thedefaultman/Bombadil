@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# scratch-up [fresh]: boot a headless scratch copy of the installed VM's disk (no window, its own
+# sockets in out/scratch), to try a branch or a draft PR on the same installed system without
+# touching the real VM. `fresh` copies the disk again first (BASE, default out/bombadil.qcow2;
+# copy from a backup taken while the VM was off for a clean copy).
+#
+# WARNING: the copy carries the real VM's Claude login. A model turn on it makes the CLI refresh
+# the OAuth token, tokens rotate, and the copy and the real VM then fight over one chain (the real
+# one may be logged out). Use launcher words and `!` commands on a copy, or point agentd at the
+# scripted API (scratch_api.py, ANTHROPIC_BASE_URL and a fake key).
+#
+# Then: with-scratch vmlogin ; with-scratch vmsh 'uname -r' ; with-scratch vmin shot out.png
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+tree="${BOMBADIL_TREE:-/root/Bombadil}"
+d="$tree/out/scratch"; base="${BASE:-$tree/out/bombadil.qcow2}"
+export VMDIR="$d" VMFIFO=/run/bombadil-scratch-serial.in
+mkdir -p "$d"
+if [[ "${1:-}" == fresh || ! -f "$d/scratch.qcow2" ]]; then
+  pkill -f "name BombadilScratch" || true; sleep 1
+  [[ -f "$base" ]] || { echo "no disk to copy at $base"; exit 2; }
+  echo "Copying $base (a few GB)..."
+  cp --reflink=auto "$base" "$d/scratch.qcow2"
+fi
+pgrep -f "name BombadilScratch" >/dev/null && { echo "scratch VM already running"; exit 0; }
+rm -f "$d/qmp.sock" "$d/serial.sock"; : > "$d/serial.log"
+ovmf=""
+for f in /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+  [[ -f "$f" ]] && { ovmf="$f"; break; }
+done
+[[ "$ovmf" ]] || { echo "no OVMF firmware found"; exit 2; }
+# The audio device gets a null backend: a sink exists in the guest, nothing plays on the host.
+setsid nohup qemu-system-x86_64 -enable-kvm -m "${MEM:-3G}" -smp "${SMP:-4}" -cpu host -name BombadilScratch \
+  -device virtio-vga,xres=1600,yres=900 -display none -audiodev none,id=snd0 \
+  -device virtio-keyboard -device virtio-tablet -device intel-hda -device hda-output,audiodev=snd0 \
+  -netdev user,id=n0 -device virtio-net,netdev=n0 -bios "$ovmf" \
+  -qmp "unix:$d/qmp.sock,server,nowait" \
+  -chardev "socket,id=s0,path=$d/serial.sock,server=on,wait=off,logfile=$d/serial.log" -serial chardev:s0 \
+  -drive "file=$d/scratch.qcow2,if=virtio,format=qcow2" >"$d/qemu.log" 2>&1 < /dev/null &
+sleep 3
+setsid nohup python3 "$here/serialpump" >"$d/pump.log" 2>&1 < /dev/null &
+sleep 1
+echo "Scratch VM up (pid $(pgrep -f 'name BombadilScratch')). An older install shows GRUB's menu and waits: press Enter"
+echo "with: $here/with-scratch vmin keys ret   then: $here/with-scratch vmlogin"

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# vmwatch: while the Bombadil VM runs, keep a screenshot every few seconds when the screen changed,
+# in $VMDIR/shots/HHMMSS.png, so what happened in a session can be looked at afterwards.
+set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+tree="${BOMBADIL_TREE:-/root/Bombadil}"
+d="${VMDIR:-$tree/out/vm}"; mkdir -p "$d/shots"
+last=""
+while pgrep -f "qemu-system-x86_64.*-name Bombadil " >/dev/null; do
+  f="$d/shots/$(date +%H%M%S).png"
+  if timeout 20 "$here/vmin" shot "$f" 2>/dev/null; then
+    h=$(md5sum < "$f" | cut -c1-32)
+    if [[ "$h" == "$last" ]]; then rm -f "$f"; else last=$h; fi
+  fi
+  sleep "${EVERY:-10}"
+done
+echo "vm stopped at $(date +%H:%M:%S)"
