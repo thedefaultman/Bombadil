@@ -63,6 +63,11 @@ snapper --no-dbus -c root create-config /
 btrfs subvolume delete /.snapshots
 mkdir /.snapshots
 mkinitcpio -P
+# Straight into Bombadil: no menu unless Esc is held at power-on.
+for kv in GRUB_TIMEOUT_STYLE=hidden GRUB_TIMEOUT=1 GRUB_TERMINAL_OUTPUT=console; do
+  k=${kv%%=*}
+  if grep -q "^#\?$k=" /etc/default/grub; then sed -i "s|^#\?$k=.*|$kv|" /etc/default/grub; else echo "$kv" >> /etc/default/grub; fi
+done
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 CH

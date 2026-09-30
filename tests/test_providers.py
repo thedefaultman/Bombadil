@@ -13,6 +13,7 @@ def test_claude_command_and_events(tmp_path):
     assert "--dangerously-skip-permissions" in cmd and "--resume" in cmd and "--model" in cmd
     cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text())
     assert cfg["mcpServers"]["bombadil-os"]["command"] == "/usr/bin/bombadil-os-mcp"
+    assert cmd[cmd.index("--mcp-config") + 2] == "--strict-mcp-config"   # no claude.ai connectors beside it
 
     lines = [
         json.dumps({"type": "system", "subtype": "init", "session_id": "s1",
@@ -102,6 +103,30 @@ def test_claude_stopped_mid_tool_ends_with_its_reason():
     assert any(e["kind"] == "tool_result" and e["error"] for e in ev)
 
 
+def test_claude_raw_diagnostics_after_a_stop_are_not_the_result():
+    p = providers.Claude("x")
+    diag = "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+    ev = list(p.events([json.dumps({"type": "result", "result": diag, "is_error": False, "session_id": "s1"})]))
+    assert ev[0]["kind"] == "result" and ev[0]["text"] == "" and ev[0]["ok"] is True
+    ev = list(p.events([json.dumps({"type": "result", "result": "Done.", "is_error": False})]))
+    assert ev[0]["text"] == "Done."
+
+
+def test_the_real_cli_puts_the_stop_diagnostic_in_errors_with_a_null_result():
+    # Captured from claude 2.x after Stop: the words are in errors[], "result" is null.
+    p = providers.Claude("x")
+    line = json.dumps({
+        "type": "result", "subtype": "error_during_execution", "is_error": True, "result": None,
+        "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],
+        "terminal_reason": "aborted_streaming", "session_id": "s1"})
+    ev = list(p.events([line]))[0]
+    assert ev["text"] == "" and ev["ok"] is False and ev["terminal_reason"] == "aborted_streaming"
+    # A real failure next to the diagnostic still says what failed.
+    line = json.dumps({"type": "result", "is_error": True, "result": None,
+                       "errors": ["[ede_diagnostic] x", "No conversation found with session ID: gone"]})
+    assert list(p.events([line]))[0]["text"] == "No conversation found with session ID: gone"
+
+
 def test_claude_tool_results_as_text_blocks():
     p = providers.Claude("x")
     line = json.dumps({"type": "user", "message": {"content": [{
@@ -152,6 +177,27 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def test_only_the_clis_own_retry_notices_are_not_progress():
+    p = providers.Claude("x")
+    delta = json.dumps({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                          "delta": {"type": "thinking_delta", "thinking": "..."}}})
+    assert list(p.events([delta])) == []   # shows nothing ...
+    assert p.is_progress(delta)            # ... but it is the model working
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "thinking_tokens", "tokens": 12}))
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "init"}))
+    assert p.is_progress("not json at all")
+    for subtype in ("api_retry", "status"):
+        assert not p.is_progress(json.dumps({"type": "system", "subtype": subtype}))
+    assert providers.Codex("x").is_progress("anything")
+
+
+def test_codex_reports_a_search_once_with_no_id_to_wait_for():
+    p = providers.Codex("x")
+    ev = list(p.events([json.dumps({"type": "item.completed",
+                                    "item": {"id": "w1", "type": "web_search", "query": "arch news"}})]))
+    assert ev == [{"kind": "tool", "name": "WebSearch", "input": {"query": "arch news"}}]
 
 
 # `claude auth login` as Claude Code 2.1.283 runs it (captured 2026-09-27): the printed page

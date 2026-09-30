@@ -33,7 +33,12 @@ zellij
 nautilus
 chromium
 pipewire
+pipewire-audio
+pipewire-alsa
+pipewire-pulse
 wireplumber
+alsa-utils
+sof-firmware
 inter-font
 noto-fonts
 noto-fonts-emoji

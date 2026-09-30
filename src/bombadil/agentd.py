@@ -116,6 +116,17 @@ SEND_TIMEOUT = 5.0
 # After a turn's process exits, how long its output may take to drain. Longer means a job it
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
+# The CLI says nothing while it retries an unreachable provider. With no tool running and no event
+# for this long, the line says so instead of staying on its last words; the watchdog looks every tick.
+NO_PROGRESS_SECS = 30.0
+WATCHDOG_TICK = 5.0
+# What a failed result says when the account, not the request, is the problem (then the provider's
+# own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
+# Anything else is passed through as it came.
+LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit")
+LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
+RATE_WORDS = ("rate limit", "rate_limit", "too many requests")
+RATE_TEXT = "The provider is rate limiting requests; try again in a minute."
 OFFLINE_POLL = 5.0   # while there is no way to the sign-in page, look again this often
 READY_LINE_SECONDS = 120.0   # how long "Signed in to Claude" is worth saying
 # Changes to the desk that come close together go out as the state they end in.
@@ -321,6 +332,14 @@ class AgentD:
                              else self.signin_asked())
         elif t == "open_url":
             self._background(self.open_url(str(msg.get("url", "")), msg.get("signin")))
+
+    async def _step_line(self, text: str):
+        """A live step line about the turn itself (the CLI is up, quiet, back), with what the turn
+        has changed so far like every other step line."""
+        narrator = self.narrator
+        await self.event("status", text=text, risk=None, command=None, source="step",
+                         touched=narrator.touched_counts() if narrator else {},
+                         touched_text=narrator.touched_text() if narrator else "")
 
     def _status(self) -> dict:
         # Busy from the moment a prompt is accepted, so Esc stops it even before its turn starts.
@@ -1219,6 +1238,9 @@ class AgentD:
         if self.stopping:
             # Stop came while the CLI was being started.
             self._background(self._stop_proc(proc, self._unit))
+        elif not shell:
+            # Replace "Saving a restore point": the CLI is up and the next word is the provider's.
+            await self._step_line(f"Waiting for {self.provider.name.capitalize()}")
         try:
             if not shell:
                 proc.stdin.write(turn.prompt.encode())
@@ -1236,16 +1258,43 @@ class AgentD:
             # A typed command is one step: its words, its mark and its exact command.
             await self._on_event({"kind": "tool", "name": "Bash", "input": {"command": prompt[1:]}, "id": "shell"},
                                  turn, result, None, False)
-        state = {"session": None, "error": False}
+        # "last": when the provider last sent an event; "tools": the tool calls still running (a long
+        # install says nothing until it is done); "quiet": the line says the provider went quiet.
+        state = {"session": None, "error": False, "last": time.monotonic(), "tools": set(), "quiet": False}
 
         async def pump():
             async for raw in proc.stdout:
-                for ev in source.parse(raw.decode(errors="replace")):
+                line = raw.decode(errors="replace")
+                # Any output line counts, also one that shows nothing (a thinking delta): a long think
+                # is not a dead connection. Only the CLI's own notices about retrying do not.
+                if source.is_progress(line):
+                    state["last"] = time.monotonic()
+                    if state["quiet"]:
+                        state["quiet"] = False
+                        if not self.stopping:
+                            await self._step_line("Thinking")
+                for ev in source.parse(line):
+                    # Running from the tool call to its result; the turn's result ends all of it.
+                    if ev["kind"] == "tool" and ev.get("id"):
+                        state["tools"].add(ev["id"])
+                    elif ev["kind"] == "tool_result":
+                        state["tools"].discard(ev.get("id"))
+                    elif ev["kind"] == "result":
+                        state["tools"].clear()
                     state["session"], state["error"] = await self._on_event(
                         ev, turn, result, state["session"], state["error"])
 
+        async def watchdog():
+            while True:
+                await asyncio.sleep(WATCHDOG_TICK)
+                if (not state["quiet"] and not state["tools"] and not self.stopping
+                        and time.monotonic() - state["last"] > NO_PROGRESS_SECS * self.provider.quiet_factor):
+                    state["quiet"] = True
+                    await self._step_line(f"{self.provider.name.capitalize()} is not answering; check the connection")
+
         reading = asyncio.create_task(pump())
         exited = asyncio.create_task(_exited(proc))
+        quiet_watch = None if shell else asyncio.create_task(watchdog())
         try:
             done, _ = await asyncio.wait({reading, exited}, return_when=asyncio.FIRST_COMPLETED)
             if reading in done:
@@ -1285,6 +1334,8 @@ class AgentD:
             exited.cancel()
             reading.cancel()
             stderr.cancel()
+            if quiet_watch:
+                quiet_watch.cancel()
             stopped = self.stopping
             summary = narrator.summary()
             if stopped:
@@ -1336,6 +1387,8 @@ class AgentD:
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
+                if not turn.prompt.startswith("!"):   # a typed command's failure is its own, not the account's
+                    text = _limit_text(text)
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
@@ -1363,6 +1416,18 @@ class AgentD:
         paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
         with paths.turns_log().open("a") as f:
             f.write(json.dumps(entry) + "\n")
+
+
+def _limit_text(text: str) -> str:
+    """A failed result that names the account's limit says so plainly, then the provider's first
+    line (it holds the reset time); a bare rate limit is a busy moment, not the account."""
+    low = text.lower()
+    if any(w in low for w in LIMIT_WORDS):
+        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        return LIMIT_TEXT + (f"\n{first[:200]}" if first else "")
+    if any(w in low for w in RATE_WORDS):
+        return RATE_TEXT
+    return text
 
 
 def _bombadil_browser() -> str:
