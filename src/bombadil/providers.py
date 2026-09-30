@@ -21,8 +21,9 @@ SYSTEM_PROMPT = (
     "reloaded, no web servers), take screenshots to check your work, and use rollback when the user says "
     "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
     "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
-    "`pacman -Sy` alone (Arch breaks on a partial upgrade). The user sees your work on screen and your "
-    "final reply as at most four lines above the bar: one or two plain sentences saying what you did, "
+    "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
+    "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
+    "screen and your final reply as at most four lines above the bar: one or two plain sentences saying what you did, "
     "no markdown, no lists."
 )
 

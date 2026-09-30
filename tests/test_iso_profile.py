@@ -78,3 +78,9 @@ def test_the_pill_opens_from_super_and_from_alt_space():
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
     binds = re.findall(r'hl\.bind\("([^"]+)", hl\.dsp\.exec_cmd\("bombadil pill"\)', lua)
     assert {"SUPER + SUPER_L", "SUPER + SUPER_R", "ALT + space"} <= set(binds)
+
+
+def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
+    # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
+    from bombadil import providers
+    assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.SYSTEM_PROMPT
