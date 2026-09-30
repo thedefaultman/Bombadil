@@ -4,6 +4,8 @@
 // while it works and how the turn ended. The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
 // Everything else on screen is a panel or an app the agent opened.
+// Beside the pill a small "noticed" chip appears while the loop has something waiting; hovering
+// it shows a card, and the bar tells agentd where its parts are and whether its keys work.
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
@@ -98,9 +100,23 @@ ShellRoot {
         }
     }
 
+    // What agentd has noticed, and what the bar reports about itself.
+    LoopState {
+        id: loopState
+        connected: root.connected
+        busy: pillState.stoppable
+        typing: root.summonedOn !== ""
+        drawer: pillState.drawerUp
+        pid: Quickshell.processId || 0
+        build: Quickshell.env("BOMBADIL_BUILD") || ""
+        onOutgoing: msg => root.write(msg)
+        onOpened: root.noticedOpened()
+    }
+
     function handle(message) {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
+        loopState.handle(ev)
         pillState.handle(ev)
         deskState.handle(ev)
     }
@@ -121,6 +137,15 @@ ShellRoot {
 
     function release() { root.summonedOn = "" }
 
+    // He said "noticed": the card stays up on the focused screen, and its pill takes the keyboard
+    // so Esc puts the card away.
+    function noticedOpened() {
+        const m = Hyprland.focusedMonitor
+        const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+        loopState.cardScreen = name
+        if (root.hyprland) root.summonedOn = name
+    }
+
     Variants {
         model: Quickshell.screens
         PanelWindow {
@@ -134,7 +159,8 @@ ShellRoot {
             readonly property bool capsule: onDesk && deskState.capsule
             readonly property real pillMax: onDesk ? deskState.pillWidth : 900
             anchors { left: true; right: true; bottom: true }
-            implicitHeight: column.implicitHeight + 24
+            // The layer also grows to hold the chip (when it sits above the pill) and the open card.
+            implicitHeight: Math.max(column.implicitHeight + 24, noticedChip.reach, noticedCard.reach)
             color: "transparent"
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
@@ -153,6 +179,8 @@ ShellRoot {
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
+                Region { item: noticedChip }
+                Region { item: noticedCard }
                 Region { item: chips }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
@@ -160,7 +188,14 @@ ShellRoot {
             }
 
             onSummonedChanged: {
-                if (summoned) input.forceActiveFocus()
+                if (summoned) {
+                    input.forceActiveFocus()
+                    // Already holding the keyboard: no change will say so, and the summon worked.
+                    if (input.activeFocus) loopState.inputFocused()
+                } else if (root.hyprland) {
+                    // A card kept by a click lasts while the pill has the keyboard.
+                    loopState.keyboardLost(modelData.name)
+                }
                 grab.active = summoned
             }
 
@@ -181,7 +216,7 @@ ShellRoot {
                 // the wait again; text already typed stays in the pill.
                 id: idle
                 interval: input.text === "" ? 20000 : 60000
-                running: win.summoned
+                running: win.summoned && !loopState.kept
                 onTriggered: root.release()
             }
 
@@ -295,6 +330,8 @@ ShellRoot {
                                     }
                                 }
                                 onTextChanged: if (win.summoned) idle.restart()
+                                // A summon counts as worked once the input really has the keyboard.
+                                onActiveFocusChanged: if (activeFocus && win.summoned) loopState.inputFocused()
                                 // Tab takes the suggested name: "pass" + Tab = "passwords".
                                 Keys.onTabPressed: {
                                     const rest = pillState.completion(text)
@@ -303,6 +340,8 @@ ShellRoot {
                                 // Esc stops a running turn; otherwise it clears, then puts the line and
                                 // the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
+                                    // The loop counts Esc that does not help; a kept card goes first.
+                                    if (loopState.esc()) { if (text === "") root.release(); return }
                                     if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""
                                     else { pillState.dismiss(); pillState.closeDetails(); root.release() }
@@ -336,6 +375,39 @@ ShellRoot {
                     }
                 }
             }
+
+            // The "noticed" chip beside the pill and the card that rises from it. Each is empty
+            // while hidden, so the mask above takes no room for it.
+            NoticedChip {
+                id: noticedChip
+                loop: loopState
+                screenName: modelData.name
+                pillRight: column.x + pillBox.x + pillBox.width
+                pillHeight: pillBox.height
+                columnHeight: column.height
+                windowWidth: win.width
+                // A click keeps the card up, and the pill takes the keyboard so Esc can put it away.
+                onClicked: { if (loopState.kept) win.summonHere(); else if (win.summoned) root.release() }
+            }
+            NoticedCard {
+                id: noticedCard
+                loop: loopState
+                chip: noticedChip
+                screenName: modelData.name
+            }
+
+            // Where this bar's parts are, in the screen's pixels, once the layout settles and again
+            // when it moves, and whenever agentd has just been met (it has heard nothing yet).
+            readonly property string rectsKey: [statusLine, chips, pillBox, noticedChip, noticedCard]
+                .map(it => [it.visible, it.x, it.y, it.width, it.height].join(",")).join("|") + "|" + column.x + "," + column.y + "," + win.height
+            onRectsKeyChanged: rectsTimer.restart()
+            function reportRects() {
+                loopState.reportRects(modelData.name, modelData.width, modelData.height, modelData.height - win.height,
+                    [["statusLine", statusLine], ["chips", chips], ["pillBox", pillBox],
+                     ["noticedChip", noticedChip], ["noticedCard", noticedCard]])
+            }
+            Timer { id: rectsTimer; interval: 250; onTriggered: win.reportRects() }
+            Connections { target: loopState; function onAnnounce() { win.reportRects() } }
         }
     }
 }

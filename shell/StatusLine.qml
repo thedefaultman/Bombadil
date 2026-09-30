@@ -110,10 +110,12 @@ Rectangle {
             maximumLineCount: 1
         }
 
-        // A turn that changed something: take it back, or see exactly what ran.
+        // A turn that changed something: take it back, or see exactly what ran. A receipt that
+        // carries its own Undo (a word the loop made) gets the button and nothing else.
         RowLayout {
             Layout.fillWidth: true
-            visible: bar.pill.mode === "closing" && (bar.pill.changed || bar.pill.irreversible)
+            visible: (bar.pill.mode === "closing" && (bar.pill.changed || bar.pill.irreversible))
+                     || (bar.pill.mode === "local" && bar.pill.undoMsg !== null)
             spacing: 8
 
             Text {
@@ -131,6 +133,7 @@ Rectangle {
             }
             LineButton {
                 objectName: "detailsButton"
+                visible: bar.pill.mode === "closing"   // a receipt has no turn to show
                 label: "Details"
                 onClicked: bar.pill.details()
             }
