@@ -43,8 +43,8 @@ from .probes import (
     PROBES,
     Observation,
     Result,
-    _program,
     loads,
+    program_of,
     run_all,
     run_probe,
     write_json_atomic,
@@ -394,7 +394,7 @@ class Collectors:
             if recent and exe.startswith("python") and isinstance(row.get("pid"), int) and looked < 10:
                 looked += 1
                 row = {**row, **self._who(row["pid"])}
-            if _program(row) is not None:
+            if program_of(row) is not None:
                 ours.append(row)
         return ours
 

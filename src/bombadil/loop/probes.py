@@ -650,7 +650,7 @@ _PROGRAMS = (
 )
 
 
-def _program(dump: dict) -> tuple | None:
+def program_of(dump: dict) -> tuple | None:
     """(component, program) of a coredump when it is one of Bombadil's. A Python program shows up
     as python: its comm or command line (which the runner adds) says which."""
     names = set()
@@ -697,7 +697,7 @@ def _coredump(obs):
     now = _now(obs)
     bad = []
     for d in dumps:
-        found, when = _program(d), _when(d.get("time"))
+        found, when = program_of(d), _when(d.get("time"))
         if found is None or (now is not None and when is not None and now - when > COREDUMP_DAYS * 86400):
             continue
         component, label = found
