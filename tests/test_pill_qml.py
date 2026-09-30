@@ -56,6 +56,7 @@ Window {
                 Component.onCompleted: setSource("%s/CardHost.qml", { pill: pillState, maxHeight: 520 })
             }
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
+            SetupChips { objectName: "setupChips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
         }
@@ -137,6 +138,18 @@ class Bar:
         centre = it.mapToScene(QtCore.QPointF(it.width() / 2, it.height() / 2)).toPoint()
         QtTest.QTest.mouseClick(self.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, centre)
         self.pump()
+
+    def click_item(self, it):
+        centre = it.mapToScene(QtCore.QPointF(it.width() / 2, it.height() / 2)).toPoint()
+        QtTest.QTest.mouseClick(self.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, centre)
+        self.pump()
+
+    def chips(self):
+        """The setup chips on screen, left to right, as (label, item)."""
+        found = self.items("setupChip")
+        found.sort(key=lambda it: it.mapToScene(QtCore.QPointF(0, 0)).x())
+        return [(next(c.property("text") for c in it.childItems() if c.property("text") is not None), it)
+                for it in found]
 
     def snap(self, name):
         out = os.environ.get("BOMBADIL_SCREENS")
@@ -643,3 +656,117 @@ def test_a_tall_picture_scrolls_inside_the_bar_instead_of_running_off_the_screen
     assert scroll.property("contentHeight") > scroll.property("height") >= 100
     assert bar.item("cardHost").property("height") <= 520 + 40
     bar.snap("card-tall")
+
+
+CHOOSE = dict(type="setup", state="choose", line="Which AI should run this computer?", tone="ask",
+              actions=[{"id": "provider:claude", "label": "Claude", "style": "big"},
+                       {"id": "provider:codex", "label": "Codex", "style": "big"}])
+
+
+def test_first_boot_asks_which_ai_with_two_big_chips(bar):
+    bar.send(**CHOOSE)
+    assert bar.text() == "Which AI should run this computer?"
+    assert [label for label, _ in bar.chips()] == ["Claude", "Codex"]
+    assert bar.chips()[0][1].height() > 40
+    bar.snap("setup-1-choose")
+    bar.click_item(bar.chips()[0][1])
+    assert bar.sent[-1] == {"type": "setup_action", "id": "provider:claude"}
+
+
+def test_a_prompt_before_the_ai_is_ready_waits_without_on_it(bar):
+    bar.send(**CHOOSE)
+    assert bar.call("submit", "make me a password manager") is True
+    assert bar.sent[-1] == {"type": "prompt", "text": "make me a password manager"}
+    assert bar.text() == "Which AI should run this computer?" and bar.pill.property("mode") == "setup"
+    bar.send(kind="queued", turn=1, prompt="make me a password manager")
+    assert bar.shown("queuedChip")
+    bar.snap("setup-2-waiting-prompt")
+
+
+def test_signing_in_says_where_and_esc_calls_it_off(bar):
+    bar.send(type="setup", state="signing_in", line="Sign in to Claude in the browser", tone="step",
+             actions=[{"id": "cancel", "label": "Cancel", "style": "quiet"}], phase="waiting", view="shown")
+    assert bar.text() == "Sign in to Claude in the browser"
+    assert [label for label, _ in bar.chips()] == ["Cancel"]
+    assert bar.pill.property("stoppable") is True
+    bar.snap("setup-3-signing-in")
+    bar.call("stop")
+    assert bar.sent[-1] == {"type": "stop"}
+    bar.send(type="setup", state="signing_in", line="The Claude sign-in is waiting in the browser", tone="step",
+             actions=[{"id": "show", "label": "Show sign-in", "style": "primary"},
+                      {"id": "cancel", "label": "Cancel", "style": "quiet"}], phase="waiting", view="hidden")
+    assert [label for label, _ in bar.chips()] == ["Show sign-in", "Cancel"]
+    bar.snap("setup-4-hidden")
+    before = bar.win.property("handOffs")
+    bar.click_item(bar.chips()[0][1])
+    assert bar.sent[-1] == {"type": "setup_action", "id": "show"}
+    # The page that slides in takes the keyboard: typed passwords must not land in the pill.
+    assert bar.win.property("handOffs") == before + 1
+    bar.click_item(bar.chips()[1][1])
+    assert bar.sent[-1] == {"type": "setup_action", "id": "cancel"}
+    assert bar.win.property("handOffs") == before + 1   # cancelling opens nothing
+
+
+def test_offline_and_failures_read_as_errors(bar):
+    bar.send(type="setup", state="offline", line="No internet. Connect to a network to sign in to Claude.",
+             tone="error", actions=[{"id": "wifi", "label": "Wi-Fi", "style": "primary"},
+                                    {"id": "signin", "label": "Try again", "style": "quiet"}])
+    assert bar.item("statusLine").property("edge").name() == "#c04a4a"
+    assert [label for label, _ in bar.chips()] == ["Wi-Fi", "Try again"]
+    bar.snap("setup-5-offline")
+    bar.send(type="setup", state="signed_out", line="The Claude sign-in timed out.", tone="error",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    assert bar.text() == "The Claude sign-in timed out." and bar.pill.property("stoppable") is False
+    bar.pump(0.3)
+    assert bar.pill.property("mode") == "setup"   # it stays until signed in; nothing fades it
+
+
+def test_signed_in_is_said_once_and_fades(bar):
+    bar.send(type="setup", state="signing_in", line="Finishing the Claude sign-in", tone="step", actions=[])
+    bar.send(type="setup", state="ready", line="Signed in to Claude. Ask me for anything.", tone="done", actions=[])
+    assert bar.text() == "Signed in to Claude. Ask me for anything."
+    assert bar.pill.property("mode") == "local" and not bar.chips()
+    bar.snap("setup-6-signed-in")
+    bar.pill.setProperty("lineAt", bar.pill.property("lineAt") - 9000)
+    bar.pump(0.6)
+    assert bar.pill.property("mode") == "idle"
+
+
+def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
+    signed_out = dict(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
+                      actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    bar.send(**signed_out)
+    bar.call("submit", "!ls")
+    bar.send(kind="turn_start", turn=1, prompt="!ls")
+    bar.send(**signed_out)
+    assert bar.text() == "On it" and not bar.chips()
+    bar.send(kind="result", turn=1, ok=True, text="Apps  Documents")
+    bar.send(kind="turn_end", turn=1, seconds=0.1, changed=False, summary="")
+    assert bar.text() == "Apps  Documents"
+    bar.call("dismiss")
+    assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
+
+
+READY = dict(type="setup", state="ready", tone="done", actions=[])
+
+
+def test_switching_to_another_ai_says_so(bar):
+    bar.send(**READY, line="")
+    bar.send(**READY, line="Codex is ready. Ask me for anything.")
+    assert bar.text() == "Codex is ready. Ask me for anything." and bar.pill.property("mode") == "local"
+
+
+def test_a_bar_that_starts_later_does_not_announce_an_old_sign_in(bar):
+    bar.send(**READY, line="Signed in to Claude. Ask me for anything.")   # the greeting of a restarted bar
+    assert bar.pill.property("mode") == "idle"
+
+
+def test_a_prompt_before_the_ai_is_ready_brings_the_setup_line_back_over_a_finished_one(bar):
+    bar.send(**CHOOSE)
+    bar.call("submit", "!echo hi")
+    bar.send(kind="turn_start", turn=1, prompt="!echo hi")
+    bar.send(kind="result", turn=1, ok=True, text="hi")
+    bar.send(kind="turn_end", turn=1, seconds=0.1, changed=True, summary="Ran it")
+    assert bar.pill.property("mode") == "closing"
+    bar.call("submit", "make me an app")
+    assert bar.pill.property("mode") == "setup" and [label for label, _ in bar.chips()] == ["Claude", "Codex"]

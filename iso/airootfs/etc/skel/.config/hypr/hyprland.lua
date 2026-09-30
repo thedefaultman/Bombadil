@@ -8,7 +8,7 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
     hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
     hl.exec_cmd("mako")
-    hl.exec_cmd("bombadil-setup --first-run")
+    -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
 hl.config({
@@ -50,6 +50,9 @@ hl.bind("SUPER + Return", hl.dsp.exec_cmd("foot"))
 -- release, and Hyprland drops it when another key, a click or a drag happened meanwhile.
 hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })
 hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("bombadil pill"), { release = true })
+-- Alt+Space does the same where Super never arrives: a VM window on Windows keeps the Windows key
+-- for its Start menu.
+hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.

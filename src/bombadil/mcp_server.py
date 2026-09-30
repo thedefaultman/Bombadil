@@ -82,12 +82,14 @@ class OsTools:
                 # The QML hot reloads, the Python behind it does not: restart for a new backend.
                 _stop(app.name)
             if not _is_running(app.name):
+                self.hypr.place_app(app.name)
                 apps.run(app.name)
             return f"app {app.name} written to {app.path}; " + _app_state(app.name)
 
         @t("open_app", "Open a previously generated app.", {"name": {"type": "string"}}, ["name"])
         def open_app(a):
             if not _is_running(a["name"]):
+                self.hypr.place_app(a["name"])
                 apps.run(a["name"])
             return _app_state(a["name"])
 

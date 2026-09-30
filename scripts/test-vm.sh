@@ -2,7 +2,7 @@
 # Boot the newest ISO headless with a smoke entry, capture the serial log and screenshots,
 # and exit 0 when the smoke test reports no failures.
 #
-#   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app
+#   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app, sign-in
 #   MODE=install scripts/test-vm.sh   # live checks, install to a scratch disk, boot it, test undo
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 set -euo pipefail
@@ -10,7 +10,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 iso="${ISO:-$(ls -t "$root"/out/*.iso | head -1)}"
 mode="${MODE:-live}"
 out="$root/out/test"; mkdir -p "$out"
-timeout="${TIMEOUT:-1500}"
+timeout="${TIMEOUT:-2400}"
 
 ovmf=""
 for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
@@ -29,11 +29,12 @@ if [[ "$mode" == "install" ]]; then rm -f "$disk"; qemu-img create -q -f qcow2 "
 boot() {
   local name=$1 done=$2; shift 2
   local log="$out/$name.serial.log" qmp="$out/$name.qmp.sock"
-  : > "$log"; rm -f "$qmp" "$out/$name".keys.*
+  : > "$log"; rm -f "$qmp" "$out/$name".keys.* "$out/$name"-*.png "$out/$name"-*.png.ppm
   qemu-system-x86_64 "${accel[@]}" -m 4G -smp "$(nproc)" \
     -drive if=pflash,format=raw,readonly=on,file="$ovmf" \
     -device virtio-vga -display none -vnc "${VNC:-127.0.0.1:99}" \
     -device virtio-keyboard -device virtio-mouse \
+    -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
     -netdev user,id=n0 -device virtio-net,netdev=n0 \
     -chardev "socket,id=s0,path=$out/$name.serial.sock,server=on,wait=off,logfile=$log" -serial chardev:s0 -qmp "unix:$qmp,server,nowait" "$@" &
   local pid=$!

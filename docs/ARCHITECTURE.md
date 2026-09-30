@@ -17,13 +17,49 @@
 1. The bar (or `bombadil ask`) writes `{"type":"prompt","text":…}` to the socket.
 2. `agentd` takes a snapper snapshot named `turn:<n>: <prompt>`.
 3. It runs the provider CLI once, in full-access mode, resuming the previous session id,
-   with `bombadil-os-mcp` in its MCP config and `providers.SYSTEM_PROMPT` appended.
+   with `bombadil-os-mcp` in its MCP config and `providers.system_prompt()` appended.
 4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
 5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
 
 "Undo that" is the agent calling `rollback` (or the user running `bombadil undo`): snapper
 rolls the root subvolume back to the last `turn:` snapshot; it applies on reboot. Home is
 its own subvolume and is not rolled back.
+
+## Signing in
+
+agentd never handles a password or a token: it runs the provider CLI's own login
+(`claude auth login`, `codex login`) in a terminal it holds, so the CLI stores its
+credentials exactly as it would in a terminal of yours (`signin.py`).
+
+1. Setup states, shown in the pill with chips: `choose` (first boot: Claude or Codex),
+   `checking`, `signed_out`, `offline`, `signing_in`, `ready`. Prompts wait until `ready`
+   and then run; a `!command` runs anyway.
+2. The CLI runs with `BROWSER=bombadil-browser`, which hands its page to agentd over the
+   socket, tagged with the sign-in's id. The page opens in the browser panel's Chromium
+   (own profile under `~/.local/share/bombadil/browser`, no first-run pages, DevTools on
+   127.0.0.1:9222) and comes back to the CLI's localhost callback.
+3. If `$BROWSER` is not used within 2 s, the printed URL opens instead. A Claude page that
+   ends on the code page gets `code#state` typed into the CLI, read from the tab's address.
+4. DevTools and Hyprland tell it when the panel slid out or the browser was closed; the
+   pill offers the page again. Esc cancels (the pill says "Cancelling" at once, and a page
+   still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
+   an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
+   status` or `codex login status`. A browser that cannot open the page is an error the pill
+   shows with "Open it again", not a quiet success.
+5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
+   Wi-Fi, and the sign-in starts once the host answers.
+6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again
+   and runs the prompt once more, with what you did meanwhile told to the model. If the
+   rerun says it too, the login is not what is wrong (a 403, an API key in the environment):
+   the CLI's own words show and there is no second sign-in. Only the provider whose turn
+   failed is signed in again, even if you switched AI meanwhile. A `/login` typed in a
+   terminal lands in the panel too, and agentd watches for it to finish.
+7. "Sign in" typed while signed in starts a new login, except for a provider whose login
+   signs the stored one out as it starts (`login_replaces`: Codex, even if the new one is
+   then called off): there it answers "already signed in".
+
+`fake_signin.py` plays a provider login on localhost for the tests and the VM smoke test
+(`BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail`).
 
 ## Generated apps
 

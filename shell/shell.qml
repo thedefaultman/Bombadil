@@ -190,6 +190,7 @@ ShellRoot {
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
+                Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: appChips }
                 Region { item: pillBox }
@@ -262,6 +263,15 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                // Which AI, Sign in, Show sign-in: the choices under the setup line.
+                SetupChips {
+                    id: setupChips
+                    pill: pillState
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: 900
                 }
 
                 QueueChips {

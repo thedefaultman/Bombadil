@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, hypr, paths, snapshots, sysmap
+from . import apps, browser, hypr, paths, snapshots, sysmap
 from .desk import WIDGETS, Desk
 
 PANEL_WORDS = {
@@ -44,6 +44,12 @@ CORE_COMMANDS = {
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
 }
+# Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
+SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
+                "log me in"]
+PROVIDER_WORDS = {"claude": ["claude", "claude code", "anthropic"], "codex": ["codex", "openai codex", "chatgpt"]}
+PROVIDER_VERBS = ("use", "switch to", "change to", "sign in to", "log in to", "sign into", "log into",
+                  "sign in with", "log in with")
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
@@ -185,6 +191,14 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     picture = _picture(apostrophe) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
+    if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
+        return Action("signin")
+    if plain:
+        for verbs in (PROVIDER_VERBS,):
+            word = _strip_verb(t, verbs)
+            name = _lookup(word, PROVIDER_WORDS) if word else None
+            if name:
+                return Action("provider", name, title=name.capitalize())
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
@@ -237,6 +251,7 @@ def entries(app_list: list | None = None) -> list[dict]:
     for table in (CORE_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
+    out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
     return out
 
 
@@ -280,7 +295,8 @@ class Launcher:
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
-                "battery": "Checking the battery", "stop": "Stopping",
+                "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
+                "provider": f"Switching to {action.title or action.target}",
                 "desk": "Changing the desk"}.get(action.kind, "On it")
 
     @staticmethod
@@ -337,6 +353,7 @@ class Launcher:
             if _app_running(a.target):
                 self._focus_class(f"bombadil-app-{a.target}")
             else:
+                self.hypr.place_app(a.target)   # its own spot, before the window maps
                 apps.run(a.target)
         elif a.verb == "close":
             self._run(["pkill", "-f", f"bombadil-app run {a.target}$"], capture_output=True, check=False)
@@ -525,7 +542,10 @@ class Launcher:
             return self._view(value, [bomb, "view", "--", "sh", "-c",
                                       'pacman -Qi -- "$1" 2>/dev/null || pacman -Si -- "$1" 2>&1', "sh", value])
         if kind == "url":
-            self.hypr.open_url(value)
+            try:
+                browser.open_url(value, self.hypr)
+            except RuntimeError as e:
+                return False, f"Could not open the page: {e}."
             return True, "Opened the page in the browser."
         if kind == "path":
             path = Path(value).expanduser()

@@ -178,15 +178,16 @@ def test_undo_without_restore_points_says_so(home):
 class FakeHypr:
     def __init__(self):
         self.calls = []
+        self.placed = []
         self.available = True
+
+    def place_app(self, name):
+        self.placed.append(name)
+        return ""
 
     def panel(self, name, show=True):
         self.calls.append(("panel", name, show))
         return f"panel {name} shown"
-
-    def open_url(self, url):
-        self.calls.append(("open_url", url))
-        return "panel browser shown"
 
     def dispatch(self, lua):
         self.calls.append(("dispatch", lua))
@@ -223,6 +224,7 @@ def test_an_open_app_comes_forward_instead_of_starting_twice(home, monkeypatch):
     lx.run(launcher.match("passwords"))
     assert started == ["passwords"]
     assert h.calls == [("dispatch", 'hl.dsp.focus({ window = "class:^(bombadil-app-passwords)$" })')]
+    assert h.placed == ["passwords"]   # only the open that starts it picks a spot; the re-open just focuses
 
 
 def test_failures_are_one_plain_line(home):
@@ -531,11 +533,23 @@ def test_a_tilde_path_opens_in_the_home_folder(home, monkeypatch):
     assert _drawn(spawned)[0] == [launcher._bombadil(), "view", "--file", str(home / "a.txt")]
 
 
-def test_a_page_opens_in_the_browser_panel(home):
+def test_a_page_opens_in_the_browser_panel_the_way_every_other_link_does(monkeypatch):
     h = FakeHypr()
     lx = launcher.Launcher(hyprland=h, snaps=Snaps(0))
+    opened = []
+    monkeypatch.setattr(launcher.browser, "open_url", lambda url, hyprland=None, **kw: opened.append((url, hyprland)))
     assert lx.open_thing("url", "https://www.wireguard.com/quickstart/") == (True, "Opened the page in the browser.")
-    assert h.calls == [("open_url", "https://www.wireguard.com/quickstart/")]
+    assert opened == [("https://www.wireguard.com/quickstart/", h)]
+
+
+def test_a_page_the_browser_would_not_open_says_why(monkeypatch):
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+
+    def refuse(url, hyprland=None, **kw):
+        raise RuntimeError("the browser is still starting")
+
+    monkeypatch.setattr(launcher.browser, "open_url", refuse)
+    assert lx.open_thing("url", "https://example.com/") == (False, "Could not open the page: the browser is still starting.")
 
 
 def test_text_is_told_from_binary_by_its_first_bytes(tmp_path):
