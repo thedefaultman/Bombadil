@@ -6,7 +6,15 @@ set -u
 out=/dev/console
 say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
 ok=0; fail=0
-check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); fi; }
+check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); diag "$name"; fi; }
+# What a failed check leaves to read in the serial log: the windows Hyprland has and the programs that
+# should be running, for the first few failures (each costs a few seconds under emulation).
+ndiag=0
+diag() {
+  ndiag=$((ndiag+1)); (( ndiag > 4 )) && return 0
+  say "DIAG $1 windows: $(as_user hyprctl -j clients 2>&1 | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["pid"]) for c in json.load(sys.stdin)])' 2>&1 | tail -c 600)"
+  say "DIAG $1 programs: $(pgrep -a 'foot|agentd|quickshell|chromium|zellij' | cut -c1-90 | tr '\n' ';' | tail -c 700)"
+}
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
 # bombadil.smoke          live checks, then power off
 # bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
