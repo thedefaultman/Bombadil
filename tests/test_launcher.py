@@ -1,8 +1,10 @@
 import json
+import tomllib
 
 import pytest
 
-from bombadil import apps, desk, launcher, snapshots
+from bombadil import apps, desk, launcher, paths, snapshots
+from bombadil.loop import words
 
 
 def _apps(home):
@@ -428,3 +430,207 @@ def test_a_launcher_made_alone_reads_the_desk_that_was_saved(home):
     saved.apply("hide", "machine")
     assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).desk_state.snapshot()["hidden"] == \
         ["alive", "machine"]
+
+
+# -- words Bombadil made (words.toml) --
+
+def _words(*rows):
+    """Write words.toml by hand: (phrase, kind, name[, away]) rows, some of which add() would
+    refuse (a name an app took later), because the launcher must cope with whatever is in the file."""
+    text = "".join(
+        f'[[word]]\nphrase = {json.dumps(r[0], ensure_ascii=False)}\n'
+        f'opens = {{ kind = "{r[1]}", name = "{r[2]}" }}\naway = {"true" if len(r) > 3 and r[3] else "false"}\n\n'
+        for r in rows)
+    paths.words_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.words_file().write_text(text)
+    words._cache = None
+
+
+def test_a_word_opens_what_it_was_made_for(home):
+    _words(("show me my passwords", "app", "passwords"), ("show my stuff", "panel", "files"))
+    apps_ = _apps(home)
+    a = launcher.match("show me my passwords", apps_)
+    assert a == launcher.Action("app", "passwords", "open", "Passwords", "show me my passwords")
+    assert launcher.match("show my stuff", apps_) == launcher.Action("panel", "files", "open", "Files", "show my stuff")
+    assert launcher.match("passwords", apps_).word == "" and launcher.Action("app").word == ""
+
+
+@pytest.mark.parametrize("text", [
+    "show me my passwords", "Show Me My Passwords", "show me my passwords.", " SHOW  me   my passwords!! ",
+    "show me my passwords?", "open show me my passwords", "launch show me my passwords",
+    "go to show me my passwords",
+])
+def test_a_word_matches_its_phrase_exactly_and_after_an_opening_verb(home, text):
+    _words(("show me my passwords", "app", "passwords"))
+    a = launcher.match(text, _apps(home))
+    assert a is not None and (a.kind, a.target, a.verb, a.word) == ("app", "passwords", "open", "show me my passwords")
+
+
+@pytest.mark.parametrize("text", [
+    "show me my passwords please", "show me my password", "please show me my passwords", "my passwords",
+    "show me my passwords and my files", "show me my passwords, then lock", "show me my passwords\nmake it big",
+    "close show me my passwords", "hide show me my passwords", "what do show me my passwords mean",
+    "!show me my passwords", " !show me my passwords", "", "show me",
+])
+def test_a_word_is_never_a_guess(home, text):
+    _words(("show me my passwords", "app", "passwords"))
+    assert launcher.match(text, _apps(home)) is None
+
+
+def test_a_word_in_another_script_matches_only_as_a_whole(home):
+    _words(("мои пароли", "app", "passwords"), ("café", "app", "passwords"))
+    apps_ = _apps(home)
+    assert launcher.match("Мои пароли!", apps_).word == "мои пароли"
+    assert launcher.match("open café", apps_).word == "café"
+    for text in ("открой мои пароли", "¿мои пароли", "мои пароли и файлы", "мои пароли?!?x"):
+        assert launcher.match(text, apps_) is None
+
+
+def test_nothing_starting_with_a_bang_is_ever_a_word(home):
+    _words(("ls", "app", "passwords"), ("list all", "app", "passwords"))
+    apps_ = _apps(home)
+    assert launcher.match("ls", apps_).word == "ls"
+    for text in ("!ls", "! ls", "!list all", "  !ls"):
+        assert launcher.match(text, apps_) is None
+
+
+def test_a_word_never_beats_anything_the_machine_already_has(home):
+    """Hand-written rows for every kind of name: each still means what it always meant."""
+    apps_ = _apps(home)
+    _words(("passwords", "app", "memory-viewer"), ("open passwords", "app", "memory-viewer"),
+           ("browser", "app", "passwords"), ("chrome", "panel", "files"), ("the terminal", "app", "passwords"),
+           ("undo", "app", "passwords"), ("stop it", "app", "passwords"), ("history", "panel", "files"),
+           ("wifi", "app", "passwords"), ("sound", "panel", "files"), ("battery", "app", "passwords"),
+           ("noticed", "app", "passwords"), ("hide noticed", "app", "passwords"),
+           ("show noticed", "app", "passwords"), ("memory viewer", "app", "passwords"))
+    want = {"passwords": ("app", "passwords"), "open passwords": ("app", "passwords"),
+            "browser": ("panel", "browser"), "chrome": ("panel", "browser"), "the terminal": ("panel", "terminal"),
+            "undo": ("undo", ""), "stop it": ("stop", ""), "history": ("history", ""), "wifi": ("wifi", ""),
+            "sound": ("sound", ""), "battery": ("battery", ""), "noticed": ("noticed", "open"),
+            "hide noticed": ("noticed", "hide"), "show noticed": ("noticed", "open"),
+            "memory viewer": ("app", "memory-viewer")}
+    for text, (kind, target) in want.items():
+        a = launcher.match(text, apps_)
+        assert (a.kind, a.target, a.word) == (kind, target, ""), text
+
+
+def test_a_word_gives_way_to_an_app_made_later(home):
+    _words(("notes", "app", "passwords"))
+    a = launcher.match("notes", _apps(home))
+    assert (a.target, a.word) == ("passwords", "notes")
+    apps.create("Notes", "import QtQuick\nItem {}\n")
+    a = launcher.match("notes")
+    assert (a.target, a.word) == ("notes", "")
+
+
+def test_a_word_whose_app_is_gone_or_which_is_put_away_matches_nothing(home):
+    _words(("my ghost", "app", "ghost"), ("my panel", "panel", "chromium"), ("my passwords", "app", "passwords", True))
+    apps_ = _apps(home)
+    for text in ("my ghost", "open my ghost", "my panel", "my passwords", "show my passwords"):
+        assert launcher.match(text, apps_) is None
+    apps.create("Ghost", "import QtQuick\nItem {}\n")
+    assert launcher.match("my ghost").target == "ghost"          # the app came back: so does the word
+    words.bring_back("my passwords")
+    assert launcher.match("my passwords", apps_).word == "my passwords"
+
+
+def test_a_word_made_by_add_works_and_undoes(home):
+    apps_ = _apps(home)
+    assert launcher.match("show me my passwords", apps_) is None
+    words.add("show me my passwords", {"kind": "app", "name": "passwords"}, group="g-1")
+    assert launcher.match("show me my passwords", apps_).target == "passwords"
+    words.put_away("show me my passwords")
+    assert launcher.match("show me my passwords", apps_) is None
+    words.bring_back("show me my passwords")
+    words.remove("show me my passwords")
+    assert launcher.match("show me my passwords", apps_) is None
+
+
+def test_match_leaves_words_out_when_asked_and_means_says_what_is_taken(home):
+    _words(("show me my passwords", "app", "passwords"))
+    apps_ = _apps(home)
+    assert launcher.match("show me my passwords", apps_, use_words=False) is None
+    assert launcher.means("show me my passwords", apps_) == ""          # a word is not a name the machine has
+    assert [launcher.means(t, apps_) for t in ("passwords", "Chrome", "undo", "noticed", "wifi", "!ls", "")] == [
+        "an app", "a panel", "a command", "a command", "a utility word", "", ""]
+
+
+def test_a_broken_words_file_costs_the_launcher_nothing(home, capsys):
+    paths.words_file().parent.mkdir(parents=True)
+    paths.words_file().write_text('[[word]\nphrase = "x')
+    apps_ = _apps(home)
+    assert launcher.match("what is using my memory", apps_) is None
+    assert launcher.match("passwords", apps_).kind == "app" and launcher.match("undo", apps_).kind == "undo"
+    assert capsys.readouterr().err.count("does not parse") == 1
+
+
+def test_every_enter_reads_the_words_file_at_most_once_while_it_is_unchanged(home, monkeypatch):
+    _words(("show me my passwords", "app", "passwords"))
+    apps_ = _apps(home)
+    parses = []
+    real = tomllib.loads
+    monkeypatch.setattr(words.tomllib, "loads", lambda text: parses.append(1) or real(text))
+    for _ in range(50):
+        assert launcher.match("what is eating my memory", apps_) is None
+        assert launcher.match("show me my passwords", apps_) is not None
+    assert len(parses) == 1
+
+
+def test_a_word_runs_like_the_app_it_opens(home, monkeypatch):
+    _words(("show me my passwords", "app", "passwords"))
+    _apps(home)
+    started = []
+    monkeypatch.setattr(launcher, "_placement", lambda: None)
+    monkeypatch.setattr(launcher, "_app_running", lambda name: False)
+    monkeypatch.setattr(launcher.apps, "run", lambda name: started.append(name))
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    action = launcher.match("show me my passwords")
+    assert lx.doing(action) == "Opening Passwords" and lx.failed(action) == "Could not open Passwords"
+    assert lx.run(action) == (True, "Opened Passwords.") and started == ["passwords"]
+
+
+# -- "noticed": the widget's name --
+
+@pytest.mark.parametrize("text, verb", [
+    ("noticed", "open"), ("Noticed", "open"), ("Noticed.", "open"), ("  noticed  ", "open"),
+    ("open noticed", "open"), ("show noticed", "open"), ("Show Noticed!", "open"), ("launch noticed", "open"),
+    ("open the noticed", "open"), ("hide noticed", "hide"), ("Hide Noticed", "hide"), ("put away noticed", "hide"),
+])
+def test_the_noticed_words(home, text, verb):
+    a = launcher.match(text, _apps(home))
+    # The verb rides in target too, so whichever the loop service reads is right.
+    assert a == launcher.Action("noticed", verb, verb, "Noticed")
+
+
+@pytest.mark.parametrize("text", [
+    "noticed this", "what have you noticed", "noticed stuff", "is noticed open", "close noticed", "quit noticed",
+    "hide noticed and show passwords", "show me noticed", "unnoticed", "not noticed", "¿noticed", "почему noticed",
+    "!noticed", "!hide noticed", " !show noticed", "noticed 2", "hide everything noticed", "no ticed", "no-ticed",
+])
+def test_anything_else_with_noticed_in_it_goes_to_the_agent(home, text):
+    assert launcher.match(text, _apps(home)) is None
+
+
+def test_an_app_called_noticed_keeps_the_name(home):
+    apps.create("Noticed", "import QtQuick\nItem {}\n")
+    for text, verb in (("noticed", "open"), ("show noticed", "open"), ("hide noticed", "hide"),
+                       ("close noticed", "close")):
+        a = launcher.match(text)
+        assert (a.kind, a.target, a.verb) == ("app", "noticed", verb), text
+    assert [e["kind"] for e in launcher.entries() if e["name"] == "noticed"] == ["app"]
+
+
+def test_noticed_is_a_name_tab_completes(home):
+    (e,) = [e for e in launcher.entries(_apps(home)) if e["name"] == "noticed"]
+    assert e == {"name": "noticed", "title": "Noticed", "kind": "command", "words": ["noticed"]}
+    assert launcher.entries(_apps(home))[-1] == e
+
+
+def test_noticed_has_its_own_sentences_and_is_not_run_by_the_launcher(home):
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    opening, hiding = launcher.match("noticed", []), launcher.match("hide noticed", [])
+    assert (lx.doing(opening), lx.doing(hiding)) == ("Opening Noticed", "Hiding Noticed")
+    assert (lx.failed(opening), lx.failed(hiding)) == ("Could not open Noticed", "Could not hide Noticed")
+    # agentd hands these to the loop service; if one gets here, nothing is running to do it.
+    assert lx.run(opening) == (False, "Noticed is not running.")
+    assert lx.run(hiding) == (False, "Noticed is not running.")
