@@ -47,3 +47,11 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def desk_file() -> Path:
+    return state_dir() / "desk.toml"
+
+
+def jobs_dir() -> Path:
+    return state_dir() / "jobs"

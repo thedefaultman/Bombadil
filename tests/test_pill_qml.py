@@ -160,6 +160,10 @@ def bar(app, tmp_path):
                                      "words": ["passwords"]},
                                     {"name": "browser", "title": "Browser", "kind": "panel",
                                      "words": ["browser", "chrome"]},
+                                    {"name": "machine", "title": "Machine", "kind": "widget",
+                                     "words": ["machine"]},
+                                    {"name": "now", "title": "Now", "kind": "widget", "words": ["now", "route"]},
+                                    {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]},
                                     {"name": "undo", "title": "Undo", "kind": "command", "words": ["undo"]}])
     yield b
     b.win.close()
@@ -335,6 +339,17 @@ def test_tab_completes_names_and_exact_words_show_where_they_go(bar):
     assert bar.call("completion", "open un") == ""      # commands take no verb
     assert bar.call("exact", "Passwords.") == "Passwords"
     assert bar.call("exact", "open the browser and search") == ""
+
+
+def test_a_widgets_name_is_a_launcher_word_only_after_a_verb_that_puts_a_thing_on_screen(bar):
+    assert bar.call("exact", "show machine") == "Machine"
+    assert bar.call("exact", "hide route") == "Now" and bar.call("exact", "close now.") == "Now"
+    assert bar.call("exact", "machine") == "" and bar.call("exact", "now") == ""   # bare, it is a sentence
+    assert bar.call("exact", "start now") == "" and bar.call("exact", "launch machine") == ""
+    assert bar.call("completion", "show mach") == "ine" and bar.call("completion", "mach") == ""
+    assert bar.call("completion", "start mach") == ""
+    assert bar.call("exact", "desk") == "Desk" and bar.call("exact", "desk.") == "Desk"
+    assert bar.call("exact", "desk?") == "" and bar.call("exact", "show machine?") == ""
 
 
 def test_the_bar_loads_without_qml_warnings(bar):
