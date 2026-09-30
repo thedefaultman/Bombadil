@@ -1,12 +1,12 @@
 [Unit]
 Description=Bombadil agent daemon
+# A daemon that keeps failing is still better than none: never give up on it.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/local/bin/agentd
 Restart=always
 RestartSec=1
-# A daemon that keeps failing is still better than none: never give up on it.
-StartLimitIntervalSec=0
 # Apps it started keep running when it restarts; only the daemon itself stops.
 KillMode=process
 TimeoutStopSec=5

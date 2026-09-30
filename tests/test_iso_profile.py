@@ -114,7 +114,9 @@ def test_the_daemon_the_bar_and_the_notifications_come_back_when_they_die():
         u = _unit(path)
         assert u["Service"]["Restart"] == "always", path.name
         # systemd's default of five restarts in ten seconds would leave a crash loop with no bar.
-        assert u.get("Unit", {}).get("StartLimitIntervalSec", u["Service"].get("StartLimitIntervalSec")) == "0", path.name
+        # (systemd reads the key from [Unit] and ignores it under [Service].)
+        assert u["Unit"]["StartLimitIntervalSec"] == "0", path.name
+        assert "StartLimitIntervalSec" not in u["Service"], path.name
     # Apps the agent started keep running when only the daemon restarts.
     assert _unit(units[0])["Service"]["KillMode"] == "process"
     assert _unit(units[0])["Service"]["ExecStart"] == "/usr/local/bin/agentd"
