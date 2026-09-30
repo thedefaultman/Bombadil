@@ -111,10 +111,13 @@ Existing messages are unchanged. New (client → agentd):
 - `{"type":"noticed_state"}` → agentd sends `noticed` to that client.
 - `{"type":"noticed_list"}` → agentd sends `noticed_full` to that client, for the Noticed window:
   `{"type":"noticed_full","hidden":bool,"held":bool,"resting":"","asks":[{"id","title","n","days","last","state","sentences":[…],"became":""}],
-  "changes":[{"id","title","t","what","undone":bool,"can_undo":bool}],"found":[{"id","title","meta","fp","state","can_send":bool,"preview"?:{"text","goes":[…],"stays":[…]}}],
+  "changes":[{"id","title","t","what","undone":bool,"can_undo":bool}],"found":[{"id","title","meta","fp","state","can_send":bool,"why":[…],"preview"?:{"text","goes":[…],"stays":[…]}}],
   "said_no":[{"id","title","t","form"}],"words":[{"phrase","opens","away":bool}]}`. `held` is true while offers are held
   (hidden, resting). The window acts with the same `noticed_do` ops (`id` is the row's id in its own list) and
   asks again after each answer or when it hears a `noticed` message.
+  `can_send` is true until it is sent (the window's button says `report` first, then `send` after the card).
+  An ask waiting on him also carries `primary`, `what` and `others` like a `noticed` row; `found[].why` holds
+  two plain sentences (what was expected, what was seen).
   A found row's `report` op builds and holds the report (state `reported`), adds its `preview` to that row and
   opens the Noticed window on it; `send` (only after `report`) opens the prefilled issue page in the browser
   panel and marks it `sent`. `noticed_result.preview` is a string or `{"text",…}`.

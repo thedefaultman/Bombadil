@@ -361,7 +361,8 @@ async def test_accepting_a_word_makes_it_writes_the_trail_through_agentd_and_han
     # The trail is one improve row, written by agentd's own writer.
     [row] = rig.turns("improve")
     assert row["what"] == "word" and row["title"] == "Made “my passwords” open Passwords."
-    assert row["group"] == "gpw1" and row["undo"] == {"op": "remove_word", "phrase": "my passwords"}
+    assert row["group"] == "gpw1" and row["undo"] == {"op": "remove_word", "phrase": "my passwords",
+                              "opens": {"kind": "app", "name": "passwords"}}
     assert row["undone"] is False and row["v"] == 2 and row["id"].startswith("i") and "of" not in row
     # The line above the pill is the receipt, to the one who tapped, with an Undo that comes back here.
     [line] = [m for m in rig.bar.inbox if m["type"] == "event" and m.get("kind") == "local"]
@@ -614,15 +615,51 @@ async def test_an_app_is_not_brought_back_over_one_with_its_name(rig_of):
 
 
 @pytest.mark.asyncio
-async def test_a_word_that_was_taken_out_is_not_brought_back_as_an_app_and_the_app_that_is_gone_says_so(rig_of):
+async def test_a_word_he_took_out_comes_back_with_put_it_back_and_one_that_stands_does_not(rig_of):
     rig = rig_of(passwords_asks())
     await rig.start()
     await rig.ask_state()
     await rig.do("accept", "gpw1")
     [made] = rig.turns("improve")
+    standing = await rig.do("bring_back", made["id"])
+    assert standing["ok"] is False and "nothing to bring back" in standing["text"]
     await rig.do("undo", made["id"])
+    assert words_file() == []
     back = await rig.do("bring_back", made["id"])
-    assert back["ok"] is False and back["text"] == "That word was taken out. It comes back if you keep asking for it."
+    assert back["ok"] and back["text"] == "Made “my passwords” open Passwords again."
+    assert [w["phrase"] for w in words_file()] == ["my passwords"]
+    rows = rig.turns("improve")
+    assert rows[-1]["of"] == made["id"] and rows[-1]["undone"] is False and rows[-1]["what"] == "word"
+    [change] = (await rig.full())["changes"]
+    assert change["undone"] is False and change["can_undo"] is True
+    # And it can be taken out again.
+    again = await rig.do("undo", made["id"])
+    assert again["ok"] and words_file() == []
+
+
+@pytest.mark.asyncio
+async def test_an_ask_waiting_on_him_carries_its_button_what_it_does_and_the_other_ways_in_the_window_list(rig_of):
+    rig = rig_of(passwords_asks())
+    await rig.start()
+    await rig.ask_state()                                            # the offer is made: the group is "offered"
+    full = await rig.full()
+    mine = next(a for a in full["asks"] if a["id"] == "gpw1")
+    assert mine["state"] == "offered"
+    assert mine["primary"] == {"label": "Make the word", "op": "accept", "form": "word"}
+    assert mine["what"] and isinstance(mine["others"], list)
+    await rig.do("accept", "gpw1")
+    mine = next(a for a in (await rig.full())["asks"] if a["id"] == "gpw1")
+    assert mine["state"] == "made" and "primary" not in mine and "what" not in mine
+
+
+@pytest.mark.asyncio
+async def test_a_found_row_in_the_window_list_carries_what_was_expected_and_what_was_seen(rig_of):
+    rig = rig_of()
+    found = plant()
+    await rig.start()
+    [entry] = (await rig.full())["found"]
+    assert entry["id"] == found.fp
+    assert entry["why"] == [f"Expected: {found.expected}", f"Seen: {found.observed}"]
 
 
 @pytest.mark.asyncio
@@ -1606,7 +1643,8 @@ async def test_accepting_a_word_over_the_socket_writes_the_trail_once_and_undo_r
     # The ledger has one trail row, written by agentd's own writer.
     rows = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
     [trail] = [x for x in rows if x.get("kind") == "improve"]
-    assert trail["undo"] == {"op": "remove_word", "phrase": "my passwords"} and receipt["undo_msg"]["id"] == trail["id"]
+    assert trail["undo"] == {"op": "remove_word", "phrase": "my passwords",
+                              "opens": {"kind": "app", "name": "passwords"}} and receipt["undo_msg"]["id"] == trail["id"]
     # His Undo on the line sends exactly what the line carries.
     await say(w, receipt["undo_msg"])
     undone, _ = await hear(r, is_("noticed_result"))

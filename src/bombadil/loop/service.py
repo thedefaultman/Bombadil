@@ -375,7 +375,7 @@ class LoopService:
         titles = store._titles()
         asks = [{"id": r["id"], "title": sentence_of(r["sentences"][0]) if r["sentences"] else r["label"],
                  "n": r["n"], "days": r["days"], "last": r["last"], "state": r["state"],
-                 "sentences": r["sentences"], "became": r["became"]}
+                 "sentences": r["sentences"], "became": r["became"], **self._w_ask_buttons(r, now)}
                 for r in store.asks_report(20, now)]
         said_no = []
         for r in store.said_no():
@@ -389,12 +389,28 @@ class LoopService:
         found = []
         for f in finds.all(("open", "reported", "sent")):
             entry = {"id": f.fp, "title": f.title, "meta": _times(f.n, f.days), "fp": f.fp, "state": f.state,
-                     "can_send": f.state == "reported"}
+                     "can_send": f.state in ("open", "reported"),   # the window's button says report first
+                     "why": [t for t in (f"Expected: {f.expected}" if f.expected else "",
+                                         f"Seen: {f.observed}" if f.observed else "") if t]}
             if f.state == "reported":
                 entry["preview"] = report.preview(report.build(f)).to_dict()
             found.append(entry)
         return {"hidden": self._flag("hidden") == "1", "resting": store.resting(now), "asks": asks,
                 "found": found, "said_no": said_no, "words": listed}
+
+    def _w_ask_buttons(self, r: dict, now: float) -> dict:
+        """For a group that is waiting on him: what the button says, what it would do, the other ways."""
+        if r["state"] != "offered":
+            return {}
+        store = self._store
+        g = store.group(r["id"], now)
+        rec = forms.recommend(g, store.built, titles=store._titles()) if g is not None else None
+        if rec is None:
+            return {}
+        label = "Got it" if rec.op == "got_it" else BUTTONS.get(rec.form.letter, "Make it")
+        return {"what": rec.sentence, "primary": {"label": label, "op": rec.op, "form": rec.form.id},
+                "others": [{"label": BUTTONS.get(f.letter, offers.BUTTONS.get(f.letter, "Make it")),
+                            "op": "accept", "form": f.id} for f in rec.others[:2]]}
 
     def _w_sweep(self, now: float) -> list[str]:
         """Put away the words nobody said for 28 days. The phrases that went."""
@@ -788,7 +804,8 @@ class LoopService:
         store.note_word_made(word.phrase, now)
         store.answer(ask["id"], offers.ACCEPT, form="A", now=now)
         title = f"Made “{word.phrase}” open {forms.thing_title(ask['opens'], store._titles())}."
-        return Result(True, title), {"phrase": word.phrase, "title": title, "group": ask["id"]}
+        return Result(True, title), {"phrase": word.phrase, "title": title, "group": ask["id"],
+                                     "opens": {"kind": kind, "name": name}}
 
     async def _op_accept(self, rid: str, form: str | None, writer) -> Result:
         if rid in self._accepting:
@@ -815,7 +832,7 @@ class LoopService:
         res, made = await self._work(self._w_make_word, ask, now, default=failed, where="word")
         if made is not None:
             row = self._improve("word", made["title"], group=made["group"],
-                                undo={"op": "remove_word", "phrase": made["phrase"]})
+                                undo={"op": "remove_word", "phrase": made["phrase"], "opens": made["opens"]})
             await self.agentd._send(writer, _local_line(
                 made["title"], target=made["phrase"],
                 undo_msg={"type": "noticed_do", "op": "undo", "id": row["id"]}))
@@ -1050,11 +1067,34 @@ class LoopService:
             return False, "That is not on the list any more."
         return False, "That is not on the list any more."
 
+    async def _bring_back_made_word(self, row: dict) -> Result:
+        """A word he took out: make it again, if what it opened is still here and the phrase is free."""
+        rid = row["id"]
+        undo = row.get("undo") if isinstance(row.get("undo"), dict) else {}
+        opens = undo.get("opens") if isinstance(undo.get("opens"), dict) else {}
+        phrase = str(undo.get("phrase") or "")
+        if not (self._undone(rid) and phrase and opens.get("kind") in ("app", "panel") and opens.get("name")):
+            return Result(False, "That word was not taken out, so there is nothing to bring back.")
+        ok, text = await self._work(self._w_remake_word, phrase, opens, row.get("group"), self.clock(),
+                                    default=(False, "That did not work."), where="bring back")
+        if ok:
+            self._improve("word", text, group=row.get("group"), of=rid, undone=False)
+        return Result(ok, text)
+
+    def _w_remake_word(self, phrase: str, opens: dict, group: str | None, now: float) -> tuple[bool, str]:
+        try:
+            word = words.add(phrase, {"kind": opens["kind"], "name": opens["name"]}, group=group, now=now)
+        except words.WordError as e:
+            return False, str(e)
+        self._store.note_word_made(word.phrase, now)
+        thing = forms.thing_title(f"{opens['kind']}:{opens['name']}", self._store._titles())
+        return True, f"Made “{word.phrase}” open {thing} again."
+
     async def _bring_back_app(self, row: dict) -> Result:
         """An undone change whose app is in the trash: move it back, if its name is free."""
         rid = row["id"]
         if row.get("what") == "word":
-            return Result(False, "That word was taken out. It comes back if you keep asking for it.")
+            return await self._bring_back_made_word(row)
         answer = next((r for r in self._newest_first() if r.get("of") == rid), None)
         if answer is None or not answer.get("undone") or not answer.get("trash"):
             return Result(False, "That change was not put away, so there is nothing to bring back.")
