@@ -47,11 +47,15 @@ hover. A bare "why" during a turn is answered from that record.
 
 `show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
 over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
-service, disks, sound or screens from the real machine in parallel, under half a second). `agentd`
+service, disks, sound or screens from the real machine in parallel, under half a second; the boot
+record and the check that the provider answers get longer, since both are slow by nature). `agentd`
 broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
 agent gets the same picture back in words. A card still being written streams in a box at a time;
 a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
-box that names a file, service, package, page or turn comes back as `{"type":"open"}`.
+box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
+package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
+closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
+was there. A picture that cannot be drawn takes the last one away.
 `shell/Bombadil` is a symlink to `share/qml/Bombadil`: Quickshell cannot import from outside its
 own folder.
 

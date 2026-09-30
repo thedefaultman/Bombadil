@@ -153,6 +153,15 @@ keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
+# A click on a box in a picture that names a service opens it in the same drawer, in the viewer
+# (bombadil view, which needs no pager on the image), and one Esc puts it away.
+check open-unit agentd_send '{"type": "open", "kind": "unit", "value": "systemd-logind.service"}'
+check open-unit-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+check open-unit-has-keyboard wait_for 30 active_is bombadil-details
+shot open-unit
+keys esc
+check open-unit-esc-closes wait_for 30 drawer_gone
+
 
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'

@@ -449,7 +449,8 @@ class Launcher:
 
     def details(self, argv: list[str], toggle: bool = False) -> str:
         """Run a terminal program in the details drawer (a foot window in special:details).
-        With toggle, the same drawer already open closes instead: a second click on Details."""
+        With toggle, the same drawer already open closes instead: a second click on Details.
+        "failed" when the program ended before its window showed, so nothing is on screen."""
         foot = shutil.which("foot")
         if foot is None:
             raise RuntimeError("foot is not installed")
@@ -461,15 +462,17 @@ class Launcher:
         proc = self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self._drawer = shows
-        if self.hypr.available:
-            self._focus_drawer(proc)
+        if self.hypr.available and not self._focus_drawer(proc):
+            self._drawer = None
+            return "failed"
         return "shown"
 
-    def _focus_drawer(self, proc, wait: float = 5.0) -> None:
+    def _focus_drawer(self, proc, wait: float = 5.0) -> bool:
         """Slide the drawer in with the keyboard, so Esc (any key) closes it. Its window rule is
         silent, so the window never takes the keyboard by itself, and showing the workspace before
         the window maps opens it empty and leaves the keyboard where it was (the bar). So wait
-        for the window, then focus it: that shows the drawer and moves keys and pointer into it."""
+        for the window, then focus it: that shows the drawer and moves keys and pointer into it.
+        False when the drawer's program ended before its window showed (nothing was ever on screen)."""
         pid = getattr(proc, "pid", None)
 
         def gone() -> bool:   # closed meanwhile (Esc, a second click), or foot failed
@@ -479,7 +482,7 @@ class Launcher:
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             if gone():
-                return
+                return False
             try:
                 mapped = any(c.get("class") == DETAILS_CLASS and (pid is None or c.get("pid") == pid)
                              for c in self.hypr.clients())
@@ -488,11 +491,13 @@ class Launcher:
             if mapped:
                 sel = f"pid:{pid}" if pid is not None else f"class:^({DETAILS_CLASS})$"
                 self.hypr.dispatch(f'hl.dsp.focus({{ window = "{sel}" }})')
-                return
+                return True
             time.sleep(0.05)
-        if not gone():
-            # Still starting: show the drawer anyway; a click in it gives it the keyboard.
-            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+        if gone():
+            return False
+        # Still starting: show the drawer anyway; a click in it gives it the keyboard.
+        self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+        return True
 
     def _drawer_open(self) -> bool:
         r = self._run(["pgrep", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
@@ -511,14 +516,14 @@ class Launcher:
     def open_thing(self, kind: str, value: str) -> tuple[bool, str]:
         """Open what a picture's box names: a service or a package in the drawer, a folder or a text
         file in the drawer, any other file with its app, a page in the browser panel. `value` has been
-        checked by cards.check_opens; nothing here runs a shell on it (it is an argument)."""
+        checked by cards.check_opens; nothing here runs a shell on it (it is an argument). The drawer
+        shows it with `bombadil view` (Esc closes), and only "Showing" once its window was there."""
+        bomb = _bombadil()
         if kind == "unit":
-            self.details(["sh", "-c", 'systemctl status --no-pager -l -- "$1" 2>&1 | less -R', "sh", value])
-            return True, f"Showing {value}."
+            return self._view(value, [bomb, "view", "--", "systemctl", "status", "--no-pager", "-l", "--", value])
         if kind == "package":
-            self.details(["sh", "-c", '(pacman -Qi -- "$1" 2>/dev/null || pacman -Si -- "$1" 2>&1) | less -R',
-                          "sh", value])
-            return True, f"Showing {value}."
+            return self._view(value, [bomb, "view", "--", "sh", "-c",
+                                      'pacman -Qi -- "$1" 2>/dev/null || pacman -Si -- "$1" 2>&1', "sh", value])
         if kind == "url":
             self.hypr.open_url(value)
             return True, "Opened the page in the browser."
@@ -528,17 +533,20 @@ class Launcher:
             if not path.exists():
                 return False, f"{name} is not there."
             if path.is_dir():
-                self.details(["sh", "-c", 'ls -la --color=always -- "$1" | less -R', "sh", str(path)])
-                return True, f"Showing {name}."
+                return self._view(name, [bomb, "view", "--", "ls", "-la", "-p", "--", str(path)])
             if _is_text(path):
-                self.details(["less", "-R", "--", str(path)])
-                return True, f"Showing {name}."
+                return self._view(name, [bomb, "view", "--file", str(path)])
             if shutil.which("xdg-open") is None:
                 return False, f"Nothing here opens {name}."
             self._spawn(["xdg-open", str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL, start_new_session=True)
             return True, f"Opened {name}."
         return False, f"Nothing here opens a {kind}."
+
+    def _view(self, what: str, argv: list[str]) -> tuple[bool, str]:
+        if self.details(argv) == "failed":
+            return False, f"Could not open {what}."
+        return True, f"Showing {what}."
 
     def _history(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "history"])

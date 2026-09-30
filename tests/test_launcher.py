@@ -475,16 +475,18 @@ def _drawn(spawned):
 
 def test_a_service_and_a_package_open_in_the_drawer_as_arguments_never_as_shell_text(home, monkeypatch):
     lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    bomb = launcher._bombadil()
     assert lx.open_thing("unit", "NetworkManager.service") == (True, "Showing NetworkManager.service.")
     assert lx.open_thing("package", "wireguard-tools") == (True, "Showing wireguard-tools.")
     first, second = _drawn(spawned)
-    assert first[:2] == ["sh", "-c"] and "systemctl status" in first[2] and first[-2:] == ["sh", "NetworkManager.service"]
-    assert "NetworkManager" not in first[2]          # the name is $1, not part of the script
-    assert "pacman -Qi" in second[2] and second[-1] == "wireguard-tools"
+    assert first == [bomb, "view", "--", "systemctl", "status", "--no-pager", "-l", "--", "NetworkManager.service"]
+    assert second[:5] == [bomb, "view", "--", "sh", "-c"] and "pacman -Qi" in second[5]
+    assert "wireguard" not in second[5] and second[-2:] == ["sh", "wireguard-tools"]   # the name is $1, not script
 
 
 def test_a_folder_a_text_file_and_another_file_each_open_their_own_way(home, monkeypatch):
     lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    bomb = launcher._bombadil()
     (home / "notes").mkdir()
     (home / "notes" / "todo.txt").write_text("call mum\n")
     (home / "notes" / "photo.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
@@ -492,9 +494,25 @@ def test_a_folder_a_text_file_and_another_file_each_open_their_own_way(home, mon
     assert lx.open_thing("path", str(home / "notes" / "todo.txt")) == (True, "Showing todo.txt.")
     assert lx.open_thing("path", str(home / "notes" / "photo.bin")) == (True, "Opened photo.bin.")
     folder, text = _drawn(spawned)[:2]
-    assert "ls -la" in folder[2] and folder[-1] == str(home / "notes")
-    assert text == ["less", "-R", "--", str(home / "notes" / "todo.txt")]
+    assert folder == [bomb, "view", "--", "ls", "-la", "-p", "--", str(home / "notes")]
+    assert text == [bomb, "view", "--file", str(home / "notes" / "todo.txt")]
     assert spawned[-1] == ["xdg-open", str(home / "notes" / "photo.bin")]
+
+
+def test_a_drawer_whose_program_ended_before_its_window_showed_is_not_called_shown(home, monkeypatch):
+    h = MappingHypr(after=10 ** 6)
+    lx, spawned, _ = _drawer(monkeypatch, h, foot=Foot(4242, exited=1))
+    assert lx.open_thing("unit", "NetworkManager.service") == (False, "Could not open NetworkManager.service.")
+    (home / "a.txt").write_text("hello")
+    assert lx.open_thing("path", str(home / "a.txt")) == (False, "Could not open a.txt.")
+    assert h.calls == []                      # nothing was ever slid in
+
+
+def test_the_drawers_viewer_needs_nothing_installed_beyond_bombadil_itself(home, monkeypatch):
+    lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
+    monkeypatch.setattr(launcher.shutil, "which", lambda b: "/usr/bin/foot" if b == "foot" else None)   # no less, no pager
+    assert lx.open_thing("unit", "sshd.service")[0] is True
+    assert "less" not in " ".join(" ".join(a) for a in _drawn(spawned))
 
 
 def test_a_path_that_is_gone_or_unopenable_says_so(home, monkeypatch):
@@ -510,7 +528,7 @@ def test_a_tilde_path_opens_in_the_home_folder(home, monkeypatch):
     lx, spawned, _ = _drawer(monkeypatch, FakeHypr())
     (home / "a.txt").write_text("hello")
     assert lx.open_thing("path", "~/a.txt") == (True, "Showing a.txt.")
-    assert _drawn(spawned)[0] == ["less", "-R", "--", str(home / "a.txt")]
+    assert _drawn(spawned)[0] == [launcher._bombadil(), "view", "--file", str(home / "a.txt")]
 
 
 def test_a_page_opens_in_the_browser_panel(home):

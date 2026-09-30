@@ -365,6 +365,20 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 7b. a click on a box in a picture that names a file opens it in the same drawer, in the viewer
+# (`bombadil view`: the image has no pager), and one Esc puts it away.
+m = mark()
+send({"type": "open", "kind": "path", "value": "/etc/os-release"})
+done = wait(ev("local", action="open", phase="done"), 15, m)
+check("a clicked file is opened and the line says so", done is not None and done.get("ok") is True, done and done.get("text"))
+check("the viewer opens in the drawer", until(drawer_open, 5) and "bombadil view --file /etc/os-release" in run("pgrep", "-af", "bombadil").stdout,
+      run("pgrep", "-af", "bombadil view").stdout[:200])
+time.sleep(1)
+shot("21-open-file")
+check("the viewer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("one Esc puts the viewer away", until(lambda: not drawer_open()))
+
 # 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
 # the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
 def glass_pixels(x, y, h):
