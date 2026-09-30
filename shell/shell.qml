@@ -11,6 +11,7 @@ import Quickshell.Wayland
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Bombadil as Kit
 
 ShellRoot {
     id: root
@@ -132,7 +133,7 @@ ShellRoot {
             // screen it lives on; the pill on another screen is as it always was.
             readonly property bool onDesk: modelData.name === root.deskScreen
             readonly property bool capsule: onDesk && deskState.capsule
-            readonly property real pillMax: onDesk ? deskState.pillWidth : 900
+            readonly property real pillMax: onDesk ? deskState.pillWidth : Kit.Theme.pillMaxWidth
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
@@ -219,7 +220,7 @@ ShellRoot {
                     pill: pillState
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Kit.Theme.pillMaxWidth
                 }
 
                 QueueChips {
@@ -238,12 +239,12 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: win.pillMax
                     Layout.alignment: Qt.AlignHCenter
-                    implicitHeight: 52
-                    radius: 26
-                    color: "#f01a1d21"
-                    border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
-                    border.width: 1.5
-                    Behavior on border.color { ColorAnimation { duration: 300 } }
+                    implicitHeight: Kit.Theme.pillHeight
+                    radius: Kit.Theme.radiusPill
+                    color: Kit.Theme.glassPill
+                    border.color: pillState.busy ? Kit.Theme.accent : (win.summoned ? Kit.Theme.borderActive : (root.connected ? Kit.Theme.border : Kit.Theme.badLine))
+                    border.width: Kit.Theme.pillBorder
+                    Behavior on border.color { ColorAnimation { duration: Kit.Theme.slow } }
                     TapHandler { onTapped: win.summonHere() }
 
                     RowLayout {
@@ -257,16 +258,16 @@ ShellRoot {
                             implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
                             implicitHeight: 24
                             radius: 12
-                            color: stoppable ? "#3a2a26" : "transparent"
-                            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+                            color: stoppable ? Kit.Theme.accentSoft : "transparent"
+                            Behavior on implicitWidth { NumberAnimation { duration: Kit.Theme.fast } }
                             Rectangle {
                                 visible: !dotBox.stoppable
                                 anchors.centerIn: parent
                                 width: 10; height: 10; radius: 5
-                                color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
+                                color: pillState.busy ? Kit.Theme.accent : (root.connected ? Kit.Theme.good : Kit.Theme.bad)
                                 SequentialAnimation on opacity {
                                     running: pillState.busy; loops: Animation.Infinite
-                                    NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
+                                    NumberAnimation { to: Kit.Theme.pulseLow; duration: 500 } NumberAnimation { to: 1; duration: 500 }
                                 }
                             }
                             Row {
@@ -274,8 +275,8 @@ ShellRoot {
                                 visible: dotBox.stoppable
                                 anchors.centerIn: parent
                                 spacing: 6
-                                Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
-                                Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
+                                Rectangle { width: 9; height: 9; radius: 2; color: Kit.Theme.accent; anchors.verticalCenter: parent.verticalCenter }
+                                Text { font.family: Kit.Theme.fontFamily; text: "Stop"; color: Kit.Theme.accentInk; font.pixelSize: Kit.Theme.smallSize }
                             }
                             HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
                             TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
@@ -288,12 +289,13 @@ ShellRoot {
 
                             TextField {
                                 id: input
+                                font.family: Kit.Theme.fontFamily
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
                                 placeholderText: root.connected ? "Ask anything" : "Waiting for agentd…"
-                                color: "#e6e8eb"
-                                placeholderTextColor: "#8b939c"
-                                font.pixelSize: 16
+                                color: Kit.Theme.fg
+                                placeholderTextColor: Kit.Theme.muted
+                                font.pixelSize: Kit.Theme.promptSize
                                 background: null
                                 focus: true
                                 // The field takes the press itself, so the pill's own handler never sees it.
@@ -325,22 +327,24 @@ ShellRoot {
                                 anchors.verticalCenter: parent.verticalCenter
                                 visible: input.text !== "" && ghost.text !== ""
                                 Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
-                                Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
+                                Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: Kit.Theme.faint; textFormat: Text.PlainText }
                             }
                         }
 
                         // An exact launcher word: say it opens here, without the model.
                         Text {
+                            font.family: Kit.Theme.fontFamily
                             readonly property string target: pillState.exact(input.text)
                             visible: target !== "" && !win.capsule
                             text: "↵ " + target
-                            color: "#8b939c"
-                            font.pixelSize: 12
+                            color: Kit.Theme.muted
+                            font.pixelSize: Kit.Theme.captionSize
                         }
 
                         Text {
                             id: clock
-                            text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
+                            font.family: Kit.Theme.fontFamily
+                            text: Qt.formatTime(new Date(), "HH:mm"); color: Kit.Theme.muted; font.pixelSize: Kit.Theme.smallSize
                             Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
                         }
                     }

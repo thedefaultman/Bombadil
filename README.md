@@ -25,8 +25,9 @@ permission prompt.
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) as a Qt Quick window with hot reload. |
 | `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`. |
 | `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
-| `shell/shell.qml` | The Quickshell bar. |
-| `share/qml/Bombadil` | `Theme` and `Window` QML components so generated apps look like one system. |
+| `bin/bombadil-shell` | Starts the bar: Quickshell on `shell/shell.qml`, with `share/qml` on its import path so the shell can `import Bombadil`. Every launcher (Hyprland, a unit, `scripts/dev-session.sh`) runs this, never `quickshell` directly. |
+| `shell/shell.qml` | The Quickshell bar: the pill, the line above it, the desk. Its colours, sizes and type are `Theme`'s (`shell/DeskTheme.js` mirrors them for the desk; `tests/test_theme.py` keeps the two equal). |
+| `share/qml/Bombadil` | The app kit: `Theme` (the tokens the shell and every app share) and the components, so generated apps look like one system. |
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools

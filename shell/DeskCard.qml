@@ -101,6 +101,7 @@ Item {
     Text {
         id: titleLabel
         objectName: card.namePrefix + "Title"
+        font.family: T.fontFamily
         x: card.textLeft
         y: Math.round(26 - baselineOffset)
         width: card.width - x - 14
@@ -118,6 +119,7 @@ Item {
 
     Text {
         objectName: card.namePrefix + "Why"
+        font.family: T.fontFamily
         x: card.textLeft
         y: Math.round(44 - baselineOffset)
         width: card.width - x - 14

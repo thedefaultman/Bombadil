@@ -1,4 +1,12 @@
+import os
+from pathlib import Path
+
 import pytest
+
+# The shell's QML imports the app kit as the module "Bombadil", as apps do; bin/bombadil-shell puts
+# share/qml on the import path for Quickshell, and this does it for the offscreen engines.
+_QML = str(Path(__file__).resolve().parents[1] / "share" / "qml")
+os.environ["QML2_IMPORT_PATH"] = _QML + os.pathsep + os.environ.get("QML2_IMPORT_PATH", "")
 
 
 @pytest.fixture
