@@ -19,6 +19,13 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                     "rail": "left"|"right", "rank": 0}  change the desk; the state comes back to everyone
                    {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
                                                         the os-mcp `desk` tool; answered with desk-result
+                   {"type": "jobs", "op": "get"}        the jobs table (also sent after `desk get`)
+                   {"type": "jobs", "op": "stop"|"dismiss"|"why", "id": job}
+                                                        stop a job (systemctl, never the model), drop a
+                                                        finished one's row, show its output in the drawer
+                   {"type": "job-tool", "id": s, "turn": n, "op": "start"|"list"|"stop", "title": ...,
+                    "command": ..., "kind": "job"|"watch", "seconds": n, "job": id}
+                                                        the os-mcp `job` tool; answered with job-result
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
@@ -30,6 +37,11 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a desk-tool, to its sender only
+                   {"type": "jobs", "jobs": [{"id", "title", "kind": "job"|"watch"|"timer", "state":
+                    "running"|"done"|"failed", "started", "deadline", "ended", "pct", "last", "unit"}]}
+                                                        the jobs table: to whoever asks, and on change
+                   {"type": "job-result", "id": s, "ok": bool, "text": "..."}
+                                                        the answer to a job-tool, to its sender only
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
@@ -47,6 +59,13 @@ turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.",
 The desk-tool changes the desk only in the turn that is running, and only when that turn's own
 typed words asked for the desk (desk.asked_for_desk); otherwise it is refused.
 
+Jobs are background commands, watchers and timers the agent starts with the `job` tool (jobs.py):
+transient systemd user units that outlive the turn. The job-tool's `start` needs the turn that is
+running (a stale process cannot start jobs) but not the person's words; `list` and `stop` need
+neither. While the table has anything in it agentd looks at it every JOBS_POLL seconds, broadcasts
+the table when it changes, and when a job ends says one line in the pill (a "local" event with no
+turn) and tells the next turn's prompt.
+
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
@@ -62,6 +81,7 @@ from pathlib import Path
 
 from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
 from .desk import Desk, asked_for_desk
+from .jobs import JobError, Jobs, ending, started_text
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
@@ -75,12 +95,15 @@ SEND_TIMEOUT = 5.0
 OUTPUT_GRACE = 1.0
 # Changes to the desk that come close together go out as the state they end in.
 DESK_DEBOUNCE = 0.03
+# The same for the jobs table, which is also looked at this often (seconds) while it has anything in it.
+JOBS_DEBOUNCE = 0.03
+JOBS_POLL = 2.0
 
 
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None, desk: Desk | None = None):
+                 stopper: procs.Stopper | None = None, desk: Desk | None = None, jobs: Jobs | None = None):
         self.provider = provider
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
@@ -115,6 +138,11 @@ class AgentD:
         self._desk_dirty = False
         self._desk_last = self.desk.snapshot()      # what the shell was last told
         self.desk.on_change = self._desk_changed
+        self.jobs = jobs if jobs is not None else Jobs()
+        self._jobs_task: asyncio.Task | None = None  # looks at the jobs while the table has anything
+        self._jobs_again = False                    # a job started while that task was deciding to stop
+        self._jobs_dirty = False
+        self._jobs_last = self.jobs.snapshot()      # what the shell was last told
 
     # -- socket --
 
@@ -128,10 +156,14 @@ class AgentD:
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
         worker = asyncio.create_task(self._worker())
         watcher = asyncio.create_task(self._watch_apps())
+        self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
-            await server.serve_forever()
-        worker.cancel()
-        watcher.cancel()
+            try:
+                await server.serve_forever()
+            finally:
+                for task in (worker, watcher, self._jobs_task):
+                    if task is not None:
+                        task.cancel()
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         queue: asyncio.Queue = asyncio.Queue(CLIENT_BACKLOG)
@@ -210,6 +242,10 @@ class AgentD:
             await self._desk_op(msg, writer)
         elif t == "desk-tool":
             await self._send(writer, await self._desk_tool(msg))
+        elif t == "jobs":
+            await self._jobs_op(msg, writer)
+        elif t == "job-tool":
+            await self._send(writer, await self._job_tool(msg))
         elif t == "status":
             await self._send(writer, self._status())
 
@@ -322,6 +358,8 @@ class AgentD:
             # A bar that restarts mid-turn still has the route.
             if self.current is not None and self.plan_msg is not None:
                 await self._send(writer, self.plan_msg)
+            # And what is counting, which the desk's card and strip are made from.
+            await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
             return
         if op not in ("fold", "hide", "show", "move"):
             return
@@ -357,6 +395,127 @@ class AgentD:
         ok, text = await asyncio.to_thread(self.desk.apply, op, msg.get("widget"), msg.get("rail"),
                                            msg.get("rank"))
         return result(ok, text)
+
+    # -- jobs --
+
+    def _jobs_kick(self):
+        """Look at the jobs every JOBS_POLL seconds from now, unless that is already going."""
+        self._jobs_again = True
+        if self._jobs_task is None or self._jobs_task.done():
+            self._jobs_task = asyncio.create_task(self._jobs_loop())
+
+    async def _jobs_loop(self):
+        """Look at the table until it is empty: a running job is read, a finished one leaves on
+        its own clock, and the shell is told whenever the table is not what it was."""
+        while True:
+            self._jobs_again = False
+            try:
+                for rec in await asyncio.to_thread(self.jobs.poll):
+                    await self._job_ended(rec)
+                self._jobs_soon()
+                if not (await asyncio.to_thread(self.jobs.snapshot))["jobs"] and not self._jobs_again:
+                    return
+            except Exception as e:  # noqa: BLE001 - keep looking whatever one look found
+                print(f"agentd: looking at jobs: {type(e).__name__}: {e}", file=sys.stderr)
+            await asyncio.sleep(JOBS_POLL)
+
+    def _jobs_soon(self):
+        if not self._jobs_dirty:
+            self._jobs_dirty = True
+            self._background(self._jobs_broadcast())
+
+    async def _jobs_broadcast(self):
+        await asyncio.sleep(JOBS_DEBOUNCE)
+        self._jobs_dirty = False
+        table = await asyncio.to_thread(self.jobs.snapshot)
+        if table != self._jobs_last:
+            self._jobs_last = table
+            await self.broadcast(table)
+
+    async def _job_ended(self, rec: dict):
+        """One line in the pill, as a launcher word's answer is, and a note for the next prompt."""
+        text, ok = ending(rec)
+        await self.event("local", turn=None, action="job", target=rec["id"], phase="done", ok=ok, text=text)
+        note = f"background job {rec['id']}: {text}"
+        if not ok:
+            log = await asyncio.to_thread(self.jobs.log_path, rec["id"])
+            note += f" (its output is in {log})" if log is not None else ""
+        self.notes = [*self.notes, note][-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
+                        "target": rec["title"], "result": text, "ok": ok})
+
+    async def _jobs_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the table, or acts on a row: × stops a running job, × on a finished one
+        drops its row, Why? shows its output. None of them goes through the model."""
+        op, job_id = str(msg.get("op", "")), msg.get("id")
+        if op == "get":
+            await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
+        elif op == "stop":
+            self._background(self._jobs_stop(job_id))
+        elif op == "dismiss":
+            await asyncio.to_thread(self.jobs.dismiss, job_id)
+            self._jobs_soon()
+        elif op == "why":
+            self._background(self._jobs_why(job_id))
+
+    async def _jobs_stop(self, job_id):
+        try:
+            rec = await asyncio.to_thread(self.jobs.stop, job_id)
+        except JobError as e:
+            await self.event("local", turn=None, action="job", target=str(job_id), phase="done", ok=False,
+                             text=str(e))
+            return
+        self._jobs_soon()
+        if rec is not None:
+            # Not said on the line (the × is its own answer), but the agent should know.
+            text = f"Stopped {rec['title']}."
+            self.notes = [*self.notes, f"background job {rec['id']}: {text}"][-10:]
+            self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
+                            "target": rec["title"], "result": text, "ok": True})
+
+    async def _jobs_why(self, job_id):
+        argv = await asyncio.to_thread(self.jobs.why, job_id)
+        if argv is None:
+            return
+        try:
+            await asyncio.to_thread(self.launcher.details, argv, True)
+        except Exception as e:  # noqa: BLE001
+            await self.event("local", turn=None, action="job", target=str(job_id), phase="done", ok=False,
+                             text=f"Could not show the output: {e}")
+
+    async def _job_tool(self, msg: dict) -> dict:
+        """The os-mcp `job` tool. Starting a job is ordinary work, so the person's words do not
+        gate it, but it must come from the turn that is running, so a stale process cannot start
+        jobs. Listing and stopping need no turn. The answer goes to the one client that asked."""
+        def result(ok: bool, text: str) -> dict:
+            return {"type": "job-result", "id": msg.get("id"), "ok": ok, "text": text}
+        op = str(msg.get("op", ""))
+        try:
+            if op == "start":
+                turn = msg.get("turn")
+                if self.current is None or isinstance(turn, bool) or turn != self.current:
+                    return result(False, "That turn is over, so nothing was started.")
+                if self.stopping:
+                    return result(False, "That turn is being stopped, so nothing was started.")
+                rec = await asyncio.to_thread(self.jobs.start, msg.get("title"), msg.get("command"),
+                                              msg.get("kind") or "job", msg.get("seconds"))
+                self._jobs_kick()
+                self._jobs_soon()
+                return result(True, started_text(rec, await asyncio.to_thread(self.jobs.log_path, rec["id"])))
+            if op == "list":
+                return result(True, await asyncio.to_thread(self.jobs.listing))
+            if op == "stop":
+                if not msg.get("job"):
+                    return result(False, "Which job? `list` says which are running.")
+                rec = await asyncio.to_thread(self.jobs.stop, msg.get("job"))
+                if rec is None:
+                    return result(False, f"There is no job {str(msg.get('job'))[:20]!r}. `list` says which "
+                                         "are running.")
+                self._jobs_soon()
+                return result(True, f"Stopped {rec['title']}.")
+        except JobError as e:
+            return result(False, str(e))
+        return result(False, f"Jobs cannot {op or 'do that'}. They can start, list and stop.")
 
     # -- things that never wait for the model --
 
