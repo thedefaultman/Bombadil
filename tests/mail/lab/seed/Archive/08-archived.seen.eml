@@ -1,0 +1,9 @@
+From: Alice Example <alice@example.org>
+To: test@example.test
+Subject: Old archived mail
+Date: Fri, 04 Sep 2026 09:00:00 +0000
+Message-ID: <archived-1@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+This message lives in the Archive folder and is already read. ARCHIVEDMARKER

@@ -32,6 +32,13 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "job-tool", "id": s, "turn": n, "op": "start"|"list"|"stop", "title": ...,
                     "command": ..., "kind": "job"|"watch", "seconds": n, "job": id}
                                                         the os-mcp `job` tool; answered with job-result
+                   {"type": "mail-tool", "id": s, "turn": n, "op": "search"|"read"|"draft"|"mark"|"show"|
+                    "status", ...}                      the os-mcp mail tools; answered with mail-result
+                   {"type": "press", "kind": "mail", "id": draft, "fingerprint": fp}
+                                                        the person's press on a Send button; answered
+                                                        with press_result (outbox.py)
+                   {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
+                   {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
@@ -49,6 +56,16 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         the jobs table: to whoever asks, and on change
                    {"type": "job-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a job-tool, to its sender only
+                   {"type": "mail-result", "id": s, "ok": bool, "text": "..."}
+                                                        the answer to a mail-tool, to its sender only
+                   {"type": "press_result", "kind", "id", "ok": bool, "line": "...", "code": "",
+                    "receipt": {...}|null}              the answer to a press, to its sender only
+                   {"type": "notice", "id": n, "source": "mail", "line": "...", "tone": "step"|"ask"|
+                    "done"|"error", "actions": [{"id", "label", "style": "primary"|"quiet"}], "ttl": s,
+                    "at": epoch}                        a line another service says above the pill
+                                                        (notices.py); again with the same id when it
+                                                        changes, to every client and to one that joins
+                   {"type": "notice_end", "id": n}      it is gone (handled, dismissed, or out of time)
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
@@ -73,6 +90,13 @@ step, ask, error or done, and `actions` are its chips: [{"id", "label", "style"}
 The desk-tool changes the desk only in the turn that is running, and only when that turn's own
 typed words asked for the desk (desk.asked_for_desk); otherwise it is refused.
 
+Mail is another service (docs/MAIL.md). The mail-tool reads, searches, marks and drafts in the turn
+that is running and can never send: only a press, which agentd takes from a window that is not
+part of any agent's turn (outbox.py), lets a draft go. A typed "send it" while a draft waits is
+answered at once with where the button is. agentd also listens to the mail service (mail/watch.py) and
+says new mail, drafts and receipts as notices; with no mail service that costs one failed connect
+every few seconds.
+
 Jobs are background commands, watchers and timers the agent starts with the `job` tool (jobs.py):
 transient systemd user units that outlive the turn. The job-tool's `start` needs the turn that is
 running (a stale process cannot start jobs) but not the person's words; `list` and `stop` need
@@ -90,15 +114,21 @@ import json
 import os
 import re
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
 
-from . import browser, config, launcher, narrate, paths, procs, providers, signin, snapshots, watch
+from . import browser, config, launcher, narrate, outbox, paths, procs, providers, signin, snapshots, watch
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
+from .mail import client as mail_client
+from .mail import tools as mail_tools
+from .mail import watch as mail_watch
+from .notices import Notices
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
@@ -129,6 +159,12 @@ DESK_DEBOUNCE = 0.03
 # The same for the jobs table, which is also looked at this often (seconds) while it has anything in it.
 JOBS_DEBOUNCE = 0.03
 JOBS_POLL = 2.0
+# A notice with a time to live is looked at this often (seconds), and only while one exists.
+NOTICE_POLL = 1.0
+# The service's "show" push that follows our own request for the Mail window must not open it twice.
+MAIL_WINDOW_DEBOUNCE = 2.0
+DRAFT_CHECK_SECONDS = 1.0   # how long "send it" waits to learn whether a draft is waiting
+MAIL_ANSWER_CHARS = 60_000  # the most text one mail tool answers with
 
 
 class AgentD:
@@ -192,6 +228,15 @@ class AgentD:
         self._jobs_again = False                    # a job started while that task was deciding to stop
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
+        # Mail: the notices above the pill, the outbox that turns a press into one send, what the
+        # person's words and the service's pushes say, and the agent's tools.
+        self.notices = Notices(self._notice_emit)
+        self.outbox = outbox.Outbox(in_turn=self._in_turn)
+        self.says = mail_watch.Says(self.notices, self.outbox, self._mail_show, self._mail_window, self.open_url)
+        self.mail = mail_tools.Broker(self.says)
+        self._mail_watch = mail_watch.Watch(self.says.push)
+        self._mail_opened = -MAIL_WINDOW_DEBOUNCE   # when the Mail window was last brought in
+        self._notices_task: asyncio.Task | None = None  # looks at the clock while a notice has a ttl
 
     # -- socket --
 
@@ -206,12 +251,13 @@ class AgentD:
         worker = asyncio.create_task(self._worker())
         self._background(self.check_access(start=self.auto_signin))
         watcher = asyncio.create_task(self._watch_apps())
+        mail = asyncio.create_task(self._mail_watch.run())
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
             try:
                 await server.serve_forever()
             finally:
-                for task in (worker, watcher, self._jobs_task):
+                for task in (worker, watcher, mail, self._jobs_task, self._notices_task):
                     if task is not None:
                         task.cancel()
 
@@ -223,6 +269,8 @@ class AgentD:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
             await self._send(writer, self._setup_msg())
+            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
+                await self._send(writer, notice)
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -257,6 +305,8 @@ class AgentD:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
             action = await self._match(text)
+            if action is None and launcher.is_send_word(text) and await self._draft_waiting():
+                action = launcher.Action("send")   # "send it" is not a send: the press is the person's
             if action is None and self.access == "choose":
                 # First boot asks which AI: typing its name answers too.
                 name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
@@ -306,6 +356,15 @@ class AgentD:
             await self._jobs_op(msg, writer)
         elif t == "job-tool":
             await self._send(writer, await self._job_tool(msg))
+        elif t == "mail-tool":
+            await self._send(writer, await self._mail_tool(msg))
+        elif t == "press":
+            self._background(self._press(msg, writer))
+        elif t == "notice_action":
+            self._background(self._notice_action(msg.get("id"), msg.get("action")))
+        elif t == "notice_dismiss":
+            if _is_int(msg.get("id")):
+                self.notices.dismiss(msg["id"])
         elif t == "status":
             await self._send(writer, self._status())
         elif t == "setup_action":
@@ -594,6 +653,106 @@ class AgentD:
         except JobError as e:
             return result(False, str(e))
         return result(False, f"Jobs cannot {op or 'do that'}. They can start, list and stop.")
+
+    # -- notices, mail and the press --
+
+    def _notice_emit(self, msg: dict):
+        """Notices.emit: every change goes to every client, in the order it was made."""
+        self._background(self.broadcast(msg))
+        if msg["type"] == "notice":
+            self._notices_kick()
+
+    def _notices_kick(self):
+        if self.notices.next_expiry() is not None and (self._notices_task is None or self._notices_task.done()):
+            self._notices_task = asyncio.create_task(self._notices_loop())
+
+    async def _notices_loop(self):
+        """Look at the clock while some notice has a time to live, and not otherwise."""
+        while (left := self.notices.next_expiry()) is not None:
+            await asyncio.sleep(min(left, NOTICE_POLL))
+            self.notices.expire()
+
+    async def _notice_action(self, notice_id, action):
+        """A chip on a notice. What it does is its notice's own; when that fails the notice says so."""
+        if not _is_int(notice_id) or not isinstance(action, str):
+            return
+        try:
+            await self.notices.action(notice_id, action)
+        except Exception as e:  # noqa: BLE001 - the person pressed it: they are told why nothing happened
+            self.notices.replace(notice_id, line=f"Could not do that: {launcher._reason(e)}", tone="error",
+                                 actions=[], ttl=30)
+
+    async def _mail_tool(self, msg: dict) -> dict:
+        """The os-mcp mail tools. They work in the turn that is running, like the desk's, and are answered
+        to the one client that asked. Nothing here sends: see outbox.py for the only way a draft leaves."""
+        def result(ok: bool, text: str) -> dict:
+            return {"type": "mail-result", "id": msg.get("id"), "ok": ok, "text": text}
+        turn = msg.get("turn")
+        if self.current is None or isinstance(turn, bool) or turn != self.current or self.stopping:
+            return result(False, "That turn is over, so mail stays as it is.")
+        # The raw prompt, as in the desk's gate: the turn's own has notes in front. A coding session's
+        # turn has no typed words, so every address in its drafts is one nobody typed.
+        typed = self.turn_prompt or ""
+
+        def alive() -> bool:
+            return self.current == turn and not self.stopping
+        try:
+            ok, text = await self.mail.call(turn, str(msg.get("op", "")), msg, typed, alive)
+        except Exception as e:  # noqa: BLE001 - a tool call is always answered
+            print(f"agentd: mail-tool: {type(e).__name__}: {e}", file=sys.stderr)
+            return result(False, f"Mail failed: {launcher._reason(e)}")
+        return result(ok, text[:MAIL_ANSWER_CHARS])
+
+    async def _press(self, msg: dict, writer: asyncio.StreamWriter):
+        """The person's press on a Send button, from whatever process drew it: the outbox decides whether
+        it counts, does the act once, and what came of it goes back to the sender and onto the line."""
+        kind, id_ = msg.get("kind"), msg.get("id")
+        result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer))
+        self.says.pressed(result)
+        if result.ok:
+            # Not said again on the line (the receipt is), but the agent should know what happened to its draft.
+            self.notes = [*self.notes, f"the person pressed Send: {result.line}"][-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": "pressed Send", "action": "press",
+                        "target": (id_ if isinstance(id_, str) else "")[:128], "result": result.line,
+                        "ok": result.ok})
+        await self._send(writer, {"type": "press_result", "kind": kind if isinstance(kind, str) else "",
+                                  "id": id_ if isinstance(id_, str) else "", "ok": result.ok,
+                                  "line": result.line, "code": result.code, "receipt": result.receipt})
+
+    def _in_turn(self, pid: int) -> bool:
+        """Is this process the running turn's own CLI or one it started? (A turn without a systemd
+        scope is only its process tree.) Blocking: the outbox asks from a thread."""
+        proc = self.proc
+        if proc is None or proc.returncode is not None:
+            return False
+        return pid == proc.pid or pid in procs.descendants(proc.pid, procs.all_procs())
+
+    async def _draft_waiting(self) -> bool:
+        """Does a draft wait for the person's press? Asked of the service, since the person may have
+        started it in the window themselves. No service, no draft."""
+        try:
+            got = await mail_watch.ask("list", DRAFT_CHECK_SECONDS, view="drafts", limit=5)
+        except (mail_client.MailUnavailable, mail_client.MailError):
+            return False
+        rows = got if isinstance(got, list) else (got or {}).get("drafts", []) if isinstance(got, dict) else []
+        return any(isinstance(d, dict) and d.get("state", "open") == "open" for d in rows)
+
+    async def _mail_show(self, **view):
+        """Ask the service to show a view and bring the Mail window in (Launcher.open_mail). Raises when
+        the window will not open, for the caller to say."""
+        self._mail_opened = time.monotonic()
+        await asyncio.to_thread(self.launcher.open_mail, **view)
+
+    async def _mail_window(self):
+        """The service says somebody wants a view shown: make sure the window is there to draw it. Not
+        again just after we opened it ourselves, which is what this push usually is."""
+        if time.monotonic() - self._mail_opened < MAIL_WINDOW_DEBOUNCE:
+            return
+        self._mail_opened = time.monotonic()
+        try:
+            await asyncio.to_thread(self.launcher.open_mail_window)
+        except Exception as e:  # noqa: BLE001 - nobody asked agentd for this one: it is a line, not an error
+            print(f"agentd: the Mail window: {type(e).__name__}: {e}", file=sys.stderr)
 
     # -- things that never wait for the model --
 
@@ -1039,6 +1198,7 @@ class AgentD:
             finally:
                 stopped = self.stopping
                 self.current = None
+                self.mail.end(turn_id)   # what the turn read is not carried into the next
                 self.narrator = None
                 self.plan_msg = None
                 self.proc = None
@@ -1326,6 +1486,22 @@ def _limit_text(text: str) -> str:
 def _bombadil_browser() -> str:
     local = Path(__file__).resolve().parents[2] / "bin" / "bombadil-browser"
     return str(local) if local.exists() else "bombadil-browser"
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _peer_pid(writer: asyncio.StreamWriter) -> int | None:
+    """The process on the other end of a client's socket, as the kernel recorded it when that client
+    connected; None when it cannot be told (which the outbox treats as a press from nobody)."""
+    sock = writer.get_extra_info("socket")
+    try:
+        pid, _uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                              struct.calcsize("3i")))
+    except (AttributeError, OSError, struct.error):
+        return None
+    return pid or None
 
 
 def _action(msg: dict) -> launcher.Action | None:

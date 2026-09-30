@@ -1,0 +1,154 @@
+"""Shared helpers for the lab's question scripts (q2_*.py, q3_*.py, q4_*.py, q5_*.py).
+
+    from labtest import Lab
+    lab = Lab()                       # uses $BOMBADIL_LAB_DIR (default /tmp/bombadil-lab)
+    lab.start(LAB_HEADLESS="1")       # run-thunderbird.sh start with env overrides; waits for the add-on
+    b = lab.bridge()                  # lab_bridge.Bridge, connected to the add-on
+    lab.ms                            # mailserver.MailServer handle (deliver(), sent(), wait_sent())
+    lab.imap()                        # imaplib connection as the test user
+    lab.stop()
+"""
+import imaplib
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from lab_bridge import Bridge  # noqa: E402
+from mailserver import MailServer  # noqa: E402
+
+RUN = os.path.join(HERE, "run-thunderbird.sh")
+
+
+class Lab:
+    def __init__(self, lab_dir=None):
+        self.dir = lab_dir or os.environ.get("BOMBADIL_LAB_DIR", "/tmp/bombadil-lab")
+        self.ms = MailServer(os.path.join(self.dir, "mail"))
+        self._bridge = None
+        self.start_seconds = None
+
+    # -- lifecycle
+    def start(self, **env):
+        e = dict(os.environ)
+        e["BOMBADIL_LAB_DIR"] = self.dir
+        e.update({k: str(v) for k, v in env.items()})
+        t = time.time()
+        p = subprocess.run([RUN, "start"], env=e, capture_output=True, text=True)
+        self.start_seconds = time.time() - t
+        if p.returncode not in (0,):
+            raise RuntimeError("run-thunderbird.sh start failed (%d): %s" % (p.returncode, p.stderr[-800:]))
+        self._display()
+        return self
+
+    def restart(self, **env):
+        e = dict(os.environ)
+        e["BOMBADIL_LAB_DIR"] = self.dir
+        e.update({k: str(v) for k, v in env.items()})
+        subprocess.run([RUN, "restart"], env=e, check=True, capture_output=True)
+        return self
+
+    def stop(self):
+        if self._bridge:
+            self._bridge.close()
+            self._bridge = None
+        subprocess.run([RUN, "stop"], env=dict(os.environ, BOMBADIL_LAB_DIR=self.dir), capture_output=True)
+
+    def _display(self):
+        try:
+            os.environ["DISPLAY"] = open(os.path.join(self.dir, "display")).read().strip()
+        except OSError:
+            pass
+
+    def bridge(self, timeout=60):
+        if self._bridge is None:
+            self._bridge = Bridge(os.path.join(self.dir, "host.sock"))
+        self._bridge.wait_connected(timeout)
+        return self._bridge
+
+    # -- conveniences
+    def imap(self):
+        m = imaplib.IMAP4("127.0.0.1", 1143)
+        m.login("test@example.test", "lab")
+        return m
+
+    def imap_flags(self, folder, message_id, tries=10):
+        """Server-side FLAGS of the message with this Message-ID in `folder` ([] if absent, None if not found)."""
+        for _ in range(tries):
+            m = self.imap()
+            try:
+                m.select(folder)
+                typ, data = m.search(None, "HEADER", "Message-ID", message_id)
+                nums = data[0].split()
+                if nums:
+                    typ, d = m.fetch(nums[0], "(FLAGS)")
+                    return d[0].decode()
+            finally:
+                m.logout()
+            time.sleep(0.5)
+        return None
+
+    def imap_count(self, folder):
+        m = self.imap()
+        try:
+            typ, data = m.select(folder)
+            return int(data[0])
+        finally:
+            m.logout()
+
+    def windows(self):
+        """Top-level X windows with a name (xwininfo)."""
+        out = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True).stdout
+        res = []
+        for l in out.splitlines():
+            l = l.strip()
+            if l.startswith("0x") and '"' in l and "has no name" not in l:
+                res.append(l)
+        return res
+
+    def screenshot(self, path):
+        subprocess.run(["import", "-window", "root", path], check=False)
+        return path
+
+    def tb_pids(self):
+        """PIDs of all Thunderbird processes of this lab (main + content/gpu/socket/utility children)."""
+        out = subprocess.run(["pgrep", "-f", "thunderbird-bin|thunderbird -no-remote"], capture_output=True, text=True).stdout
+        pids = []
+        for p in out.split():
+            try:
+                cmd = open("/proc/%s/cmdline" % p).read()
+            except OSError:
+                continue
+            if self.dir in cmd or ("thunderbird" in cmd and "-contentproc" in cmd):
+                pids.append(int(p))
+        return pids
+
+    def rss_mb(self):
+        total = 0
+        for p in self.tb_pids():
+            try:
+                for l in open("/proc/%d/status" % p):
+                    if l.startswith("VmRSS:"):
+                        total += int(l.split()[1])
+            except OSError:
+                pass
+        return total / 1024.0
+
+    def cpu_seconds(self):
+        tck = os.sysconf("SC_CLK_TCK")
+        total = 0.0
+        for p in self.tb_pids():
+            try:
+                f = open("/proc/%d/stat" % p).read().rsplit(")", 1)[1].split()
+                total += (int(f[11]) + int(f[12])) / tck
+            except (OSError, IndexError):
+                pass
+        return total
+
+
+def pretty(o, n=400):
+    s = json.dumps(o, default=str)
+    return s if len(s) <= n else s[:n] + "..."

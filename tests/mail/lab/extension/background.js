@@ -53,6 +53,9 @@ async function jsonable(v) {
       b64: await blobToB64(v),
     };
   }
+  if (v instanceof Date) {
+    return v.toISOString();
+  }
   if (Array.isArray(v)) {
     return Promise.all(v.map(jsonable));
   }
@@ -117,6 +120,13 @@ async function handle(msg) {
     switch (op) {
       case "ping":
         result = { pong: true, uptimeMs: Date.now() - T0 };
+        break;
+      case "hello":
+        result = {
+          version: messenger.runtime.getManifest().version,
+          startedAtMs: T0,
+          accounts: await messenger.accounts.list(),
+        };
         break;
       case "call": {
         const [obj, fn] = resolvePath(msg.path);

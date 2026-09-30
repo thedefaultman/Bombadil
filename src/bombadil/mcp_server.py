@@ -169,6 +169,8 @@ class OsTools:
 
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
         app_tools.register(self)
+        from .mail import tools as mail_tools  # mail_search, mail_read, mail_mark, mail_draft, mail_show
+        mail_tools.register(self)
 
     # MCP plumbing
 

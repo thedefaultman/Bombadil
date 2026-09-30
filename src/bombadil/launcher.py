@@ -4,6 +4,8 @@ Typing an app's name, a panel's name ("browser", or an alias people already use:
 or one of a few commands ("undo", "stop", "history", "wifi", "desk") is handled here, by
 agentd, in a fraction of a second and offline. So are the desk's widgets, but only with a
 verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the agent.
+Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
+every inbox at once, and the service behind it is asked, never waited for.
 Everything else goes to the agent. The list is deliberately exact (after lowercasing and
 trimming, with an optional "open"/"close" in front): a parser that guesses would give the
 machine two brains that sometimes disagree.
@@ -22,6 +24,7 @@ from pathlib import Path, PurePosixPath
 
 from . import apps, hypr, paths, snapshots
 from .desk import WIDGETS, Desk
+from .mail import client as mail_client
 
 PANEL_WORDS = {
     "browser": ["browser", "web browser", "web", "chrome", "chromium", "google", "internet"],
@@ -57,6 +60,13 @@ UTILITY_COMMANDS = {
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
+# The Mail window (a kit app that ships with Bombadil), and what people call it.
+MAIL_APP = "mail"
+MAIL_WORDS = {"mail": ["mail", "email", "e-mail", "inbox", "my mail", "my email", "my inbox"]}
+MAIL_SHOW_SECONDS = 1.0   # the service is asked to show a view and never waited for longer than this
+# Typed alone while a draft waits, these are not for the model: sending is the person's press.
+SEND_WORDS = ("send", "send it", "send that", "send this", "yes send", "yes send it", "yes send that")
+SEND_LINE = "Sending is yours. It's under the pointer."
 OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "switch to")
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
@@ -177,11 +187,22 @@ def match(text: str, app_list: list | None = None) -> Action | None:
         panel = _lookup(word, PANEL_WORDS)
         if panel is not None:
             return Action("panel", panel, verb, PANEL_TITLES[panel])
+        if _lookup(word, MAIL_WORDS) is not None:
+            return Action("mail", MAIL_APP, verb, "Mail")
         if verb == "open":
             util = _lookup(word, UTILITY_COMMANDS)
             if util and (verbs or word == t):
                 return Action(util)
     return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
+
+
+def is_send_word(text: str) -> bool:
+    """Is this only "send" (send it, yes send, ...)? Whether it is answered here depends on whether a
+    draft waits, which only agentd can tell; a question ("send it?") is left to the agent, like
+    "restart?"."""
+    raw = str(text).strip()
+    t = normalize(raw).replace(",", "")
+    return t.isascii() and not raw.endswith("?") and not raw.startswith("!") and t in SEND_WORDS
 
 
 def _widget_action(t: str, app_list: list) -> Action | None:
@@ -205,6 +226,8 @@ def entries(app_list: list | None = None) -> list[dict]:
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
            for a in app_list]
+    if not any(a.name == MAIL_APP for a in app_list):
+        out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": ["mail", "email", "inbox"]})
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
@@ -246,7 +269,7 @@ class Launcher:
 
     @staticmethod
     def doing(action: Action) -> str:
-        if action.kind in ("panel", "app"):
+        if action.kind in ("panel", "app", "mail"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
         if action.kind == "widget":
@@ -256,11 +279,11 @@ class Launcher:
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "provider": f"Switching to {action.title or action.target}",
-                "desk": "Changing the desk"}.get(action.kind, "On it")
+                "desk": "Changing the desk", "send": "Sending is yours"}.get(action.kind, "On it")
 
     @staticmethod
     def failed(action: Action) -> str:
-        if action.kind in ("panel", "app"):
+        if action.kind in ("panel", "app", "mail"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
         if action.kind == "widget":
@@ -318,6 +341,42 @@ class Launcher:
             return True, f"{a.title} has no drawer to put away yet."
         past = {"open": "Opened", "close": "Closed", "hide": "Put"}[a.verb]
         return True, f"{past} {a.title}" + (" away." if a.verb == "hide" else ".")
+
+    # -- mail --
+
+    def _mail(self, a: Action) -> tuple[bool, str]:
+        if a.verb != "open":
+            return self._app(Action("app", MAIL_APP, a.verb, a.title))
+        self.open_mail()
+        return True, "Opened Mail."
+
+    def _send(self, _a: Action) -> tuple[bool, str]:
+        # agentd says this only when a draft waits (is_send_word); the press itself is not here.
+        return True, SEND_LINE
+
+    def open_mail(self, **show) -> None:
+        """The Mail window, on a view ("all" unless told). The service is asked first, so the window
+        finds the request waiting when it opens, or, already open, is pushed to it; a service that
+        is not there costs a moment at most, and the window says so itself."""
+        try:
+            mail_client.request("show", timeout=MAIL_SHOW_SECONDS, **(show or {"view": "all"}))
+        except (mail_client.MailUnavailable, mail_client.MailError):
+            pass
+        self.open_mail_window()
+
+    def open_mail_window(self) -> None:
+        """Slide the Mail window in (the app kit's drawer when there is one), or bring it forward."""
+        if (apps.own_dir(MAIL_APP) / "main.qml").exists():
+            # app_dir would run it instead of the real one, and its Send would be a press.
+            raise RuntimeError("an app of yours called mail stands in front of Mail; rename it to open Mail")
+        placement = _placement()
+        if placement is not None:
+            placement.show(MAIL_APP)
+        elif _app_running(MAIL_APP):
+            self._focus_class(f"bombadil-app-{MAIL_APP}")
+        else:
+            self.hypr.place_app(MAIL_APP)
+            apps.run(MAIL_APP)
 
     def _focus_class(self, cls: str) -> None:
         if self.hypr.available:
