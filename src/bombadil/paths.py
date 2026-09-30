@@ -57,3 +57,11 @@ def loop_db() -> Path:
 def words_file() -> Path:
     """The words Bombadil made from what you keep asking (launcher.py reads them)."""
     return config_dir() / "words.toml"
+
+
+def desk_file() -> Path:
+    return state_dir() / "desk.toml"
+
+
+def jobs_dir() -> Path:
+    return state_dir() / "jobs"

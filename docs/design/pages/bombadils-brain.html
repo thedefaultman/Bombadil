@@ -1,0 +1,1519 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Bombadil's Brain</title>
+<meta name="description" content="The third Bombadil experience brief: a native brain for your files, projects and what the machine knows, kept current by the OS itself, with the graph view and three alternatives drawn side by side.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f2f3f4; --surface: #ffffff; --line: #d8dce1; --fg: #15181b; --soft: #3a4047; --muted: #5f6873;
+  --accent: #b4532f; --accent-soft: #f6e4dc; --ok: #2f7d3d; --amber: #9a6a0c; --red: #b23a3a; --ui-bg: #e7e9ec;
+  --blue: #2f6aa8;
+  --os-bg: #101214; --os-panel: #1a1d21; --os-edge: #2a2f36; --os-fg: #e6e8eb; --os-muted: #8b939c;
+  --os-accent: #d97757; --os-ok: #5fb36b; --os-amber: #e0a84a; --os-red: #e06a6a; --os-blue: #5b9bd5;
+  --sans: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+    --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+  --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16.5px; line-height: 1.6; padding-inline: 20px; padding-block: 0 72px; }
+.wrap { max-width: 900px; margin: 0 auto; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--ui-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+q.ui { quotes: "\201C" "\201D"; color: var(--fg); font-weight: 500; }
+strong { font-weight: 650; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.hero { display: grid; gap: 26px; padding-block: 48px 36px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.hero h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; letter-spacing: -.025em; }
+.hero .lede { font-size: 19px; color: var(--soft); max-width: 64ch; }
+.hero .note { font-size: 15px; color: var(--muted); max-width: 66ch; }
+.screen { position: relative; border-radius: 14px; max-width: 100%;
+  background: radial-gradient(120% 90% at 15% 0%, #1f2a33 0%, transparent 60%), radial-gradient(90% 80% at 95% 100%, #33231d 0%, transparent 55%), var(--os-bg);
+  border: 1px solid var(--os-edge); padding: 4% 7% 2.6%; display: grid; gap: 12px; justify-items: center; }
+.screen .brainwin { width: 100%; border-radius: 12px; border: 1px solid #3a414a; box-shadow: 0 18px 50px rgba(0,0,0,.45); overflow: hidden; }
+.screen .m-pill { width: 82%; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14.5px; color: var(--muted); }
+.hero-meta b { color: var(--fg); font-weight: 650; font-variant-numeric: tabular-nums; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 8px; padding-block: 4px 8px; }
+nav.toc a { font-size: 14px; color: var(--soft); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+section { padding-block: 44px 8px; }
+section > h2 { font-size: 28px; font-weight: 750; letter-spacing: -.015em; margin-bottom: 8px; }
+section > .intro { color: var(--soft); max-width: 68ch; margin-bottom: 22px; }
+
+/* The four ways to look, side by side */
+.mock-svg { display: block; width: 100%; height: auto; font-family: var(--sans); }
+.mock-svg .pulse { transform-box: fill-box; transform-origin: center; animation: ring 2s ease-out infinite; }
+@keyframes ring { 0% { transform: scale(.7); opacity: .95; } 100% { transform: scale(1.7); opacity: 0; } }
+.options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.opt { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.opt.rec { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
+.opt-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.opt-letter { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.opt-head h3 { font-size: 18px; font-weight: 700; flex: 1 1 auto; min-width: 0; }
+.verdict { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 10px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.verdict.yes { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
+.opt .frame { border-radius: 10px; overflow: hidden; border: 1px solid var(--os-edge); background: var(--os-bg); }
+.opt ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14.5px; color: var(--soft); }
+.opt li { padding-left: 20px; position: relative; }
+.opt li::before { position: absolute; left: 2px; top: 0; font-weight: 700; }
+.opt li.pro::before { content: "+"; color: var(--ok); }
+.opt li.con::before { content: "−"; color: var(--red); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--muted); margin-top: 14px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.recbox { margin-top: 18px; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 16px 20px; display: grid; gap: 6px; }
+.recbox h3 { font-size: 18px; }
+.recbox p { color: var(--soft); max-width: 72ch; font-size: 15.5px; }
+
+.rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; counter-reset: rule; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; counter-increment: rule; }
+.rules li strong { display: block; font-size: 16.5px; margin-bottom: 4px; line-height: 1.35; }
+.rules li strong::before { content: counter(rule) ". "; color: var(--accent); font-family: var(--mono); font-size: 14px; font-weight: 500; }
+.rules li span { color: var(--soft); font-size: 15px; }
+
+/* Small OS mocks, same kit as the first two briefs */
+.mock { background: var(--os-bg); border: 1px solid var(--os-edge); border-radius: 12px; padding: 18px 16px 16px; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 8px; min-height: 150px; color: var(--os-fg); font-family: var(--sans); min-width: 0; overflow: hidden; }
+.m-pill { display: flex; align-items: center; gap: 8px; background: var(--os-panel); border: 1.5px solid var(--os-edge); border-radius: 999px; padding: 8px 12px; font-size: 13.5px; min-width: 0; overflow: hidden; color: var(--os-fg); }
+.m-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--os-ok); flex: none; }
+.m-ph { color: var(--os-muted); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-typed { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-typed em { font-style: normal; color: var(--os-muted); }
+.m-meta { color: var(--os-muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+.m-chip { flex: none; font-size: 12px; padding: 2px 9px; border-radius: 999px; background: #2b2320; color: #f0c3b0; border: 1px solid #4a3027; white-space: nowrap; }
+.m-chip.grey { background: #22262b; color: var(--os-muted); border-color: var(--os-edge); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.m-chip b { font-weight: 400; opacity: .7; margin-left: 4px; }
+.m-line { align-self: center; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 13px; color: var(--os-fg); text-align: center; overflow-wrap: anywhere; }
+.m-line small { color: var(--os-muted); font-size: 11.5px; }
+.m-line q.ui { color: var(--os-fg); }
+.m-card { background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 10px; padding: 10px 12px; font-size: 12px; display: grid; gap: 4px; }
+.m-card-t { font-weight: 650; font-size: 13px; }
+.m-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--os-edge); }
+.m-row .k { color: var(--os-muted); flex: none; }
+.m-row .v { text-align: right; min-width: 0; }
+.m-row.m-warn .v { color: var(--os-amber); }
+.m-row.m-btns { justify-content: flex-start; flex-wrap: wrap; }
+.m-btn { font-size: 11.5px; padding: 1px 10px; border-radius: 999px; border: 1px solid var(--os-edge); background: #22262b; color: var(--os-fg); }
+.m-btn-go { border-color: var(--os-accent); color: #f0c3b0; }
+.m-term { background: #0c0e10; border: 1px solid var(--os-edge); border-radius: 10px; padding: 10px 12px; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: var(--os-muted); display: grid; gap: 2px; overflow-wrap: anywhere; }
+.m-term b { color: var(--os-fg); font-weight: 500; }
+.m-term .tool { color: var(--os-blue); }
+.m-term .you { color: var(--os-fg); }
+.m-strip { position: relative; height: 22px; border-radius: 6px; background: var(--os-panel); border: 1px solid var(--os-edge); display: grid; grid-template-columns: repeat(7, 1fr); }
+.m-strip span { border-left: 1px solid var(--os-edge); position: relative; }
+.m-strip span:first-child { border-left: 0; }
+.m-strip i { position: absolute; top: 7px; height: 6px; border-radius: 2px; opacity: .8; }
+.m-strip .h { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--os-accent); left: 21%; }
+.m-days { display: grid; grid-template-columns: repeat(7, 1fr); font-size: 10.5px; color: var(--os-muted); padding-inline: 4px; }
+.c-you { background: var(--os-fg); } .c-mac { background: var(--os-accent); } .c-ses { background: var(--os-blue); }
+
+.pieces { display: grid; gap: 18px; }
+.piece { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; min-width: 0; }
+.piece-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 14px; }
+.piece-num { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; flex: none; }
+.piece-head h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; flex: 1 1 240px; min-width: 0; }
+.effort { flex: 0 1 auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }
+.effort::before { content: "Effort "; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.piece-body { display: grid; grid-template-columns: minmax(0, 290px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.piece-body > * { min-width: 0; }
+.piece .see { font-size: 16.5px; margin-bottom: 14px; }
+.piece dl { margin: 0; display: grid; gap: 4px 0; font-size: 15px; color: var(--soft); }
+.piece dt { font-family: var(--mono); font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+.piece dd { margin: 0; }
+.piece dd ul { margin: 6px 0 0; padding-left: 1.1em; display: grid; gap: 6px; }
+.next { margin-top: 4px; background: var(--surface); border: 1px dashed var(--line); border-radius: 14px; padding: 16px 20px; font-size: 15.5px; color: var(--soft); }
+.next strong { color: var(--fg); }
+
+.day { list-style: none; margin: 0; padding: 0; display: grid; border-left: 2px solid var(--line); }
+.day li { position: relative; padding: 0 0 22px 22px; }
+.day li::before { content: ""; position: absolute; left: -7px; top: 7px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+.day h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.day p { color: var(--soft); max-width: 70ch; }
+
+.made { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.made div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 15px; color: var(--soft); }
+.made div strong { display: block; color: var(--fg); margin-bottom: 4px; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 560px; }
+th, td { text-align: left; padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top; }
+th { border-top: 0; font-family: var(--mono); font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+td { color: var(--soft); }
+td:first-child { color: var(--fg); font-weight: 600; white-space: nowrap; }
+.tag { font-size: 12px; border-radius: 999px; padding: 0 8px; border: 1px solid var(--line); white-space: nowrap; }
+.tag.strong { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.tag.weak { color: var(--muted); }
+.aside { margin-top: 14px; font-size: 15px; color: var(--soft); max-width: 72ch; }
+
+.decisions { display: grid; gap: 8px; }
+details.dec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.dec summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+details.dec summary::-webkit-details-marker { display: none; }
+details.dec summary .q { font-weight: 650; }
+details.dec summary .d { grid-column: 1; color: var(--soft); font-size: 15px; }
+details.dec summary .d::before { content: "Default: "; font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+details.dec summary .chev { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); transition: transform .15s; }
+details.dec[open] summary .chev { transform: rotate(90deg); }
+details.dec .more { padding: 0 16px 14px; font-size: 15px; color: var(--soft); display: grid; gap: 8px; max-width: 72ch; }
+details.dec .more .alt { color: var(--muted); }
+details.dec .more .alt b { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; }
+.expand { display: flex; gap: 8px; margin-bottom: 12px; }
+.expand button { font: inherit; font-size: 13.5px; background: var(--surface); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.expand button:hover { border-color: var(--accent); color: var(--accent); }
+.group h3 { font-size: 13px; font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; margin: 26px 0 10px; }
+.group ul, ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 10px; max-width: 74ch; }
+.group li, ul.plain li { color: var(--soft); font-size: 15.5px; }
+.group li strong, ul.plain li strong { color: var(--fg); }
+.cut li { color: var(--muted); }
+.cut li strong { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.pitfalls { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.pitfalls li { padding: 10px 14px 10px 40px; position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; font-size: 15px; color: var(--soft); }
+.pitfalls li::before { content: "×"; position: absolute; left: 15px; top: 8px; font-size: 18px; color: var(--red); }
+.facts { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 20px 22px; }
+.facts h2 { font-size: 24px; margin-bottom: 6px; }
+.facts .intro { color: var(--soft); margin-bottom: 12px; max-width: 70ch; }
+.facts ul { margin: 0 0 12px; padding-left: 1.3em; display: grid; gap: 8px; font-size: 15px; }
+.facts p.unv { font-size: 15px; color: var(--soft); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .mock-svg .pulse { animation: none; opacity: .6; } details.dec summary .chev { transition: none; } }
+@media (max-width: 760px) {
+  body { font-size: 16px; padding-inline: 16px; }
+  .options { grid-template-columns: 1fr; }
+  .piece-body { grid-template-columns: 1fr; }
+  .rules { grid-template-columns: 1fr; }
+  .hero { padding-block: 32px 28px; }
+  .screen { padding: 4% 3% 3%; }
+  .screen .m-pill { width: 96%; }
+}
+</style>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Bombadil · experience brief 3 · the brain · 27 Sep 2026</div>
+  <h1>Bombadil's Brain</h1>
+  <p class="lede">You have a PDF open, tap Super and click the chip that names it. The Brain rises around it: the PDF in the middle, and in fixed places around it where it came from, what was made from it, what you used with it, and every time it changed, each line saying who and when. Zoom out and you see the whole machine as a map that holds still, each area a cluster of dots that are bright when they were touched lately and breathe while someone is touching them now: white for you, orange for the machine, blue for a coding session. Drag the strip along the bottom back to Tuesday and the map lights what you touched that day. Nobody writes any of it. The OS sees every save, download, turn and session edit as it happens, so the brain cannot fall behind, and every sentence a model writes about it is pinned to what it read and greys out when that changes. You learn one word, <q class="ui">brain</q>, and the chip you already click.</p>
+  <div class="screen" role="img" aria-label="The Bombadil screen with the Brain window showing the Map above the pill.">
+    <div class="brainwin"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Latchkey, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
+<rect width="420" height="300" rx="10" fill="#101214"/>
+<path d="M160.0 138.0 Q118.2 94.4 66.0 64.0" stroke="#2c3238" stroke-width="7" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q204.6 96.3 236.0 44.0" stroke="#2c3238" stroke-width="5" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M336.0 92.0 Q289.4 61.0 236.0 44.0" stroke="#2c3238" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q254.6 175.7 356.0 186.0" stroke="#2c3238" stroke-width="2.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M336.0 92.0 Q339.4 140.4 356.0 186.0" stroke="#2c3238" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M74.0 210.0 Q56.2 176.9 30.0 150.0" stroke="#2c3238" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q218.0 197.1 290.0 238.0" stroke="#2c3238" stroke-width="2" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M74.0 210.0 Q123.0 231.1 176.0 238.0" stroke="#2c3238" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q251.2 127.3 336.0 92.0" stroke="#2c3238" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<line x1="153.6" y1="138.8" x2="68.6" y2="65.7" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="238.5" y2="45.6" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="151.7" y2="130.5" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="161.8" y2="124.1" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<circle cx="68.6" cy="65.7" r="4.0" fill="#e6e8eb" opacity="0.82"/>
+<circle cx="59.8" cy="64.8" r="3.5" fill="#e6e8eb" opacity="0.78"/>
+<circle cx="71.3" cy="58.1" r="3.0" fill="#aab1b9" opacity="0.74"/>
+<circle cx="66.5" cy="73.1" r="2.5" fill="#aab1b9" opacity="0.70"/>
+<circle cx="58.0" cy="56.7" r="2.1" fill="#aab1b9" opacity="0.65"/>
+<circle cx="78.5" cy="64.4" r="1.8" fill="#aab1b9" opacity="0.61"/>
+<circle cx="55.7" cy="72.1" r="1.5" fill="#aab1b9" opacity="0.57"/>
+<circle cx="238.5" cy="45.6" r="3.5" fill="#e6e8eb" opacity="0.72"/>
+<circle cx="230.0" cy="44.8" r="3.0" fill="#aab1b9" opacity="0.68"/>
+<circle cx="241.1" cy="38.3" r="2.6" fill="#aab1b9" opacity="0.64"/>
+<circle cx="236.5" cy="52.7" r="2.1" fill="#aab1b9" opacity="0.60"/>
+<circle cx="228.3" cy="37.0" r="1.8" fill="#aab1b9" opacity="0.56"/>
+<circle cx="248.0" cy="44.4" r="1.5" fill="#aab1b9" opacity="0.52"/>
+<circle cx="162.7" cy="139.7" r="4.7" fill="#5b9bd5" opacity="0.96"/>
+<circle cx="153.6" cy="138.8" r="4.5" fill="#5b9bd5" opacity="0.95"/>
+<circle cx="165.4" cy="131.9" r="4.4" fill="#aab1b9" opacity="0.94"/>
+<circle cx="160.6" cy="147.4" r="4.2" fill="#5b9bd5" opacity="0.92"/>
+<circle cx="151.7" cy="130.5" r="4.1" fill="#aab1b9" opacity="0.91"/>
+<circle cx="172.9" cy="138.4" r="3.9" fill="#e6e8eb" opacity="0.90"/>
+<circle cx="149.3" cy="146.4" r="3.8" fill="#aab1b9" opacity="0.89"/>
+<circle cx="161.8" cy="124.1" r="3.6" fill="#aab1b9" opacity="0.87"/>
+<circle cx="169.4" cy="150.1" r="3.5" fill="#5b9bd5" opacity="0.86"/>
+<circle cx="143.2" cy="134.7" r="3.4" fill="#aab1b9" opacity="0.85"/>
+<circle cx="175.5" cy="129.6" r="3.2" fill="#aab1b9" opacity="0.84"/>
+<circle cx="154.5" cy="154.6" r="3.1" fill="#aab1b9" opacity="0.82"/>
+<circle cx="151.5" cy="121.7" r="3.0" fill="#aab1b9" opacity="0.81"/>
+<circle cx="179.0" cy="145.0" r="2.8" fill="#aab1b9" opacity="0.80"/>
+<circle cx="140.1" cy="144.8" r="2.7" fill="#aab1b9" opacity="0.79"/>
+<circle cx="170.0" cy="120.0" r="2.6" fill="#aab1b9" opacity="0.77"/>
+<circle cx="166.1" cy="158.1" r="2.5" fill="#aab1b9" opacity="0.76"/>
+<circle cx="140.2" cy="126.6" r="2.4" fill="#aab1b9" opacity="0.75"/>
+<circle cx="183.6" cy="134.0" r="2.2" fill="#aab1b9" opacity="0.74"/>
+<circle cx="145.2" cy="156.1" r="2.1" fill="#aab1b9" opacity="0.72"/>
+<circle cx="157.6" cy="114.9" r="2.0" fill="#aab1b9" opacity="0.71"/>
+<circle cx="179.2" cy="153.9" r="1.9" fill="#aab1b9" opacity="0.70"/>
+<circle cx="133.5" cy="138.2" r="1.8" fill="#aab1b9" opacity="0.69"/>
+<circle cx="179.8" cy="121.0" r="1.7" fill="#aab1b9" opacity="0.67"/>
+<circle cx="157.8" cy="163.3" r="1.7" fill="#aab1b9" opacity="0.66"/>
+<circle cx="142.7" cy="117.5" r="1.6" fill="#aab1b9" opacity="0.65"/>
+<circle cx="188.3" cy="142.4" r="1.5" fill="#aab1b9" opacity="0.64"/>
+<circle cx="135.4" cy="152.6" r="1.4" fill="#aab1b9" opacity="0.62"/>
+<circle cx="167.5" cy="111.5" r="1.4" fill="#aab1b9" opacity="0.61"/>
+<circle cx="174.2" cy="162.7" r="1.3" fill="#aab1b9" opacity="0.60"/>
+<circle cx="338.6" cy="93.6" r="2.3" fill="#aab1b9" opacity="0.48"/>
+<circle cx="329.9" cy="92.8" r="2.2" fill="#aab1b9" opacity="0.48"/>
+<circle cx="341.2" cy="86.2" r="2.1" fill="#aab1b9" opacity="0.47"/>
+<circle cx="336.5" cy="100.9" r="2.0" fill="#aab1b9" opacity="0.46"/>
+<circle cx="328.1" cy="84.9" r="1.9" fill="#aab1b9" opacity="0.45"/>
+<circle cx="348.3" cy="92.4" r="1.8" fill="#aab1b9" opacity="0.44"/>
+<circle cx="325.9" cy="100.0" r="1.7" fill="#aab1b9" opacity="0.43"/>
+<circle cx="337.7" cy="78.9" r="1.6" fill="#aab1b9" opacity="0.42"/>
+<circle cx="344.9" cy="103.5" r="1.6" fill="#aab1b9" opacity="0.41"/>
+<circle cx="320.1" cy="88.9" r="1.5" fill="#aab1b9" opacity="0.41"/>
+<circle cx="350.7" cy="84.0" r="1.4" fill="#aab1b9" opacity="0.40"/>
+<circle cx="330.8" cy="107.7" r="1.4" fill="#aab1b9" opacity="0.39"/>
+<circle cx="328.0" cy="76.5" r="1.3" fill="#aab1b9" opacity="0.38"/>
+<circle cx="358.6" cy="187.6" r="3.3" fill="#d97757" opacity="0.69"/>
+<circle cx="349.9" cy="186.8" r="3.0" fill="#aab1b9" opacity="0.66"/>
+<circle cx="361.2" cy="180.2" r="2.7" fill="#d97757" opacity="0.64"/>
+<circle cx="356.5" cy="194.9" r="2.5" fill="#aab1b9" opacity="0.61"/>
+<circle cx="348.1" cy="178.9" r="2.2" fill="#aab1b9" opacity="0.59"/>
+<circle cx="368.3" cy="186.4" r="2.0" fill="#aab1b9" opacity="0.56"/>
+<circle cx="345.9" cy="194.0" r="1.7" fill="#aab1b9" opacity="0.54"/>
+<circle cx="357.7" cy="172.9" r="1.5" fill="#aab1b9" opacity="0.51"/>
+<circle cx="364.9" cy="197.5" r="1.4" fill="#aab1b9" opacity="0.49"/>
+<circle cx="293.2" cy="240.0" r="3.0" fill="#e6e8eb" opacity="0.62"/>
+<circle cx="282.5" cy="239.0" r="2.5" fill="#aab1b9" opacity="0.58"/>
+<circle cx="296.3" cy="230.9" r="2.1" fill="#aab1b9" opacity="0.55"/>
+<circle cx="290.6" cy="248.9" r="1.8" fill="#aab1b9" opacity="0.51"/>
+<circle cx="280.3" cy="229.3" r="1.5" fill="#aab1b9" opacity="0.47"/>
+<circle cx="76.6" cy="211.7" r="4.2" fill="#e6e8eb" opacity="0.86"/>
+<circle cx="67.8" cy="210.8" r="3.8" fill="#d97757" opacity="0.82"/>
+<circle cx="79.3" cy="204.1" r="3.3" fill="#e6e8eb" opacity="0.79"/>
+<circle cx="74.5" cy="219.1" r="2.9" fill="#aab1b9" opacity="0.75"/>
+<circle cx="66.0" cy="202.7" r="2.6" fill="#aab1b9" opacity="0.72"/>
+<circle cx="86.5" cy="210.4" r="2.2" fill="#aab1b9" opacity="0.68"/>
+<circle cx="63.7" cy="218.1" r="1.9" fill="#aab1b9" opacity="0.65"/>
+<circle cx="75.8" cy="196.6" r="1.7" fill="#aab1b9" opacity="0.61"/>
+<circle cx="83.1" cy="221.7" r="1.4" fill="#aab1b9" opacity="0.58"/>
+<circle cx="32.4" cy="151.5" r="3.7" fill="#e6e8eb" opacity="0.76"/>
+<circle cx="24.2" cy="150.8" r="2.6" fill="#aab1b9" opacity="0.67"/>
+<circle cx="34.9" cy="144.6" r="1.8" fill="#aab1b9" opacity="0.58"/>
+<circle cx="178.5" cy="239.6" r="2.0" fill="#aab1b9" opacity="0.43"/>
+<circle cx="170.0" cy="238.8" r="1.9" fill="#aab1b9" opacity="0.42"/>
+<circle cx="181.1" cy="232.3" r="1.7" fill="#aab1b9" opacity="0.40"/>
+<circle cx="176.5" cy="246.7" r="1.6" fill="#aab1b9" opacity="0.39"/>
+<circle cx="168.3" cy="231.0" r="1.5" fill="#aab1b9" opacity="0.37"/>
+<circle cx="188.0" cy="238.4" r="1.4" fill="#aab1b9" opacity="0.36"/>
+<circle class="pulse" cx="153.6" cy="138.8" r="9.5" fill="none" stroke="#5b9bd5" stroke-width="1.4"/>
+<circle cx="153.6" cy="138.8" r="5.1" fill="#5b9bd5"/>
+<text x="163.6" y="137.8" font-size="8" fill="#e6e8eb" text-anchor="start" font-weight="600">snapshots.py</text>
+<text x="163.6" y="146.8" font-size="7" fill="#5b9bd5" text-anchor="start">builder, now</text>
+<circle class="pulse" cx="76.6" cy="211.7" r="9.2" fill="none" stroke="#e6e8eb" stroke-width="1.4"/>
+<circle cx="76.6" cy="211.7" r="4.8" fill="#e6e8eb"/>
+<text x="76.6" y="229.8" font-size="8" fill="#e6e8eb" text-anchor="middle" font-weight="600">letter-to-landlord.odt</text>
+<text x="76.6" y="238.8" font-size="7" fill="#e6e8eb" text-anchor="middle">you, now</text>
+<circle class="pulse" cx="358.6" cy="187.6" r="8.3" fill="none" stroke="#d97757" stroke-width="1.4"/>
+<circle cx="358.6" cy="187.6" r="3.9" fill="#d97757"/>
+<text x="358.6" y="205.0" font-size="8" fill="#e6e8eb" text-anchor="middle" font-weight="600">qemu-full</text>
+<text x="358.6" y="214.0" font-size="7" fill="#d97757" text-anchor="middle">the machine, now</text>
+<text x="68.6" y="59.7" font-size="6.8" fill="#8b939c" text-anchor="middle">Snapper</text>
+<text x="244.5" y="48.0" font-size="6.8" fill="#8b939c" text-anchor="start">PR 418</text>
+<text x="293.2" y="234.0" font-size="6.8" fill="#8b939c" text-anchor="middle">Passwords</text>
+<text x="282.5" y="249.0" font-size="6.8" fill="#8b939c" text-anchor="middle">Tracker</text>
+<text x="143.3" y="148.8" font-size="6.8" fill="#8b939c" text-anchor="end">agentd.py</text>
+<text x="66.0" y="47.7" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Arch Wiki</text>
+<text x="236.0" y="28.0" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">GitHub</text>
+<text x="160.0" y="102.5" font-size="10.5" font-weight="650" fill="#e6e8eb" text-anchor="middle">Bombadil</text>
+<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Latchkey</text>
+<text x="356.0" y="163.9" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">System</text>
+<text x="290.0" y="220.3" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Apps</text>
+<text x="74.0" y="187.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Lease</text>
+<text x="30.0" y="135.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">rent-portal</text>
+<text x="176.0" y="222.0" font-size="9" font-weight="650" fill="#6b737c" text-anchor="middle">Taxes 2026</text>
+<text x="14" y="18" font-size="9" fill="#e6e8eb" font-weight="650">Map</text>
+<rect x="42" y="9" width="62" height="13" rx="6.5" fill="#1a1d21" stroke="#2a2f36"/><rect x="43" y="10" width="30" height="11" rx="5.5" fill="#2a2f36"/>
+<text x="58" y="18.3" font-size="6.8" fill="#e6e8eb" text-anchor="middle">Alive</text><text x="88.5" y="18.3" font-size="6.8" fill="#8b939c" text-anchor="middle">Size</text>
+<circle cx="300" cy="15" r="2.6" fill="#e6e8eb"/><text x="305" y="17.6" font-size="7" fill="#8b939c">you</text>
+<circle cx="328.6" cy="15" r="2.6" fill="#d97757"/><text x="333.6" y="17.6" font-size="7" fill="#8b939c">machine</text>
+<circle cx="374.0" cy="15" r="2.6" fill="#5b9bd5"/><text x="379.0" y="17.6" font-size="7" fill="#8b939c">session</text>
+<rect x="12" y="276" width="396" height="14" rx="4" fill="#1a1d21" stroke="#2a2f36"/>
+<text x="15.0" y="273" font-size="6.2" fill="#5c636b">Mon</text>
+<rect x="49.4" y="280" width="14.6" height="6" rx="2" fill="#d97757" opacity=".55"/>
+<rect x="33.4" y="280" width="14.6" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="68.6" y1="278" x2="68.6" y2="288" stroke="#2a2f36"/>
+<text x="71.6" y="273" font-size="6.2" fill="#5c636b">Tue</text>
+<rect x="103.6" y="280" width="10.8" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="125.1" y1="278" x2="125.1" y2="288" stroke="#2a2f36"/>
+<text x="128.1" y="273" font-size="6.2" fill="#5c636b">Wed</text>
+<rect x="146.4" y="280" width="7.4" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="181.7" y1="278" x2="181.7" y2="288" stroke="#2a2f36"/>
+<text x="184.7" y="273" font-size="6.2" fill="#5c636b">Thu</text>
+<rect x="223.6" y="280" width="15.6" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="209.7" y="280" width="14.3" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="188.0" y="280" width="7.9" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="238.3" y1="278" x2="238.3" y2="288" stroke="#2a2f36"/>
+<text x="241.3" y="273" font-size="6.2" fill="#5c636b">Fri</text>
+<rect x="243.4" y="280" width="10.6" height="6" rx="2" fill="#d97757" opacity=".55"/>
+<rect x="265.1" y="280" width="8.0" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="267.0" y="280" width="11.0" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="294.9" y1="278" x2="294.9" y2="288" stroke="#2a2f36"/>
+<text x="297.9" y="273" font-size="6.2" fill="#5c636b">Sat</text>
+<rect x="324.1" y="280" width="10.1" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="326.2" y="280" width="9.2" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="351.4" y1="278" x2="351.4" y2="288" stroke="#2a2f36"/>
+<text x="354.4" y="273" font-size="6.2" fill="#5c636b">Sun</text>
+<line x1="396.7" y1="272" x2="396.7" y2="293" stroke="#d97757" stroke-width="1.6"/><text x="393.7" y="273" font-size="6.2" fill="#d97757" text-anchor="end">now</text>
+</svg></div>
+    <div class="m-pill"><i class="dot"></i><span class="m-chip grey">snapshots.py <b>×</b></span><span class="m-ph">Ask anything</span><span class="m-meta">13:04</span></div>
+  </div>
+  <p class="note">This is the third experience brief. It sits on top of How Bombadil should feel and Building on Bombadil (both 27 Sep 2026), whose 29 and 19 decisions are confirmed and stay in force. Where the brain needs one of them extended, the change is named at the end. Daniel confirmed this brief, its recommendation and its 17 defaults on 27 Sep 2026.</p>
+  <div class="hero-meta">
+    <span><b>4</b> ways to look at it, drawn</span>
+    <span><b>6</b> to build first</span>
+    <span><b>17</b> decisions, confirmed</span>
+    <span><b>13</b> touches on the first two briefs</span>
+    <span><b>10</b> facts checked today</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#compare">Graph or better</a><a href="#rules">Rules</a><a href="#first">Build first</a><a href="#day">A day</a><a href="#made">Made of</a><a href="#decisions">Decisions</a><a href="#everything">Everything else</a><a href="#cut">Cut</a><a href="#gaps">Gaps</a><a href="#pitfalls">Pitfalls</a><a href="#extends">Earlier briefs</a><a href="#facts">Checked</a>
+  </nav>
+</header>
+
+<section id="compare">
+  <h2>Graph, or something better</h2>
+  <p class="intro">You asked for Obsidian's graph view, natively, and for something better if the graph is not the best experience. Here are four ways to look at the same machine on the same afternoon, drawn in the OS's own colors. My recommendation is C as the view that opens, B as the overview, and D as the strip that runs under both.</p>
+  <div class="options">
+    <figure class="opt" style="margin:0">
+      <div class="opt-head"><span class="opt-letter">A</span><h3>The Obsidian graph, drawn natively</h3><span class="verdict">Not built as its own view</span></div>
+      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="An Obsidian-style graph: about 150 grey dots joined by thin lines in a tangle, with overlapping labels; one dot, snapshots.py, is highlighted with its lines.">
+<rect width="420" height="300" rx="10" fill="#101214"/>
+<line x1="218.3" y1="115.3" x2="246.4" y2="76.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="194.7" y1="128.7" x2="170.7" y2="131.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="30.4" y1="154.2" x2="16.0" y2="152.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="243.8" y2="70.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="186.3" y1="155.0" x2="172.9" y2="173.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="217.2" y1="130.7" x2="218.3" y2="115.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="246.4" y1="76.5" x2="287.5" y2="66.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="249.6" y2="132.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="258.7" y1="112.3" x2="274.2" y2="127.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="330.9" y1="127.3" x2="330.6" y2="110.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="285.6" y2="169.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="321.0" y2="120.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="340.2" y2="139.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.8" y1="119.9" x2="218.3" y2="115.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="330.6" y2="110.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="280.2" y1="111.8" x2="248.9" y2="107.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="176.0" y1="138.7" x2="189.4" y2="142.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="91.2" y1="147.3" x2="119.1" y2="160.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="277.3" y2="55.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="343.5" y1="107.7" x2="333.4" y2="85.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="208.8" y2="152.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="307.2" y1="87.8" x2="343.9" y2="77.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="304.9" y1="83.3" x2="330.6" y2="110.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="284.1" y1="80.1" x2="297.6" y2="88.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="209.5" y1="118.3" x2="189.4" y2="142.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="222.7" y1="77.7" x2="249.5" y2="82.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="332.6" y2="132.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="243.8" y1="70.4" x2="216.6" y2="90.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="368.3" y1="67.7" x2="357.9" y2="72.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="307.2" y1="87.8" x2="325.8" y2="73.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="320.8" y2="142.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="249.5" y1="82.1" x2="294.0" y2="78.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="176.0" y1="138.7" x2="186.3" y2="155.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="244.9" y2="96.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="249.5" y1="82.1" x2="244.9" y2="96.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="331.7" y2="152.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="194.7" y1="128.7" x2="208.9" y2="137.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="229.8" y1="111.2" x2="280.2" y2="111.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="176.0" y1="138.7" x2="183.6" y2="143.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="311.0" y1="129.9" x2="285.6" y2="154.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.8" y1="141.4" x2="274.0" y2="119.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="381.2" y1="153.2" x2="362.0" y2="148.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.8" y1="119.9" x2="253.0" y2="124.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="307.2" y1="87.8" x2="287.5" y2="66.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="230.4" y1="117.7" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="159.7" y1="180.4" x2="179.6" y2="170.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="280.2" y1="111.8" x2="311.0" y2="129.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="260.5" y2="128.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="285.6" y1="154.0" x2="249.1" y2="166.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="190.2" y1="135.1" x2="170.7" y2="131.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="330.9" y1="127.3" x2="281.0" y2="131.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="252.9" y2="158.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="207.4" y1="82.4" x2="216.6" y2="90.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="172.9" y2="173.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="242.8" y2="180.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="176.0" y1="138.7" x2="188.7" y2="118.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="154.4" y2="177.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="253.0" y1="124.5" x2="248.9" y2="107.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="229.8" y1="111.2" x2="234.2" y2="97.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="218.3" y1="115.3" x2="191.4" y2="147.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="240.0" y1="56.0" x2="252.2" y2="54.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="91.2" y1="147.3" x2="71.6" y2="151.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="280.2" y1="111.8" x2="265.5" y2="96.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="179.6" y1="170.7" x2="186.0" y2="167.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="297.6" y1="88.5" x2="321.0" y2="120.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="218.3" y2="115.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="274.8" y2="141.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="320.8" y1="142.5" x2="312.2" y2="138.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="265.5" y1="58.6" x2="243.8" y2="70.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="334.2" y1="117.8" x2="366.0" y2="115.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="53.3" y1="149.8" x2="91.2" y2="147.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="288.0" y1="51.5" x2="299.8" y2="50.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="244.9" y1="96.8" x2="209.5" y2="118.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="70.8" y1="120.3" x2="92.9" y2="125.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="172.9" y1="173.7" x2="186.0" y2="167.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="298.1" y1="39.7" x2="310.9" y2="24.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="229.8" y1="111.2" x2="248.9" y2="107.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="343.5" y2="107.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="126.2" y1="131.2" x2="92.9" y2="125.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="243.3" y2="159.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.0" y1="119.8" x2="249.6" y2="132.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="254.4" y1="100.4" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="281.0" y1="131.3" x2="247.3" y2="119.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="29.6" y1="148.5" x2="16.0" y2="152.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="119.1" y1="160.2" x2="158.7" y2="166.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="206.7" y1="162.6" x2="183.6" y2="143.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="236.1" y1="129.0" x2="249.6" y2="132.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="204.2" y1="76.4" x2="176.0" y2="58.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="225.2" y1="70.2" x2="204.2" y2="76.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="334.2" y1="117.8" x2="311.0" y2="129.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="53.3" y1="149.8" x2="29.6" y2="148.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="330.9" y1="127.3" x2="336.1" y2="123.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="159.7" y2="180.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="333.4" y1="85.4" x2="299.2" y2="98.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="375.4" y1="121.8" x2="404.0" y2="123.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="186.3" y1="155.0" x2="219.7" y2="139.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="219.7" y2="139.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="307.2" y1="87.8" x2="274.0" y2="119.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="312.2" y1="138.4" x2="293.0" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="312.2" y2="138.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="265.5" y1="96.5" x2="244.9" y2="96.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="176.0" y1="58.0" x2="156.6" y2="45.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="362.1" y1="89.8" x2="333.2" y2="94.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="285.6" y1="169.1" x2="242.8" y2="180.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="381.2" y1="153.2" x2="384.6" y2="159.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="311.0" y1="129.9" x2="336.1" y2="123.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="216.6" y1="90.3" x2="188.7" y2="118.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="236.4" y1="105.9" x2="265.5" y2="96.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="265.7" y2="132.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="253.0" y1="124.5" x2="236.1" y2="129.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="297.6" y2="88.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="320.8" y1="142.5" x2="293.0" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="330.9" y1="127.3" x2="321.0" y2="120.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="288.5" y1="128.1" x2="312.2" y2="138.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="225.2" y1="70.2" x2="231.5" y2="91.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="288.5" y2="128.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="172.9" y1="173.7" x2="178.1" y2="188.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="249.1" y1="166.5" x2="206.7" y2="162.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="353.7" y1="112.0" x2="330.6" y2="110.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="333.4" y1="85.4" x2="361.5" y2="79.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="194.7" y1="128.7" x2="202.8" y2="141.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="202.8" y2="141.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.8" y1="141.4" x2="256.2" y2="147.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="246.4" y1="76.5" x2="255.3" y2="62.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.2" y1="54.9" x2="255.3" y2="62.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="186.0" y2="167.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="297.6" y2="88.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="298.1" y1="39.7" x2="300.9" y2="22.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="293.7" y1="111.3" x2="332.6" y2="132.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="340.2" y1="139.3" x2="321.0" y2="120.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="91.2" y1="147.3" x2="126.2" y2="131.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="202.6" y1="174.2" x2="186.0" y2="167.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="243.1" y1="90.1" x2="244.9" y2="96.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="381.2" y1="153.2" x2="365.7" y2="144.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="365.7" y2="144.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="258.7" y1="112.3" x2="299.2" y2="98.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="293.7" y2="111.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="172.5" y1="118.2" x2="126.2" y2="131.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="253.0" y1="124.5" x2="230.4" y2="117.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="304.9" y2="83.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.9" y1="117.2" x2="231.5" y2="91.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="217.2" y1="130.7" x2="194.7" y2="128.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="204.2" y1="76.4" x2="222.7" y2="77.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="225.2" y1="70.2" x2="206.0" y2="54.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="260.5" y1="128.2" x2="256.2" y2="147.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="333.4" y1="85.4" x2="294.0" y2="78.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="206.7" y2="162.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="298.1" y1="39.7" x2="288.0" y2="51.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="304.9" y2="83.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="254.4" y1="100.4" x2="280.2" y2="111.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="343.9" y1="77.4" x2="365.4" y2="63.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="229.8" y1="111.2" x2="172.5" y2="118.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="265.5" y2="58.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.8" y1="141.4" x2="305.9" y2="155.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.0" y1="119.8" x2="237.5" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="157.8" y1="138.1" x2="126.2" y2="131.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="188.7" y1="118.6" x2="183.6" y2="143.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="206.7" y1="162.6" x2="191.4" y2="147.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="233.9" y2="74.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="202.8" y2="141.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="255.3" y2="62.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="214.3" y1="152.7" x2="179.6" y2="170.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="362.0" y1="148.1" x2="384.6" y2="159.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="253.0" y1="124.5" x2="293.0" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="214.3" y1="152.7" x2="202.6" y2="174.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="214.3" y2="152.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="260.5" y1="128.2" x2="258.7" y2="112.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="178.1" y2="188.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="246.4" y1="76.5" x2="252.2" y2="54.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="229.8" y1="111.2" x2="252.9" y2="117.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="293.7" y1="111.3" x2="333.2" y2="94.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="317.4" y1="146.1" x2="340.2" y2="139.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="343.9" y1="77.4" x2="333.2" y2="94.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="150.7" y2="147.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="217.2" y1="130.7" x2="247.3" y2="119.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="254.4" y1="100.4" x2="234.2" y2="97.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="179.6" y1="170.7" x2="154.4" y2="177.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="202.8" y1="141.7" x2="157.8" y2="138.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="262.8" y1="87.4" x2="293.7" y2="111.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="168.0" y1="126.0" x2="150.7" y2="147.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="214.3" y1="152.7" x2="237.5" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="333.4" y1="85.4" x2="357.9" y2="72.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="368.3" y1="67.7" x2="365.4" y2="63.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="198.4" y2="190.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="208.9" y1="137.0" x2="237.5" y2="137.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="363.7" y1="127.9" x2="375.4" y2="121.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="231.5" y1="91.5" x2="207.4" y2="82.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="207.0" y1="89.4" x2="233.9" y2="74.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="249.5" y1="82.1" x2="216.6" y2="90.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="284.1" y1="80.1" x2="265.5" y2="96.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="274.8" y1="141.4" x2="274.2" y2="127.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="256.2" y1="147.1" x2="228.8" y2="153.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="214.3" y2="152.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="186.0" y1="167.2" x2="189.4" y2="142.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="247.3" y1="119.9" x2="244.9" y2="96.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="248.9" y1="107.5" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="330.9" y1="127.3" x2="358.5" y2="134.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="225.2" y1="70.2" x2="262.8" y2="87.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="334.2" y1="117.8" x2="375.4" y2="121.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="280.2" y1="111.8" x2="334.2" y2="117.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="198.4" y1="190.6" x2="202.6" y2="174.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="334.2" y1="117.8" x2="353.7" y2="112.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="53.3" y1="149.8" x2="30.4" y2="154.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="230.4" y1="117.7" x2="236.1" y2="129.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="333.4" y1="85.4" x2="343.9" y2="77.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="181.7" y1="64.8" x2="204.2" y2="76.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="298.1" y1="39.7" x2="287.5" y2="66.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="252.2" y1="54.9" x2="273.1" y2="48.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="320.8" y2="142.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="312.2" y2="138.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="214.3" y1="152.7" x2="217.2" y2="130.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="204.2" y1="76.4" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="334.2" y1="117.8" x2="321.0" y2="120.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="246.4" y1="76.5" x2="240.0" y2="56.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="284.1" y2="80.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="222.7" y1="77.7" x2="231.5" y2="91.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="343.9" y1="77.4" x2="368.3" y2="67.7" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="299.8" y2="50.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="254.4" y1="100.4" x2="243.1" y2="90.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="243.1" y1="90.1" x2="234.2" y2="97.6" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="135.7" y2="178.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="362.0" y2="148.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="336.1" y1="123.4" x2="330.6" y2="110.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="202.8" y1="141.7" x2="228.8" y2="153.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="269.6" y1="73.0" x2="288.0" y2="51.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="225.2" y1="70.2" x2="213.9" y2="51.2" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="340.2" y1="139.3" x2="362.0" y2="148.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="305.9" y1="155.0" x2="331.7" y2="152.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="248.9" y1="107.5" x2="231.5" y2="91.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="260.5" y1="128.2" x2="293.7" y2="111.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="197.0" y1="178.5" x2="158.7" y2="166.5" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="190.2" y2="135.1" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="223.9" y2="136.4" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="236.4" y2="105.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="223.9" y1="136.4" x2="236.1" y2="129.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="363.7" y1="127.9" x2="330.9" y2="127.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="332.6" y1="132.0" x2="311.0" y2="129.9" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="242.3" y1="139.8" x2="281.0" y2="131.3" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="287.5" y1="66.3" x2="273.1" y2="48.8" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="158.7" y1="166.5" x2="191.4" y2="147.0" stroke="#3a414a" stroke-width=".6" opacity=".75"/>
+<line x1="205.7" y1="112.0" x2="258.7" y2="112.3" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="168.0" y2="126.0" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="207.0" y2="89.4" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="177.6" y2="102.8" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="223.8" y2="119.9" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="194.7" y2="128.7" stroke="#d97757" stroke-width="1.1"/>
+<line x1="205.7" y1="112.0" x2="230.4" y2="117.7" stroke="#d97757" stroke-width="1.1"/>
+<circle cx="242.3" cy="139.8" r="5.0" fill="#6b737c"/>
+<circle cx="205.7" cy="112.0" r="6.0" fill="#d97757"/>
+<circle cx="274.8" cy="141.4" r="3.7" fill="#6b737c"/>
+<circle cx="223.9" cy="136.4" r="5.4" fill="#6b737c"/>
+<circle cx="214.3" cy="152.7" r="4.1" fill="#6b737c"/>
+<circle cx="217.2" cy="130.7" r="3.3" fill="#6b737c"/>
+<circle cx="208.8" cy="152.7" r="2.0" fill="#6b737c"/>
+<circle cx="223.8" cy="119.9" r="2.9" fill="#e6e8eb"/>
+<circle cx="260.5" cy="128.2" r="3.3" fill="#6b737c"/>
+<circle cx="252.9" cy="158.0" r="2.0" fill="#6b737c"/>
+<circle cx="218.3" cy="115.3" r="3.7" fill="#6b737c"/>
+<circle cx="307.2" cy="87.8" r="3.3" fill="#6b737c"/>
+<circle cx="168.0" cy="126.0" r="2.4" fill="#e6e8eb"/>
+<circle cx="194.7" cy="128.7" r="3.7" fill="#e6e8eb"/>
+<circle cx="207.0" cy="89.4" r="2.4" fill="#e6e8eb"/>
+<circle cx="256.2" cy="147.1" r="2.9" fill="#6b737c"/>
+<circle cx="325.8" cy="73.2" r="2.0" fill="#6b737c"/>
+<circle cx="258.7" cy="112.3" r="3.3" fill="#e6e8eb"/>
+<circle cx="202.8" cy="141.7" r="3.7" fill="#6b737c"/>
+<circle cx="208.9" cy="137.0" r="2.4" fill="#6b737c"/>
+<circle cx="190.2" cy="135.1" r="2.4" fill="#6b737c"/>
+<circle cx="253.0" cy="124.5" r="3.7" fill="#6b737c"/>
+<circle cx="230.4" cy="117.7" r="3.3" fill="#e6e8eb"/>
+<circle cx="177.6" cy="102.8" r="2.0" fill="#e6e8eb"/>
+<circle cx="228.8" cy="153.4" r="2.4" fill="#6b737c"/>
+<circle cx="274.0" cy="119.8" r="3.3" fill="#6b737c"/>
+<circle cx="305.9" cy="155.0" r="2.4" fill="#6b737c"/>
+<circle cx="157.8" cy="138.1" r="2.4" fill="#6b737c"/>
+<circle cx="237.5" cy="137.4" r="2.9" fill="#6b737c"/>
+<circle cx="236.1" cy="129.0" r="3.3" fill="#6b737c"/>
+<circle cx="274.2" cy="127.6" r="2.4" fill="#6b737c"/>
+<circle cx="249.6" cy="132.1" r="2.9" fill="#6b737c"/>
+<circle cx="243.3" cy="159.0" r="2.0" fill="#6b737c"/>
+<circle cx="170.7" cy="131.4" r="2.4" fill="#6b737c"/>
+<circle cx="246.4" cy="76.5" r="3.7" fill="#6b737c"/>
+<circle cx="269.6" cy="73.0" r="5.0" fill="#6b737c"/>
+<circle cx="298.1" cy="39.7" r="3.3" fill="#6b737c"/>
+<circle cx="287.5" cy="66.3" r="5.4" fill="#6b737c"/>
+<circle cx="284.1" cy="80.1" r="2.9" fill="#6b737c"/>
+<circle cx="304.9" cy="83.3" r="2.9" fill="#6b737c"/>
+<circle cx="288.0" cy="51.5" r="2.9" fill="#6b737c"/>
+<circle cx="233.9" cy="74.1" r="2.4" fill="#6b737c"/>
+<circle cx="240.0" cy="56.0" r="2.4" fill="#6b737c"/>
+<circle cx="310.9" cy="24.2" r="2.0" fill="#6b737c"/>
+<circle cx="277.3" cy="55.0" r="2.0" fill="#6b737c"/>
+<circle cx="252.2" cy="54.9" r="3.3" fill="#6b737c"/>
+<circle cx="297.6" cy="88.5" r="3.3" fill="#6b737c"/>
+<circle cx="299.8" cy="50.1" r="2.4" fill="#6b737c"/>
+<circle cx="265.5" cy="58.6" r="2.4" fill="#6b737c"/>
+<circle cx="273.1" cy="48.8" r="2.4" fill="#6b737c"/>
+<circle cx="255.3" cy="62.0" r="2.9" fill="#6b737c"/>
+<circle cx="243.8" cy="70.4" r="2.9" fill="#6b737c"/>
+<circle cx="225.2" cy="70.2" r="3.7" fill="#6b737c"/>
+<circle cx="229.8" cy="111.2" r="3.7" fill="#6b737c"/>
+<circle cx="254.4" cy="100.4" r="3.3" fill="#6b737c"/>
+<circle cx="280.2" cy="111.8" r="4.1" fill="#6b737c"/>
+<circle cx="213.9" cy="51.2" r="2.0" fill="#6b737c"/>
+<circle cx="181.7" cy="64.8" r="2.0" fill="#6b737c"/>
+<circle cx="252.9" cy="117.2" r="4.5" fill="#6b737c"/>
+<circle cx="248.9" cy="107.5" r="3.7" fill="#6b737c"/>
+<circle cx="204.2" cy="76.4" r="3.7" fill="#6b737c"/>
+<circle cx="262.8" cy="87.4" r="2.4" fill="#6b737c"/>
+<circle cx="293.7" cy="111.3" r="3.7" fill="#6b737c"/>
+<circle cx="243.1" cy="90.1" r="2.9" fill="#6b737c"/>
+<circle cx="176.0" cy="58.0" r="2.4" fill="#6b737c"/>
+<circle cx="172.5" cy="118.2" r="2.4" fill="#6b737c"/>
+<circle cx="234.2" cy="97.6" r="2.9" fill="#6b737c"/>
+<circle cx="236.4" cy="105.9" r="4.5" fill="#6b737c"/>
+<circle cx="222.7" cy="77.7" r="2.9" fill="#6b737c"/>
+<circle cx="265.7" cy="132.1" r="2.0" fill="#6b737c"/>
+<circle cx="156.6" cy="45.5" r="2.0" fill="#6b737c"/>
+<circle cx="231.5" cy="91.5" r="3.7" fill="#6b737c"/>
+<circle cx="265.5" cy="96.5" r="3.3" fill="#6b737c"/>
+<circle cx="206.0" cy="54.2" r="2.0" fill="#6b737c"/>
+<circle cx="317.4" cy="146.1" r="4.1" fill="#6b737c"/>
+<circle cx="332.6" cy="132.0" r="5.4" fill="#6b737c"/>
+<circle cx="363.7" cy="127.9" r="2.4" fill="#6b737c"/>
+<circle cx="330.9" cy="127.3" r="4.1" fill="#6b737c"/>
+<circle cx="334.2" cy="117.8" r="4.1" fill="#6b737c"/>
+<circle cx="311.0" cy="129.9" r="3.7" fill="#6b737c"/>
+<circle cx="375.4" cy="121.8" r="2.9" fill="#6b737c"/>
+<circle cx="358.5" cy="134.7" r="2.0" fill="#6b737c"/>
+<circle cx="285.6" cy="169.1" r="2.4" fill="#6b737c"/>
+<circle cx="285.6" cy="154.0" r="2.4" fill="#6b737c"/>
+<circle cx="320.8" cy="142.5" r="3.3" fill="#6b737c"/>
+<circle cx="281.0" cy="131.3" r="2.9" fill="#6b737c"/>
+<circle cx="366.0" cy="115.6" r="2.0" fill="#6b737c"/>
+<circle cx="288.5" cy="128.1" r="2.4" fill="#6b737c"/>
+<circle cx="381.2" cy="153.2" r="2.9" fill="#6b737c"/>
+<circle cx="353.7" cy="112.0" r="2.4" fill="#6b737c"/>
+<circle cx="340.2" cy="139.3" r="3.3" fill="#6b737c"/>
+<circle cx="321.0" cy="120.2" r="3.7" fill="#6b737c"/>
+<circle cx="331.7" cy="152.1" r="2.4" fill="#6b737c"/>
+<circle cx="312.2" cy="138.4" r="3.7" fill="#6b737c"/>
+<circle cx="404.0" cy="123.2" r="2.0" fill="#6b737c"/>
+<circle cx="362.0" cy="148.1" r="3.3" fill="#6b737c"/>
+<circle cx="343.5" cy="107.7" r="2.4" fill="#6b737c"/>
+<circle cx="293.0" cy="137.4" r="2.9" fill="#6b737c"/>
+<circle cx="336.1" cy="123.4" r="2.9" fill="#6b737c"/>
+<circle cx="330.6" cy="110.5" r="3.7" fill="#6b737c"/>
+<circle cx="247.3" cy="119.9" r="2.9" fill="#6b737c"/>
+<circle cx="384.6" cy="159.0" r="2.4" fill="#6b737c"/>
+<circle cx="300.9" cy="22.0" r="2.0" fill="#6b737c"/>
+<circle cx="365.7" cy="144.1" r="2.4" fill="#6b737c"/>
+<circle cx="53.3" cy="149.8" r="2.9" fill="#6b737c"/>
+<circle cx="91.2" cy="147.3" r="3.3" fill="#6b737c"/>
+<circle cx="70.8" cy="120.3" r="2.0" fill="#6b737c"/>
+<circle cx="29.6" cy="148.5" r="2.4" fill="#6b737c"/>
+<circle cx="30.4" cy="154.2" r="2.4" fill="#6b737c"/>
+<circle cx="119.1" cy="160.2" r="2.4" fill="#6b737c"/>
+<circle cx="126.2" cy="131.2" r="3.3" fill="#6b737c"/>
+<circle cx="92.9" cy="125.1" r="2.4" fill="#6b737c"/>
+<circle cx="16.0" cy="152.0" r="2.4" fill="#6b737c"/>
+<circle cx="71.6" cy="151.4" r="2.0" fill="#6b737c"/>
+<circle cx="249.5" cy="82.1" r="3.3" fill="#6b737c"/>
+<circle cx="333.4" cy="85.4" r="4.1" fill="#6b737c"/>
+<circle cx="299.2" cy="98.3" r="2.4" fill="#6b737c"/>
+<circle cx="343.9" cy="77.4" r="3.7" fill="#6b737c"/>
+<circle cx="358.9" cy="278.0" r="1.6" fill="#6b737c"/>
+<circle cx="362.1" cy="89.8" r="2.0" fill="#6b737c"/>
+<circle cx="294.0" cy="78.4" r="2.4" fill="#6b737c"/>
+<circle cx="207.4" cy="82.4" r="2.4" fill="#6b737c"/>
+<circle cx="368.3" cy="67.7" r="2.9" fill="#6b737c"/>
+<circle cx="365.4" cy="63.1" r="2.4" fill="#6b737c"/>
+<circle cx="357.9" cy="72.7" r="2.4" fill="#6b737c"/>
+<circle cx="333.2" cy="94.2" r="2.9" fill="#6b737c"/>
+<circle cx="249.1" cy="166.5" r="2.4" fill="#6b737c"/>
+<circle cx="361.5" cy="79.1" r="2.0" fill="#6b737c"/>
+<circle cx="216.6" cy="90.3" r="3.3" fill="#6b737c"/>
+<circle cx="244.9" cy="96.8" r="4.1" fill="#6b737c"/>
+<circle cx="197.0" cy="178.5" r="4.1" fill="#6b737c"/>
+<circle cx="158.7" cy="166.5" r="5.0" fill="#6b737c"/>
+<circle cx="176.0" cy="138.7" r="3.3" fill="#6b737c"/>
+<circle cx="159.7" cy="180.4" r="2.4" fill="#6b737c"/>
+<circle cx="209.5" cy="118.3" r="2.4" fill="#6b737c"/>
+<circle cx="186.3" cy="155.0" r="2.9" fill="#6b737c"/>
+<circle cx="179.6" cy="170.7" r="3.3" fill="#6b737c"/>
+<circle cx="188.7" cy="118.6" r="2.9" fill="#6b737c"/>
+<circle cx="172.9" cy="173.7" r="3.3" fill="#6b737c"/>
+<circle cx="206.7" cy="162.6" r="3.3" fill="#6b737c"/>
+<circle cx="242.8" cy="180.8" r="2.4" fill="#6b737c"/>
+<circle cx="178.1" cy="188.7" r="2.4" fill="#6b737c"/>
+<circle cx="150.7" cy="147.3" r="2.4" fill="#6b737c"/>
+<circle cx="198.4" cy="190.6" r="2.4" fill="#6b737c"/>
+<circle cx="183.6" cy="143.3" r="2.9" fill="#6b737c"/>
+<circle cx="202.6" cy="174.2" r="2.9" fill="#6b737c"/>
+<circle cx="186.0" cy="167.2" r="3.7" fill="#6b737c"/>
+<circle cx="154.4" cy="177.5" r="2.4" fill="#6b737c"/>
+<circle cx="135.7" cy="178.5" r="2.0" fill="#6b737c"/>
+<circle cx="219.7" cy="139.3" r="2.4" fill="#6b737c"/>
+<circle cx="191.4" cy="147.0" r="2.9" fill="#6b737c"/>
+<circle cx="189.4" cy="142.5" r="2.9" fill="#6b737c"/>
+<text x="242.3" y="148.8" font-size="6.6" fill="#6b737c" text-anchor="middle">agentd.py</text>
+<text x="205.7" y="121.0" font-size="6.6" fill="#e6e8eb" text-anchor="middle" font-weight="600">snapshots.py</text>
+<text x="274.8" y="150.4" font-size="6.6" fill="#6b737c" text-anchor="middle">shell.qml</text>
+<text x="223.9" y="145.4" font-size="6.6" fill="#6b737c" text-anchor="middle">launcher.py</text>
+<text x="214.3" y="161.7" font-size="6.6" fill="#6b737c" text-anchor="middle">README.md</text>
+<text x="217.2" y="139.7" font-size="6.6" fill="#6b737c" text-anchor="middle">hyprland.lua</text>
+<text x="208.8" y="161.7" font-size="6.6" fill="#6b737c" text-anchor="middle">procs.py</text>
+<text x="223.8" y="128.9" font-size="6.6" fill="#e6e8eb" text-anchor="middle">test_snapshots.py</text>
+<text x="260.5" y="137.2" font-size="6.6" fill="#6b737c" text-anchor="middle">narrate.py</text>
+<text x="252.9" y="167.0" font-size="6.6" fill="#6b737c" text-anchor="middle">PillState.qml</text>
+<text x="246.4" y="85.5" font-size="6.6" fill="#6b737c" text-anchor="middle">schema.sql</text>
+<text x="269.6" y="82.0" font-size="6.6" fill="#6b737c" text-anchor="middle">api.ts</text>
+<text x="298.1" y="48.7" font-size="6.6" fill="#6b737c" text-anchor="middle">migrations</text>
+<text x="287.5" y="75.3" font-size="6.6" fill="#6b737c" text-anchor="middle">auth.ts</text>
+<text x="284.1" y="89.1" font-size="6.6" fill="#6b737c" text-anchor="middle">.env</text>
+<text x="225.2" y="79.2" font-size="6.6" fill="#6b737c" text-anchor="middle">lease-2026.pdf</text>
+<text x="229.8" y="120.2" font-size="6.6" fill="#6b737c" text-anchor="middle">IMG_2041.jpg</text>
+<text x="254.4" y="109.4" font-size="6.6" fill="#6b737c" text-anchor="middle">budget-2026.ods</text>
+<text x="280.2" y="120.8" font-size="6.6" fill="#6b737c" text-anchor="middle">letter.odt</text>
+<text x="213.9" y="60.2" font-size="6.6" fill="#6b737c" text-anchor="middle">IMG_2042.jpg</text>
+<text x="181.7" y="73.8" font-size="6.6" fill="#6b737c" text-anchor="middle">notes.txt</text>
+<text x="317.4" y="155.1" font-size="6.6" fill="#6b737c" text-anchor="middle">Arch Wiki: Btrfs</text>
+<text x="332.6" y="141.0" font-size="6.6" fill="#6b737c" text-anchor="middle">GitHub</text>
+<text x="363.7" y="136.9" font-size="6.6" fill="#6b737c" text-anchor="middle">zellij docs</text>
+<text x="330.9" y="136.3" font-size="6.6" fill="#6b737c" text-anchor="middle">Snapper</text>
+<text x="334.2" y="126.8" font-size="6.6" fill="#6b737c" text-anchor="middle">HN</text>
+<text x="311.0" y="138.9" font-size="6.6" fill="#6b737c" text-anchor="middle">rent-portal</text>
+<text x="53.3" y="158.8" font-size="6.6" fill="#6b737c" text-anchor="middle">Passwords</text>
+<text x="91.2" y="156.3" font-size="6.6" fill="#6b737c" text-anchor="middle">Tracker</text>
+<text x="249.5" y="91.1" font-size="6.6" fill="#6b737c" text-anchor="middle">resolv.conf</text>
+<text x="333.4" y="94.4" font-size="6.6" fill="#6b737c" text-anchor="middle">qemu-full</text>
+<text x="299.2" y="107.3" font-size="6.6" fill="#6b737c" text-anchor="middle">pacman.conf</text>
+<text x="197.0" y="187.5" font-size="6.6" fill="#6b737c" text-anchor="middle">setup-wg.sh</text>
+<text x="158.7" y="175.5" font-size="6.6" fill="#6b737c" text-anchor="middle">Untitled 3</text>
+<text x="176.0" y="147.7" font-size="6.6" fill="#6b737c" text-anchor="middle">todo.md</text>
+<text x="159.7" y="189.4" font-size="6.6" fill="#6b737c" text-anchor="middle">tmp.json</text>
+</svg></div>
+      <ul>
+        <li class="pro">The best first minute there is. It looks like a brain, and clusters and orphans jump out.</li>
+        <li class="con">A hairball at the size of a real machine, and it reshuffles every time it opens, so there is no <q class="ui">where</q> to learn.</li>
+        <li class="con">A line has no reason and no date, and you still have to search to find anything.</li>
+      </ul>
+    </figure>
+    <figure class="opt rec" style="margin:0">
+      <div class="opt-head"><span class="opt-letter">B</span><h3>The Map</h3><span class="verdict yes">The overview</span></div>
+      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Latchkey, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
+<rect width="420" height="300" rx="10" fill="#101214"/>
+<path d="M160.0 138.0 Q118.2 94.4 66.0 64.0" stroke="#2c3238" stroke-width="7" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q204.6 96.3 236.0 44.0" stroke="#2c3238" stroke-width="5" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M336.0 92.0 Q289.4 61.0 236.0 44.0" stroke="#2c3238" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q254.6 175.7 356.0 186.0" stroke="#2c3238" stroke-width="2.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M336.0 92.0 Q339.4 140.4 356.0 186.0" stroke="#2c3238" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M74.0 210.0 Q56.2 176.9 30.0 150.0" stroke="#2c3238" stroke-width="4" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q218.0 197.1 290.0 238.0" stroke="#2c3238" stroke-width="2" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M74.0 210.0 Q123.0 231.1 176.0 238.0" stroke="#2c3238" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<path d="M160.0 138.0 Q251.2 127.3 336.0 92.0" stroke="#2c3238" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".9"/>
+<line x1="153.6" y1="138.8" x2="68.6" y2="65.7" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="238.5" y2="45.6" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="151.7" y2="130.5" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<line x1="153.6" y1="138.8" x2="161.8" y2="124.1" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<circle cx="68.6" cy="65.7" r="4.0" fill="#e6e8eb" opacity="0.82"/>
+<circle cx="59.8" cy="64.8" r="3.5" fill="#e6e8eb" opacity="0.78"/>
+<circle cx="71.3" cy="58.1" r="3.0" fill="#aab1b9" opacity="0.74"/>
+<circle cx="66.5" cy="73.1" r="2.5" fill="#aab1b9" opacity="0.70"/>
+<circle cx="58.0" cy="56.7" r="2.1" fill="#aab1b9" opacity="0.65"/>
+<circle cx="78.5" cy="64.4" r="1.8" fill="#aab1b9" opacity="0.61"/>
+<circle cx="55.7" cy="72.1" r="1.5" fill="#aab1b9" opacity="0.57"/>
+<circle cx="238.5" cy="45.6" r="3.5" fill="#e6e8eb" opacity="0.72"/>
+<circle cx="230.0" cy="44.8" r="3.0" fill="#aab1b9" opacity="0.68"/>
+<circle cx="241.1" cy="38.3" r="2.6" fill="#aab1b9" opacity="0.64"/>
+<circle cx="236.5" cy="52.7" r="2.1" fill="#aab1b9" opacity="0.60"/>
+<circle cx="228.3" cy="37.0" r="1.8" fill="#aab1b9" opacity="0.56"/>
+<circle cx="248.0" cy="44.4" r="1.5" fill="#aab1b9" opacity="0.52"/>
+<circle cx="162.7" cy="139.7" r="4.7" fill="#5b9bd5" opacity="0.96"/>
+<circle cx="153.6" cy="138.8" r="4.5" fill="#5b9bd5" opacity="0.95"/>
+<circle cx="165.4" cy="131.9" r="4.4" fill="#aab1b9" opacity="0.94"/>
+<circle cx="160.6" cy="147.4" r="4.2" fill="#5b9bd5" opacity="0.92"/>
+<circle cx="151.7" cy="130.5" r="4.1" fill="#aab1b9" opacity="0.91"/>
+<circle cx="172.9" cy="138.4" r="3.9" fill="#e6e8eb" opacity="0.90"/>
+<circle cx="149.3" cy="146.4" r="3.8" fill="#aab1b9" opacity="0.89"/>
+<circle cx="161.8" cy="124.1" r="3.6" fill="#aab1b9" opacity="0.87"/>
+<circle cx="169.4" cy="150.1" r="3.5" fill="#5b9bd5" opacity="0.86"/>
+<circle cx="143.2" cy="134.7" r="3.4" fill="#aab1b9" opacity="0.85"/>
+<circle cx="175.5" cy="129.6" r="3.2" fill="#aab1b9" opacity="0.84"/>
+<circle cx="154.5" cy="154.6" r="3.1" fill="#aab1b9" opacity="0.82"/>
+<circle cx="151.5" cy="121.7" r="3.0" fill="#aab1b9" opacity="0.81"/>
+<circle cx="179.0" cy="145.0" r="2.8" fill="#aab1b9" opacity="0.80"/>
+<circle cx="140.1" cy="144.8" r="2.7" fill="#aab1b9" opacity="0.79"/>
+<circle cx="170.0" cy="120.0" r="2.6" fill="#aab1b9" opacity="0.77"/>
+<circle cx="166.1" cy="158.1" r="2.5" fill="#aab1b9" opacity="0.76"/>
+<circle cx="140.2" cy="126.6" r="2.4" fill="#aab1b9" opacity="0.75"/>
+<circle cx="183.6" cy="134.0" r="2.2" fill="#aab1b9" opacity="0.74"/>
+<circle cx="145.2" cy="156.1" r="2.1" fill="#aab1b9" opacity="0.72"/>
+<circle cx="157.6" cy="114.9" r="2.0" fill="#aab1b9" opacity="0.71"/>
+<circle cx="179.2" cy="153.9" r="1.9" fill="#aab1b9" opacity="0.70"/>
+<circle cx="133.5" cy="138.2" r="1.8" fill="#aab1b9" opacity="0.69"/>
+<circle cx="179.8" cy="121.0" r="1.7" fill="#aab1b9" opacity="0.67"/>
+<circle cx="157.8" cy="163.3" r="1.7" fill="#aab1b9" opacity="0.66"/>
+<circle cx="142.7" cy="117.5" r="1.6" fill="#aab1b9" opacity="0.65"/>
+<circle cx="188.3" cy="142.4" r="1.5" fill="#aab1b9" opacity="0.64"/>
+<circle cx="135.4" cy="152.6" r="1.4" fill="#aab1b9" opacity="0.62"/>
+<circle cx="167.5" cy="111.5" r="1.4" fill="#aab1b9" opacity="0.61"/>
+<circle cx="174.2" cy="162.7" r="1.3" fill="#aab1b9" opacity="0.60"/>
+<circle cx="338.6" cy="93.6" r="2.3" fill="#aab1b9" opacity="0.48"/>
+<circle cx="329.9" cy="92.8" r="2.2" fill="#aab1b9" opacity="0.48"/>
+<circle cx="341.2" cy="86.2" r="2.1" fill="#aab1b9" opacity="0.47"/>
+<circle cx="336.5" cy="100.9" r="2.0" fill="#aab1b9" opacity="0.46"/>
+<circle cx="328.1" cy="84.9" r="1.9" fill="#aab1b9" opacity="0.45"/>
+<circle cx="348.3" cy="92.4" r="1.8" fill="#aab1b9" opacity="0.44"/>
+<circle cx="325.9" cy="100.0" r="1.7" fill="#aab1b9" opacity="0.43"/>
+<circle cx="337.7" cy="78.9" r="1.6" fill="#aab1b9" opacity="0.42"/>
+<circle cx="344.9" cy="103.5" r="1.6" fill="#aab1b9" opacity="0.41"/>
+<circle cx="320.1" cy="88.9" r="1.5" fill="#aab1b9" opacity="0.41"/>
+<circle cx="350.7" cy="84.0" r="1.4" fill="#aab1b9" opacity="0.40"/>
+<circle cx="330.8" cy="107.7" r="1.4" fill="#aab1b9" opacity="0.39"/>
+<circle cx="328.0" cy="76.5" r="1.3" fill="#aab1b9" opacity="0.38"/>
+<circle cx="358.6" cy="187.6" r="3.3" fill="#d97757" opacity="0.69"/>
+<circle cx="349.9" cy="186.8" r="3.0" fill="#aab1b9" opacity="0.66"/>
+<circle cx="361.2" cy="180.2" r="2.7" fill="#d97757" opacity="0.64"/>
+<circle cx="356.5" cy="194.9" r="2.5" fill="#aab1b9" opacity="0.61"/>
+<circle cx="348.1" cy="178.9" r="2.2" fill="#aab1b9" opacity="0.59"/>
+<circle cx="368.3" cy="186.4" r="2.0" fill="#aab1b9" opacity="0.56"/>
+<circle cx="345.9" cy="194.0" r="1.7" fill="#aab1b9" opacity="0.54"/>
+<circle cx="357.7" cy="172.9" r="1.5" fill="#aab1b9" opacity="0.51"/>
+<circle cx="364.9" cy="197.5" r="1.4" fill="#aab1b9" opacity="0.49"/>
+<circle cx="293.2" cy="240.0" r="3.0" fill="#e6e8eb" opacity="0.62"/>
+<circle cx="282.5" cy="239.0" r="2.5" fill="#aab1b9" opacity="0.58"/>
+<circle cx="296.3" cy="230.9" r="2.1" fill="#aab1b9" opacity="0.55"/>
+<circle cx="290.6" cy="248.9" r="1.8" fill="#aab1b9" opacity="0.51"/>
+<circle cx="280.3" cy="229.3" r="1.5" fill="#aab1b9" opacity="0.47"/>
+<circle cx="76.6" cy="211.7" r="4.2" fill="#e6e8eb" opacity="0.86"/>
+<circle cx="67.8" cy="210.8" r="3.8" fill="#d97757" opacity="0.82"/>
+<circle cx="79.3" cy="204.1" r="3.3" fill="#e6e8eb" opacity="0.79"/>
+<circle cx="74.5" cy="219.1" r="2.9" fill="#aab1b9" opacity="0.75"/>
+<circle cx="66.0" cy="202.7" r="2.6" fill="#aab1b9" opacity="0.72"/>
+<circle cx="86.5" cy="210.4" r="2.2" fill="#aab1b9" opacity="0.68"/>
+<circle cx="63.7" cy="218.1" r="1.9" fill="#aab1b9" opacity="0.65"/>
+<circle cx="75.8" cy="196.6" r="1.7" fill="#aab1b9" opacity="0.61"/>
+<circle cx="83.1" cy="221.7" r="1.4" fill="#aab1b9" opacity="0.58"/>
+<circle cx="32.4" cy="151.5" r="3.7" fill="#e6e8eb" opacity="0.76"/>
+<circle cx="24.2" cy="150.8" r="2.6" fill="#aab1b9" opacity="0.67"/>
+<circle cx="34.9" cy="144.6" r="1.8" fill="#aab1b9" opacity="0.58"/>
+<circle cx="178.5" cy="239.6" r="2.0" fill="#aab1b9" opacity="0.43"/>
+<circle cx="170.0" cy="238.8" r="1.9" fill="#aab1b9" opacity="0.42"/>
+<circle cx="181.1" cy="232.3" r="1.7" fill="#aab1b9" opacity="0.40"/>
+<circle cx="176.5" cy="246.7" r="1.6" fill="#aab1b9" opacity="0.39"/>
+<circle cx="168.3" cy="231.0" r="1.5" fill="#aab1b9" opacity="0.37"/>
+<circle cx="188.0" cy="238.4" r="1.4" fill="#aab1b9" opacity="0.36"/>
+<circle class="pulse" cx="153.6" cy="138.8" r="9.5" fill="none" stroke="#5b9bd5" stroke-width="1.4"/>
+<circle cx="153.6" cy="138.8" r="5.1" fill="#5b9bd5"/>
+<text x="163.6" y="137.8" font-size="8" fill="#e6e8eb" text-anchor="start" font-weight="600">snapshots.py</text>
+<text x="163.6" y="146.8" font-size="7" fill="#5b9bd5" text-anchor="start">builder, now</text>
+<circle class="pulse" cx="76.6" cy="211.7" r="9.2" fill="none" stroke="#e6e8eb" stroke-width="1.4"/>
+<circle cx="76.6" cy="211.7" r="4.8" fill="#e6e8eb"/>
+<text x="76.6" y="229.8" font-size="8" fill="#e6e8eb" text-anchor="middle" font-weight="600">letter-to-landlord.odt</text>
+<text x="76.6" y="238.8" font-size="7" fill="#e6e8eb" text-anchor="middle">you, now</text>
+<circle class="pulse" cx="358.6" cy="187.6" r="8.3" fill="none" stroke="#d97757" stroke-width="1.4"/>
+<circle cx="358.6" cy="187.6" r="3.9" fill="#d97757"/>
+<text x="358.6" y="205.0" font-size="8" fill="#e6e8eb" text-anchor="middle" font-weight="600">qemu-full</text>
+<text x="358.6" y="214.0" font-size="7" fill="#d97757" text-anchor="middle">the machine, now</text>
+<text x="68.6" y="59.7" font-size="6.8" fill="#8b939c" text-anchor="middle">Snapper</text>
+<text x="244.5" y="48.0" font-size="6.8" fill="#8b939c" text-anchor="start">PR 418</text>
+<text x="293.2" y="234.0" font-size="6.8" fill="#8b939c" text-anchor="middle">Passwords</text>
+<text x="282.5" y="249.0" font-size="6.8" fill="#8b939c" text-anchor="middle">Tracker</text>
+<text x="143.3" y="148.8" font-size="6.8" fill="#8b939c" text-anchor="end">agentd.py</text>
+<text x="66.0" y="47.7" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Arch Wiki</text>
+<text x="236.0" y="28.0" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">GitHub</text>
+<text x="160.0" y="102.5" font-size="10.5" font-weight="650" fill="#e6e8eb" text-anchor="middle">Bombadil</text>
+<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Latchkey</text>
+<text x="356.0" y="163.9" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">System</text>
+<text x="290.0" y="220.3" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Apps</text>
+<text x="74.0" y="187.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Lease</text>
+<text x="30.0" y="135.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">rent-portal</text>
+<text x="176.0" y="222.0" font-size="9" font-weight="650" fill="#6b737c" text-anchor="middle">Taxes 2026</text>
+<text x="14" y="18" font-size="9" fill="#e6e8eb" font-weight="650">Map</text>
+<rect x="42" y="9" width="62" height="13" rx="6.5" fill="#1a1d21" stroke="#2a2f36"/><rect x="43" y="10" width="30" height="11" rx="5.5" fill="#2a2f36"/>
+<text x="58" y="18.3" font-size="6.8" fill="#e6e8eb" text-anchor="middle">Alive</text><text x="88.5" y="18.3" font-size="6.8" fill="#8b939c" text-anchor="middle">Size</text>
+<circle cx="300" cy="15" r="2.6" fill="#e6e8eb"/><text x="305" y="17.6" font-size="7" fill="#8b939c">you</text>
+<circle cx="328.6" cy="15" r="2.6" fill="#d97757"/><text x="333.6" y="17.6" font-size="7" fill="#8b939c">machine</text>
+<circle cx="374.0" cy="15" r="2.6" fill="#5b9bd5"/><text x="379.0" y="17.6" font-size="7" fill="#8b939c">session</text>
+<rect x="12" y="276" width="396" height="14" rx="4" fill="#1a1d21" stroke="#2a2f36"/>
+<text x="15.0" y="273" font-size="6.2" fill="#5c636b">Mon</text>
+<rect x="49.4" y="280" width="14.6" height="6" rx="2" fill="#d97757" opacity=".55"/>
+<rect x="33.4" y="280" width="14.6" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="68.6" y1="278" x2="68.6" y2="288" stroke="#2a2f36"/>
+<text x="71.6" y="273" font-size="6.2" fill="#5c636b">Tue</text>
+<rect x="103.6" y="280" width="10.8" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="125.1" y1="278" x2="125.1" y2="288" stroke="#2a2f36"/>
+<text x="128.1" y="273" font-size="6.2" fill="#5c636b">Wed</text>
+<rect x="146.4" y="280" width="7.4" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="181.7" y1="278" x2="181.7" y2="288" stroke="#2a2f36"/>
+<text x="184.7" y="273" font-size="6.2" fill="#5c636b">Thu</text>
+<rect x="223.6" y="280" width="15.6" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="209.7" y="280" width="14.3" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="188.0" y="280" width="7.9" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="238.3" y1="278" x2="238.3" y2="288" stroke="#2a2f36"/>
+<text x="241.3" y="273" font-size="6.2" fill="#5c636b">Fri</text>
+<rect x="243.4" y="280" width="10.6" height="6" rx="2" fill="#d97757" opacity=".55"/>
+<rect x="265.1" y="280" width="8.0" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="267.0" y="280" width="11.0" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="294.9" y1="278" x2="294.9" y2="288" stroke="#2a2f36"/>
+<text x="297.9" y="273" font-size="6.2" fill="#5c636b">Sat</text>
+<rect x="324.1" y="280" width="10.1" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<rect x="326.2" y="280" width="9.2" height="6" rx="2" fill="#5b9bd5" opacity=".55"/>
+<line x1="351.4" y1="278" x2="351.4" y2="288" stroke="#2a2f36"/>
+<text x="354.4" y="273" font-size="6.2" fill="#5c636b">Sun</text>
+<line x1="396.7" y1="272" x2="396.7" y2="293" stroke="#d97757" stroke-width="1.6"/><text x="393.7" y="273" font-size="6.2" fill="#d97757" text-anchor="end">now</text>
+</svg></div>
+      <ul>
+        <li class="pro">Keeps the graph's look, but areas are pinned, so you learn it like a city.</li>
+        <li class="pro">Only the few hundred most alive things are drawn, and lines between areas are bundled into roads.</li>
+        <li class="pro">Live: a dot breathes while you, the machine or a session is touching it.</li>
+      </ul>
+    </figure>
+    <figure class="opt rec" style="margin:0">
+      <div class="opt-head"><span class="opt-letter">C</span><h3>Focus</h3><span class="verdict yes">Opens by default</span></div>
+      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="Focus on snapshots.py: the file in the middle; on the left the two coding sessions and you who changed it, on the right the pages read with it, below the files used with it, one in amber because another session is changing it now, and on top its seven changes this week.">
+<rect width="420" height="300" rx="10" fill="#101214"/>
+<text x="14" y="18" font-size="8" fill="#8b939c">Map  ›  Bombadil  ›  <tspan fill="#e6e8eb" font-weight="650">snapshots.py</tspan></text>
+<path d="M128 111 C140 111 130 142.0 142 142.0" stroke="#5b9bd5" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M128 151 C140 151 130 142.0 142 142.0" stroke="#5b9bd5" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M128 191 C140 191 130 142.0 142 142.0" stroke="#e6e8eb" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M294 111 C282 111 290 142.0 278 142.0" stroke="#e6e8eb" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M294 151 C282 151 290 142.0 278 142.0" stroke="#5b9bd5" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M294 191 C282 191 290 142.0 278 142.0" stroke="#e6e8eb" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M138 226 C138 214 210.0 212 210.0 198" stroke="#5b9bd5" stroke-width=".9" fill="none" opacity=".75"/>
+<path d="M282 226 C282 214 210.0 212 210.0 198" stroke="#e0a93b" stroke-width=".9" fill="none" opacity=".75"/>
+<line x1="210.0" y1="86" x2="210.0" y2="68" stroke="#5b9bd5" stroke-width=".9" opacity=".75"/>
+<text x="210.0" y="34" font-size="6.2" fill="#8b939c" text-anchor="middle" letter-spacing=".6">CHANGES · 7 THIS WEEK</text>
+<polyline points="150,62 166,60 182,63 198,54 214,57 230,50 246,52 262,44" fill="none" stroke="#5b9bd5" stroke-width="1.3"/>
+<circle cx="150" cy="62" r="1.6" fill="#5b9bd5"/>
+<circle cx="166" cy="60" r="1.6" fill="#5b9bd5"/>
+<circle cx="182" cy="63" r="1.6" fill="#5b9bd5"/>
+<circle cx="198" cy="54" r="1.6" fill="#5b9bd5"/>
+<circle cx="214" cy="57" r="1.6" fill="#5b9bd5"/>
+<circle cx="230" cy="50" r="1.6" fill="#5b9bd5"/>
+<circle cx="246" cy="52" r="1.6" fill="#5b9bd5"/>
+<circle cx="262" cy="44" r="1.6" fill="#5b9bd5"/>
+<circle cx="262" cy="44" r="2.8" fill="#5b9bd5"/>
+<rect x="284" y="46" width="72" height="15" rx="7.5" fill="#22262b" stroke="#d97757"/><text x="320" y="56.2" font-size="6.8" fill="#f0c3b0" text-anchor="middle">Undo this change</text>
+<rect x="142" y="86" width="136" height="112" rx="8" fill="#1a1d21" stroke="#3a414a" stroke-width="1.2"/>
+<text x="152" y="101" font-size="9" font-weight="700" fill="#e6e8eb">snapshots.py</text>
+<text x="152" y="111" font-size="6.2" fill="#8b939c">Bombadil · src/bombadil · 214 lines</text>
+<text x="152" y="126.0" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">"""Undo for a system with no</text>
+<text x="152" y="134.6" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">guard rails.</text>
+<text x="152" y="143.2" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace"></text>
+<text x="152" y="151.8" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">Before every agent turn that may</text>
+<text x="152" y="160.4" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">touch the system we take a btrfs</text>
+<text x="152" y="169.0" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">snapshot through snapper; ...</text>
+<text x="152" y="177.6" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">"""</text>
+<text x="152" y="186.2" font-size="6.1" fill="#aab1b9" font-family="IBM Plex Mono, ui-monospace, monospace">class Snapshots:</text>
+<text x="12" y="88" font-size="6.2" fill="#8b939c" letter-spacing=".6">CAME FROM</text>
+<rect x="10" y="94" width="118" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="18" cy="103.5" r="2.6" fill="#5b9bd5"/>
+<text x="24" y="106" font-size="7.4" font-weight="600" fill="#e6e8eb">builder · turn 12</text>
+<text x="18" y="116" font-size="6.6" fill="#8b939c">‘drop the old cleanup’</text>
+<text x="18" y="125" font-size="6.2" fill="#5c636b">today 13:02</text>
+<rect x="10" y="134" width="118" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="18" cy="143.5" r="2.6" fill="#5b9bd5"/>
+<text x="24" y="146" font-size="7.4" font-weight="600" fill="#e6e8eb">flaky-snapshot · turn 3</text>
+<text x="18" y="156" font-size="6.6" fill="#8b939c">‘fix the race’</text>
+<text x="18" y="165" font-size="6.2" fill="#5c636b">Tue 16:40</text>
+<rect x="10" y="174" width="118" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="18" cy="183.5" r="2.6" fill="#e6e8eb"/>
+<text x="24" y="186" font-size="7.4" font-weight="600" fill="#e6e8eb">you, in the terminal</text>
+<text x="18" y="196" font-size="6.6" fill="#8b939c">first version</text>
+<text x="18" y="205" font-size="6.2" fill="#5c636b">21 Sep</text>
+<text x="296" y="88" font-size="6.2" fill="#8b939c" letter-spacing=".6">READ WITH</text>
+<rect x="294" y="94" width="116" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="302" cy="103.5" r="2.6" fill="#e6e8eb"/>
+<text x="308" y="106" font-size="7.4" font-weight="600" fill="#e6e8eb">Arch Wiki: Snapper</text>
+<text x="302" y="116" font-size="6.6" fill="#8b939c">open while builder edited</text>
+<text x="302" y="125" font-size="6.2" fill="#5c636b">today</text>
+<rect x="294" y="134" width="116" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="302" cy="143.5" r="2.6" fill="#5b9bd5"/>
+<text x="308" y="146" font-size="7.4" font-weight="600" fill="#e6e8eb">snapper(8)</text>
+<text x="302" y="156" font-size="6.6" fill="#8b939c">read by builder</text>
+<text x="302" y="165" font-size="6.2" fill="#5c636b">today</text>
+<rect x="294" y="174" width="116" height="34" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="302" cy="183.5" r="2.6" fill="#e6e8eb"/>
+<text x="308" y="186" font-size="7.4" font-weight="600" fill="#e6e8eb">PR 418</text>
+<text x="302" y="196" font-size="6.6" fill="#8b939c">ships this change</text>
+<text x="302" y="205" font-size="6.2" fill="#5c636b">open</text>
+<text x="210.0" y="220" font-size="6.2" fill="#8b939c" text-anchor="middle" letter-spacing=".6">USED WITH</text>
+<rect x="92" y="226" width="92" height="26" rx="6" fill="#1a1d21" stroke="#2a2f36"/>
+<circle cx="100" cy="235.5" r="2.6" fill="#5b9bd5"/>
+<text x="106" y="238" font-size="7.4" font-weight="600" fill="#e6e8eb">test_snapshots.py</text>
+<text x="100" y="248" font-size="6.6" fill="#8b939c">changed together 5 times</text>
+<rect x="236" y="226" width="92" height="26" rx="6" fill="#1a1d21" stroke="#e0a93b"/>
+<circle cx="244" cy="235.5" r="2.6" fill="#e0a93b"/>
+<text x="250" y="238" font-size="7.4" font-weight="600" fill="#e6e8eb">launcher.py</text>
+<text x="244" y="248" font-size="6.6" fill="#8b939c">kit is changing it now</text>
+<rect x="112" y="268" width="25.6" height="15" rx="7.5" fill="#22262b" stroke="#2a2f36"/><text x="124.8" y="278.2" font-size="6.8" fill="#e6e8eb" text-anchor="middle">Open</text>
+<rect x="145.6" y="268" width="64.6" height="15" rx="7.5" fill="#22262b" stroke="#2a2f36"/><text x="177.9" y="278.2" font-size="6.8" fill="#e6e8eb" text-anchor="middle">Show in folder</text>
+<rect x="218.2" y="268" width="64.6" height="15" rx="7.5" fill="#22262b" stroke="#2a2f36"/><text x="250.5" y="278.2" font-size="6.8" fill="#e6e8eb" text-anchor="middle">Ask about this</text>
+</svg></div>
+      <ul>
+        <li class="pro">Obsidian's local graph made readable: the same kind of link is always in the same place.</li>
+        <li class="pro">Every link is one line saying who and when, and clicking a neighbor slides it to the middle.</li>
+        <li class="pro">A folder in the middle is a list, so this is also the file manager.</li>
+      </ul>
+    </figure>
+    <figure class="opt rec" style="margin:0">
+      <div class="opt-head"><span class="opt-letter">D</span><h3>Time</h3><span class="verdict yes">Strip under both</span></div>
+      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="Time: a lane per area across the week, each stretch of work a short block named by the words used, such as fix the race and install the VPN; a handle sits on Tuesday at 14:02 and a card shows the stretch fix the race with its four files.">
+<rect width="420" height="300" rx="10" fill="#101214"/>
+<text x="14" y="18" font-size="8" fill="#e6e8eb" font-weight="650">Time <tspan fill="#8b939c" font-weight="400">· this week</tspan></text>
+<text x="94.2" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Mon</text>
+<line x1="70.0" y1="38" x2="70.0" y2="200" stroke="#1e2226"/>
+<text x="142.4" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Tue</text>
+<line x1="118.3" y1="38" x2="118.3" y2="200" stroke="#1e2226"/>
+<text x="190.8" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Wed</text>
+<line x1="166.6" y1="38" x2="166.6" y2="200" stroke="#1e2226"/>
+<text x="239.0" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Thu</text>
+<line x1="214.9" y1="38" x2="214.9" y2="200" stroke="#1e2226"/>
+<text x="287.3" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Fri</text>
+<line x1="263.2" y1="38" x2="263.2" y2="200" stroke="#1e2226"/>
+<text x="335.6" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Sat</text>
+<line x1="311.5" y1="38" x2="311.5" y2="200" stroke="#1e2226"/>
+<text x="383.9" y="34" font-size="6.6" fill="#8b939c" text-anchor="middle">Sun</text>
+<line x1="359.8" y1="38" x2="359.8" y2="200" stroke="#1e2226"/>
+<line x1="12" y1="40" x2="410" y2="40" stroke="#1e2226"/>
+<text x="14" y="54" font-size="7.4" fill="#e6e8eb" font-weight="600">Bombadil</text>
+<line x1="12" y1="72" x2="410" y2="72" stroke="#1e2226"/>
+<text x="14" y="86" font-size="7.4" fill="#e6e8eb" font-weight="600">Latchkey</text>
+<line x1="12" y1="104" x2="410" y2="104" stroke="#1e2226"/>
+<text x="14" y="118" font-size="7.4" fill="#e6e8eb" font-weight="600">Lease</text>
+<line x1="12" y1="136" x2="410" y2="136" stroke="#1e2226"/>
+<text x="14" y="150" font-size="7.4" fill="#8b939c" font-weight="600">Web</text>
+<line x1="12" y1="168" x2="410" y2="168" stroke="#1e2226"/>
+<text x="14" y="182" font-size="7.4" fill="#8b939c" font-weight="600">System</text>
+<rect x="78.0" y="46" width="10.1" height="7" rx="2.5" fill="#5b9bd5" opacity="0.5"/>
+<text x="78.0" y="63" font-size="6.4" fill="#8b939c">review the kit</text>
+<rect x="146.5" y="46" width="10.1" height="7" rx="2.5" fill="#5b9bd5" opacity="1"/>
+<text x="146.5" y="63" font-size="6.4" fill="#e6e8eb">fix the race</text>
+<rect x="186.7" y="46" width="8.0" height="7" rx="2.5" fill="#5b9bd5" opacity="0.5"/>
+<text x="186.7" y="63" font-size="6.4" fill="#8b939c">drop the old cleanup</text>
+<rect x="287.3" y="46" width="4.0" height="7" rx="2.5" fill="#e6e8eb" opacity="0.5"/>
+<text x="287.3" y="63" font-size="6.4" fill="#8b939c">ship builder</text>
+<rect x="170.6" y="78" width="8.0" height="7" rx="2.5" fill="#5b9bd5" opacity="0.5"/>
+<text x="170.6" y="95" font-size="6.4" fill="#8b939c">migrations</text>
+<rect x="222.9" y="78" width="24.1" height="7" rx="2.5" fill="#5b9bd5" opacity="0.5"/>
+<text x="222.9" y="95" font-size="6.4" fill="#8b939c">api tests</text>
+<rect x="140.4" y="110" width="6.0" height="7" rx="2.5" fill="#e6e8eb" opacity="1"/>
+<text x="140.4" y="127" font-size="6.4" fill="#e6e8eb">Lease renewal</text>
+<rect x="269.2" y="110" width="4.4" height="7" rx="2.5" fill="#d97757" opacity="0.5"/>
+<text x="269.2" y="127" font-size="6.4" fill="#8b939c">draft a reply</text>
+<rect x="140.4" y="142" width="6.0" height="7" rx="2.5" fill="#e6e8eb" opacity="1"/>
+<text x="140.4" y="159" font-size="6.4" fill="#e6e8eb">rent-portal</text>
+<rect x="371.9" y="142" width="4.0" height="7" rx="2.5" fill="#e6e8eb" opacity="0.5"/>
+<text x="371.9" y="159" font-size="6.4" fill="#8b939c">zellij docs</text>
+<rect x="102.2" y="174" width="3.2" height="7" rx="2.5" fill="#d97757" opacity="0.5"/>
+<text x="102.2" y="191" font-size="6.4" fill="#8b939c">install the VPN</text>
+<rect x="227.0" y="174" width="3.0" height="7" rx="2.5" fill="#d97757" opacity="0.5"/>
+<text x="227.0" y="191" font-size="6.4" fill="#8b939c">install qemu-full</text>
+<line x1="142.6" y1="30" x2="142.6" y2="200" stroke="#d97757" stroke-width="1.4"/>
+<rect x="120.6" y="22" width="44" height="12" rx="6" fill="#d97757"/><text x="142.6" y="30.4" font-size="6.6" fill="#fff" text-anchor="middle" font-weight="600">Tue 14:02</text>
+<line x1="152.5" y1="53" x2="176.5" y2="222" stroke="#5b9bd5" stroke-width=".8" opacity=".7"/>
+<rect x="150" y="222" width="258" height="66" rx="8" fill="#1a1d21" stroke="#3a414a"/>
+<rect x="158" y="230" width="64" height="40" rx="4" fill="#0c0e10" stroke="#2a2f36"/>
+<rect x="164" y="236" width="52" height="28" rx="2" fill="#22262b"/><rect x="168" y="240" width="30" height="2.4" fill="#5c636b"/><rect x="168" y="245" width="40" height="2.4" fill="#5c636b"/><rect x="168" y="250" width="24" height="2.4" fill="#5b9bd5"/>
+<text x="230" y="238" font-size="8.4" font-weight="700" fill="#e6e8eb">fix the race</text>
+<text x="230" y="249" font-size="6.6" fill="#8b939c">flaky-snapshot on Bombadil · Tue 15:02 to 17:30</text>
+<text x="230" y="259" font-size="6.6" fill="#8b939c">4 files · snapshots.py, test_snapshots.py, +2</text>
+<rect x="230.0" y="267" width="60.7" height="14" rx="7" fill="#22262b" stroke="#2a2f36"/><text x="260.4" y="276.6" font-size="6.6" fill="#e6e8eb" text-anchor="middle">Open in Focus</text>
+<rect x="296.7" y="267" width="45.1" height="14" rx="7" fill="#22262b" stroke="#2a2f36"/><text x="319.2" y="276.6" font-size="6.6" fill="#e6e8eb" text-anchor="middle">Undo this</text>
+<text x="14" y="236" font-size="6.6" fill="#8b939c">On the Map now:</text>
+<text x="14" y="247" font-size="6.6" fill="#e6e8eb">Lease, rent-portal</text>
+<text x="14" y="256" font-size="6.6" fill="#e6e8eb">and flaky-snapshot’s</text>
+<text x="14" y="265" font-size="6.6" fill="#e6e8eb">corner of Bombadil</text>
+<text x="14" y="274" font-size="6.6" fill="#8b939c">light up; the rest</text>
+<text x="14" y="283" font-size="6.6" fill="#8b939c">dims.</text>
+</svg></div>
+      <ul>
+        <li class="pro">People remember <q class="ui">Tuesday, while I was reading about btrfs</q> far more often than a folder path.</li>
+        <li class="pro">Each stretch of work is named by the words you used, with no model.</li>
+        <li class="pro">It replaces Rewind, so there is one place for what happened and what is where.</li>
+      </ul>
+    </figure>
+  </div>
+  <div class="legend"><span><i class="c-you"></i>you</span><span><i class="c-mac"></i>the machine's agent</span><span><i class="c-ses"></i>a coding session</span><span>Position says what, color says who.</span></div>
+  <div class="recbox">
+    <h3>Recommendation: C opens, B is the overview, D runs under both</h3>
+    <p>All three read one index. The free-floating graph of everything is not built as a view of its own, but the Map keeps its look, so the machine still feels like a brain when you zoom out. Obsidian's own users navigate with the local graph, links and search, and in 2025 Obsidian itself added Bases, table and card views, beside the graph. If you would rather have A as the main view anyway, say <q class="ui">graph</q> and the Map becomes a free layout instead.</p>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>The rules</h2>
+  <p class="intro">Every idea below follows these, on top of the first two briefs' rules. When a feature breaks one, the feature changes.</p>
+  <ol class="rules">
+    <li><strong>Nobody writes the brain. The machine does, from what actually happened.</strong><span>A save, a download, a turn, a session's edit, a page you read: every link is an event the OS witnessed, so there is nothing to tend and nothing to go stale.</span></li>
+    <li><strong>Every link says why and when.</strong><span><q class="ui">Downloaded from rent-portal while you read Lease renewal 2026, Tue 14:02.</q> A link with no reason is a guess, and guesses are what turn a graph into noise.</span></li>
+    <li><strong>Plain files stay the truth.</strong><span>Folders are still folders, every tool and both agents still read them, and the brain is an index beside them that can be rebuilt. Deleting it loses the view, not your data or its history.</span></li>
+    <li><strong>Things hold still.</strong><span>A thing keeps its place on the map from the day it appears, through renames and moves, so you learn where things are the way you learn a city.</span></li>
+    <li><strong>Bright means alive.</strong><span>Brightness is how recently and how often something was touched, by you or an agent. Nothing is removed for being old, it only dims, and the map at rest shows a few hundred things, never fifty thousand.</span></li>
+    <li><strong>What a model writes is pinned to what it read.</strong><span>A summary carries a fingerprint of its sources. When a source changes, the sentence greys out and is rewritten the next time someone looks. This is the fix for the folder of markdown that goes stale.</span></li>
+    <li><strong>You and the agents see the same brain.</strong><span>The pill, the Brain window, the machine's agent, coding sessions and apps all ask one index, so what the machine knows and what you can see never disagree.</span></li>
+  </ol>
+</section>
+
+<section id="first">
+  <h2>Build these first</h2>
+  <p class="intro">Six pieces, in this order. The first one starts recording history, which cannot be recovered later, so it should start as early as possible. The next three are what gets used every day. The Map and Time come last because a map needs a few weeks of history to be worth looking at, and by then the first piece has collected it.</p>
+  <div class="pieces">
+
+<article class="piece" id="piece-1">
+  <div class="piece-head"><span class="piece-num">1</span><h3>The brain writes itself</h3><span class="effort">L</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-line"><span>Downloaded from rent-portal on Tue 14:02 while you read <q class="ui">Lease renewal 2026</q>.</span></div>
+      <div class="m-pill"><i class="dot"></i><span class="m-chip grey">lease-2026.pdf <b>×</b></span><span class="m-typed">where did this come from?</span></div>
+    </div>
+    <div class="piece-text">
+      <p class="see">Nothing to learn and nothing to set up. Within a second of any save, download, turn or session edit, the thing and its links exist. The first visible payoff is two questions that answer instantly, with no model call. With the lease PDF in front, <q class="ui">where did this come from?</q> says <q class="ui">Downloaded from rent-portal on Tue 14:02 while you read 'Lease renewal 2026'.</q> With ~/setup-wg.sh selected, <q class="ui">why is this here?</q> says <q class="ui">Made by the machine in turn 41, 'install the VPN', on Monday. Nothing has opened it since.</q></p>
+      <dl>
+        <dt>Why first</dt><dd>Every view, the search and the agents' tools read this index. More importantly, who made a file is known only at the moment it is written: a history that was not recorded cannot be rebuilt later, so every day without this piece is a day the brain will never know about.</dd>
+        <dt>What changes</dt><dd>A new user service, <code>bombadil-brain</code>, owns ~/.local/state/bombadil/brain.db (SQLite in WAL mode: things, links, events, and an FTS5 index), which the first brief already keeps outside home snapshots. It is fed by witnesses that report what happened, and it never scans on a timer.
+          <ul>
+            <li><strong>Files.</strong> A small root service, <code>bombadil-brain-watch</code>, holds one fanotify mark on the whole btrfs filesystem (a filesystem mark needs root, and it is the only kind that reports creates, renames and deletes with the writer's pid), keeps the events under /home, and resolves each pid to who did it through its cgroup: a <code>bombadil-turn-*</code> scope (procs.py already runs every turn in one) is the machine's turn, a scope under bombadil-dev-&lt;project&gt;.slice is that coding session, an app's unit is that app, and anything else in your session is <q class="ui">you, in &lt;app&gt;</q>. After a reboot or a stop it catches up with <code>btrfs subvolume find-new</code> for new writes and a quick walk of the tree against the last index for deletions and renames, so there is never a full rescan after the first index.</li>
+            <li><strong>Turns.</strong> agentd adds the files each turn touched (from its own tool events and the turn's snapper diff) to its turns.jsonl row, which today holds only the prompt, result and a details string.</li>
+            <li><strong>Coding sessions.</strong> The second brief's hooks (the prompt text from UserPromptSubmit) and its checkpoint refs (the files each session turn changed).</li>
+            <li><strong>The browser.</strong> Chromium's History database, copied when it changes and at most once a minute (Chromium keeps it locked): URL, title, time and how long you stayed. A download's page comes from the same database's downloads table, joined to the file the watcher saw Chromium write.</li>
+            <li><strong>Apps, the system and memory.</strong> The git history of each ~/Apps folder and app.toml; pacman.log and each turn's snapper diff as packages, services and /etc files in one System area; each line of memory.md as a fact linked to the turn that wrote it.</li>
+          </ul>
+          Who made a file, and for a download where it came from, is also written on the file as xattrs (<code>user.bombadil.made_by</code>, <code>user.bombadil.origin</code>), so it survives a move, a copy that keeps xattrs and a rebuild of brain.db. A thing's identity follows renames and moves, and an editor's save-by-rename keeps the same thing. Caches, most dot-folders, git-ignored files, node_modules, target, .venv and the Trash stay out; a project is one thing with its tracked files inside, and an app is one thing with its data. The first index runs at idle I/O priority and says so in one line (<q class="ui">Getting to know your files, 40%</q>); nothing waits for it.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+
+<article class="piece" id="piece-2">
+  <div class="piece-head"><span class="piece-num">2</span><h3>Focus: the thing in front, and everything around it</h3><span class="effort">M</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-card">
+        <div class="m-card-t">snapshots.py</div>
+        <div class="m-row"><span class="k">Came from</span><span class="v">builder, turn 12, 13:02</span></div>
+        <div class="m-row"><span class="k">Read with</span><span class="v">Arch Wiki: Snapper</span></div>
+        <div class="m-row m-warn"><span class="k">Used with</span><span class="v">launcher.py, kit is changing it</span></div>
+        <div class="m-row m-btns"><span class="m-btn">Open</span><span class="m-btn">Ask about this</span><span class="m-btn m-btn-go">Undo this change</span></div>
+      </div>
+      <div class="m-pill"><i class="dot"></i><span class="m-chip">snapshots.py <b>×</b></span><span class="m-ph">Ask anything</span></div>
+    </div>
+    <div class="piece-text">
+      <p class="see">Tap Super and click the <q class="ui">this</q> chip, or type <q class="ui">brain</q>, and the Brain window rises on whatever <q class="ui">this</q> is. With snapshots.py in front, its first lines sit in the middle. On the left, where it came from: <q class="ui">builder on Bombadil, turn 12, 'drop the old cleanup', 13:02</q>. On the right, what it was read with: <q class="ui">Arch Wiki: Snapper, open while builder edited this</q>. Below, what it is used with: <q class="ui">test_snapshots.py, changed in the same 5 turns</q>, and in amber <q class="ui">launcher.py, also being changed by kit</q>. On top, its changes: 7 this week as a small line, with Undo this change. Click any of them and it slides to the middle, with a trail of where you have been at the top. A folder or a project in the middle is a list (name, when, by whom), so the Brain is also where you browse files. Esc closes it. The big picture is option C above.</p>
+      <dl>
+        <dt>Why first</dt><dd>Focus answers the three questions people ask about any file (where did it come from, what goes with it, who changed it), it stays readable however big the brain gets, and it gives the first brief's <q class="ui">why is this like this?</q> a screen.</dd>
+        <dt>What changes</dt><dd>A kit app, Brain, shipped in /usr/share/bombadil/apps like the other built-in apps. Focus has fixed slots per kind of link, at most five per slot with <q class="ui">+12 more</q>, and a preview in the middle built from kit components (read-only Editor for text and code, an image, the first page of a PDF). It asks bombadil-brain over its socket (focus, search, map, timeline, subscribe). <q class="ui">This</q> becomes a thing: for the focused app, the files it has open under your home, read from /proc/&lt;pid&gt;/fd at the moment you tap Super, else the file it last saved; for the browser, the tab's URL; for a terminal, its shell's folder; for a coding session, the session. Clicking the chip opens Focus on it, and its x still sends your words without it.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+
+<article class="piece" id="piece-3">
+  <div class="piece-head"><span class="piece-num">3</span><h3>Find anything from the pill</h3><span class="effort">S to M</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-line"><span>lease-2026.pdf · Lease renewal 2026 (page) · Lease (folder)</span><small>Tab to walk them</small></div>
+      <div class="m-pill"><i class="dot"></i><span class="m-typed">lease<em>-2026.pdf · Downloads · Tue</em></span><span class="m-meta">Tab</span></div>
+    </div>
+    <div class="piece-text">
+      <p class="see">Type <q class="ui">lease</q> and the pill finishes it in grey: <q class="ui">lease-2026.pdf · Downloads · Tue</q>. Tab walks up to three matches as chips (a file, a page, a stretch of work), and Enter opens the thing itself: the PDF in its viewer, the page in the browser, the stretch of work in Time. A sentence, such as <q class="ui">the pdf the landlord sent last month</q>, goes to the agent, which asks the brain several ways and answers with the thing open and one line: <q class="ui">Opened lease-2026.pdf, downloaded 3 Sep from rent-portal.</q> There is nothing new to learn, because typing a name already opens apps.</p>
+      <dl>
+        <dt>Why first</dt><dd>Finding is what people do most with files, and the pill is where they already are.</dd>
+        <dt>What changes</dt><dd>The launcher gets a second source of names: brain.search over names, titles and extracted text, answered from FTS5 with the trigram tokenizer in a few milliseconds and ranked by how alive a thing is. Only a match you accepted with Tab opens without the model, which is the first brief's rule that open never guesses. Extracted text is the first 64 KB of text files, PDF text through pdftotext, and image dates from EXIF.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+
+<article class="piece" id="piece-4">
+  <div class="piece-head"><span class="piece-num">4</span><h3>The agents read the same brain</h3><span class="effort">S to M</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-term">
+        <span><b>api · Latchkey</b> · Claude Code</span>
+        <span class="you">› use the approach from the zellij page I read last week</span>
+        <span class="tool">● brain_search("zellij", kind: page, since: 7d)</span>
+        <span>&nbsp;&nbsp;3 pages you read, Tue and Thu</span>
+        <span><b>Following zellij.dev/documentation/…</b></span>
+      </div>
+    </div>
+    <div class="piece-text">
+      <p class="see"><q class="ui">what was I doing on Latchkey before the weekend?</q> answers in two lines and opens that stretch in Time. In a coding session on Latchkey, <q class="ui">use the approach from the zellij page I read last week</q> works: the session asks the brain and gets the three pages with their URLs, instead of asking you. When a session starts on a project, its first line of context says <q class="ui">Since your last session here: kit changed shell.qml, PR 418 merged, you read 3 pages about zellij.</q></p>
+      <dl>
+        <dt>Why first</dt><dd>Today every turn starts blind and spends tokens rediscovering the machine with find, ls and grep. An index the OS already keeps makes both agents faster and cheaper, and it makes what the agent knows the same as what you see.</dd>
+        <dt>What changes</dt><dd>os-mcp gains brain_search(query, kind, since), brain_focus(thing), brain_why(path), brain_timeline(since, area) and brain_recent. The bombadil-dev MCP from the second brief gains read-only brain_search and brain_focus scoped to the session's project, the pages linked to it and the machine turns it asked for, never your whole home. Results are plain text with paths and reasons, and page titles and URLs are marked as untrusted data, as the first brief's [Screen] block already is. The [Screen] block gains one line from the brain for <q class="ui">this</q>. The <q class="ui">since your last session here</q> line is built locally and added through the SessionStart hook, with no model call. Nothing else is added to a turn automatically; the agent calls the tools when it needs them.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+
+<article class="piece" id="piece-5">
+  <div class="piece-head"><span class="piece-num">5</span><h3>The Map: the whole machine, holding still, showing what is alive</h3><span class="effort">M</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-line"><span>The Map switched to size. Downloads is 9 GB, most of it 3 ISOs.</span><small>Same places, sized by bytes</small></div>
+      <div class="m-pill"><i class="dot"></i><span class="m-typed">what's eating my disk?</span></div>
+    </div>
+    <div class="piece-text">
+      <p class="see">Type <q class="ui">map</q>, or press the Map crumb at the top of Focus. Your areas sit where they always sit: Bombadil and Latchkey, Passwords and Tracker, Lease and Taxes 2026, Arch Wiki and GitHub, System. Each is a cluster of dots, bigger and brighter for what was touched lately and often. While builder edits snapshots.py its dot breathes blue; your save of the letter to your landlord pulses white; the machine installing qemu-full glows orange in System. Roads between areas are as wide as what they share. Point at a dot and its lines appear; click and it opens in Focus. Scrolling zooms into an area, where the dimmer things appear. <q class="ui">what's eating my disk?</q> switches the Map to size: the same places, with every dot and area sized by bytes instead. The big picture is option B above.</p>
+      <dl>
+        <dt>Why first</dt><dd>It is the overview you asked for, in the graph's look, but it can be learned like a city, it shows where work is happening right now, and it never becomes a hairball. It comes fifth because an empty brain draws an empty map.</dd>
+        <dt>What changes</dt><dd>bombadil-brain lays areas out once with a force layout over the links between areas, places each thing around its area in a spiral ordered by when it arrived, and stores every position in brain.db. A new thing takes the nearest free spot to its area, and an area that grows makes room by moving only its newest members. The Brain app draws the Map in one scene-graph item (a few hundred dots and a dozen roads), and the live pulses come from the same event stream the witnesses feed. What is drawn at rest is chosen by aliveness (recency, frequency, and whether you or an agent touched it), with areas always shown.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+
+<article class="piece" id="piece-6">
+  <div class="piece-head"><span class="piece-num">6</span><h3>Time: the week as stretches of work, and every version one drag away</h3><span class="effort">M</span></div>
+  <div class="piece-body">
+    <div class="mock">
+      <div class="m-days"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span></div>
+      <div class="m-strip"><span><i class="c-ses" style="left:20%;width:40%"></i></span><span><i class="c-you" style="left:40%;width:25%"></i></span><span><i class="c-ses" style="left:30%;width:40%"></i></span><span><i class="c-mac" style="left:25%;width:15%"></i></span><span><i class="c-you" style="left:50%;width:20%"></i></span><span></span><span><i class="c-you" style="left:25%;width:20%"></i></span><b class="h" aria-hidden="true"></b></div>
+      <div class="m-pill"><i class="dot"></i><span class="m-typed">history</span></div>
+    </div>
+    <div class="piece-text">
+      <p class="see">A strip along the bottom of the Brain holds the last seven days. Each block is a stretch of work, named by the words you used (<q class="ui">install the VPN</q>, <q class="ui">fix the race</q>) or by its main thing (<q class="ui">Lease renewal 2026</q>), and placed in its area's lane. Hovering a block shows what it touched and the first brief's thumbnail of the screen. Dragging the handle back to Tuesday lights on the Map what was touched then and dims everything else. In Focus, dragging steps the thing through its versions, and <q class="ui">Go back to this</q> restores one. <q class="ui">history</q> and Super+Z still open it, at now, pulled up into lanes as in option D above.</p>
+      <dl>
+        <dt>Why first</dt><dd>People remember by when and by what else was going on far more than by where something is saved, and without this the first brief's Rewind and the brain would be two history views.</dd>
+        <dt>What changes</dt><dd>bombadil-brain groups events into stretches locally, splitting at 20 minutes of quiet or a change of main area, and names each from the turn's words or the most-touched title, with no model. Versions come from git for apps and projects (including the second brief's checkpoint refs) and from snapper for home and /etc once home has its own config, as the first brief planned. Rewind's data (turns.jsonl and the thumbnails) is read as it is.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+  </div>
+  <p class="next" style="margin-top:18px"><strong>Next, after these six: Files through the Brain.</strong> Once Focus on a folder can move, rename, copy, trash and take a drag, <q class="ui">files</q> opens the Brain on your home and the Files panel retires. File operations made in the Brain undo with Ctrl+Z inside it, like any file manager, and <q class="ui">tidy my downloads</q> through the pill is an ordinary turn with its receipt and Undo. Nautilus stays installed for the rare case and as the file chooser behind Chromium's uploads.</p>
+</section>
+
+<section id="day">
+  <h2>A day with the brain</h2>
+  <p class="intro">This is how a day should feel once the six pieces and the best of the rest are built. Most of it does not exist yet.</p>
+  <ol class="day">
+    <li><h3>Finding</h3><p>In the middle of the morning, Super, <q class="ui">lease</q>. The pill finishes it with <q class="ui">lease-2026.pdf · Downloads · Tue</q>. Enter, and the PDF opens.</p></li>
+    <li><h3>Where it came from</h3><p>With the PDF in front, a click on the chip. Focus shows it came from rent-portal's <q class="ui">Lease renewal 2026</q> page on Tuesday at 14:02, that the machine made letter-to-landlord.odt from it in turn 57 (<q class="ui">draft a reply saying we'll renew</q>), and that budget-2026.ods was open beside it both times.</p></li>
+    <li><h3>A file you do not recognize</h3><p>~/setup-wg.sh sits in your home. <q class="ui">why is this here?</q> answers <q class="ui">Made by the machine in turn 41, 'install the VPN', on Monday. Nothing has opened it since.</q> with Move to Trash.</p></li>
+    <li><h3>At the code</h3><p>You are reading snapshots.py in reviewer. A click on the chip shows that builder rewrote prune() an hour ago, flaky-snapshot touched it on Tuesday, and kit is changing launcher.py, which changed with it five times. <q class="ui">tell flaky-snapshot builder rewrote prune() an hour ago</q> reaches the session as typed text.</p></li>
+    <li><h3>A session that asks instead of guessing</h3><p>In Latchkey's Claude Code: <q class="ui">use the approach from the zellij page I read last week</q>. The session calls brain_search and continues with the right URL.</p></li>
+    <li><h3>Friday</h3><p><q class="ui">history</q>, then drag back to Tuesday afternoon. The Map lights Lease, rent-portal, and flaky-snapshot's corner of Bombadil. You click the block named <q class="ui">fix the race</q> and see the four files it changed.</p></li>
+    <li><h3>Tidying</h3><p><q class="ui">tidy my downloads</q> is a turn. On the Map, dots leave Downloads for Lease, Taxes 2026 and Installers as it works, keeping their links, and the closing line says <q class="ui">Moved 23 files into 4 folders. [Undo]</q>.</p></li>
+    <li><h3>Evening</h3><p><q class="ui">map</q>. Latchkey is dim after a quiet week, Bombadil is bright, and a new area, Wedding, has appeared since Wednesday from a folder and a few pages. <q class="ui">make me a reading list of what I read about btrfs this month</q> builds a small app that asks the brain, so it stays current without anyone updating it.</p></li>
+  </ol>
+</section>
+
+<section id="made">
+  <h2>What the brain is made of</h2>
+  <div class="made">
+    <div><strong>Things</strong>Files and folders, projects, apps, coding sessions, the machine's turns, pages and sites, downloads, packages, services and /etc files, facts from memory.md, and stretches of work.</div>
+    <div><strong>Areas</strong>A project in ~/Projects, an app in ~/Apps, a folder in your home you use (Lease, Taxes 2026), a site you read often, and System. Areas come from where things live and where you go, never from tags you maintain.</div>
+    <div><strong>Where the model comes in</strong>Names come from folders, projects, page titles and your own words, with no model. A one-line description is written only when someone looks and there is none, by the fast model, pinned to a fingerprint and greyed when that changes. Private things never get one.</div>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Link</th><th>Made when</th><th>Strength</th></tr></thead>
+      <tbody>
+        <tr><td>made by, changed by</td><td>a write, with the writer's scope; a turn's tool call; a session checkpoint</td><td><span class="tag strong">strong</span></td></tr>
+        <tr><td>came from</td><td>a download's origin xattr; a turn that read X and wrote Y</td><td><span class="tag strong">strong</span></td></tr>
+        <tr><td>lives in</td><td>the folder, project or app a thing is in</td><td><span class="tag strong">strong</span></td></tr>
+        <tr><td>asked about</td><td>a turn whose <q class="ui">this</q> was the thing</td><td><span class="tag strong">strong</span></td></tr>
+        <tr><td>mentions</td><td>a turn's words naming it; a URL or a [[link]] in your own file</td><td><span class="tag strong">strong</span></td></tr>
+        <tr><td>used with</td><td>changed in the same turn, or open in the same stretch of work, at least twice</td><td><span class="tag weak">weak, Focus only</span></td></tr>
+        <tr><td>read with</td><td>a page open while the thing was being changed</td><td><span class="tag weak">weak, Focus only</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="aside">Every link keeps when it first and last happened, how many times, and the events behind it, so <q class="ui">why</q> is always a click away.</p>
+</section>
+
+<section id="decisions">
+  <h2>Decisions, confirmed</h2>
+  <p class="intro">Each of these forks. I picked a default and say why; the other options are listed for the record. Daniel accepted every default on 2026-09-27, so these are confirmed decisions, not proposals.</p>
+  <div class="expand"><button type="button" id="open-all">Open all</button><button type="button" id="close-all">Close all</button></div>
+  <div class="decisions">
+    <details class="dec"><summary><span class="q">Is the main view a graph?</span><span class="d">Focus opens by default, the Map is the overview, and Time runs along the bottom.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The Map keeps the graph's look with pinned positions, a few hundred alive things and bundled roads; a free-floating force graph of everything is not built. The global graph is lovely for a minute and unusable after a month, while the local graph is what people actually navigate with.</p><p class="alt"><b>Other options</b> Obsidian's global graph as the home view; a 3D brain; a dashboard of cards.</p></div></details>
+    <details class="dec"><summary><span class="q">Is the brain the file system?</span><span class="d">no new file system.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Plain folders on btrfs stay the truth, and the brain is an index beside them. The Brain becomes the file manager once Focus on a folder can move, rename, trash and take a drag, and Nautilus stays as a guest and as the upload file chooser. A database-backed file system with tags instead of folders would break every tool and both agents, which read plain paths.</p><p class="alt"><b>Other options</b> a FUSE file system organized by the brain; keeping Nautilus as Files for good.</p></div></details>
+    <details class="dec"><summary><span class="q">Who makes links?</span><span class="d">only witnessed events.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The model never invents a link. The agent adds one only when you ask (<q class="ui">link this to the lease</q>), recorded as yours, and [[links]] and URLs in your own files count as links you wrote. Links guessed from similar content are the main source of noise in a graph and are wrong often enough to make every line suspect.</p><p class="alt"><b>Other options</b> <q class="ui">similar</q> links drawn from embeddings; links only from files you write.</p></div></details>
+    <details class="dec"><summary><span class="q">Search: words or meaning?</span><span class="d">a word index (FTS5 with trigrams over names, titles, extracted text and your prompts), with the agent as the layer that understands meaning: it rephrases and asks the index several times.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>No embedding model ships for now. The agent already understands <q class="ui">the pdf the landlord sent</q>, and a local embedding model costs disk, memory and CPU on every write for a gain that has not been shown yet.</p><p class="alt"><b>Other options</b> a local embedding model (revisit if sentence searches miss); a provider's embeddings (the CLIs have none, and it sends your files away).</p></div></details>
+    <details class="dec"><summary><span class="q">Reuse GNOME's LocalSearch or KDE's Baloo instead of a new index?</span><span class="d">no, a new index of our own, with their extractors borrowed where useful (pdftotext for PDFs).</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Both index file contents by crawling folders; neither knows who wrote a file, which turn made it, which page it came from or what was open beside it, and those links are the whole point.</p><p class="alt"><b>Other options</b> LocalSearch as the file index with the brain on top (two indexes to keep in step, and a crawler beside a watcher); Baloo.</p></div></details>
+    <details class="dec"><summary><span class="q">How much of a file does it read?</span><span class="d">names, metadata and the first 64 KB of text, PDF text, and the date and camera from EXIF but not the location.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Contents of private apps, ~/.ssh, ~/.gnupg, keyrings and password files are never read, only their names. Office documents come later.</p><p class="alt"><b>Other options</b> everything (slow first index, secrets in the index); names only (search misses the lease).</p></div></details>
+    <details class="dec"><summary><span class="q">How much of the web does it keep?</span><span class="d">URL, title, time and how long you stayed, from Chromium's History.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Page text only for pages an agent read in a turn or that you asked it to remember. Incognito never, because Chromium keeps no history for it. A full-text record of everything you read, on a machine where an agent has sudo, is more than most people would want kept.</p><p class="alt"><b>Other options</b> the text of every page; no web at all (then <q class="ui">came from</q> dies).</p></div></details>
+    <details class="dec"><summary><span class="q">When does a model write about your things?</span><span class="d">only when someone looks and there is nothing yet, using the fast model, pinned to a fingerprint and greyed when it goes out of date; never a background crawl, and never for private things.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Nightly summaries of everything would spend tokens and be stale by the morning anyway.</p><p class="alt"><b>Other options</b> summarize everything nightly; no summaries at all.</p></div></details>
+    <details class="dec"><summary><span class="q">Colour: who or what?</span><span class="d">position says what (the area), colour says who touched it: white for you, orange for the machine's agent, blue for coding sessions.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Areas are told apart by their place and name. Three colours can be read at a glance; a colour per area stops working at nine areas.</p><p class="alt"><b>Other options</b> a colour per area; a colour per kind of thing.</p></div></details>
+    <details class="dec"><summary><span class="q">How many things does the Map draw?</span><span class="d">about 200 at rest, picked by aliveness, with every area shown; zooming into an area reveals its dimmer things.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>about 200 at rest, picked by aliveness, with every area shown; zooming into an area reveals its dimmer things.</p><p class="alt"><b>Other options</b> everything (the hairball); areas only.</p></div></details>
+    <details class="dec"><summary><span class="q">Where does the Brain open?</span><span class="d">on <q class="ui">this</q> in Focus; <q class="ui">map</q>, or <q class="ui">brain</q> with nothing in front, opens the Map; <q class="ui">history</q> opens Time at now.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>It is a stage window, large and central like an app, because you work in it.</p><p class="alt"><b>Other options</b> always the Map; a panel that slides in and leaves on a click.</p></div></details>
+    <details class="dec"><summary><span class="q">Does Rewind stay its own app?</span><span class="d">no.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>It becomes the Brain's time strip, and <q class="ui">history</q> and Super+Z open it, so there is one place for what happened and what is where.</p><p class="alt"><b>Other options</b> Rewind beside the Brain.</p></div></details>
+    <details class="dec"><summary><span class="q">What does undo do to the brain?</span><span class="d">nothing, because brain.db is outside home snapshots.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>An undo is recorded as an event, and the things it touched step back to their earlier versions in the brain, which then shows <q class="ui">undone by you</q>.</p><p class="alt"><b>Other options</b> snapshot the brain with home (then undo would erase the record of what was undone).</p></div></details>
+    <details class="dec"><summary><span class="q">Where do facts about you live?</span><span class="d">in memory.md, as confirmed.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The Brain shows each line as a fact linked to the turn that added it, and marks it <q class="ui">source gone</q> when the file or project it names no longer exists. The brain never writes project knowledge into memory.md, because every coding session loads it.</p><p class="alt"><b>Other options</b> moving memory into brain.db (both CLIs read memory.md as their instructions file, so it stays).</p></div></details>
+    <details class="dec"><summary><span class="q">What does the brain keep of coding sessions?</span><span class="d">your words from each prompt, the files each session turn changed, and when the session started, waited and ended, all from the second brief's hooks and checkpoints.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Transcripts stay in the vendors' own files, which the second brief rules out reading.</p><p class="alt"><b>Other options</b> transcripts in the brain.</p></div></details>
+    <details class="dec"><summary><span class="q">How much of the disk does it cover?</span><span class="d">your home, plus a System area built from pacman and turn diffs (packages, services, and the /etc files that changed), not every file under /usr.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>External drives appear as an area while they are mounted, with names only.</p><p class="alt"><b>Other options</b> the whole disk; home only.</p></div></details>
+    <details class="dec"><summary><span class="q">Is anything added to every turn?</span><span class="d">one line for <q class="ui">this</q>, nothing more.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The agent calls brain tools when it needs them. More context on every turn slows the first words, which the first brief puts a 200 ms rule on.</p><p class="alt"><b>Other options</b> a digest of recent activity in every prompt.</p></div></details>
+  </div>
+</section>
+
+<section id="everything">
+  <h2>Everything else, by moment</h2>
+  <div class="group">
+    <h3>Finding</h3>
+    <ul>
+      <li><strong>Words for time and kind.</strong> <q class="ui">pdfs from last month</q>, <q class="ui">what did I download yesterday</q> and <q class="ui">pages about zellij</q> work in the pill's Tab matches through a small fixed grammar (a kind word and a time word), and anything longer goes to the agent.</li>
+      <li><strong>Drop onto the pill.</strong> The first brief's drag-and-drop chip gets the brain's line: dropping a file shows <q class="ui">lease-2026.pdf, from rent-portal</q> as its chip.</li>
+      <li><strong>The file chooser.</strong> Chromium's upload dialog is the one place people search for files outside the pill. A portal backend that lists <q class="ui">recent in the brain</q> first comes after Files through the Brain.</li>
+    </ul>
+    <h3>Understanding</h3>
+    <ul>
+      <li><strong>Why is this like this?</strong> The first brief's idea gets Focus: <q class="ui">why is my DNS set to 1.1.1.1?</q> opens /etc/resolv.conf in Focus with the turn that changed it on the left and <q class="ui">Undo just this file</q> on top.</li>
+      <li><strong>Pin and forget.</strong> Pinning keeps a thing bright on the Map whatever its age. <q class="ui">forget this</q> removes a thing and its links from the brain and keeps it out, and the file itself stays.</li>
+      <li><strong>Your own notes.</strong> Notes you write are ordinary files. [[links]] and URLs in them become links, so an Obsidian vault copied into your home shows up as an area with its own links, next to everything else.</li>
+    </ul>
+    <h3>Working</h3>
+    <ul>
+      <li><strong>The project in Focus.</strong> A project in the middle shows its sessions with their dots, the files changed this week by whom, the pages read while working on it, the packages it asked the machine for, open pull requests, and overlap between sessions. The second brief's project card gets an <q class="ui">Open in Brain</q> button.</li>
+      <li><strong>A map of the code (later).</strong> For a project, modules as dots and imports as lines, sized by lines of code and lit by recent change, colored by who changed them. This is the one place a free graph earns its keep, because code really is a network.</li>
+      <li><strong>Apps on the brain.</strong> The kit gets a Brain object with search, focus and subscribe, so <q class="ui">make me a reading list</q> or <q class="ui">show me what my sessions did this week</q> is an ordinary app that stays current by itself. An app can describe its own items in app.toml (Tracker's runs, Passwords' entries by name only) so search and Focus can show them.</li>
+    </ul>
+    <h3>When it goes wrong</h3>
+    <ul>
+      <li><strong>The index is a cache.</strong> Deleting brain.db rebuilds it from files, xattrs, git, turns.jsonl, snapper and History; only the weak <q class="ui">used with</q> links from before are lost. <code>bombadil brain rebuild</code> does it on purpose.</li>
+      <li><strong>The brain is never in the way.</strong> If bombadil-brain dies, the pill, turns, undo and apps carry on; its witnesses spool to a file and it catches up when it returns, as the second brief does for agentd's signals.</li>
+      <li><strong>A full disk or a huge home.</strong> The first index runs at idle priority and pauses on battery; a folder of a million generated files becomes one thing (<q class="ui">data, 1.2 M files</q>) rather than a million.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="cut">
+  <h2>Cut, and why</h2>
+  <ul class="plain cut">
+    <li><strong>A free-floating global graph as the home view.</strong> A hairball at real size, no <q class="ui">where</q>, no <q class="ui">when</q>, and no reasons on the lines.</li>
+    <li><strong>"Similar" links from embeddings drawn on the Map.</strong> Noise that looks like knowledge, and wrong often enough to make every line suspect.</li>
+    <li><strong>A wiki or notes folder the agent keeps.</strong> Exactly the stale markdown you ruled out; prose that is not pinned to its sources rots.</li>
+    <li><strong>Tags you maintain.</strong> The same chore as notes. Areas and stretches of work come from what happened.</li>
+    <li><strong>A virtual file system in place of folders.</strong> Every tool and both agents read plain paths.</li>
+    <li><strong>A 3D brain.</strong> Harder to read, harder to click, and slower in a VM.</li>
+    <li><strong>Background summaries of everything.</strong> Tokens spent on things nobody looked at, stale by the next morning.</li>
+    <li><strong>Screenshots every minute to see what you are doing.</strong> The first brief already rejected it; windows, files and URLs say more.</li>
+  </ul>
+</section>
+
+<section id="gaps">
+  <h2>Gaps worth thinking about</h2>
+  <div class="group">
+    <h3>In the code today</h3>
+    <ul>
+      <li>A turns.jsonl row has no list of the files the turn touched, only the prompt, the result and a details string, so <q class="ui">made by turn 41</q> needs agentd to record them.</li>
+      <li>There is no snapper config for /home yet, so versions of home files wait for it, as the first brief's live undo does.</li>
+      <li>Generated apps are started by <code>bombadil-app run</code> rather than each in its own systemd user unit, which the first brief planned, so writes by apps are attributed by process name until that lands.</li>
+      <li>Chromium still starts without its own --user-data-dir, and the History path has to be fixed along with it.</li>
+    </ul>
+    <h3>Not designed yet</h3>
+    <ul>
+      <li>The brain from the phone. The Claude app reaches coding sessions, but there is no way to search the brain or open Focus away from the desk.</li>
+      <li>More than one machine, and folders synced from elsewhere.</li>
+      <li>Email, calendar and people. Bombadil has no mail client yet, and people are the most natural things to link.</li>
+      <li>Sharing a view: sending someone <q class="ui">the lease, and everything around it</q>.</li>
+      <li>How the brain feels with a million files and five years of history: aliveness weights, archiving old areas, and whether the Map needs seasons.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="pitfalls">
+  <h2>What would make it Obsidian with a new skin, or another stale folder</h2>
+  <ul class="pitfalls">
+    <li>A graph that reshuffles every time it opens.</li>
+    <li>Every file drawn as a dot.</li>
+    <li>Lines without a reason, or links a model guessed.</li>
+    <li>A folder of summaries the agent writes and nobody reads.</li>
+    <li>A notes app with a new name.</li>
+    <li>Tags to maintain.</li>
+    <li>A file tree in a sidebar beside the graph.</li>
+    <li>A history app and a brain app that disagree about what happened.</li>
+    <li>Summaries with no date that are silently wrong.</li>
+    <li>A spinner that says <q class="ui">indexing</q> before you can do anything.</li>
+  </ul>
+</section>
+
+<section id="extends">
+  <h2>Extends or changes the first two briefs</h2>
+  <ul class="plain">
+    <li><strong>Rule 8, one memory you can read:</strong> extended. The brain is the machine's readable memory of what happened; memory.md stays the short list about Daniel.</li>
+    <li><strong>Rewind:</strong> folded into the Brain as its time strip. <q class="ui">history</q> and Super+Z are unchanged; Rewind's thumbnails and rows are read as they are.</li>
+    <li><strong>Why is this like this?:</strong> gets Focus and brain_why, reading the brain instead of turns.jsonl alone.</li>
+    <li><strong>What skips the model:</strong> extended with Tab-accepted matches from the brain (files, pages, stretches of work), <q class="ui">brain</q>, <q class="ui">map</q>, <q class="ui">where did this come from?</q>, <q class="ui">why is this here?</q> and <q class="ui">forget this</q>. Enter on text that was not accepted still goes to the agent.</li>
+    <li><strong><q class="ui">This</q>:</strong> extended. It resolves to a thing in the brain, open files come from /proc/&lt;pid&gt;/fd of the focused app, and clicking the chip opens Focus on it.</li>
+    <li><strong>The Files panel:</strong> replaced by the Brain once its folder view can move, rename, trash and take a drag; the Brain is a stage window, not a panel. Nautilus stays as a guest and as the upload chooser.</li>
+    <li><strong>The [Screen] block:</strong> gains one line from the brain for <q class="ui">this</q>, marked untrusted like the rest.</li>
+    <li><strong>Home snapshot exclusions:</strong> unchanged; brain.db is under ~/.local/state/bombadil, which is already excluded.</li>
+    <li><strong>Apps as systemd user units:</strong> now also needed for attribution, so writes by an app are named by the app.</li>
+    <li><strong>The project card (second brief):</strong> gains <q class="ui">Open in Brain</q>.</li>
+    <li><strong>The bombadil-dev MCP (second brief):</strong> gains read-only, project-scoped brain_search and brain_focus; sessions still never get os-mcp.</li>
+    <li><strong>SessionStart context (second brief):</strong> gains one <q class="ui">since your last session here</q> line, built locally.</li>
+    <li><strong>Reading vendor transcripts (cut in the second brief):</strong> stays cut; the brain uses hooks and checkpoints only.</li>
+  </ul>
+</section>
+
+<section id="facts">
+  <div class="facts">
+    <h2>Checked today</h2>
+    <p class="intro">These are the facts the design rests on, checked against kernel, browser and vendor sources on 27 Sep 2026. The build threads should re-check the ones marked as moving.</p>
+    <ul>
+      <li>fanotify: an unprivileged process gets only inode marks with no other process's pid, so the watcher is a root service. A filesystem mark (<code>FAN_MARK_FILESYSTEM</code>, needs CAP_SYS_ADMIN) reports creates, deletes, renames and moves with the writer's pid, and <code>FAN_REPORT_PIDFD</code> (since 5.15) gives a pidfd for a safe lookup of its cgroup. Directory-entry events still fail on mount marks in mainline, so it must be a filesystem mark.</li>
+      <li>fanotify on btrfs: a filesystem mark with FID reporting placed on a subvolume such as /home fails with EXDEV, because btrfs mixes the subvolume id into the fsid, and the 6.8 change only allowed inode marks inside one subvolume. The way through, read from the source and not yet run: mount the top-level subvolume (subvolid=5) at a private path and mark that; every subvolume shares the one superblock, so /home is covered. Moving.</li>
+      <li><code>btrfs subvolume find-new</code> lists files written at or after a generation and prints the next marker, but it misses deletions, renames and metadata-only changes and needs root, so catch-up after a stop pairs it with a walk against the last index. There is no kernel change journal; <code>btrfs send --no-data -p</code> between two read-only snapshots is the full diff once home has snapshots.</li>
+      <li>Chromium on Linux no longer writes user.xdg.origin.url and user.xdg.referrer.url on downloads (the code left in 2019). Where a download came from is in the History database's downloads table (target path, referrer, tab URL). The brain writes its own xattrs.</li>
+      <li>Chromium's History database has a visit_duration column on visits, and Chromium holds the file with an exclusive lock, so the brain copies it rather than reading it in place.</li>
+      <li>Claude Code hooks: PostToolUse for Write and Edit carries tool_input.file_path, UserPromptSubmit carries the prompt, and there is a FileChanged event. Codex hooks exist (SessionStart, SessionEnd, PreToolUse, PostToolUse, UserPromptSubmit with the prompt, Stop, Interrupt, PermissionRequest and more), but its edits arrive as patch text with no file path, which is why the files a session turn changed come from the second brief's git checkpoints on both vendors.</li>
+      <li>Obsidian's graph view has a global graph, a local graph with a depth slider, filters, colour groups by search and a time-lapse by creation date. Obsidian added Bases (table, cards, list and map views of notes) in 2025, with kanban in September 2026, so even Obsidian now navigates notes as tables beside the graph.</li>
+      <li>Qt Graphs (6.11) draws charts only; a node-link map needs a custom QQuickItem or Qt Quick Shapes with our own layout, which is what piece 5 says.</li>
+      <li>GNOME's LocalSearch (the renamed tracker-miners, Arch package <code>localsearch</code>) and KDE's Baloo both index file contents by crawling and expose search over D-Bus; LocalSearch extracts PDF text with poppler. Neither records who wrote a file or what it came from.</li>
+      <li>SQLite ships FTS5 with the trigram tokenizer since 3.34 (Arch builds it in); searches under three characters match nothing, so the pill falls back to name prefixes for one and two letters. sqlite-vec is AUR and pip only and pre-1.0, which is one more reason to leave embeddings out for now.</li>
+    </ul>
+    <p class="unv"><strong>Unverified, and to test in the VM before piece 1:</strong> the fanotify mark on a subvolid=5 mount catching writes made through /home and ~/Projects; whether the watcher keeps up with a large build's write rate without dropping events (a queue overflow event would force a walk); resolving a pidfd to a cgroup fast enough for a burst of thousands of events; and that xattrs on downloads survive Chromium's rename from the .crdownload file.</p>
+  </div>
+</section>
+
+<footer>Bombadil experience brief 3. Text: /mnt/project-files/design/brain-brief.md in the project's files. Earlier briefs: How Bombadil should feel, Building on Bombadil.</footer>
+</div>
+<script>
+(function () {
+  var all = document.querySelectorAll('details.dec');
+  var o = document.getElementById('open-all'), c = document.getElementById('close-all');
+  if (o) o.addEventListener('click', function () { all.forEach(function (d) { d.open = true; }); });
+  if (c) c.addEventListener('click', function () { all.forEach(function (d) { d.open = false; }); });
+})();
+</script>
+
+</body></html>
