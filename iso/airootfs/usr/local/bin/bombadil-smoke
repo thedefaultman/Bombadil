@@ -38,8 +38,9 @@ mcp_call() {
 hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl $1: $o"; return 1; }
 has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any($1 for c in json.load(sys.stdin)))"; }
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
-# A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
-virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
+# A virtual display must not stay at the 640x480 QEMU's EDID can report as preferred. It is fine at
+# any width a desktop fits in: a hypervisor may cap it (or the host window) below 1920x1080.
+virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any(x["width"] < 1280 for x in m))'; }
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
