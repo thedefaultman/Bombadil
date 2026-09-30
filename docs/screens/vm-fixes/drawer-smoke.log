@@ -1,0 +1,52 @@
+BOMBADIL-SMOKE: START mode=live
+BOMBADIL-SMOKE: PASS user-exists
+BOMBADIL-SMOKE: PASS tools-installed
+BOMBADIL-SMOKE: PASS pyside6-imports
+BOMBADIL-SMOKE: PASS greetd-active
+BOMBADIL-SMOKE: PASS hyprland-running
+BOMBADIL-SMOKE: PASS agentd-socket
+BOMBADIL-SMOKE: PASS quickshell-running
+BOMBADIL-SMOKE: PASS hypr-config-ok
+BOMBADIL-SMOKE: PASS bar-layer
+BOMBADIL-SMOKE: PASS agentd-status
+BOMBADIL-SMOKE: PASS claude-cli
+BOMBADIL-SMOKE: PASS codex-cli
+BOMBADIL-SMOKE: PASS os-mcp-lists-tools
+BOMBADIL-SMOKE: SHOT desktop
+BOMBADIL-SMOKE: PASS browser-panel
+BOMBADIL-SMOKE: PASS browser-window
+BOMBADIL-SMOKE: PASS browser-shown
+BOMBADIL-SMOKE: SHOT browser
+BOMBADIL-SMOKE: PASS browser-hide
+BOMBADIL-SMOKE: PASS create-app
+BOMBADIL-SMOKE: PASS app-window
+BOMBADIL-SMOKE: SHOT app
+BOMBADIL-SMOKE: PASS screenshot
+BOMBADIL-SMOKE: KEYS 1 meta_l
+BOMBADIL-SMOKE: KEYS 2 b r o w s e r ret
+BOMBADIL-SMOKE: PASS super-tap-then-launcher
+BOMBADIL-SMOKE: PASS launcher-without-model
+BOMBADIL-SMOKE: SHOT launcher-browser
+BOMBADIL-SMOKE: PASS browser-hide-again
+BOMBADIL-SMOKE: PASS bang-turn-running
+BOMBADIL-SMOKE: SHOT pill-working
+BOMBADIL-SMOKE: KEYS 3 meta_l+esc
+BOMBADIL-SMOKE: PASS super-escape-stops
+BOMBADIL-SMOKE: PASS stop-in-history
+BOMBADIL-SMOKE: PASS details-drawer
+BOMBADIL-SMOKE: PASS details-window
+BOMBADIL-SMOKE: PASS details-has-keyboard
+BOMBADIL-SMOKE: SHOT details
+BOMBADIL-SMOKE: KEYS 4 esc
+BOMBADIL-SMOKE: PASS details-esc-closes
+BOMBADIL-SMOKE: PASS details-reopen
+BOMBADIL-SMOKE: PASS details-reopen-shown
+BOMBADIL-SMOKE: PASS details-again
+BOMBADIL-SMOKE: PASS details-again-closes
+BOMBADIL-SMOKE: PASS details-third
+BOMBADIL-SMOKE: PASS details-third-shown
+BOMBADIL-SMOKE: KEYS 5 meta_l
+BOMBADIL-SMOKE: KEYS 6 esc
+BOMBADIL-SMOKE: PASS pill-esc-closes-details
+BOMBADIL-SMOKE: SHOT details-closed
+BOMBADIL-SMOKE: DONE pass=37 fail=0
