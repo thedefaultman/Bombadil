@@ -361,17 +361,22 @@ class Backend(QObject):
     def save(self, text):
         pass
 """
+FOCUS_QML = """\
+import QtQuick
+import Bombadil
+AppWindow {
+    Text { objectName: "label"; text: "count " + backend.count }
+    TextInput { objectName: "field"; y: 40; width: 200; text: "draft"
+        onActiveFocusChanged: if (!activeFocus) backend.save(text) }
+}
+"""
+RENAME_SAVE = [("save", "store"), ("return 7", "return 8"), ("count 7", "count 8")]
 LEAVING = {
     # The old UI's focus loss calls a slot the new Backend no longer has.
-    "focus": (SAVE_PY, """\
-        import QtQuick
-        import Bombadil
-        AppWindow {
-            Text { objectName: "label"; text: "count " + backend.count }
-            TextInput { objectName: "field"; y: 40; width: 200; text: "draft"
-                onActiveFocusChanged: if (!activeFocus) backend.save(text) }
-        }
-        """, [("save", "store"), ("return 7", "return 8"), ("count 7", "count 8")]),
+    "focus": (SAVE_PY, FOCUS_QML, RENAME_SAVE),
+    # The same, caused by the new UI taking focus as it is created.
+    "taken": (SAVE_PY, FOCUS_QML.replace("TextInput {", "TextInput { id: field;"),
+              RENAME_SAVE + [("    Text {", "    Component.onCompleted: field.forceActiveFocus()\n    Text {")]),
     # The old UI's binding on App.reloads runs once the reload is counted.
     "reloads": (COUNT_PY, """\
         import QtQuick
@@ -408,6 +413,26 @@ def test_what_the_old_ui_does_as_it_leaves_is_not_counted(home, how):
     assert out["start"][0]
     assert out.get("focused", True)
     assert out["edited"] == [True, True, [], "", 1]
+
+
+def test_a_reload_that_fails_late_leaves_the_old_ui_its_focus(home):
+    pytest.importorskip("PySide6")
+    make_app("focused", {"main.qml": FOCUS_QML, "app.py": SAVE_PY})
+    out = drive("focused", """
+        qml = (d / "main.qml").read_text()
+        out["start"] = [host.start(), label()]
+        field = host.root.findChild(QQuickItem, "field")
+        field.forceActiveFocus()
+        pump(100)
+        # Compiles, but the root is created without the property it requires.
+        write("main.qml", qml.replace("AppWindow {", "AppWindow { required property int need;"))
+        wait_for(lambda: host.attempts == 2)
+        pump(200)
+        st = status()
+        out["failed"] = [host.loaded, st["ok"], st["showing"], "need" in st["errors"][0], field.hasActiveFocus()]
+    """)
+    assert out["start"][0]
+    assert out["failed"] == [False, False, "previous", True, True]
 
 
 def test_reloading_app_py_does_not_abort_on_a_backend_thread(home):
@@ -481,6 +506,24 @@ class Backend(QObject):
     """)
     assert out["start"] == [True, "count 7"]
     assert out["edited"] == [True, "count 8", 1]
+
+
+def test_a_backend_that_is_not_a_qobject_still_reloads(home):
+    pytest.importorskip("PySide6")
+    make_app("plain", {"main.qml": 'import QtQuick\nimport Bombadil\nAppWindow {\n'
+                                   '    Text { objectName: "label"; text: "backend " + typeof backend }\n}\n',
+                       "app.py": "class Backend:\n    count = 7\n"})
+    out = drive("plain", """
+        py = (d / "app.py").read_text()
+        out["start"] = [host.start(), label()]
+        for n in (2, 3):
+            write("app.py", py.replace("7", str(n)))
+            wait_for(lambda: host.attempts == n)
+            out[str(n)] = [host.loaded, status()["ok"], status()["errors"], reloads()]
+    """)
+    assert out["start"][0]
+    assert out["2"] == [True, True, [], 1]
+    assert out["3"] == [True, True, [], 2]
 
 
 @pytest.mark.skipif(not os.path.exists("/dev/full"), reason="no /dev/full")
