@@ -1202,7 +1202,7 @@ async def test_the_job_tool_starts_a_job_in_the_running_turn_and_the_shell_sees_
 
 @pytest.mark.asyncio
 async def test_progress_reaches_the_shell_once_per_change(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "get me the ubuntu iso")
     job_id, _ = await _start_job(tool_r, tool_w)
     await _jobs_table(r)
@@ -1216,7 +1216,7 @@ async def test_progress_reaches_the_shell_once_per_change(home, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_when_a_job_ends_the_pill_says_so_and_the_next_turn_is_told(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "get me the ubuntu iso")
     job_id, _ = await _start_job(tool_r, tool_w)
     _finish(job_id, 0, "100%\n")
@@ -1242,7 +1242,7 @@ async def test_when_a_job_ends_the_pill_says_so_and_the_next_turn_is_told(home, 
 
 @pytest.mark.asyncio
 async def test_a_failed_job_says_its_last_line_and_where_the_rest_is(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "update the system")
     job_id, _ = await _start_job(tool_r, tool_w, "Build", "make")
     _finish(job_id, 2, "cc -o a a.c\npacman: could not resolve host\n")
@@ -1251,8 +1251,8 @@ async def test_a_failed_job_says_its_last_line_and_where_the_rest_is(home, monke
     assert (line["text"], line["ok"]) == ("Build failed: pacman: could not resolve host", False)
     failed = next(x for m in msgs if _table_with("failed")(m) for x in m["jobs"])
     assert (failed["state"], failed["last"]) == ("failed", "pacman: could not resolve host")
-    assert d.notes == [f"background job {job_id}: Build failed: pacman: could not resolve host "
-                       f"(its output is in {paths.jobs_dir()}/{job_id}.log)"]
+    assert d.notes == [(f"background job {job_id}: Build failed: pacman: could not resolve host "
+                       f"(its output is in {paths.jobs_dir()}/{job_id}.log)")]
     await _stop(r, w, server, tool_w)
 
 
@@ -1315,7 +1315,7 @@ async def test_a_unit_that_will_not_stop_is_said_on_the_line_and_keeps_its_row(h
 
 @pytest.mark.asyncio
 async def test_the_shell_drops_a_finished_row_and_asks_why_a_job_failed(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     shown = []
     monkeypatch.setattr(d.launcher, "details", lambda argv, toggle=False: shown.append((argv, toggle)) or "shown")
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "update the system")
@@ -1349,7 +1349,7 @@ async def test_the_shell_drops_a_finished_row_and_asks_why_a_job_failed(home, mo
 
 @pytest.mark.asyncio
 async def test_the_shell_asks_for_the_table_and_a_running_one_is_in_the_desks_reply(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "get me the ubuntu iso")
     job_id, _ = await _start_job(tool_r, tool_w)
     await _jobs_table(r)
@@ -1440,7 +1440,7 @@ async def test_the_agent_can_list_and_stop_jobs_without_a_turn(home, monkeypatch
 
 @pytest.mark.asyncio
 async def test_the_loop_runs_only_while_the_table_has_something_in_it_and_stops_with_agentd(home, monkeypatch):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "get me the ubuntu iso")
     await asyncio.sleep(0.3)
     assert d._jobs_task is not None and d._jobs_task.done()         # an empty table is not looked at
@@ -1461,7 +1461,7 @@ async def test_the_loop_runs_only_while_the_table_has_something_in_it_and_stops_
 
 @pytest.mark.asyncio
 async def test_one_bad_look_does_not_end_the_looking(home, monkeypatch, capsys):
-    d, sd = _jobs_daemon(monkeypatch)
+    d, _ = _jobs_daemon(monkeypatch)
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "get me the ubuntu iso")
     job_id, _ = await _start_job(tool_r, tool_w)
     real = d.jobs.poll

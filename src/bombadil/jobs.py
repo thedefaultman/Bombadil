@@ -234,9 +234,12 @@ class Jobs:
         def opt(key):
             return float(raw[key]) if _number(raw.get(key)) else None
         code = raw.get("exit")
+        started = float(raw["started"])
+        # Only a timer has a deadline, and every timer has one.
+        deadline = (opt("deadline") or started) if raw["kind"] == "timer" else None
         return {"id": f.stem, "title": _clean(raw.get("title")) or "A job", "kind": raw["kind"],
-                "command": str(raw.get("command") or "")[:MAX_COMMAND], "started": float(raw["started"]),
-                "deadline": opt("deadline"), "ended": opt("ended"), "state": raw["state"],
+                "command": str(raw.get("command") or "")[:MAX_COMMAND], "started": started,
+                "deadline": deadline, "ended": opt("ended"), "state": raw["state"],
                 "exit": code if isinstance(code, int) and not isinstance(code, bool) else None,
                 "pct": opt("pct"), "last": _clean(raw.get("last"), MAX_LAST),
                 "dismissed": raw.get("dismissed") is True}

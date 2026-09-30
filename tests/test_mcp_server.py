@@ -343,6 +343,9 @@ def test_without_a_turn_the_job_tool_says_so_and_asks_nobody(home, monkeypatch):
     assert r["isError"] is True and "from inside a turn" in _said(r) and "jobs" in _said(r).lower()
     time.sleep(0.1)
     assert got == []
+    with socket.socket(socket.AF_UNIX) as s:
+        s.connect(str(paths.socket_path()))     # so the stand-in's accept returns and its thread ends
+    time.sleep(0.05)
     srv.close()
 
 

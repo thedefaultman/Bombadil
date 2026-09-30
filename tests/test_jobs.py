@@ -99,7 +99,7 @@ def row(j, job_id):
 # -- starting --
 
 def test_a_job_starts_as_a_user_unit_whose_wrapper_keeps_its_output_and_its_exit_status(tmp_path):
-    j, sd, clock = make(tmp_path)
+    j, sd, _ = make(tmp_path)
     rec = j.start("Ubuntu 26.04 ISO", "curl -O https://example.org/ubuntu.iso")
     assert re.fullmatch(r"[0-9a-f]{6}", rec["id"])
     job_id = rec["id"]
@@ -107,8 +107,8 @@ def test_a_job_starts_as_a_user_unit_whose_wrapper_keeps_its_output_and_its_exit
     exit_file = shlex.quote(str(tmp_path / "jobs" / f"{job_id}.exit"))
     assert sd.calls == [[
         "systemd-run", "--user", f"--unit=bombadil-job-{job_id}", "--description=Ubuntu 26.04 ISO", "/bin/sh", "-c",
-        f"/bin/sh -c {shlex.quote('curl -O https://example.org/ubuntu.iso')} >> {out} 2>&1; "
-        f"s=$$?; echo $$s > {exit_file}; exit $$s"]]
+        (f"/bin/sh -c {shlex.quote('curl -O https://example.org/ubuntu.iso')} >> {out} 2>&1; "
+         f"s=$$?; echo $$s > {exit_file}; exit $$s")]]
     assert rec == {"id": job_id, "title": "Ubuntu 26.04 ISO", "kind": "job",
                    "command": "curl -O https://example.org/ubuntu.iso", "started": T0, "deadline": None,
                    "ended": None, "state": "running", "exit": None, "pct": None, "last": "", "dismissed": False}
@@ -127,7 +127,7 @@ def test_a_watcher_is_a_job_of_its_own_kind(tmp_path):
 
 
 def test_a_timer_is_a_timer_unit_that_says_it_is_up(tmp_path):
-    j, sd, clock = make(tmp_path)
+    j, sd, _ = make(tmp_path)
     rec = j.start("Timer, 10 min", "", seconds=600)
     job_id = rec["id"]
     exit_file = shlex.quote(str(tmp_path / "jobs" / f"{job_id}.exit"))
@@ -202,20 +202,20 @@ def test_a_title_is_never_part_of_a_unit_name_or_a_command_line(tmp_path):
 def test_what_cannot_be_started_is_said_plainly_and_runs_nothing(tmp_path):
     j, sd, _ = make(tmp_path)
     for args, words in [
-        (dict(title="", command="true"), "Give the job a short name"),
-        (dict(title="  ", command="true"), "Give the job a short name"),
-        (dict(title="Build", command=""), "command is empty"),
-        (dict(title="Build", command=None), "command is empty"),
-        (dict(title="Build", command="true", kind="daemon"), "no kind of job called 'daemon'"),
-        (dict(title="Build", command="true", kind="timer"), "needs a number of seconds"),
-        (dict(title="T", command="", seconds=0), "between 1 second and 7 days"),
-        (dict(title="T", command="", seconds=-5), "between 1 second and 7 days"),
-        (dict(title="T", command="", seconds=10 ** 9), "between 1 second and 7 days"),
-        (dict(title="T", command="", seconds="soon"), "needs a number of seconds"),
-        (dict(title="T", command="", seconds=True), "needs a number of seconds"),
-        (dict(title="T", command="", seconds=float("nan")), "needs a number of seconds"),
-        (dict(title="Build", command="true\x00rm"), "NUL byte"),
-        (dict(title="Build", command="x" * 20_001), "too long"),
+        ({"title": "", "command": "true"}, "Give the job a short name"),
+        ({"title": "  ", "command": "true"}, "Give the job a short name"),
+        ({"title": "Build", "command": ""}, "command is empty"),
+        ({"title": "Build", "command": None}, "command is empty"),
+        ({"title": "Build", "command": "true", "kind": "daemon"}, "no kind of job called 'daemon'"),
+        ({"title": "Build", "command": "true", "kind": "timer"}, "needs a number of seconds"),
+        ({"title": "T", "command": "", "seconds": 0}, "between 1 second and 7 days"),
+        ({"title": "T", "command": "", "seconds": -5}, "between 1 second and 7 days"),
+        ({"title": "T", "command": "", "seconds": 10 ** 9}, "between 1 second and 7 days"),
+        ({"title": "T", "command": "", "seconds": "soon"}, "needs a number of seconds"),
+        ({"title": "T", "command": "", "seconds": True}, "needs a number of seconds"),
+        ({"title": "T", "command": "", "seconds": float("nan")}, "needs a number of seconds"),
+        ({"title": "Build", "command": "true\x00rm"}, "NUL byte"),
+        ({"title": "Build", "command": "x" * 20_001}, "too long"),
     ]:
         with pytest.raises(JobError, match=words):
             j.start(**args)
@@ -330,7 +330,7 @@ def test_only_the_end_of_a_long_log_counts(tmp_path):
     j.poll()
     assert row(j, rec["id"])["pct"] == 7.0 and row(j, rec["id"])["last"] == "7%"
     # A log cut in the middle of a character, or with bytes that are not text, still reads.
-    j._file(rec["id"], "log").write_bytes(b"\xff\xfe stuff \xe2\x82 " + "30%".encode())
+    j._file(rec["id"], "log").write_bytes(b"\xff\xfe stuff \xe2\x82 30%")
     j.poll()
     assert row(j, rec["id"])["pct"] == 30.0
 
@@ -489,12 +489,12 @@ def test_dismiss_drops_a_finished_row_and_nothing_else(tmp_path):
 # -- how long a row stays --
 
 def test_a_done_row_stays_15_seconds_and_a_failed_one_until_dismissed_or_30_minutes(tmp_path):
-    j, sd, clock = make(tmp_path)
+    j, _, clock = make(tmp_path)
     ok, bad, going = begin(j, clock, "Ok"), begin(j, clock, "Bad"), begin(j, clock, "Going")
     finish(j, ok["id"], 0)
     finish(j, bad["id"], 3, "nope\n")
     j.poll()
-    ids = lambda: [r["id"] for r in j.snapshot()["jobs"]]  # noqa: E731
+    ids = lambda: [r["id"] for r in j.snapshot()["jobs"]]
     assert ids() == [ok["id"], bad["id"], going["id"]]
     clock.t += 14.9
     assert ids() == [ok["id"], bad["id"], going["id"]]
@@ -590,6 +590,12 @@ def test_a_folder_of_strangers_is_not_a_table(tmp_path):
     odd = row(k, "abcd22")
     assert odd["pct"] is None and odd["last"] == "5" and odd["deadline"] is None
     assert len(odd["title"]) <= jobs.MAX_TITLE and odd["unit"] == "bombadil-job-abcd22"
+    # Every timer has a deadline and nothing else does, whatever a file says.
+    (d / "abcd23.json").write_text(json.dumps({**good, "id": "abcd23", "kind": "timer", "deadline": None}))
+    (d / "abcd24.json").write_text(json.dumps({**good, "id": "abcd24", "deadline": T0 + 5}))
+    k, _, _ = make(tmp_path)
+    assert row(k, "abcd23")["deadline"] == T0 and row(k, "abcd24")["deadline"] is None
+    assert k.listing().count("left") == 1
 
 
 # -- ids --
@@ -609,7 +615,7 @@ def test_an_id_that_is_not_one_of_ours_reaches_no_path_and_no_unit(tmp_path, bad
 
 
 def test_an_id_with_a_newline_is_not_the_id_before_it(tmp_path):
-    j, sd, _ = make(tmp_path)
+    j, _, _ = make(tmp_path)
     rec = j.start("Real", "sleep 100")
     assert j.stop(rec["id"] + "\n") is None and j.log_path(rec["id"] + "\n") is None and j.running()
     assert j.log_path(rec["id"]) == tmp_path / "jobs" / f"{rec['id']}.log"
@@ -667,7 +673,7 @@ def test_what_the_agent_is_told_when_it_starts_one(tmp_path):
 
 
 def test_what_list_says(tmp_path):
-    j, sd, clock = make(tmp_path)
+    j, _, clock = make(tmp_path)
     assert j.listing() == "Nothing is running in the background."
     iso, timer, bad = (begin(j, clock, "Ubuntu ISO", "curl"), begin(j, clock, "Tea", "", seconds=300),
                        begin(j, clock, "Build", "make"))
