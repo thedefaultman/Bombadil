@@ -32,17 +32,22 @@ QtObject {
     property bool irreversible: false
     property bool stopped: false
     property bool sticky: false      // a closing line that stays until the next prompt
+    property var undoMsg: null       // a local receipt's own Undo: the message the button sends, not the machine's undo
     property double lineAt: 0        // when the closing or local line appeared
     property int fadeAfter: 12000    // how long a closing or local line stays (ms)
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
+    // Details was asked for and not put away since: the bar cannot see the drawer, so this is its
+    // guess, enough to tell an Esc that should have closed something from one that had nothing to close.
+    property bool drawerUp: false
     // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
     readonly property bool stoppable: busy || optimistic
 
     property string _result: ""
     property bool _resultOk: true
     property string _error: ""
+    property var _drawerTurn: null
 
     function _now() { return Date.now() }
 
@@ -71,7 +76,7 @@ QtObject {
         if (ev.type === "summon") { summoned(); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
-            if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }
+            if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; undoMsg = null; lineAt = _now() }
             return
         }
         if (ev.type === "queued") {
@@ -94,7 +99,7 @@ QtObject {
             optimistic = false
             mode = "working"; turn = ev.turn; busy = true
             line = "On it"; source = "step"; risk = ""; command = ""
-            changed = false; irreversible = false; stopped = false; sticky = false
+            changed = false; irreversible = false; stopped = false; sticky = false; undoMsg = null
             _result = ""; _resultOk = true; _error = ""
             break
         case "status":
@@ -107,7 +112,7 @@ QtObject {
         case "error":
             if (ev.turn === null || ev.turn === undefined) {
                 if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now() }
-                else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; sticky = false; lineAt = _now() }
+                else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; sticky = false; undoMsg = null; lineAt = _now() }
             } else if (ev.turn === turn) {
                 _error = ev.text || ""
             }
@@ -145,6 +150,10 @@ QtObject {
                 optimistic = false
                 mode = "local"; line = ev.text || ""; source = ev.ok === false ? "error" : "step"
                 risk = ""; command = ""; sticky = false; lineAt = _now()
+                // A receipt that knows how to take itself back (a word the loop made) stays, with
+                // Undo, like a turn that changed something, and its Undo sends that message.
+                undoMsg = ev.undo_msg && typeof ev.undo_msg === "object" ? ev.undo_msg : null
+                sticky = undoMsg !== null
                 // Undo says what it covered; give people time to read it.
                 fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000 : 5000
             }
@@ -156,7 +165,7 @@ QtObject {
         const t = String(text || "").trim()
         if (!t) return false
         if (!connected) {
-            mode = "local"; line = "Not connected to the agent yet."; source = "error"; sticky = false
+            mode = "local"; line = "Not connected to the agent yet."; source = "error"; sticky = false; undoMsg = null
             lineAt = _now(); fadeAfter = 4000
             return false
         }
@@ -165,7 +174,7 @@ QtObject {
             // Something true on screen at once; agentd confirms with turn_start (or a local answer).
             optimistic = true
             mode = "working"; line = "On it"; source = "step"; risk = ""; command = ""
-            startedAt = _now(); turn = null; sticky = false; stopped = false
+            startedAt = _now(); turn = null; sticky = false; stopped = false; undoMsg = null
             flash = ""   // a "Stopped while…" still showing would hide "On it"
         } else if (mode === "closing" || mode === "local") {
             mode = "idle"
@@ -205,21 +214,30 @@ QtObject {
 
     function undo() {
         if (_offline()) return
-        outgoing({ type: "local", action: "undo" }); sticky = false
+        // A receipt with its own Undo puts back only what it made; the machine's undo is for turns.
+        if (mode === "local" && undoMsg !== null) { outgoing(undoMsg); undoMsg = null }
+        else outgoing({ type: "local", action: "undo" })
+        sticky = false
     }
 
     // Details opens the drawer, and closes it when it already shows this turn.
     function details() {
         if (_offline()) return
         handOff()
+        drawerUp = !(drawerUp && _drawerTurn === turn)
+        _drawerTurn = turn
         outgoing({ type: "details", turn: turn })
     }
 
     // Esc in the pill with nothing to stop or clear: put the drawer away too.
-    function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
+    function closeDetails() {
+        if (!connected) return
+        drawerUp = false
+        outgoing({ type: "close_details" })
+    }
 
     function dismiss() {
-        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
+        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false; undoMsg = null }
         flash = ""
     }
 
