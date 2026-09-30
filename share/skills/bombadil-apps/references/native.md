@@ -23,7 +23,7 @@ missing value is `null`.
 | `App.dataDir` | `~/Apps/<name>/data`, created on first use; never overwritten by `create_app` |
 | `App.reloads` | how many times the UI has hot reloaded (0 on start) |
 | `App.checking` | true while `check` renders the app offscreen (nothing is saved then) |
-| `App.show()` / `App.hide()` / `App.toggle()` | slide the app's window in or out |
+| `App.show()` / `App.hide()` / `App.toggle()` | slide the app's window in or out. They return at once (Hyprland is asked in the background; a request it refuses is written to the log, and with no Hyprland running nothing happens) and do nothing during `check` |
 | `App.close()` | quit the app (it leaves the bar) |
 | `App.notify(title, body = "")` | desktop notification |
 | `App.openUrl(url)` | open a link in the browser panel (shared by every app; it stays open when the app is closed or killed) |
@@ -83,12 +83,12 @@ Vault { id: vault; name: "passwords" }
 
 | Member | |
 |---|---|
-| `name` | default `"vault"` |
+| `name` | default `"vault"`. Assigning a new name at runtime first locks this object (`unlockedChanged` and `dataChanged` fire, so an `onUnlockedChanged` that closes editors runs), then opens the new file only if its key is still cached (that vault was in use within its `autoLock`). Renaming back within `autoLock` comes back unlocked |
 | `exists` | a vault file is there |
 | `unlocked` | data is readable |
 | `data` | the decrypted value; `null` while locked. Assign to save (same rule as Store: assign a new array/object) |
 | `error` | last error message: `"wrong password"`, `"a vault already exists"`, `"empty password"`, `"no vault yet"`, `"the vault is locked"`, `"cannot save: ..."`, `"not JSON: ..."`, `"the vault file is damaged: ..."`, `"the vault changed on disk; unlock it again"`; `""` after a success. The last one: a save refuses to overwrite a file that something else (another process, a restored backup) changed since this vault last read or wrote it, and locks (`data` becomes `null`) so the user unlocks the fresh content |
-| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never. The countdown includes time the machine was asleep (it is checked about once a second), so a vault left open before a suspend locks right after resume. Close anything that shows a secret when it does: `onUnlockedChanged: if (!unlocked) editor.close()` |
+| `autoLock` | seconds without reading or assigning `data` before it locks again; default 300, 0 = never. The countdown includes time the machine was asleep (it is checked about once a second), so a vault left open before a suspend locks right after resume; reading `data` after the deadline gives `null` (even before that check runs), and assigning it fails with `"the vault is locked"`. Close anything that shows a secret when it locks: `onUnlockedChanged: if (!unlocked) editor.close()` |
 | `create(password)` | make a new empty vault (`data` = `[]`) and unlock it; false if one exists |
 | `unlock(password)` / `lock()` | |
 | `changePassword(old, new)` | bool; re-encrypts with the new password and leaves the vault unlocked |
@@ -102,7 +102,20 @@ Several `Vault` objects with the same `name` (for example one in a dialog) are v
 one vault: saving, unlocking or locking through one shows in all of them, and using any
 of them keeps them all from auto-locking. The shortest `autoLock` among them wins: a main
 Vault set to 60 locks all of them after 60 s idle, even beside a dialog Vault left at the
-default 300 or one with `autoLock: 0`.
+default 300 or one with `autoLock: 0`. Only open objects count: one that was renamed to
+another file or destroyed (a closed dialog) no longer sets the deadline. A `Vault` created
+while the vault is open (a dialog made later) starts unlocked.
+
+A `Vault` reads its file when its component has finished loading (after `name` is set), so
+`exists` and `unlocked` are `false` until then. Bindings on them pick up the real values
+before the first frame. `onExistsChanged` fires once at startup when a file exists, and
+`onUnlockedChanged` once more when a key kept from before a hot reload reopens it (a
+handler like `if (!unlocked) close()` is unaffected). Code that runs while the object is
+still being made sees the pre-load state: a binding that calls `create` unconditionally
+and reads `data` runs again once the file has loaded (`data` changes then), and its second
+`create` fails with `"a vault already exists"`; one written as `vault.exists ||
+vault.create(pw)` is a binding loop instead. Call `create` and `unlock` from a handler or
+`Component.onCompleted`, never from a binding.
 
 `create`, `unlock` and `changePassword` take about half a second (scrypt with 128 MiB, as
 OWASP recommends; that is the point), so call them from a button, not from a binding.
@@ -239,9 +252,9 @@ The app can talk to the OS agent, the same one the user types to in the bar.
 | Member | |
 |---|---|
 | `Agent.connected`, `Agent.busy`, `Agent.provider` | |
-| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable |
-| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`, including a provider that is not installed and a lost connection) |
-| `replied(text)` | signal when that answer is complete, also after an error |
+| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable; while the agent is busy it waits its turn in the bar's queue |
+| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`, including a provider that is not installed and a lost connection). An `ask` that waits behind another turn (the user's, or an earlier `ask` of this app) leaves `reply` as it was (the earlier answer, still streaming or done) until its own turn starts, then `reply` starts afresh |
+| `replied(text)` | signal when that answer is complete, also after an error. A prompt the user drops from the bar's queue ends with `replied("Error: dropped from the queue")`, and `reply` is set to that text unless an answer of this app is still streaming. A lost connection ends every sent prompt that is still unanswered with one `replied` |
 
 The prompt is prefixed with `[from app <name>]` so the agent knows where it came from
 and can, for example, edit this app in response. During `check` Agent never connects.

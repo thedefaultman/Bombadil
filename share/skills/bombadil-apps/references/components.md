@@ -253,9 +253,9 @@ A styled, selectable, keyboard-navigable list.
 | `delegate` | Component | a `ListRow` | replace for fully custom rows |
 | `count` | int | (read-only) | number of rows |
 
-Signals: `activated(int index, var item)` (click or Enter), `contextRequested(int index,
-var item)` (right click). Up/Down/Home/End move the selection once the list has focus
-(click it, or `focus: true`).
+Signals: `activated(int index, var item)` (tap, click or Enter), `contextRequested(int
+index, var item)` (right click; it selects the row too). Up/Down/Home/End move the
+selection once the list has focus (click it, or `focus: true`).
 
 When `model` is replaced by a new array (filtering, an edit saved to a `Store`), the
 selection stays on the same item, matched by its `id`, `uuid`, `key` or `pid` field, else
@@ -266,19 +266,38 @@ neighbour. An item with none of those fields is matched by content: if it is gon
 the count stays the same, the selection keeps its row, because the item was probably
 edited in place (a changed count gives -1 and `null` too).
 
+A `ListModel` is not matched like that: Qt's `ListView` keeps the selection on its item
+while rows are added or removed around it, and when the selected row itself is removed a
+neighbouring row is selected (the next one, the previous for the last row; -1 when none is
+left).
+
 A custom `delegate` is a normal `ListView` delegate (`index`, `modelData`); set
-`selected: ListView.isCurrentItem` on a `ListRow`. A click selects the row and emits
-`activated` when the delegate does not take the press itself (`ListRow` or a plain
-`Item`). It does the same when the delegate's root is a button (`ItemDelegate`,
-`CheckDelegate`, `SwitchDelegate`): that row is selected on press and activated on click,
-and the delegate's own `onClicked` still runs, first. If that `onClicked` moves its item
-(mark as read in a list sorted unread first), the selection and `activated` follow the
-item to its new index when it has an `id`, `uuid`, `key` or `pid` field. An item without
-one that its `onClicked` edits keeps its row, and `activated` reports whatever item is now
-in that row, so give such items an `id`. If it removes the item (ticking a todo in a
-list that hides done items), the selection becomes -1/`null` and `activated` is not
-emitted. A delegate that takes the press some other way, such as a `MouseArea` over the
-row, has to set `ListView.view.currentIndex = index` itself.
+`selected: ListView.isCurrentItem` on a `ListRow`. Every kind of delegate is selected when
+it is pressed and activated when it is tapped or clicked: a `ListRow`, a plain `Item`, or
+a delegate whose root is a button (`ItemDelegate`, `CheckDelegate`, `SwitchDelegate`). The
+delegate's own `onClicked` (a `ListRow`'s or a button's) still runs, first. If that
+`onClicked` moves its item (mark as read in a list sorted unread first), the selection and
+`activated` follow the item to its new index when it has an `id`, `uuid`, `key` or `pid`
+field. An item without one that its `onClicked` edits keeps its row, and `activated`
+reports whatever item is now in that row, so give such items an `id`. If it removes the
+item (ticking a todo in a list that hides done items), the selection becomes -1/`null` and
+`activated` is not emitted. A model or array replaced between the press and the release (a
+poller) does not change which item the tap is about: the pressed item stays selected,
+matched as above, or -1 when it is gone. The rows are rebuilt with the array, so a click
+that spans the replacement does not run a `ListRow`'s `onClicked`, and a button row's
+`onClicked` and `activated` do not run at all. A delegate that takes the press some other way,
+such as a `MouseArea` over the row or a `Button` inside an `Item`, has to set
+`ListView.view.currentIndex = index` itself.
+
+A double-click on a `ListRow`, a plain `Item` or the default row emits `activated` once,
+on its first click (a `ListRow` also emits `doubleClicked()` for the second). A button row
+is clicked twice: its `onClicked` and `activated` both run twice. A press that turns into a
+scroll (a touch drag), or that the mouse drags away, gives the previous selection back
+without `activated` and without moving the list (a `SwitchDelegate` is the exception for
+the mouse: its own drag gesture keeps the press, so it is selected and activated on
+release), so scrolling a touch list never changes
+`current` or jumps it to a selection that is off-screen. A tap on a partly visible row
+scrolls it fully into view.
 
 On its own an ItemList is as tall as its rows, up to eight, then scrolls; give it
 `Layout.fillHeight: true` to take the free height instead.
@@ -287,7 +306,8 @@ On its own an ItemList is as tall as its rows, up to eight, then scrolls; give i
 The row `ItemList` uses; use it in your own `ListView` delegates.
 Properties: `title`, `subtitle`, `icon`, `trailing` (string), `selected`, `trailingItem`
 (an Item placed at the right, e.g. a Badge or IconButton), `hovered` (read-only).
-Signals: `clicked()`, `doubleClicked()`, `contextRequested()` (right click).
+Signals: `clicked()`, `doubleClicked()`, `contextRequested()` (right click). A double-click
+is a `clicked()` for the first click and a `doubleClicked()` for the second.
 
 ### DataTable
 A sortable table with a sticky header.
@@ -310,15 +330,24 @@ default right), `format` (function `(value, row) => string`), `mono` (bool), `so
 keeps room for its values; names elide.
 
 Signals: `activated(var row)` (double-click or Enter), `contextRequested(var row)` (right
-click). Clicking a header sorts by it (numbers start descending); clicking again flips
-the order. Up/Down, PageUp/PageDown, Home/End and Enter work once the table has focus.
+click; it selects the row too). Clicking a header sorts by it (numbers start descending);
+clicking again flips the order. Up/Down, PageUp/PageDown, Home/End and Enter work once
+the table has focus. A row is selected when it is pressed, not when the button is
+released, so a refresh that re-sorts the table between the press and the click leaves the
+pressed row selected, wherever it went. A double-click emits `activated` once. A press that
+turns into a touch scroll, or that the mouse drags away, gives the previous selection back
+without moving the list, and a tap on a partly visible row scrolls it fully into view.
 When `rows` is replaced (a poller refreshing every second), the scroll position stays and
 the selection follows the same row, matched by its `id`, `uuid`, `key` or `pid` field.
 When that row is gone from the new rows (a process that exited, or one that dropped out
 of a `limit`), `currentIndex` becomes -1 and `current` `null`, so details panels and
 actions bound to `current` must handle `null` (`table.current ? table.current.pid : -1`).
 Rows with none of those fields are matched by content; one that is gone keeps its place
-when the count is unchanged (its values changed), else it is deselected too.
+when the count is unchanged (its values changed), else it is deselected too. A `ListModel`
+passed as `rows` is copied into plain objects and followed as rows are added, removed or
+changed (`ListModel.move()` is not noticed: the table shows the old order until the next
+add, remove or change): `current` is a copy (change the model with `setProperty`, not through `current`),
+and removing the selected row deselects it (-1/`null`) like any other row that is gone.
 
 ```qml
 DataTable {

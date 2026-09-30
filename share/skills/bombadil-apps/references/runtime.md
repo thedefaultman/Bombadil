@@ -17,6 +17,11 @@ What `bombadil-app` promises an app, and what an app has to do in return.
 `<name>` is the title lowercased with dashes (`"Password Manager"` → `password-manager`).
 Calling `create_app` again with the same title updates the same app.
 
+Some apps ship with the OS (`/usr/share/bombadil/share/apps/<name>/`, read-only). They run
+by name like yours (`bombadil-app run <name>`), keep their saved state in
+`~/.local/state/bombadil/apps/<name>/data/`, and are not listed among your apps. An app of
+your own with the same name takes its place.
+
 ## Loading and hot reload
 
 - The runtime owns the native window; `main.qml`'s `AppWindow` is placed inside it, and
@@ -32,7 +37,24 @@ Calling `create_app` again with the same title updates the same app.
   the new one. Nothing the old UI reports while it switches over is counted as an error,
   including errors from an old `backend` it kept in a property (deleted, it reads as
   `null`). While `app.py` fails to load, every reload tries it again and its error stays
-  in the status until it is fixed (the last good version keeps running meanwhile).
+  in the status until it is fixed, also across QML-only edits (the last good version keeps
+  running meanwhile). A `Backend` whose `__init__` never calls `super().__init__()` is
+  such an error (`TypeError: Backend is not usable: its __init__ never calls
+  super().__init__()`): QML cannot use it.
+- The old UI is unfocused before the new one is created. Its focus-loss handler (say
+  `onActiveFocusChanged: if (!activeFocus) backend.save(text)`) runs once, at that point,
+  on the `backend` the new UI will use, and what it reports is not counted, whether or not
+  the new `main.qml` takes focus as it is created (`Component.onCompleted:
+  field.forceActiveFocus()`). Once the new UI is up, the old one is destroyed before `App.reloads`
+  and `App.lastError` change, so its bindings on them never run. If the new UI fails to
+  load, the old UI stays and gets its focus back.
+- On an `app.py` reload the `QThread`s of the replaced `Backend` (its children, or held as
+  attributes of it) are asked to `quit()` and waited on for up to 2 s, because Qt aborts
+  the whole app when a running `QThread` is destroyed. A thread that has not stopped is
+  logged and its old `Backend` is kept alive rather than destroyed, so a thread should end
+  when asked: the default `run()` (an event loop) stops on `quit()`, a `run()` of your own
+  must return by itself. A `Backend` that is not a `QObject` is left alone: nothing is
+  stopped or waited on. Python `threading` threads are not touched.
 - The app's folder being removed or moved away and then written again (`rm -rf
   ~/Apps/<name>`, then `create_app`) is picked up by the running app: while the folder is
   gone the old UI stays up with the error `main.qml: No such file or directory`, and it
@@ -45,7 +67,7 @@ Calling `create_app` again with the same title updates the same app.
 - If the app has never loaded successfully, the window shows the error list instead.
 - `Store` state is saved before each reload and restored after it, so the app comes back
   where it was. A `Vault` that was unlocked stays unlocked across reloads (not across
-  restarts).
+  restarts, and not past its `autoLock`).
 - An edit never costs saved data: a Store keeps the saved value of a property the new
   version no longer declares (renamed `entries` to `items`; kept until `reset()`) or cannot
   take (a new type; kept until the app sets that property) in its file, so undoing the
@@ -101,10 +123,12 @@ Calling `create_app` again with the same title updates the same app.
   it was started from a terminal (then it prints there). The log is moved to `.log.1`
   past 1 MB, at start and while the app runs (checked about every half second).
   `app_status` and `bombadil-app status` show its last 40 lines, read from its last
-  64 KiB, so a very long last line can mean fewer lines are shown. When the log is on a
-  full disk, what it has no room for (console.log lines, errors, tracebacks, `app.py`'s
-  own prints) is dropped from it; the app keeps running, and errors and console lines
-  still reach the status file when that can be written.
+  64 KiB, so a very long last line can mean fewer lines are shown. `print()` output is
+  line-buffered: each line reaches the log as it is printed, so the status shows it while
+  the app runs. When the log is on a full disk, what it has no room for (console.log
+  lines, errors, tracebacks, `app.py`'s own prints) is dropped from it; the app keeps
+  running, and errors and console lines still reach the status file when that can be
+  written.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
   calls do nothing, and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
   throwaway test location (`~/.qttest`) instead of the user's `~/.config` and
