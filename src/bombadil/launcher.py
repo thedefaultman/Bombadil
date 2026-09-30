@@ -316,7 +316,16 @@ class Launcher:
         if placement is not None:
             # The app kit's drawers: each app slides in from its own special workspace.
             fn = {"open": placement.show, "hide": placement.hide, "close": placement.close}[a.verb]
-            fn(a.target)
+            said = fn(a.target)
+            if a.verb == "close" and "could not be killed" in said:
+                return False, f"{self.failed(a)}: {said}"
+            done = {"open": True, "hide": said.endswith(" hidden"),
+                    "close": said.endswith(" closed") or " was killed" in said}[a.verb]
+            if not done:
+                # Nothing to put away or close (not on screen, not running): say what placement found.
+                if said.startswith(a.target + " "):
+                    said = (a.title or a.target) + said[len(a.target):]
+                return True, said[:1].upper() + said[1:] + "."
         elif a.verb == "open":
             if _app_running(a.target):
                 self._focus_class(f"bombadil-app-{a.target}")
