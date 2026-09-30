@@ -538,6 +538,7 @@ async def _another(d):
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     return r, w
 
 
