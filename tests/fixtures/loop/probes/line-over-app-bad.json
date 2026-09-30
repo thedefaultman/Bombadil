@@ -1,0 +1,144 @@
+{
+ "now": 1790680000.0,
+ "clients": [
+  {
+   "address": "0x55a1b1",
+   "mapped": true,
+   "hidden": false,
+   "at": [12, 12],
+   "size": [1896, 1056],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": false,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "foot",
+   "title": "user@bombadil: ~/projects/secret-plans",
+   "initialClass": "foot",
+   "initialTitle": "user@bombadil: ~/projects/secret-plans",
+   "pid": 1990,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 2,
+   "inhibitingIdle": false
+  },
+  {
+   "address": "0x55a1e5",
+   "mapped": true,
+   "hidden": false,
+   "at": [690, 210],
+   "size": [540, 660],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": true,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "bombadil-app-passwords",
+   "title": "Passwords - Bombadil",
+   "initialClass": "bombadil-app-passwords",
+   "initialTitle": "Passwords - Bombadil",
+   "pid": 2301,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 0,
+   "inhibitingIdle": false
+  }
+ ],
+ "monitors": [
+  {
+   "id": 0,
+   "name": "Virtual-1",
+   "description": "Unknown Virtual-1",
+   "make": "",
+   "model": "",
+   "serial": "",
+   "width": 1920,
+   "height": 1080,
+   "physicalWidth": 0,
+   "physicalHeight": 0,
+   "refreshRate": 60.0,
+   "x": 0,
+   "y": 0,
+   "activeWorkspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "specialWorkspace": {
+    "id": 0,
+    "name": ""
+   },
+   "reserved": [0, 0, 0, 64],
+   "scale": 1.0,
+   "transform": 0,
+   "focused": true,
+   "dpmsStatus": true,
+   "vrr": false,
+   "activelyTearing": false,
+   "disabled": false,
+   "currentFormat": "XRGB8888",
+   "availableModes": ["1920x1080@60.00Hz", "1280x720@60.00Hz", "640x480@60.00Hz"]
+  }
+ ],
+ "layers": {
+  "Virtual-1": {
+   "levels": {
+    "0": [],
+    "1": [],
+    "2": [],
+    "3": [
+     {
+      "address": "0x55a1c2d3e4f0",
+      "x": 0,
+      "y": 726,
+      "w": 1920,
+      "h": 354,
+      "namespace": "bombadil-bar",
+      "pid": 1871
+     }
+    ]
+   }
+  }
+ },
+ "bar": {
+  "pid": 1871,
+  "connected_at": 1790679400.0,
+  "alive_at": 1790679997.0,
+  "build": "d9dde3b",
+  "screens": {
+   "Virtual-1": {
+    "w": 1920,
+    "h": 1080,
+    "rects": [
+     {
+      "name": "line",
+      "x": 510,
+      "y": 790,
+      "w": 900,
+      "h": 218
+     },
+     {
+      "name": "pill",
+      "x": 510,
+      "y": 1016,
+      "w": 900,
+      "h": 52
+     }
+    ]
+   }
+  }
+ }
+}

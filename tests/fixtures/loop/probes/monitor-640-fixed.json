@@ -1,0 +1,88 @@
+{
+ "now": 1790680000.0,
+ "clients": [
+  {
+   "address": "0x55a1f1",
+   "mapped": true,
+   "hidden": false,
+   "at": [690, 96],
+   "size": [540, 660],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": true,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "bombadil-app-notes",
+   "title": "Notes",
+   "initialClass": "bombadil-app-notes",
+   "initialTitle": "Notes",
+   "pid": 2401,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 0,
+   "inhibitingIdle": false
+  }
+ ],
+ "monitors": [
+  {
+   "id": 0,
+   "name": "Virtual-1",
+   "description": "Unknown Virtual-1",
+   "make": "",
+   "model": "",
+   "serial": "",
+   "width": 1920,
+   "height": 1080,
+   "physicalWidth": 0,
+   "physicalHeight": 0,
+   "refreshRate": 60.0,
+   "x": 0,
+   "y": 0,
+   "activeWorkspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "specialWorkspace": {
+    "id": 0,
+    "name": ""
+   },
+   "reserved": [0, 0, 0, 64],
+   "scale": 1.0,
+   "transform": 0,
+   "focused": true,
+   "dpmsStatus": true,
+   "vrr": false,
+   "activelyTearing": false,
+   "disabled": false,
+   "currentFormat": "XRGB8888",
+   "availableModes": ["1920x1080@60.00Hz", "1280x720@60.00Hz", "640x480@60.00Hz"]
+  }
+ ],
+ "layers": {
+  "Virtual-1": {
+   "levels": {
+    "0": [],
+    "1": [],
+    "2": [],
+    "3": [
+     {
+      "address": "0x55a1c2d3e4f0",
+      "x": 0,
+      "y": 726,
+      "w": 1920,
+      "h": 354,
+      "namespace": "bombadil-bar",
+      "pid": 1871
+     }
+    ]
+   }
+  }
+ }
+}
