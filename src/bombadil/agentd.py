@@ -6,6 +6,7 @@ app) can connect; every event is broadcast to all of them.
 
 Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher word ("browser", "undo");
                                                         "asked_by": "builder" says a coding session asks
+                                                        (another helper's name works the same)
                    {"type": "stop"}                     end the running turn and all it started
                    {"type": "cancel"}                   the same as stop
                    {"type": "unqueue", "turn": n}       drop a prompt still waiting its turn
@@ -52,7 +53,8 @@ files so far" ("" when nothing).
 {"steps": [{"id": "1", "subject": "Install ffmpeg", "active": "Installing ffmpeg" | null, "status":
 "pending" | "in_progress" | "completed"}]}. A step the agent has only just made has "id": null and
 comes last. When several are in progress the last one is the current step.
-turn_start carries "asked_by": "builder" when the turn was started for a coding session, else null.
+turn_start carries "asked_by": "builder" (or another helper's name) when the turn was started for a coding
+session, else null.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
 
@@ -74,6 +76,7 @@ the os-mcp server attached in its own scope, stream its events, log the turn. La
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -85,6 +88,7 @@ from .jobs import JobError, Jobs, ending, started_text
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
+_WHO = re.compile(r"[a-z][a-z0-9_-]{0,23}")   # a helper's name in "asked_by"
 MAX_OUTPUT = 16_000   # characters of one command's output kept in events and the turn's log
 # A client that stops reading (a hung bar) is dropped rather than allowed to hold up the
 # others: its messages wait in a queue of this many, each write gets this long.
@@ -211,8 +215,9 @@ class AgentD:
                 self._background(self.local(action, text))
                 return
             self.next_id += 1
-            if msg.get("asked_by") == "builder":
-                self.asked_by[self.next_id] = "builder"
+            who = msg.get("asked_by")
+            if isinstance(who, str) and _WHO.fullmatch(who):
+                self.asked_by[self.next_id] = who
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
             if self.current is not None or self.pending:
@@ -382,7 +387,8 @@ class AgentD:
         name. The answer goes to the one client that asked."""
         def result(ok: bool, text: str) -> dict:
             return {"type": "desk-result", "id": msg.get("id"), "ok": ok, "text": text}
-        if self.current is None or msg.get("turn") != self.current:
+        turn = msg.get("turn")
+        if self.current is None or isinstance(turn, bool) or turn != self.current or self.stopping:
             return result(False, "That turn is over, so the desk stays as it is.")
         # The raw prompt, not the turn's: that one has notes in front, which quote earlier desk words.
         if not asked_for_desk(self.turn_prompt or ""):
@@ -634,7 +640,9 @@ class AgentD:
 
     async def turn(self, prompt: str):
         shell = prompt.startswith("!")
-        self.turn_prompt = prompt
+        asked_by = self.asked_by.pop(self.current, None)
+        # What the person typed. A turn a coding session asked for has none: the desk stays as it is.
+        self.turn_prompt = None if asked_by else prompt
         started = time.time()
         self.narrator = narrator = narrate.Narrator()
         log = paths.state_dir() / "turns" / f"{int(started * 1000)}-{self.current}.jsonl"
@@ -643,7 +651,6 @@ class AgentD:
         for old in sorted(self.turn_logs)[:-50]:
             self.turn_logs.pop(old, None)
         # Turns run in the order they were asked, so a mark left by one that was unqueued is dead.
-        asked_by = self.asked_by.pop(self.current, None)
         self.asked_by = {i: who for i, who in self.asked_by.items() if i > self.current}
         # Something true on screen before snapper, which can take a second.
         await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)

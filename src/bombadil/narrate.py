@@ -899,16 +899,18 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     if tool == "notify":
         return Step("Sending a notification")
     if tool == "desk":
+        # The line only: the desk is not part of a restore point, and a call can be refused or change
+        # nothing, so no closing sentence claims it and no Undo is offered for it.
         op, widget = str(a.get("op") or ""), desk.title(a.get("widget"))
         if op == "hide":
-            return Step(f"Putting {widget} away", f"Put {widget} away")
+            return Step(f"Putting {widget} away")
         if op == "show":
-            return Step(f"Putting {widget} on the desk", f"Put {widget} on the desk")
+            return Step(f"Putting {widget} on the desk")
         if op == "move":
             to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
-            return Step(f"Moving {widget}{to}", f"Moved {widget}{to}")
+            return Step(f"Moving {widget}{to}")
         if op in ("fold", "unfold"):
-            return Step(f"{op.capitalize()}ing the desk", f"{op.capitalize()}ed the desk")
+            return Step(f"{op.capitalize()}ing the desk")
         return Step("Looking at the desk")
     if tool == "job":
         op = str(a.get("op") or "")
@@ -1111,7 +1113,7 @@ class Narrator:
         self._plan: list[_Task] = []
         self._listing: set[str] = set()       # TaskList calls whose result is the whole table
         self._sent: list[dict] = []           # the plan take_plan gave last
-        self._shown: dict | None = None       # the line last returned
+        self._shown: tuple[dict, dict[str, int]] | None = None   # the line last returned, and the counts then
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
 
@@ -1134,10 +1136,11 @@ class Narrator:
     def on_event(self, ev: dict) -> dict | None:
         self._track_plan(ev)
         line = self._line(ev)
-        # The complete message repeats what its stream already showed; say each line once.
-        if line is None or line == self._shown:
+        # The complete message repeats what its stream already showed; say each line once, unless
+        # what it has touched so far moved on with it.
+        if line is None or (line, self.touched_counts()) == self._shown:
             return None
-        self._shown = line
+        self._shown = (line, self.touched_counts())
         return line
 
     def touched_counts(self) -> dict[str, int]:

@@ -5,6 +5,7 @@ so they load here without a compositor, with the real PillState beside them as i
 card faces are the real ones from shell/. Set BOMBADIL_SCREENS=<dir> to save a picture of each state.
 """
 
+import itertools
 import json
 import os
 import shutil
@@ -932,10 +933,10 @@ def test_strips_run_outward_from_the_pill_nearest_first(desk):
     rx = [desk.at(it)[0] for it in right]
     # Left: the first of the rail's order is the outermost; each strip is 12 from the next, the nearest 12 from the pill.
     assert abs(lx[0] + left[0].property("width") - (pill_x - 12)) <= 1      # positions are whole pixels, widths are not
-    for near, far in zip(left, left[1:]):
+    for near, far in itertools.pairwise(left):
         assert abs(desk.at(far)[0] + far.property("width") - (desk.at(near)[0] - 12)) <= 1
     assert rx[0] == pill_x + pill_w + 12
-    for near, far in zip(right, right[1:]):
+    for near, far in itertools.pairwise(right):
         assert abs(desk.at(far)[0] - (desk.at(near)[0] + near.property("width") + 12)) <= 1
     # All on the pill's row.
     assert len({desk.at(it)[1] for it in left + right}) == 1

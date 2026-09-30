@@ -66,6 +66,8 @@ def test_exact_words_open_locally(home, text, kind, target, verb):
     "!shutdown", "!restart", "!undo", "!files", " !history",
     # The desk word is exact; a sentence with it in is for the agent.
     "what is on my desk?", "show me the desk", "hide the desk", "clean my desk", "desk please",
+    # A question asks; it does not tell, so it is the agent's to answer, for the desk as for restart.
+    "desk?", "show machine?", "hide now?", "open alive ?",
     # A widget's name needs one of the verbs that put a thing on the screen: bare it is a word,
     # and with other verbs it is a sentence.
     "now", "away", "machine", "alive", "watching", "needs you", "the machine", "route",

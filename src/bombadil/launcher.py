@@ -148,7 +148,7 @@ def match(text: str, app_list: list | None = None) -> Action | None:
     plain = t.isascii()
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
-        if cmd in ("restart", "shutdown") and raw.endswith("?"):
+        if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
@@ -167,7 +167,7 @@ def match(text: str, app_list: list | None = None) -> Action | None:
             util = _lookup(word, UTILITY_COMMANDS)
             if util and (verbs or word == t):
                 return Action(util)
-    return _widget_action(t, app_list) if plain else None
+    return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
 
 
 def _widget_action(t: str, app_list: list) -> Action | None:

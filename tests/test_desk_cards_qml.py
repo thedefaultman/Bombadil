@@ -23,7 +23,8 @@ SHELL = Path(__file__).resolve().parents[1] / "shell"
 
 # The faces are read from here (SHELL by default); the integrator points a rail's tests elsewhere.
 THEME = {}
-for name, value in re.findall(r'^var (\w+) = ("#[0-9a-f]+"|[\d.]+)', (SHELL / "DeskTheme.js").read_text(), re.M):
+for name, value in re.findall(r'^var (\w+) = ("#[0-9a-f]+"|[\d.]+)', (SHELL / "DeskTheme.js").read_text(),
+                              re.MULTILINE):
     THEME[name] = value.strip('"') if value.startswith('"') else float(value)
 
 # One Loader per card, the way a rail's Repeater builds them; the test says what to build.
@@ -384,7 +385,7 @@ def test_a_step_is_done_current_or_pending_by_its_look(cards):
     assert done.property("labelColor").name() == colour("fg")
     assert current.property("labelColor").name() == colour("fg")
     assert pending.property("labelColor").name() == colour("muted")
-    label = lambda r: cards.one(r, "nowLabel")   # noqa: E731
+    label = lambda r: cards.one(r, "nowLabel")
     assert label(current).property("font").weight() == QtGui.QFont.Medium
     assert label(done).property("font").weight() == QtGui.QFont.Normal
     assert label(current).property("text") == "Installing docker"
@@ -633,7 +634,7 @@ def test_a_meter_that_is_odd_is_clamped_or_empty(cards):
 
 def test_a_dot_row_has_its_dot_title_sub_and_button_where_the_page_puts_them(cards):
     (card,) = cards.show(("rows", "needs", rows(*NEEDS)))
-    first, second = cards.find(card, "rowsRow")
+    first, _second = cards.find(card, "rowsRow")
     dot = cards.one(first, "rowsDot")
     assert (cards.geometry(dot, first)[0] + 4.5, cards.geometry(dot, first)[1] + 4.5) == (19, 22)
     assert dot.width() == 9 and dot.property("color").name() == colour("you")
@@ -683,7 +684,7 @@ def test_the_small_x_removes_its_row_and_a_row_can_have_both(cards):
     meter, oneshot, timer = cards.find(card, "rowsRow")
     assert not cards.find(meter, "rowsRemove") and not cards.find(meter, "rowsButton")
     drop = cards.one(oneshot, "rowsRemove")
-    x, y, w, h = cards.geometry(drop, oneshot)
+    x, _y, w, _h = cards.geometry(drop, oneshot)
     assert abs(x + w - 286) < 0.01 and not cards.find(oneshot, "rowsButton")
     cards.click(drop)
     cards.click(cards.one(timer, "rowsRemove"))
@@ -808,7 +809,7 @@ def test_a_strip_is_28_tall_and_as_wide_as_its_words_plus_24_and_14_for_a_dot(ca
     for it in (plain, dotted, ringed):
         assert it.height() == THEME["stripHeight"] == 28 and it.property("radius") == 14
         assert it.objectName() == "deskStrip"
-    text = lambda s: cards.one(s, "deskStripText")   # noqa: E731
+    text = lambda s: cards.one(s, "deskStripText")
     assert abs(plain.width() - (text(plain).property("implicitWidth") + 24)) < 0.01
     assert abs(dotted.width() - (text(dotted).property("implicitWidth") + 24 + 14)) < 0.01
     assert text(plain).x() == 12 and text(dotted).x() == 26

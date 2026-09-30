@@ -144,6 +144,33 @@ def test_a_corrupt_or_odd_file_gives_a_working_default_desk(home, content):
     assert "machine" in desk.Desk().load().snapshot()["hidden"]
 
 
+@pytest.mark.parametrize("screen", [
+    '"a\\u0007b"', '"' + "x" * 41 + '"', '"DP-1\\nfolded"', '""', '"ÄÖ"', '"<script>"',
+])
+def test_a_screen_name_is_an_output_name_or_nothing(home, screen):
+    paths.desk_file().parent.mkdir(parents=True)
+    paths.desk_file().write_text(f"screen = {screen}\n")
+    assert desk.Desk().load().snapshot()["screen"] == ""
+
+
+@pytest.mark.parametrize("screen", ["DP-1", "HDMI-A-1", "Virtual-1", "eDP-1", "Dell Inc. 27:a/b"])
+def test_an_output_name_is_kept(home, screen):
+    paths.desk_file().parent.mkdir(parents=True)
+    paths.desk_file().write_text(f'screen = "{screen}"\n')
+    assert desk.Desk().load().snapshot()["screen"] == screen
+
+
+def test_a_file_that_fails_in_some_unexpected_way_is_still_the_default_desk(home, monkeypatch):
+    paths.desk_file().parent.mkdir(parents=True)
+    paths.desk_file().write_text("folded = true\n")
+    with monkeypatch.context() as m:
+        m.setattr(desk.tomllib, "loads", lambda _t: (_ for _ in ()).throw(RecursionError("deep")))
+        assert desk.Desk().load().snapshot() == desk.Desk().snapshot()
+    paths.desk_file().unlink()
+    paths.desk_file().mkdir()   # a directory where the file should be
+    assert desk.Desk().load().snapshot() == desk.Desk().snapshot()
+
+
 def test_bytes_that_are_not_text_are_no_crash(home):
     paths.desk_file().parent.mkdir(parents=True)
     paths.desk_file().write_bytes(b"\xff\xfe\x00folded = true")
@@ -264,7 +291,8 @@ def test_the_title_the_line_uses():
     "make a widget for my streak",
     "hide machine", "show alive", "put watching on the right", "keep needs you where it is",
     "pin my batch. also bring the machine card back", "move now to the right rail",
-    "Show my batch on the desk", "the widget is in the way",
+    "Show my batch on the desk", "the widget is in the way", "hide the machine card",
+    "show while you were away", "please hide machine", "put up my desk",
 ])
 def test_the_words_that_ask_for_the_desk(prompt):
     assert desk.asked_for_desk(prompt)
@@ -275,6 +303,11 @@ def test_the_words_that_ask_for_the_desk(prompt):
     "is the machine slow?", "the download is now at 40%", "show me my files", "put the kettle on. it is now late",
     "hide", "I am away until monday", "make me a password manager", "keep going",
     "why is the sky blue. show your work",
+    # A widget's name in a sentence about something else, and "desk" as a thing in a room.
+    "show me the machine's logs", "keep watching the build", "hide the machine from the guest wifi",
+    "keep away from the machine", "put away the groceries", "bring me the machine specs",
+    "I am at the help desk all day", "a standing desk for the office", "write to the front desk",
+    "tidy my desk job list", "make a password manager",
 ])
 def test_the_words_that_do_not(prompt):
     assert not desk.asked_for_desk(prompt)
@@ -292,32 +325,32 @@ def test_the_state_file_is_the_one_paths_names(home):
     assert tomllib.loads((home / "state" / "desk.toml").read_text())["folded"] is True
 
 
-@pytest.mark.parametrize("args, text, done", [
-    ({"op": "hide", "widget": "machine"}, "Putting Machine away", "Put Machine away"),
-    ({"op": "show", "widget": "needs"}, "Putting Needs you on the desk", "Put Needs you on the desk"),
-    ({"op": "show", "widget": "while you were away"}, "Putting Away on the desk", "Put Away on the desk"),
-    ({"op": "move", "widget": "watching", "rail": "right", "rank": 0},
-     "Moving Watching to the right rail", "Moved Watching to the right rail"),
-    ({"op": "move", "widget": "now", "rank": 1}, "Moving Now", "Moved Now"),
-    ({"op": "fold"}, "Folding the desk", "Folded the desk"),
-    ({"op": "unfold"}, "Unfolding the desk", "Unfolded the desk"),
-    ({"op": "state"}, "Looking at the desk", None),
-    ({}, "Looking at the desk", None),
+@pytest.mark.parametrize("args, text", [
+    ({"op": "hide", "widget": "machine"}, "Putting Machine away"),
+    ({"op": "show", "widget": "needs"}, "Putting Needs you on the desk"),
+    ({"op": "show", "widget": "while you were away"}, "Putting Away on the desk"),
+    ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, "Moving Watching to the right rail"),
+    ({"op": "move", "widget": "now", "rank": 1}, "Moving Now"),
+    ({"op": "fold"}, "Folding the desk"),
+    ({"op": "unfold"}, "Unfolding the desk"),
+    ({"op": "state"}, "Looking at the desk"),
+    ({}, "Looking at the desk"),
 ])
-def test_the_line_says_what_the_desk_tool_did(args, text, done):
+def test_the_line_says_what_the_desk_tool_does_and_claims_no_change(args, text):
     from bombadil import narrate
     step = narrate.tool_step("mcp__bombadil-os__desk", args)
-    assert (step.text, step.done) == (text, done)
+    assert (step.text, step.done, step.changes) == (text, None, False)
 
 
-def test_the_closing_sentence_names_what_was_done_to_the_desk():
+def test_a_desk_call_leaves_no_closing_sentence_and_no_undo():
+    """The call may be refused or change nothing, and the desk is outside the restore points."""
     from bombadil import narrate
     n = narrate.Narrator()
-    hide = {"op": "hide", "widget": "machine"}
-    line = n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": hide})
+    line = n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk",
+                       "input": {"op": "hide", "widget": "machine"}})
     assert line["text"] == "Putting Machine away" and line["risk"] is None
     n.on_event({"kind": "tool", "name": "mcp__bombadil-os__desk", "input": {"op": "fold"}})
-    assert n.summary() == "Put Machine away and folded the desk."
+    assert n.summary() == "" and n.done == []
 
 
 @pytest.mark.parametrize("args", [{"op": ["hide"], "widget": ["machine"]}, {"op": 5, "widget": {"a": 1}},

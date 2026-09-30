@@ -632,6 +632,19 @@ def test_a_step_still_being_written_counts_only_once_it_is_whole(home):
     assert n.touched_counts() == {"file": 1}
 
 
+def test_the_whole_step_is_said_again_when_it_adds_to_the_count(home):
+    """The stream shows "Writing a.txt" before the file counts; the whole message repeats the
+    line and carries the count, so the desk's "1 file so far" does not wait for the next step."""
+    n = narrate.Narrator()
+    first = n.on_event({"kind": "tool_start", "index": 0, "name": "Write"})
+    partial = n.on_event({"kind": "tool_input", "index": 0, "partial": '{"file_path": "/home/u/a.txt", "content": "x'})
+    assert (first or partial) and n.touched_counts() == {}
+    whole = n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x"))
+    assert whole is not None and whole["text"] == (partial or first)["text"]
+    assert n.touched_counts() == {"file": 1}
+    assert n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x")) is None   # nothing new
+
+
 def test_the_count_in_words():
     n = narrate.Narrator()
     assert n.touched_text() == "" and n.touched_counts() == {}

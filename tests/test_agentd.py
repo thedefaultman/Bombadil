@@ -761,11 +761,14 @@ DESK_TURN = (
 )
 
 
-async def _in_a_turn(d, prompt):
+async def _in_a_turn(d, prompt, **extra):
     """A running turn whose CLI waits, and a second client standing in for its os-mcp server."""
     server, r, w = await _start(d)
     tool_r, tool_w = await _another(d)
-    await _ask(w, prompt)
+    if extra:
+        await _say(w, {"type": "prompt", "text": prompt, **extra})
+    else:
+        await _ask(w, prompt)
     msgs = await _events_until(r, lambda m: m.get("kind") == "text")
     return server, r, w, tool_r, tool_w, msgs[-1]["text"]
 
@@ -824,7 +827,7 @@ async def test_the_desk_tool_refuses_a_turn_that_is_not_the_running_one(home):
     d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
     server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "hide machine now please, in the desk")
     no = "That turn is over, so the desk stays as it is."
-    for turn in (0, 2, None, "1", 99):
+    for turn in (0, 2, None, "1", 99, True, 1.5):   # True == 1 in Python; a flag is no turn
         await _say(tool_w, {"type": "desk-tool", "id": "x", "turn": turn, "op": "hide", "widget": "machine"})
         assert await _desk_result(tool_r) == {"type": "desk-result", "id": "x", "ok": False, "text": no}
     await _say(tool_w, {"type": "desk-tool", "id": "y", "op": "hide", "widget": "machine"})   # no turn at all
@@ -842,6 +845,34 @@ async def test_the_desk_tool_refuses_a_turn_that_did_not_ask_for_the_desk(home):
         await _say(tool_w, {"type": "desk-tool", "id": "n", "turn": 1, **op})
         res = await _desk_result(tool_r)
         assert res["ok"] is False and res["text"].startswith("The person did not ask for the desk in this turn")
+    assert d.desk.snapshot() == desk.Desk().snapshot()
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_the_desk_tool_refuses_while_the_turn_is_being_stopped(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "hide machine, it is on my desk")
+    d.stopping = True
+    await _say(tool_w, {"type": "desk-tool", "id": "s", "turn": 1, "op": "hide", "widget": "machine"})
+    res = await _desk_result(tool_r)
+    assert res["ok"] is False and res["text"] == "That turn is over, so the desk stays as it is."
+    d.stopping = False
+    assert d.desk.snapshot()["hidden"] == ["alive"]
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_a_coding_session_asked_for_cannot_use_the_desk_tool(home):
+    """The words of a coding session are not the person's, even when they say "desk"."""
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "hide machine on the desk", asked_by="builder")
+    assert d.turn_prompt is None
+    await _say(tool_w, {"type": "desk-tool", "id": "b", "turn": 1, "op": "hide", "widget": "machine"})
+    res = await _desk_result(tool_r)
+    assert res["ok"] is False and "did not ask for the desk" in res["text"]
     assert d.desk.snapshot() == desk.Desk().snapshot()
     await _stop(r, w, server, tool_w)
 
@@ -1078,15 +1109,16 @@ async def test_the_turn_says_who_asked_for_it(home):
     await ask("first", asked_by="builder")
     await ask("second", asked_by="builder")     # waits, and is taken back before it runs
     await ask("third")                          # typed by the person
-    await ask("fourth", asked_by="somebody")    # a name nobody knows
-    seen = await _events_until(r, lambda m: m.get("kind") == "queued" and m.get("prompt") == "fourth")
+    await ask("fourth", asked_by="somebody")    # a helper with another name is still not the person
+    await ask("fifth", asked_by="Some Body; rm -rf")   # anything that is no name is taken as typed
+    seen = await _events_until(r, lambda m: m.get("kind") == "queued" and m.get("prompt") == "fifth")
     second = next(m for m in seen if m.get("kind") == "queued" and m["prompt"] == "second")
     w.write((json.dumps({"type": "unqueue", "turn": second["turn"]}) + "\n").encode())
     await w.drain()
-    for _ in range(3):
+    for _ in range(4):
         seen += await _read_until(r, "turn_end")
     starts = {m["prompt"]: m["asked_by"] for m in seen if m.get("kind") == "turn_start"}
-    assert starts == {"first": "builder", "third": None, "fourth": None}
+    assert starts == {"first": "builder", "third": None, "fourth": "somebody", "fifth": None}
     assert d.asked_by == {}   # nothing left over from the turn that was taken back
     w.close()
     server.cancel()

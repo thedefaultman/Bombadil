@@ -51,19 +51,28 @@ ALWAYS = ("needs",)
 # Opt in: it is on the desk only after "show alive".
 OPT_IN = ("alive",)
 
-_DESK_WORD = re.compile(r"\b(?:desk|widgets?)\b")
-_DESK_VERB = re.compile(r"\b(?:show|hide|put|keep|pin|move|bring|fold|make)\b")
-_DESK_NOUN = re.compile(r"\b(?:now|watching|needs you|machine|away|alive)\b")
+# "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
+_DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
+                        r"(?! (?:job|lamp|chair|work))")
+# A verb for moving things about, then a widget's name right after it, and then the end of the
+# words or a word that goes on about where it should be: "hide machine", "put watching on the
+# right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
+_DESK_ASK = re.compile(
+    r"\b(?:show|hide|put|keep|pin|move|bring|fold)\s+(?:(?:up|back|the|my)\s+)*"
+    r"(?:now|watching|needs you|machine|alive|while you were away)\b(?!')"
+    r"(?=\s*$|\s*,"
+    r"|\s+(?:on|to|in|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 
 
 def asked_for_desk(prompt: str) -> bool:
     """Do the person's own words ask for the desk? The `desk` tool works only when they do:
     a widget that appears unasked would be a popup by another name. Give it the raw typed
-    prompt, never the one with notes in front, which quote earlier desk words."""
+    prompt, never the one with notes in front, which quote earlier desk words. This is a
+    courtesy gate, not a security boundary: anyone who can type to the agent can say the words."""
     t = str(prompt or "").lower()
     if _DESK_WORD.search(t):
         return True
-    return any(_DESK_VERB.search(s) and _DESK_NOUN.search(s) for s in re.split(r"[.!?;\n]+", t))
+    return any(_DESK_ASK.search(sentence) for sentence in re.split(r"[.!?;\n]+", t))
 
 
 def _key(s) -> str:
@@ -215,11 +224,11 @@ class Desk:
                 data = tomllib.loads(self.path.read_text(encoding="utf-8"))
             except FileNotFoundError:
                 data = {}
-            except (OSError, ValueError) as e:   # TOMLDecodeError and UnicodeDecodeError are ValueErrors
+            except Exception as e:   # noqa: BLE001 - a file that cannot be read never stops agentd
                 print(f"desk: {self.path} is not usable ({e}); starting with the default desk",
                       file=sys.stderr)
                 data = {}
-            self._adopt(data)
+            self._adopt(data if isinstance(data, dict) else {})
         return self
 
     def _adopt(self, data: dict):
@@ -228,7 +237,8 @@ class Desk:
         if isinstance(data.get("hidden"), list):
             self.hidden = {w for w in data["hidden"]
                            if isinstance(w, str) and w in WIDGETS and w not in ALWAYS}
-        if isinstance(data.get("screen"), str):
+        # An output name ("DP-1", "HDMI-A-1", "Virtual-1"), nothing the shell could trip on.
+        if isinstance(data.get("screen"), str) and re.fullmatch(r"[A-Za-z0-9 ._:/-]{1,40}", data["screen"]):
             self.screen = data["screen"]
         rails = data.get("rails") if isinstance(data.get("rails"), dict) else {}
         for w in WIDGETS:
@@ -254,7 +264,7 @@ class Desk:
         it holds until agentd stops."""
         with self._lock:
             lines = ["# Bombadil's desk: which widget sits in which rail, and which are put away.",
-                     "# agentd writes this when the desk changes; it is safe to edit by hand.",
+                     "# agentd writes this when the desk changes; edit by hand only while agentd is stopped.",
                      f"folded = {'true' if self.folded else 'false'}",
                      f"hidden = {json.dumps([w for w in WIDGETS if w in self.hidden])}",
                      f"screen = {json.dumps(self.screen)}", "", "[rails]"]
