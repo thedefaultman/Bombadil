@@ -249,7 +249,7 @@ fi
 # What the installer must refuse, and what it must do, from the live system (a USB-attached ISO is /dev/sda
 # when the host attaches it that way; a CD has no disk, and the check is then skipped).
 stick=$(lsblk -dnro NAME,TYPE,TRAN | awk '$2 == "disk" && $3 == "usb" { print "/dev/" $1; exit }')
-stick_refused() { local o; o=$(bombadil-install "$stick" --yes 2>&1) && return 1; grep -q 'USB stick' <<<"$o"; }
+stick_refused() { local o; o=$(bombadil-install "$stick" --yes 2>&1) && return 1; grep -q 'is the USB stick Bombadil started from' <<<"$o"; }
 no_uefi_needed() { [[ -d /sys/firmware/efi ]]; }
 
 cmdline_installed="console=tty0 console=ttyS0,115200 bombadil.smoke=undo"
@@ -356,6 +356,15 @@ if [[ "$mode" == "refreshed" ]]; then
   check refresh-old-system-kept bash -c 'top=$(mktemp -d); mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" "$top" && ls -d "$top"/@.before-refresh-* >/dev/null && test -f "$top"/@.before-refresh-*/etc/bombadil-old-marker && test -s "$top"/@.before-refresh-*/boot/vmlinuz-linux; r=$?; umount "$top"; exit $r'
   check refresh-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["mode"] == "refresh" and d["kept_aside"], d'
   check refresh-home-restore-points bash -c 'snapper -c home list >/dev/null'
+  # Put the old system back: the same GRUB then starts it, which the host sees as that system's own session coming up.
+  phase=/home/user/.bombadil-smoke-phase
+  if [[ ! -f "$phase" ]]; then
+    check refresh-undo bombadil-rollback refresh
+    echo 2 > "$phase"; chown user: "$phase"
+    say "REBOOT pass=$ok fail=$fail"
+    [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
+    exit 0
+  fi
 fi
 
 say "DONE pass=$ok fail=$fail"

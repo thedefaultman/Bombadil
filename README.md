@@ -27,7 +27,7 @@ permission prompt.
 | `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
 | `shell/shell.qml` | The Quickshell bar. |
 | `share/qml/Bombadil` | `Theme` and `Window` QML components so generated apps look like one system. |
-| `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
+| `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to an encrypted or plain btrfs disk with snapper (layout in `docs/ARCHITECTURE.md`). |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools
 are the same MCP server either way.

@@ -421,6 +421,22 @@ def rollback_fixture(tmp_path, *, with_kernel=True):
     return top, shims
 
 
+def old_system(top, stamp, marker, *, complete=True, incomplete=False):
+    """A system a refresh put aside."""
+    d = top / f"@.before-refresh-{stamp}"
+    (d / "boot").mkdir(parents=True)
+    (d / "boot/vmlinuz-linux").write_text("old kernel")
+    (d / "usr/lib/modules").mkdir(parents=True)
+    (d / "marker").write_text(marker)
+    if complete:
+        (d / "etc").mkdir()
+        (d / "etc/fstab").write_text("# fstab\n")
+    if incomplete:
+        (d / "var/lib/bombadil").mkdir(parents=True)
+        (d / "var/lib/bombadil/install-incomplete").write_text("")
+    return d
+
+
 def run_rollback(tmp_path, top, shims, *args):
     (tmp_path / "tmp").mkdir(exist_ok=True)
     work = tmp_path / "work"
@@ -467,10 +483,7 @@ def test_undo_of_a_restore_point_that_does_not_exist_is_refused(tmp_path):
 
 def test_undoing_a_refresh_puts_the_old_system_and_its_restore_points_back(tmp_path):
     top, shims = rollback_fixture(tmp_path)
-    old = top / "@.before-refresh-20260930-120000"
-    (old / "boot").mkdir(parents=True)
-    (old / "boot/vmlinuz-linux").write_text("old kernel")
-    (old / "marker").write_text("before the refresh")
+    old_system(top, "20260930-120000", "before the refresh")
     (top / "@snapshots.@.before-refresh-20260930-120000/7").mkdir(parents=True)
     r, after = run_rollback(tmp_path, top, shims, "refresh")
     assert r.returncode == 0, r.stderr
@@ -483,3 +496,396 @@ def test_undoing_a_refresh_with_nothing_to_go_back_to_is_refused(tmp_path):
     top, shims = rollback_fixture(tmp_path)
     r, _ = run_rollback(tmp_path, top, shims, "refresh")
     assert r.returncode == 1 and "no system from before a refresh" in r.stderr
+
+
+def test_undoing_a_refresh_goes_back_to_the_whole_system_not_to_a_half_made_one(tmp_path):
+    # A refresh that stopped part way leaves its own half system newer than the user's; it must never be chosen.
+    top, shims = rollback_fixture(tmp_path)
+    old_system(top, "20260930-100000", "the user's own system")
+    old_system(top, "20260930-110000", "half of a refresh", incomplete=True)
+    old_system(top, "20260930-120000", "a bare folder", complete=False)
+    r, after = run_rollback(tmp_path, top, shims, "refresh")
+    assert r.returncode == 0, r.stderr
+    assert (after / "@/marker").read_text() == "the user's own system"
+
+
+def test_undo_finishes_when_an_earlier_one_stopped_with_no_system_in_place(tmp_path):
+    # Two renames with a stop between them leave no @; running undo again puts one in.
+    top, shims = rollback_fixture(tmp_path)
+    shutil.move(top / "@", top / "@.undone-earlier")
+    r, after = run_rollback(tmp_path, top, shims, "12")
+    assert r.returncode == 0, r.stderr
+    assert (after / "@/marker").read_text() == "snapshot 12" and (after / "@.undone-earlier/marker").exists()
+
+
+def test_undo_takes_the_snapshot_before_it_moves_the_system_so_a_failure_leaves_the_system_alone(tmp_path):
+    top, shims = rollback_fixture(tmp_path)
+    shim(shims, "btrfs", "exit 1")
+    r, after = run_rollback(tmp_path, top, shims, "12")
+    assert r.returncode != 0
+    assert (after / "@/marker").read_text() == "current"
+
+
+def test_undo_works_where_the_system_cannot_exchange_two_names_in_one_step(tmp_path):
+    top, shims = rollback_fixture(tmp_path)
+    real_mv = shutil.which("mv")
+    shim(shims, "mv", f'[[ "$1" == --exchange ]] && exit 1\nexec {real_mv} "$@"')
+    r, after = run_rollback(tmp_path, top, shims, "12")
+    assert r.returncode == 0, r.stderr
+    assert (after / "@/marker").read_text() == "snapshot 12"
+    assert any((p / "marker").read_text() == "current" for p in after.iterdir() if p.name.startswith("@.undone-"))
+
+
+# -- btrfs, as a folder with a list of which folders are subvolumes ---------------------------------------------
+
+def btrfs_shim(shims: Path, state: Path | None = None) -> None:
+    """A subvolume is a folder with a marker file in it, so it stays one when it is renamed."""
+    shim(shims, "btrfs", """mark=.subvolume
+case "$1 $2" in
+  "subvolume create") mkdir "$3" && touch "$3/$mark" ;;
+  "subvolume show") [[ -e "$3/$mark" ]] ;;
+  "subvolume delete") rm -rf "${@: -1}" ;;
+  "subvolume snapshot") cp -a "$3" "$4" && touch "$4/$mark" ;;
+  "subvolume get-default") echo "ID 5 (FS_TREE)" ;;
+  *) exit 1 ;;
+esac""")
+
+
+def make_top(tmp_path, *, layout1: bool):
+    work = tmp_path / "work"
+    top = work / "top"
+    state = None
+    shims = tmp_path / "shims"
+    btrfs_shim(shims)
+    names = ["@", "@home", "@snapshots"] + (["@log", "@pkg"] if layout1 else [])
+    for n in names:
+        (top / n).mkdir(parents=True)
+        (top / n / ".subvolume").touch()
+    (top / "@/boot").mkdir()
+    (top / "@/boot/vmlinuz-linux").write_text("kernel")
+    (top / "@/etc").mkdir()
+    (top / "@/etc/fstab").write_text("UUID=x\t/boot\tvfat\tumask=0077\t0 2\n")
+    (top / "@/marker").write_text("the user's system")
+    (top / "@snapshots/3").mkdir()
+    (top / "@home/user").mkdir()
+    if layout1:
+        (top / "@log/journal-marker").write_text("logs")
+    shim(shims, "pacman", "printf 'base\\nvim\\n'")
+    shim(shims, "mount", "true")
+    shim(shims, "umount", "true")
+    return work, top, shims, state
+
+
+def result(r):
+    """The fields the last line of a run printed."""
+    return r.stdout.strip().splitlines()[-1].split("|")
+
+
+def refresh_aside(tmp_path, *, layout1: bool):
+    work, top, shims, state = make_top(tmp_path, layout1=layout1)
+    r = sh(f'work="{work}"; esp=/dev/null; old=""; resume=0; refresh_aside; echo "$old|$made_log|$made_pkg|$phase"',
+           path_first=shims, check=False)
+    return r, work, top, state
+
+
+def test_refresh_of_a_disk_that_is_already_layout_1_keeps_its_logs_and_package_cache(tmp_path):
+    # Every layout-1 disk has @log and @pkg; making them again failed, after the system was already moved aside.
+    r, work, top, state = refresh_aside(tmp_path, layout1=True)
+    assert r.returncode == 0, r.stderr
+    old, made_log, made_pkg, phase = result(r)
+    assert old.startswith("@.before-refresh-") and (made_log, made_pkg, phase) == ("0", "0", "aside")
+    assert (top / "@log/journal-marker").read_text() == "logs"
+    assert (top / old / "marker").read_text() == "the user's system"
+    assert (top / "@").is_dir() and not (top / "@/marker").exists()
+    assert (top / f"@snapshots.{old}/3").is_dir()
+
+
+def test_refresh_of_an_older_disk_makes_the_logs_and_package_subvolumes_and_notes_it(tmp_path):
+    r, work, top, state = refresh_aside(tmp_path, layout1=False)
+    assert r.returncode == 0, r.stderr
+    assert result(r)[1:3] == ["1", "1"]
+    assert (top / "@log").is_dir() and (top / "@pkg").is_dir()
+
+
+def test_the_old_fstab_is_pointed_at_the_new_boot_partition_and_its_old_text_is_kept_to_go_back(tmp_path):
+    r, work, top, state = refresh_aside(tmp_path, layout1=False)
+    old = result(r)[0]
+    assert "\t/efi\tvfat" in (top / old / "etc/fstab").read_text()
+    assert "\t/boot\tvfat" in (top / old / "etc/fstab.bombadil-backup").read_text()
+
+
+def test_a_refresh_that_stops_before_the_boot_files_change_puts_the_old_system_straight_back(tmp_path):
+    r, work, top, state = refresh_aside(tmp_path, layout1=False)
+    old = result(r)[0]
+    (top / "@/half-copied").write_text("x")
+    shims = tmp_path / "shims"
+    r = sh(f'work="{work}"; old="{old}"; made_log=1; made_pkg=1; refresh_restore; echo rc=$?', path_first=shims, check=False)
+    assert "rc=0" in r.stdout, r.stderr
+    assert (top / "@/marker").read_text() == "the user's system" and not (top / "@/half-copied").exists()
+    assert (top / "@snapshots/3").is_dir() and not (top / "@log").exists() and not (top / "@pkg").exists()
+    # The old fstab is as it was, so the old system starts as it always did.
+    assert "\t/boot\tvfat" in (top / "@/etc/fstab").read_text() and not (top / "@/etc/fstab.bombadil-backup").exists()
+
+
+@pytest.mark.parametrize("phase,mode,say", [
+    ("checking", "fresh", "before anything on the disk was changed"),
+    ("erased", "fresh", "after the disk was erased"),
+    ("boot", "refresh", "Run the refresh again"),
+])
+def test_what_the_installer_says_when_it_stops_is_what_happened(tmp_path, phase, mode, say):
+    shims = tmp_path / "shims"
+    shim(shims, "mountpoint", "exit 1")
+    r = sh(f'work="{tmp_path}/w"; target="{tmp_path}/t"; phase={phase}; mode={mode}; old=@.before-refresh-1; '
+           'set +e; (exit 1); cleanup', path_first=shims, check=False)
+    assert r.returncode == 1 and say in r.stdout
+
+
+def test_a_refresh_that_put_everything_back_says_so(tmp_path):
+    r, work, top, state = refresh_aside(tmp_path, layout1=False)
+    old = result(r)[0]
+    shims = tmp_path / "shims"
+    shim(shims, "mountpoint", '[[ "$2" == "' + str(work / "top") + '" ]]')
+    r = sh(f'work="{work}"; target="{tmp_path}/t"; phase=aside; mode=refresh; old="{old}"; made_log=1; made_pkg=1; '
+           'set +e; (exit 1); cleanup', path_first=shims, check=False)
+    assert "put everything back" in r.stdout and (top / "@/marker").exists()
+
+
+# -- the subvolumes inside the home folder --------------------------------------------------------------------
+
+def home_fixture(tmp_path):
+    shims = tmp_path / "shims"
+    btrfs_shim(shims)
+    target = tmp_path / "target"
+    (target / "home/user").mkdir(parents=True)
+    return shims, None, target
+
+
+def make_sub(shims, target, rel, check=True):
+    return sh(f'target="{target}"; make_subvolume "{target}/home/user/{rel}"', path_first=shims, check=check)
+
+
+def test_a_folder_with_files_becomes_a_subvolume_with_the_same_files_and_no_leftover(tmp_path):
+    shims, state, target = home_fixture(tmp_path)
+    d = target / "home/user/Projects"
+    (d / "demo").mkdir(parents=True)
+    (d / "demo/main.py").write_text("code")
+    d.chmod(0o750)
+    make_sub(shims, target, "Projects")
+    assert (d / "demo/main.py").read_text() == "code" and (d / ".subvolume").exists()
+    assert stat.S_IMODE(d.stat().st_mode) == 0o750
+    assert not (target / "home/user/Projects.bombadil-old").exists() and not (target / "home/user/Projects.bombadil-new").exists()
+    # Run again: nothing changes.
+    make_sub(shims, target, "Projects")
+    assert (d / "demo/main.py").read_text() == "code"
+
+
+def test_a_folder_the_install_did_not_finish_converting_is_not_lost_or_orphaned(tmp_path):
+    shims, state, target = home_fixture(tmp_path)
+    home = target / "home/user"
+    # Stopped between the two renames: the files are in the .bombadil-old folder and the folder is missing.
+    (home / ".claude.bombadil-old").mkdir()
+    (home / ".claude.bombadil-old/credentials.json").write_text("login")
+    make_sub(shims, target, ".claude")
+    assert (home / ".claude/credentials.json").read_text() == "login"
+    assert not (home / ".claude.bombadil-old").exists()
+
+
+def test_an_old_copy_beside_a_folder_that_has_files_stops_the_install_instead_of_hiding_either(tmp_path):
+    shims, state, target = home_fixture(tmp_path)
+    home = target / "home/user"
+    (home / "Projects").mkdir()
+    (home / "Projects/a.txt").write_text("a")
+    (home / "Projects.bombadil-old").mkdir()
+    (home / "Projects.bombadil-old/b.txt").write_text("b")
+    r = make_sub(shims, target, "Projects", check=False)
+    assert r.returncode != 0 and "left from an earlier try" in r.stderr
+    assert (home / "Projects/a.txt").exists() and (home / "Projects.bombadil-old/b.txt").exists()
+
+
+def test_a_new_folder_is_made_as_a_subvolume_owned_by_the_account_and_private_where_it_holds_a_sign_in(tmp_path):
+    shims, state, target = home_fixture(tmp_path)
+    make_sub(shims, target, ".claude")
+    make_sub(shims, target, ".local/share/bombadil/browser")
+    make_sub(shims, target, ".cache")
+    home = target / "home/user"
+    assert stat.S_IMODE((home / ".claude").stat().st_mode) == 0o700
+    assert stat.S_IMODE((home / ".local/share/bombadil/browser").stat().st_mode) == 0o700
+    assert stat.S_IMODE((home / ".cache").stat().st_mode) == 0o755
+    assert (home / ".claude").stat().st_uid == (home).stat().st_uid
+
+
+def test_a_link_is_left_alone(tmp_path):
+    shims, state, target = home_fixture(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (target / "home/user/Projects").symlink_to(elsewhere)
+    make_sub(shims, target, "Projects")
+    assert (target / "home/user/Projects").is_symlink()
+
+
+# -- the account -------------------------------------------------------------------------------------------------
+
+def configure_run(tmp_path, *, mode, password="", old_hash=""):
+    target = tmp_path / "target"
+    (target / "etc/mkinitcpio.conf.d").mkdir(parents=True)
+    (target / "etc/mkinitcpio.d").mkdir()
+    log = tmp_path / "chroot.log"
+    shims = tmp_path / "shims"
+    shim(shims, "blkid", 'echo UUID-X')
+    shim(shims, "arch-chroot", f'echo "CHROOT $*" >>"{log}"\ncat >>"{log}"')
+    pw = password.replace("'", "'\\''")
+    sh(f"""target="{target}"; mode={mode}; encrypt=no; root_dev=/dev/x; esp=/dev/y; P_HOSTNAME=""; P_TIMEZONE=UTC; P_KEYMAP=""
+        password='{pw}'; old_hash='{old_hash}'; configure""", path_first=shims)
+    return log.read_text()
+
+
+def test_the_password_goes_to_the_account_on_standard_input_and_never_on_a_command_line(tmp_path):
+    log = configure_run(tmp_path, mode="fresh", password="it's a $ecret: with spaces")
+    assert "user:it's a $ecret: with spaces" in log
+    chroot_lines = [ln for ln in log.splitlines() if ln.startswith("CHROOT")]
+    assert not any("ecret" in ln for ln in chroot_lines)
+    assert any(ln.endswith("chpasswd") for ln in chroot_lines)
+
+
+def test_a_refresh_keeps_the_account_its_old_password_even_when_a_password_was_given_to_open_the_disk(tmp_path):
+    log = configure_run(tmp_path, mode="refresh", password="the disk password", old_hash="$6$salt$hash")
+    assert "user:$6$salt$hash" in log and "chpasswd -e" in log and "the disk password" not in log
+
+
+def test_no_password_leaves_the_account_without_one(tmp_path):
+    log = configure_run(tmp_path, mode="fresh", password="")
+    assert "passwd -d user" in log
+
+
+# -- what is refused before anything is touched -------------------------------------------------------------------
+
+def probe_fixture(tmp_path, *, efi=True, size=40 << 30, types="", mounts="", stick="", tools=None):
+    shims = tmp_path / "shims"
+    for t in (tools if tools is not None else ["sgdisk", "wipefs", "mkfs.fat", "mkfs.btrfs", "btrfs", "blkid", "partprobe",
+                                               "arch-chroot", "snapper", "grub-install", "cryptsetup", "systemd-cryptenroll"]):
+        shim(shims, t, "true")
+    shim(shims, "blockdev", f"echo {size}")
+    shim(shims, "lsblk", f"""case "$*" in
+  *FSTYPE*) printf '%s\\n' {types or "''"} ;; *TYPE*) echo disk ;; *MOUNTPOINTS*) echo '{mounts}' ;; *TRAN*) echo sata ;; *) echo ;;
+esac""")
+    shim(shims, "mountpoint", "exit 1")
+    efi_dir = tmp_path / "efi"
+    if efi:
+        efi_dir.mkdir(exist_ok=True)
+    return shims, {"BOMBADIL_EFI_SYSFS": str(efi_dir), "BOMBADIL_MODULES": str(tmp_path / "modules")}, stick
+
+
+def run_probe(tmp_path, **kw):
+    shims, env, stick = probe_fixture(tmp_path, **kw)
+    (tmp_path / "modules/6.1.0").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "modules/6.1.0/vmlinuz").write_text("k")
+    body = f'is_block() {{ true; }}; stick_disk() {{ echo "{stick}"; }}; disk=/dev/vda; mode=fresh; encrypt=no; P_KIND=""; probe; echo "kernel=$kernel"'
+    return sh(body, env=env, path_first=shims, check=False)
+
+
+def test_a_disk_that_passes_every_check_is_let_through(tmp_path):
+    r = run_probe(tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert "kernel=" in r.stdout and r.stdout.strip().endswith("vmlinuz")
+
+
+@pytest.mark.parametrize("kw,message", [
+    ({"efi": False}, "did not start in UEFI mode"),
+    ({"stick": "/dev/vda"}, "is the USB stick Bombadil started from"),
+    ({"size": 8 << 30}, "smaller than 16 GB"),
+    ({"types": "iso9660"}, "holds a Bombadil install image"),
+    ({"mounts": "/mnt/data"}, "is in use"),
+    ({"tools": ["sgdisk"]}, "is missing from this system"),
+])
+def test_a_disk_that_should_not_be_written_is_refused_with_the_reason(tmp_path, kw, message):
+    r = run_probe(tmp_path, **kw)
+    assert r.returncode != 0 and message in r.stderr
+
+
+def test_the_stick_is_refused_for_what_it_is_not_for_its_size(tmp_path):
+    # An 8 GB stick is also too small; the message that matters is the one about the stick.
+    r = run_probe(tmp_path, stick="/dev/vda", size=8 << 30)
+    assert "USB stick Bombadil started from" in r.stderr
+
+
+def test_a_key_file_and_a_recovery_key_are_needed_only_when_the_disk_is_encrypted(tmp_path):
+    shims, env, _ = probe_fixture(tmp_path, tools=["sgdisk", "wipefs", "mkfs.fat", "mkfs.btrfs", "btrfs", "blkid", "partprobe",
+                                                   "arch-chroot", "snapper", "grub-install"])
+    (tmp_path / "modules/6.1.0").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "modules/6.1.0/vmlinuz").write_text("k")
+    body = 'is_block() { true; }; stick_disk() { :; }; disk=/dev/vda; mode=fresh; P_KIND=""; encrypt=%s; probe'
+    assert sh(body % "no", env=env, path_first=shims, check=False).returncode == 0
+    r = sh(body % "yes", env=env, path_first=shims, check=False)
+    assert r.returncode != 0 and "cryptsetup is missing" in r.stderr
+
+
+def test_a_password_longer_than_grub_can_take_is_refused():
+    r = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%0300d\\n" 7)', check=False)
+    assert r.returncode != 0 and "longer than 255" in r.stderr
+
+
+def test_the_preset_does_not_name_a_config_so_the_drop_in_with_the_hooks_is_read(tmp_path):
+    target = tmp_path / "target"
+    (target / "etc/mkinitcpio.conf.d").mkdir(parents=True)
+    (target / "etc/mkinitcpio.d").mkdir()
+    sh(f'target="{target}"; encrypt=no; write_initramfs_config')
+    preset = (target / "etc/mkinitcpio.d/linux.preset").read_text()
+    # mkinitcpio -c (which a preset's ALL_config makes it do) skips /etc/mkinitcpio.conf.d.
+    assert not [ln for ln in preset.splitlines() if ln.startswith("ALL_config")]
+    assert "PRESETS=('default' 'fallback')" in preset
+
+
+# -- programs installed on the stick ---------------------------------------------------------------------------------
+
+def test_programs_installed_on_the_stick_come_along_from_the_stick_own_package_files(tmp_path):
+    target = tmp_path / "target"
+    (target / "var/cache/pacman/pkg").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    for f in ("spotify-2-1-x86_64.pkg.tar.zst", "spotify-2-1-x86_64.pkg.tar.zst.sig", "libfoo-3-2-x86_64.pkg.tar.zst"):
+        (cache / f).write_text("pkg")
+    log = tmp_path / "log"
+    shims = tmp_path / "shims"
+    shim(shims, "pacman", """if [[ "$1" == --dbpath ]]; then printf 'base 1-1\\nvim 9-1\\nlibfoo 3-1\\n'
+else printf 'base 1-1\\nvim 9-1\\nspotify 2-1\\nlibfoo 3-2\\nmissing 1-1\\n'; fi""")
+    shim(shims, "arch-chroot", f'echo "CHROOT $*" >>"{log}"')
+    r = sh(f'target="{target}"; image=/run/img; record() {{ echo RECORD >>"{log}"; }}; snapshot() {{ echo "SNAP $1" >>"{log}"; }}; '
+           'replay_stick_packages; echo "brought=${stick_brought[*]}"',
+           env={"BOMBADIL_STICK_CACHE": str(cache)}, path_first=shims)
+    assert "brought=libfoo spotify" in r.stdout
+    assert "missing 1-1 came from the stick but its package file is gone" in r.stderr + r.stdout
+    text = log.read_text()
+    assert "pacman -U --noconfirm --needed /var/cache/pacman/pkg/libfoo-3-2-x86_64.pkg.tar.zst /var/cache/pacman/pkg/spotify-2-1-x86_64.pkg.tar.zst" in text
+    assert "SNAP Brought from the USB stick: libfoo, spotify" in text
+    assert (target / "var/cache/pacman/pkg/spotify-2-1-x86_64.pkg.tar.zst.sig").exists()
+
+
+def test_nothing_is_brought_when_the_stick_has_what_the_image_has(tmp_path):
+    shims = tmp_path / "shims"
+    shim(shims, "pacman", "printf 'base 1-1\\n'")
+    shim(shims, "arch-chroot", "exit 9")
+    r = sh(f'target="{tmp_path}"; image=/run/img; replay_stick_packages; echo "brought=${{stick_brought[*]:-}}"',
+           env={"BOMBADIL_STICK_CACHE": str(tmp_path)}, path_first=shims)
+    assert r.stdout.strip().endswith("brought=")
+
+
+# -- the VM test scripts ---------------------------------------------------------------------------------------------
+
+def test_the_vm_test_reads_serial_lines_that_end_in_a_carriage_return():
+    # A serial console ends its lines with CR LF; a pattern anchored with a bare $ never matches them.
+    text = (ROOT / "scripts/test-vm.sh").read_text()
+    anchored = [ln for ln in text.splitlines() if "BOMBADIL-SMOKE: PASS" in ln and '$"' in ln]
+    assert anchored, "the test no longer checks that the installs passed"
+    assert all("[[:space:]]*$" in ln for ln in anchored), anchored
+
+
+def test_the_installed_systems_own_restart_is_answered_at_grub_every_time_it_asks():
+    text = (ROOT / "scripts/test-vm.sh").read_text()
+    assert "seen > typed" in text  # not once per boot() call: the undo test restarts the machine by itself
+
+
+def test_the_smoke_test_recognises_the_stick_refusal_by_its_own_words_not_by_a_phrase_other_messages_share():
+    text = (ROOT / "iso/airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert "is the USB stick Bombadil started from" in text
+    installer = INSTALL.read_text()
+    assert "is the USB stick Bombadil started from" in installer

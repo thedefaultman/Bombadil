@@ -14,9 +14,12 @@ CARRY = [".claude", ".claude.json", ".codex", ".config/bombadil", ".local/state/
 @pytest.fixture
 def zones(tmp_path):
     z = tmp_path / "zoneinfo"
+    (z / "leapseconds").parent.mkdir(parents=True, exist_ok=True)
+    (z / "leapseconds").write_text("# Leap seconds")
+    (z / "dangling").symlink_to(z / "nothing")
     for name in ("UTC", "Europe/Lisbon", "America/Vancouver"):
         (z / name).parent.mkdir(parents=True, exist_ok=True)
-        (z / name).write_text("tz")
+        (z / name).write_bytes(b"TZif2" + b"\0" * 40)
     return z
 
 
@@ -34,8 +37,16 @@ def test_a_bare_disk_is_a_fresh_install_with_everything_carried_and_no_zone_chos
 def test_the_command_line_disk_and_mode_fill_what_the_plan_leaves_out(zones):
     p = validate({}, carry_list=CARRY, zoneinfo=zones, disk="/dev/nvme0n1", mode="refresh")
     assert (p["disk"], p["mode"]) == ("/dev/nvme0n1", "refresh")
-    p = validate({"disk": "/dev/vda", "mode": "fresh"}, carry_list=CARRY, zoneinfo=zones, disk="/dev/sdb", mode="refresh")
+    p = validate({"disk": "/dev/vda", "mode": "fresh"}, carry_list=CARRY, zoneinfo=zones, disk="/dev/vda", mode="fresh")
     assert (p["disk"], p["mode"]) == ("/dev/vda", "fresh")
+
+
+def test_a_plan_that_disagrees_with_the_command_line_is_refused_not_obeyed(zones):
+    # A wipe of the plan's disk where a refresh of another was typed is the mistake this prevents.
+    with pytest.raises(PlanError, match="disk: the plan says"):
+        validate({"disk": "/dev/sda"}, carry_list=CARRY, zoneinfo=zones, disk="/dev/sdb")
+    with pytest.raises(PlanError, match="mode: the plan says"):
+        validate({"disk": "/dev/sda", "mode": "fresh"}, carry_list=CARRY, zoneinfo=zones, mode="refresh")
 
 
 def test_a_time_zone_and_where_it_came_from(zones):
@@ -48,6 +59,9 @@ def test_a_time_zone_and_where_it_came_from(zones):
 
 @pytest.mark.parametrize("fields", [
     {"timezone": "Mars/Olympus"},
+    {"timezone": "UTC/"},
+    {"timezone": "Europe"},
+    {"timezone": "leapseconds"},
     {"timezone": "../etc/passwd"},
     {"timezone": "/usr/share/zoneinfo/UTC"},
     {"timezone_source": "detected"},

@@ -64,6 +64,15 @@ def _text(plan: dict, key: str, pattern: re.Pattern, what: str) -> str | None:
     return value
 
 
+def _is_zone_file(path: Path) -> bool:
+    """A compiled time zone (TZif), not a directory, a dangling link or one of zoneinfo's index files."""
+    try:
+        with path.open("rb") as f:
+            return f.read(4) == b"TZif"
+    except OSError:
+        return False
+
+
 def validate(plan: dict, *, carry_list: list[str], zoneinfo: Path = ZONEINFO, disk: str | None = None,
              mode: str | None = None) -> dict:
     """The plan with every field checked and every default filled in. `disk` and `mode` are the
@@ -77,6 +86,12 @@ def validate(plan: dict, *, carry_list: list[str], zoneinfo: Path = ZONEINFO, di
         raise PlanError(f"unknown plan field: {', '.join(unknown)}")
 
     out: dict = {}
+    # What the plan and the command line both say must agree: a plan never quietly wins over a disk or a
+    # mode typed on the command line (a wipe where a refresh was asked for).
+    if disk is not None and plan.get("disk") not in (None, disk):
+        raise PlanError(f"disk: the plan says {plan.get('disk')!r} and the command line {disk!r}")
+    if mode is not None and plan.get("mode") not in (None, mode):
+        raise PlanError(f"mode: the plan says {plan.get('mode')!r} and the command line {mode!r}")
     out["disk"] = _text({**plan, "disk": plan.get("disk", disk)}, "disk", _DISK, "a disk under /dev")
     if not out["disk"] or ".." in out["disk"].split("/"):
         raise PlanError("disk: the plan names no disk")
@@ -94,7 +109,7 @@ def validate(plan: dict, *, carry_list: list[str], zoneinfo: Path = ZONEINFO, di
             raise PlanError(f"timezone_source {source!r} needs a timezone")
         zone, source = "UTC", "unset"
     else:
-        if ".." in zone.split("/") or not (zoneinfo / zone).is_file():
+        if any(part in ("", ".", "..") for part in zone.split("/")) or not _is_zone_file(zoneinfo / zone):
             raise PlanError(f"timezone: {zone!r} is not a time zone this system knows")
         if source in (None, "unset"):
             source = "chosen" if source is None else "unset"

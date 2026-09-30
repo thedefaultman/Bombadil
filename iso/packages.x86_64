@@ -7,6 +7,7 @@ cryptsetup
 amd-ucode
 intel-ucode
 gptfdisk
+parted
 dosfstools
 snapper
 grub

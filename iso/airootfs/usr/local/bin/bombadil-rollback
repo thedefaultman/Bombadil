@@ -22,17 +22,32 @@ top="$(mktemp -d)"
 mount -o subvolid=5 "$dev" "$top"
 trap 'umount "$top"; rmdir "$top"' EXIT
 stamp="$(date +%Y%m%d-%H%M%S)"
+INCOMPLETE=var/lib/bombadil/install-incomplete
+
+# Put $top/NEW in as $top/NAME and keep what was there as $top/ASIDE. One exchange where the system has it,
+# so there is never a moment with no NAME; with two renames, a stop between them leaves NAME missing, and
+# running this again finishes the job.
+swap_in() {  # swap_in NAME NEW ASIDE
+  local name=$1 new=$2 aside=$3
+  if [[ -e "$top/$name" ]]; then
+    if mv --exchange "$top/$new" "$top/$name" 2>/dev/null; then mv "$top/$new" "$top/$aside"; return; fi
+    mv "$top/$name" "$top/$aside"
+  fi
+  mv "$top/$new" "$top/$name"
+}
 
 if [[ "$n" == refresh ]]; then
-  old="$(find "$top" -maxdepth 1 -name '@.before-refresh-*' | sort | tail -n 1)"
+  # The newest system a refresh put aside that is whole (a refresh that stopped part way leaves a half one).
+  old=""
+  for d in "$top"/@.before-refresh-*; do
+    [[ -d "$d" && -f "$d/etc/fstab" && -d "$d/usr/lib/modules" && ! -e "$d/$INCOMPLETE" ]] && old="$d"
+  done
   [[ -n "$old" ]] || { echo "no system from before a refresh on $dev" >&2; exit 1; }
   name="${old##*/}"
   [[ -f "$old/boot/vmlinuz-linux" ]] || { echo "the system from before the refresh has no kernel to start" >&2; exit 1; }
-  mv "$top/@" "$top/@.after-refresh-$stamp"
-  mv "$old" "$top/@"
+  swap_in @ "$name" "@.after-refresh-$stamp"
   if [[ -d "$top/@snapshots.$name" ]]; then
-    mv "$top/@snapshots" "$top/@snapshots.after-refresh-$stamp"
-    mv "$top/@snapshots.$name" "$top/@snapshots"
+    swap_in @snapshots "@snapshots.$name" "@snapshots.after-refresh-$stamp"
   fi
   echo "the system from before the refresh starts next time; the refreshed one is kept as @.after-refresh-$stamp"
   exit 0
@@ -45,7 +60,8 @@ src="$top/@snapshots/$n/snapshot"
 if [[ -f "$top/@/boot/vmlinuz-linux" && ! -f "$src/boot/vmlinuz-linux" ]]; then
   echo "restore point $n has no kernel of its own and cannot start" >&2; exit 1
 fi
-aside="@.undone-$stamp"
-mv "$top/@" "$top/$aside"
-btrfs subvolume snapshot "$src" "$top/@" >/dev/null
-echo "root is snapshot $n from the next boot; the previous root is kept as $aside"
+# The snapshot is made beside @ first, so a failure leaves @ as it was.
+new="@.new-$stamp"
+btrfs subvolume snapshot "$src" "$top/$new" >/dev/null
+swap_in @ "$new" "@.undone-$stamp"
+echo "root is snapshot $n from the next boot; the previous root is kept as @.undone-$stamp"

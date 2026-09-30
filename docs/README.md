@@ -14,6 +14,7 @@ The project's documents, next to its code.
   - `voice-brief.md`: the one-time setup card, the voices and the welcome lines.
   - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
+  - `installed-os-brief.md`: Bombadil as an installed operating system: the disk layout, encryption, refresh, packages and updates. Piece 1 (the disk) is built; the rest are planned.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
   fonts without a connection. They are copies of what the pages showed on 2026-09-30.

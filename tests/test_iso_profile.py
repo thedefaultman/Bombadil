@@ -49,7 +49,7 @@ def test_the_stick_carries_everything_the_installer_calls():
     # bombadil-install checks for these tools before it touches a disk, and mkinitcpio builds the
     # initramfs that opens an encrypted one; the microcode packages are what the installed system's initramfs embeds.
     assert {"grub", "efibootmgr", "btrfs-progs", "snapper", "dosfstools", "gptfdisk", "arch-install-scripts",
-            "cryptsetup", "mkinitcpio", "amd-ucode", "intel-ucode"} <= _packages()
+            "cryptsetup", "mkinitcpio", "amd-ucode", "intel-ucode", "parted"} <= _packages()
 
 
 def test_the_installed_clock_is_kept_right_by_timesyncd():

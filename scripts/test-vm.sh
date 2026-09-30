@@ -82,7 +82,7 @@ type_keys() {
 boot() {
   local name=$1 done=$2; shift 2
   local log="$out/$name.serial.log" qmp="$out/$name.qmp.sock"
-  : > "$log"; rm -f "$qmp" "$out/$name".keys.* "$out/$name".typed "$out/$name"-*.png "$out/$name"-*.png.ppm
+  : > "$log"; rm -f "$qmp" "$out/$name".keys.* "$out/$name"-*.png "$out/$name"-*.png.ppm
   qemu-system-x86_64 "${accel[@]}" -m "${RAM:-$ram}" -smp "$(nproc)" \
     "${firmware[@]}" \
     -device virtio-vga -display none -vnc "${VNC:-127.0.0.1:99}" \
@@ -99,14 +99,18 @@ boot() {
     local keys=(); for _ in $(seq "$MENU_DOWN"); do keys+=(down); done
     python3 "$root/scripts/qmp.py" "$qmp" send-keys "${keys[@]}" ret || true
   fi
-  local start; start=$(date +%s)
+  local start typed=0; start=$(date +%s)
   while kill -0 $pid 2>/dev/null; do
     finished "$log" "$done" && break
-    if [[ "${TYPE_WHEN:-}" && ! -f "$out/$name.typed" ]] && grep -aq "$TYPE_WHEN" "$log"; then
-      touch "$out/$name.typed"
-      sleep 3  # the prompt is ready a moment after it is printed
-      # shellcheck disable=SC2046
-      python3 "$root/scripts/qmp.py" "$qmp" send-keys $(type_keys "$TYPE_TEXT") || true
+    if [[ "${TYPE_WHEN:-}" ]]; then
+      # Once for every time the prompt has shown: the installed system restarts itself once (the undo applies on boot).
+      local seen; seen=$(grep -ac "$TYPE_WHEN" "$log" || true)
+      if (( seen > typed )); then
+        typed=$seen
+        sleep 3  # the prompt is ready a moment after it is printed
+        # shellcheck disable=SC2046
+        python3 "$root/scripts/qmp.py" "$qmp" send-keys $(type_keys "$TYPE_TEXT") || true
+      fi
     fi
     # The smoke test asks for screenshots at interesting moments: "BOMBADIL-SMOKE: SHOT <name>".
     for shot in $(grep -ao "BOMBADIL-SMOKE: SHOT [a-z0-9-]*" "$log" | awk '{print $3}'); do
@@ -140,7 +144,7 @@ case "$mode" in
     need_entries "$iso" "bombadil.smoke=install"
     stick_for "$iso"
     MENU_DOWN=2 boot live-install "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
-    grep -aq "BOMBADIL-SMOKE: PASS install$" "$out/live-install.serial.log" || exit 1
+    grep -aqE "BOMBADIL-SMOKE: PASS install[[:space:]]*$" "$out/live-install.serial.log" || exit 1
     # The installed system reboots itself once (the undo applies on boot), so no -no-reboot here.
     MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
     logs=("$out/live-install.serial.log" "$out/installed.serial.log")
@@ -149,7 +153,7 @@ case "$mode" in
     need_entries "$iso" "bombadil.smoke=install-encrypted"
     stick_for "$iso"
     MENU_DOWN=3 boot live-install "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
-    grep -aq "BOMBADIL-SMOKE: PASS install-encrypted$" "$out/live-install.serial.log" || exit 1
+    grep -aqE "BOMBADIL-SMOKE: PASS install-encrypted[[:space:]]*$" "$out/live-install.serial.log" || exit 1
     # GRUB asks for the password; typed there, nothing after it may ask again (no key is typed to the initramfs).
     KEYBOARD=(-device qemu-xhci -device usb-kbd)
     TYPE_WHEN="Enter passphrase" TYPE_TEXT="correct-horse-battery-staple" \
@@ -163,19 +167,20 @@ case "$mode" in
     need_entries "$old_iso" "bombadil.smoke=install"
     need_entries "$iso" "bombadil.smoke=refresh"
     # 1. The disk as an older Bombadil installed it.
-    stick_for "$old_iso"
-    MENU_DOWN=2 boot old-install "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
-    grep -aq "BOMBADIL-SMOKE: PASS install$" "$out/old-install.serial.log" || { echo "the old ISO did not install"; exit 1; }
+    # The old installer takes its kernel from the stick's own mount, which copy-to-RAM removes, so it is given a CD.
+    MENU_DOWN=2 RAM=4G boot old-install "BOMBADIL-SMOKE: DONE" -cdrom "$old_iso" -drive file="$disk",if=virtio,format=qcow2 -boot d -no-reboot
+    grep -aqE "BOMBADIL-SMOKE: PASS install[[:space:]]*$" "$out/old-install.serial.log" || { echo "the old ISO did not install"; exit 1; }
     # 2. This ISO refreshes it, keeping the home folder.
     stick_for "$iso"
     MENU_DOWN=4 boot refresh "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
-    grep -aq "BOMBADIL-SMOKE: PASS refresh-runs$" "$out/refresh.serial.log" || exit 1
+    grep -aqE "BOMBADIL-SMOKE: PASS refresh-runs[[:space:]]*$" "$out/refresh.serial.log" || exit 1
     # 3. The refreshed system starts, and puts the old system back: it then starts from the same GRUB.
     MENU_DOWN="" STOP=1 PCRE=1 boot refreshed "(?s)BOMBADIL-SMOKE: REBOOT.*BOMBADIL-SMOKE: PASS hyprland-running" \
       -drive file="$disk",if=virtio,format=qcow2
     logs=("$out/old-install.serial.log" "$out/refresh.serial.log" "$out/refreshed.serial.log")
     ;;
   live)
+    need_entries "$iso" "console=ttyS0,115200 bombadil.smoke"
     MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -boot d -no-reboot
     logs=("$out/live.serial.log")
     ;;
