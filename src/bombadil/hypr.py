@@ -23,17 +23,19 @@ PANELS: dict[str, list[str]] = {
 
 
 # A generated app opens as a card this big (hyprland.lua's bombadil-apps rule), centered, and the next
-# one a step down and to the right, so a second never hides the first.
+# one a step down and to the right, so a second never hides the first. The step shows the covered
+# card's heading (its title sits about 30 px below the top edge, so 32 px cut it through).
 APP_CARD = (540, 660)
-APP_STEP = 32
+APP_STEP = 48
 APP_SLOTS = 3
 _APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 
 def app_slots(monitor: dict, card: tuple[int, int] = APP_CARD) -> list[tuple[int, int]]:
     """Where an app card can open on this monitor, in its coordinates: centered in the room the
-    bar leaves, then down and right by a step each. The steps shrink to what the room allows, so
-    the last slot's bottom edge is still above the bar; a card as tall as the room has one slot."""
+    bar leaves, then down and right by a step each. On a short screen the first slot moves up and
+    left of center until the steps fit, and only then do they shrink, so the last slot's bottom
+    edge is still above the bar; a card as tall as the room has one slot."""
     scale = float(monitor.get("scale") or 1)
     w, h = float(monitor["width"]) / scale, float(monitor["height"]) / scale
     if int(monitor.get("transform") or 0) % 2:
@@ -42,8 +44,10 @@ def app_slots(monitor: dict, card: tuple[int, int] = APP_CARD) -> list[tuple[int
     x0 = left + max(0.0, (w - left - right - card[0]) / 2)
     y0 = top + max(0.0, (h - top - bottom - card[1]) / 2)
     room = max(0.0, (h - top - bottom - card[1]) / 2)   # what is left below the centered card
-    step = min(APP_STEP, room / (APP_SLOTS - 1))
-    return [(round(x0 + step * k), round(y0 + step * k)) for k in range(APP_SLOTS)]
+    back = min(room, max(0.0, (APP_SLOTS - 1) * APP_STEP - room))   # how far above center the cascade starts
+    step = min(APP_STEP, (room + back) / (APP_SLOTS - 1))
+    bx = min(back, x0 - left)
+    return [(round(x0 - bx + step * k), round(y0 - back + step * k)) for k in range(APP_SLOTS)]
 
 
 def _socket_path() -> Path | None:

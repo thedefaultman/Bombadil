@@ -11,14 +11,26 @@ def _monitor(w=1600, h=900, reserved=(0, 0, 0, 64), scale=1, x=0, y=0, transform
 
 
 def test_app_slots_start_centered_above_the_bar_and_step_down_and_right():
-    assert hypr.app_slots(_monitor()) == [(530, 88), (562, 120), (594, 152)]
+    assert hypr.app_slots(_monitor(1920, 1080)) == [(690, 178), (738, 226), (786, 274)]
+
+
+def test_the_step_shows_the_heading_of_the_card_it_covers():
+    # A card's title sits about 30 px under its top edge; the next card's edge must pass below it.
+    steps = {b[1] - a[1] for slots in (hypr.app_slots(_monitor(1920, 1080)), hypr.app_slots(_monitor()))
+             for a, b in zip(slots, slots[1:])}
+    assert min(steps) >= 44
+
+
+def test_a_short_screen_starts_the_cascade_above_center_before_the_steps_shrink():
+    slots = hypr.app_slots(_monitor())   # 1600x900: 88 px of room, a full cascade needs 96
+    assert slots == [(522, 80), (570, 128), (618, 176)]
+    assert slots[-1][1] + 660 == 900 - 64
 
 
 def test_the_steps_shrink_so_the_last_card_stays_above_the_bar():
     slots = hypr.app_slots(_monitor(1280, 800))
-    room = 800 - 64 - 660
-    assert slots[0] == (370, 38)
-    assert slots[-1][1] + 660 <= 800 - 64 and slots[-1][1] - slots[0][1] <= room / 2
+    assert slots[0] == (332, 0)
+    assert slots[-1][1] + 660 <= 800 - 64
     assert slots[0] != slots[1] != slots[2]
 
 
@@ -38,7 +50,7 @@ class Ipc(hypr.Hyprland):
 
     def __init__(self, clients=(), monitors=None, reply="ok"):
         self._clients = list(clients)
-        self._monitors = monitors if monitors is not None else [_monitor()]
+        self._monitors = monitors if monitors is not None else [_monitor(1920, 1080)]
         self.reply = reply
         self.sent = []
 
@@ -61,39 +73,39 @@ def _rule(h):
 
 def test_the_first_app_opens_centered_through_a_rule_named_for_it():
     h = Ipc()
-    assert h.place_app("passwords") == "passwords opens at 530,88"
+    assert h.place_app("passwords") == "passwords opens at 690,178"
     assert _rule(h) == ['eval hl.window_rule({ name = "bombadil-app-passwords", '
-                        'match = { class = "^(bombadil-app-passwords)$" }, move = { 530, 88 } })']
+                        'match = { class = "^(bombadil-app-passwords)$" }, move = { 690, 178 } })']
 
 
 def test_the_next_app_takes_the_next_free_slot():
-    h = Ipc(clients=[_card((530, 88))])
-    assert h.place_app("memory-viewer") == "memory-viewer opens at 562,120"
-    h = Ipc(clients=[_card((530, 88)), _card((562, 120), "memory-viewer")])
-    assert h.place_app("smoke-test") == "smoke-test opens at 594,152"
+    h = Ipc(clients=[_card((690, 178))])
+    assert h.place_app("memory-viewer") == "memory-viewer opens at 738,226"
+    h = Ipc(clients=[_card((690, 178)), _card((738, 226), "memory-viewer")])
+    assert h.place_app("smoke-test") == "smoke-test opens at 786,274"
 
 
 def test_a_slot_freed_by_closing_an_app_is_used_again():
-    h = Ipc(clients=[_card((562, 120), "memory-viewer")])
-    assert h.place_app("notes") == "notes opens at 530,88"
+    h = Ipc(clients=[_card((738, 226), "memory-viewer")])
+    assert h.place_app("notes") == "notes opens at 690,178"
 
 
 def test_with_every_slot_taken_it_cycles_by_count():
-    slots = hypr.app_slots(_monitor())
+    slots = hypr.app_slots(_monitor(1920, 1080))
     h = Ipc(clients=[_card(s, f"a{i}") for i, s in enumerate(slots)] + [_card((1, 1), "a9")])
     assert h.place_app("new") == f"new opens at {slots[4 % 3][0]},{slots[4 % 3][1]}"
 
 
 def test_other_windows_and_tiled_apps_do_not_take_a_slot():
-    h = Ipc(clients=[{"class": "foot", "floating": True, "at": [530, 88]}, _card((530, 88), floating=False)])
-    assert h.place_app("passwords") == "passwords opens at 530,88"
+    h = Ipc(clients=[{"class": "foot", "floating": True, "at": [690, 178]}, _card((690, 178), floating=False)])
+    assert h.place_app("passwords") == "passwords opens at 690,178"
 
 
 def test_slots_are_in_the_focused_monitors_own_coordinates():
-    second = _monitor(x=1600)
-    first = {**_monitor(), "focused": False}
-    h = Ipc(clients=[_card((1600 + 530, 88))], monitors=[first, second])
-    assert h.place_app("notes") == "notes opens at 562,120"
+    second = _monitor(1920, 1080, x=1920)
+    first = {**_monitor(1920, 1080), "focused": False}
+    h = Ipc(clients=[_card((1920 + 690, 178))], monitors=[first, second])
+    assert h.place_app("notes") == "notes opens at 738,226"
 
 
 def test_it_never_raises_and_says_why_it_did_not_pick():
