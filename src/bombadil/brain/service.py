@@ -756,7 +756,7 @@ class Brain:
                 elif op != "pong":
                     if not batch:
                         began = self.loop.time()
-                    batch.append(ev)
+                    batch.extend(_unbatch(ev))
                     self._saw_at = self.loop.time()
             if len(buf) > LINE_LIMIT:
                 log("the watcher sent a line too long to be one; skipping it")
@@ -1199,6 +1199,19 @@ class Brain:
             return focus.title_of(self.store, thing), thing["id"]
         text = str(ref)
         return (os.path.basename(text.rstrip("/")) or text) if text.startswith("/") else text, None
+
+
+def _unbatch(ev: dict) -> list[dict]:
+    """The events in a watcher line. A batch is several events by one writer, which the watcher
+    names once ({"op":"batch", pid, uid, comm, cgroup, chain, gone, "events":[...]}); each comes
+    out as the ordinary event it stands for, in order, so a transaction counts events, not lines."""
+    if ev.get("op") != "batch":
+        return [ev]
+    events = ev.get("events")
+    if not isinstance(events, list):
+        return []
+    who = {k: v for k, v in ev.items() if k not in ("op", "events")}
+    return [{**who, **e} for e in events if isinstance(e, dict)]
 
 
 def _event(raw: bytes) -> dict | None:

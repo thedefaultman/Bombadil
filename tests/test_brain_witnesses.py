@@ -60,6 +60,22 @@ def test_turns_legacy_rows_are_numbered_in_order_and_launcher_rows_skipped(home,
     assert ing.store.turn(8)["prompt"] == "no number"
 
 
+def test_turns_rows_of_other_kinds_are_not_turns(home, ing):
+    # The self-improvement loop writes "improve" rows into the same log; none of them is a turn,
+    # whatever number it carries, and they do not move the count of the turns around them.
+    log = home / "state" / "turns.jsonl"
+    _write(log, [{"t": NOW - 500, "prompt": "install the VPN"},
+                 {"t": NOW - 400, "kind": "improve", "what": "saw 'install' three times"},
+                 {"t": NOW - 300, "kind": "improve", "n": 40, "prompt": "made a widget"},
+                 {"t": NOW - 200, "prompt": "fix the race"},
+                 {"t": NOW - 100, "kind": "next-thing-we-add", "prompt": "unknown kind"},
+                 {"t": NOW - 50, "n": 3, "prompt": "numbered"}])
+    assert TurnsLog(ing).read_new() == 3
+    assert [ing.store.turn(n)["prompt"] for n in (1, 2, 3)] == ["install the VPN", "fix the race", "numbered"]
+    assert ing.store.turn(4) is None and ing.store.turn(40) is None
+    assert ing.store.get_meta("turns.legacy") == "3"
+
+
 def test_turns_half_written_line_waits_and_bad_rows_are_skipped(home, ing):
     log = home / "state" / "turns.jsonl"
     log.write_text('{"t": 1, "n": 1, "prompt": "one"}\nnot json\n[1, 2]\n'

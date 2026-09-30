@@ -51,6 +51,23 @@ that, and maps paths back through `/proc/self/mountinfo` (`/run/bombadil-brain/t
 is `/home/user/a`). Checked on Arch's own kernel under QEMU with the installer's layout,
 including a nested subvolume (`tests/vm/btrfs-kernel.sh`).
 
+## What the watcher sends
+
+One JSON line per event: `op` (create, write, delete, rename, offline), `t`, `path`, `old`
+(renames), `dir`, `ino`, `size`, then the writer: `pid`, `uid`, `comm`, `cgroup`, `chain` (the
+writer and its ancestors as `[pid, comm, command line]`) and `gone`. The chain is most of the
+bytes, and a build writes 20,000 files, so events by one writer in a row (within one read of the
+kernel's queue, at most 1,000 or about 190 KB) go as one line that names the writer once:
+
+```
+{"op":"batch","pid":..,"uid":..,"comm":..,"cgroup":..,"chain":[..],"gone":..,"events":[{"op":"write","t":..,"path":..,...}, ...]}
+```
+
+The brain unpacks it into the events it stands for, in order (`service._unbatch`); a run of
+one is an ordinary line. Every line stands alone, so a spool, a late reader and a reconnect
+need nothing from the lines before. A user's line holds only the events under their home and
+`/etc`. 20,000 files written by one process (a create and a write each) is about 3 MB of lines rather than 52.
+
 ## What gets in, and what stays out
 
 What a person would call a thing: files and folders under home, projects, apps, pages you

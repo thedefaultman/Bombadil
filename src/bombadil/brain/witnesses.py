@@ -204,8 +204,8 @@ class TurnsLog:
                 with store.tx():
                     for line in chunk:
                         row = _json(line)
-                        if row is None or row.get("kind") == "local":
-                            continue   # not a row (a torn write), or a launcher action rather than a turn
+                        if not paths.is_turn_row(row):
+                            continue   # not a row (a torn write), or a launcher action, an "improve" row...
                         if row.get("n") is None:
                             # Written before rows had numbers: the turns are counted in order.
                             count += 1

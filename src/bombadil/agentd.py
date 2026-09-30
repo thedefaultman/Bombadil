@@ -701,7 +701,7 @@ def _turn_number(value) -> int | None:
 
 def _last_turn(log: Path) -> int:
     """The number of the last turn in turns.jsonl. Rows from before turns had numbers count
-    in order, as the brain counts them; launcher actions are not turns."""
+    in order, as the brain counts them; launcher actions and other kinds of row are not turns."""
     count = 0
     try:
         with log.open("rb") as f:
@@ -714,7 +714,7 @@ def _last_turn(log: Path) -> int:
                         # when it started, so its number is never used again.
                         count += 1
                     continue
-                if not isinstance(row, dict) or row.get("kind") == "local":
+                if not paths.is_turn_row(row):
                     continue
                 if row.get("n") is None:
                     count += 1

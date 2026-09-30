@@ -15,6 +15,7 @@ import pytest
 
 from bombadil.brain import fanotify as fan
 from bombadil.brain import forks
+from bombadil.brain import service
 from bombadil.brain import watch as W
 
 TOP = "/run/bombadil-brain/top"
@@ -487,11 +488,21 @@ class FakeResolver:
 
 
 class Capture:
+    """The hub, for a watcher under test: `sent` is the events the brain would read (batches
+    unpacked the way it unpacks them), `lines` the lines as they went out."""
+
     def __init__(self):
         self.sent = []
+        self.lines = []
 
     def deliver(self, line, paths):
         self.sent.append(json.loads(line))
+
+    def deliver_run(self, who, run):
+        heads = [head for head, _paths in run]
+        line = W.batch_line(who, heads) if len(heads) > 1 else ("{" + heads[0] + "," + who + "}\n").encode()
+        self.lines.append(line)
+        self.sent.extend(service._unbatch(json.loads(line)))
 
     def broadcast(self, line):
         self.sent.append(json.loads(line))
@@ -578,6 +589,131 @@ def test_event_fds_are_closed_even_when_dropped(tmp_path):
             os.fstat(fd)
 
 
+# --- writers in a row share one line ---
+
+CHAIN = [[100 + i, "sh", "sh -c " + "x" * 90] for i in range(W.CHAIN_MAX)]
+
+
+def _long_who(w) -> str:
+    """A writer with ten ancestors, each a command line: the who-block that used to repeat on every line."""
+    who = W._members({"pid": 4321, "uid": 1000, "comm": "make", "cgroup": "/user.slice/x.scope", "chain": CHAIN,
+                      "gone": False})
+    w.attr.who_json = lambda pid, pidfd, now=None: who
+    return who
+
+
+def test_events_by_one_writer_in_a_row_go_out_as_one_line(tmp_path):
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    _long_who(w)
+    w.handle([fev(fan.FAN_CLOSE_WRITE, b"a"), fev(fan.FAN_CLOSE_WRITE, b"b"), fev(fan.FAN_CLOSE_WRITE, b"c")], 1.0)
+    assert len(cap.lines) == 1
+    line = json.loads(cap.lines[0])
+    assert line["op"] == "batch" and line["chain"] == CHAIN and line["uid"] == 1000
+    assert [e["path"] for e in line["events"]] == ["/home/user/a", "/home/user/b", "/home/user/c"]
+    assert all("chain" not in e and "pid" not in e for e in line["events"])
+    # What the brain reads is each event with the writer, as before.
+    assert [(e["op"], e["path"], e["pid"], e["chain"]) for e in cap.sent] == [
+        ("write", f"/home/user/{n}", 4321, CHAIN) for n in "abc"]
+
+
+def test_one_event_is_an_ordinary_line_and_a_new_writer_starts_a_new_line_in_order(tmp_path):
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    w.attr.who_json = lambda pid, pidfd, now=None: W._members({"pid": pid, "uid": 1000, "comm": "c", "cgroup": "",
+                                                                   "chain": [], "gone": False})
+    w.handle([fev(fan.FAN_CLOSE_WRITE, b"1", pid=10), fev(fan.FAN_CLOSE_WRITE, b"2", pid=10),
+              fev(fan.FAN_CLOSE_WRITE, b"3", pid=20), fev(fan.FAN_CLOSE_WRITE, b"4", pid=10)], 1.0)
+    assert [json.loads(x)["op"] for x in cap.lines] == ["batch", "write", "write"]   # 1+2, 3, 4
+    # The order of events across writers is the order they happened in.
+    assert [(e["path"], e["pid"]) for e in cap.sent] == [("/home/user/1", 10), ("/home/user/2", 10),
+                                                         ("/home/user/3", 20), ("/home/user/4", 10)]
+
+
+def test_a_run_is_cut_at_the_event_limit_and_at_the_byte_limit(tmp_path, monkeypatch):
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    _long_who(w)
+    monkeypatch.setattr(W, "RUN_EVENTS", 4)
+    w.handle([fev(fan.FAN_CLOSE_WRITE, f"f{i}".encode()) for i in range(10)], 1.0)
+    assert [len(json.loads(x)["events"]) for x in cap.lines] == [4, 4, 2]
+    assert [e["path"] for e in cap.sent] == [f"/home/user/f{i}" for i in range(10)]
+    cap.lines.clear()
+    monkeypatch.setattr(W, "RUN_EVENTS", 1000)
+    monkeypatch.setattr(W, "RUN_BYTES", 300)
+    w.handle([fev(fan.FAN_CLOSE_WRITE, f"g{i}".encode()) for i in range(10)], 1.0)
+    assert len(cap.lines) > 1 and all(len(x) < 1000 + 600 for x in cap.lines[:-1])
+
+
+def test_a_20000_file_write_fits_the_clients_buffer(tmp_path):
+    """One process writing 20,000 files was 56 MB of lines (its ten ancestors' command lines on
+    each), more than a client's buffer and most of the spool; now the ancestors go once per read."""
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    who = _long_who(w)
+    flat = 0
+    for start in range(0, 20000, 700):       # about what one read of the kernel's queue holds
+        w.handle([fev(fan.FAN_CREATE | fan.FAN_CLOSE_WRITE, f"file-{i}.o".encode())
+                  for i in range(start, min(start + 700, 20000))], 1.0)
+    for e in cap.sent:
+        flat += len(W.event_line({k: v for k, v in e.items() if k in ("op", "t", "path", "dir", "ino", "size")}, who))
+    sent = sum(len(x) for x in cap.lines)
+    assert len(cap.sent) == 40000 and flat > 40 << 20
+    assert sent < W.CLIENT_CAP and sent * 8 < flat
+
+
+def test_overflow_and_caught_up_come_after_the_events_before_them(tmp_path):
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    w.handle([fev(fan.FAN_CLOSE_WRITE, b"a"), fev(fan.FAN_CLOSE_WRITE, b"b"),
+              fan.Event(mask=fan.FAN_Q_OVERFLOW, pid=0), fev(fan.FAN_CLOSE_WRITE, b"c")], 1.0)
+    assert [e["op"] for e in cap.sent] == ["write", "write", "overflow", "write"]
+    assert [e.get("path") for e in cap.sent] == ["/home/user/a", "/home/user/b", None, "/home/user/c"]
+
+
+def test_a_run_that_cannot_be_delivered_tells_the_brain_to_walk_and_does_not_stop_the_watcher(tmp_path, capsys):
+    w, cap = watcher(tmp_path, {b"H": ("/x", "/home/user")})
+    cap.deliver_run = lambda who, run: (_ for _ in ()).throw(OSError("disk full"))
+    w.handle([fev(fan.FAN_CLOSE_WRITE, b"a"), fev(fan.FAN_CLOSE_WRITE, b"b")], 1.0)
+    assert [e["op"] for e in cap.sent] == ["overflow"]
+    assert "could not deliver 2 events" in capsys.readouterr().err
+    cap.deliver_run = lambda who, run: None
+    w.handle([fev(fan.FAN_CLOSE_WRITE, b"c")], 2.0)      # and on it goes
+    assert w._run == [] and w.stats["sent"] == 3
+
+
+def test_the_hub_gives_each_user_their_own_events_of_a_run_in_one_line(tmp_path):
+    h = hub(tmp_path)
+    u, o = Peer(), Peer()
+    h.add(u.mine, 1000)
+    h.add(o.mine, 1001)
+    who = W._members({"pid": 7, "uid": 0, "comm": "cp", "cgroup": "", "chain": [[7, "cp", "cp a b"]], "gone": False})
+    run = [(W._members({"op": "write", "t": 1.0, "path": p}), (p,))
+           for p in ("/home/user/a", "/home/other/b", "/home/user/c", "/etc/hosts", "/home/userx/d")]
+    h.deliver_run(who, run)
+    pump_all(h)
+    mine, theirs = u.read(), o.read()
+    assert [e["op"] for e in mine] == ["hello", "batch"] and [e["op"] for e in theirs] == ["hello", "batch"]
+    assert [e["path"] for e in mine[1]["events"]] == ["/home/user/a", "/home/user/c", "/etc/hosts"]
+    assert [e["path"] for e in theirs[1]["events"]] == ["/home/other/b", "/etc/hosts"]
+    assert mine[1]["chain"] == [[7, "cp", "cp a b"]] and "path" not in mine[1]
+    # One event for a user is an ordinary line.
+    h.deliver_run(who, run[:2])
+    pump_all(h)
+    assert [(e["op"], e["path"], e["pid"]) for e in u.read()] == [("write", "/home/user/a", 7)]
+
+
+def test_unbatch_reads_batches_and_leaves_other_lines_alone():
+    flat = {"op": "write", "path": "/home/u/a", "pid": 1}
+    assert service._unbatch(flat) == [flat]
+    batch = {"op": "batch", "pid": 9, "uid": 1000, "comm": "make", "cgroup": "/c", "chain": [[9, "make", "make"]],
+             "gone": True, "events": [{"op": "create", "t": 1.0, "path": "/home/u/a"},
+                                      {"op": "write", "t": 2.0, "path": "/home/u/a", "size": 3}, "junk"]}
+    out = service._unbatch(batch)
+    assert [(e["op"], e["t"], e["pid"], e["comm"], e["gone"], e["chain"]) for e in out] == [
+        ("create", 1.0, 9, "make", True, [[9, "make", "make"]]), ("write", 2.0, 9, "make", True, [[9, "make", "make"]])]
+    assert out[1]["size"] == 3
+    assert service._unbatch({"op": "batch", "pid": 1, "events": "no"}) == []
+    # A batch names its writer the way an event does, so the brain names it the same.
+    from bombadil.brain import actors
+    assert actors.from_event(out[0]).kind == "you"
+
+
 # --- the whole service, on this machine's filesystem ---
 
 def _cgroup2() -> str | None:
@@ -600,6 +736,7 @@ class Client:
         self.p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         os.set_blocking(self.p.stdout.fileno(), False)
         self.buf = b""
+        self.lines: list[bytes] = []
         self.events: list[dict] = []
 
     def poll(self) -> list[dict]:
@@ -613,7 +750,10 @@ class Client:
             pass
         lines, _, self.buf = self.buf.rpartition(b"\n")
         if lines:
-            self.events += [json.loads(x) for x in lines.split(b"\n") if x]
+            for x in lines.split(b"\n"):
+                if x:
+                    self.lines.append(x)
+                    self.events += service._unbatch(json.loads(x))
         return self.events
 
     def wait(self, pred, timeout=10.0) -> dict | None:

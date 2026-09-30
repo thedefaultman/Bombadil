@@ -689,6 +689,30 @@ def test_cli_refs(tmp_path, monkeypatch):
 
 # -- everything together --
 
+def test_a_batch_line_from_the_watcher_reads_like_its_events(home, h):
+    """Consecutive events by one writer come as one line that names the writer once."""
+    watcher = FakeWatcher(home / "watch.sock")
+    try:
+        with running(make_brain(home, watch_path=watcher.path)):
+            until(lambda: ask("status")["watching"])
+            assert client.notify("note", kind="turn_start", n=7, unit=TURN_UNIT, prompt="install the VPN",
+                                 t=time.time())
+            until(lambda: ask("thing", ref="turn:7"))
+            files = [h / f"batch-{i}.sh" for i in range(3)]
+            for f in files:
+                f.write_text("#!/bin/sh\n")
+            events = [ev(op, f, TURN_CG, SH) for f in files for op in ("create", "write")]
+            writer = {k: events[0][k] for k in ("pid", "uid", "comm", "cgroup", "chain", "gone")}
+            watcher.send({"op": "batch", **writer,
+                          "events": [{k: v for k, v in e.items() if k not in writer} for e in events]},
+                         {"op": "batch", "events": "a broken line is skipped, the next one still counts"})
+            for f in files:
+                until(lambda f=f: ask("thing", ref=str(f)))
+                assert ask("why", ref=str(f)).startswith("Made by the machine in turn 7, “install the VPN”, today at")
+    finally:
+        watcher.close()
+
+
 def test_end_to_end_from_the_watcher_to_the_answers(home, h):
     for mod in ("witnesses", "index", "focus", "describe"):
         pytest.importorskip(f"bombadil.brain.{mod}")

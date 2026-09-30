@@ -87,6 +87,10 @@ SPOOL_CHUNK = 256 << 10
 GENERATIONS_EVERY = 60.0
 CHAIN_MAX = 10
 CMD_MAX = 200
+# Consecutive events by one writer travel in one line, its who-members once: a chain of ten
+# command lines is most of an event's bytes, and a build writes 20,000 files.
+RUN_EVENTS = 1000
+RUN_BYTES = 192 << 10
 # Under a home, never sent for create/write/delete (renames always are, so moves in and out
 # are seen): per home, and anywhere below one.
 HOME_NOISE = (".cache/", ".local/share/Trash/expunged/")
@@ -142,6 +146,14 @@ def _members(obj: dict) -> str:
 def event_line(head: dict, who: str) -> bytes:
     """One event: `head` (op, t, path, old, dir, ino, size) then the who-members."""
     return ("{" + _members(head) + "," + who + "}\n").encode()
+
+
+def batch_line(who: str, heads: list[str]) -> bytes:
+    """Several events by one writer: {"op":"batch", <who-members>, "events":[{head}, ...]}. `heads`
+    are the events' own members as JSON (see _members); the brain reads it as those events in
+    order, each with the who-members (service._unbatch). A line stands alone, so a spool, a
+    reader that joins late and a client that reconnects need nothing from the lines before it."""
+    return ('{"op":"batch",' + who + ',"events":[' + ",".join("{" + h + "}" for h in heads) + "]}\n").encode()
 
 
 # --- The mount table ----------------------------------------------------------------------
@@ -639,6 +651,17 @@ class Hub:
             if self.wants(uid, paths):
                 self._to(uid, line)
 
+    def deliver_run(self, who: str, run: list[tuple[str, tuple]]) -> None:
+        """Consecutive events by one writer, as (the event's members, its paths): each user
+        gets the ones under their own home, in order, in one line with the who-members once (a
+        single event is an ordinary line)."""
+        for uid in self._uids():
+            mine = [head for head, paths in run if self.wants(uid, paths)]
+            if len(mine) == 1:
+                self._to(uid, ("{" + mine[0] + "," + who + "}\n").encode())
+            elif mine:
+                self._to(uid, batch_line(who, mine))
+
     def broadcast(self, line: bytes) -> None:
         for uid in self._uids():
             self._to(uid, line)
@@ -974,6 +997,9 @@ class Watcher:
         self.ep = select.epoll()
         self.listener: socket.socket | None = None
         self.stats = {"events": 0, "sent": 0}
+        self._run: list[tuple[str, tuple]] = []     # events by one writer, waiting to go out as a line
+        self._run_who: str | None = None
+        self._run_bytes = 0
 
     # Setup
     def start_watching(self) -> None:
@@ -1092,18 +1118,44 @@ class Watcher:
                         os.close(fd)
                     except OSError:
                         pass
+        self._flush_run()
         self.stats["events"] += len(events)
 
     def _send(self, head: dict, who: str, paths: tuple) -> None:
-        assert self.hub is not None
-        self.hub.deliver(event_line(head, who), paths)
+        """Queue one event. Events from one writer in a row go out as one line (see
+        _flush_run); a different writer, a full line or the end of a read ends the run."""
+        if who != self._run_who or len(self._run) >= RUN_EVENTS or self._run_bytes >= RUN_BYTES:
+            self._flush_run()
+            self._run_who = who
+        members = _members(head)
+        self._run.append((members, paths))
+        self._run_bytes += len(members)
         self.stats["sent"] += 1
+
+    def _flush_run(self) -> None:
+        run, who = self._run, self._run_who
+        self._run, self._run_who, self._run_bytes = [], None, 0
+        if run and who is not None:
+            assert self.hub is not None
+            try:
+                self.hub.deliver_run(who, run)
+            except Exception as e:  # never stops the watcher; what was lost is found again by walking
+                log(f"could not deliver {len(run)} events: {e!r}")
+                try:
+                    self.hub.broadcast(dumps({"op": "overflow", "t": round(time.time(), 3)}))
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def _broadcast(self, line: bytes) -> None:
+        """A line for everyone, after the events queued before it."""
+        assert self.hub is not None
+        self._flush_run()
+        self.hub.broadcast(line)
 
     def _one(self, ev: fan.Event, now: float, mono: float) -> None:
         m = ev.mask
         if m & fan.FAN_Q_OVERFLOW:
-            assert self.hub is not None
-            self.hub.broadcast(dumps({"op": "overflow", "t": now}))
+            self._broadcast(dumps({"op": "overflow", "t": now}))
             return
         if ev.pid == self.pid or self.resolver is None:
             return
@@ -1190,7 +1242,7 @@ class Watcher:
     def catch_up(self) -> None:
         assert self.hub is not None
         if not self.btrfs_mode:
-            self.hub.broadcast(dumps({"op": "caught_up", "t": round(time.time(), 3), "offline": 0}))
+            self._broadcast(dumps({"op": "caught_up", "t": round(time.time(), 3), "offline": 0}))
             return
         t0 = time.monotonic()
         sent = 0
@@ -1219,10 +1271,11 @@ class Watcher:
                                 "ino": st.st_ino, "size": st.st_size}, who, (path,))
                     sent += 1
                     if sent % 1000 == 0:
+                        self._flush_run()
                         self.hub.flush_spools()
         except (OSError, subprocess.TimeoutExpired) as e:
             log(f"catch-up failed: {e}")
-        self.hub.broadcast(dumps({"op": "caught_up", "t": round(time.time(), 3), "offline": sent}))
+        self._broadcast(dumps({"op": "caught_up", "t": round(time.time(), 3), "offline": sent}))
         self.hub.flush_spools()
         log(f"caught up: {sent} files written while stopped ({time.monotonic() - t0:.1f}s)")
 

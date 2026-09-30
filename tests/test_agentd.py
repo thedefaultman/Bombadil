@@ -574,6 +574,16 @@ def test_turn_numbers_go_on_across_restarts(home):
     assert agentd._last_turn(paths.turns_log()) == 7
 
 
+def test_rows_of_other_kinds_are_not_turns(home):
+    # The self-improvement loop writes "improve" rows into the same log.
+    rows = [{"t": 1, "prompt": "a"}, {"t": 2, "kind": "improve", "what": "noticed a repeat"},
+            {"t": 3, "n": 2, "prompt": "b"}, {"t": 4, "kind": "improve", "n": 99, "what": "tried a fix"},
+            {"t": 5, "kind": "something-new", "n": 50}, {"t": 6, "kind": "turn", "n": 3, "prompt": "c"}]
+    _write_log([json.dumps(r) for r in rows])
+    assert agentd._last_turn(paths.turns_log()) == 3
+    assert agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots()).turns == 3
+
+
 @pytest.mark.asyncio
 async def test_a_restarted_agentd_numbers_its_next_turn_and_restore_point_after_the_last(home, monkeypatch):
     monkeypatch.setattr(agentd.brain_client, "notify", lambda *a, **k: True)

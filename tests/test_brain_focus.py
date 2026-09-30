@@ -589,6 +589,32 @@ def test_a_folders_entries_say_who_changed_them_last(brain):
                                                      "untracked.txt": "unknown"}
 
 
+def test_the_last_writers_query_reads_events_by_thing_not_by_kind(brain):
+    """For a folder of hundreds of entries SQLite, left to itself, reads every create or change
+    event of the index (340 ms on 340,000 events; by thing it is 14 ms), so the query names its
+    index. (A folder of one entry plans well either way; the statement is what is checked.)"""
+    lease = brain.home / "Documents/Lease"
+    lease.mkdir(parents=True)
+    brain.found(lease)
+    notes = brain.file("Documents/Lease/notes.txt", "n", local(2026, 10, 1, 9, 0))
+    brain.you("create", notes, local(2026, 10, 1, 9, 0))
+    seen = []
+    real = brain.store.q
+
+    def spy(sql, params=()):
+        seen.append((sql, params))
+        return real(sql, params)
+    brain.store.q = spy
+    try:
+        assert [c["name"] for c in brain.focus(lease)["children"]["items"]] == ["notes.txt"]
+    finally:
+        brain.store.q = real
+    [(sql, params)] = [s for s in seen if "FROM events" in s[0] and "GROUP BY thing" in s[0]]
+    assert "INDEXED BY events_thing_t" in sql
+    plan = " ".join(str(r[3]) for r in brain.store.db.execute("EXPLAIN QUERY PLAN " + sql, params))
+    assert "events_thing_t" in plan and "events_kind_t" not in plan
+
+
 # -- what the lines say --
 
 def test_a_line_says_when_it_was_made_not_when_it_was_last_saved(brain):

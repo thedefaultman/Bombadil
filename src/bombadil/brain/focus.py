@@ -947,10 +947,13 @@ class _Focus:
         out = {}
         for n in range(0, len(ids), 500):
             chunk = ids[n:n + 500]
+            # INDEXED BY: left to itself SQLite picks the kind index and reads every event of those
+            # kinds (340 ms on 340,000 events; 14 ms by thing).
+            marks = ", ".join("?" for _ in chunk)
             for row in self.store.q(
-                    f"SELECT thing, actor, actor_thing, via, MAX(COALESCE(t_end, t)) AS te FROM events "
-                    f"WHERE thing IN ({', '.join('?' for _ in chunk)}) AND kind IN ('create', 'change', 'download', "
-                    f"'install', 'upgrade', 'remove') GROUP BY thing", chunk):
+                    f"SELECT thing, actor, actor_thing, via, MAX(COALESCE(t_end, t)) AS te "
+                    f"FROM events INDEXED BY events_thing_t WHERE thing IN ({marks}) AND kind IN ('create', "
+                    f"'change', 'download', 'install', 'upgrade', 'remove') GROUP BY thing", chunk):
                 out[row["thing"]] = row
         return out
 
