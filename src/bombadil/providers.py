@@ -24,18 +24,36 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SYSTEM_PROMPT = (
-    "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
-    "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
-    "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML, hot "
-    "reloaded, no web servers), take screenshots to check your work, and use rollback when the user says "
-    "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
-    "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
-    "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
-    "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
-    "screen and your final reply as at most four lines above the bar: one or two plain sentences saying what you did, "
-    "no markdown, no lists."
-)
+from . import paths
+
+
+def kit_paths() -> tuple[Path, Path]:
+    """(the QML kit's folder, the bombadil-apps skill's folder), where they are on this system."""
+    for share in (Path(__file__).resolve().parents[2] / "share", paths.share_dir() / "share", paths.share_dir()):
+        if (share / "qml" / "Bombadil").is_dir():
+            return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+    share = Path("/usr/share/bombadil/share")
+    return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+
+
+def system_prompt() -> str:
+    """What both CLIs get on every turn, fresh or resumed."""
+    kit, skill = kit_paths()
+    return (
+        "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
+        "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
+        "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML with the "
+        "Bombadil kit, hot reloaded, no web servers). The kit is the QML module `Bombadil`: write "
+        f"`import Bombadil` and it resolves; its files are in {kit}/ (Theme.qml, AppWindow.qml, ...). "
+        f"Read {skill}/SKILL.md first, or call app_guide, and never search the disk for the kit. "
+        "Take screenshots to check your work, and use rollback when the user says "
+        "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
+        "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
+        "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
+        "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
+        "screen and your final reply as at most four lines above the bar: one or two plain sentences saying "
+        "what you did, no markdown, no lists."
+    )
 
 
 DIAGNOSTIC = "[ede_diagnostic]"   # what the CLI prints when a turn was cut short
@@ -229,7 +247,7 @@ class Claude(Provider):
                # Only Bombadil's own tools: the account's claude.ai connectors (Gmail, Drive) would
                # load too and end replies with notices to authorize them.
                "--strict-mcp-config",
-               "--append-system-prompt", SYSTEM_PROMPT]
+               "--append-system-prompt", system_prompt()]
         if self.model:
             cmd += ["--model", self.model]
         if turn.session_id:
@@ -431,7 +449,7 @@ class Codex(Provider):
         # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
-                     "-c", f"developer_instructions={json.dumps(SYSTEM_PROMPT)}",
+                     "-c", f"developer_instructions={json.dumps(system_prompt())}",
                      # Codex offers update_plan (the plan on the desk) only when its config says so.
                      "-c", "tools.update_plan.enabled=true",
                      "--skip-git-repo-check"]

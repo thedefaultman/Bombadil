@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# vmsmoke: run the ISO's own bombadil-smoke checks inside the running, installed VM without powering
+# it off, playing the host's part (the KEYS and SHOT requests) the way scripts/test-vm.sh does.
+# Prints the PASS/FAIL lines; screenshots and the log land in $VMDIR/smoke.
+# (Refuses on a VM that has a provider chosen, unless FORCE=1; see below.)
+# The installed VM is pinned to RES (1600x900 by default), so virtual-display-size fails there: that
+# check expects the unpinned 1920x1080.
+set -u
+here="$(cd "$(dirname "$0")" && pwd)"
+# bombadil-smoke was written for a fresh live system: its sign-in checks restart agentd with stand-in
+# providers, pick Claude and Codex in turn and cancel them, and `codex login` revokes a stored Codex
+# login. Not for a VM whose login matters (Daniel's); a scratch copy is fine with FORCE=1.
+if [[ "${FORCE:-}" != 1 ]] && "$here/vmsh" 'test -f ~/.config/bombadil/config.toml && echo HAS-PROVIDER' | grep -q HAS-PROVIDER; then
+  echo "This VM already has a provider chosen, so it may hold a login. Refusing: the smoke test's sign-in" >&2
+  echo "checks restart agentd with stand-ins and pick providers. Run it on a scratch copy (with-scratch" >&2
+  echo "with FORCE=1) or on a fresh install; FORCE=1 runs it here anyway." >&2
+  exit 2
+fi
+tree="${BOMBADIL_TREE:-/root/Bombadil}"
+d="${VMDIR:-$tree/out/vm}"; out="$d/smoke"; rm -rf "$out"; mkdir -p "$out"; log="$d/serial.log"
+start=$(stat -c %s "$log")
+T=8 "$here/vmsh" 'sudo -b env BOMBADIL_SMOKE_NO_POWEROFF=1 bombadil-smoke > /tmp/smoke.out 2>&1' >/dev/null
+declare -A seen
+for _ in $(seq 900); do
+  tail -c +$((start + 1)) "$log" | tr -d '\r\021' | grep -ao 'BOMBADIL-SMOKE: .*' > "$out/lines"
+  while read -r _ kind rest; do
+    case "$kind" in
+      SHOT) name=${rest%% *}
+            [[ -n "${seen[s$name]:-}" ]] || { seen[s$name]=1; timeout 20 "$here/vmin" shot "$out/$name.png"; } ;;
+      KEYS) n=${rest%% *}; k=${rest#* }
+            # shellcheck disable=SC2086
+            [[ -n "${seen[k$n]:-}" ]] || { seen[k$n]=1; timeout 20 "$here/vmin" keys $k; } ;;
+    esac
+  done < "$out/lines"
+  grep -q 'BOMBADIL-SMOKE: DONE' "$out/lines" && break
+  sleep 2
+done
+T=10 "$here/vmsh" 'grep -a "BOMBADIL-SMOKE" /tmp/smoke.out' > "$out/result.txt"
+cat "$out/result.txt"
+echo "(details of a failed check: vmsh 'cat /tmp/smoke.CHECK-NAME.log' in the guest)"
