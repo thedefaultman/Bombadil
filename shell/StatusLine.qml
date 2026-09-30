@@ -48,7 +48,7 @@ Rectangle {
             // The line shows on every screen; hovering it on any of them keeps it.
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
             if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
-                bar.pill.dismiss()
+                bar.pill.fade()
         }
     }
 

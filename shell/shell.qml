@@ -137,6 +137,7 @@ ShellRoot {
             exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
+                Region { item: cardHost }
                 Region { item: statusLine }
                 Region { item: chips }
                 Region { item: appChips }
@@ -173,6 +174,16 @@ ShellRoot {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
+
+                // A picture the machine drew from itself, or the agent drew: above the line, over the windows.
+                CardHost {
+                    id: cardHost
+                    pill: pillState
+                    maxHeight: Math.round(modelData.height * 0.6)
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 900
+                    Layout.alignment: Qt.AlignHCenter
+                }
 
                 StatusLine {
                     id: statusLine
@@ -324,8 +335,8 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then puts the line and
-                                // the drawer away and gives the keyboard back.
+                                // Esc stops a running turn; otherwise it clears, then puts the line, the
+                                // picture and the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""

@@ -40,6 +40,10 @@ QtObject {
     property double flashAt: 0
     property int flashFor: 3500      // how long it stays (ms); the reason for "why" stays longer
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
+    // The picture above the line (a diagram card from show_card, system_map or a receipt), or null.
+    // One at a time: a newer one replaces it; Esc and its × put it away; the next turn clears it.
+    property var card: null
+    property double cardAt: 0
     // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
     readonly property bool stoppable: busy || optimistic
 
@@ -55,6 +59,35 @@ QtObject {
     }
 
     function _setQueue(q) { queue = q }
+
+    // A picture from agentd: a whole card, a half-drawn one ("partial") or {id, gone} taking one back.
+    function _takeCard(c) {
+        if (!c || typeof c !== "object") return
+        if (c.gone) {
+            if (card && card.id === c.id) card = null
+            return
+        }
+        if (c.type !== "diagram") return
+        card = c
+        cardAt = _now()
+        // A receipt comes just after the closing line: read the two together, so both start their time now.
+        if (c.receipt && mode === "closing") { lineAt = cardAt; fadeAfter = Math.max(fadeAfter, 15000) }
+    }
+
+    // Esc or the card's ×.
+    function dismissCard() { card = null }
+
+    // A click on a box that names a thing: a file, a service, a package, a page or a turn.
+    function openThing(target) {
+        if (!target || typeof target !== "object" || !target.kind) return
+        if (_offline()) return
+        if (target.kind === "turn") {
+            handOff()
+            outgoing({ type: "details", turn: Number(target.value) })
+        } else {
+            outgoing({ type: "open", kind: target.kind, value: String(target.value) })
+        }
+    }
 
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
@@ -91,7 +124,11 @@ QtObject {
         case "unqueued":
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             break
+        case "card":
+            _takeCard(ev.card)
+            break
         case "turn_start":
+            card = null
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             if (!optimistic || mode !== "working") startedAt = _now()
             optimistic = false
@@ -151,8 +188,9 @@ QtObject {
                 optimistic = false
                 mode = "local"; line = ev.text || ""; source = ev.ok === false ? "error" : "step"
                 risk = ""; command = ""; sticky = false; lineAt = _now()
-                // Undo says what it covered; give people time to read it.
-                fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000 : 5000
+                // Undo says what it covered, and a picture brings its own words: give people time to read them.
+                fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000
+                          : ev.action === "picture" && ev.phase === "done" ? 8000 : 5000
             }
             break
         }
@@ -184,6 +222,7 @@ QtObject {
         connected = false
         busy = false
         optimistic = false
+        if (card && card.partial) card = null   // a half-drawn picture will not be finished
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
@@ -224,9 +263,19 @@ QtObject {
     // Esc in the pill with nothing to stop or clear: put the drawer away too.
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
+    // Esc: put the line and the picture away.
     function dismiss() {
         if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
         flash = ""
+        card = null
+    }
+
+    // A finished line nobody is looking at fades, and takes a receipt picture with it; a picture the
+    // user asked for stays until Esc or the next turn.
+    function fade() {
+        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
+        flash = ""
+        if (card && card.receipt) card = null
     }
 
     // -- the launcher: completing and recognising names --
