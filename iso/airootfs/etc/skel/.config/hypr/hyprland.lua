@@ -1,5 +1,8 @@
 -- Bombadil session. The shell is the Quickshell bar; the agent daemon starts with it.
 hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+-- A QEMU or virtio guest reports the size of the host window it started in (often 640x480) as
+-- the preferred mode and never moves off it. 1920x1080 is always in the virtual display's list.
+hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", scale = 1 })
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
