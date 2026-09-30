@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# with-scratch TOOL ARGS...: run one of these tools (vmsh, vmpy, vmin, vmlogin, vmsmoke, probe...)
+# against the scratch VM from scratch-up instead of the real one.
+#   with-scratch vmlogin && with-scratch vmsh 'uname -r'
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+tree="${BOMBADIL_TREE:-/root/Bombadil}"
+export VMDIR="$tree/out/scratch" VMFIFO=/run/bombadil-scratch-serial.in
+export QMP="$VMDIR/qmp.sock"
+[[ $# -ge 1 ]] || { sed -n '2,4p' "$0"; exit 2; }
+tool="$1"; shift
+exec "$here/$tool" "$@"

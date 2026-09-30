@@ -64,6 +64,15 @@ scripts/run-vm.sh --disk     # then `sudo bombadil-install /dev/vda` inside
 On first boot the pill asks which AI should run the computer and signs in to it, with the
 provider's page in the browser panel (see "Signing in" in `docs/ARCHITECTURE.md`).
 
+On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an Arch WSL
+distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
+checkout has checked out, installs it onto a VM disk, and opens the VM as a window. Run it again
+to boot the same VM. `bombadil-vm refresh` keeps the disk (the login, apps and files on it), takes a
+`qemu-img` restore point first and moves the VM to this checkout in place; `bombadil-vm stop` shuts
+it down cleanly; `bombadil-vm reinstall` wipes the disk and asks first; `wsl --unregister bombadil`
+removes everything. `scripts/vm-tools/` drives a running VM without a window (keys, a shell,
+screenshots, the smoke checks, scratch copies to try a branch on); see its README.
+
 ## Status
 
 First milestone: the pieces above, tested where they can be without a display.
