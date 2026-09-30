@@ -76,7 +76,8 @@ def test_grub_settings_missing_from_the_defaults_are_added(tmp_path):
 def test_the_pill_opens_from_super_and_from_alt_space():
     # A VM window on Windows keeps the Windows key for its Start menu, so Alt+Space is the way in there.
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
-    binds = re.findall(r'hl\.bind\("([^"]+)", hl\.dsp\.exec_cmd\("bombadil pill"\)', lua)
+    # Anchored at the line start, so a commented-out bind does not count.
+    binds = re.findall(r'^\s*hl\.bind\("([^"]+)", hl\.dsp\.exec_cmd\("bombadil pill"\)', lua, re.M)
     assert {"SUPER + SUPER_L", "SUPER + SUPER_R", "ALT + space"} <= set(binds)
 
 
