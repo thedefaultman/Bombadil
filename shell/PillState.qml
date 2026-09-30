@@ -13,6 +13,8 @@ QtObject {
     signal handOff()
     // agentd asked what to call the user: the card is up and wants the keyboard.
     signal asked()
+    // Super while the card holds the keyboard: the keys go to the pill's field (shell.qml).
+    signal focusPill()
     // A welcome line just took the line: the shell notes which screen had the focus.
     signal welcomeShown()
 

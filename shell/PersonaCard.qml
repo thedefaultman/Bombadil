@@ -32,7 +32,9 @@ Rectangle {
 
     // How a voice would greet you, with the name typed so far ("{n}" is ", Name" or nothing).
     function sample(voice) {
+        // A name ending in a dot ("Daniel Z.") meets the template's own full stop: one is enough.
         return String(voice && voice.card || "").split("{n}").join(typed !== "" ? ", " + typed : "")
+            .replace(/\.\.(?!\.)/g, ".")
     }
 
     function move(step) {
@@ -128,6 +130,9 @@ Rectangle {
                 TapHandler { onTapped: card.wantKeys() }
                 Keys.onUpPressed: card.move(-1)
                 Keys.onDownPressed: card.move(1)
+                // Tab is "next": the voices. Left alone it would take the focus to the pill behind the card.
+                Keys.onTabPressed: card.move(1)
+                Keys.onBacktabPressed: card.move(-1)
                 Keys.onReturnPressed: card.answer()
                 Keys.onEnterPressed: card.answer()
                 Keys.onEscapePressed: card.skip()
@@ -200,6 +205,20 @@ Rectangle {
                             text: card.sample(row.modelData)
                             color: row.on ? "#a9b0b8" : "#8b939c"
                             font.pixelSize: 13
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                        }
+                        // How it ends a reply: the other half of what a voice is.
+                        Text {
+                            objectName: "voiceReply"
+                            Layout.fillWidth: true
+                            visible: text !== ""
+                            text: String(row.modelData.reply || "")
+                            color: row.on ? "#8f98a1" : "#6f7780"
+                            font.pixelSize: 12
+                            font.italic: true
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                             maximumLineCount: 2

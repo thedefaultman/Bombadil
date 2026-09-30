@@ -281,6 +281,41 @@ def test_up_and_down_move_the_highlight_from_the_field_and_the_hint_follows(card
     card.snap("card-3-plain")
 
 
+def test_tab_and_shift_tab_move_the_highlight_and_the_field_keeps_the_keys(card):
+    # Left alone, Tab takes the focus to the pill behind the card and the card stops answering.
+    card.type("Al")
+    card.key(QtCore.Qt.Key_Tab)
+    assert card.chosen() == ["plain"] and card.field.property("activeFocus") and card.field.property("text") == "Al"
+    card.key(QtCore.Qt.Key_Backtab)
+    assert card.chosen() == ["merry"] and card.field.property("activeFocus")
+    card.key(QtCore.Qt.Key_Tab)
+    card.type("ex")
+    assert card.field.property("text") == "Alex"
+    before = len(card.sent)
+    card.key(QtCore.Qt.Key_Return)
+    assert card.sent[before:] == [{"type": "persona", "name": "Alex", "voice": "plain"}]
+
+
+def test_a_name_that_ends_in_a_dot_does_not_double_the_full_stop_in_the_samples(card):
+    card.type("Daniel Z.")
+    assert card.samples()[:2] == ["Welcome, Daniel Z. Let's go for a walk!", "Welcome, Daniel Z."]
+
+
+def test_each_row_reads_back_how_its_voice_ends_a_reply(card):
+    card.ask(voices=[
+        {"id": "merry", "name": "Merry", "card": "Welcome{n}.", "reply": "Two tabs use most of it. That's a lot of reading."},
+        {"id": "plain", "name": "Plain", "card": "Welcome{n}.", "reply": "Two tabs use most of it."},
+        {"id": "quiet", "name": "Quiet", "card": "Nothing on an ordinary morning, only news."}])
+    replies = [it.property("text") for it in card.items("voiceReply")]
+    assert replies == ["Two tabs use most of it. That's a lot of reading.", "Two tabs use most of it."]   # none for a voice without one
+
+
+def test_every_text_in_the_card_is_plain_text_because_names_and_samples_come_from_outside():
+    src = (SHELL / "PersonaCard.qml").read_text()
+    texts = re.findall(r"^\s*Text \{", src, re.MULTILINE)
+    assert len(texts) >= 5 and len(re.findall(r"textFormat: Text\.PlainText", src)) == len(texts)
+
+
 def test_enter_answers_with_the_name_and_the_highlighted_voice(card):
     card.type("Dan")
     card.key(QtCore.Qt.Key_Down)
@@ -520,7 +555,8 @@ def test_shell_qml_reaches_the_card_only_through_what_it_declares():
     assert {"shown", "visible", "takeKeys"} <= used and used - {"visible"} <= card, used - card   # visible is Item's
     block = shell[shell.index("PersonaCard {"):]
     block = block[:block.index("QueueChips {")]
-    assert "onWantKeys: win.summonHere()" in block and "here: win.cardHere" in block
+    assert "onWantKeys:" in block and "root.cardKeys = true" in block and "win.takeCard()" in block
+    assert "here: win.cardHere" in block
     assert "root.release()" in block and "input.forceActiveFocus()" in block   # after Enter or Esc
     assert "Layout.fillWidth: true" in block and "pill: pillState" in block
     assert re.search(r"PersonaCard \{.*\n(?:.*\n)*?.*\}\n\n                QueueChips", shell)   # the card sits before the chips
@@ -534,9 +570,19 @@ def test_shell_qml_hands_the_keyboard_to_the_card_without_toggling_it():
     assert "onAsked: root.summonKeep()" in shell
     # A window that was already summoned gets no summonedChanged: the Connections takes the card's keys.
     assert re.search(r"function onAsked\(\) \{ if \(win\.summoned\) Qt\.callLater\(win\.takeCard\) \}", shell)
-    assert "if (personaCard.shown) personaCard.takeKeys()" in shell
+    # Only a card that asked (or was clicked) gets the keys when a screen turns summoned: Super and a click
+    # on the pill always mean the pill, even with the card up.
+    assert "if (root.cardKeys && personaCard.shown) personaCard.takeKeys()" in shell
+    assert "root.cardKeys = true" in keep
+    summon = shell[shell.index("function summon()"):]
+    summon = summon[:summon.index("\n    }")]
+    assert "root.cardKeys = false" in summon and "pillState.focusPill()" in summon
+    assert "function onFocusPill() { if (win.summoned) input.forceActiveFocus() }" in shell
+    assert shell.count("TapHandler { onTapped: win.focusPill() }") == 2   # the pill and its field
     # The keyboard timer waits while the card does, and the input mask follows the card.
     assert "running: win.summoned && !personaCard.shown" in shell
     assert "Region { item: personaCard.visible ? personaCard : null }" in shell
-    # Any fold puts the pill's field back in focus.
-    assert re.search(r"function onPersonaAskChanged\(\) \{ if \(pillState\.personaAsk === null\) input\.forceActiveFocus\(\) \}", shell)
+    # Any fold puts the pill's field back in focus, and gives back a keyboard the card was holding.
+    fold = shell[shell.index("function onPersonaAskChanged()"):]
+    fold = fold[:fold.index("\n                }")]
+    assert "input.forceActiveFocus()" in fold and "win.summoned && root.cardKeys" in fold and "root.release()" in fold

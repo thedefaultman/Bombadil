@@ -21,6 +21,9 @@ ShellRoot {
     // The screens that show the card and the welcome: the ones that had the focus when they
     // arrived ("" = every screen).
     property string cardOn: ""
+    // The keyboard goes to the card (not the pill) when a screen turns summoned: the card asked for it
+    // or was clicked. Super and a click on the pill clear it, so they always mean the pill.
+    property bool cardKeys: false
     property string welcomeOn: ""
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
@@ -140,10 +143,13 @@ ShellRoot {
     function summon() {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+        root.cardKeys = false
+        // Super while the card holds the keyboard here means the pill: the card stays, the keys move.
+        if (pillState.personaAsk !== null && root.summonedOn === name) { pillState.focusPill(); return }
         root.summonedOn = root.summonedOn === name ? "" : name
     }
 
-    function release() { root.summonedOn = "" }
+    function release() { root.cardKeys = false; root.summonedOn = "" }
 
     function focusedScreen() {
         const m = Hyprland.focusedMonitor
@@ -160,6 +166,7 @@ ShellRoot {
     // The card asks what to call you: it comes up on the focused screen and takes the keyboard
     // there. Unlike summon() this never gives the keyboard back, and it works on every compositor.
     function summonKeep() {
+        root.cardKeys = true
         root.cardOn = root.focusedScreen()
         root.summonedOn = root.cardOn
     }
@@ -210,7 +217,7 @@ ShellRoot {
             onSummonedChanged: {
                 // The card, when it is up here, is where typing goes; the pill stays one click away.
                 if (summoned) {
-                    if (personaCard.shown) personaCard.takeKeys()
+                    if (root.cardKeys && personaCard.shown) personaCard.takeKeys()
                     else input.forceActiveFocus()
                 }
                 grab.active = summoned
@@ -223,13 +230,25 @@ ShellRoot {
                 // The card asked while this screen already had the keyboard: summoned did not
                 // change, so hand it over here. Later, once the card is shown.
                 function onAsked() { if (win.summoned) Qt.callLater(win.takeCard) }
-                // Folded by anything (an answer from another bar, a dropped socket): the pill's field is the focus again.
-                function onPersonaAskChanged() { if (pillState.personaAsk === null) input.forceActiveFocus() }
+                function onFocusPill() { if (win.summoned) input.forceActiveFocus() }
+                // Folded by anything (an answer from another bar, a dropped socket): the pill's field is the
+                // focus again, and a keyboard the card was holding goes back to the windows at once.
+                function onPersonaAskChanged() {
+                    if (pillState.personaAsk !== null) return
+                    input.forceActiveFocus()
+                    if (win.summoned && root.cardKeys) root.release()
+                }
             }
 
             // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
             // layer takes clicks on demand by itself.)
             function summonHere() { if (root.hyprland) root.summonedOn = modelData.name }
+            // A click on the pill: its field has the keys, card or no card.
+            function focusPill() {
+                root.cardKeys = false
+                summonHere()
+                if (summoned) input.forceActiveFocus()
+            }
 
             // While summoned the pill holds the keyboard; a click anywhere else hands it back,
             // so typing meant for another window (a password prompt) never lands in the pill.
@@ -285,7 +304,11 @@ ShellRoot {
                     Layout.maximumWidth: 620
                     Layout.alignment: Qt.AlignHCenter
                     // A click on the card is a click on the pill: take the keyboard (Hyprland gives none unasked).
-                    onWantKeys: win.summonHere()
+                    onWantKeys: {
+                        root.cardKeys = true
+                        win.summonHere()
+                        win.takeCard()
+                    }
                     onClosed: {
                         root.release()
                         input.forceActiveFocus()
@@ -323,7 +346,7 @@ ShellRoot {
                     border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
                     border.width: 1.5
                     Behavior on border.color { ColorAnimation { duration: 300 } }
-                    TapHandler { onTapped: win.summonHere() }
+                    TapHandler { onTapped: win.focusPill() }
 
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
@@ -376,7 +399,7 @@ ShellRoot {
                                 background: null
                                 focus: true
                                 // The field takes the press itself, so the pill's own handler never sees it.
-                                TapHandler { onTapped: win.summonHere() }
+                                TapHandler { onTapped: win.focusPill() }
                                 onAccepted: {
                                     if (pillState.submit(text)) {
                                         text = ""

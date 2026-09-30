@@ -188,7 +188,7 @@ def test_a_welcome_takes_the_line_and_tells_agentd_it_was_shown(bar):
 def test_the_first_hello_stays_longer_than_a_later_one(bar):
     bar.welcome(first=True)
     assert bar.prop("fadeAfter") == 15000
-    bar.call("dismiss")
+    bar.call("dismissWelcome")
     bar.welcome()
     assert bar.prop("fadeAfter") == 8000
 
@@ -219,7 +219,7 @@ def test_welcome_done_follows_the_rule_for_any_clock(bar):
     bar.set("hovers", 1)
     assert done(t0 + 90000) is False                                        # hover holds both limits
     bar.set("hovers", 0)
-    bar.call("dismiss")
+    bar.call("dismissWelcome")
     assert done(t0 + 90000) is False                                        # only a welcome is ever done
 
 
@@ -294,12 +294,22 @@ def test_a_welcome_is_dropped_not_queued_when_anything_holds_the_line(bar, why):
     assert bar.mode != "welcome"
 
 
+def test_dismiss_is_for_finished_lines_and_leaves_a_welcome_to_dismissWelcome(bar):
+    # Other branches rewrite dismiss() (a setup line to bring back, a picture to clear): the welcome's
+    # own end must not depend on what it does, and it must not clear what a welcome has nothing to do with.
+    bar.welcome()
+    bar.call("dismiss")
+    assert bar.mode == "welcome" and bar.text() == GREETING
+    bar.call("dismissWelcome")
+    assert bar.mode == "idle" and bar.text() == ""
+
+
 def test_a_welcome_with_no_words_is_dropped(bar):
     bar.welcome(text="   ")
     assert bar.mode == "idle" and bar.welcomed() == []
 
 
-@pytest.mark.parametrize("how", ["submit", "turn_start", "error", "local", "dismiss", "lost", "typed", "offline_submit"])
+@pytest.mark.parametrize("how", ["submit", "turn_start", "error", "local", "lost", "typed", "offline_submit"])
 def test_a_welcome_gives_way_to_what_follows(bar, how):
     bar.welcome()
     assert bar.mode == "welcome"
@@ -315,9 +325,6 @@ def test_a_welcome_gives_way_to_what_follows(bar, how):
     elif how == "local":
         bar.send(kind="local", action="panel", phase="done", ok=True, text="Opened the browser.")
         assert bar.mode == "local" and bar.text() == "Opened the browser."
-    elif how == "dismiss":
-        bar.call("dismiss")
-        assert bar.mode == "idle"
     elif how == "lost":
         bar.call("lost")
         assert bar.mode == "idle" and bar.text() == ""
@@ -482,6 +489,8 @@ def test_shell_qml_feeds_presence_and_touch_from_idle_monitors_and_binds_fullscr
     assert 'pillState.mode === "welcome" && pillState.touchedAt === 0' in touch
     assert "pillState.touched()" in touch
     assert re.search(r"fullscreen:.*activeWorkspace.*hasFullscreen", _block(shell, "PillState {"))
-    # A welcome is dismissed by typing and by Enter on nothing; Esc already calls dismiss().
-    assert len(re.findall(r"pillState\.dismissWelcome\(\)", shell)) == 2
+    # A welcome is dismissed by typing, by Enter on nothing and by Esc, through dismissWelcome() (not dismiss(),
+    # which other branches change), and by the status line's timer.
+    assert len(re.findall(r"pillState\.dismissWelcome\(\)", shell)) == 3
+    assert "bar.pill.dismissWelcome()" in (SHELL / "StatusLine.qml").read_text()
     assert "here: win.welcomeHere" in shell and "root.welcomeOn = root.focusedScreen()" in shell
