@@ -20,6 +20,7 @@ from .. import apps, hypr
 
 NO_HYPRLAND = "Hyprland is not running"
 MARGIN = 24           # logical px kept free around a window that had to be shrunk to fit
+LINE_ROOM = 56        # and the height left for the finished line that sits above the prompt bar
 MIN_SIZE = (240, 160)
 _RUN_RE = re.compile(r"bombadil-app run ([a-z0-9][a-z0-9-]*)$")
 
@@ -143,7 +144,9 @@ def shown(h: hypr.Hyprland | None = None) -> set[str]:
 
 
 def usable_area(h: hypr.Hyprland | None = None) -> tuple[int, int] | None:
-    """The focused monitor's room for a window in logical px: without the bar, less a margin."""
+    """The focused monitor's room for a window in logical px: without the bar, less a margin and
+    the room the status line takes above the prompt (it reserves no space, so a window that fills
+    the screen would sit under it)."""
     h = _hypr(h)
     if not h.available:
         return None
@@ -159,7 +162,7 @@ def usable_area(h: hypr.Hyprland | None = None) -> tuple[int, int] | None:
         left, top, right, bottom = ([float(x) for x in m.get("reserved") or []] + [0.0] * 4)[:4]
     except (KeyError, TypeError, ValueError, ZeroDivisionError):
         return None
-    return int(w - left - right - 2 * MARGIN), int(h_ - top - bottom - 2 * MARGIN)
+    return int(w - left - right - 2 * MARGIN), int(h_ - top - bottom - 2 * MARGIN - LINE_ROOM)
 
 
 def fit(w: int, h_: int, room: tuple[int, int] | None) -> tuple[int, int]:
@@ -298,7 +301,7 @@ def open_url(url: str, h: hypr.Hyprland | None = None) -> str:
     h = _hypr(h)
     if not h.available:
         return f"{NO_HYPRLAND}; not opening {url}"
-    cmd = hypr.PANELS["browser"]
+    cmd = hypr.panel_command("browser")
     if shutil.which(cmd[0]) is None:
         return f"{cmd[0]} is not installed; not opening {url}"
     try:

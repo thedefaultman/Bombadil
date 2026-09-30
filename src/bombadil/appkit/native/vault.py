@@ -19,9 +19,12 @@ import re
 import secrets
 import string
 import time
+import weakref
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QMetaObject, QObject, Qt, QTimer, Signal, Slot
+from PySide6.QtQml import QPyQmlParserStatus
+from shiboken6 import isValid
 
 from ..context import AppContext
 from . import MAJOR, MINOR, URI
@@ -46,10 +49,13 @@ RUNS = re.compile(r"(0123|1234|2345|3456|4567|5678|6789|abcd|bcde|cdef|qwer|wert
 
 # file path -> {"key", "salt", "expires", "touched"}; survives hot reloads, not restarts. Every
 # Vault object on the file shares them (_now() times), so using one keeps them all open, and the
-# shortest autoLock among them wins.
+# shortest autoLock among the ones unlocked on it wins (`expires` is worked out from them again
+# whenever it is looked at; with none left it stands, and _sweep drops the key once it has passed).
 _keys: dict[str, dict] = {}
 # file path -> what the file would hold, during `check` (which writes nothing).
 _dry: dict[str, bytes] = {}
+# Every Vault object; a destroyed one is skipped.
+_vaults: "weakref.WeakSet[Vault]" = weakref.WeakSet()
 
 
 def _now() -> float:
@@ -57,9 +63,49 @@ def _now() -> float:
     return time.clock_gettime(time.CLOCK_BOOTTIME)
 
 
+def _views(path: str) -> list:
+    """The Vault objects that show that file unlocked."""
+    return [v for v in list(_vaults) if isValid(v) and v._unlocked and str(v._file) == path]
+
+
+def _expires(path: str) -> float | None:
+    """When that file locks (None: never): the shortest autoLock among the objects on it, from the last use."""
+    cached = _keys[path]
+    auto = [v._auto_lock for v in _views(path)]
+    if auto:
+        shortest = min((a for a in auto if a > 0), default=0)
+        cached["expires"] = cached["touched"] + shortest if shortest else None
+    return cached["expires"]
+
+
+def _lapsed(path: str) -> bool:
+    """No key for that file, or its deadline has passed."""
+    if path not in _keys:
+        return True
+    expires = _expires(path)
+    return expires is not None and _now() >= expires
+
+
+def _sweep():
+    """Forget the key of a file that no object shows any more once its deadline has passed."""
+    now = _now()
+    for path, cached in list(_keys.items()):
+        if cached["expires"] is not None and now >= cached["expires"] and not _views(path):
+            del _keys[path]
+    if not any(c["expires"] is not None for c in _keys.values()):
+        _hub.sweeper.stop()
+
+
 class _Hub(QObject):
     # file path, and the Vault object whose state every other one on that file should show
     changed = Signal(str, QObject)
+
+    def __init__(self):
+        super().__init__()
+        # A file may have no Vault object left to tick (renamed away, destroyed): this drops its key when due.
+        self.sweeper = QTimer(self)
+        self.sweeper.setInterval(1000)
+        self.sweeper.timeout.connect(_sweep)
 
 
 _hub: _Hub | None = None
@@ -157,7 +203,7 @@ def strength(pw: str) -> int:
     return 1 if bits < 40 else 2 if bits < 60 else 3 if bits < 80 else 4
 
 
-class Vault(QObject):
+class Vault(QPyQmlParserStatus):
     nameChanged = Signal()
     existsChanged = Signal()
     unlockedChanged = Signal()
@@ -169,6 +215,7 @@ class Vault(QObject):
         super().__init__(parent)
         self._ctx = native_context()
         self._name = "vault"
+        self._loaded = False               # the file is looked at once QML has set `name` (see componentComplete)
         self._auto_lock = 300
         self._exists = False
         self._unlocked = False
@@ -186,6 +233,14 @@ class Vault(QObject):
         if _hub is None:
             _hub = _Hub()
         _hub.changed.connect(self._follow)
+        _vaults.add(self)
+
+    def classBegin(self):
+        pass
+
+    def componentComplete(self):
+        """Every property is set: only now is the name known, so only now join that file (not the default one)."""
+        self._loaded = True
         self._load()
 
     @property
@@ -215,10 +270,10 @@ class Vault(QObject):
         """Look at the file, and unlock with a key an earlier Vault (before a hot reload) left behind."""
         self._key, self._data = None, None
         self._check_exists()
-        cached = _keys.get(str(self._file))
-        if self._exists and cached and (cached["expires"] is None or cached["expires"] > _now()):
+        path = str(self._file)
+        if self._exists and not _lapsed(path):
             try:
-                doc = self._read()
+                cached, doc = _keys[path], self._read()
                 if doc["salt"] == cached["salt"]:
                     self._nonce = doc["nonce"]
                     self._open(cached["key"], doc["salt"], doc["kdf"], unseal(cached["key"], doc))
@@ -231,9 +286,11 @@ class Vault(QObject):
     def _open(self, key: bytes, salt: bytes, kdf: dict, value):
         self._key, self._salt, self._kdf, self._data = key, salt, kdf, value
         self._set("_error", "", self.errorChanged)
-        self._set("_unlocked", True, self.unlockedChanged)
+        was, self._unlocked = self._unlocked, True
         self._timer.start()
-        self._touch()
+        self._touch()                      # before the signal: a handler that uses `data` needs the key cached
+        if not was:
+            self.unlockedChanged.emit()
         self._data_changed()
 
     def _close(self):
@@ -249,7 +306,7 @@ class Vault(QObject):
     @Slot(str, QObject)
     def _follow(self, path: str, other):
         """Another Vault object on this file saved, unlocked or locked it: show the same."""
-        if other is self or path != str(self._file):
+        if other is self or not self._loaded or path != str(self._file):
             return
         self._set("_exists", other._exists, self.existsChanged)
         if other._unlocked:
@@ -261,15 +318,19 @@ class Vault(QObject):
     def _touch(self):
         """Push the auto-lock deadline back; the key cache expires with it."""
         if self._unlocked:
-            expires = _now() + self._auto_lock if self._auto_lock > 0 else None
-            _keys[str(self._file)] = {"key": self._key, "salt": self._salt, "expires": expires,
-                                      "touched": _now()}
+            path = str(self._file)
+            _keys[path] = {"key": self._key, "salt": self._salt, "expires": None, "touched": _now()}
+            if _expires(path) is not None and not _hub.sweeper.isActive():
+                _hub.sweeper.start()
 
+    def _overdue(self) -> bool:
+        """Unlocked past the deadline, before a tick has locked it (a resume: no Qt time passed asleep)."""
+        return self._unlocked and _lapsed(str(self._file))
+
+    @Slot()
     def _tick(self):
         """Lock once the deadline has passed, time asleep included (a Qt timer does not count it)."""
-        cached, now = _keys.get(str(self._file)), _now()
-        if (cached is None or (cached["expires"] is not None and now >= cached["expires"])
-                or (self._auto_lock > 0 and now >= cached["touched"] + self._auto_lock)):
+        if self._overdue():
             self.lock()
 
     def _write(self, key: bytes, salt: bytes, kdf: dict, value) -> bool:
@@ -377,12 +438,18 @@ class Vault(QObject):
     def _get_data(self):
         if not self._unlocked:
             return NULL
+        if self._overdue():
+            # Locking sends signals, which a read inside a binding must not: the queued tick does it.
+            QMetaObject.invokeMethod(self, "_tick", Qt.ConnectionType.QueuedConnection)
+            return NULL
         self._touch()
         if self._data_js is None:
             self._data_js = js_value(self, self._data)
         return self._data_js
 
     def _set_data(self, value):
+        if self._overdue():
+            self.lock()
         if not self._unlocked:
             self._fail("the vault is locked")
             return
@@ -400,14 +467,17 @@ class Vault(QObject):
 
     def _set_name(self, name: str):
         if name and name != self._name:
-            self._timer.stop()
+            self._close()                  # what it shows is the old file's: not once `name` (or `data`) can be read
             self._name = name
             self.nameChanged.emit()
-            self._load()
+            if self._loaded:
+                self._load()
 
     def _set_auto_lock(self, seconds: int):
         seconds = max(0, int(seconds))
         if seconds != self._auto_lock:
+            if self._overdue():
+                self.lock()
             self._auto_lock = seconds
             self.autoLockChanged.emit()
             self._touch()

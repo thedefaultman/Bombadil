@@ -692,10 +692,11 @@ def test_usable_area_is_the_focused_monitor_without_the_bar():
     laptop = {"name": "eDP-1", "focused": True, "width": 1280, "height": 800, "scale": 1.0,
               "transform": 0, "reserved": [0, 36, 0, 0]}
     other = {**laptop, "name": "DP-1", "focused": False, "width": 3840, "height": 2160}
-    assert placement.usable_area(FakeHypr([other, laptop])) == (1280 - 48, 800 - 36 - 48)
+    room = 48 + placement.LINE_ROOM   # the margin, and the finished line above the prompt
+    assert placement.usable_area(FakeHypr([other, laptop])) == (1280 - 48, 800 - 36 - room)
     hidpi = {**laptop, "width": 2560, "height": 1600, "scale": 2.0}
-    assert placement.usable_area(FakeHypr([hidpi])) == (1232, 716)
-    assert placement.usable_area(FakeHypr([{**laptop, "transform": 1}])) == (800 - 48, 1280 - 36 - 48)
+    assert placement.usable_area(FakeHypr([hidpi])) == (1232, 800 - 36 - room)
+    assert placement.usable_area(FakeHypr([{**laptop, "transform": 1}])) == (800 - 48, 1280 - 36 - room)
     assert placement.usable_area(FakeHypr([{"name": "?"}])) is None
     assert placement.usable_area(FakeHypr(available=False)) is None
     assert placement.fit(1120, 880, (1232, 716)) == (1120, 716)
@@ -756,7 +757,7 @@ def test_open_url_validates_and_opens_in_the_browser_panel(monkeypatch):
         with pytest.raises(ValueError):
             placement.open_url(bad, h)
     assert placement.open_url("example.com/a b", h) == "opened https://example.com/a b in the browser panel"
-    assert launched[-1] == ["setsid", "-f", *hypr.PANELS["browser"], "https://example.com/a b"]
+    assert launched[-1] == ["setsid", "-f", *hypr.panel_command("browser"), "https://example.com/a b"]
     # Chromium was not running: the new window lands in special:browser; show it.
     assert h.sent[-1] == 'dispatch hl.dsp.focus({ workspace = "special:browser" })' and panels == []
     h.clients = lambda: [{"class": "bombadil-browser", "workspace": {"name": "special:browser"}}]

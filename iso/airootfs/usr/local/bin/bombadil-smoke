@@ -44,8 +44,8 @@ virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x 
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
-# Every generated app card sits at its own spot (a second one does not hide the first).
-apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
+# Every generated app has its own drawer (a special workspace), so a second never hides the first.
+apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -98,7 +98,11 @@ check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
 check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 shot app
-check app-hide app_hidden smoke-test
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-drawers wait_for 30 apps_in_own_drawers
+check second-app-shown wait_for 30 special_shown app-smoke-two
+check app-hide app_hidden smoke-two
 for ex in memory password-manager; do
   [[ -d "/usr/share/bombadil/share/skills/bombadil-apps/examples/$ex" ]] || continue
   check "example-$ex" open_example "$ex"
@@ -106,9 +110,6 @@ for ex in memory password-manager; do
   check "example-$ex-status" wait_for 30 app_ok "$ex"
   shot "$ex"
 done
-check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
-check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
-check apps-have-own-spots wait_for 30 apps_apart
 check screenshot grab
 
 # Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
@@ -136,6 +137,15 @@ keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
+# A tap that did nothing: was it the bind (Hyprland never ran `bombadil pill`) or the pill? Say which
+# in the log: ask for the pill by hand and type the word again.
+if ! launcher_ran browser "Opened the browser" "$before"; then
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1)"
+  as_user bombadil pill; sleep 3
+  keys b r o w s e r ret
+  if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
+  else say "DIAG by hand the pill did not take the word either"; fi
+fi
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 # Alt+Space opens the pill too, for hosts that keep Super.
