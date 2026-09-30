@@ -57,6 +57,7 @@ Window {
         id: deskState
         objectName: "desk"
         pill: pillState
+        pillAnimMs: 0
         screenWidth: w.width; screenHeight: w.height
         onOutgoing: msg => w.sent = w.sent.concat([msg])
         onRowAction: (widget, key, action) => w.actions = w.actions.concat([[widget, key, action]])
@@ -696,6 +697,21 @@ def test_the_pill_takes_the_stage_less_the_strips(laptop):
     laptop.send(type="desk", folded=False)
     laptop.pump(0.2)
     assert laptop.prop("leftStripsWidth") == 0 or laptop.prop("pillWidth") == 900
+
+
+def test_a_card_in_full_narrows_the_pill_on_a_small_screen(laptop):
+    # A rail is 300 wide and the line above the pill must never cover a card: 1280 px leaves 624.
+    laptop.turn(1, steps=TWO)
+    assert laptop.faces["now"] == "full"
+    assert laptop.prop("pillWidth") == 1280 - 2 * (300 + 12 + 16)
+    laptop.end(1, stopped=True)
+    laptop.pump(0.3)
+    assert laptop.prop("pillWidth") == 900                 # nothing showing: the whole stage
+
+
+def test_a_card_in_full_leaves_the_pill_its_900_on_a_big_screen(desk):
+    desk.turn(1, steps=TWO)
+    assert desk.faces["now"] == "full" and desk.prop("pillWidth") == 900
 
 
 def test_a_lot_of_strips_cannot_take_the_pill_below_its_minimum(laptop):

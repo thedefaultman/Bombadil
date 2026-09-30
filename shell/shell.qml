@@ -57,8 +57,12 @@ ShellRoot {
         target: "desk"
         // What the desk is showing, as JSON.
         function state(): string { return JSON.stringify(deskState.snapshot()) }
-        // Stand-in windows for a session without Hyprland: a JSON list of {x, y, w, h, fullscreen}.
-        function cover(windows: string): void { deskState.setWindows(JSON.parse(windows)) }
+        // Stand-in windows for a session without Hyprland: {"windows": [{x, y, w, h, fullscreen}]}.
+        // (The command line takes the brackets off a bare list, so the list goes in an object.)
+        function cover(windows: string): void {
+            const v = JSON.parse(windows)
+            deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
+        }
         // A message as agentd would send it, for demos and the VM smoke check.
         function inject(message: string): void { root.handle(message) }
     }

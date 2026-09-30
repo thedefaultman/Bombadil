@@ -103,9 +103,17 @@ QtObject {
         return windows.length > 0 ? "shared" : "open"
     }
     readonly property bool capsule: mode === "immersive"
-    readonly property real pillWidth: mode === "immersive" ? 100
+    // The pill is as wide as the stage leaves it: up to 900, less what the strips take on each side,
+    // and less a rail's width while a card is showing in full (so the line above the pill never
+    // covers a card on a small screen).
+    readonly property bool anyFull: widgetIds.some(id => faces[id] === "full")
+    readonly property real pillTarget: mode === "immersive" ? 100
         : mode === "shared" ? 360
-        : Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth) + T.stripGap + T.railMargin)))
+        : Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
+                                                        + T.stripGap + T.railMargin)))
+    property int pillAnimMs: 150
+    property real pillWidth: pillTarget
+    Behavior on pillWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
 
     // -- the rails --
 
