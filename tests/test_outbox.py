@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from mail_stub import mail  # noqa: F401 - the fixture
+from mail_stub import mail_service  # noqa: F401 - the `mail` fixture
 
 from bombadil import outbox, paths, procs
 from bombadil.outbox import Outbox, PressResult
@@ -24,11 +24,13 @@ class Doing:
 
     def __init__(self, result=None, gate=None):
         self.calls = []
+        self.again = []     # the `again` each call was given; a performer that is not told never sees one
         self.result = result or PressResult(True, "Done.", {"line": "Done."})
         self.gate = gate
 
-    async def __call__(self, id, fingerprint):
+    async def __call__(self, id, fingerprint, **more):
         self.calls.append((id, fingerprint))
+        self.again.append(more.get("again", False))
         if self.gate is not None:
             await self.gate.wait()
         return self.result
@@ -46,7 +48,15 @@ async def test_a_press_from_an_ordinary_process_does_the_act_once_and_is_written
     assert box.performers["note"].calls == [("n1", "f" * 64)]
     [row] = rows()
     assert row.pop("t") > 1_700_000_000
-    assert row == {"kind": "note", "id": "n1", "fingerprint": "f" * 64, "ok": True, "code": "", "pid": 4242}
+    assert row == {"kind": "note", "id": "n1", "fingerprint": "f" * 64, "ok": True, "code": "", "pid": 4242,
+                   "src": "agentd"}
+
+
+@pytest.mark.asyncio
+async def test_a_second_press_is_told_to_the_act_only_when_the_person_said_so(box):
+    await box.press("note", "n1", "f1", 10)
+    await box.press("note", "n2", "f1", 10, again=True)
+    assert box.performers["note"].again == [False, True]
 
 
 @pytest.mark.asyncio
@@ -184,7 +194,7 @@ async def test_a_press_that_started_here_is_known_and_a_send_nobody_pressed_is_w
     assert box.was_pressed("note", "n1") and not box.was_pressed("note", "n2")
     box.saw_send("mail", "d9")
     assert rows()[-1] | {"t": 0} == {"t": 0, "kind": "mail", "id": "d9", "fingerprint": "", "ok": True,
-                                     "code": "no_press", "pid": 0}
+                                     "code": "no_press", "pid": 0, "src": "agentd"}
 
 
 @pytest.mark.asyncio

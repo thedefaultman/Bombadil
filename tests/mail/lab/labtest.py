@@ -27,9 +27,12 @@ RUN = os.path.join(HERE, "run-thunderbird.sh")
 class Lab:
     def __init__(self, lab_dir=None):
         self.dir = lab_dir or os.environ.get("BOMBADIL_LAB_DIR", "/tmp/bombadil-lab")
-        self.ms = MailServer(os.path.join(self.dir, "mail"))
+        self.imap_port = int(os.environ.get("LAB_IMAP_PORT", "1143"))
+        self.smtp_port = int(os.environ.get("LAB_SMTP_PORT", "1025"))
+        self.ms = MailServer(os.path.join(self.dir, "mail"), self.imap_port, self.smtp_port)
         self._bridge = None
         self.start_seconds = None
+        self.display = None
 
     # -- lifecycle
     def start(self, **env):
@@ -58,10 +61,19 @@ class Lab:
         subprocess.run([RUN, "stop"], env=dict(os.environ, BOMBADIL_LAB_DIR=self.dir), capture_output=True)
 
     def _display(self):
+        """Remember the lab's DISPLAY WITHOUT exporting it: run-thunderbird.sh starts its own Xvfb only when $DISPLAY
+        is unset, so a stale DISPLAY in this process would make the next start() use a dead display."""
         try:
-            os.environ["DISPLAY"] = open(os.path.join(self.dir, "display")).read().strip()
+            self.display = open(os.path.join(self.dir, "display")).read().strip()
         except OSError:
-            pass
+            self.display = None
+
+    def env(self):
+        self._display()
+        e = dict(os.environ)
+        if self.display:
+            e["DISPLAY"] = self.display
+        return e
 
     def bridge(self, timeout=60):
         if self._bridge is None:
@@ -71,7 +83,7 @@ class Lab:
 
     # -- conveniences
     def imap(self):
-        m = imaplib.IMAP4("127.0.0.1", 1143)
+        m = imaplib.IMAP4("127.0.0.1", self.imap_port)
         m.login("test@example.test", "lab")
         return m
 
@@ -101,7 +113,7 @@ class Lab:
 
     def windows(self):
         """Top-level X windows with a name (xwininfo)."""
-        out = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True).stdout
+        out = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True, env=self.env()).stdout
         res = []
         for l in out.splitlines():
             l = l.strip()
@@ -110,7 +122,7 @@ class Lab:
         return res
 
     def screenshot(self, path):
-        subprocess.run(["import", "-window", "root", path], check=False)
+        subprocess.run(["import", "-window", "root", path], check=False, env=self.env())
         return path
 
     def tb_pids(self):

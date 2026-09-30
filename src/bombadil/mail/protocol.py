@@ -13,6 +13,7 @@ import json
 import re
 import struct
 import sys
+import unicodedata
 from dataclasses import dataclass
 from email.utils import formataddr, getaddresses
 
@@ -38,7 +39,7 @@ MAX_NAME = 200
 MAX_KEY = 512
 
 _ACCOUNT = re.compile(r"a[0-9]{1,9}")
-_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")   # the last are lone surrogates
 # One mailbox: no quotes, brackets, commas or spaces, and a dot in the domain. Not RFC 5322 (quoted
 # local parts and domain literals are refused on purpose): whatever this accepts is safe to put in a header.
 _EMAIL = re.compile(r"[^\s@<>(),;:\\\"\[\]]{1,64}@[^\s@<>(),;:\\\"\[\]]{1,255}\.[^\s@<>(),;:\\\"\[\]]{2,63}")
@@ -96,6 +97,10 @@ class Addr:
 
 def valid_email(text) -> bool:
     if not isinstance(text, str) or len(text) > MAX_EMAIL or _EMAIL.fullmatch(text) is None:
+        return False
+    # Invisible and look-alike-by-layout characters (zero-width, bidi controls, odd spaces) make an address
+    # that reads as another one: refused, so nothing carries one into a header or a recipient list.
+    if any(unicodedata.category(c)[0] in "CZ" for c in text):
         return False
     return all(label and label[0] != "-" and label[-1] != "-" for label in text.rpartition("@")[2].split("."))
 

@@ -62,8 +62,9 @@ class PressResult:
     code: str = ""                # why not, for the log and for the window: "agent", "busy", "changed", ...
 
 
-# Does the act for one press. It is called once, and what it returns is final.
-Performer = Callable[[str, str], Awaitable[PressResult]]
+# Does the act for one press. It is called once, and what it returns is final. `again=True` is passed
+# only when the person chose to press again on something whose outcome was not known.
+Performer = Callable[..., Awaitable[PressResult]]
 
 
 def _receipt(result) -> dict | None:
@@ -76,7 +77,7 @@ def _receipt(result) -> dict | None:
     return None
 
 
-def _send_mail(draft: str, fingerprint: str) -> PressResult:
+def _send_mail(draft: str, fingerprint: str, again: bool = False) -> PressResult:
     """Ask the mail service to send one draft, waiting as long as a send may take. A service that
     cannot be reached was never asked, so nothing went; one that stops answering after it was
     asked may have sent, which is said as that."""
@@ -86,7 +87,8 @@ def _send_mail(draft: str, fingerprint: str) -> PressResult:
         return PressResult(False, MAIL_DOWN, code="engine_down")
     with conn:
         try:
-            result = conn.request("send", timeout=MAIL_SEND_SECONDS, id=draft, fingerprint=fingerprint)
+            result = conn.request("send", timeout=MAIL_SEND_SECONDS, id=draft, fingerprint=fingerprint,
+                                  **({"again": True} if again else {}))
         except mail_client.MailUnavailable:
             return PressResult(False, UNKNOWN_LINE, code="unknown_outcome")
         except mail_client.MailError as e:
@@ -96,8 +98,8 @@ def _send_mail(draft: str, fingerprint: str) -> PressResult:
     return PressResult(True, str((receipt or {}).get("line") or "Sent."), receipt)
 
 
-async def send_mail(draft: str, fingerprint: str) -> PressResult:
-    return await asyncio.to_thread(_send_mail, draft, fingerprint)
+async def send_mail(draft: str, fingerprint: str, again: bool = False) -> PressResult:
+    return await asyncio.to_thread(_send_mail, draft, fingerprint, again)
 
 
 def _field(value, limit: int = 128) -> str:
@@ -122,12 +124,12 @@ class Outbox:
         the person's press."""
         return (kind, id) in self._pressed
 
-    async def press(self, kind, id, fingerprint, peer_pid: int | None) -> PressResult:
-        result = await self._press(kind, id, fingerprint, peer_pid)
+    async def press(self, kind, id, fingerprint, peer_pid: int | None, again: bool = False) -> PressResult:
+        result = await self._press(kind, id, fingerprint, peer_pid, again)
         self._log(kind, id, fingerprint, result.ok, result.code, peer_pid)
         return result
 
-    async def _press(self, kind, id, fingerprint, peer_pid) -> PressResult:
+    async def _press(self, kind, id, fingerprint, peer_pid, again: bool = False) -> PressResult:
         if not isinstance(peer_pid, int) or isinstance(peer_pid, bool) or peer_pid <= 0:
             return PressResult(False, "I could not tell who pressed. " + NOT_SENT, code="no_peer")
         if await asyncio.to_thread(self._from_agent, peer_pid):
@@ -138,7 +140,8 @@ class Outbox:
             return PressResult(False, "Nothing here sends that. " + NOT_SENT, code="unknown_kind")
         if not (isinstance(id, str) and isinstance(fingerprint, str) and 0 < len(id) <= 128
                 and 0 < len(fingerprint) <= 128):
-            return PressResult(False, "That press did not say what it was for. " + NOT_SENT, code="bad_request")
+            return PressResult(False, "That press did not say what it was for. " + NOT_SENT,
+                               code="bad_request")
         key = (kind, id)
         if key in self._busy:
             return PressResult(False, "That is already being sent.", code="busy")
@@ -147,7 +150,8 @@ class Outbox:
         while len(self._pressed) > REMEMBER:
             self._pressed.popitem(last=False)
         try:
-            return await asyncio.wait_for(performer(id, fingerprint), PERFORM_SECONDS)
+            return await asyncio.wait_for(performer(id, fingerprint, again=True) if again
+                                          else performer(id, fingerprint), PERFORM_SECONDS)
         except TimeoutError:
             return PressResult(False, UNKNOWN_LINE, code="unknown_outcome")
         except Exception as e:  # noqa: BLE001 - a press ends in a sentence, whatever the performer did
@@ -169,8 +173,10 @@ class Outbox:
     def _log(self, kind, id, fingerprint, ok: bool, code: str, pid) -> None:
         """One row: when, what, which fingerprint, from which process, how it ended. Never mail text:
         the fields are what the sender said they were, so each is cut and held to printable characters."""
-        row = {"t": round(time.time(), 3), "kind": _field(kind, 24), "id": _field(id), "fingerprint": _field(fingerprint),
-               "ok": bool(ok), "code": code, "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else 0}
+        who = pid if isinstance(pid, int) and not isinstance(pid, bool) else 0
+        # The service writes its own rows in the same file, with src "mail".
+        row = {"t": round(time.time(), 3), "kind": _field(kind, 24), "id": _field(id),
+               "fingerprint": _field(fingerprint), "ok": bool(ok), "code": code, "pid": who, "src": "agentd"}
         path = paths.press_log()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +185,7 @@ class Outbox:
             with path.open("a") as f:
                 f.write(json.dumps(row) + "\n")
         except OSError as e:
-            print(f"agentd: press log: {e}", file=sys.stderr)   # a log that cannot be written never stops a press
+            print(f"agentd: press log: {e}", file=sys.stderr)   # a log that fails never stops a press
 
 
 _said: set[tuple[Path, str]] = set()   # what this process has said, for a told.json that cannot be written

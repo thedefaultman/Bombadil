@@ -30,6 +30,8 @@
 #   LAB_SIGNATURES_REQUIRED=1   set xpinstall.signatures.required=true (proves the pref is honoured)
 #   LAB_EXTRA_PREFS=file.js     extra user_pref lines         LAB_KIND=lab|gmail|outlook|icloud  account template
 #   LAB_HEADLESS=1              pass --headless               LAB_MARIONETTE=1  pass --marionette (port 2828)
+#   LAB_IMAP_PORT=1143 LAB_SMTP_PORT=1025   ports of the local mail server (lets two labs run side by side with different
+#                               BOMBADIL_LAB_DIR)
 #   LAB_NO_SERVER=1             do not start the mail server  LAB_NO_WAIT=1     do not wait for the add-on
 #   LAB_APP_COPY=1              work on a hard-linked copy of the app dir (implied by policy-dist/distribution-ext/...)
 #   LAB_POLICY_JSON=file.json   write this as <app>/distribution/policies.json (implies LAB_APP_COPY)
@@ -146,7 +148,7 @@ do_start() {
 
   # ---- mail server ----------------------------------------------------------------------------
   if [ "${LAB_NO_SERVER:-0}" != 1 ]; then
-    python3 "$HERE/mailserver.py" serve --dir "$LAB/mail" --seed "${LAB_SEED:-$HERE/seed}" >"$LAB/mail-server.log" 2>&1 &
+    python3 "$HERE/mailserver.py" serve --dir "$LAB/mail" --imap-port "${LAB_IMAP_PORT:-1143}" --smtp-port "${LAB_SMTP_PORT:-1025}" --seed "${LAB_SEED:-$HERE/seed}" >"$LAB/mail-server.log" 2>&1 &
     wait_file "$LAB/mail/ready" 20 || { log "mail server did not come up"; cat "$LAB/mail-server.log" >&2; exit 1; }
   fi
 
@@ -190,6 +192,7 @@ EOS
   (cd "$HERE" && python3 - <<PYEOF
 import make_profile
 make_profile.write_profile("$LAB/profile", kind="${LAB_KIND:-lab}", load="$pl_load", xpi="$XPI",
+                           imap_port=${LAB_IMAP_PORT:-1143}, smtp_port=${LAB_SMTP_PORT:-1025},
                            nss_dir="$APP", extra_user_js="$extra", addon_prefs=bool(int("$addon_prefs")))
 PYEOF
   )
@@ -212,8 +215,8 @@ export DISPLAY="$DISPLAY"
 export TB_APP_DIR="$APP"
 export LAB_PROFILE="$LAB/profile"
 export LAB_HOST_SOCK="$LAB/host.sock"
-export LAB_IMAP="127.0.0.1:1143"
-export LAB_SMTP="127.0.0.1:1025"
+export LAB_IMAP="127.0.0.1:${LAB_IMAP_PORT:-1143}"
+export LAB_SMTP="127.0.0.1:${LAB_SMTP_PORT:-1025}"
 export LAB_TB_PID="$(cat "$LAB/tb.pid")"
 EOS
   log "thunderbird pid $(cat "$LAB/tb.pid") on DISPLAY=$DISPLAY, lab dir $LAB, load mode $LOAD"

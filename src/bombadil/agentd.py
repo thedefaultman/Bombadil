@@ -34,9 +34,10 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         the os-mcp `job` tool; answered with job-result
                    {"type": "mail-tool", "id": s, "turn": n, "op": "search"|"read"|"draft"|"mark"|"show"|
                     "status", ...}                      the os-mcp mail tools; answered with mail-result
-                   {"type": "press", "kind": "mail", "id": draft, "fingerprint": fp}
+                   {"type": "press", "kind": "mail", "id": draft, "fingerprint": fp, "again"?: true}
                                                         the person's press on a Send button; answered
-                                                        with press_result (outbox.py)
+                                                        with press_result (outbox.py). "again" is for a
+                                                        send whose outcome was unknown, pressed on purpose
                    {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
                    {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
@@ -707,7 +708,10 @@ class AgentD:
         """The person's press on a Send button, from whatever process drew it: the outbox decides whether
         it counts, does the act once, and what came of it goes back to the sender and onto the line."""
         kind, id_ = msg.get("kind"), msg.get("id")
-        result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer))
+        # `again` is the person's own second press on a send that might have gone (the service refuses it
+        # otherwise); nothing but an explicit true counts.
+        result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer),
+                                         again=msg.get("again") is True)
         self.says.pressed(result)
         if result.ok:
             # Not said again on the line (the receipt is), but the agent should know what happened to its draft.
@@ -731,7 +735,7 @@ class AgentD:
         """Does a draft wait for the person's press? Asked of the service, since the person may have
         started it in the window themselves. No service, no draft."""
         try:
-            got = await mail_watch.ask("list", DRAFT_CHECK_SECONDS, view="drafts", limit=5)
+            got = await mail_watch.ask("list", DRAFT_CHECK_SECONDS, view="drafts", limit=50)
         except (mail_client.MailUnavailable, mail_client.MailError):
             return False
         rows = got if isinstance(got, list) else (got or {}).get("drafts", []) if isinstance(got, dict) else []

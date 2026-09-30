@@ -101,35 +101,85 @@ press on the Send button the view shows, for exactly what the view showed:
    own folder when they are added, so what is fingerprinted is what is sent.
 2. The window, when it draws a draft, reports `draft_shown {id, fingerprint}`. Any edit (the agent's or
    the person's) changes the fingerprint and clears what was shown.
-3. The press is `{"type": "press", "kind": "mail", "id": draft, "fingerprint": fp}` to agentd. agentd
-   refuses a press from a process inside an agent turn's scope (`procs.cgroup_of`), logs it, and calls
-   the service's `send`. The service refuses unless the stored fingerprint, the pressed one and the shown
-   one agree, the draft is `open`, there is a recipient, the attachments still hash the same and the size
-   is under the account's limit.
+3. The press is `{"type": "press", "kind": "mail", "id": draft, "fingerprint": fp}` to agentd (and
+   `"again": true` only for a draft whose send was `unknown`, which the person chose to press again).
+   agentd refuses a press from a process inside an agent turn's scope (`procs.cgroup_of`) or in the
+   running turn's process tree (a turn with no scope), and one whose peer it cannot name (`SO_PEERCRED`;
+   it fails closed). It logs the press, calls the service's `send` once, and answers the sender with
+   `press_result` (below). The service refuses unless the stored fingerprint, the pressed one and the
+   shown one agree, the draft is `open`, there is a recipient, the attachments still hash the same and
+   the size is under the account's limit.
 4. `sending` is written before the engine is asked; a draft found `sending` after a crash becomes
    `unknown` ("Thunderbird did not say whether this went; look in Sent before pressing again"). Nothing
    retries a send. Pressing twice sends once.
-5. A typed "send it" does nothing but say that sending is yours and where the button is (choice 1a).
+5. A typed "send it" does nothing but say that sending is yours and where the button is (choice 1a):
+   the launcher's word table answers it, and only when agentd finds an open draft waiting (asked of the
+   service, waiting at most a second); with no draft, or a question ("send it?"), it is the model's
+   like any other words.
 
 This is a rule with a check, not yet a wall: the agent runs as the person, with a shell and sudo, and
 could in principle write to `mail.sock` or read Thunderbird's profile. The brief's hardening order
 (bombadil-connect as its own user, agentd accepting presses only from the shell's own process, the sudo
-question) is what turns it into a wall.
+question) is what turns it into a wall. Bypasses that agentd cannot close from where it stands: a process
+the agent starts with `systemd-run --user` is in no turn scope and no process tree, and so is a write
+straight to `mail.sock`; an app of the person's own called `mail` (`~/Apps/mail`) would be run by
+`apps.app_dir` in place of the real window (the launcher refuses to open it, but `apps.py` is not
+agentd's). The press log (`presses.jsonl`) holds both writers' rows: agentd's with `"src": "agentd"`,
+the service's with `"src": "mail"`; a send the service reports that no press of agentd's started is
+written with code `no_press` and said on the pill ("That was not your press on Send.").
 
 ## Agent tools
 
 Each is `os-mcp tool -> {"type": "mail-tool", "id", "turn", "op", ...} -> agentd -> mail.sock`, answered
-with `{"type": "mail-result", "id", "ok", "text"}`. They work only inside a turn.
+with `{"type": "mail-result", "id", "ok", "text"}`. They work only inside the turn that is running (agentd
+compares `turn`), and only the asking client is answered. `id` names the request, so the mail's own id
+travels on this line as `mail` (the tool's `id` argument); ops are `search`, `read`, `mark`, `draft`,
+`show`, and there is no other: nothing sends, lists drafts, or discards.
 
 - `mail_search {text?, from?, account?, unread?, since?, limit?}`: senders, subjects, times and ids.
-- `mail_read {id}`: the text between marks that say it is other people's words; the turn is marked as
-  having read mail. Reading leaves the mail unread.
+- `mail_read {id}`: the text between marks that carry a random word per read ("Other people's words
+  begin (a1b2c3d4)"), cut at 20 000 characters inside them and said; control and bidi characters are
+  stripped. The turn is marked as having read mail, and so is a `mail_search` that found some (the
+  senders and subjects are other people's words too). Reading leaves the mail unread.
 - `mail_mark {id, needs_reply, why}`: fills Needs a reply; `why` is one line under 140 characters.
 - `mail_draft {reply_to? | to, subject, body, cc?, attachments?, account?}`: a draft in the view, which
-  opens on it. Attachments come from paths; credentials-shaped paths are refused. Recipients the
-  person's words and the thread do not contain, and that are not in the address book or Sent, are
-  flagged on the draft (more strongly when the turn had read mail).
+  opens on it, and a notice above the pill ("Reply to Priya is ready. Sending is yours."). agentd adds
+  `created_by: "agent"`, `typed` (the words the person typed for this turn, none for a coding session's
+  turn) and `tainted` (the turn has read mail) for the service's address check. The first draft a
+  person gets also says, once on this machine (`told.json`), that the agent never presses Send.
+  Attachments come from paths; credentials-shaped paths are refused. Recipients the person's words and
+  the thread do not contain, and that are not in the address book or Sent, are flagged on the draft
+  (more strongly when the turn had read mail).
 - `mail_show {view?, id?}`: slide the Mail window in on a view.
+
+## agentd: the pill's notices, the press and what it watches
+
+Messages on agentd's own socket (docs in `agentd.py`'s header):
+
+- `{"type": "notice", "id", "source": "mail", "line", "tone": "step"|"ask"|"done"|"error", "actions":
+  [{"id", "label", "style": "primary"|"quiet"}], "ttl", "at"}`: a line above the pill, sent to every client
+  and to one that joins later, and again with the same `id` when it changes. At most four are live
+  (the oldest goes); `ttl` 0 waits, else it ends by itself. `{"type": "notice_end", "id"}` says it is gone.
+- Client to agentd: `{"type": "notice_action", "id", "action"}` (a chip; the notice ends unless the action
+  failed or changed it, and a failure is said on the notice itself) and `{"type": "notice_dismiss", "id"}`.
+- `{"type": "press_result", "kind", "id", "ok", "line", "code", "receipt"}`, to the pressing client only.
+  `code` is `""` when it went, else `agent`, `no_peer`, `busy`, `bad_request`, `unknown_kind`, `error`,
+  `unknown_outcome` (said in words: "I can't tell whether that went. Look in Sent before you press Send
+  again."), `engine_down`, or the service's own code (`changed`, `refused`, `too_big`, ...). Nothing
+  retries.
+
+What agentd says, from `mail/watch.py`: new mail from a sender the service says is `known` is one line
+("Priya Shah: Launch date", five minutes) with Reply (a reply draft made `created_by: "person"` and shown)
+and Open; anyone else waits in the view. A draft from the agent is "Reply to Priya is ready. Sending is
+yours." with Open, and stays. A send is one receipt ("Sent to Priya from maya@acme.com · 09:08", with
+"Open in Gmail" when the provider has a link), said once whichever of the press's answer and the
+service's `sent` push arrives first. A `show` push brings the Mail window in, unless agentd just did.
+Mail is optional: with no service agentd retries every 5 s and says nothing, and a service silent for
+45 s is pinged and, if it does not answer in 10 s, reconnected to.
+
+The launcher answers "mail", "email", "inbox" (with open/show/close/hide) itself; `Launcher.open_mail(**show)`
+asks the service to `show` (waiting at most a second) and slides the window in, and `bombadil mail
+[status|accounts|add|remove|views|list|show]` is the same from a terminal, with no send.
 
 ## Thunderbird and the add-on
 
@@ -188,8 +238,9 @@ attachment); a timed-out `send` is `unknown_outcome`, never retried.
 | `mail/engine.py` | `ThunderbirdProcess`: profile, prefs for accounts, add-on and host install, start, supervise, stage and hide the window | service |
 | `mail/service.py` | `Service`, `main()` | `bin/bombadil-mail` |
 | `mail/client.py` | blocking client: `Connection`, `request(op, **args)`, `notify(op, **args)`, `MailUnavailable`, `MailError` | agentd, launcher, CLI |
-| `mail/tools.py` | the five os-mcp tools | `mcp_server.py` |
-| `outbox.py`, `notices.py` | presses; the pill line's notices | agentd |
+| `mail/tools.py` | the five os-mcp tools (`register`) and agentd's `Broker` for them | `mcp_server.py`, agentd |
+| `mail/watch.py` | `Watch` (subscribe to `mail.sock`, reconnect, test silence), `Says` (pushes and drafts to notices) | agentd |
+| `outbox.py` | `Outbox`: the press registry, log and told-once sentence; `notices.py`: `Notices`, the pure stack | agentd |
 
 `BOMBADIL_MAIL_ENGINE=fake` runs the service on the fake engine with sample mailboxes: the window, the
 desktop test and the VM smoke use it, and so can anyone without an account.

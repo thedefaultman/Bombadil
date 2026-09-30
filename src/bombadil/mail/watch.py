@@ -126,7 +126,8 @@ def short_name(addr) -> str:
     """Who, the way a person says it: "Priya" for Priya Shah <priya@acme.example>, else the address."""
     addr = addr if isinstance(addr, dict) else {}
     words = one_line(addr.get("name") or "", 40).split()
-    return words[0].strip(",") if words and words[0].strip(",") else one_line(addr.get("email") or "someone", 60)
+    first = words[0].strip(",") if words else ""
+    return first or one_line(addr.get("email") or "someone", 60)
 
 
 class Says:
@@ -192,7 +193,7 @@ class Says:
     # -- drafts --
 
     def draft_ready(self, draft: dict, told: str = "") -> int:
-        """A draft is in the view, and sending it is the person's. `told` is what is said once, in addition."""
+        """A draft is in the view, and sending it is the person's. `told` is said once, in addition."""
         to = draft.get("to") if isinstance(draft.get("to"), list) else []
         who = short_name(to[0] if to else {}) + (f" and {len(to) - 1} more" if len(to) > 1 else "")
         what = "Reply to" if draft.get("reply_to") else "Mail to"

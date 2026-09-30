@@ -30,8 +30,51 @@ _VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "me
 _BLOCK = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "table", "ul", "ol", "dl", "pre", "section", "article",
           "header", "footer", "address", "figure", "form", "center"}
 _LINE = {"div", "tr", "li", "dt", "dd", "thead", "tbody", "tfoot", "caption", "nav", "main", "aside"}
-_HIDDEN = re.compile(r"display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px|pt|em|%)?\s*(?:;|$)"
-                     r"|max-height\s*:\s*0|mso-hide\s*:\s*all|opacity\s*:\s*0(?:\.0+)?\s*(?:;|$)", re.IGNORECASE)
+_ZERO = re.compile(r"0+(?:\.0+)?(?:px|pt|em|rem|ex|%|vh|vw)?")
+_FAR = re.compile(r"-\s*(\d+(?:\.\d+)?)\s*(?:px|pt|em|rem|ex|%|vh|vw)")
+_TINY = re.compile(r"[0-2](?:\.\d+)?px")
+_CLIP = re.compile(r"rect\([01](?:px)?,[01](?:px)?,[01](?:px)?,[01](?:px)?\)")
+
+
+def _hidden_style(style: str) -> bool:
+    """Does this inline style keep the element from being seen? The usual ways a mail hides words from a
+    person (and so, in a phishing or injection attempt, for a machine reader): display, visibility, opacity,
+    no-size boxes that clip, text pushed off the page, text of no size, clear text."""
+    rules: dict[str, str] = {}
+    for declaration in style.lower().split(";"):
+        name, colon, value = declaration.partition(":")
+        if colon:
+            rules[name.strip()] = " ".join(value.replace("!important", " ").split())
+    get = rules.get
+    if get("display") == "none" or get("visibility") in ("hidden", "collapse") or get("mso-hide") == "all":
+        return True
+    if get("opacity") and _ZERO.fullmatch(get("opacity")) or get("color") == "transparent":
+        return True
+    size = get("font-size", "")
+    if size and (_ZERO.fullmatch(size) or _TINY.fullmatch(size)):
+        return True
+    clipped = get("overflow") in ("hidden", "clip") or get("overflow-y") in ("hidden", "clip")
+    for name in ("max-height", "max-width"):
+        if name in rules and _ZERO.fullmatch(rules[name]):
+            return True
+    if clipped and any(name in rules and _ZERO.fullmatch(rules[name])
+                       for name in ("height", "width", "line-height")):
+        return True
+    if "text-indent" in rules and _far(rules["text-indent"]):
+        return True
+    if get("position") in ("absolute", "fixed") and any(
+            _far(rules.get(side, "")) for side in ("left", "top", "right", "bottom")):
+        return True
+    return (_CLIP.fullmatch(get("clip", "").replace(" ", "")) is not None
+            or get("clip-path", "").replace(" ", "") in ("inset(100%)", "inset(50%)")
+            or get("transform", "").replace(" ", "") in ("scale(0)", "scale(0,0)"))
+
+
+def _far(value: str) -> bool:
+    found = _FAR.fullmatch(value.strip())
+    return found is not None and float(found.group(1)) >= 500
+
+
 _SPACES = re.compile("[ \t\r\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
 # Invisible padding that newsletters put after the subject line, and marks that reorder text on screen.
 _INVISIBLE = re.compile("[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
@@ -117,7 +160,7 @@ class _Reader(HTMLParser):
                 self.size = self.limit   # nested this deep is not a mail, and hidden text could hide in it
                 return
             self.stack.append(tag)
-            if self.hidden_at is None and ("hidden" in attrs or _HIDDEN.search(attrs.get("style") or "")):
+            if self.hidden_at is None and ("hidden" in attrs or _hidden_style(attrs.get("style") or "")):
                 self.hidden_at = len(self.stack)
         if self.hidden_at is not None:
             return
@@ -191,7 +234,7 @@ class _Reader(HTMLParser):
                 self._flush()
             self.cur.append(last)
         else:
-            self._put(data)
+            self._put(data.replace("\n", " "))   # a line end in HTML source is a space, not a new line
             if len(self.cur) > 2000:
                 self.cur = ["".join(self.cur)]   # keep the pieces of one long line from piling up
 

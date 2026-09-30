@@ -21,7 +21,8 @@ from bombadil import paths
 class StubMail:
     def __init__(self, path):
         self.path = Path(path)
-        self.requests: list[dict] = []     # every request received, as sent, in order
+        self.requests: list[dict] = []     # the work asked of it, as sent, in order
+        self.watching: list[dict] = []     # subscribe and ping: agentd's own housekeeping, apart from the work
         self.results: dict[str, object] = {}     # op -> result, or a function of the request
         self.errors: dict[str, tuple[str, str]] = {}   # op -> (sentence, code)
         self.delays: dict[str, float] = {}       # op -> seconds before it answers; "hang" never does
@@ -46,7 +47,7 @@ class StubMail:
         self.delays[op] = seconds
 
     def asked(self, op: str) -> list[dict]:
-        return [r for r in list(self.requests) if r.get("op") == op]
+        return [r for r in list(self.requests) + list(self.watching) if r.get("op") == op]
 
     def push(self, msg: dict) -> None:
         """Say something to every subscriber."""
@@ -85,7 +86,11 @@ class StubMail:
             self._server.close()
             for w in list(self._writers):
                 w.close()
-            self._loop.run_until_complete(asyncio.sleep(0))
+            # A connection that was told to hang is still sleeping: end it, or the loop closes on it.
+            pending = [t for t in asyncio.all_tasks(self._loop) if not t.done()]
+            for t in pending:
+                t.cancel()
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             self._loop.close()
 
     def _in_loop(self, fn, *args) -> None:
@@ -108,8 +113,8 @@ class StubMail:
         try:
             while line := await reader.readline():
                 req = json.loads(line)
-                self.requests.append(req)
                 op = req.get("op")
+                (self.watching if op in ("subscribe", "ping") else self.requests).append(req)
                 if op == "subscribe":
                     self._subs.append(writer)
                 delay = self.delays.get(op, 0)
@@ -135,8 +140,8 @@ class StubMail:
             writer.close()
 
 
-@pytest.fixture
-def mail(home):
+@pytest.fixture(name="mail")
+def mail_service(home):
     """A stub mail service on the socket the whole of Bombadil looks for (under the test's own runtime dir)."""
     stub = StubMail(paths.mail_socket()).start()
     yield stub

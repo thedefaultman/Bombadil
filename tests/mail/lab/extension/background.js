@@ -11,6 +11,7 @@
  *   host -> ext  {id, op:"call",   path:"messages.query", args:[{...}]}
  *                {id, op:"listen", event:"messages.onNewMailReceived"}
  *                {id, op:"unlisten", event:"..."}
+ *                {id, op:"stash", key, idx, b64}                 (chunked upload, see fromHost)
  *                {id, op:"echo",   payload:"..."}          (host->ext size tests)
  *                {id, op:"gen",    bytes:N}                (ext->host size tests)
  *                {id, op:"ping"}
@@ -18,6 +19,9 @@
  *   ext  -> host {id, ok:true,  result:...} | {id, ok:false, error:"..."}
  *                {event:"messages.onNewMailReceived", args:[...], t:ms}
  *                {hello:true, ...}   (sent once on connect)
+ *
+ * Arguments: {__file:true,name,type,b64|stash} becomes a File, {__date:"<ISO>"} a Date (messages.query's fromDate/toDate
+ * hang forever when given a string or number: pass a Date).
  *
  * Blob/File results (messages.getRaw, getAttachmentFile) are returned as
  *   {__blob:true, name, type, size, b64}.
@@ -28,6 +32,9 @@ const HOST = "bombadil_mail";
 const T0 = Date.now();
 let port = null;
 const listeners = new Map();
+// Chunked uploads from the host (host->ext frames are capped at 1 MB): {op:"stash",key,idx,b64} x N, then reference
+// the assembled bytes as {__file:true, stash:key, name, type} in any call argument.
+const stash = new Map();
 
 function log(...a) {
   console.log("[bombadil-lab]", ...a);
@@ -76,8 +83,11 @@ function fromHost(v) {
     return v.map(fromHost);
   }
   if (v && typeof v == "object") {
+    if (v.__date) {
+      return new Date(v.__date);
+    }
     if (v.__file) {
-      const bin = atob(v.b64 || "");
+      const bin = atob(v.stash ? stash.get(v.stash).join("") : v.b64 || "");
       const u8 = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) {
         u8[i] = bin.charCodeAt(i);
@@ -156,6 +166,17 @@ async function handle(msg) {
         result = { unlistened: msg.event };
         break;
       }
+      case "stash": {
+        const arr = stash.get(msg.key) || [];
+        arr[msg.idx] = msg.b64;
+        stash.set(msg.key, arr);
+        result = { chunks: arr.length };
+        break;
+      }
+      case "stash_drop":
+        stash.delete(msg.key);
+        result = { dropped: msg.key };
+        break;
       case "echo":
         result = { len: msg.payload.length };
         break;

@@ -1,7 +1,7 @@
 import re
 
 import pytest
-from mail_stub import mail, msg  # noqa: F401 - the fixture
+from mail_stub import mail_service, msg  # noqa: F401 - mail_service is the `mail` fixture
 from test_mcp_server import _agentd, _said, call, make, rpc
 
 from bombadil import outbox
@@ -450,17 +450,8 @@ async def test_a_dead_turn_shows_nothing_and_a_window_that_fails_is_said(room):
 
 
 @pytest.mark.asyncio
-async def test_status_says_how_each_account_is(room):
-    room.results["status"] = {"accounts": [{"id": "a1", "email": "maya@example.test", "state": "ok", "unread": 3},
-                                           {"id": "a2", "email": "me@example.org", "state": "signin"}]}
-    assert await room.call("status") == (True, "a1 maya@example.test: ok, 3 unread\na2 me@example.org: signin")
-    room.results["status"] = {"accounts": []}
-    assert await room.call("status") == (True, "No mail account is set up yet.")
-
-
-@pytest.mark.asyncio
 async def test_an_op_that_is_not_a_mail_op_is_refused_in_words(room):
-    for op in ("send", "forward", "", "__class__", "draft_edit", "discard"):
+    for op in ("send", "forward", "", "__class__", "draft_edit", "discard", "status", "accounts"):
         ok, text = await room.call(op)
         assert not ok and text.startswith("Mail cannot") and "search, read, mark, draft and show" in text
     assert room.asked == []

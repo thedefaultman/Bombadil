@@ -365,6 +365,12 @@ class Store:
             args += list(was)
         return self.x(sql, args).rowcount > 0
 
+    def set_shown(self, draft_id: str, fingerprint: str, now: float) -> bool:
+        """Record that the view drew this draft with this fingerprint. False when the draft is not open with
+        exactly that fingerprint any more, so a view that drew an old version cannot vouch for the new one."""
+        return self.x("UPDATE drafts SET shown_fp = ?, shown_at = ? WHERE id = ? AND fingerprint = ? "
+                      "AND state IN ('open', 'unknown')", (fingerprint, now, draft_id, fingerprint)).rowcount > 0
+
     def begin_send(self, draft_id: str, fingerprint: str, now: float) -> bool:
         """Write "sending" for a draft that is still exactly what was checked: open (or unknown, when the
         person chooses to try again), with this fingerprint, and shown with it. False when any of that changed."""

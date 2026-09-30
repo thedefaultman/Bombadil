@@ -43,6 +43,7 @@ BLOB_TOTAL_S = 120.0
 UNCLAIMED_S = 60.0         # pieces that arrive for a transfer nobody asked about are dropped after this
 UNCLAIMED_MAX = 4 << 20    # ... and so is a transfer that nobody has asked about by the time it is this big
 MAX_XFERS = 16
+FRAME_MAX = 1_000_000      # bytes of one frame to the add-on: Thunderbird refuses more than 1 MiB from a host
 
 
 class EngineError(Exception):
@@ -83,6 +84,27 @@ class _Conn:
         self.writer = writer
         self.pending: dict[int, asyncio.Future] = {}
         self.task: asyncio.Task | None = None
+        self.buffer = bytearray()    # what was read and is not yet a whole line
+        self.scanned = 0             # how much of it is known to hold no newline
+
+    async def line(self) -> bytes:
+        """The next line, whatever its length up to the native-messaging limit (a mail's text comes in one
+        frame, far over the 1 MiB that an ordinary client of mail.sock may send). b"" at the end of the
+        stream; ValueError for a line that is over the limit."""
+        while True:
+            at = self.buffer.find(b"\n", self.scanned)
+            if at >= 0:
+                line = bytes(self.buffer[:at + 1])
+                del self.buffer[:at + 1]
+                self.scanned = 0
+                return line
+            self.scanned = len(self.buffer)
+            if self.scanned > protocol.NM_MAX_READ:
+                raise ValueError("a frame over the limit")
+            chunk = await self.reader.read(1 << 18)
+            if not chunk:
+                return b""   # the end; a last line with no newline was cut short and is not one
+            self.buffer += chunk
 
 
 class _Incoming:
@@ -169,7 +191,7 @@ class EngineLink:
     async def _read(self, conn: _Conn) -> None:
         try:
             while True:
-                line = await conn.reader.readline()
+                line = await conn.line()
                 if not line:
                     break
                 try:
@@ -220,8 +242,11 @@ class EngineLink:
         fut = asyncio.get_running_loop().create_future()
         conn.pending[rid] = fut
         try:
+            frame = (json.dumps({**args, "id": rid, "op": op}, ensure_ascii=False) + "\n").encode()
+            if len(frame) > FRAME_MAX:
+                raise EngineError(protocol.TOO_BIG, "That is too much to give Thunderbird at once.")
             try:
-                conn.writer.write((json.dumps({**args, "id": rid, "op": op}) + "\n").encode())
+                conn.writer.write(frame)
             except (OSError, RuntimeError) as e:
                 raise EngineGone(str(e) or "Thunderbird went away.") from e
             try:

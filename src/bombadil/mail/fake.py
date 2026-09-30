@@ -153,6 +153,13 @@ class FakeEngine:
             f.write(data)
         return path
 
+    def account_rows(self) -> list[dict]:
+        """The accounts as a service that lost its notes would be told of them: what `Service(initial_accounts=)`
+        adopts, so `BOMBADIL_MAIL_ENGINE=fake` has its sample accounts without anyone adding them."""
+        with self._lock:
+            return [{"email": a["emails"][0], "provider": a["provider"], "name": a["name"], "state": a["state"],
+                     "detail": a["detail"]} for a in self._accounts.values()]
+
     # -- steering, for tests --
 
     def fail_send(self, code: str = ENGINE_ERROR, sentence: str = "The provider refused the message.") -> None:
@@ -271,8 +278,8 @@ class FakeEngine:
         return acct
 
     async def _dripping(self) -> None:
-        canned = [("Leo Park <leo@acme.example>", "Quick question on the import screen", "Do we show the empty state "
-                   "before or after the first sync? I need it for the ticket."),
+        canned = [("Leo Park <leo@acme.example>", "Quick question on the import screen",
+                   "Do we show the empty state before or after the first sync? I need it for the ticket."),
                   ("Priya Shah <priya@acme.example>", "Re: launch date", "Legal signed off. Can you lock it?"),
                   ("Flow Weekly <news@flowweekly.example>", "Flow Weekly: one more habit", "A short read for Friday."),
                   ("Dr Amir Haddad <reception@smilecare.example>", "Your check-up", "We have moved it to 11:00.")]
