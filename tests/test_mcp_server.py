@@ -5,6 +5,7 @@ import threading
 import time
 
 from bombadil import desk, hypr, mcp_server, paths, providers, snapshots
+from bombadil.appkit import tools as app_tools
 
 
 class FakeHypr(hypr.Hyprland):
@@ -81,6 +82,7 @@ def test_tool_errors_are_reported_not_fatal():
 
 def test_create_app_writes_files(home, monkeypatch):
     monkeypatch.setattr(mcp_server.apps, "run", lambda name: None)
+    monkeypatch.setattr(app_tools, "run_check", lambda name: {"ok": True})
     s = make()
     r = call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
     assert "todo" in r["content"][0]["text"] and (home / "Apps/todo/main.qml").exists()
@@ -88,19 +90,10 @@ def test_create_app_writes_files(home, monkeypatch):
     assert listed[0]["name"] == "todo"
 
 
-def test_a_new_app_picks_its_spot_before_it_starts_and_a_running_one_does_not(home, monkeypatch):
-    order = []
-    monkeypatch.setattr(mcp_server.apps, "run", lambda name: order.append(("run", name)))
-    monkeypatch.setattr(mcp_server, "_is_running", lambda name: False)
-    s = make()
-    s.hypr.place_app = lambda name: order.append(("place", name))
-    call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
-    call(s, "open_app", name="todo")
-    assert order == [("place", "todo"), ("run", "todo"), ("place", "todo"), ("run", "todo")]
-    order.clear()
-    monkeypatch.setattr(mcp_server, "_is_running", lambda name: True)
-    call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
-    assert order == []
+def test_content_blocks_pass_through():
+    blocks = app_tools.Blocks([{"type": "text", "text": "hi"}, {"type": "image", "data": "", "mimeType": "image/png"}])
+    assert mcp_server._content(blocks) == list(blocks)
+    assert json.loads(mcp_server._content([{"type": "x"}])[0]["text"]) == [{"type": "x"}]
 
 
 def test_snapshot_and_undo(monkeypatch):

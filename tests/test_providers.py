@@ -179,6 +179,27 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
 
 
+def test_every_turn_says_where_the_kit_lives_and_how_to_import_it(tmp_path, monkeypatch):
+    """A fresh session must not go searching the disk for Theme.qml."""
+    share = tmp_path / "share"
+    (share / "qml" / "Bombadil").mkdir(parents=True)
+    (share / "skills" / "bombadil-apps").mkdir(parents=True)
+    monkeypatch.setattr(providers, "__file__", str(tmp_path / "nowhere" / "src" / "bombadil" / "providers.py"))
+    monkeypatch.setenv("BOMBADIL_SHARE", str(tmp_path))
+    prompt = providers.system_prompt()
+    assert "import Bombadil" in prompt and f"{share}/qml/Bombadil/" in prompt
+    assert f"{share}/skills/bombadil-apps/SKILL.md" in prompt and "never search the disk" in prompt
+    claude = providers.Claude("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
+    assert claude[claude.index("--append-system-prompt") + 1] == prompt        # resumed turns get it too
+    codex = providers.Codex("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
+    assert f"developer_instructions={json.dumps(prompt)}" in codex
+
+
+def test_kit_paths_on_this_checkout_exist():
+    kit, skill = providers.kit_paths()
+    assert (kit / "Theme.qml").is_file() and (skill / "SKILL.md").is_file()
+
+
 def test_only_the_clis_own_retry_notices_are_not_progress():
     p = providers.Claude("x")
     delta = json.dumps({"type": "stream_event", "event": {"type": "content_block_delta",
