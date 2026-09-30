@@ -135,3 +135,10 @@ def test_setup_and_the_cli_restart_the_daemon_through_systemd():
     cli = (ISO.parent / "bin/bombadil").read_text()
     assert "systemctl --user restart bombadil-agentd" in cli
 
+
+def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones():
+    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    assert "set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30" in install
+    assert "systemctl enable snapper-cleanup.timer" in install
+    # The config has to exist before it is changed.
+    assert install.index("create-config") < install.index("set-config")

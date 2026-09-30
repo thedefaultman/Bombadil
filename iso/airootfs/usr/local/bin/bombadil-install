@@ -59,6 +59,9 @@ rmdir /.snapshots 2>/dev/null || true
 snapper --no-dbus -c root create-config /
 btrfs subvolume delete /.snapshots
 mkdir /.snapshots
+# One restore point per agent turn and no hourly ones; the cleanup timer keeps the newest 30.
+snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30
+systemctl enable snapper-cleanup.timer
 mkinitcpio -P
 # Straight into Bombadil: no menu unless Esc is held at power-on.
 for kv in GRUB_TIMEOUT_STYLE=hidden GRUB_TIMEOUT=1 GRUB_TERMINAL_OUTPUT=console; do

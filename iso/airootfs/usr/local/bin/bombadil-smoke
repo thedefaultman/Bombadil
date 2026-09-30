@@ -160,6 +160,9 @@ if [[ "$mode" == "undo" ]]; then
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
+    # Every restore point is one snapper may prune, and the installed config keeps only 30.
+    check snapshot-is-prunable bash -c 'snapper -c root --jsonout list | grep -Eq "\"cleanup\": *\"number\""'
+    check snapshots-are-pruned bash -c 'grep -q "^NUMBER_LIMIT=\"30\"" /etc/snapper/configs/root && grep -q "^TIMELINE_CREATE=\"no\"" /etc/snapper/configs/root && systemctl is-enabled --quiet snapper-cleanup.timer'
     check undo as_user bombadil undo
     echo 2 > "$phase"; chown user: "$phase"
     say "REBOOT pass=$ok fail=$fail"

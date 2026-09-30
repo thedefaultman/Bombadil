@@ -40,7 +40,10 @@ class Snapshots:
     def create(self, description: str) -> Snapshot | None:
         if not self.available:
             return None
-        out = self._snapper("create", "--print-number", "--description", description)
+        # "number" puts it under snapper's NUMBER_LIMIT, which snapper-cleanup.timer enforces;
+        # without it nothing ever deletes the snapshot and they pile up for good.
+        out = self._snapper("create", "--print-number", "--cleanup-algorithm", "number",
+                            "--description", description)
         return Snapshot(int(out.strip()), description)
 
     def list(self, limit: int = 20) -> list[Snapshot]:
