@@ -579,6 +579,19 @@ def test_a_receipt_fades_with_the_closing_line_but_a_picture_you_asked_for_stays
     assert bar.pill.property("card") is not None and bar.pill.property("mode") == "idle"
 
 
+def test_a_picture_that_fails_puts_the_old_one_away_but_a_failed_click_does_not(bar):
+    _card_event(bar, _diagram())
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="start", text="Drawing your boot")
+    assert bar.pill.property("card") is not None                # still there while the new one is read
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="done", ok=False,
+             text="Could not read the boot: systemd-analyze took longer than expected.")
+    assert bar.pill.property("card") is None
+    assert bar.pill.property("source") == "error"
+    _card_event(bar, _diagram(id="card-2"))
+    bar.send(kind="local", turn=None, action="open", target="nginx.service", phase="done", ok=False, text="Could not open nginx.service.")
+    assert bar.pill.property("card") is not None                # the picture is still true; only the click failed
+
+
 def test_hovering_the_picture_keeps_the_line_from_fading(bar):
     _card_event(bar, _diagram())
     it = bar.item("cardHost")
@@ -595,6 +608,7 @@ def test_a_box_that_names_a_thing_opens_it_through_agentd(bar):
     _card_event(bar, _diagram(nodes=[{"label": "NetworkManager", "opens": {"kind": "unit", "value": "NetworkManager.service"}},
                                      {"label": "Turn 3", "opens": {"kind": "turn", "value": "3"}},
                                      {"label": "Nothing to open"}]))
+    bar.pump(0.5)       # the card grows and fades in; a click lands on the box only once it has stopped moving
     before = len(bar.sent)
     bar.click("box-n1")
     assert bar.sent[before:] == [{"type": "open", "kind": "unit", "value": "NetworkManager.service"}]

@@ -181,6 +181,9 @@ QtObject {
             mode = "closing"; lineAt = _now(); fadeAfter = 12000
             break
         case "local":
+            // A picture that could not be drawn puts the last one away: the error under a picture of
+            // something else reads as if it were about that picture.
+            if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
                 flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
