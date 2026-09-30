@@ -83,6 +83,8 @@ until the next prompt like any change, and Undo sends `undo_msg` instead of the 
 - Esc is only seen while the pill has the keyboard, so the details drawer (its own window) never reports
   its Esc; `drawerUp` is a guess from Details and close_details. Expect a burst of three Esc right after a
   put-away to count; the probe wants three sightings on two days anyway.
+- When the desk lands, its strips also sit right of the pill: bind `NoticedChip.taken` to their width plus
+  the gap after them (the chip moves past them, or above the pill when that leaves no room).
 - Hovering grows the layer for the card (exclusive zone stays 64). The chip and card are zero-sized while
   hidden so the input mask takes no room for them.
 - Rows from JSON are real arrays; a test's variant lists are not, so lists go through `_list()`.

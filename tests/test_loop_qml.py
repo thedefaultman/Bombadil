@@ -328,6 +328,19 @@ def test_the_chip_sits_right_of_the_pill_and_centred_on_it(bar):
     assert chip.y1 - chip.y0 == 28
 
 
+def test_the_chip_makes_way_for_other_strips_beside_the_pill(bar):
+    bar.noticed(OFFER)
+    chip_item = bar.item("noticedChip")
+    before = bar.box(chip_item)
+    chip_item.setProperty("taken", 40)               # the desk's strips, once they are there
+    bar.pump()
+    after = bar.box(chip_item)
+    assert after.x0 - before.x0 == 40 and after.y0 == before.y0
+    chip_item.setProperty("taken", 400)              # too many to leave room: above the pill instead
+    bar.pump()
+    assert bar.box(chip_item).y1 <= bar.box(bar.item("pillBox")).y0
+
+
 def test_the_chip_sits_above_the_pill_when_there_is_no_room_beside_it(bar):
     bar.set(pillMax=800)
     bar.noticed(OFFER)
@@ -785,6 +798,21 @@ def test_the_chip_and_card_load_without_qml_warnings(bar):
     bar.loop_send(type="noticed_result", op="preview", id="a1", ok=True, preview="x")
     bar.leave()
     bar.noticed(count=0, rows=[])
+    assert bar.warnings == []
+
+
+def test_one_broken_message_costs_a_line_not_the_card(bar):
+    junk = [None, 5, "x", {"id": 7, "primary": "x", "others": "y", "forms": [{}, None], "title": {"a": 1}}]
+    bar.noticed(*junk, resting=12, lately=None)
+    bar.peek()
+    assert bar.shown("noticedCard") and len(bar.items("noticedRowTitle")) == 1
+    bar.press("noticedPrimary")
+    assert bar.drain() == [{"type": "noticed_do", "op": "accept", "id": 7}]
+    bar.loop_send(type="noticed", rows="not a list", count=3)
+    bar.loop_send(type="noticed_result", id=None, preview={"text": "a preview"})
+    bar.loop_send(type="nonsense")
+    bar.call("handle", "not even an object")
+    assert bar.prop("count") == 3 and bar.prop("rows").property("length").toInt() == 0
     assert bar.warnings == []
 
 

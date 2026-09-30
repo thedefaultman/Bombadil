@@ -16,12 +16,15 @@ Rectangle {
     property real pillHeight: 52
     property real columnHeight: 52
     property real windowWidth: 0
+    // Room other strips already use right of the pill, with the gap after them (the desk's, once it
+    // lands): the chip sits past them, or above the pill when that leaves no room.
+    property real taken: 0
     readonly property real edge: 12   // the column's margin from the window's bottom
     readonly property real gap: 12
     signal clicked()
 
     readonly property bool shown: loop.chipVisible
-    readonly property bool beside: windowWidth - pillRight - 2 * gap >= implicitWidth
+    readonly property bool beside: windowWidth - pillRight - taken - 2 * gap >= implicitWidth
     // Distance of the chip's bottom edge from the window's bottom edge.
     readonly property real bottomGap: beside ? edge + (pillHeight - implicitHeight) / 2 : edge + columnHeight + 8
     // How far above the window's bottom edge the chip reaches when it sits above the pill: the
@@ -33,7 +36,7 @@ Rectangle {
     width: shown ? implicitWidth : 0
     height: shown ? implicitHeight : 0
     visible: shown
-    x: beside ? pillRight + gap : Math.max(gap, pillRight - implicitWidth)
+    x: beside ? pillRight + taken + gap : Math.max(gap, pillRight - implicitWidth)
     anchors.bottom: parent.bottom
     anchors.bottomMargin: bottomGap
     radius: height / 2

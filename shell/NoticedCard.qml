@@ -101,7 +101,7 @@ Item {
                 Text {
                     objectName: "noticedRowTitle"
                     Layout.fillWidth: true
-                    text: row.modelData.title || ""
+                    text: String(row.modelData.title || "")
                     color: "#e6e8eb"
                     font.pixelSize: 13
                     font.weight: Font.Medium
@@ -117,7 +117,7 @@ Item {
                     Text {
                         objectName: "noticedRowMeta"
                         Layout.fillWidth: true
-                        text: row.modelData.meta || ""
+                        text: String(row.modelData.meta || "")
                         color: "#8b939c"
                         font.pixelSize: 12
                         textFormat: Text.PlainText
@@ -141,7 +141,7 @@ Item {
                     objectName: "noticedRowWhat"
                     Layout.fillWidth: true
                     visible: text !== ""
-                    text: row.modelData.what || ""
+                    text: String(row.modelData.what || "")
                     color: "#c5cad0"
                     font.pixelSize: 12
                     textFormat: Text.PlainText
