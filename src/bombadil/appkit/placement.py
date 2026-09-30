@@ -301,7 +301,7 @@ def open_url(url: str, h: hypr.Hyprland | None = None) -> str:
     h = _hypr(h)
     if not h.available:
         return f"{NO_HYPRLAND}; not opening {url}"
-    cmd = hypr.PANELS["browser"]
+    cmd = hypr.panel_command("browser")
     if shutil.which(cmd[0]) is None:
         return f"{cmd[0]} is not installed; not opening {url}"
     try:

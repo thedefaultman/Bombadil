@@ -1,0 +1,16 @@
+{
+  "DefaultBrowserSettingEnabled": false,
+  "PromotionsEnabled": false,
+  "DefaultSearchProviderEnabled": true,
+  "DefaultSearchProviderName": "Google",
+  "DefaultSearchProviderKeyword": "google.com",
+  "DefaultSearchProviderSearchURL": "https://www.google.com/search?q={searchTerms}",
+  "DefaultSearchProviderSuggestURL": "https://www.google.com/complete/search?client=chrome&q={searchTerms}",
+  "PasswordManagerEnabled": false,
+  "PasswordLeakDetectionEnabled": false,
+  "SigninInterceptionEnabled": false,
+  "ProfilePickerOnStartupAvailability": 1,
+  "MetricsReportingEnabled": false,
+  "FeedbackSurveysEnabled": false,
+  "RemoteDebuggingAllowed": true
+}
