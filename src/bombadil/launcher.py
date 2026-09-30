@@ -56,6 +56,7 @@ UTILITY_COMMANDS = {
     "sound": ["sound", "volume", "audio"],
     "brightness": ["brightness"],
     "battery": ["battery"],
+    "voice": ["voice"],   # agentd opens the name and voice card itself
 }
 OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "switch to")
 CLOSE_VERBS = ("close", "quit", "exit", "kill")

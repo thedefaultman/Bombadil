@@ -11,6 +11,12 @@ QtObject {
     signal summoned()
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
+    // agentd asked what to call the user: the card is up and wants the keyboard.
+    signal asked()
+    // Super while the card holds the keyboard: the keys go to the pill's field (shell.qml).
+    signal focusPill()
+    // A welcome line just took the line: the shell notes which screen had the focus.
+    signal welcomeShown()
 
     property bool connected: false
     property bool busy: false
@@ -28,8 +34,8 @@ QtObject {
     readonly property bool ready: setupState === "" || setupState === "ready" || setupState === "checking"
 
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
-    // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
-    // "idle" when there is nothing to say.
+    // open/undo/stop answered without the model, "welcome" for agentd's greeting, "setup" for choosing
+    // the AI and signing in, "idle" when there is nothing to say.
     property string mode: "idle"
     property string line: ""
     property string source: "step"   // step (plain words), agent (its own words), error
@@ -51,9 +57,23 @@ QtObject {
     // while a sign-in is under way (they call it off).
     readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
 
+    // The welcome line (mode "welcome"): a greeting from agentd. It waits for the first key or
+    // pointer movement, fades fadeAfter ms later, and is never on screen longer than welcomeMax.
+    property double touchedAt: 0     // 0 until that first touch after the welcome appeared
+    property int welcomeMax: 30000
+    property int welcomeId: 0
+    // A full-screen window is in front (shell.qml binds it): a greeting is dropped, not queued.
+    property bool fullscreen: false
+    // Presence as the bar last told agentd (the IdleMonitor in shell.qml).
+    property bool idle: false
+    // agentd's persona_ask while the card is up, else null:
+    // {line, name, voice, current, voices: [{id, name, card}]}
+    property var personaAsk: null
+
     property string _result: ""
     property bool _resultOk: true
     property string _error: ""
+    property bool _helloSent: false
 
     function _now() { return Date.now() }
 
@@ -76,11 +96,17 @@ QtObject {
                 mode = "working"; turn = ev.turn; line = "Working"; source = "step"
                 risk = ""; command = ""; startedAt = _now()
             }
+            // agentd cannot tell this bar from `bombadil ask`: say who we are, once per connection.
+            // Not in the socket's connected handler: the shell's write() drops it there.
+            if (!_helloSent) { _helloSent = true; outgoing({ type: "bar", idle: idle }) }
             return
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
         if (ev.type === "summon") { summoned(); return }
+        if (ev.type === "welcome") { _welcome(ev); return }
+        if (ev.type === "persona_ask") { _ask(ev); return }
+        if (ev.type === "persona") { personaAsk = null; return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
             if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }
@@ -164,6 +190,67 @@ QtObject {
         }
     }
 
+    // agentd's greeting. It yields to everything else: a line already on screen, a running turn,
+    // the card, a full-screen window. Dropped, never queued, and agentd hears only about one shown.
+    function _welcome(ev) {
+        const text = String(ev.text || "").trim()
+        if (!text || mode !== "idle" || busy || optimistic || flash !== "" || personaAsk !== null || fullscreen)
+            return
+        mode = "welcome"; line = text; source = "step"; risk = ""; command = ""; sticky = false
+        welcomeId = ev.id === undefined || ev.id === null ? 0 : ev.id
+        // Set here, not inherited: the fade clock of a local line that follows is its own.
+        lineAt = _now(); touchedAt = 0; fadeAfter = ev.first ? 15000 : 8000
+        outgoing({ type: "welcomed", id: welcomeId })
+        welcomeShown()
+    }
+
+    // The first key or pointer movement after the welcome appeared starts its fade.
+    function touched() {
+        if (mode === "welcome" && touchedAt === 0) touchedAt = _now()
+    }
+
+    // Hover holds it; else it is done fadeAfter after the first touch, or welcomeMax after it appeared.
+    function welcomeDone(now) {
+        return mode === "welcome" && hovers === 0
+            && ((touchedAt > 0 && now - touchedAt > fadeAfter) || now - lineAt > welcomeMax)
+    }
+
+    // Typing, Enter or Esc in the pill ends a welcome, and only a welcome.
+    function dismissWelcome() {
+        if (mode === "welcome") { mode = "idle"; line = ""; touchedAt = 0 }
+    }
+
+    function _ask(ev) {
+        // A greeting over the card would be noise: the card has its own line.
+        dismissWelcome()
+        personaAsk = {
+            line: String(ev.line || ""),
+            name: String(ev.name || ""),
+            voice: String(ev.voice || ""),
+            current: !!ev.current,
+            voices: ev.voices && typeof ev.voices.length === "number" ? Array.from(ev.voices) : []
+        }
+        asked()
+    }
+
+    function personaAnswer(name, voice) {
+        if (personaAsk === null) return
+        outgoing({ type: "persona", name: String(name || "").trim(), voice: String(voice || "") })
+        personaAsk = null
+    }
+
+    function personaSkip() {
+        if (personaAsk === null) return
+        outgoing({ type: "persona_skip" })
+        personaAsk = null
+    }
+
+    // The bar's IdleMonitor: the user went away or came back.
+    function presence(isIdle) {
+        idle = !!isIdle
+        outgoing({ type: "presence", idle: idle })
+    }
+
     function _showSetup() {
         mode = "setup"; line = setupLine; source = setupTone === "error" ? "error" : "step"
         risk = ""; command = ""; sticky = false; flash = ""
@@ -206,6 +293,8 @@ QtObject {
             lineAt = _now(); fadeAfter = 4000
             return false
         }
+        // A prompt while the card is up simply runs; the card folds with the defaults agentd saved.
+        if (personaAsk !== null) personaSkip()
         outgoing({ type: "prompt", text: t })
         if (!ready && !t.startsWith("!")) {
             // No AI to answer yet: the prompt waits in the queue, the setup line stays (or
@@ -222,7 +311,7 @@ QtObject {
             mode = "working"; line = "On it"; source = "step"; risk = ""; command = ""
             startedAt = _now(); turn = null; sticky = false; stopped = false
             flash = ""   // a "Stopped while…" still showing would hide "On it"
-        } else if (mode === "closing" || mode === "local") {
+        } else if (mode === "closing" || mode === "local" || mode === "welcome") {
             mode = "idle"
         }
         return true
@@ -233,6 +322,11 @@ QtObject {
         connected = false
         busy = false
         optimistic = false
+        _helloSent = false
+        // No greeting over an offline state, and no card whose answer would go nowhere: agentd
+        // asks again when we are back, if the question is still open.
+        dismissWelcome()
+        personaAsk = null
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000

@@ -784,6 +784,7 @@ def shell_step(command: str, description: str | None = None) -> Step:
     irreversible = False
     touched: dict[str, list[str]] = {}   # every segment's, not only the one the line names
     cwd: str | None = None      # after a `cd`, where relative paths point
+    talk = False                # a plain edit of persona.toml
     for segment_argv in _segments(inner):
         words, writes = _strip_redirects(segment_argv)
         argv, sudo = _strip_wrappers(words)
@@ -801,6 +802,18 @@ def shell_step(command: str, description: str | None = None) -> Step:
             else:
                 cwd = None
             continue
+        if prog in _PERSONA_PROGS:
+            targets = _shell_targets(prog, argv, writes)
+            mine = [t for t in targets if _is_persona(t, cwd, tmp=True)]
+            if mine and len(mine) == len(targets) and not sudo:
+                talk = True   # it changes nothing but how Bombadil talks
+                continue
+            if mine and len(mine) < len(targets):
+                # It changes something else too: that is narrated as if persona.toml were not there,
+                # with its own words, flags, command and Undo.
+                writes = [w for w in writes if w not in mine]
+                if prog in ("tee", "sed"):
+                    argv = [a for a in argv if a not in mine]
         if _irreversible(prog, argv, segment, cwd):
             irreversible = True
         if prog in _PKG and any(a.startswith(("-S", "-R", "-U", "--sync", "--remove", "--upgrade"))
@@ -836,6 +849,8 @@ def shell_step(command: str, description: str | None = None) -> Step:
             best = step
             if step.risk == SYSTEM:
                 system = True
+    if talk and (best is None or not best.changes) and not (irreversible or system or sudo_any):
+        return Step(PERSONA_STEP)
     said = from_description(description) if description else None
     if best is not None and said and not best.changes:
         # The model's own words for what it runs beat a generic reading ("Waiting", "Running
@@ -929,6 +944,76 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     return None
 
 
+# "Call me Dan" edits persona.toml with the agent's own tools. That is not a change to the system: no
+# Undo, no summary entry, no Details row (a Step with no `done`), just a plain line while it happens.
+PERSONA_STEP = "Changing how I talk to you"
+
+# What a shell says "call me Dan" with, and the scratch file an atomic replace writes before the move.
+_PERSONA_PROGS = ("echo", "printf", "cat", "tee", "sed", "cp", "mv", "install")
+_PERSONA_TMP = re.compile(r"persona\.toml(\.[\w-]+)?\.tmp")
+
+
+def _is_persona(p, cwd: str | None = None, tmp: bool = False) -> bool:
+    """Is this path the user's persona.toml (with tmp, or its scratch file beside it)? Compared as written,
+    with no I/O (the agent is told the path). A relative path starts at cwd, where a `cd` went, and with
+    no cwd it has no place to compare."""
+    try:
+        p = _expand_home(str(p))
+        if cwd and not p.startswith("/"):
+            p = os.path.join(cwd, p)
+        p, mine = os.path.normpath(p), os.path.normpath(str(paths.persona_file()))
+        return p == mine or (tmp and os.path.dirname(p) == os.path.dirname(mine)
+                             and _PERSONA_TMP.fullmatch(os.path.basename(p)) is not None)
+    except (TypeError, ValueError):
+        return False
+
+
+def _sed_files(argv: list[str]) -> list[str]:
+    """The files `sed -i` edits: its operands less the script, which is the first one unless -e or -f
+    gave it. A sed that only prints edits nothing."""
+    if not any(a == "--in-place" or a.startswith("--in-place=") or _short(a, "i") for a in argv[1:]):
+        return []
+    operands, scripted, i = [], False, 1
+    while i < len(argv):
+        a = argv[i]
+        i += 1
+        if a in ("-e", "-f", "--expression", "--file"):
+            scripted, i = True, i + 1   # the next word is the script (or the file it is in)
+        elif a.startswith(("--expression=", "--file=")):
+            scripted = True
+        elif a.startswith("--") or a == "-":
+            continue
+        elif a.startswith("-"):
+            for k, letter in enumerate(a[1:], 1):
+                if letter == "i":
+                    break               # the rest of the word is the backup suffix
+                if letter in "ef":
+                    scripted = True
+                    if k == len(a) - 1:
+                        i += 1          # the script is the next word, not the rest of this one
+                    break
+        else:
+            operands.append(a)
+    return operands if scripted else operands[1:]
+
+
+def _shell_targets(prog: str, argv: list[str], writes: list[str]) -> list[str]:
+    """What a shell command changes, as written: where its output goes, and what tee, sed -i, cp, mv and
+    install write. Never /dev/null and its kind, nor a file a move takes from /tmp (a scratch file)."""
+    args = _args(argv)
+    found: list[str] = []
+    if prog == "tee":
+        found = args
+    elif prog == "sed":
+        found = _sed_files(argv)
+    elif prog in ("cp", "install"):
+        found = _changed_paths(prog, argv)
+    elif prog == "mv":
+        found = [a for i, a in enumerate(args)
+                 if i == len(args) - 1 or not os.path.normpath(_expand_home(a)).startswith("/tmp/")]
+    return [p for p in writes + found if p not in _DEV_SAFE]
+
+
 def tool_step(name: str, a: dict | None) -> Step | None:
     """The step for a tool call, or None for tools that are not worth a line (ToolSearch)."""
     a = a if isinstance(a, dict) else {}
@@ -945,6 +1030,8 @@ def tool_step(name: str, a: dict | None) -> Step | None:
     if name == "Write":
         n = _lines(a.get("content"))
         p = str(a.get("file_path") or "")
+        if _is_persona(p):
+            return Step(PERSONA_STEP)
         what = _name(p) if p else "a file"
         step = Step(f"Writing {what}" + (f", {n} lines" if n > 1 else ""), f"Wrote {what}",
                     touched={"file": (p,)} if p else {})
@@ -953,6 +1040,8 @@ def tool_step(name: str, a: dict | None) -> Step | None:
         return step
     if name in ("Edit", "MultiEdit", "NotebookEdit"):
         p = str(a.get("file_path") or a.get("notebook_path") or "")
+        if _is_persona(p):
+            return Step(PERSONA_STEP)
         what = _name(p) if p else "a file"
         step = Step(f"Editing {what}", f"Edited {what}", touched={"file": (p,)} if p else {})
         if _is_system_path(p):
@@ -1006,6 +1095,8 @@ def file_change_step(changes: list) -> Step:
     changes = [c for c in changes if isinstance(c, dict)] if isinstance(changes, list) else []
     if not changes:
         return Step("Editing files", "Edited files")
+    if all(_is_persona(c.get("path", "")) for c in changes):
+        return Step(PERSONA_STEP)
     kinds = {c.get("kind") for c in changes}
     if len(changes) == 1:
         c = changes[0]
@@ -1043,11 +1134,15 @@ def partial_step(name: str, partial: str) -> Step | None:
         n = partial.count("\\n")
         if m:
             p = json.loads(f'"{m.group(1)}"')
+            if _is_persona(p):
+                return Step(PERSONA_STEP)
             return Step(f"Writing {_name(p)}" + (f", {n} lines" if n > 1 else ""), f"Wrote {_name(p)}")
     if name in ("Edit", "MultiEdit"):
         m = _PATH_RE.search(partial)
         if m:
             p = json.loads(f'"{m.group(1)}"')
+            if _is_persona(p):
+                return Step(PERSONA_STEP)
             return Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
     return None
 
@@ -1105,6 +1200,7 @@ class Narrator:
     def __init__(self):
         self.step: Step | None = None
         self.done: list[str] = []
+        self.made: list[str] = []   # apps this turn made (not changed), for turns.jsonl
         self.irreversible = False
         self.system = False
         self.touched: dict[str, set[str]] = {}   # what the turn has changed, by kind
@@ -1134,6 +1230,7 @@ class Narrator:
         return {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
 
     def on_event(self, ev: dict) -> dict | None:
+        self._note_made(ev)
         self._track_plan(ev)
         line = self._line(ev)
         # The complete message repeats what its stream already showed; say each line once, unless
@@ -1142,6 +1239,17 @@ class Narrator:
             return None
         self._shown = (line, self.touched_counts())
         return line
+
+    def _note_made(self, ev: dict) -> None:
+        """Remember an app this turn creates for the first time ("Since last time you built ...")."""
+        name = str(ev.get("name") or "")
+        if ev.get("kind") != "tool" or name.split("__", 2)[1:] != ["bombadil-os", "create_app"]:
+            return
+        a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+        raw = str(a.get("title") or "")
+        title = _app_title(raw) if raw.strip() else ""
+        if title and not _app_exists(raw) and title not in self.made:
+            self.made.append(title)
 
     def touched_counts(self) -> dict[str, int]:
         """How many things of each kind the turn has changed so far; kinds with none are left out."""

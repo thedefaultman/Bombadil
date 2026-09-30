@@ -1307,7 +1307,7 @@ def test_watching_never_reaches_the_model(desk):
     desk.click(desk.inside(desk.card_row("f7a8"), "rowsButton"))
     desk.click(desk.inside(desk.card_row("a1b2"), "rowsRemove"))
     assert {m["type"] for m in desk.sent} == {"jobs"} and len(desk.sent) == 2
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
 
 
 def test_a_row_action_for_another_widget_or_word_is_not_watchings(desk):
@@ -1542,7 +1542,7 @@ def test_open_sends_the_session_to_agentd_and_nothing_else(desk):
     assert desk.sent == [{"type": "dev", "action": "open", "key": "k2"},
                          {"type": "dev", "action": "open", "key": "k1"}]
     assert [r["key"] for r in desk.needs["rows"]] == ["k1", "k2"]      # agentd's next message says what changed
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
     assert plain(desk.win.property("actions")) == [["needs", "k2", "Open"], ["needs", "k1", "Open"]]
 
 

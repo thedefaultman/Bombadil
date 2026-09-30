@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 from test_signin import FakePanel
 
-from bombadil import agentd, config, providers, signin
+from bombadil import agentd, config, persona, providers, signin
 
 
 @pytest.fixture
@@ -21,6 +21,9 @@ def signed_out(home, monkeypatch):
     monkeypatch.setenv("FAKE_SIGNIN_DELAY", "0.2")
     monkeypatch.setenv("BOMBADIL_FAKE_SIGNIN", "auto")
     monkeypatch.setattr(agentd, "OFFLINE_POLL", 0.2)
+    # The first sign-in asks for a name on a card that says "Signed in" itself (test_voice.py); with a
+    # persona already saved, sign-in's own lines are what these tests read.
+    persona.save()
     return home
 
 

@@ -133,6 +133,21 @@ keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
+# The voice: the word `voice` opens the name and voice card with the keyboard already on it, and a typed
+# name and Enter save it. (The card is asked by itself only at the first sign-in, which the ISO has not
+# been through, so there is no persona.toml yet.)
+persona_file=/home/user/.config/bombadil/persona.toml
+persona_has() { grep -q "$1" "$persona_file"; }
+check no-persona-before-voice bash -c "! test -e $persona_file"
+keys meta_l
+keys v o i c e ret
+check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
+shot voice-card
+keys shift+d a n i e l ret
+check voice-name-saved wait_for 30 persona_has '^name = "Daniel"'
+check voice-default-merry persona_has '^voice = "merry"'
+shot voice-saved
+
 
 # Signing in (the live system has no provider picked and no login). agentd asks which AI in the
 # pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
