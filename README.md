@@ -29,7 +29,10 @@ permission prompt.
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools
-are the same MCP server either way.
+are the same MCP server either way. The model is set per provider in the same file
+(`[models]` with `claude = "..."` and `codex = "..."`); Claude defaults to Sonnet, and Codex
+keeps its own default. Typing `use opus` in the pill runs the next turns of a session on Opus,
+`use sonnet` goes back.
 
 ## Try it
 

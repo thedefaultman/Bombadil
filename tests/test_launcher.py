@@ -39,6 +39,9 @@ def _apps(home):
     ("quieter", "volume_down", "", "open"),
     ("mute", "mute", "", "open"),
     ("unmute", "unmute", "", "open"),
+    ("use opus", "model", "opus", "open"),
+    ("Use Sonnet.", "model", "sonnet", "open"),
+    ("switch to opus", "model", "opus", "open"),
 ])
 def test_exact_words_open_locally(home, text, kind, target, verb):
     a = launcher.match(text, _apps(home))
@@ -51,6 +54,7 @@ def test_exact_words_open_locally(home, text, kind, target, verb):
     # A sentence in another script keeps its one launcher word only in ASCII; it is still a sentence.
     "Как сделать restart?", "shutdownしないで", "不要 undo", "为什么 browser 很慢", "почему wifi не работает?",
     "¿restart?", "电脑 restart 以后很慢", "turn off", "restart?", "open the browser, please",
+    "use opus to write me a poem", "what is opus", "opus", "sonnet", "use the sonnet app",
     "the volume is too low", "volume up a bit more please", "mute the video", "play something louder",
     # "!" always means a shell command, even before a launcher word.
     "!shutdown", "!restart", "!undo", "!files", " !history",

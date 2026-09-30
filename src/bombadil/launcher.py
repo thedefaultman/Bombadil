@@ -37,6 +37,12 @@ CORE_COMMANDS = {
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
 }
+# Switch the session's model (agentd does it; it is a setting, not a turn). Checked with the core commands.
+MODEL_WORDS = {
+    "opus": ["use opus", "switch to opus", "use claude opus", "opus please"],
+    "sonnet": ["use sonnet", "switch to sonnet", "use claude sonnet", "sonnet please", "back to sonnet"],
+}
+MODEL_TITLES = {"opus": "Opus", "sonnet": "Sonnet"}
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
@@ -146,6 +152,9 @@ def match(text: str, app_list: list | None = None) -> Action | None:
         if cmd in ("restart", "shutdown") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    model = _lookup(t, MODEL_WORDS) if plain else None
+    if model:
+        return Action("model", model, title=MODEL_TITLES[model])
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
@@ -210,6 +219,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "model":
+            return f"Switching to {action.title or action.target}"
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",

@@ -237,3 +237,12 @@ def test_the_answer_after_an_odd_line_is_still_read():
 def test_the_agent_is_told_how_to_set_the_time_zone():
     # There is no installer question for it; the user just says where they are.
     assert "sudo timedatectl set-timezone <Area/City>" in providers.SYSTEM_PROMPT
+
+
+def test_claude_is_asked_for_sonnet_unless_the_config_says_otherwise(home):
+    from bombadil import config
+    cmd = providers.get("claude", "/x", model=config.load().model_for("claude")).command(providers.Turn("hi"), Path("/tmp"))
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5-5"
+    # Codex has no default here, so it is not passed one.
+    cmd = providers.get("codex", "/x", model=config.load().model_for("codex")).command(providers.Turn("hi"), Path("/tmp"))
+    assert "--model" not in cmd

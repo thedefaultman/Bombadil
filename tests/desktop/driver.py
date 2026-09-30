@@ -151,6 +151,13 @@ def key(k):
     run("wtype", "-s", "200", "-k", k)
 
 
+def api_models():
+    try:
+        return [json.loads(line).get("model") for line in (OUT / "api-requests.jsonl").read_text().splitlines()]
+    except OSError:
+        return []
+
+
 def api_requests():
     try:
         return len((OUT / "api-requests.jsonl").read_text().splitlines())
@@ -307,6 +314,31 @@ shot("17-bang-command")
 check("! command ran without the model", bang and api_requests() == before, bang)
 time.sleep(13)
 shot("18-faded-after-12s")
+
+# 5b. The model: Sonnet by default, "use opus" for the next turns and "use sonnet" back, each word
+# answering at once without a model call.
+check("turns so far asked for Sonnet", api_models() and set(api_models()) == {"claude-sonnet-5-5"}, set(api_models()))
+
+
+def model_turn(word, expect):
+    summon()
+    before = api_requests()
+    typ(word)
+    n = mark()
+    key("Return")
+    sw = wait(ev("local", action="model", phase="done"), 10, n)
+    check(f"{word!r} answers without a model call", sw and sw.get("ok") and api_requests() == before, sw)
+    time.sleep(0.4)
+    summon()
+    typ("tell me a joke")
+    n = mark()
+    key("Return")
+    end = wait(ev("turn_end"), 40, n)
+    check(f"the next turn ran {expect}", end is not None and api_models()[-1] == expect, api_models()[-3:])
+
+
+model_turn("use opus", "claude-opus-5-5")
+model_turn("use sonnet", "claude-sonnet-5-5")
 
 # 6. undo and details.
 summon()

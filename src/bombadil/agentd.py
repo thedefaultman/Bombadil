@@ -76,6 +76,8 @@ class AgentD:
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
         self.turns = 0
+        self.base_model = provider.model            # what the config says; "use opus" overrides it
+        self.session_model: str | None = None       # "opus" or "sonnet" once the user switched
         self.proc: asyncio.subprocess.Process | None = None
         self.pending: list[tuple[int, str]] = []   # prompts waiting for the running turn
         self._wake = asyncio.Event()
@@ -111,6 +113,8 @@ class AgentD:
             self.session_id = data["session_id"]
         if isinstance(data.get("turns"), int) and data["turns"] >= 0:
             self.turns = data["turns"]
+        if data.get("model") in config.CLAUDE_MODELS and self.provider.name == "claude":
+            self._use_model(data["model"])
 
     def _save_state(self):
         path = self._state_file()
@@ -118,10 +122,25 @@ class AgentD:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
             tmp.write_text(json.dumps({"provider": self.provider.name, "session_id": self.session_id,
-                                       "turns": self.turns}))
+                                       "turns": self.turns, "model": self.session_model}))
             tmp.replace(path)
         except OSError as e:
             print(f"agentd: could not save its state: {e}", file=sys.stderr)
+
+    def _use_model(self, choice: str | None):
+        self.session_model = choice
+        self.provider.model = config.CLAUDE_MODELS[choice] if choice else self.base_model
+
+    def _switch_model(self, choice: str) -> tuple[bool, str]:
+        """"use opus" / "use sonnet": the next turns of this session run that model. The running
+        turn, if any, finishes on the one it started with."""
+        title = launcher.MODEL_TITLES[choice]
+        if self.provider.name != "claude":
+            return False, f"{title} is a Claude model; this machine is set to use {self.provider.name}."
+        self._use_model(choice)
+        self._save_state()
+        back = ' Say "use sonnet" to go back.' if choice == "opus" else ""
+        return True, f"Using {title} from the next message.{back}"
 
     # -- socket --
 
@@ -295,6 +314,16 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
+        if action.kind == "model":
+            ok, text = self._switch_model(action.target)
+            await self.event("local", turn=None, action="model", target=action.target, phase="done", ok=ok,
+                             text=text)
+            if ok:
+                self.notes.append(f"{typed!r}: {text}")
+                self.notes = self.notes[-10:]
+            self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "model",
+                            "target": action.target, "result": text, "ok": ok})
+            return
         if action.kind == "stop":
             stopping = await self.stop()
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
@@ -622,6 +651,7 @@ class AgentD:
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
+                        "model": None if prompt.startswith("!") else self.provider.model,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
                         "details": str(self.turn_logs.get(self.current, ""))})
 
@@ -702,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cfg = config.load()
     name = os.environ.get("BOMBADIL_PROVIDER", cfg.provider)
-    provider = providers.get(name, model=cfg.model)
+    provider = providers.get(name, model=cfg.model_for(name))
     if not provider.installed:
         # Keep serving so the bar connects and can say what is missing; turns report it.
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)

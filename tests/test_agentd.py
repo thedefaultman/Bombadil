@@ -198,6 +198,78 @@ def test_the_state_file_lives_where_a_reboot_clears_it(home):
     assert d._state_file().parent == paths.runtime_dir()
 
 
+class Spy(Scripted):
+    """Records the model each turn is started with."""
+
+    def __init__(self, script, model=None):
+        super().__init__(script)
+        self.model = model
+        self.models = []
+
+    def command(self, turn, workdir):
+        self.models.append(self.model)
+        return super().command(turn, workdir)
+
+
+async def _local_text(r, w, text):
+    await _ask(w, text)
+    while True:
+        m = json.loads(await asyncio.wait_for(r.readline(), 5))
+        if m.get("kind") == "local" and m.get("phase") == "done":
+            return m["ok"], m["text"]
+
+
+@pytest.mark.asyncio
+async def test_use_opus_and_use_sonnet_switch_the_model_for_the_next_turns(home):
+    p = Spy(ONE_TURN, model="claude-sonnet-5-5")
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "first")
+    await _read_until(r, "turn_end")
+    ok, text = await _local_text(r, w, "use opus")
+    assert ok and text.startswith("Using Opus from the next message.") and '"use sonnet"' in text
+    assert any("use opus" in n for n in d.notes)   # the model is told about it with its next prompt
+    await _ask(w, "hard one")
+    await _read_until(r, "turn_end")
+    ok, text = await _local_text(r, w, "use sonnet")
+    assert ok and text == "Using Sonnet from the next message."
+    await _ask(w, "easy again")
+    await _read_until(r, "turn_end")
+    assert p.models == ["claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]
+    assert d.turns == 3   # the switch is a setting, not a turn
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_switched_model_survives_a_restart_of_the_daemon(home):
+    d = agentd.AgentD(Spy(ONE_TURN, model="claude-sonnet-5-5"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _local_text(r, w, "use opus")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()
+    p2 = Spy(ONE_TURN, model="claude-sonnet-5-5")
+    d2 = agentd.AgentD(p2, agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    await _ask(w, "hello")
+    await _read_until(r, "turn_end")
+    assert p2.models == ["claude-opus-5-5"]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_use_opus_says_so_when_the_machine_runs_another_provider(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    ok, text = await _local_text(r, w, "use opus")
+    assert not ok and text == "Opus is a Claude model; this machine is set to use fake."
+    assert d.provider.model is None
+    w.close()
+    server.cancel()
+
+
 @pytest.mark.asyncio
 async def test_prompts_get_turn_ids_and_empty_ones_are_refused(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
