@@ -63,9 +63,10 @@ def span(seconds: float) -> str:
     n = max(0, int(seconds + 0.5))
     if n < 60:
         return f"{n} s"
-    if n < 3600:
-        return f"{int(n / 60 + 0.5)} min"
-    hours, minutes = divmod(n // 60, 60)
+    minutes = int(n / 60 + 0.5)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
     return f"{hours} h" + (f" {minutes} min" if minutes else "")
 
 
@@ -98,8 +99,9 @@ def ending(rec: dict) -> tuple[str, bool]:
 def started_text(rec: dict, log: Path) -> str:
     """What the agent is told when it starts a job."""
     if rec["kind"] == "timer":
-        left = span(rec["deadline"] - rec["started"])
-        return (f"Timer set: {rec['title']} ({left}) is job {rec['id']}. The desk counts it down and says "
+        length = rec["deadline"] - rec["started"]
+        named = "" if rec["title"] == timer_title(length) else f" ({rec['title']})"
+        return (f"Timer set for {span(length)}{named} as job {rec['id']}. The desk counts it down and says "
                 "so when it is up.")
     return (f"Started {rec['title']} as job {rec['id']}. The desk counts it and says so when it ends; "
             f"its output goes to {log}. Stop it with op stop and id {rec['id']}.")

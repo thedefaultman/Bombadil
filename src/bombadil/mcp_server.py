@@ -2,8 +2,8 @@
 
 A small MCP server (JSON-RPC over stdio) that gives whichever agent CLI is running the
 same abilities: slide panels in and out, create and show native apps, screenshot,
-snapshot and roll back, notify, and arrange the desk. Claude Code and Codex both load it
-from their MCP config, so switching provider changes nothing here.
+snapshot and roll back, notify, arrange the desk and run jobs in the background. Claude Code
+and Codex both load it from their MCP config, so switching provider changes nothing here.
 
 Implemented by hand rather than with the `mcp` package to keep the base image small.
 """
@@ -27,6 +27,7 @@ from .desk import RAILS, WIDGETS
 PROTOCOL_VERSION = "2025-06-18"
 Tool = tuple[dict, Callable[[dict], Any]]
 DESK_TIMEOUT = 10.0   # seconds agentd has to answer a desk request
+JOB_TIMEOUT = 25.0    # and a job request: starting one waits for systemd
 
 
 class ToolError(Exception):
@@ -143,6 +144,27 @@ class OsTools:
         def desk(a):
             return _desk(a)
 
+        @t("job",
+           "Run something in the background and keep it on the desk. Use this instead of `&`, `nohup` or a "
+           "long `sleep` for anything that takes more than a few seconds or that the person will want to "
+           "hear about later (a download, an install, a build, a timer, waiting for something to finish): "
+           "the desk's Watching card counts it, says so in one line when it ends, and stops it when the "
+           "person asks, and a job you start keeps running after your turn ends. Ops: start runs `command` "
+           "(a shell command; what it prints goes to a log, and a line like 43% in it becomes the meter) "
+           "under `title`, a short name the person will read (\"Ubuntu 26.04 ISO\"). kind job is the "
+           "default; kind watch is a one-shot watcher on something already running, whose command waits "
+           "until that ends (`tail --pid=1234 -f /dev/null`, or `while pgrep -x make >/dev/null; do sleep "
+           "2; done`) and whose title names the thing (\"the build\"). With `seconds` instead of a "
+           "command it is a timer, and a command given with seconds runs once the time is up. list says "
+           "what is running; stop ends one by its id.",
+           {"op": {"type": "string", "enum": ["start", "list", "stop"]},
+            "title": {"type": "string"}, "command": {"type": "string"},
+            "kind": {"type": "string", "enum": ["job", "watch"]},
+            "seconds": {"type": "integer", "minimum": 1}, "id": {"type": "string"}},
+           ["op"])
+        def job(a):
+            return _job(a)
+
     # MCP plumbing
 
     def handle(self, msg: dict) -> dict | None:
@@ -243,10 +265,29 @@ def _desk(a: dict) -> str:
     return str(reply.get("text") or "Done.")
 
 
-def _ask_agentd(msg: dict, answer: str, timeout: float) -> dict:
+def _job(a: dict) -> str:
+    """Ask agentd to start, list or stop a background job and wait for its answer. agentd keeps
+    the jobs and checks that this turn is the one running; this only carries the request. The
+    job's own id travels as `job`, since `id` names the request."""
+    turn = os.environ.get("BOMBADIL_TURN", "")
+    if not turn.isdigit():
+        raise ToolError("Background jobs can only be managed from inside a turn, and this process was not "
+                        "told which.")
+    msg = {"type": "job-tool", "id": uuid.uuid4().hex, "turn": int(turn),
+           **{k: a[k] for k in ("op", "title", "command", "kind", "seconds") if a.get(k) is not None}}
+    if a.get("id") is not None:
+        msg["job"] = a["id"]
+    reply = _ask_agentd(msg, "job-result", JOB_TIMEOUT, "the job table", "`list` says what is running.")
+    if not reply.get("ok"):
+        raise ToolError(str(reply.get("text") or "Nothing was changed."))
+    return str(reply.get("text") or "Done.")
+
+
+def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk",
+                recheck: str = "the `state` op says what it is now.") -> dict:
     """Send one line to agentd and wait for the reply of type `answer` with this message's id.
     agentd greets every client with its status and names, and broadcasts what the turn does:
-    all of that is skipped."""
+    all of that is skipped. `subject` is what may be unchanged when no answer comes."""
     path = paths.socket_path()
     deadline = time.monotonic() + timeout
     try:
@@ -259,7 +300,7 @@ def _ask_agentd(msg: dict, answer: str, timeout: float) -> dict:
                 s.settimeout(max(deadline - time.monotonic(), 0.001))
                 chunk = s.recv(65536)
                 if not chunk:
-                    raise ToolError("agentd hung up before it answered, so the desk may be unchanged.")
+                    raise ToolError(f"agentd hung up before it answered, so {subject} may be unchanged.")
                 *lines, buf = (buf + chunk).split(b"\n")
                 for line in lines:
                     try:
@@ -269,10 +310,10 @@ def _ask_agentd(msg: dict, answer: str, timeout: float) -> dict:
                     if isinstance(m, dict) and m.get("type") == answer and m.get("id") == msg["id"]:
                         return m
     except TimeoutError:
-        raise ToolError(f"agentd did not answer within {timeout:g} seconds, so the desk may be unchanged; "
-                        "the `state` op says what it is now.") from None
+        raise ToolError(f"agentd did not answer within {timeout:g} seconds, so {subject} may be unchanged; "
+                        f"{recheck}") from None
     except OSError as e:
-        raise ToolError(f"agentd is not answering on {path} ({e.strerror or e}), so the desk is unchanged."
+        raise ToolError(f"agentd is not answering on {path} ({e.strerror or e}), so {subject} is unchanged."
                         ) from None
 
 

@@ -10,18 +10,19 @@ folder) is marked "irreversible". Nothing here pauses or asks: the marks are onl
 The narrator also keeps the plan the agent writes for itself (Claude's task list, Codex's plan)
 as one table for the desk, and counts what the turn has changed so far.
 
-Pure functions over the events, no I/O except checking whether an app folder exists, so the
-rule table is cheap to test and to extend.
+Pure functions over the events, no I/O except checking whether an app folder exists and reading
+a job's title by its id, so the rule table is cheap to test and to extend.
 """
 
 import json
+import math
 import os
 import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from . import desk, paths
+from . import desk, jobs, paths
 
 SYSTEM = "system"
 IRREVERSIBLE = "irreversible"
@@ -111,6 +112,19 @@ def _lines(*texts) -> int:
 
 def _app_title(title: str) -> str:
     return " ".join(str(title).split())[:40] or "an app"
+
+
+def _job_title(title) -> str:
+    return " ".join(str(title if title is not None else "").split())[:40]
+
+
+def _timer_title(n) -> str:
+    """"Timer, 10 min" for a length the job registry would take, else ""."""
+    try:
+        ok = not isinstance(n, bool) and 1 <= float(n) <= jobs.MAX_SECONDS
+    except (TypeError, ValueError):
+        ok = False
+    return jobs.timer_title(math.ceil(float(n))) if ok else ""
 
 
 def _app_exists(title: str) -> bool:
@@ -896,6 +910,15 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         if op in ("fold", "unfold"):
             return Step(f"{op.capitalize()}ing the desk", f"{op.capitalize()}ed the desk")
         return Step("Looking at the desk")
+    if tool == "job":
+        op = str(a.get("op") or "")
+        if op == "start":
+            # Not a change to the system, so no closing sentence and no Undo: the desk counts it.
+            title = _job_title(a.get("title")) or _timer_title(a.get("seconds"))
+            return Step(f"Watching {title}" if title else "Starting a background job")
+        if op == "stop":
+            return Step(f"Stopped {jobs.title_of(a.get('id')) or 'a background job'}")
+        return Step("Checking the background jobs")
     if tool == "show_card":
         return Step("Showing a card")
     if tool == "open_url":
