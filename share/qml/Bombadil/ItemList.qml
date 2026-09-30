@@ -93,6 +93,8 @@ FocusScope {
     property var _hooked: []
     // The row a press selected and the selection it replaced, for a press that turns into a scroll.
     property var _pressed: null
+    // Set while a press selects or gives back a row: the list must not scroll under the finger.
+    property bool _holding: false
     onModelChanged: _sync()
     Component.onCompleted: _sync()
 
@@ -135,9 +137,12 @@ FocusScope {
 
         onCurrentIndexChanged: {
             root._selected = root._itemAt(currentIndex)
-            if (currentIndex >= 0)
+            if (currentIndex >= 0 && !root._holding)
                 positionViewAtIndex(currentIndex, ListView.Contain)
         }
+
+        // A button row the finger left before the drag began sends no canceled(), so the drag does.
+        onDragStarted: root._cancelPress()
 
         // A press selects the row under it, a tap activates it.
         TapHandler {
@@ -163,7 +168,10 @@ FocusScope {
                                 root._press(view.indexAt(c.x + c.width / 2, c.y + c.height / 2))
                         })
                         c.canceled.connect(() => root._cancelPress())
-                        c.clicked.connect(() => root._activateCurrent())
+                        c.clicked.connect(() => {
+                            view.positionViewAtIndex(view.currentIndex, ListView.Contain)
+                            root._activateCurrent()
+                        })
                     }
                     hooked.push(c)
                 }
@@ -191,14 +199,20 @@ FocusScope {
         view.forceActiveFocus()
         _pressed = i >= 0 ? { row: i, before: view.currentIndex } : null
         if (i >= 0)
-            view.currentIndex = i
+            _setCurrent(i)
+    }
+
+    function _setCurrent(i) {
+        _holding = true
+        view.currentIndex = i
+        _holding = false
     }
 
     function _cancelPress() {
         const p = _pressed
         _pressed = null
         if (p && view.currentIndex === p.row)
-            view.currentIndex = p.before < view.count ? p.before : -1
+            _setCurrent(p.before < view.count ? p.before : -1)
     }
 
     // A double-click activates on its first click only.
@@ -208,6 +222,7 @@ FocusScope {
         const i = view.currentIndex
         if (!pressed || i < 0)
             return
+        view.positionViewAtIndex(i, ListView.Contain)
         if (button === Qt.RightButton)
             contextRequested(i, _itemAt(i))
         else if (count === 1)

@@ -62,17 +62,21 @@ def press(x, y):
 def release(x, y):
     QTest.mouseRelease(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
 
+def move(x, y):
+    QTest.mouseMove(root, QPoint(x, y))
+
 def double_click(x, y):
     QTest.mouseDClick(root, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(x, y))
 
-# One finger down at (x, y), dragged dy pixels and lifted (dy 0 is a tap).
-def swipe(x, y, dy):
+# One finger down at (x, y), dragged dy pixels and lifted (dy 0 is a tap); probe runs after each step.
+def swipe(x, y, dy, probe=lambda: None):
     dev = QTest.createTouchDevice()
     def step(kind, at):
         seq = QTest.touchEvent(root, dev)
         getattr(seq, kind)(0, QPoint(x, at), root)
         seq.commit()
         spin(16)
+        probe()
     step("press", y)
     for i in range(1, 21):
         step("move", y + dy * i // 20)
@@ -356,6 +360,59 @@ out["tap"] = [il.property("currentIndex"), js(root.property("log"))]
     assert out == {"scrolled": True, "after": [-1, []], "tap": [0, [0]]}
 
 
+@pytest.mark.parametrize("delegate", TOUCH_ROWS.values(), ids=TOUCH_ROWS.keys())
+def test_item_list_giving_the_selection_back_does_not_scroll_the_list(home, delegate):
+    """A touch scroll (or a mouse press dragged off) restores the old selection where it stands."""
+    out = run(home, _scrolling_list(delegate), """
+QTest.qWaitForWindowExposed(root)
+il = root.property("list")
+view = next(c for c in il.childItems() if c.metaObject().className().startswith("QQuickListView"))
+
+def start(current, at):
+    il.setProperty("currentIndex", current)
+    spin(50)
+    view.setProperty("contentY", at)
+    spin(50)
+
+# The list follows the finger from the press on: no jump, and the press itself does not move it.
+def scroll(current, at, y, dy):
+    start(current, at)
+    moves = []
+    swipe(100, y, dy, lambda: moves.append((view.property("contentY") - at) * (1 if dy < 0 else -1)))
+    wait_until(lambda: not view.property("moving"), 3000)
+    return [il.property("currentIndex"), moves[0] == 0 and min(moves) >= 0 and moves[-1] > 0]
+
+# Row 0 selected and far above; a partly visible row pressed; a press that leaves its row.
+out["far"] = scroll(0, 600, 230, -200)
+out["partial"] = scroll(-1, 600, 297, -200)
+out["edge"] = scroll(-1, 300, 150, 200)
+start(0, 600)
+press(100, 230)
+move(100, 180)
+move(100, 120)
+move(400, 120)
+release(400, 120)
+spin(300)
+out["mouse"] = [il.property("currentIndex"), view.property("contentY"), js(root.property("log"))]
+""")
+    assert out == {"far": [0, True], "partial": [-1, True], "edge": [-1, True], "mouse": [0, 600, []]}
+
+
+@pytest.mark.parametrize("delegate", TOUCH_ROWS.values(), ids=TOUCH_ROWS.keys())
+def test_item_list_a_tap_on_a_partly_visible_row_scrolls_it_into_view(home, delegate):
+    out = run(home, _scrolling_list(delegate), """
+QTest.qWaitForWindowExposed(root)
+il = root.property("list")
+view = next(c for c in il.childItems() if c.metaObject().className().startswith("QQuickListView"))
+view.setProperty("contentY", 600)
+spin(50)
+click(100, 297)
+spin(300)
+out["current"] = [il.property("currentIndex") > 0, view.property("contentY") > 600, len(js(root.property("log")))]
+""")
+    assert out == {"current": [True, True, 1]}
+
+
 def test_item_list_drops_the_selection_when_its_item_is_gone(home):
     """Same count, other items: an item with an id is not swapped for its neighbour."""
     out = run(home, """
@@ -458,6 +515,42 @@ spin(300)
 out["scroll"] = [dt.property("currentIndex"), js(root.property("log"))]
 """)
     assert out == {"double": [1, [1]], "scroll": [-1, []]}
+
+
+def test_data_table_giving_the_selection_back_does_not_scroll_the_list(home):
+    out = run(home, """
+Window {
+    width: 400; height: 300; visible: true
+    property Item table: dt
+    property real rowH: Theme.rowHeight
+    DataTable {
+        id: dt
+        anchors.fill: parent
+        columns: [{ key: "pid" }, { key: "name" }]
+        rows: Array.from({ length: 60 }, (_, i) => ({ pid: i, name: "p" + i }))
+    }
+}""", """
+QTest.qWaitForWindowExposed(root)
+dt = root.property("table")
+view = next(c for c in dt.childItems() if c.metaObject().className().startswith("QQuickListView"))
+dt.setProperty("currentIndex", 0)
+spin(50)
+view.setProperty("contentY", 600)
+spin(50)
+moves = []
+swipe(100, 230, -200, lambda: moves.append(view.property("contentY") - 600))
+wait_until(lambda: not view.property("moving"), 3000)
+out["scroll"] = [dt.property("currentIndex"), moves[0] == 0 and min(moves) >= 0 and moves[-1] > 0]
+# A tap on the partly visible top row brings it into view.
+rh = root.property("rowH")
+dt.setProperty("currentIndex", -1)
+view.setProperty("contentY", 20 * rh + rh / 2)
+spin(50)
+click(100, int(view.mapToScene(QPointF(0, 0)).y()) + 2)
+spin(300)
+out["tap"] = [dt.property("currentIndex"), view.property("contentY") == 20 * rh]
+""")
+    assert out == {"scroll": [0, True], "tap": [20, True]}
 
 
 def test_data_table_drops_the_selection_when_its_row_leaves_a_list_model(home):
