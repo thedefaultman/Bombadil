@@ -77,7 +77,8 @@ check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
 # The app kit: each app slides in from its own drawer, reports its load, and the skill is installed.
 app_ok() { as_user bombadil-app status "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d.get("ok") and d.get("running")))'; }
-app_hidden() { as_user bombadil-app hide "$1"; sleep 2; ! special_shown "app-$1"; }
+# Gone only if hide said so and Hyprland then answered without the drawer (no answer never counts as gone).
+app_hidden() { local h o; h=$(as_user bombadil-app hide "$1"); echo "$h"; [[ "$h" == *" hidden" ]] && sleep 2 && o=$(hypr_json monitors) && ! grep -q "\"special:app-$1\"" <<<"$o"; }
 open_example() { as_user cp -rT "/usr/share/bombadil/share/skills/bombadil-apps/examples/$1" "/home/user/Apps/$1" && mcp_call open_app "{\"name\":\"$1\"}"; }
 check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
