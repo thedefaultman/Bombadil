@@ -1,0 +1,49 @@
+{"id": "h01", "day": 0, "at": "20:10", "text": "play some music", "group": "single", "events": ["playerctl play"], "seconds": 5}
+{"id": "ua1", "day": 1, "at": "08:30", "text": "are there any updates", "group": "updates-available", "events": ["checkupdates"], "seconds": 12}
+{"id": "h02", "day": 1, "at": "11:15", "text": "what version of python do I have", "group": "single", "events": ["python --version"], "seconds": 4}
+{"id": "dl1", "day": 1, "at": "14:10", "text": "show me the logs for the web container", "group": "docker-logs", "events": ["docker logs --tail 100 web"], "seconds": 8}
+{"id": "ka1", "day": 2, "at": "13:40", "text": "close firefox", "group": "kill-app", "events": ["pkill firefox"], "seconds": 5}
+{"id": "gd1", "day": 2, "at": "17:05", "text": "what did I change", "group": "git-diff", "events": ["git diff --stat"], "seconds": 6}
+{"id": "np1", "day": 2, "at": "21:00", "text": "what's playing", "group": "now-playing", "events": ["playerctl metadata title"], "seconds": 5}
+{"id": "up1", "day": 3, "at": "10:00", "text": "how long has the machine been on", "group": "uptime", "events": ["uptime -p"], "seconds": 4}
+{"id": "h03", "day": 3, "at": "15:05", "text": "which python is that", "group": "single", "events": ["which python"], "seconds": 4}
+{"id": "bk1", "day": 3, "at": "19:10", "text": "back up my documents to the external drive", "group": "backup-docs", "events": ["rsync -a ~/Documents/ /run/media/me/backup/Documents/"], "seconds": 40}
+{"id": "pm1", "day": 3, "at": "21:30", "text": "pause the music", "group": "pause-music", "events": ["playerctl pause"], "seconds": 4}
+{"id": "sp1", "day": 4, "at": "12:00", "text": "speed test", "group": "speed", "events": ["speedtest-cli --simple"], "seconds": 25}
+{"id": "dl2", "day": 4, "at": "16:20", "text": "what is the web container saying", "group": "docker-logs", "events": ["docker logs --tail 50 web"], "seconds": 8}
+{"id": "ao1", "day": 5, "at": "09:40", "text": "switch the sound to my headphones", "group": "audio-output", "events": ["wpctl set-default 52"], "seconds": 8}
+{"id": "gd2", "day": 5, "at": "10:45", "text": "show the diff", "group": "git-diff", "events": ["git diff"], "seconds": 6}
+{"id": "h04", "day": 5, "at": "12:40", "text": "create a venv for this project", "group": "single", "events": ["python -m venv .venv"], "seconds": 15}
+{"id": "ns1", "day": 6, "at": "16:30", "text": "summarise my meeting notes", "group": "notes-summary", "events": [["Read", {"file_path": "~/Documents/notes/meeting.md"}]], "seconds": 30}
+{"id": "nt1", "day": 6, "at": "19:45", "text": "next song", "group": "next-track", "events": ["playerctl next"], "seconds": 4}
+{"id": "ua2", "day": 7, "at": "08:45", "text": "anything to update", "group": "updates-available", "events": ["checkupdates"], "seconds": 12}
+{"id": "h05", "day": 7, "at": "17:45", "text": "what day is it", "group": "single", "events": ["date"], "seconds": 3}
+{"id": "dl3", "day": 8, "at": "11:30", "text": "docker logs web", "group": "docker-logs", "events": ["docker logs web | tail -30"], "seconds": 7}
+{"id": "ka2", "day": 8, "at": "13:50", "text": "kill chrome", "group": "kill-app", "events": ["pkill chromium"], "seconds": 5}
+{"id": "h06", "day": 9, "at": "13:00", "text": "copy that to my clipboard", "group": "single", "events": ["echo hello | wl-copy"], "seconds": 4}
+{"id": "np2", "day": 9, "at": "20:20", "text": "which song is this", "group": "now-playing", "events": ["playerctl metadata --format '{{artist}} {{title}}'"], "seconds": 5}
+{"id": "bk2", "day": 10, "at": "19:30", "text": "backup documents to usb", "group": "backup-docs", "events": ["rsync -a ~/Documents/ /run/media/me/usb/docs/"], "seconds": 38}
+{"id": "nt2", "day": 10, "at": "22:05", "text": "skip this track", "group": "next-track", "events": ["playerctl next"], "seconds": 4}
+{"id": "up2", "day": 11, "at": "10:05", "text": "uptime", "group": "uptime", "events": ["uptime"], "seconds": 4}
+{"id": "gd3", "day": 11, "at": "18:00", "text": "what's different since the last commit", "group": "git-diff", "events": ["git diff HEAD"], "seconds": 7}
+{"id": "ao2", "day": 12, "at": "09:35", "text": "send audio to the headphones", "group": "audio-output", "events": ["wpctl set-default 52"], "seconds": 8}
+{"id": "sp2", "day": 12, "at": "12:10", "text": "how fast is my connection right now", "group": "speed", "events": ["speedtest-cli"], "seconds": 27}
+{"id": "h07", "day": 12, "at": "18:20", "text": "explain the difference between a thread and a process", "group": "single", "events": [], "seconds": 12}
+{"id": "dl4", "day": 13, "at": "15:10", "text": "tail the web container log", "group": "docker-logs", "events": ["docker logs -f --tail 20 web"], "seconds": 8}
+{"id": "ns2", "day": 13, "at": "16:40", "text": "give me a summary of the meeting notes", "group": "notes-summary", "events": [["Read", {"file_path": "~/Documents/notes/meeting.md"}]], "seconds": 28}
+{"id": "ua3", "day": 14, "at": "08:20", "text": "do I have updates waiting", "group": "updates-available", "events": ["checkupdates | wc -l"], "seconds": 11}
+{"id": "h08", "day": 14, "at": "09:10", "text": "rename my wallpaper folder", "group": "single", "events": ["mv ~/Pictures/wallpaper ~/Pictures/walls"], "seconds": 10}
+{"id": "ka3", "day": 14, "at": "13:45", "text": "shut down firefox it is frozen", "group": "kill-app", "events": ["pkill -9 firefox"], "seconds": 6}
+{"id": "pm2", "day": 15, "at": "20:40", "text": "can you pause the music for a sec", "group": "pause-music", "events": ["playerctl pause"], "seconds": 4}
+{"id": "h09", "day": 16, "at": "14:20", "text": "add a search box to the tracker app", "group": "single", "events": [["Edit", {"file_path": "~/Apps/tracker/main.qml"}]], "seconds": 60}
+{"id": "np3", "day": 16, "at": "21:15", "text": "who sings this", "group": "now-playing", "events": ["playerctl metadata artist"], "seconds": 5}
+{"id": "bk3", "day": 17, "at": "20:00", "text": "copy my documents onto the backup disk", "group": "backup-docs", "events": ["rsync -a ~/Documents/ /run/media/me/backup/Documents/"], "seconds": 42}
+{"id": "h10", "day": 18, "at": "15:30", "text": "make the tracker app show the week view", "group": "single", "events": [["Edit", {"file_path": "~/Apps/tracker/main.qml"}]], "seconds": 65}
+{"id": "sp3", "day": 19, "at": "09:00", "text": "run a speedtest", "group": "speed", "events": ["speedtest-cli --simple"], "seconds": 26}
+{"id": "pm3", "day": 19, "at": "21:10", "text": "pause my music please", "group": "pause-music", "events": ["playerctl pause"], "seconds": 4}
+{"id": "h11", "day": 20, "at": "10:20", "text": "what's the ssh command to tunnel port 8080", "group": "single", "events": [], "seconds": 8}
+{"id": "ns3", "day": 20, "at": "16:35", "text": "tldr my meeting notes", "group": "notes-summary", "events": [["Read", {"file_path": "~/Documents/notes/meeting.md"}]], "seconds": 26}
+{"id": "h12", "day": 21, "at": "11:40", "text": "delete the old screenshots", "group": "single", "events": ["rm ~/Pictures/shot.png ~/Pictures/screen.png"], "seconds": 12}
+{"id": "h13", "day": 22, "at": "12:30", "text": "how many lines of code is the pill", "group": "single", "events": ["wc -l ~/.config/quickshell/pill.qml"], "seconds": 7}
+{"id": "h14", "day": 23, "at": "13:15", "text": "turn off the night light", "group": "single", "events": ["pkill gammastep"], "seconds": 5}
+{"id": "h15", "day": 24, "at": "19:15", "text": "schedule the backup for midnight", "group": "single", "events": ["systemd-run --user --on-calendar=00:00 true"], "seconds": 20}
