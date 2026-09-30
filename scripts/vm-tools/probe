@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# probe PROMPT SECONDS [STOP_AT]: send PROMPT to the guest's agentd over its socket and print every
+# event with its time since sending (status lines with because/after, cards, tools, result, turn_end);
+# STOP_AT sends a Stop after that many seconds. In PROMPT, _ stands for a space, @ for ; and a
+# leading BANG for !, because the arguments are typed into the guest's bash.
+#   with-scratch probe how_am_i_connected 4
+#   with-scratch probe silent 70 65          (needs agentd pointed at scratch_api.py)
+# On the real VM this runs a real turn: it costs Daniel's quota and moves his conversation on.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+src="$(base64 -w0 "$here/agentprobe.py")"
+cat <<PY | T=$(( ${2:-60} + 40 )) "$here/vmpy" "$@"
+import base64, subprocess, sys
+open("/tmp/agentprobe.py", "wb").write(base64.b64decode("$src"))
+r = subprocess.run(["python3", "/tmp/agentprobe.py"] + sys.argv[1:], capture_output=True, text=True, timeout=300)
+print(r.stdout[-2500:]); print(r.stderr[-300:])
+PY
