@@ -539,11 +539,11 @@ def capture_disks(run_: Run = run, budget: float = BUDGET) -> dict:
         used, size, mounted_fs = use.get(mounts[0], (0, 0, "")) if mounts else (0, 0, "")
         fstype = p.get("fstype") or mounted_fs
         frac = used / size if size else 0
-        bits = [x for x in (fstype, _human(p.get("size", 0))) if x]
+        bits = [x for x in (_human(p.get("size", 0)), fstype) if x]
+        if size:
+            bits.insert(0, f"{round(frac * 100)}% full")   # first: the end of a long line gets cut
         if mounts:
             bits.insert(0, mounts[0])
-        if size:
-            bits.append(f"{round(frac * 100)}% full")
         state = ("ok" if fstype in _READ_ONLY_FS else
                  "bad" if frac >= 0.97 else "warn" if frac >= 0.90 else "ok")
         opens = {"kind": "path", "value": mounts[0]} if mounts and mounts[0].startswith("/") else None
@@ -602,7 +602,9 @@ def capture_disks(run_: Run = run, budget: float = BUDGET) -> dict:
     links = [ln for ln in links if ln["from"] in kept and ln["to"] in kept]
     if full:
         worst = next(n for n in nodes if n["id"] == full[0])
-        say = f"{worst['label']} is nearly full ({worst['sub'].split(' · ')[-1]}): that is where the space went."
+        pct = re.search(r"(\d+)% full", worst["sub"])
+        say = (f"{worst['label']} is nearly full ({pct.group(0)}): that is where the space went." if pct
+               else f"{worst['label']} is nearly full: that is where the space went.")
     else:
         say = "Nothing is close to full."
     spec = {"shape": "layers", "title": TITLES["disks"], "nodes": nodes, "links": links, "highlight": full, "say": say}
