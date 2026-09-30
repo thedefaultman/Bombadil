@@ -1,0 +1,124 @@
+{
+ "now": 1790680000.0,
+ "clients": [
+  {
+   "address": "0x55a1b1",
+   "mapped": true,
+   "hidden": false,
+   "at": [12, 12],
+   "size": [1896, 1056],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": false,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "foot",
+   "title": "user@bombadil: ~/projects/secret-plans",
+   "initialClass": "foot",
+   "initialTitle": "user@bombadil: ~/projects/secret-plans",
+   "pid": 1990,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 2,
+   "inhibitingIdle": false
+  },
+  {
+   "address": "0x55a1f1",
+   "mapped": true,
+   "hidden": false,
+   "at": [690, 210],
+   "size": [540, 660],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": true,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "bombadil-app-notes",
+   "title": "Notes",
+   "initialClass": "bombadil-app-notes",
+   "initialTitle": "Notes",
+   "pid": 2401,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 1,
+   "inhibitingIdle": false
+  },
+  {
+   "address": "0x55a1f2",
+   "mapped": true,
+   "hidden": false,
+   "at": [750, 250],
+   "size": [540, 660],
+   "workspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "floating": true,
+   "pseudo": false,
+   "monitor": 0,
+   "class": "bombadil-app-calculator",
+   "title": "Calculator",
+   "initialClass": "bombadil-app-calculator",
+   "initialTitle": "Calculator",
+   "pid": 2402,
+   "xwayland": false,
+   "pinned": false,
+   "fullscreen": 0,
+   "fullscreenClient": 0,
+   "grouped": [],
+   "tags": [],
+   "swallowing": "0x0",
+   "focusHistoryID": 0,
+   "inhibitingIdle": false
+  }
+ ],
+ "monitors": [
+  {
+   "id": 0,
+   "name": "Virtual-1",
+   "description": "Unknown Virtual-1",
+   "make": "",
+   "model": "",
+   "serial": "",
+   "width": 1920,
+   "height": 1080,
+   "physicalWidth": 0,
+   "physicalHeight": 0,
+   "refreshRate": 60.0,
+   "x": 0,
+   "y": 0,
+   "activeWorkspace": {
+    "id": 1,
+    "name": "1"
+   },
+   "specialWorkspace": {
+    "id": 0,
+    "name": ""
+   },
+   "reserved": [0, 0, 0, 64],
+   "scale": 1.0,
+   "transform": 0,
+   "focused": true,
+   "dpmsStatus": true,
+   "vrr": false,
+   "activelyTearing": false,
+   "disabled": false,
+   "currentFormat": "XRGB8888",
+   "availableModes": ["1920x1080@60.00Hz", "1280x720@60.00Hz", "640x480@60.00Hz"]
+  }
+ ]
+}

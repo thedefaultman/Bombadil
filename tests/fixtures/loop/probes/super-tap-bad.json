@@ -1,0 +1,25 @@
+{
+ "now": 1790680000.0,
+ "events": [
+  {
+   "t": 1790679960.0,
+   "kind": "hello",
+   "client": "bar",
+   "pid": 1871,
+   "build": "d9dde3b"
+  },
+  {
+   "t": 1790679988.0,
+   "kind": "summon",
+   "id": 1,
+   "screen": "Virtual-1"
+  },
+  {
+   "t": 1790679991.6,
+   "kind": "focus_timeout",
+   "id": 1,
+   "waited": 3.6,
+   "bar": true
+  }
+ ]
+}
