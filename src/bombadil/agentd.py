@@ -51,6 +51,14 @@ SEND_TIMEOUT = 5.0
 # After a turn's process exits, how long its output may take to drain. Longer means a job it
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
+# The CLI says nothing while it retries an unreachable provider. With no tool running and no event
+# for this long, the line says so instead of staying on its last words; the watchdog looks every tick.
+NO_PROGRESS_SECS = 30.0
+WATCHDOG_TICK = 5.0
+# What a failed result says when the account, not the request, is the problem. Anything else is
+# passed through as it came.
+LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "rate limit")
+LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
 
 
 class AgentD:
@@ -430,6 +438,10 @@ class AgentD:
         if self.stopping:
             # Stop came while the CLI was being started.
             self._background(self._stop_proc(proc, self._unit))
+        elif not shell:
+            # Replace "Saving a restore point": the CLI is up and the next word is the provider's.
+            await self.event("status", text=f"Waiting for {self.provider.name.capitalize()}", risk=None,
+                             command=None, source="step")
         try:
             if not shell:
                 proc.stdin.write(turn.prompt.encode())
@@ -447,16 +459,37 @@ class AgentD:
             # A typed command is one step: its words, its mark and its exact command.
             await self._on_event({"kind": "tool", "name": "Bash", "input": {"command": prompt[1:]}, "id": "shell"},
                                  turn, result, None, False)
-        state = {"session": None, "error": False}
+        # "last": when the provider last sent an event; "tools": the tool calls still running (a long
+        # install says nothing until it is done); "quiet": the line says the provider went quiet.
+        state = {"session": None, "error": False, "last": time.monotonic(), "tools": set(), "quiet": False}
 
         async def pump():
             async for raw in proc.stdout:
                 for ev in source.parse(raw.decode(errors="replace")):
+                    state["last"] = time.monotonic()
+                    if ev["kind"] in ("tool_start", "tool") and ev.get("id"):
+                        state["tools"].add(ev["id"])
+                    elif ev["kind"] == "tool_result":
+                        state["tools"].discard(ev.get("id"))
+                    if state["quiet"]:
+                        state["quiet"] = False
+                        if not self.stopping:
+                            await self.event("status", text="Thinking", risk=None, command=None, source="step")
                     state["session"], state["error"] = await self._on_event(
                         ev, turn, result, state["session"], state["error"])
 
+        async def watchdog():
+            while True:
+                await asyncio.sleep(WATCHDOG_TICK)
+                if (not state["quiet"] and not state["tools"] and not self.stopping
+                        and time.monotonic() - state["last"] > NO_PROGRESS_SECS):
+                    state["quiet"] = True
+                    await self.event("status", risk=None, command=None, source="step",
+                                     text=f"{self.provider.name.capitalize()} is not answering; check the connection")
+
         reading = asyncio.create_task(pump())
         exited = asyncio.create_task(_exited(proc))
+        quiet_watch = None if shell else asyncio.create_task(watchdog())
         try:
             done, _ = await asyncio.wait({reading, exited}, return_when=asyncio.FIRST_COMPLETED)
             if reading in done:
@@ -492,6 +525,8 @@ class AgentD:
             exited.cancel()
             reading.cancel()
             stderr.cancel()
+            if quiet_watch:
+                quiet_watch.cancel()
             stopped = self.stopping
             summary = narrator.summary()
             if stopped:
@@ -524,6 +559,8 @@ class AgentD:
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
+                if any(w in text.lower() for w in LIMIT_WORDS):
+                    text = LIMIT_TEXT
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
                     text += " (the previous conversation is gone; the next prompt starts a new one)"

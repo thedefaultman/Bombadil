@@ -205,7 +205,8 @@ async def test_the_line_says_what_runs_and_stop_ends_it_all(home):
     d = agentd.AgentD(Scripted(SLOW_INSTALL), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
     server, r, w = await _start(d)
     await _ask(w, "install docker")
-    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step"
+                               and m.get("text") != "Waiting for Claude")
     step = msgs[-1]
     assert (step["text"], step["risk"], step["command"]) == ("Installing docker", "system", "sudo pacman -S docker")
     pgid = d.proc.pid
@@ -528,3 +529,122 @@ async def test_a_missing_cli_still_starts_and_ends_its_turn(home):
     assert kinds[0] == "turn_start" and "error" in kinds and msgs[-1]["turn"] == 1
     w.close()
     server.cancel()
+
+
+def _steps(msgs):
+    return [m["text"] for m in msgs if m.get("kind") == "status" and m.get("source") == "step"]
+
+
+def _quiet_watch(monkeypatch):
+    monkeypatch.setattr(agentd, "NO_PROGRESS_SECS", 0.4)
+    monkeypatch.setattr(agentd, "WATCHDOG_TICK", 0.1)
+
+
+@pytest.mark.asyncio
+async def test_the_line_says_waiting_once_the_cli_is_up(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted("import sys, time\nsys.stdin.read()\ntime.sleep(60)\n"), agentd._NoSnapshots(),
+                      stopper=procs.Stopper(grace=1.0))
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "status" and m.get("source") == "step")
+    assert _steps(msgs) == ["Waiting for Claude"]
+    w.write(b'{"type": "stop"}\n')
+    await w.drain()
+    await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_goes_quiet_is_named_once_and_thinking_returns_with_it(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\ntime.sleep(1.5)\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'back'}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'back', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    steps = _steps(msgs)
+    assert steps[:3] == ["Waiting for Claude", "Claude is not answering; check the connection", "Thinking"]
+    assert steps.count("Claude is not answering; check the connection") == 1
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_long_tool_is_not_a_silent_provider(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1',"
+        " 'name': 'Bash', 'input': {'command': 'sudo pacman -S docker'}}]}}), flush=True)\n"
+        "time.sleep(1.5)\n"
+        "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
+        " 'content': 'ok'}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "install docker")
+    msgs = await _read_until(r, "turn_end")
+    assert "Installing docker" in _steps(msgs)
+    assert not [t for t in _steps(msgs) if "not answering" in t]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_silent_provider_after_its_tool_finished_is_named(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1',"
+        " 'name': 'Bash', 'input': {'command': 'ls'}}]}}), flush=True)\n"
+        "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
+        " 'content': 'ok'}]}}), flush=True)\n"
+        "time.sleep(1.0)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "list files")
+    msgs = await _read_until(r, "turn_end")
+    assert "Claude is not answering; check the connection" in _steps(msgs)
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_typed_command_has_no_watchdog(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "!sleep 1")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _steps(msgs) if "not answering" in t or t.startswith("Waiting for")]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_limit_is_said_plainly_and_other_errors_are_left_alone(home):
+    def failing(text):
+        return (
+            "import json, sys\nsys.stdin.read()\n"
+            f"print(json.dumps({{'type': 'result', 'is_error': True, 'result': {text!r}, 'session_id': 's'}}))\n"
+        )
+    for said, shown in (("You've hit your usage limit. Resets at 5pm.", agentd.LIMIT_TEXT),
+                        ("Credit balance is too low", agentd.LIMIT_TEXT),
+                        ("API Error: 500 overloaded", "API Error: 500 overloaded")):
+        d = agentd.AgentD(Scripted(failing(said)), agentd._NoSnapshots())
+        server, r, w = await _start(d)
+        await _ask(w, "hello")
+        msgs = await _read_until(r, "turn_end")
+        assert [m["text"] for m in msgs if m.get("kind") == "error"] == [shown]
+        w.close()
+        server.cancel()
+        d.socket_path.unlink(missing_ok=True)
