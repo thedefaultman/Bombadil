@@ -27,6 +27,42 @@ ShellRoot {
         onHandOff: root.release()
     }
 
+    // The desk: cards on two rails under every window, strips beside the pill when they fold.
+    DeskState {
+        id: deskState
+        pill: pillState
+        onOutgoing: msg => root.write(msg)
+    }
+    // The screen the desk lives on ("" = the first one).
+    readonly property string deskScreen: deskState.screen !== "" ? deskState.screen
+        : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+    // The desk screen's size, in the pixels windows and cards are laid out in.
+    readonly property var deskScreenObject: {
+        for (const s of Quickshell.screens) if (s.name === root.deskScreen) return s
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    }
+    Binding { target: deskState; property: "screenWidth"; value: root.deskScreenObject ? root.deskScreenObject.width : 1920 }
+    Binding { target: deskState; property: "screenHeight"; value: root.deskScreenObject ? root.deskScreenObject.height : 1080 }
+    HyprCover { desk: deskState; screenName: root.deskScreen }
+    Variants {
+        model: Quickshell.screens
+        DeskRails {
+            required property var modelData
+            desk: deskState
+            screen: modelData
+            active: modelData.name === root.deskScreen
+        }
+    }
+    IpcHandler {
+        target: "desk"
+        // What the desk is showing, as JSON.
+        function state(): string { return JSON.stringify(deskState.snapshot()) }
+        // Stand-in windows for a session without Hyprland: a JSON list of {x, y, w, h, fullscreen}.
+        function cover(windows: string): void { deskState.setWindows(JSON.parse(windows)) }
+        // A message as agentd would send it, for demos and the VM smoke check.
+        function inject(message: string): void { root.handle(message) }
+    }
+
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
     // to connect does not retry, so each attempt is a fresh Socket.
     property var agentd: null
@@ -40,8 +76,9 @@ ShellRoot {
             }
             onConnectionStateChanged: {
                 root.connected = connected
+                deskState.connected = connected
                 if (connected) pillState.connected = true
-                else pillState.lost()
+                else { pillState.lost(); deskState.lost() }
             }
         }
     }
@@ -57,6 +94,7 @@ ShellRoot {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
         pillState.handle(ev)
+        deskState.handle(ev)
     }
 
     function write(msg) {
@@ -104,6 +142,8 @@ ShellRoot {
                 Region { item: statusLine }
                 Region { item: chips }
                 Region { item: pillBox }
+                Region { item: stripsLeft }
+                Region { item: stripsRight }
             }
 
             onSummonedChanged: {
@@ -132,6 +172,20 @@ ShellRoot {
                 onTriggered: root.release()
             }
 
+            // The cards that folded, beside the pill.
+            DeskStrips {
+                id: stripsLeft
+                desk: deskState; side: "left"; active: modelData.name === root.deskScreen
+                pillEdge: column.x + pillBox.x
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+            DeskStrips {
+                id: stripsRight
+                desk: deskState; side: "right"; active: modelData.name === root.deskScreen
+                pillEdge: column.x + pillBox.x + pillBox.width
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+
             ColumnLayout {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
@@ -141,7 +195,7 @@ ShellRoot {
                     id: statusLine
                     pill: pillState
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, deskState.pillWidth)
                     Layout.alignment: Qt.AlignHCenter
                 }
 
@@ -152,14 +206,14 @@ ShellRoot {
                     // so the input mask lets clicks beside them through.
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, deskState.pillWidth)
                 }
 
                 // Prompt bar
                 Rectangle {
                     id: pillBox
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: deskState.pillWidth
                     Layout.alignment: Qt.AlignHCenter
                     implicitHeight: 52
                     radius: 26
@@ -205,6 +259,7 @@ ShellRoot {
                         }
 
                         Item {
+                            visible: !deskState.capsule     // a full-screen window: the pill is the dot and the clock
                             Layout.fillWidth: true
                             implicitHeight: input.implicitHeight
 
@@ -253,7 +308,7 @@ ShellRoot {
                         // An exact launcher word: say it opens here, without the model.
                         Text {
                             readonly property string target: pillState.exact(input.text)
-                            visible: target !== ""
+                            visible: target !== "" && !deskState.capsule
                             text: "↵ " + target
                             color: "#8b939c"
                             font.pixelSize: 12

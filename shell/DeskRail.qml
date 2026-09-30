@@ -1,3 +1,4 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import "DeskTheme.js" as T
 
@@ -21,7 +22,37 @@ Item {
         return out
     }
 
+    // Whether any card is on screen, folding or not: the rail's window goes away when none is.
+    property bool shown: false
+    function recount() {
+        let n = 0
+        for (let i = 0; i < cards.count; i++) {
+            const c = cards.itemAt(i)
+            if (c && c.visible) n++
+        }
+        shown = n > 0
+    }
+
+    // One box around every full card, for the window's input mask: a click beside the cards goes
+    // through to what is behind the rail.
+    readonly property var hitBox: {
+        if (hitRects.length === 0) return { x: 0, y: 0, w: 0, h: 0 }
+        let x0 = Infinity, y0 = Infinity, x1 = 0, y1 = 0
+        for (const r of hitRects) {
+            x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y)
+            x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h)
+        }
+        return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+    }
+    Item {
+        id: box
+        objectName: "hitArea"
+        x: rail.hitBox.x; y: rail.hitBox.y; width: rail.hitBox.w; height: rail.hitBox.h
+    }
+    readonly property Item hitArea: box
+
     Repeater {
+        id: cards
         model: rail.desk.order[rail.side]
 
         Item {
@@ -33,7 +64,7 @@ Item {
             readonly property var slot: rail.desk.slots[modelData] || null
             property var placed: null
             onSlotChanged: if (slot) placed = slot
-            Component.onCompleted: if (slot) placed = slot
+            Component.onCompleted: { if (slot) placed = slot; rail.recount() }
 
             readonly property bool full: rail.desk.faces[modelData] === "full"
 
@@ -44,6 +75,8 @@ Item {
             opacity: full ? 1 : 0
             scale: full ? 1 : 0.6
             visible: opacity > 0
+            onVisibleChanged: rail.recount()
+            Component.onDestruction: Qt.callLater(rail.recount)
             transformOrigin: rail.side === "left" ? Item.BottomLeft : Item.BottomRight
             Behavior on opacity { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
             Behavior on scale { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }

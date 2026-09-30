@@ -365,6 +365,75 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
+# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
+def desk_ipc(*args):
+    return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "desk", *args)
+
+
+def desk_state():
+    try:
+        return json.loads(desk_ipc("state").stdout)
+    except ValueError:
+        return {}
+
+
+summon()
+typ("show me the route")
+n = mark()
+key("Return")
+n0 = n
+pl = wait(ev("plan", steps=lambda s: bool(s) and len(s) == 2), 40, n)
+check("the plan arrives as two steps with the first running", pl and [x["status"] for x in pl["steps"]] in (
+    ["pending", "pending"], ["in_progress", "pending"]), pl and pl.get("steps"))
+st = None
+for _ in range(100):
+    st = desk_state()
+    if st.get("faces", {}).get("now") == "full":
+        break
+    time.sleep(0.2)
+time.sleep(0.6)
+shot("22-desk-now")
+check("Now is on the desk while the plan runs", st and st["present"]["now"] and st["faces"]["now"] == "full", st and st.get("faces"))
+check("Now is one of the left rail's slots, 300 wide", st and st["slots"]["now"]["x"] == 16 and st["slots"]["now"]["w"] == 300, st and st.get("slots"))
+check("Now lists both steps", st and [x["label"] for x in st["now"]["model"]["steps"]][-1] == "Write it down", st and st["now"]["model"]["steps"])
+desk_ipc("cover", json.dumps([{"x": 0, "y": 560, "w": 500, "h": 160}]))
+time.sleep(0.4)
+st = desk_state()
+shot("23-desk-covered")
+check("a window over Now folds it to a strip", st.get("faces", {}).get("now") == "strip" and st.get("mode") == "shared", st.get("faces"))
+check("the pill narrows to 360 while a window shares the stage", st.get("pillWidth") == 360, st.get("pillWidth"))
+desk_ipc("cover", "[]")
+time.sleep(1.0)
+st = desk_state()
+check("Now comes back once the window is gone", st.get("faces", {}).get("now") == "full" and st.get("mode") == "open", st.get("faces"))
+summon()
+typ("desk")
+n = mark()
+key("Return")
+d = wait(ev("local", action="desk", phase="done"), 10, n)
+time.sleep(0.6)
+st = desk_state()
+shot("25-desk-folded")
+check("the desk word folds every card", d and d.get("ok") and st.get("folded") and st["faces"]["now"] == "strip", (d, st.get("faces")))
+summon()
+typ("desk")
+n = mark()
+key("Return")
+wait(ev("local", action="desk", phase="done"), 10, n)
+time.sleep(0.6)
+check("and again brings them back", not desk_state().get("folded"))
+end = wait(ev("turn_end"), 60, n0)
+time.sleep(0.5)
+shot("24-desk-done")
+summon()
+typ("hide needs you")
+n = mark()
+key("Return")
+h = wait(ev("local", phase="done"), 10, n)
+check("Needs you cannot be hidden", h and not h.get("ok") and "cannot be hidden" in (h.get("text") or ""), h and h.get("text"))
+key("Escape")
+
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
     p.terminate()
