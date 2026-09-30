@@ -11,6 +11,7 @@ def test_claude_command_and_events(tmp_path):
     assert "--dangerously-skip-permissions" in cmd and "--resume" in cmd and "--model" in cmd
     cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text())
     assert cfg["mcpServers"]["bombadil-os"]["command"] == "/usr/bin/bombadil-os-mcp"
+    assert cmd[cmd.index("--mcp-config") + 2] == "--strict-mcp-config"   # no claude.ai connectors beside it
 
     lines = [
         json.dumps({"type": "system", "subtype": "init", "session_id": "s1",

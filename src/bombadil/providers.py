@@ -100,6 +100,9 @@ class Claude(Provider):
                "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--permission-mode", "bypassPermissions", "--dangerously-skip-permissions",
                "--mcp-config", str(mcp_config(workdir / "claude-mcp.json", self.mcp_command)),
+               # Only Bombadil's own tools: the account's claude.ai connectors (Gmail, Drive) would
+               # load too and end replies with notices to authorize them.
+               "--strict-mcp-config",
                "--append-system-prompt", SYSTEM_PROMPT]
         if self.model:
             cmd += ["--model", self.model]
