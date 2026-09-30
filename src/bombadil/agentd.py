@@ -477,7 +477,7 @@ class AgentD:
                         state["quiet"] = False
                         if not self.stopping:
                             await self.event("status", text="Thinking", risk=None, command=None, source="step")
-                for ev in source.parse(line):
+                for ev in _safely(source.parse(line), source, line):
                     # Running from the tool call to its result; the turn's result ends all of it.
                     if ev["kind"] == "tool" and ev.get("id"):
                         state["tools"].add(ev["id"])
@@ -515,7 +515,7 @@ class AgentD:
                 self._background(_drain(proc.stdout))
             pending_session, reported_error = state["session"], state["error"]
             source.returncode = proc.returncode
-            for ev in source.finish():
+            for ev in _safely(source.finish(), source, "(end of output)"):
                 pending_session, reported_error = await self._on_event(
                     ev, turn, result, pending_session, reported_error)
             try:
@@ -607,6 +607,16 @@ def _limit_text(text: str) -> str:
     if any(w in low for w in RATE_WORDS):
         return RATE_TEXT
     return text
+
+
+def _safely(events, source, raw: str):
+    """The events of one provider line. A line the parser cannot read is logged and skipped: one
+    odd line from the CLI must not end the turn and lose the answer that follows it."""
+    try:
+        yield from events
+    except Exception as e:  # noqa: BLE001 - whatever the line held, the turn goes on
+        print(f"agentd: skipped a {source.name} line it could not read ({type(e).__name__}: {e}): "
+              f"{raw[:200]!r}", file=sys.stderr)
 
 
 def _action(msg: dict) -> launcher.Action | None:

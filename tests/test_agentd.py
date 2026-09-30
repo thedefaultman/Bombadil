@@ -769,3 +769,34 @@ async def test_a_search_that_nothing_answers_does_not_switch_the_watchdog_off(ho
     assert "Codex is not answering; check the connection" in _steps(msgs)
     w.close()
     server.cancel()
+
+
+class Choking(Scripted):
+    """A parser that raises on one line, as an unguarded .get on a field of the wrong type did."""
+
+    def parse(self, line):
+        if "boom" in line:
+            raise AttributeError("'str' object has no attribute 'get'")
+        yield from super().parse(line)
+
+
+@pytest.mark.asyncio
+async def test_a_line_the_parser_chokes_on_is_skipped_and_the_answer_still_arrives(home, capsys):
+    script = (
+        "import json, sys\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'boom'}), flush=True)\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'still here'}]}}),"
+        " flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Choking(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert [m["text"] for m in msgs if m.get("kind") == "text"] == ["still here"]
+    assert next(m for m in msgs if m.get("kind") == "result")["text"] == "done"
+    assert not [m for m in msgs if m.get("kind") == "error"]
+    assert d.session_id == "s1"
+    assert "skipped a claude line it could not read (AttributeError" in capsys.readouterr().err
+    w.close()
+    server.cancel()
