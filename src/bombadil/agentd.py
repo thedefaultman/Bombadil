@@ -505,6 +505,8 @@ class AgentD:
             if op == "list":
                 return result(True, await asyncio.to_thread(self.jobs.listing))
             if op == "stop":
+                if not msg.get("job"):
+                    return result(False, "Which job? `list` says which are running.")
                 rec = await asyncio.to_thread(self.jobs.stop, msg.get("job"))
                 if rec is None:
                     return result(False, f"There is no job {str(msg.get('job'))[:20]!r}. `list` says which "
