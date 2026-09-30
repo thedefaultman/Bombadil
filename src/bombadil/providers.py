@@ -14,6 +14,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import persona
+
 SYSTEM_PROMPT = (
     "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
     "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
@@ -23,6 +25,11 @@ SYSTEM_PROMPT = (
     "permission. The user sees your work on screen and your final reply as at most four lines above the "
     "bar: one or two plain sentences saying what you did, no markdown, no lists."
 )
+
+
+def system_prompt() -> str:
+    """The fixed prompt of every session Bombadil starts, then the user's voice and where to change it."""
+    return SYSTEM_PROMPT + ("\n\n" + n if (n := persona.note()) else "")
 
 
 @dataclass
@@ -100,7 +107,7 @@ class Claude(Provider):
                "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--permission-mode", "bypassPermissions", "--dangerously-skip-permissions",
                "--mcp-config", str(mcp_config(workdir / "claude-mcp.json", self.mcp_command)),
-               "--append-system-prompt", SYSTEM_PROMPT]
+               "--append-system-prompt", system_prompt()]
         if self.model:
             cmd += ["--model", self.model]
         if turn.session_id:
@@ -179,7 +186,7 @@ class Codex(Provider):
         # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
-                     "-c", f"developer_instructions={json.dumps(SYSTEM_PROMPT)}",
+                     "-c", f"developer_instructions={json.dumps(system_prompt(), ensure_ascii=False)}",
                      "--skip-git-repo-check"]
         if self.model:
             overrides += ["--model", self.model]

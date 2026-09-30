@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import narrate, paths
+from . import greet, narrate, paths
 
 AMBER, RED, DIM, BOLD, RESET = "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 CLAUDE_REJECTED = "The user doesn't want to proceed with this tool use"
@@ -216,7 +216,9 @@ def show(turn_file: Path | None, live: bool = False, out=sys.stdout, wait: bool 
 
 def history_lines(limit: int = 40, color: bool = False) -> list[str]:
     c = _color(color)
-    rows = read_log(paths.turns_log())[-limit:]
+    # A boot row only anchors "since last time" for the welcome line; it is no turn and no action.
+    rows = [e for e in read_log(paths.turns_log()) if isinstance(e, dict) and e.get("action") != "boot"]
+    rows = rows[-limit:]
     out = []
     day = None
     for e in rows:
@@ -234,7 +236,7 @@ def history_lines(limit: int = 40, color: bool = False) -> list[str]:
             end = (e.get("result") or "").strip().splitlines()[0][:80] if (e.get("result") or "").strip() else ""
         snap = f"  (restore point {e['snapshot']})" if e.get("snapshot") else ""
         out.append(f"  {when}  {e.get('prompt', '')}" + (c(DIM, f"  {end}") if end else "") + c(DIM, snap))
-    return out or ["Nothing yet."]
+    return out or [greet.empty("history") or "Nothing yet."]
 
 
 def wait_for_key(prompt: str = "Press Esc to close.") -> None:

@@ -8,8 +8,10 @@ import QtQuick.Layouts
 Rectangle {
     id: bar
     required property var pill       // a PillState
+    // A welcome shows on one screen only, the one that had the focus when it arrived.
+    property bool here: true
 
-    readonly property bool shown: pill.mode !== "idle" || pill.flash !== ""
+    readonly property bool shown: (pill.mode !== "idle" && (pill.mode !== "welcome" || here)) || pill.flash !== ""
     readonly property color edge: pill.mode === "working" && pill.risk === "irreversible" ? "#e05252"
                                  : pill.mode === "working" && pill.risk === "system" ? "#e8a33d"
                                  : pill.source === "error" && pill.mode !== "working" ? "#c04a4a"
@@ -49,12 +51,16 @@ Rectangle {
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
             if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.dismiss()
+            if (bar.pill.welcomeDone(bar.now)) bar.pill.dismiss()
         }
     }
 
     HoverHandler {
         id: hover
-        onHoveredChanged: bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
+        onHoveredChanged: {
+            bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
+            if (hovered) bar.pill.touched()
+        }
     }
     Component.onDestruction: if (hover.hovered) bar.pill.hovers = Math.max(0, bar.pill.hovers - 1)
     TapHandler {

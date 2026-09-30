@@ -746,6 +746,7 @@ def shell_step(command: str, description: str | None = None) -> Step:
     system = False
     irreversible = False
     cwd: str | None = None      # after a `cd`, where relative paths point
+    talk = False                # a plain edit of persona.toml
     for segment_argv in _segments(inner):
         words, writes = _strip_redirects(segment_argv)
         argv, sudo = _strip_wrappers(words)
@@ -762,6 +763,10 @@ def shell_step(command: str, description: str | None = None) -> Step:
                 cwd = os.path.normpath(os.path.join(cwd, to))
             else:
                 cwd = None
+            continue
+        edited = _changed_paths(prog, argv) if prog in ("tee", "sed") else []
+        if any(_is_persona(p) for p in writes + edited):
+            talk = True
             continue
         if _irreversible(prog, argv, segment, cwd):
             irreversible = True
@@ -790,6 +795,8 @@ def shell_step(command: str, description: str | None = None) -> Step:
             best = step
             if step.risk == SYSTEM:
                 system = True
+    if talk and (best is None or not best.changes) and not (irreversible or system or sudo_any):
+        return Step(PERSONA_STEP)
     said = from_description(description) if description else None
     if best is not None and said and not best.changes:
         # The model's own words for what it runs beat a generic reading ("Waiting", "Running
@@ -857,6 +864,19 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     return None
 
 
+# "Call me Dan" edits persona.toml with the agent's own tools. That is not a change to the system: no
+# Undo, no summary entry, no Details row (a Step with no `done`), just a plain line while it happens.
+PERSONA_STEP = "Changing how I talk to you"
+
+
+def _is_persona(p) -> bool:
+    """Is this path the user's persona.toml? Compared as written, with no I/O (the agent is told the path)."""
+    try:
+        return os.path.normpath(_expand_home(str(p))) == os.path.normpath(str(paths.persona_file()))
+    except (TypeError, ValueError):
+        return False
+
+
 def tool_step(name: str, a: dict | None) -> Step | None:
     """The step for a tool call, or None for tools that are not worth a line (ToolSearch)."""
     a = a if isinstance(a, dict) else {}
@@ -873,6 +893,8 @@ def tool_step(name: str, a: dict | None) -> Step | None:
     if name == "Write":
         n = _lines(a.get("content"))
         p = str(a.get("file_path") or "")
+        if _is_persona(p):
+            return Step(PERSONA_STEP)
         what = _name(p) if p else "a file"
         step = Step(f"Writing {what}" + (f", {n} lines" if n > 1 else ""), f"Wrote {what}")
         if _is_system_path(p):
@@ -880,6 +902,8 @@ def tool_step(name: str, a: dict | None) -> Step | None:
         return step
     if name in ("Edit", "MultiEdit", "NotebookEdit"):
         p = str(a.get("file_path") or a.get("notebook_path") or "")
+        if _is_persona(p):
+            return Step(PERSONA_STEP)
         what = _name(p) if p else "a file"
         step = Step(f"Editing {what}", f"Edited {what}")
         if _is_system_path(p):
@@ -929,6 +953,8 @@ def file_change_step(changes: list) -> Step:
     changes = [c for c in changes if isinstance(c, dict)] if isinstance(changes, list) else []
     if not changes:
         return Step("Editing files", "Edited files")
+    if all(_is_persona(c.get("path", "")) for c in changes):
+        return Step(PERSONA_STEP)
     kinds = {c.get("kind") for c in changes}
     if len(changes) == 1:
         c = changes[0]
@@ -965,11 +991,15 @@ def partial_step(name: str, partial: str) -> Step | None:
         n = partial.count("\\n")
         if m:
             p = json.loads(f'"{m.group(1)}"')
+            if _is_persona(p):
+                return Step(PERSONA_STEP)
             return Step(f"Writing {_name(p)}" + (f", {n} lines" if n > 1 else ""), f"Wrote {_name(p)}")
     if name in ("Edit", "MultiEdit"):
         m = _PATH_RE.search(partial)
         if m:
             p = json.loads(f'"{m.group(1)}"')
+            if _is_persona(p):
+                return Step(PERSONA_STEP)
             return Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
     return None
 
@@ -986,6 +1016,7 @@ class Narrator:
     def __init__(self):
         self.step: Step | None = None
         self.done: list[str] = []
+        self.made: list[str] = []   # apps this turn made (not changed), for turns.jsonl
         self.irreversible = False
         self.system = False
         self.said = ""           # the agent's words in the current text block
@@ -1009,12 +1040,24 @@ class Narrator:
         return {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
 
     def on_event(self, ev: dict) -> dict | None:
+        self._note_made(ev)
         line = self._line(ev)
         # The complete message repeats what its stream already showed; say each line once.
         if line is None or line == self._shown:
             return None
         self._shown = line
         return line
+
+    def _note_made(self, ev: dict) -> None:
+        """Remember an app this turn creates for the first time ("Since last time you built ...")."""
+        name = str(ev.get("name") or "")
+        if ev.get("kind") != "tool" or name.split("__", 2)[1:] != ["bombadil-os", "create_app"]:
+            return
+        a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+        raw = str(a.get("title") or "")
+        title = _app_title(raw) if raw.strip() else ""
+        if title and not _app_exists(raw) and title not in self.made:
+            self.made.append(title)
 
     def _line(self, ev: dict) -> dict | None:
         kind = ev.get("kind")

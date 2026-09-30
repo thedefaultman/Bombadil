@@ -26,6 +26,9 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
 
+The bar also says hello ("bar", "presence", "welcomed", "persona") for the welcome line and the name and
+voice card; voice.py holds those messages and what agentd answers.
+
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
@@ -39,7 +42,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
+from . import config, launcher, narrate, paths, procs, providers, snapshots, voice, watch
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
@@ -80,6 +83,8 @@ class AgentD:
         self._unit: str | None = None               # the running turn's systemd scope
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
+        self.configured = True                      # a provider was chosen; main() sets it from the config
+        self.voice = voice.Voice(self)
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
 
     # -- socket --
@@ -122,6 +127,7 @@ class AgentD:
             pass
         finally:
             # The client hung up or half-closed: what is already queued for it still goes out.
+            self.voice.on_disconnect(writer)
             if self.clients.pop(writer, None) is not None:
                 try:
                     queue.put_nowait(None)
@@ -169,6 +175,8 @@ class AgentD:
             self._background(asyncio.to_thread(self.launcher.close_details))
         elif t == "summon":
             await self.broadcast({"type": "summon"})
+        elif t in voice.TYPES:
+            await self.voice.handle(t, msg, writer)
         elif t == "status":
             await self._send(writer, self._status())
 
@@ -258,6 +266,9 @@ class AgentD:
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
                              text="Stopping." if stopping else "Nothing is running.")
             return
+        if action.kind == "voice":
+            await self.voice.word(typed)
+            return
         if action.kind in ("undo", "restart", "shutdown"):
             # Undo takes back the turn that is running too, so end it first, and start no
             # queued turn until the undo is done: it would take that turn's snapshot instead.
@@ -277,8 +288,15 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
-        await self.event("local", turn=None, action=action.kind, target=action.target, phase="start", text=doing)
+        # A shutdown says goodbye in the start text: the done text may come after the power is gone.
+        bye = await self.voice.goodbye() if action.kind == "shutdown" else ""
+        await self.event("local", turn=None, action=action.kind, target=action.target, phase="start",
+                         text=bye or doing)
+        if action.kind in ("restart", "shutdown"):
+            await self.voice.flush()   # bounded: a dead client never holds the power button
         ok, text = await asyncio.to_thread(self.launcher.run, action)
+        if ok and bye:
+            text = bye
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
                          text=text)
         if ok:
@@ -300,6 +318,18 @@ class AgentD:
 
     def _busy(self) -> bool:
         return self.current is not None
+
+    # -- the voice: name and voice card, welcome line, goodbye (voice.py does the work) --
+
+    def _setup_ready(self) -> bool:
+        """Sign-in is done. The access state of the native login gates this when it lands; main has none."""
+        return getattr(self, "access", "ready") == "ready"
+
+    async def ask_persona(self, line: str | None = None, current: bool = False) -> bool:
+        """Show the name and voice card. Sign-in calls it when it turns ready, with the line "Signed in to
+        Claude. What should I call you?"; it asks only while persona.toml is missing. The word `voice` asks
+        with current=True. False when nothing was asked."""
+        return await self.voice.ask(line, current)
 
     async def stop(self) -> bool:
         """End the running turn and everything it started. False when nothing runs.
@@ -542,6 +572,7 @@ class AgentD:
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
+                        "changed": bool(summary), "made": list(getattr(self.narrator, "made", ())),
                         "details": str(self.turn_logs.get(self.current, ""))})
 
     def _log_line(self, entry: dict):
@@ -605,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
     daemon = AgentD(provider, snaps)
+    daemon.configured = cfg.configured or bool(os.environ.get("BOMBADIL_PROVIDER"))
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
     try:
         asyncio.run(daemon.serve())

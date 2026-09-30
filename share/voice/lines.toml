@@ -1,0 +1,184 @@
+# Bombadil's voice: every word of the greetings, goodbyes and empty places. greet.py holds the
+# grammar and the ranking and no sentences of its own, and tests/test_greet.py checks this table.
+# One line, 100 characters at most, no dash, "!" only in Merry. {n} is ", Name" or nothing.
+# A section or a key that is absent means silence: Quiet has no "none" under boot, so it says nothing.
+
+[voices]
+merry = "Merry"
+plain = "Plain"
+quiet = "Quiet"
+
+# What each row of the setup card shows while the name is typed.
+[card]
+merry = "Welcome{n}. Let's go for a walk!"
+plain = "Welcome{n}."
+quiet = "Nothing on an ordinary morning, only news."
+
+[opener]
+welcome = "Welcome"
+back = "Welcome back"
+morning = "Good morning"
+afternoon = "Good afternoon"
+evening = "Good evening"
+late = "Late one"
+
+[join]
+pair = ", and "     # between the two facts of a line
+list = ", "         # inside "While you were away" and in a list of names
+names = " and "     # before the last name of a list, and between two stopping sessions
+
+[clause]
+away = "While you were away: {list}"
+made = "Since last time you built {list}"
+
+# Merry's invitations. The walk comes on day 0 and every fourth day after, and the other seven
+# take the days between in this order, so none comes back within nine days.
+[invite]
+walk = "Let's go for a walk!"
+pool = [
+  "Where to today?",
+  "Shall we wander somewhere?",
+  "What shall we make?",
+  "Ready when you are.",
+  "What's on the road today?",
+  "Somewhere new today?",
+  "Let's see where this goes.",
+]
+
+# The clauses the readers in greet_sources.py write. The same in every voice.
+[fact]
+updates = "{count:# update is waiting/# updates are waiting}"
+security = ", {security:# of them a security fix/# of them security fixes}"
+stopped = "{title} was stopped by the restart"
+stopped_at = "{title} was stopped by the restart at {done} of {total}"
+finished = "{title} finished"
+failed = "{title} failed"
+requests_finished = "{n} requests finished"
+requests_failed = "{n:A request failed/# requests failed}"
+more = "{n} more"
+
+# Per voice and per situation: "none" is the line when there is nothing to report and "facts"
+# the line when there is. Slots: {opener} {n} {body} {invite}. The situations: first (right after
+# the card), boot, night (a boot from 00:00 to 04:59 with a zone set), long (three days or more away),
+# back (four hours or overnight), away (thirty minutes to four hours).
+
+[merry]
+installed = "Welcome home{n}. Undo works from here."
+
+[merry.first]
+none = "{opener}{n}. {invite}"
+facts = "{opener}{n}. {body}"
+
+[merry.boot]
+none = "{opener}{n}. {invite}"
+facts = "{opener}{n}. {body}"
+
+[merry.night]
+opener = "late"
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[merry.long]
+none = "{opener}{n}. {invite}"
+facts = "{opener}{n}. {body}"
+
+[merry.back]
+facts = "{opener}{n}. {body}"
+
+[merry.away]
+facts = "{body}"
+
+[merry.bye]
+night = "Good night"
+day = "See you"
+none = "{bye}{n}."
+stop = "{bye}{n}. {stop} and waits for you."
+
+[plain]
+installed = "Installed. Undo works from here."
+
+[plain.first]
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[plain.boot]
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[plain.night]
+opener = "welcome"
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[plain.long]
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[plain.back]
+facts = "{opener}{n}. {body}"
+
+[plain.away]
+facts = "{body}"
+
+[plain.bye]
+night = "Shutting down"
+day = "Shutting down"
+none = "{bye}."
+stop = "{bye}. {stop}."
+
+[quiet]
+installed = "Installed. Undo works from here."
+
+[quiet.first]
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[quiet.boot]
+facts = "{body}"
+
+[quiet.night]
+facts = "{body}"
+
+[quiet.long]
+none = "{opener}{n}."
+facts = "{opener}{n}. {body}"
+
+[quiet.back]
+facts = "{body}"
+
+[quiet.away]
+facts = "{body}"
+
+[quiet.bye]
+night = "Shutting down"
+day = "Shutting down"
+none = "{bye}."
+stop = "{bye}."
+
+# Empty places. No name, no voice variants, no "!": they teach, and agents and docs read them.
+# "{n:one/many}" picks a form by the number, "#" stands for the number itself.
+[empty]
+focus_folder = "{place} is empty. Drop files in, or ask for what belongs here."
+focus_moved = "{place} is empty. Its last file, {file}, went into {target} on {when}."
+focus_links = "No links yet. The Brain has watched since {since}, and nothing else has touched this."
+focus_match = "Nothing called “{query}”. The Brain only knows what happened since {since}."
+map_small = "The Map is still small: {areas:# area/# areas} after {days:# day/# days}. It grows as you save, download and ask."
+history = "Nothing to go back to yet. Undo starts after the first change."
+history_live = "Nothing to go back to yet. Undo starts once Bombadil is installed."
+needs_you = "Nothing needs you."
+running = "Nothing is running."
+watching = "Nothing is being watched. Ask me to keep an eye on something and it shows here with a stop button."
+know = "Only your name so far. Tell me what is worth keeping."
+app = "No {things} yet. Add one and it stays on this computer."
+apps = "No apps yet. Say what you need and I will make one."
+
+# The one doorway of an empty place, when it is a chip. A label that ends in an ellipsis fills the pill.
+[empty_chip]
+focus_folder = "Find what belongs here"
+focus_links = "What is this?"
+focus_match = "Find {query} for me"
+map_small = "files"
+running = "claude {project}"
+watching = "Tell me if my disk gets nearly full"
+know = "Remember that…"
+apps = "Make me a password manager"
