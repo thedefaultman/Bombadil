@@ -249,7 +249,8 @@ ShellRoot {
                     id: cardHost
                     visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    // As wide as the pill, so it stays between the desk's rails.
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
