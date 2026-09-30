@@ -602,6 +602,25 @@ def test_slots_are_the_size_of_the_cards_the_rail_draws(desk):
     assert desk.slots["needs"]["h"] == 50 + 2 * 44 + 18
 
 
+def test_a_rails_window_is_up_while_a_card_is_full_and_while_it_folds_away(desk):
+    # The window follows what the desk says, not the animation: one that is not up runs none.
+    left, right = desk.item("railLeft"), desk.item("railRight")
+    assert not left.property("shown") and not right.property("shown")
+    desk.set("foldMs", 60)
+    desk.turn(1, steps=TWO)
+    assert left.property("shown") and not right.property("shown")     # up at once, before the card is visible
+    desk.cover((0, 0, 1920, 1080))                                       # a window over it: the card folds
+    assert desk.faces["now"] == "strip" and left.property("shown")      # still up while it folds
+    desk.pump(0.4)
+    assert not left.property("shown")
+    desk.cover()
+    desk.set("unfoldDelayMs", 60)
+    desk.pump(0.3)                                                       # the card unfolds and the window is back
+    assert desk.faces["now"] == "full" and left.property("shown")
+    desk.pump(0.3)
+    assert desk.shown("deskCard-now")
+
+
 def test_cards_stand_at_their_slots(desk):
     desk.turn(1, steps=FOUR)
     desk.set("needsModel", rows(2))

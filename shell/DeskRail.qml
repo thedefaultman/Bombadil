@@ -22,15 +22,16 @@ Item {
         return out
     }
 
-    // Whether any card is on screen, folding or not: the rail's window goes away when none is.
-    property bool shown: false
-    function recount() {
-        let n = 0
-        for (let i = 0; i < cards.count; i++) {
-            const c = cards.itemAt(i)
-            if (c && c.visible) n++
-        }
-        shown = n > 0
+    // Whether the rail's window is up: while a card is meant to be in full, and for as long as one
+    // takes to fold away. It follows what the desk says, never the animation: a window that is not
+    // up runs no animation, so a card that waited for its own opacity to show the window would
+    // never come back.
+    readonly property bool anyFull: hitRects.length > 0
+    property bool shown: anyFull || leaving.running
+    onAnyFullChanged: if (!anyFull) leaving.restart()
+    Timer {
+        id: leaving
+        interval: rail.desk.foldMs + 80
     }
 
     // One box around every full card, for the window's input mask: a click beside the cards goes
@@ -52,7 +53,6 @@ Item {
     readonly property Item hitArea: box
 
     Repeater {
-        id: cards
         model: rail.desk.order[rail.side]
 
         Item {
@@ -64,7 +64,7 @@ Item {
             readonly property var slot: rail.desk.slots[modelData] || null
             property var placed: null
             onSlotChanged: if (slot) placed = slot
-            Component.onCompleted: { if (slot) placed = slot; rail.recount() }
+            Component.onCompleted: if (slot) placed = slot
 
             readonly property bool full: rail.desk.faces[modelData] === "full"
 
@@ -75,8 +75,6 @@ Item {
             opacity: full ? 1 : 0
             scale: full ? 1 : 0.6
             visible: opacity > 0
-            onVisibleChanged: rail.recount()
-            Component.onDestruction: Qt.callLater(rail.recount)
             transformOrigin: rail.side === "left" ? Item.BottomLeft : Item.BottomRight
             Behavior on opacity { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
             Behavior on scale { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
