@@ -130,6 +130,74 @@ async def test_a_dead_session_is_dropped(home):
     server.cancel()
 
 
+ONE_TURN = (
+    "import json, sys\nsys.stdin.read()\n"
+    "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_daemon_keeps_the_conversation_and_the_turn_count(home):
+    # systemd brings agentd back after a crash; the next prompt must still continue the same
+    # conversation, and turn N must not be saved as a second "turn:1".
+    p = Scripted(ONE_TURN)
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "first")
+    await _read_until(r, "turn_end")
+    assert (d.session_id, d.turns) == ("s1", 1)
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()   # what a crash leaves behind is replaced by serve(); _start must not race it
+
+    p2 = Scripted(ONE_TURN)
+    d2 = agentd.AgentD(p2, agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    assert (d2.session_id, d2.turns) == ("s1", 1)
+    await _ask(w, "second")
+    await _read_until(r, "turn_end")
+    assert p2.seen_sessions == ["s1"] and d2.turns == 2
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_dead_conversation_is_not_brought_back_by_a_restart(home):
+    p = Scripted("import json, sys\nsys.stdin.read()\n"
+                 "print(json.dumps({'type': 'result', 'is_error': True, 'num_turns': 0, 'session_id': 'gone',"
+                 " 'errors': ['No conversation found with session ID: gone']}))\n")
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    d.session_id = "gone"
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()
+    d2 = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    assert d2.session_id is None
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.parametrize("saved", [
+    "not json", "[]", '{"provider": "codex", "session_id": "theirs", "turns": 9}',
+    '{"provider": "claude", "session_id": 7, "turns": -3}',
+])
+def test_saved_state_that_is_not_for_this_daemon_is_ignored(home, saved):
+    d = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    d._state_file().parent.mkdir(parents=True, exist_ok=True)
+    d._state_file().write_text(saved)
+    d._load_state()
+    assert (d.session_id, d.turns) == (None, 0)
+
+
+def test_the_state_file_lives_where_a_reboot_clears_it(home):
+    d = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    assert d._state_file().parent == paths.runtime_dir()
+
+
 @pytest.mark.asyncio
 async def test_prompts_get_turn_ids_and_empty_ones_are_refused(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())

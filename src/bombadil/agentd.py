@@ -93,12 +93,43 @@ class AgentD:
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
 
+    # -- state that outlives a restart --
+
+    def _state_file(self) -> Path:
+        return paths.runtime_dir() / "agentd-state.json"
+
+    def _load_state(self):
+        """The conversation and the turn count survive a restart of the daemon (systemd brings it
+        back after a crash), but not a reboot or a new login: they live under the runtime dir."""
+        try:
+            data = json.loads(self._state_file().read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict) or data.get("provider") != self.provider.name:
+            return
+        if isinstance(data.get("session_id"), str) and data["session_id"]:
+            self.session_id = data["session_id"]
+        if isinstance(data.get("turns"), int) and data["turns"] >= 0:
+            self.turns = data["turns"]
+
+    def _save_state(self):
+        path = self._state_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"provider": self.provider.name, "session_id": self.session_id,
+                                       "turns": self.turns}))
+            tmp.replace(path)
+        except OSError as e:
+            print(f"agentd: could not save its state: {e}", file=sys.stderr)
+
     # -- socket --
 
     async def serve(self):
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             self.socket_path.unlink()
+        self._load_state()
         # Probe for systemd scopes now, not on the first Enter.
         await asyncio.to_thread(procs.scope_supported)
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
@@ -394,6 +425,7 @@ class AgentD:
                              stopped=False, line="")
             return
         self.turns += 1
+        self._save_state()
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
@@ -566,6 +598,7 @@ class AgentD:
             if ev.get("ok", True):
                 # Adopt a session id only from a turn that worked, so a dead one is not kept.
                 self.session_id = ev.get("session_id") or pending_session or self.session_id
+                self._save_state()
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
@@ -573,6 +606,7 @@ class AgentD:
                     text = _limit_text(text)
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
+                    self._save_state()
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
                 if not self.stopping:
                     await self.event("error", text=text)

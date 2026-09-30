@@ -8,7 +8,7 @@
   bombadil watch [--file F] [--follow] every step, command and output of the last (or a) turn
   bombadil history                     recent turns and launcher actions
   bombadil undo                        roll back the last turn (reboot to apply)
-  bombadil provider claude|codex       switch provider (restart agentd to apply)
+  bombadil provider claude|codex       switch provider (then: systemctl --user restart bombadil-agentd)
 """
 import json
 import socket
@@ -24,7 +24,7 @@ def talk(msg: dict, until: str | None = "turn_end"):
         try:
             s.connect(str(paths.socket_path()))
         except OSError as e:
-            print(f"agentd is not running ({e}); it starts with the Hyprland session", file=sys.stderr)
+            print(f"agentd is not running ({e}); it starts with the desktop and comes back by itself; see journalctl --user -u bombadil-agentd", file=sys.stderr)
             return 1
         s.sendall((json.dumps(msg) + "\n").encode())
         mine = None  # the turn id agentd gave this prompt; other clients' turns are skipped
@@ -111,7 +111,7 @@ def main() -> int:
         if args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")
             return 2
-        print(f"wrote {config.save_user(args[0])}; restart agentd to apply")
+        print(f"wrote {config.save_user(args[0])}; apply it with: systemctl --user restart bombadil-agentd")
     else:
         print(__doc__)
         return 2

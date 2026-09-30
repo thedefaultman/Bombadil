@@ -14,7 +14,6 @@ case "$provider" in
   claude) command -v claude >/dev/null || sudo npm install -g @anthropic-ai/claude-code; claude auth login ;;
   codex)  command -v codex  >/dev/null || sudo npm install -g @openai/codex;            codex login ;;
 esac
-pkill -x agentd || true
-hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null
+systemctl --user restart bombadil-agentd
 echo "Done. Type in the bar at the bottom of the screen."
 read -r -p "Press enter to close."

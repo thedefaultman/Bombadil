@@ -85,3 +85,53 @@ def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers
     assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.SYSTEM_PROMPT
+
+
+USER_UNITS = ISO / "airootfs/etc/systemd/user"
+
+
+def _unit(path: Path) -> dict[str, dict[str, str]]:
+    sections: dict[str, dict[str, str]] = {}
+    current = None
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            current = sections.setdefault(line.strip("[]"), {})
+        elif current is not None and "=" in line:
+            key, _, value = line.partition("=")
+            current[key.strip()] = value.strip()
+    return sections
+
+
+def test_the_daemon_the_bar_and_the_notifications_come_back_when_they_die():
+    units = [USER_UNITS / "bombadil-agentd.service", USER_UNITS / "bombadil-shell.service",
+             USER_UNITS / "mako.service.d/restart.conf"]
+    for path in units:
+        u = _unit(path)
+        assert u["Service"]["Restart"] == "always", path.name
+        # systemd's default of five restarts in ten seconds would leave a crash loop with no bar.
+        assert u.get("Unit", {}).get("StartLimitIntervalSec", u["Service"].get("StartLimitIntervalSec")) == "0", path.name
+    # Apps the agent started keep running when only the daemon restarts.
+    assert _unit(units[0])["Service"]["KillMode"] == "process"
+    assert _unit(units[0])["Service"]["ExecStart"] == "/usr/local/bin/agentd"
+    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/bin/quickshell -p /usr/share/bombadil/shell/shell.qml"
+
+
+def test_the_session_starts_them_after_handing_over_its_environment():
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    start = lua[lua.index('hl.on("hyprland.start"'):].split("\nend)")[0]
+    # WAYLAND_DISPLAY and the Hyprland signature exist only in the session, not in the user manager.
+    assert start.index("import-environment") < start.index("restart bombadil-agentd bombadil-shell mako")
+    assert "exec_cmd(\"agentd\")" not in start and "quickshell" not in start.replace("bombadil-shell", "")
+    # The key for a hung bar restarts the service instead of racing a second quickshell against it.
+    assert 'hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell"))' in lua
+
+
+def test_setup_and_the_cli_restart_the_daemon_through_systemd():
+    setup = (ISO / "airootfs/usr/local/bin/bombadil-setup").read_text()
+    assert "systemctl --user restart bombadil-agentd" in setup and "pkill" not in setup
+    cli = (ISO.parent / "bin/bombadil").read_text()
+    assert "systemctl --user restart bombadil-agentd" in cli
+

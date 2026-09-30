@@ -134,6 +134,20 @@ keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
+# A service that dies comes back by itself, as a new process (systemd, Restart=always).
+main_pid() { as_user systemctl --user show -p MainPID --value "$1"; }
+restarted() { local p; p=$(main_pid "$1"); [[ -n $p && $p != 0 && $p != "$2" ]]; }
+revives() {
+  local old; old=$(main_pid "$1"); [[ -n $old && $old != 0 ]] || return 1
+  kill -9 "$old"
+  wait_for 90 restarted "$1" "$old"
+}
+check agentd-comes-back revives bombadil-agentd
+check agentd-answers-again wait_for 60 as_user bombadil status
+check bar-comes-back revives bombadil-shell
+check bar-layer-again wait_for 60 has_layer bombadil-bar
+check notifications-come-back revives mako
+check services-are-units bash -c 'for u in bombadil-agentd bombadil-shell mako; do as_user systemctl --user is-active --quiet $u || exit 1; done'
 
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
