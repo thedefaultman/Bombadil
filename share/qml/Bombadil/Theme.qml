@@ -12,6 +12,15 @@ QtObject {
     readonly property color sunken: "#0c0e10"      // editors, code, wells
     readonly property color border: "#2a2f36"      // hairlines between surfaces
     readonly property color borderStrong: "#3a414a" // focused/hovered outlines
+    readonly property color borderActive: "#4a525c" // the outline of whatever holds the keyboard
+    // Glass: the panels that float over windows, panel #1a1d21 at a set opacity. (QML order is
+    // #AARRGGBB; the design system's CSS writes the same colours #RRGGBBAA.)
+    readonly property color glassPill: "#f01a1d21"  // the prompt bar, 94%
+    readonly property color glassLine: "#e61a1d21"  // the line above it, 90%
+    readonly property color glassChip: "#d91a1d21"  // queued prompts, quiet chips, 85%
+    readonly property color glassCard: "#f51a1d21"  // the desk's cards, 96%
+    readonly property color glassStrip: "#f21a1d21" // the desk's strips, 95%
+    readonly property color glassRaised: "#f022262b" // a chosen chip, raised at 94%
 
     // Ink
     readonly property color fg: "#e6e8eb"          // primary text
@@ -24,10 +33,19 @@ QtObject {
     readonly property color accentPressed: "#c4633f"
     readonly property color accentFg: "#ffffff"    // text on accent
     readonly property color accentSoft: "#33d97757" // tinted wash behind accent things
+    readonly property color accentInk: "#f2c4b3"   // text on an accent wash (Stop)
+    readonly property color accentOnLight: "#b4532f" // the accent where the ground is light (print, the lockup)
     readonly property color good: "#5fb36b"
     readonly property color warn: "#e0a93b"
+    readonly property color warnInk: "#e8c38d"     // text that names a system step (its command)
     readonly property color bad: "#d05555"
+    readonly property color badInk: "#f0a0a0"      // error text
+    readonly property color badLine: "#7a2e2e"     // the outline of something offline
     readonly property color info: "#5b9bd5"
+
+    // Where the ground is light: print, the stick's label, the lockup on white
+    readonly property color inkOnLight: "#15181b"
+    readonly property color groundLight: "#f2f3f4"
 
     // Chart series, in fixed order: series 1 is `series[0]`. Validated for the dark
     // surface; use them in this order and never cycle past the end.
@@ -44,6 +62,16 @@ QtObject {
     readonly property int gapSmall: 6
     readonly property int controlHeight: 36
     readonly property int rowHeight: 44
+    // The shell: the prompt bar, the line above it, chips, the desk
+    readonly property int pillHeight: 52
+    readonly property int radiusPill: 26           // half the pill's height
+    readonly property int radiusLine: 14           // the line above the pill; chips and strips (28 high) are pills too
+    readonly property int radiusLineButton: 12     // Undo, Details
+    readonly property int chipHeight: 28
+    readonly property int pillMaxWidth: 900
+    readonly property int railWidth: 300           // a desk card's width
+    readonly property real pillBorder: 1.5
+    readonly property int focusRing: 2
 
     // Type
     readonly property string fontFamily: "Inter"
@@ -52,6 +80,9 @@ QtObject {
     readonly property font font: Qt.font({ family: fontFamily, pixelSize: textSize })
     readonly property font monoFont: Qt.font({ family: monoFamily, pixelSize: 13 })
     readonly property int captionSize: 12
+    readonly property int smallSize: 13            // counters, chips, the clock
+    readonly property int lineSize: 15             // the line above the pill
+    readonly property int promptSize: 16           // what you type in the pill
     readonly property int headingSize: 17
     readonly property int titleSize: 22
     readonly property int displaySize: 34
@@ -59,6 +90,8 @@ QtObject {
     // Motion
     readonly property int fast: 120
     readonly property int normal: 200
+    readonly property int slow: 300
+    readonly property real pulseLow: 0.3           // the dimmest a pulsing thing gets (reduced motion)
 
     // `Button { icon.source: Theme.icon("copy") }`; names are the files in icons/.
     function icon(name) { return Qt.resolvedUrl("icons/" + name + ".svg") }

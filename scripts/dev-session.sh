@@ -9,4 +9,4 @@ export BOMBADIL_SHARE="$root/share"
 "$root/bin/agentd" &
 trap 'kill %1 2>/dev/null || true' EXIT
 sleep 0.5
-quickshell -p "$root/shell/shell.qml"
+bombadil-shell
