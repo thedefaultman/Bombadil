@@ -165,3 +165,37 @@ def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_af
     # The undo round trip boots twice; each boot's first request has its own number.
     log = "BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l\nBOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l\n"
     assert re.findall(pattern, log) == ["BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l", "BOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l"]
+
+
+def test_the_smokes_sign_in_block_never_runs_where_a_provider_is_already_chosen():
+    # It picks other providers, cancels their logins and deletes the config file at its end.
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    gate = 'if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then'
+    assert 'signin_config=/home/user/.config/bombadil/config.toml' in smoke and gate in smoke
+    assert smoke.index(gate) < smoke.index("check signin-agentd-starts") < smoke.index("rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml")
+    # The gate is one block: what the fresh ISO runs is inside it, up to the install step.
+    assert smoke.index(gate) < smoke.index('if [[ "$mode" == "install" ]]; then')
+    host = (ISO.parent / "scripts/test-vm.sh").read_text()
+    assert "SKIP signin" in smoke and "SKIP signin" in host
+
+
+def _run_gate(home, with_config):
+    """The gate's own lines, run in bash against a home with or without a config file."""
+    import subprocess
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    start = smoke.index("signin_config=")
+    end = smoke.index(": >/tmp/smoke.agentd.log")
+    home.mkdir()
+    cfg = home / "config.toml"
+    if with_config:
+        cfg.write_text('provider = "claude"\n')
+    body = smoke[start:end].replace("/home/user/.config/bombadil/config.toml", str(cfg))
+    script = f'say() {{ echo "SAY $*"; }}\nmode=live\n{body}\necho RUNS\nfi\n'
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+
+
+def test_the_gate_skips_with_a_config_and_runs_without_one(tmp_path):
+    chosen = _run_gate(tmp_path / "chosen", with_config=True)
+    assert "SKIP signin" in chosen and "RUNS" not in chosen
+    fresh = _run_gate(tmp_path / "fresh", with_config=False)
+    assert "RUNS" in fresh and "SKIP" not in fresh

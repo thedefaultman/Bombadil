@@ -208,7 +208,14 @@ times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never B
 offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
 agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
-if [[ "$mode" != "undo" ]]; then
+# The block below picks other providers, starts and cancels their logins (`codex login` revokes a
+# stored Codex login) and deletes the config file at its end. It is for a system with no provider
+# chosen yet (the live ISO), never one a person has signed in on.
+signin_config=/home/user/.config/bombadil/config.toml
+if [[ "$mode" != "undo" && -e "$signin_config" ]]; then
+  say "SKIP signin: a provider is already chosen here, and these checks would change it"
+fi
+if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   : >/tmp/smoke.agentd.log
   check signin-agentd-starts restart_agentd
   check signin-asks-which-ai setup_is choose 'Which AI should run this computer'

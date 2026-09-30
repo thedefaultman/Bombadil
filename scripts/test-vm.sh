@@ -81,4 +81,6 @@ else
   logs=("$out/live.serial.log")
 fi
 for l in "${logs[@]}"; do grep -aqE "BOMBADIL-SMOKE: DONE pass=[0-9]+ fail=0" "$l" || exit 1; done
+# The sign-in checks skip themselves on a machine that has a provider chosen; a fresh ISO has none.
+if grep -aq "BOMBADIL-SMOKE: SKIP signin" "${logs[0]}"; then echo "the sign-in checks were skipped on a fresh ISO"; exit 1; fi
 ! grep -aq "BOMBADIL-SMOKE: FAIL" "${logs[@]}"
