@@ -1,0 +1,479 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>How Bombadil Feels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f2f3f4;
+  --surface: #ffffff;
+  --line: #d8dce1;
+  --fg: #15181b;
+  --soft: #3a4047;
+  --muted: #5f6873;
+  --accent: #b4532f;
+  --accent-soft: #f6e4dc;
+  --ok: #2f7d3d;
+  --amber: #9a6a0c;
+  --red: #b23a3a;
+  --ui-bg: #e7e9ec;
+  /* The OS itself is always dark: these match share/qml/Bombadil/Theme.qml */
+  --os-bg: #101214;
+  --os-panel: #1a1d21;
+  --os-edge: #2a2f36;
+  --os-fg: #e6e8eb;
+  --os-muted: #8b939c;
+  --os-accent: #d97757;
+  --os-ok: #5fb36b;
+  --os-amber: #e0a84a;
+  --os-red: #e06a6a;
+  --sans: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0d0f11;
+    --surface: #16191c;
+    --line: #2a2f36;
+    --fg: #e6e8eb;
+    --soft: #c3c8ce;
+    --muted: #8b939c;
+    --accent: #e08462;
+    --accent-soft: #2c1f1a;
+    --ok: #6cc07a;
+    --amber: #e0a84a;
+    --red: #e06a6a;
+    --ui-bg: #22262b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0f11;
+  --surface: #16191c;
+  --line: #2a2f36;
+  --fg: #e6e8eb;
+  --soft: #c3c8ce;
+  --muted: #8b939c;
+  --accent: #e08462;
+  --accent-soft: #2c1f1a;
+  --ok: #6cc07a;
+  --amber: #e0a84a;
+  --red: #e06a6a;
+  --ui-bg: #22262b;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 16.5px;
+  line-height: 1.6;
+  padding-inline: 20px;
+  padding-block: 0 72px;
+}
+.wrap { max-width: 860px; margin: 0 auto; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--ui-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+q.ui { quotes: "\201C" "\201D"; color: var(--fg); font-weight: 500; }
+strong { font-weight: 650; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+/* ---------- hero */
+.hero { display: grid; gap: 28px; padding-block: 48px 40px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.hero h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; letter-spacing: -.025em; }
+.hero .lede { font-size: 19px; color: var(--soft); max-width: 62ch; }
+.screen {
+  position: relative;
+  aspect-ratio: 16 / 8;
+  max-width: 100%;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 90% at 20% 10%, #23303a 0%, transparent 60%),
+    radial-gradient(90% 80% at 90% 100%, #3a2620 0%, transparent 55%),
+    var(--os-bg);
+  border: 1px solid var(--os-edge);
+  overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+  padding: 0 6% 3.2%;
+  gap: 8px;
+}
+.screen .hint { font-family: var(--sans); font-size: clamp(10px, 1.6vw, 13px); color: var(--os-muted); opacity: .8; }
+.screen .m-pill { width: 70%; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14.5px; color: var(--muted); }
+.hero-meta b { color: var(--fg); font-weight: 650; font-variant-numeric: tabular-nums; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 8px; padding-block: 4px 8px; }
+nav.toc a { font-size: 14px; color: var(--soft); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+section { padding-block: 44px 8px; }
+section > h2 { font-size: 28px; font-weight: 750; letter-spacing: -.015em; margin-bottom: 8px; }
+section > .intro { color: var(--soft); max-width: 66ch; margin-bottom: 22px; }
+
+/* ---------- rules */
+.rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.rules li strong { display: block; font-size: 16.5px; margin-bottom: 4px; line-height: 1.35; }
+.rules li span { color: var(--soft); font-size: 15px; }
+
+/* ---------- mock OS pieces (always dark, like the OS) */
+.mock {
+  background: var(--os-bg);
+  border: 1px solid var(--os-edge);
+  border-radius: 12px;
+  padding: 18px 16px 16px;
+  display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch;
+  gap: 8px;
+  min-height: 150px;
+  color: var(--os-fg);
+  font-family: var(--sans);
+}
+.m-pill {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--os-panel);
+  border: 1.5px solid var(--os-edge);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  min-width: 0;
+}
+.m-pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--os-ok); flex: none; }
+.m-pill .dot.busy { background: var(--os-accent); animation: pulse 1s ease-in-out infinite; }
+.mock:has(.dot.busy) .m-pill, .screen .m-pill.busy { border-color: var(--os-accent); }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .m-pill .dot.busy { animation: none; } }
+.m-ph { color: var(--os-muted); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-typed { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-typed em { font-style: normal; color: var(--os-muted); }
+.m-meta { color: var(--os-muted); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; }
+.m-chip { flex: none; font-size: 12px; padding: 2px 9px; border-radius: 999px; background: #2b2320; color: #f0c3b0; border: 1px solid #4a3027; white-space: nowrap; }
+.m-chip.grey { background: #22262b; color: var(--os-muted); border-color: var(--os-edge); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.m-chip b { font-weight: 400; opacity: .7; margin-left: 4px; }
+.m-line { align-self: center; max-width: 100%; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 13px; color: var(--os-fg); text-align: center; }
+.m-line code { background: transparent; color: var(--os-muted); font-size: 11.5px; padding: 0; }
+.m-amber { border-left: 2px solid var(--os-amber); padding-left: 10px; align-items: flex-start; align-self: flex-start; text-align: left; }
+.m-choose { justify-content: center; gap: 10px; }
+.m-big { padding: 5px 20px; border-radius: 999px; background: #22262b; border: 1px solid var(--os-edge); font-weight: 600; }
+.m-big:first-child { border-color: var(--os-accent); }
+.m-win { align-self: center; width: min(100%, 250px); background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 10px; padding: 10px 12px 0; font-size: 12.5px; overflow: hidden; }
+.m-win-t { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.m-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--os-edge); }
+.m-tag { font-size: 10.5px; color: var(--os-muted); border: 1px dashed var(--os-edge); border-radius: 4px; padding: 0 5px; }
+.m-err { margin: 6px -12px 0; padding: 3px 12px; border-top: 2px solid var(--os-red); color: var(--os-red); font-size: 11.5px; }
+.m-card { background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 10px; padding: 10px 12px; font-size: 12px; display: grid; gap: 6px; }
+.m-card-t { font-weight: 650; font-size: 13px; }
+.m-bar { display: grid; grid-template-columns: 84px 1fr 52px; align-items: center; gap: 8px; }
+.m-bar span { color: var(--os-muted); }
+.m-bar i { display: block; height: 8px; border-radius: 3px; background: linear-gradient(90deg, var(--os-accent) var(--w), #2a2f36 var(--w)); }
+.m-bar b { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- build first */
+.pieces { display: grid; gap: 18px; }
+.pieces > * { min-width: 0; }
+.piece { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+.piece-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 14px; }
+.piece-num { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; flex: none; }
+.piece-head h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; flex: 1 1 240px; min-width: 0; }
+.effort { flex: 0 1 auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }
+.effort::before { content: "Effort "; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.piece-body { display: grid; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.piece .see { font-size: 16.5px; margin-bottom: 14px; }
+.piece dl { margin: 0; display: grid; gap: 4px 0; font-size: 15px; color: var(--soft); }
+.piece dt { font-family: var(--mono); font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+.piece dd { margin: 0; }
+
+/* ---------- bugs */
+.bugs { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 20px 22px; }
+.bugs h2 { font-size: 24px; margin-bottom: 6px; }
+.bugs .intro { color: var(--soft); margin-bottom: 12px; max-width: 70ch; }
+.bugs ol { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; font-size: 15px; }
+.bugs li::marker { color: var(--accent); font-family: var(--mono); font-size: 13px; }
+.bugs li:first-child { font-weight: 500; }
+
+/* ---------- day */
+.day { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; border-left: 2px solid var(--line); }
+.day li { position: relative; padding: 0 0 22px 22px; }
+.day li::before { content: ""; position: absolute; left: -7px; top: 7px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+.day h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+.day p { color: var(--soft); max-width: 70ch; }
+
+/* ---------- decisions */
+.decisions { display: grid; gap: 8px; }
+details.dec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.dec summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+details.dec summary::-webkit-details-marker { display: none; }
+details.dec summary .q { font-weight: 650; }
+details.dec summary .d { grid-column: 1; color: var(--soft); font-size: 15px; }
+details.dec summary .d::before { content: "Default: "; font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+details.dec summary .chev { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); transition: transform .15s; }
+details.dec[open] summary .chev { transform: rotate(90deg); }
+details.dec .more { padding: 0 16px 14px; font-size: 15px; color: var(--soft); display: grid; gap: 8px; max-width: 72ch; }
+details.dec .more .alt { color: var(--muted); }
+details.dec .more .alt b { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; }
+.expand { display: flex; gap: 8px; margin-bottom: 12px; }
+.expand button { font: inherit; font-size: 13.5px; background: var(--surface); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.expand button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- lists */
+.group h3 { font-size: 13px; font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; margin: 26px 0 10px; }
+.group ul, ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 10px; max-width: 74ch; }
+.group li, ul.plain li { color: var(--soft); font-size: 15.5px; }
+.group li strong, ul.plain li strong { color: var(--fg); }
+.sig { display: inline-block; margin-left: 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 4px; padding: 0 5px; vertical-align: 2px; }
+.cut li { color: var(--muted); }
+.cut li strong { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.pitfalls { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.pitfalls li { padding: 10px 14px 10px 40px; position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; font-size: 15px; color: var(--soft); }
+.pitfalls li::before { content: "×"; position: absolute; left: 15px; top: 8px; font-size: 18px; color: var(--red); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); }
+
+@media (max-width: 720px) {
+  body { font-size: 16px; padding-inline: 16px; }
+  .piece-body { grid-template-columns: 1fr; }
+  .rules { grid-template-columns: 1fr; }
+  .hero { padding-block: 32px 28px; }
+  .screen .m-pill { width: 88%; }
+  .screen .m-pill .m-meta { display: none; }
+}
+</style>
+
+<div class="wrap">
+<header class="hero">
+  <div class="eyebrow">Bombadil · experience brief · 27 Sep 2026</div>
+  <h1>How Bombadil feels</h1>
+  <p class="lede">You turn it on and see your wallpaper and one pill at the bottom of the screen. That is the whole interface until you ask for something. When you do ask, the machine answers by doing it: the browser slides in, a slider appears where you need it, or a native window builds itself in the middle of the screen, and one plain line tells you what it is doing while it does it. Nothing asks for permission, because everything is visible and <q class="ui">undo</q> puts it back. You learn three things: Super to talk, Esc to stop and <q class="ui">undo</q> to go back. You find everything else by asking.</p>
+  <div class="screen" role="img" aria-label="The Bombadil screen at rest: wallpaper, one prompt pill at the bottom, and a faint hint line.">
+    <div class="hint">Super to talk. Esc to stop. Say undo to go back.</div>
+    <div class="m-pill"><i class="dot"></i><span class="m-ph">Ask anything</span><span class="m-meta">08:30</span></div>
+  </div>
+  <div class="hero-meta">
+    <span><b>44</b> ideas</span>
+    <span><b>6</b> to build first</span>
+    <span><b>29</b> decisions, confirmed</span>
+    <span><b>15</b> bugs found on the branch</span>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#rules">Rules</a><a href="#first">Build first</a><a href="#bugs">Bugs</a><a href="#day">A day</a><a href="#decisions">Decisions</a><a href="#everything">Everything else</a><a href="#gaps">Gaps</a><a href="#pitfalls">Pitfalls</a>
+  </nav>
+</header>
+
+<section id="rules">
+  <h2>The rules</h2>
+  <p class="intro">Every idea below follows these. When a feature breaks one, the feature changes.</p>
+  <ol class="rules">
+    <li><strong>One pill, and three things to learn: Super to talk, Esc to stop, <q class="ui">undo</q> to go back.</strong><span>Everything else appears when you call it and leaves when it is done, so nobody needs a manual.</span></li><li><strong>The answer is the thing itself.</strong><span>A window, a card or a panel appears, and written replies stay at one or two lines, because a paragraph about the work turns an OS back into a chat window.</span></li><li><strong>Something true is on screen within 200 ms of Enter, and open, stop and undo never wait for the model.</strong><span>If nothing happens after Enter, people press it again or decide the machine has frozen.</span></li><li><strong>No prompts, and nothing hidden.</strong><span>With no guard rails, safety comes from two things: every change shows in plain words as it happens, and undo says exactly what it covered.</span></li><li><strong><q class="ui">This</q> means what is in front of you.</strong><span>People talk about what they can see, and nobody should have to describe their own screen to their own computer.</span></li><li><strong>What the agent makes is a real native app.</strong><span>You open it by name, change it by talking and roll it back on its own, and it never runs as a web page on a port, because that is what separates an OS from a chatbot that writes code.</span></li><li><strong>Recovery never goes through the part that broke.</strong><span>The agent can edit the shell, the compositor config and agentd itself, so stop, undo and rescue must work without the model, the network or the GUI.</span></li><li><strong>One machine, one conversation, one memory you can read.</strong><span>The OS lives in os-mcp and in plain files, so Claude and Codex run it the same way and switching between them loses nothing.</span></li>
+  </ol>
+</section>
+
+<section id="first">
+  <h2>Build these first</h2>
+  <p class="intro">Build these six pieces in this order. The first two change how every ask feels. The middle two are the core promise: native apps, and an agent that sees your screen. The last two are what people use most often and see first. Three judges (you as product owner, a first-time user, and the engineer who builds it next) ranked all 44 ideas; these six won.</p>
+  <div class="pieces">
+    
+<article class="piece" id="piece-1">
+  <div class="piece-head">
+    <span class="piece-num">1</span>
+    <h3>You can see what it is doing, as it happens</h3>
+    <span class="effort" title="Effort">S for the live line, M once the warm Claude process is added.</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-line m-amber"><span>Installing ffmpeg</span><code>sudo pacman -S --noconfirm ffmpeg</code></div>
+  <div class="m-pill"><i class="dot busy"></i><span class="m-chip grey">next: make it dark <b>×</b></span><span class="m-ph"></span><span class="m-meta">6s</span></div>
+</div>
+    <div class="piece-text">
+      <p class="see">Within a fifth of a second of Enter, the line above the pill says <q class="ui">On it</q> with a seconds counter, so you never wonder whether it heard you. The line then rewrites itself in plain words as the work goes on: <q class="ui">Opening the browser</q>, <q class="ui">Installing ffmpeg</q>, <q class="ui">Building Passwords, 84 lines</q>. A step that touches the system (sudo, pacman, /etc or a service) gets an amber edge with the exact command underneath, but it never pauses, and anything you type in the meantime waits as a grey <q class="ui">next</q> chip you can remove. When the turn ends, the line becomes one sentence (<q class="ui">Made Passwords.</q>), and clicking it shows every command and its output in a terminal panel.</p>
+      <dl>
+        <dt>Why first</dt><dd>Today agentd collects all of the CLI's output and parses it only after the process exits (agentd.py, around line 128). So during a long turn you see a pulsing dot, then everything arrives at once. Almost every other idea needs these live events, and with no permission prompts, watching the work is the safety model.</dd>
+        <dt>What changes</dt><dd>agentd broadcasts each line as it arrives. It also reads stderr while the turn runs, because today a CLI that writes a lot to stderr can fill the pipe and hang the turn. It adds --include-partial-messages for Claude, sends turn_start before calling snapper, and maps tool events to plain verbs with a small rule table. shell.qml replaces the transcript with a single label, and the command view starts as a <code>bombadil watch</code> TUI in foot. The second step keeps one Claude process alive with --input-format stream-json, so the first words arrive in about a second. Before relying on it, check that it works with --resume, the MCP config and bypassPermissions. Codex keeps starting a new process for each turn.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+<article class="piece" id="piece-2">
+  <div class="piece-head">
+    <span class="piece-num">2</span>
+    <h3>The pill is the launcher, and Stop means stop</h3>
+    <span class="effort" title="Effort">M (three small pieces)</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-line"><span>Enter opens Passwords</span></div>
+  <div class="m-pill"><i class="dot"></i><span class="m-typed">pass<em>words</em></span><span class="m-meta">Tab</span></div>
+</div>
+    <div class="piece-text">
+      <p class="see">Tap Super from anywhere and the pill is ready for typing, with no click needed. Type <q class="ui">passwords</q>, <q class="ui">browser</q> or <q class="ui">chrome</q> and it opens in under a tenth of a second with no model call. If that app is already open, its window comes forward instead of a second copy starting. <q class="ui">Undo</q>, <q class="ui">history</q>, <q class="ui">wifi</q> and <q class="ui">lock</q> work the same way, even offline. Until live undo exists, <q class="ui">undo</q> says plainly that system files come back on the next restart. Esc in the pill, Super+Escape from anywhere, or a click on the orange dot (which says Stop on hover) ends the turn and everything it started, sudo installs included, and the line says <q class="ui">Stopped while installing docker.</q></p>
+      <dl>
+        <dt>Why first</dt><dd>When open, stop and undo take several seconds, the machine feels slower than any other OS, and those are exactly the commands you reach for when you are offline or something is wrong. A local undo also fixes a real bug. Today <q class="ui">undo that</q> sent through the agent first takes a snapshot of itself, then rolls back to that same snapshot, so it does nothing.</dd>
+        <dt>What changes</dt><dd>agentd accepts messages that are not turns (open, panel, undo, stop, history). It handles them by calling hypr, apps and snapshots directly, and it logs them to turns.jsonl so the next turn knows what happened. shell.qml acts only on an exact name, an accepted match or the fixed alias table, and open_app focuses a window that is already running. Each turn's CLI runs in its own systemd scope, so Stop can kill the whole group; check on Arch that children started with sudo stay inside the scope. Super and Super+Escape become Hyprland binds that reach the pill and agentd through the socket. Today Super+Escape restarts Quickshell, and the Super tap bind must ignore Super+click and Super+drag.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+<article class="piece" id="piece-3">
+  <div class="piece-head">
+    <span class="piece-num">3</span>
+    <h3>Apps change in front of you, and undo in a second</h3>
+    <span class="effort" title="Effort">M</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-win">
+    <div class="m-win-t">Passwords</div>
+    <div class="m-row"><span>github.com</span><span class="m-tag">sample</span></div>
+    <div class="m-row"><span>mail.proton.me</span><span class="m-tag">sample</span></div>
+    <div class="m-row"><span>bank.example</span><span class="m-tag">sample</span></div>
+    <div class="m-err">fixing line 42</div>
+  </div>
+</div>
+    <div class="piece-text">
+      <p class="see">Say <q class="ui">I need a password manager</q> and within seconds a window titled Passwords appears in the middle of the screen. It starts with a few rows tagged <q class="ui">sample</q>, then fills in with the real thing while you watch. Say <q class="ui">make the rows denser</q> and it changes where it stands: it does not blink, jump back to the center or lose your entries. If the new code will not load, the last working version stays up with a thin red line (<q class="ui">fixing line 42</q>) while the agent fixes it in the same turn, and <q class="ui">undo that</q> puts the app back in about a second with no restart.</p>
+      <dl>
+        <dt>Why first</dt><dd>The kit thread is setting the app runtime contract right now, and changing that contract after dozens of apps exist will be expensive. Today an edit blanks the window and moves it back to the center, because the runtime deletes the window and makes a new one. Undo after an app change does nothing, because ~/Apps is in /home, which the snapshots do not cover.</dd>
+        <dt>What changes</dt><dd>The runtime owns one host window per app and loads the app's root Item into it. It keeps the last good Item when a load fails, restarts the Python backend with persisted state when app.py changes (today the backend is built once and never reloaded), and writes a status file. create_app returns that status along with a screenshot of the window. Each app folder becomes a git repo with a commit at the end of each turn, and data/ is ignored so undo never touches saved data. The system prompt gets two rules: build the skeleton first, and change existing apps with the Edit tool instead of resending the whole file.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+<article class="piece" id="piece-4">
+  <div class="piece-head">
+    <span class="piece-num">4</span>
+    <h3><q class="ui">This</q> means what is in front of you</h3>
+    <span class="effort" title="Effort">S</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-pill"><i class="dot"></i><span class="m-chip">Arch Wiki: Btrfs <b>×</b></span><span class="m-typed">summarize this</span></div>
+</div>
+    <div class="piece-text">
+      <p class="see">With an article open, <q class="ui">summarize this</q> summarizes that page. You can select a paragraph anywhere and say <q class="ui">translate this</q>, or with Passwords in front, say <q class="ui">make this darker</q>. A small chip at the left of the pill shows what <q class="ui">this</q> means right now (<q class="ui">Arch Wiki: Btrfs</q>, <q class="ui">Selection: 6 lines</q>, <q class="ui">Passwords</q>). Its x sends your words without that context, so the model never gets something you did not see.</p>
+      <dl>
+        <dt>Why first</dt><dd>It takes about a day to build, and it is the moment people notice that the agent is part of the machine rather than a chat box next to it. The context goes in as plain prompt text, so Claude and Codex get exactly the same thing.</dd>
+        <dt>What changes</dt><dd>shell.qml records the focused window when the pill takes focus and draws the chip. agentd puts a short [Screen] block in front of the prompt: the window, the tab URL from CDP, the primary selection from wl-paste and the app's folder. The block is marked as untrusted data, because page titles and selections can carry instructions to an agent that has sudo. Chromium needs its own --user-data-dir. Chromium 136 and later ignore the debugging port on the default profile, so CDP on port 9222 probably does not answer today. Getting the Nautilus selection needs a small nautilus-python extension, because Nautilus's window title only names the folder.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+<article class="piece" id="piece-5">
+  <div class="piece-head">
+    <span class="piece-num">5</span>
+    <h3>Answers you can touch</h3>
+    <span class="effort" title="Effort">M</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-card">
+    <div class="m-card-t">What's eating the disk</div>
+    <div class="m-bar"><span>~/Videos</span><i style="--w:100%"></i><b>212 GB</b></div>
+    <div class="m-bar"><span>~/.cache</span><i style="--w:19.3%"></i><b>41 GB</b></div>
+    <div class="m-bar"><span>~/Downloads</span><i style="--w:8.5%"></i><b>18 GB</b></div>
+  </div>
+  <div class="m-pill"><i class="dot"></i><span class="m-ph">Ask anything</span><span class="m-meta">08:30</span></div>
+</div>
+    <div class="piece-text">
+      <p class="see"><q class="ui">What's eating my disk?</q> comes back as a small card above the pill with a clickable bar for each folder. <q class="ui">Timer 10 minutes</q> is a countdown that stays on screen and chimes at zero. <q class="ui">The screen's too bright</q> dims the screen and leaves a slider that changes the real brightness as you drag, with no round trip to the AI. A click on the clock opens the same Wi-Fi, sound and brightness controls without asking anything. Long answers never grow the reply past 4 lines. They slide in from the right as a reader you close with Esc, and every card goes away once its job is done, a newer one replaces it, or you press Esc.</p>
+      <dl>
+        <dt>Why first</dt><dd>These cards are your <q class="ui">native visual interactives</q> at the smallest and most frequent scale. They are also what keeps the reply box from turning into a chat transcript.</dd>
+        <dt>What changes</dt><dd>A new os-mcp tool, show_card, sends JSON for a few typed kinds of card (list, checklist, timer, control, markdown reader), and shell.qml draws them. Because they are data rather than code, they appear at once and cannot freeze the pill. Controls run their get and set commands (wpctl, brightnessctl, nmcli) through Quickshell's Process. Cards written by the agent in QML come next. Each one runs in its own pre-started bombadil-app process, never inside Quickshell.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+<article class="piece" id="piece-6">
+  <div class="piece-head">
+    <span class="piece-num">6</span>
+    <h3>First boot happens in the pill</h3>
+    <span class="effort" title="Effort">M</span>
+  </div>
+  <div class="piece-body">
+    
+<div class="mock">
+  <div class="m-line"><span>Which AI should run this machine?</span></div>
+  <div class="m-pill m-choose"><span class="m-big">Claude</span><span class="m-big">Codex</span></div>
+</div>
+    <div class="piece-text">
+      <p class="see">After boot the screen is dark except for the pill. With no network, it lists Wi-Fi networks as chips and takes the password in the pill. Next come two large chips, Claude and Codex. Clicking Claude slides the browser in on the sign-in page and back out when you finish, and the pill says <q class="ui">Signed in. Ask me for anything.</q> The empty pill then offers three example chips (<q class="ui">Show me the web</q>, <q class="ui">Make me a password manager</q>, <q class="ui">What's using my memory?</q>), and for the first day one faint line reads <q class="ui">Super to talk. Esc to stop. Say undo to go back.</q> At no point do you see a terminal, a terms page or a promo tab.</p>
+      <dl>
+        <dt>Why first</dt><dd>The first minute decides whether this reads as an OS or as a Linux project. Today that minute shows a foot terminal wizard and Chromium's terms page. Two parts of the fix take about an hour each and can ship today: the Chromium policy file, and preinstalling both CLIs in the image.</dd>
+        <dt>What changes</dt><dd>agentd reports a setup state (needs_network, needs_provider, needs_login or ok) and runs the CLI's login in a pty. A bombadil-browser .desktop file becomes the default https handler, so any login URL slides in the browser panel. Codex has a device-code login that fits in the pill; Claude's login needs wide pty columns and the ANSI codes stripped. Chromium managed policies turn off the first-run page, the promos and the default-browser prompt but leave Google sign-in working, and the foot wizard stays only as a fallback.</dd>
+      </dl>
+    </div>
+  </div>
+</article>
+  </div>
+</section>
+
+<section id="bugs">
+  <div class="bugs">
+    <h2>Bugs on the first-milestone branch</h2>
+    <p class="intro">The reviewers read the code while judging. I checked each of these against the branch; the first one is worth fixing before anything else.</p>
+    <ol>
+      <li><q class="ui">Undo that</q> sent through the agent undoes nothing. The undo turn takes a snapshot of itself first, and rollback then picks that snapshot (undo_last_turn in snapshots.py).</li><li>agentd reads the whole CLI output before showing any of it (the loop in AgentD.turn), so during a long turn the bar shows only a pulsing dot, then everything at once.</li><li>The turn counter restarts at 1 every time agentd starts, so snapshot names repeat after each reboot. Use a lasting id taken from turns.jsonl.</li><li>stderr is read only after the CLI exits, so a CLI that writes a lot to stderr can hang a turn forever.</li><li>A Codex resume rebuilds the command without the os-mcp, instructions, model and -C flags, so from the second Codex turn on, the OS tools and the system prompt may be missing. Also check whether -c instructions= replaces Codex's base instructions instead of adding to them.</li><li>session_id lives only in memory, so every reboot, including the one after an undo, starts a blank conversation.</li><li>The installer mounts the ESP at /boot, so kernels are not in snapshots. Move the ESP to /efi and keep grubenv there.</li><li>Snapshots are never cleaned up. Nothing sets a cleanup algorithm when snapshots are created, snapper-cleanup.timer is off, and @.undone-* subvolumes pile up.</li><li>Chromium starts without --user-data-dir, so CDP on port 9222 probably does not work, and /json/new also needs a PUT request.</li><li>The bar is a full-width transparent window that swallows clicks above the pill as the reply grows. Give it an input mask.</li><li>app.py is never hot reloaded, because the backend is built once per process.</li><li>agentd and Quickshell do not come back after a crash, and bombadil-setup even kills agentd and relaunches it through hyprctl.</li><li>The CLIs are installed with npm under /usr, so they cannot update themselves as the user, and a root rollback silently downgrades them. Package them in the image and set DISABLE_AUTOUPDATER.</li><li>With several monitors, shell.qml makes an independent pill on each screen, and nothing defines which one Super focuses.</li><li>Keybinds already collide: Super+Escape restarts Quickshell, Super+Q closes windows, and a Super-tap bind would also fire after Super+click. All binds need one table.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="day">
+  <h2>A day with Bombadil</h2>
+  <p class="intro">This is how a day should feel once the six pieces above and the best of the rest are built. Most of it does not exist yet.</p>
+  <ol class="day">
+    <li><h3>First boot</h3><p>You boot the USB stick on a laptop. The screen is dark except for the pill, which says <q class="ui">No internet</q> and shows your home network as a chip. You pick it, type the password into the pill, and pick Claude from two large chips. The browser slides in on the sign-in page and slides away when you finish, and the pill says <q class="ui">Signed in. Ask me for anything.</q> A chip offers <q class="ui">Install on this computer</q>, and the pill notes that undo starts once the system is installed. You pick the disk from a plain list, press the red button that names it, and the laptop restarts into the installed system, still signed in.</p></li><li><h3>First minute</h3><p>The browser, the terminal and Files each slide in and back out once and name themselves, which takes ten seconds. Three example chips sit above the empty pill, with one faint line under it: <q class="ui">Super to talk. Esc to stop. Say undo to go back.</q> You press <q class="ui">What's using my memory?</q> and a card rises above the pill with a bar for each app. You click the biggest one, ask <q class="ui">why is that so big?</q>, and get a two-line answer.</p></li><li><h3>An ordinary ask</h3><p>In the middle of the morning you are reading a long Arch Wiki page. You tap Super, and the chip at the left of the pill says <q class="ui">Arch Wiki: Btrfs</q>. You type <q class="ui">summarize this</q>. <q class="ui">On it</q> appears at once, then <q class="ui">Reading the page</q>, then four lines that fade on their own. <q class="ui">The screen's too bright</q> dims it and leaves a slider; you nudge it and it fades. Typing <q class="ui">terminal</q> drops the terminal in instantly, and typing <q class="ui">stop</q> in the middle of a long install ends it, sudo and all.</p></li><li><h3>Something that doesn't exist</h3><p>You type <q class="ui">I need a password manager.</q> Within seconds a window titled Passwords rises into the middle of the screen with three rows marked <q class="ui">sample</q>. Over the next half minute it fills in with search and a lock screen while the line counts what is being written, until the line says <q class="ui">Passwords is ready.</q> You say <q class="ui">make the rows denser</q> and it changes where it stands. You don't like the change, so you say <q class="ui">undo that</q>, and a second later it is back. It is an app now: next time you type <q class="ui">pass</q> and press Tab.</p></li><li><h3>A week later</h3><p>You come back after a week away. For a few seconds the line says <q class="ui">Welcome back. Since last time you built Passwords and Tracker. 214 updates are waiting.</q> There is no chat to pick, because it simply remembers, and <q class="ui">what do you know about me?</q> opens a short list you can edit. You type <q class="ui">history</q> and the week slides up as small screenshots with your own words beside each one, and you find the Tuesday you asked it to block ads.</p></li><li><h3>When something goes wrong</h3><p>You ask it to set up a VPN and the network drops. You don't have to do anything: the network check after the turn failed twice, so agentd put back the three files it had changed in /etc. The pill says <q class="ui">That change cut the network, so I put it back. Redo it?</q> Later Claude hits its limit and the pill says <q class="ui">Claude is at its limit until 15:00</q>, with a button to use Codex until then. The one time a driver update leaves the desktop unable to start, the screen switches by itself to a plain page in large type with four choices. You press 1, and after a restart the machine is back to how it was before the update.</p></li>
+  </ol>
+</section>
+
+<section id="decisions">
+  <h2>Decisions, confirmed</h2>
+  <p class="intro">Each one forks. Daniel agreed with every default below on 27 Sep 2026, so these are what gets built; open one for the reason and the other options.</p>
+  <div class="expand"><button type="button" id="open-all">Open all</button><button type="button" id="close-all">Close all</button></div>
+  <div class="decisions">
+    <details class="dec"><summary><span class="q">How much of the screen does the agent's text take?</span><span class="d">One line that rewrites itself while the agent works, and at most 4 lines when it is done, with two sentences as the goal.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The answer fades 12 seconds after the turn, but never while you hover over it or while a card is up. If the turn changed files, its closing line (<q class="ui">Installed Docker.</q>, with Undo and Details) stays until your next prompt. Anything longer slides in from the right as a reader. A text box that grows above the pill is exactly how this becomes a chat window, and the Undo button must not fade while you are looking away.</p><p class="alt"><b>Other options</b> today's box that grows to 360px; everything stays until the next prompt; a separate receipt card after every turn.</p></div></details><details class="dec"><summary><span class="q">Do the apps it makes stay?</span><span class="d">Yes. Every app lives in ~/Apps, survives a reboot and opens by name.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The agent extends an existing app with the same purpose instead of making <q class="ui">passwords-2</q>, and <q class="ui">what apps do I have?</q> and <q class="ui">delete Passwords</q> make cleanup one step. Cards are the temporary layer: they stay in a cache for 7 days, and a pin turns one into an app. Asking <q class="ui">keep it?</q> after every build would be a permission prompt in disguise.</p><p class="alt"><b>Other options</b> temporary until you say <q class="ui">keep it</q>; ask every time.</p></div></details><details class="dec"><summary><span class="q">What does <q class="ui">undo</q> cover, and does it need a restart?</span><span class="d">Apps undo live through git. Home files undo live once /home gets its own snapper config, and only the files the turn changed are restored; files you edited since then are skipped.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>System files undo live only when every change was under /etc, and the affected services are restarted. Changes to packages, /usr, /var/lib, the kernel or /boot go back on a restart, and the line says so. Undo never rolls back all of /home, and it always says what it covered. If a config tweak needs a restart to undo, people learn never to use undo. A short list of paths that are safe to revert live is the safer design, because a list of exceptions would miss daemon state under /var/lib.</p><p class="alt"><b>Other options</b> root only, on restart (today); packages live too; rolling back all of /home.</p></div></details><details class="dec"><summary><span class="q">Can answers come back as small live widgets instead of text?</span><span class="d">Yes, when the answer changes over time, is a list you act on, is a comparison or involves a clock.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>An answer that is a single number stays a sentence. Start with a few typed cards that the shell draws from JSON, then add agent-written QML cards that run in their own process, never inside Quickshell. Typed cards appear at once, look consistent, cannot freeze the pill and can be tested in the VM, and free QML later keeps the promise that anything can be native.</p><p class="alt"><b>Other options</b> text only; agent-written QML from the start, with a Python process to start for every card.</p></div></details><details class="dec"><summary><span class="q">Voice input?</span><span class="d">Push to talk with local whisper.cpp, in a later milestone.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>You click a mic button in the pill or hold Super+Space, there is no wake word, and the mic is on only while you talk. A visible button gets found without instructions, and a wake word means a mic that is always on, on a machine where the agent has sudo. This needs a new piece, a small speech daemon, and the VM needs an audio device.</p><p class="alt"><b>Other options</b> a wake word; the provider's speech API; holding Super alone, which clashes with tapping Super to focus the pill.</p></div></details><details class="dec"><summary><span class="q">What skips the model?</span><span class="d">A small exact list. It covers panel and app names, undo, redo, stop, hide, history, lock, restart and shut down.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>A fixed alias table adds the names people already know: chrome, google and internet open the browser, and wifi, sound, brightness and battery open the built-in cards. A line starting with <q class="ui">!</q> runs a shell command directly. Everything else goes to the agent, and local actions are logged so the agent knows about them. Open, stop and undo must be instant and must work offline, and a parser that guesses would give the machine two brains that sometimes disagree.</p><p class="alt"><b>Other options</b> everything goes through the model; a local intent parser.</p></div></details><details class="dec"><summary><span class="q">What happens when you type during a turn?</span><span class="d">Your message waits as a visible grey chip you can remove, and Esc cancels the running turn.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>There is no second agent in this milestone; background work means jobs such as downloads and builds, not agents running in parallel. Two agents with sudo writing to one machine would make <q class="ui">this</q>, restore points and undo ambiguous.</p><p class="alt"><b>Other options</b> a silent queue (today); interrupting the running turn; parallel helper agents.</p></div></details><details class="dec"><summary><span class="q">Any pause before things no restore point can undo?</span><span class="d">None. The step turns red on the live line and shows the exact command while it runs, Esc stops it, and the closing line marks it <q class="ui">can't be undone</q>.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>In the installer, one red button names the disk and what is on it (<q class="ui">Erase Samsung 980 (has Windows) and install</q>), and you do not have to type the disk's name. A countdown is a guard rail under another name, only Claude has a hook that could run one, and matching shell commands with a regex misses scripts anyway.</p><p class="alt"><b>Other options</b> a 3-second countdown; typing the disk name.</p></div></details><details class="dec"><summary><span class="q">If a change breaks the display, the shell or the network, does it revert by itself?</span><span class="d">Yes, but only when a health check actually fails.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>That means the monitor is gone, the shell has dropped off agentd's socket, or the network worked before the turn and fails twice after it. agentd quietly puts the changed files back, then one line says what it put back and offers <q class="ui">Redo it</q>. If the screen or keyboard is broken, you cannot click Undo. But a <q class="ui">does everything look right?</q> countdown after every restyle would interrupt the thing people most enjoy doing.</p><p class="alt"><b>Other options</b> a countdown after any display or network change; Undo and Keep buttons only.</p></div></details><details class="dec"><summary><span class="q">Should a broken app fix itself?</span><span class="d">Once for each distinct error. A visible <q class="ui">Fixing Passwords</q> strip shows while it happens, and Esc stops it.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>If the same error comes back, the app shows a Fix button instead. The machine should mend its own apps, and one try per error cannot spiral into a crash loop that burns tokens.</p><p class="alt"><b>Other options</b> always wait for a click on Fix; fix every crash automatically.</p></div></details><details class="dec"><summary><span class="q">How does the agent know what's on screen?</span><span class="d">Every prompt carries a short text block (the window, the tab URL, the selection), shown to you as the <q class="ui">this</q> chip, and the agent takes a screenshot only when it asks for one.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Taking screenshots constantly is a mode you turn on by asking, and an eye appears on the dot while it is on. Screenshots all day cost time and tokens, would send your password manager to the provider, and still tell the agent less than the exact URL does.</p><p class="alt"><b>Other options</b> periodic screenshots always on.</p></div></details><details class="dec"><summary><span class="q">What does <q class="ui">this</q> point to?</span><span class="d">Whatever you pinned with Super+click. If there is no pin, it is the focused window, with its selection and tab URL.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The mouse is often parked somewhere random, so reading what is under the cursor would guess wrong.</p><p class="alt"><b>Other options</b> whatever is under the cursor; the focused window only.</p></div></details><details class="dec"><summary><span class="q">One conversation or chat threads?</span><span class="d">One conversation you never have to manage. agentd keeps the session across reboots.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>After about 4 hours idle, or when the context gets large, it quietly starts a fresh session seeded with memory.md and the last few turns. Visible threads would turn it back into a chat app, and one endless session slows down the first words of every reply.</p><p class="alt"><b>Other options</b> one endless session; a <q class="ui">new chat</q> button; one conversation per app.</p></div></details><details class="dec"><summary><span class="q">Claude, Codex, or both?</span><span class="d">One main provider, which you switch with a sentence.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Both load the same memory.md and the same os-mcp, so nothing is lost when you switch. The resting pill says <q class="ui">Ask anything</q>, and the provider is named where it matters: in setup, sign-in, limits, errors and the dot's tooltip. You talk to your computer, not to a vendor, but an honest error has to say which provider signed you out.</p><p class="alt"><b>Other options</b> <q class="ui">Ask Claude anything</q>, following the active provider; a picker chip in the pill.</p></div></details><details class="dec"><summary><span class="q">Where do you sign in, on the live USB or after install?</span><span class="d">On the live USB, and the sign-in carries into the install along with the conversation and memory.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>You sign in once, and the agent can then help with the install.</p><p class="alt"><b>Other options</b> after install; both.</p></div></details><details class="dec"><summary><span class="q">What does the pill do when an app is in front?</span><span class="d">It narrows to about 360px but keeps the dot, <q class="ui">Ask anything</q>, the battery and the clock fully visible.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>A tiny capsule with only the dot and clock is used just for full-screen video and games. For a new user, those words are the only sign of where to type.</p><p class="alt"><b>Other options</b> always full width; a small capsule at 60% opacity; hiding the pill.</p></div></details><details class="dec"><summary><span class="q">How are windows placed?</span><span class="d">A stage. One app sits in the middle, and a second goes beside it when you ask or drag it to an edge.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p><q class="ui">Put that away</q> sends a window to a shelf above the pill, and typing its name brings it back. Today every app floats in the center at 540x660, stacked with no way to find them, and tiling would make it feel like a developer's desktop.</p><p class="alt"><b>Other options</b> tiling; free-floating windows with title bars.</p></div></details><details class="dec"><summary><span class="q">Do windows keep a close button?</span><span class="d">There are no title bars, but a small X and a drag strip appear at the top edge when you hover.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Alt+F4, Ctrl+Q, Ctrl+W and Alt+Tab keep their usual meaning. Everyone looks for the X on the window itself. Chromium and Nautilus draw their own headers either way.</p><p class="alt"><b>Other options</b> close only from a chip in the pill; full title bars.</p></div></details><details class="dec"><summary><span class="q">Is the browser a panel or a window?</span><span class="d">It slides in like a panel, then stays until you put it away, works with Alt+Tab and can sit beside an app.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The terminal and Files stay as panels that leave when you click the wallpaper. People spend most of their time in the browser, and it would feel broken if a stray click hid it.</p><p class="alt"><b>Other options</b> all three as panels, as today.</p></div></details><details class="dec"><summary><span class="q">Do panels slide in from different edges?</span><span class="d">One direction for now. Hyprland's special-workspace animation is a single global setting, so sliding each panel from its own edge would mean rebuilding the panels as floating windows or waiting for the custom compositor.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Every panel behaving the same way matters more than the direction.</p><p class="alt"><b>Other options</b> rebuild the panels as floating pinned windows now.</p></div></details><details class="dec"><summary><span class="q">Where do notifications go, and when does the agent speak up on its own?</span><span class="d">A notification is one line in the pill that stays until you have seen it, with a mark on the dot.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>You accept it with a click or Tab, never with Enter on an empty pill, and afterwards it is filed in the history. mako is removed. The agent speaks up only about watchers you set up and about something breaking, and it never starts work on its own. Everything comes through one voice in one place, and uninvited actions on a machine with no guard rails would wear down trust.</p><p class="alt"><b>Other options</b> mako popups; a line that vanishes after 8 seconds; an agent that acts on what it notices.</p></div></details><details class="dec"><summary><span class="q">How do apps share data with the agent and with each other?</span><span class="d">Now, plain files in ~/Apps/&lt;name&gt;/data, described in app.toml.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Later, once the kit's runtime contract settles, each app's backend is exported on D-Bus. Files cost nothing and both providers can read them. D-Bus later adds typed calls and things like logging a run without opening the app, still with no ports.</p><p class="alt"><b>Other options</b> D-Bus now; messages routed through agentd.</p></div></details><details class="dec"><summary><span class="q">What do you see while an app is being written?</span><span class="d">The skeleton first, which is only a rule in the system prompt: a small window with rows marked <q class="ui">sample</q> that then fills in.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Next comes a window frame that opens with the app's title as soon as the tool call starts. That works on Claude only, because Codex does not stream its tool input. This gives most of the effect for very little work.</p><p class="alt"><b>Other options</b> nothing until the app is complete; rendering half-written QML.</p></div></details><details class="dec"><summary><span class="q">Do you ever see the code?</span><span class="d">Only when you ask in words. <q class="ui">Show me how Passwords works</q> opens its folder in the terminal panel.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Code on screen makes the machine feel like an IDE, and technical users still get there with one sentence.</p><p class="alt"><b>Other options</b> a key that flips the window over to show the code; code shown beside the app while it builds.</p></div></details><details class="dec"><summary><span class="q">One CLI process per turn, or one kept alive?</span><span class="d">One Claude process kept alive per session through stream-json input, once it has been checked with --resume, the MCP config and bypassPermissions.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Codex keeps one process per turn, and starting a process per turn remains the fallback for both. For apps, a spare bombadil-app process waits ready for the next window. Starting a process is most of the wait on a small request. Qt sets the window class once per process, so one shared process cannot host many apps, and one bad backend in it would freeze them all.</p><p class="alt"><b>Other options</b> a new process every turn (today); calling the Agent SDK directly.</p></div></details><details class="dec"><summary><span class="q">How many restore points are kept?</span><span class="d">Every turn gets a pre and post pair. Pairs where nothing changed are dropped at the end of the turn, and the last 100 pairs that did change something are kept.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Snapper's cleanup timer is switched on, and the old @.undone-* subvolumes are pruned. Most turns change nothing, and a full disk is a failure you would have to debug yourself.</p><p class="alt"><b>Other options</b> keep everything; keep the last 50.</p></div></details><details class="dec"><summary><span class="q">Where does the kernel live?</span><span class="d">In /boot on the btrfs root, so restore points include it, with the ESP moved to /efi and GRUB's grubenv kept on the ESP.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Today the ESP is mounted at /boot, so rolling back after a kernel update can pair a new kernel with old modules, and the machine may not boot.</p><p class="alt"><b>Other options</b> keep kernels on the ESP and keep the previous kernel installed; systemd-boot.</p></div></details><details class="dec"><summary><span class="q">What is the rescue screen when the desktop is broken?</span><span class="d">A text page in large type on tty2 with four choices: undo the last change, restart the desktop, talk to Claude here, or open a shell.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>There is also a panic key while the compositor still runs, and restore points appear in the boot menu later. A text console depends on the fewest things that can break, and Ctrl+Alt+F2 still works when hyprland.lua is broken.</p><p class="alt"><b>Other options</b> a second, minimal graphical session.</p></div></details><details class="dec"><summary><span class="q">Should the history show screenshots?</span><span class="d">A small thumbnail at the end of every turn, kept on your disk under /home, with apps marked private blurred and a switch to turn thumbnails off.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>Pictures make the history easy to scan. Blurring does not cover a bank page in the browser, and the setting should say so.</p><p class="alt"><b>Other options</b> a history with text only.</p></div></details>
+  </div>
+</section>
+
+<section id="everything">
+  <h2>Everything else, by moment</h2>
+  <p class="intro">The rest of the catalog, grouped by when you would meet it. 9 are marked as signature moments: the ones people would remember and tell others about.</p>
+  <div class="group"><h3>First boot</h3><ul><li><strong>Installing from the live USB is one card</strong> Once you are signed in on the live USB, a chip offers <q class="ui">Install on this computer</q>. A card lists the disks in plain words (<q class="ui">Samsung 980, 1 TB, has Windows on it</q>), one red button installs, and the machine restarts signed in, with the same conversation and memory. Copying ~/.claude and ~/.codex into the install is a small change to bombadil-install worth making now. <q class="ui">Install next to Windows</q> is new installer work, and because the installer copies the live system as it is, anything changed during the live session comes along too.</li></ul></div><div class="group"><h3>First minute</h3><ul><li><strong>A ten-second tour</strong> Right after sign-in, the browser, the terminal and Files each slide in and out once and name themselves, and then a chip offers <q class="ui">Make me something for what I do</q>. The tour is a fixed script in agentd, so it is the same on both providers, and Esc skips it.</li><li><strong>The built-in apps can be changed too</strong> Rewind, System and Settings ship as ordinary Bombadil apps in /usr/share/bombadil/apps. Your first change makes your own copy in ~/Apps, and <q class="ui">reset Settings</q> brings back the original. Build this together with Rewind.</li></ul></div><div class="group"><h3>Ordinary asks</h3><ul><li><strong>Drop or paste onto the pill</strong> Drag a PDF or an image onto the pill, or press Ctrl+V, and it becomes a chip (<q class="ui">report.pdf x</q>) that goes along with your words. Whatever it produces lands in a sensible folder, with a Show button. Test drag-and-drop into a layer-shell surface early. Chromium uploads will still open the system file chooser, so style that chooser to match.</li><li><strong>Point at it</strong><span class="sig">signature</span> Super+click a window or drag a box around part of the screen, and a chip names what you pointed at (<q class="ui">Passwords &gt; Delete button</q>, <q class="ui">Region 640x320</q>). The agent can point back with an orange ring for a few seconds. Cropping a window works for every app and is small. Naming the exact QML element needs a small socket in the app runtime. <q class="ui">Change this app</q> on the window chip should reach the same thing with a normal click.</li><li><strong>Talk instead of typing</strong> Click the mic in the pill or hold Super+Space, and your words appear in grey as you speak; Esc throws them away. This needs a local speech-to-text daemon, which is a new piece.</li><li><strong>The closing line is the receipt</strong> When a turn changed something, its last line says so the way you would (<q class="ui">Installed Docker.</q>), with Undo and Details. Details lists the changes in plain groups, with diffs. It needs a snapper pre and post pair for every turn, plus filters on /home so browser churn does not flood the list.</li><li><strong>Music controls by the clock</strong> While anything plays, a small play, pause and next chip sits beside the clock. It comes from Quickshell's MPRIS service and needs no work from the agent.</li></ul></div><div class="group"><h3>Something new</h3><ul><li><strong>Watch the app build itself</strong><span class="sig">signature</span> The skeleton-first rule ships with piece 3. Next, the moment a build starts, a window frame titled <q class="ui">Passwords</q> rises from the pill with a soft shimmer and a line counter. That frame works on Claude only, because Codex does not stream tool input. Rendering half-written QML is left out.</li><li><strong>A broken app mends itself</strong> When an app hits an error, its window keeps the last working state and shows a strip at the bottom (<q class="ui">Something broke in Passwords. Fixing it.</q>). If the process dies, it restarts once. Each app runs as a systemd user unit, and the Fix button sends a prompt to agentd tagged with the app's name.</li><li><strong>Keep a card</strong> A pin in a card's corner, or saying <q class="ui">keep it</q>, turns the card into a named app in ~/Apps that opens by name. Chips in the bar come later, and only from kit components or drawn by the app runtime, never as generated QML inside the shell.</li><li><strong>Apps that work with the agent and with each other</strong><span class="sig">signature</span> A week after you make a habit tracker, <q class="ui">log a 5 km run</q> logs it without opening the window. Right-clicking a process in the memory viewer can ask <q class="ui">why is this using 4 GB?</q>. Data files and an Agent.ask() call for apps come first; D-Bus calls wait for the kit's runtime contract.</li></ul></div><div class="group"><h3>A week later</h3><ul><li><strong>One conversation and a memory you can read</strong> The line <q class="ui">Welcome back. Since last time you built Passwords and Tracker.</q> is built locally from turns.jsonl, with no model call, and <q class="ui">what do you know about me?</q> opens a short list you can edit. One file, ~/.bombadil/memory.md, is linked as ~/.claude/CLAUDE.md and as ~/.codex/AGENTS.md. Do not also add ~/CLAUDE.md, because Claude runs from $HOME and would load the file twice. Saving session_id across reboots is a five-line fix to make now.</li><li><strong>Rewind</strong><span class="sig">signature</span> Super+Z or typing <q class="ui">history</q> slides up every turn, grouped by day. Each turn shows a small screenshot, your words and what changed, and typing filters by words or by a path. Clicking a turn offers <q class="ui">Undo just this</q>, <q class="ui">Go back to before this</q> and <q class="ui">Ask about this</q>. Rewind replaces a notification center and a recent-files list, and it should be the first app built with the kit. Keep its data under /home so a rollback never erases it.</li><li><strong>Every version of an app</strong><span class="sig">signature</span> <q class="ui">Show me Passwords from yesterday</q> opens a slider that steps through each change, labeled by the prompt that made it, and letting go on a version keeps it. <q class="ui">Make a copy for my team</q> makes a second app. It reads the git history from piece 3.</li><li><strong>Why is this like this?</strong><span class="sig">signature</span> <q class="ui">Why is my DNS set to 1.1.1.1?</q> gets an answer with the turn that changed it, the time and the old value, plus <q class="ui">Undo just this file</q>. It is cheap once receipts exist, and the agent can answer from turns.jsonl before any index is built.</li><li><strong>Chips that learn your habits</strong> After about 20 turns, the example chips become your own most-opened apps and <q class="ui">Continue: &lt;the last thing you did&gt;</q>, ranked locally from turns.jsonl.</li></ul></div><div class="group"><h3>When it goes wrong</h3><ul><li><strong>Provider trouble is one sentence and one button</strong> You see <q class="ui">Claude signed you out. [Sign in]</q>, <q class="ui">Claude is at its limit until 15:00. [Use Codex until then]</q> or <q class="ui">Offline. Undo, history, apps and panels still work.</q>, not the last 2000 characters of stderr. CLI wording changes between versions, so keep the error patterns in providers.py with tests built from captured output.</li><li><strong>Live undo that covers your home folder</strong><span class="sig">signature</span> <q class="ui">Undo that</q> strikes through the changed files one by one and ends with <q class="ui">Undone. 14 files back as before 'install docker'.</q>, with no restart for config and home changes. It leaves alone the files you edited since, lists them, and <q class="ui">redo</q> puts everything back. This is the largest piece in this list: a snapper config for /home set up by the installer with exclusions, the list of paths that are safe to revert live, and service restarts.</li><li><strong>The machine puts back a change that cut it off</strong><span class="sig">signature</span> If a turn loses the monitor, drops the shell or breaks a network that worked before, agentd puts back just those files without asking and says so afterwards. This needs no snapper: copy the short list of watched files at the start of the turn and restore those copies.</li><li><strong>Lifeboat</strong> When the desktop dies, the screen switches to a page in large type on tty2 with four choices, each one key. While the compositor still runs, Super+Ctrl+Backspace opens a plain menu. Move agentd and Quickshell to systemd user services with Restart=always now. Today they are started by hl.exec_cmd and stay dead if they crash.</li><li><strong>A bad boot rolls itself back</strong><span class="sig">signature</span> After two failed boots, the machine starts from the restore point before the turn that broke it and says <q class="ui">Last boot failed after turn 41 (install nvidia-open). I went back. Try another way?</q>. The whole feature is large (grub-btrfs, a boot counter and a boot-ok unit), but one part is urgent now: moving the ESP to /efi.</li></ul></div><div class="group"><h3>Always on</h3><ul><li><strong>The pill at rest</strong> With nothing in front, the screen shows only the wallpaper and the pill. With an app in front, the pill is narrower but still says <q class="ui">Ask anything</q>. The layer surface should keep a fixed size, with the pill animating inside it and an input mask so the surface stops swallowing clicks meant for the windows behind it.</li><li><strong>No title bars</strong> Windows get a thin outline, 12px corners and a soft shadow. The focused app's name shows as a chip in the pill, offering Close, Full screen, Change this app and Show its files. Nautilus and Chromium draw their own headers, so this look applies to Bombadil apps and the terminal.</li><li><strong>The stage and the shelf</strong> Apps you put away shrink into a row above the pill that appears when you tap Super, and typing a name brings one back where it was. A hidden special workspace holds these windows, and a place() tool arranges windows on request. Live thumbnails of hidden windows may not render, so icons are the fallback.</li><li><strong>Background jobs as chips</strong> <q class="ui">Download the Ubuntu ISO and check it</q> ends at once with <q class="ui">Started.</q> and a chip to the left of the pill (<q class="ui">ISO 43%</q>). The chip turns green when the job is done, or red with <q class="ui">Why?</q> if it fails. Jobs run through systemd-run --user and never take over the screen.</li><li><strong>Watchers</strong> <q class="ui">Tell me when the download finishes</q> or <q class="ui">every morning, tell me which updates matter</q> becomes a systemd user timer that speaks through the pill. <q class="ui">What are you watching?</q> shows each watcher with a stop button.</li><li><strong>Windows that open fast</strong> A spare bombadil-app process, with Qt and the kit already loaded, waits for the next app or card, so a window appears a few hundred milliseconds after it is written.</li></ul></div>
+  <div class="group cut"><h3>Cut, and why</h3><ul><li><strong>Learn undo by breaking something (the pink screen)</strong> The first minute should show what the machine can do, and the live USB has no restore points to undo. Instead, the first real change gets a one-time <q class="ui">Changed your mind? Say undo.</q></li><li><strong>Flip an app over to see its code</strong> It makes the machine feel like an IDE, and <q class="ui">show me how this works</q> opening the folder covers the same need.</li><li><strong>A three-second countdown before one-way acts</strong> It is a guard rail by another name, it would work on Claude only, and a regex over shell commands misses scripts anyway. A red line and <q class="ui">can't be undone</q> are just as honest.</li><li><strong><q class="ui">Put that there</q> (talking while pointing)</strong> It is large, research-grade, and depends on both voice and pointing. Revisit it once those ship.</li><li><strong>Make this web page a native app with a CDP pick tool</strong> Capturing the page's data means reloading the page with network logging on. <q class="ui">Make this page an app</q> through <q class="ui">this</q> covers most of the idea, and the rest can come from the planned browser tools.</li><li><strong>Generated bar chips loaded inside the shell</strong> Agent-written QML inside Quickshell can freeze the only way to talk to the machine.</li><li><strong>Parallel helper agents (Shift+Enter, a Codex second opinion)</strong> Two agents with sudo on one machine break the model of one turn and one restore point, which undo depends on.</li><li><strong>Keys 1-5 on the starter chips</strong> They steal the first character of prompts such as <q class="ui">10 minute timer</q>.</li><li><strong>Building a first app automatically during the tour</strong> A slow or weak first app is the worst possible first impression, so it becomes a chip you can press instead.</li><li><strong>Holding Super+Escape to freeze a turn</strong> It is a second meaning on the stop key that nobody would find, and stop plus undo already cover it.</li></ul></div>
+</section>
+
+<section id="gaps">
+  <h2>Not designed yet</h2>
+  <p class="intro">Things the judges said nobody covered. Some are ordinary laptop basics that an OS has to get right without the agent.</p>
+  <ul class="plain">
+    <li><strong>The agent driving the browser while you watch.</strong> The panel slides in, a highlight shows what it clicks and types, you grab the mouse to take over, and you say <q class="ui">continue</q> to hand control back.</li><li><strong>A speed budget with a benchmark.</strong> A fixed set of prompts on both providers would time Enter to first pixel, to a card and to an app skeleton. Run it on KVM or real hardware, because the TCG VM cannot measure it, and add a fake provider that replays captured stream-json so every UX state can be tested without API cost.</li><li><strong>Choosing the model for each turn: a fast model for one-line answers, cards and controls, and the large one for building apps, picked by agentd with --model.</strong> </li><li><strong>One live theme for the whole machine (the shell, cards, apps, GTK apps such as Nautilus, and Chromium), so <q class="ui">make everything warmer</q> restyles everything at once.</strong> </li><li><strong>A motion and sound language: how things rise from the pill, slide in and go back, plus an optional soft sound when a turn ends.</strong> </li><li><strong>Laptop basics that work without the agent.</strong> That means brightness, volume, media and mic keys with a level shown in the pill, Print Screen, suspend on lid close, battery, tap-to-click and HiDPI. It also means a status card opened by a click on the clock, with Wi-Fi, Bluetooth, sound, battery, Sleep, Restart and Shut down.</li><li><strong>Lock screen and encryption: lock on lid close and when idle, a user password, and full-disk encryption offered at install.</strong> The agent has sudo and your accounts are signed in.</li><li><strong>Familiar keys keep their meaning (Alt+Tab, Ctrl+C and Ctrl+V, Alt+F4, Print Screen), and hints show a Windows-key symbol instead of the word Super.</strong> </li><li><strong>A shape for the rare question the agent really must ask (<q class="ui">which network?</q>): two or three buttons in the pill, never a paragraph.</strong> </li><li><strong>Ordinary Linux apps: how <q class="ui">install Spotify</q> or <q class="ui">open GIMP</q> works (pacman, the AUR or Flatpak), how these apps land on the stage, open by name and follow the theme.</strong> </li><li><strong>Week-one basics: codecs, PDFs and images, Bluetooth headphones, external monitors, and the webcam, mic and screen sharing in Chromium (xdg-desktop-portal-hyprland with PipeWire).</strong> </li><li><strong>Updates on rolling Arch as a background job inside a snapshot, reported as one line about what changed and what needs a restart, never as a terminal.</strong> </li><li><strong>Memory cost: one PySide6 process per app adds up, so decide how many stay running, and add <q class="ui">what's running</q> as a card.</strong> </li><li><strong>Account and usage: setup should say which plan each provider needs, and a gentle usage hint should warn before the limit rather than after it is hit.</strong> </li><li><strong>Accessibility: text size, reduced motion, a screen reader and high contrast.</strong> <q class="ui">Make everything bigger</q> should be one of the known controls.</li><li><strong>Bringing your stuff over: Chromium sign-in and sync must keep working under the managed policy, and bookmarks and passwords should import from an old computer.</strong> </li><li><strong>The app skill and the component kit must be served through os-mcp (app_template, app_guide) rather than as a Claude-only skill, so that Codex builds apps as well as Claude does.</strong> </li><li><strong>Exclusions for home snapshots must be decided at install time: ~/.cache, ~/.claude, ~/.codex, ~/.local/state/bombadil and the Chromium profile.</strong> Otherwise undo rewinds the conversation itself, and every receipt fills with browser churn.</li><li><strong>The live USB has no snapshots at all, so the live session must say that undo starts after install.</strong> </li>
+  </ul>
+</section>
+
+<section id="pitfalls">
+  <h2>What would make it feel like a chat window instead</h2>
+  <ul class="pitfalls">
+    <li>A reply box that grows into a scrolling log with markdown, avatars and history. Keep only the current turn there; the past belongs in Rewind.</li><li>Silence after Enter, and simple lookups like <q class="ui">open the browser</q> that wait several seconds for the model.</li><li>Internals on screen: tool names such as mcp__bombadil-os__create_app, gear icons, raw JSON, or the last 2000 characters of stderr, which is what the bar shows today. Chatty lines such as <q class="ui">Hmm, let me think!</q> are no better.</li><li>The agent explaining how to do something, or asking follow-up questions, instead of doing it, showing the result and offering to adjust.</li><li>A <q class="ui">new chat</q> button, a list of threads or a provider picker. One machine has one conversation.</li><li>Popups, toasts and <q class="ui">Are you sure?</q> dialogs over your work. Status belongs in the pill, and any check happens after the fact.</li><li>Every answer becoming a card or a new window. An answer that is a single number is a sentence, and an app that already does the job gets extended rather than copied.</li><li>Making things <q class="ui">native</q> with a web UI: a settings page in Chromium, a localhost port or HTML charts.</li>
+  </ul>
+</section>
+
+<footer>
+  Written from the first milestone on the <code>claude/first-milestone</code> branch of Bombadil. Five designers each took one angle (a day with the machine, radical simplicity, what makes it an OS, apps made on the spot, trust and recovery), their ideas were merged, and three judges scored every one. Nothing here is built yet unless it says so.
+</footer>
+</div>
+
+<script>
+(function () {
+  var all = function (open) {
+    document.querySelectorAll("details.dec").forEach(function (d) { d.open = open; });
+  };
+  var o = document.getElementById("open-all"), c = document.getElementById("close-all");
+  if (o) o.addEventListener("click", function () { all(true); });
+  if (c) c.addEventListener("click", function () { all(false); });
+})();
+</script>
+
+</body></html>

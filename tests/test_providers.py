@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from bombadil import providers
 
 
@@ -11,6 +13,7 @@ def test_claude_command_and_events(tmp_path):
     assert "--dangerously-skip-permissions" in cmd and "--resume" in cmd and "--model" in cmd
     cfg = json.loads(Path(cmd[cmd.index("--mcp-config") + 1]).read_text())
     assert cfg["mcpServers"]["bombadil-os"]["command"] == "/usr/bin/bombadil-os-mcp"
+    assert cmd[cmd.index("--mcp-config") + 2] == "--strict-mcp-config"   # no claude.ai connectors beside it
 
     lines = [
         json.dumps({"type": "system", "subtype": "init", "session_id": "s1",
@@ -100,6 +103,30 @@ def test_claude_stopped_mid_tool_ends_with_its_reason():
     assert any(e["kind"] == "tool_result" and e["error"] for e in ev)
 
 
+def test_claude_raw_diagnostics_after_a_stop_are_not_the_result():
+    p = providers.Claude("x")
+    diag = "[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"
+    ev = list(p.events([json.dumps({"type": "result", "result": diag, "is_error": False, "session_id": "s1"})]))
+    assert ev[0]["kind"] == "result" and ev[0]["text"] == "" and ev[0]["ok"] is True
+    ev = list(p.events([json.dumps({"type": "result", "result": "Done.", "is_error": False})]))
+    assert ev[0]["text"] == "Done."
+
+
+def test_the_real_cli_puts_the_stop_diagnostic_in_errors_with_a_null_result():
+    # Captured from claude 2.x after Stop: the words are in errors[], "result" is null.
+    p = providers.Claude("x")
+    line = json.dumps({
+        "type": "result", "subtype": "error_during_execution", "is_error": True, "result": None,
+        "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],
+        "terminal_reason": "aborted_streaming", "session_id": "s1"})
+    ev = list(p.events([line]))[0]
+    assert ev["text"] == "" and ev["ok"] is False and ev["terminal_reason"] == "aborted_streaming"
+    # A real failure next to the diagnostic still says what failed.
+    line = json.dumps({"type": "result", "is_error": True, "result": None,
+                       "errors": ["[ede_diagnostic] x", "No conversation found with session ID: gone"]})
+    assert list(p.events([line]))[0]["text"] == "No conversation found with session ID: gone"
+
+
 def test_claude_tool_results_as_text_blocks():
     p = providers.Claude("x")
     line = json.dumps({"type": "user", "message": {"content": [{
@@ -135,7 +162,11 @@ def test_codex_items_become_steps_and_results():
     assert ev[3]["name"] == "mcp__bombadil-os__show_panel" and ev[3]["input"] == {"name": "browser"}
     assert ev[4] == {"kind": "tool_result", "id": "m", "output": "ok", "error": False}
     assert ev[5]["kind"] == "file_change" and ev[6]["error"] is True
-    assert ev[7]["input"]["todos"][0]["content"] == "Open the browser"
+    # The whole list, done items included: the first one not done is the one under way.
+    assert ev[7]["kind"] == "tool" and ev[7]["name"] == "TodoWrite" and ev[7]["id"] == "l"
+    assert ev[7]["input"]["todos"] == [
+        {"content": "Install ffmpeg", "status": "completed", "activeForm": None},
+        {"content": "Open the browser", "status": "in_progress", "activeForm": None}]
 
 
 def test_shell_turns_stream_output_and_end_with_the_exit_code():
@@ -146,3 +177,205 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def test_only_the_clis_own_retry_notices_are_not_progress():
+    p = providers.Claude("x")
+    delta = json.dumps({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                          "delta": {"type": "thinking_delta", "thinking": "..."}}})
+    assert list(p.events([delta])) == []   # shows nothing ...
+    assert p.is_progress(delta)            # ... but it is the model working
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "thinking_tokens", "tokens": 12}))
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "init"}))
+    assert p.is_progress("not json at all")
+    for subtype in ("api_retry", "status"):
+        assert not p.is_progress(json.dumps({"type": "system", "subtype": subtype}))
+    assert providers.Codex("x").is_progress("anything")
+
+
+def test_codex_reports_a_search_once_with_no_id_to_wait_for():
+    p = providers.Codex("x")
+    ev = list(p.events([json.dumps({"type": "item.completed",
+                                    "item": {"id": "w1", "type": "web_search", "query": "arch news"}})]))
+    assert ev == [{"kind": "tool", "name": "WebSearch", "input": {"query": "arch news"}}]
+
+
+# `claude auth login` as Claude Code 2.1.283 runs it (captured 2026-09-27): the printed page
+# ends on platform.claude.com's code page; the one it gives $BROWSER comes back to localhost.
+CLAUDE_PRINTED = ("https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+                  "&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback"
+                  "&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference&code_challenge=nzpRG7o8B88E"
+                  "&code_challenge_method=S256&state=G85xIrldESHXAlDvUTWVQPrEjnVEtE0bIWkEtFWzXUs")
+CLAUDE_BROWSER = CLAUDE_PRINTED.replace("https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
+                                        "http%3A%2F%2Flocalhost%3A44241%2Fcallback")
+
+
+def test_claude_knows_its_sign_in_pages_and_the_code_page():
+    p = providers.Claude("x")
+    assert p.signin_url_kind(CLAUDE_BROWSER) == "auto"
+    assert p.signin_url_kind(CLAUDE_PRINTED) == "manual"
+    assert p.signin_url_kind(CLAUDE_BROWSER.replace("https://claude.com/cai", "https://platform.claude.com")) == "auto"
+    assert p.signin_url_kind("https://claude.com/cai/pricing") is None
+    assert p.signin_url_kind("https://evil.example/oauth/authorize?redirect_uri=http://localhost:1/callback") is None
+    assert p.code_from_url("https://platform.claude.com/oauth/code/callback?code=abc123&state=G85x") == "abc123#G85x"
+    assert p.code_from_url("https://platform.claude.com/oauth/code/success?app=claude-code") is None
+    assert p.code_from_url("https://example.com/oauth/code/callback?code=abc&state=x") is None
+    assert p.signin_command() == ["claude", "auth", "login"]
+
+
+def test_claude_signed_out_turn_is_recognised():
+    p = providers.Claude("x")
+    ev = _kinds(p, "claude-signed-out.jsonl")
+    kinds = [e["kind"] for e in ev]
+    assert "signed_out" in kinds and "text" not in kinds   # the error is not shown as its reply
+    result = next(e for e in ev if e["kind"] == "result")
+    assert result["ok"] is False and p.signed_out(result["text"])
+    for said in ("Failed to authenticate: OAuth session expired and could not be refreshed",
+                 "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
+                 "Your account does not have access to Claude. Please login again or contact your administrator.",
+                 "OAuth token revoked · Please run /login"):
+        assert p.signed_out(said), said
+    assert not p.signed_out("Installed ffmpeg.") and not p.signed_out("")
+
+
+def test_claude_sign_in_errors_read_plainly():
+    p = providers.Claude("x")
+    assert p.signin_error("Paste code here if prompted > Login failed: getaddrinfo EAI_AGAIN platform.claude.com") \
+        == "no internet"
+    assert p.signin_error("Login failed: Request failed with status code 400") == "the sign-in was refused; try again"
+    assert p.signin_error("Login failed: Request failed with status code 429").startswith("too many tries")
+    assert p.signin_error("Paste code here if prompted > Login failed: Something new") == "Login failed: Something new"
+
+
+# `codex login` as Codex 0.157.1 runs it (captured 2026-09-27): one page, back to localhost:1455.
+CODEX_BROWSER = ("https://auth.openai.com/oauth/authorize?response_type=code&client_id=app_EMoamEEZ73f0CkXaXp7hrann"
+                 "&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&code_challenge=t_mN6paZyiJsJ4tORLmN4C"
+                 "&code_challenge_method=S256&state=HOS_-sXG80vjv-OdY4uQb4a7HMiEVdaOnl4MQ_WVRTA"
+                 "&scope=openid+profile+email+offline_access+api.connectors.read+api.connectors.invoke"
+                 "&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=codex_cli_rs")
+
+
+def test_codex_knows_its_sign_in_page():
+    p = providers.Codex("x")
+    assert p.title == "Codex" and p.signin_command() == ["codex", "login"]
+    assert p.signin_url_kind(CODEX_BROWSER) == "auto"
+    assert p.signin_url_kind(CODEX_BROWSER.replace("1455", "1457")) == "auto"
+    assert p.signin_url_kind("https://auth.openai.com/codex/device") is None
+    assert p.signin_url_kind(CODEX_BROWSER.replace("http%3A%2F%2Flocalhost", "https%3A%2F%2Fevil.example")) is None
+    assert p.code_from_url("http://localhost:1455/success?id_token=x") is None   # nothing to paste, ever
+
+
+def test_codex_signed_out_turn_is_recognised_at_the_first_401():
+    p = providers.Codex("x")
+    ev = _kinds(p, "codex-signed-out.jsonl")
+    kinds = [e["kind"] for e in ev]
+    assert kinds[:2] == ["session", "signed_out"]   # not "Reconnecting... 2/5 (unexpected status 401…)" as its reply
+    assert "text" not in kinds
+    result = next(e for e in ev if e["kind"] == "result")
+    assert result["ok"] is False and p.signed_out(result["text"])
+    for said in ("workspace routing discovery unauthorized (401)",
+                 "2026-09-27T11:20:01Z ERROR codex_login::auth::manager: Failed to refresh token: Your access token "
+                 "could not be refreshed. Please log out and sign in again.",
+                 "unexpected status 401 Unauthorized: Incorrect API key provided: sk-proj-***7890.",
+                 "WARNING: proceeding, even though we could not create PATH aliases\nNot logged in"):
+        assert p.signed_out(said), said
+    assert p.ends_when_signed_out and not providers.Claude("x").ends_when_signed_out
+    assert not p.signed_out("Reconnecting... 1/5 (stream disconnected before completion)")
+    assert not p.signed_out("I'm not logged in to GitHub, so I cloned it over https.")
+
+
+def test_codex_sign_in_errors_read_plainly():
+    p = providers.Codex("x")
+    assert p.signin_error("Error logging in: Token exchange failed: error sending request for url "
+                          "(https://auth.openai.com/oauth/token)") == "no internet"
+    assert p.signin_error("Error logging in: Port 127.0.0.1:1457 is already in use").startswith("another sign-in")
+    assert p.signin_error("OAuth callback error: Sign-in failed: User cancelled") == \
+        "the sign-in was cancelled in the browser"
+    assert p.signin_error("Error logging in: Token exchange failed: token endpoint returned status 401 "
+                          "Unauthorized: Could not validate your token.") == "the sign-in was refused; try again"
+    assert "admin" in p.signin_error("Error logging in: Codex is not enabled for your workspace. Contact your "
+                                     "workspace administrator to request access to Codex.")
+
+
+def test_codex_signed_in_asks_codex_login_status(tmp_path, monkeypatch):
+    codex = tmp_path / "codex"
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    p = providers.Codex("x")
+    for script, want in (('echo "Not logged in" >&2; exit 1', False),
+                         ('echo "Logged in using ChatGPT" >&2; exit 0', True),
+                         ('echo "Error checking login status: keyring" >&2; exit 1', None)):
+        codex.write_text(f"#!/bin/sh\n[ \"$1 $2\" = \"login status\" ] || exit 9\n{script}\n")
+        codex.chmod(0o755)
+        assert p.signed_in() is want, script
+
+
+def _todo_list(kind, items, item_id="l"):
+    return json.dumps({"type": kind, "item": {"id": item_id, "type": "todo_list", "items": items}})
+
+
+def test_codex_sends_the_whole_plan_on_every_change():
+    p = providers.Codex("x")
+    plan = [{"text": "Install ffmpeg", "completed": False}, {"text": "Open the browser", "completed": False},
+            {"text": "Check the sound", "completed": False}]
+    started = list(p.parse(_todo_list("item.started", plan)))
+    assert started == [{"kind": "tool", "name": "TodoWrite", "id": "l", "input": {"todos": [
+        {"content": "Install ffmpeg", "status": "in_progress", "activeForm": None},
+        {"content": "Open the browser", "status": "pending", "activeForm": None},
+        {"content": "Check the sound", "status": "pending", "activeForm": None}]}}]
+    plan[0]["completed"] = plan[1]["completed"] = True
+    updated = list(p.parse(_todo_list("item.updated", plan)))
+    assert [t["status"] for t in updated[0]["input"]["todos"]] == ["completed", "completed", "in_progress"]
+    # Every item done: the list still goes out, so the last step is ticked.
+    plan[2]["completed"] = True
+    done = list(p.parse(_todo_list("item.updated", plan)))
+    assert [t["status"] for t in done[0]["input"]["todos"]] == ["completed"] * 3
+    # The list Codex closes the turn with is the final one.
+    closed = list(p.parse(_todo_list("item.completed", plan)))
+    assert [t["status"] for t in closed[0]["input"]["todos"]] == ["completed"] * 3
+
+
+@pytest.mark.parametrize("items", [[], None, "nope", [3, None]])
+def test_a_codex_plan_without_steps_says_nothing(items):
+    for kind in ("item.started", "item.updated", "item.completed"):
+        assert list(providers.Codex("x").parse(_todo_list(kind, items))) == []
+
+
+def _claude_line(**m):
+    return json.dumps(m)
+
+
+def test_claude_forwards_the_parent_of_a_subagents_tools_and_only_then():
+    p = providers.Claude("x")
+    call = {"type": "tool_use", "id": "t1", "name": "TaskCreate", "input": {"subject": "Read"}}
+    sub = list(p.parse(_claude_line(type="assistant", message={"content": [call]}, parent_tool_use_id="toolu_A")))
+    assert sub == [{"kind": "tool", "name": "TaskCreate", "input": {"subject": "Read"}, "id": "t1",
+                    "parent": "toolu_A"}]
+    result = _claude_line(type="user", parent_tool_use_id="toolu_A", message={"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "Task #1 created successfully: Read"}]})
+    [got] = p.parse(result)
+    assert got["kind"] == "tool_result" and got["parent"] == "toolu_A"
+    start = _claude_line(type="stream_event", parent_tool_use_id="toolu_A", event={
+        "type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "Bash"}})
+    [got] = p.parse(start)
+    assert got["kind"] == "tool_start" and got["parent"] == "toolu_A"
+    # The turn's own tools carry no such key, null or absent.
+    for extra in ({"parent_tool_use_id": None}, {}):
+        main = list(p.parse(_claude_line(type="assistant", message={"content": [call]}, **extra)))
+        assert "parent" not in main[0]
+    # Words are not tool calls: nothing reads a subagent's text as plan.
+    text = list(p.parse(_claude_line(type="assistant", parent_tool_use_id="toolu_A",
+                                     message={"content": [{"type": "text", "text": "hi"}]})))
+    assert text == [{"kind": "text", "text": "hi"}]
+
+
+def test_the_plan_tools_are_switched_on_for_the_machines_own_turns(tmp_path):
+    # Claude Code offers TodoWrite/TaskCreate on some models only when asked, and the way to ask is
+    # the CLI's environment (agentd merges this over its own).
+    assert providers.Claude("x").env() == {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+    for other in (providers.Codex("x"), providers.Shell(), providers.Fake("x")):
+        assert other.env() == {}
+    # Codex registers update_plan only when its config says so: on a fresh and on a resumed turn alike.
+    codex = providers.Codex("x")
+    for turn in (providers.Turn("hi"), providers.Turn("again", session_id="t1")):
+        cmd = codex.command(turn, tmp_path)
+        assert cmd[cmd.index("tools.update_plan.enabled=true") - 1] == "-c"

@@ -40,6 +40,11 @@ has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
 # A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
 virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
+# A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
+# no ALSA plugin to read one.
+audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
+# Every generated app card sits at its own spot (a second one does not hide the first).
+apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -67,6 +72,8 @@ check quickshell-running wait_for 60 pgrep -x quickshell
 check hypr-config-ok no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
 check virtual-display-size virtual_display_size
+check audio-output wait_for 60 audio_sink
+check pacman-mirror grep -q '^Server = ' /etc/pacman.d/mirrorlist
 check agentd-status as_user bombadil status
 check claude-cli as_user claude --version
 check codex-cli as_user codex --version
@@ -81,6 +88,9 @@ qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
 shot app
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-spots wait_for 30 apps_apart
 check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
@@ -92,6 +102,12 @@ check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
+# Alt+Space opens the pill too, for hosts that keep Super.
+before=$(launcher_done browser "Opened the browser")
+keys alt+spc
+keys b r o w s e r ret
+check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
+check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
 check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
 shot pill-working
@@ -133,6 +149,114 @@ check voice-default-merry persona_has '^voice = "merry"'
 shot voice-saved
 
 
+# Signing in (the live system has no provider picked and no login). agentd asks which AI in the
+# pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
+# get as far as their real page (or "No internet", when the VM has none), then are called off;
+# the whole round trip runs against fake_signin.py, a stand-in login on localhost.
+# setup_is STATES [LINE-REGEX [PROVIDER [PHASE [VIEW]]]]: agentd's setup line is in one of STATES
+# (a,b) and matches the rest. It prints what it saw: "state provider phase view | line".
+setup_is() {
+  as_user python3 - "$sock" "$@" <<'PY'
+import json, re, socket, sys
+sock, states = sys.argv[1], sys.argv[2].split(",")
+want = (sys.argv[3:] + ["", "", "", ""])[:4]
+s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sock)
+for raw in s.makefile():
+    m = json.loads(raw)
+    if m.get("type") == "setup":
+        break
+print(m.get("state"), m.get("provider"), m.get("phase"), m.get("view"), "|", m.get("line"), flush=True)
+ok = (m.get("state") in states and re.search(want[0], m.get("line") or "") is not None
+      and all(not w or m.get(k) == w for w, k in zip(want[1:], ("provider", "phase", "view"))))
+sys.exit(0 if ok else 1)
+PY
+}
+not_checking() { ! setup_is checking; }
+# cdp_tab REGEX: a tab in the panel's Chromium has an address that matches.
+cdp_tab() { python3 -c 'import json, re, sys, urllib.request as u
+t = json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20))
+print([x.get("url") for x in t]); sys.exit(not any(re.search(sys.argv[1], x.get("url", "")) for x in t if x.get("type") == "page"))' "$1"; }
+panel_away() { ! special_shown browser; }
+gone() { ! pgrep -u user -f "$1"; }
+# restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
+restart_agentd() {
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  echo "--- agentd $*" >>/tmp/smoke.agentd.log
+  as_user env "$@" setsid -f agentd >>/tmp/smoke.agentd.log 2>&1 </dev/null
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
+page_or_offline() { setup_is signing_in "" "$1" waiting || setup_is offline "No internet" "$1"; }
+# try_provider NAME PAGE: pick it; its page shows in the panel (or "No internet"); the panel is out.
+try_provider() {
+  agentd_send "{\"type\": \"setup_action\", \"id\": \"provider:$1\"}" || return 1
+  wait_for 240 page_or_offline "$1" || return 1
+  if setup_is offline "" "$1"; then echo "no internet in this VM: $1 stops at the offline line"; return 0; fi
+  wait_for 90 cdp_tab "$2" && wait_for 60 special_shown browser
+}
+# called_off PROVIDER: Cancel (Esc) ends the sign-in; the pill says so.
+called_off() { agentd_send '{"type": "setup_action", "id": "cancel"}'; wait_for 90 setup_is signed_out,offline 'cancelled|No internet' "${1:-}"; }
+port_free() { ! ss -ltn | grep -qE "127\.0\.0\.1:$1\b"; }
+held_prompt_ran() { grep -q "echo: hello there" /tmp/smoke.held.log; }
+signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=manual FAKE_SIGNIN_DELAY=3 && wait_for 180 setup_is ready 'Signed in to Fake'; }
+slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
+browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
+page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
+times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
+offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
+agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
+
+if [[ "$mode" != "undo" ]]; then
+  : >/tmp/smoke.agentd.log
+  check signin-agentd-starts restart_agentd
+  check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
+  shot signin-choose
+  check signin-codex-page try_provider codex '^https://(auth\.openai\.com|chatgpt\.com)/'
+  shot signin-codex
+  check signin-codex-called-off called_off codex
+  check signin-codex-port-freed wait_for 30 port_free 1455
+  check signin-claude-page try_provider claude '^https://(claude\.com|claude\.ai|platform\.claude\.com)/'
+  shot signin-claude
+  check signin-claude-called-off called_off claude
+  check signin-claude-login-ended wait_for 30 gone 'auth login'
+
+  # The round trip, against the stand-in: the page comes back to the CLI by itself, and a prompt
+  # asked meanwhile runs after. FAKE_SIGNIN_DELAY keeps the page up long enough for a picture.
+  check signin-fake-starts restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=40
+  check signin-fake-page wait_for 180 cdp_tab '^http://127\.0\.0\.1:[0-9]+/authorize'
+  check signin-fake-panel-shown wait_for 90 special_shown browser
+  as_user timeout 900 bombadil ask "hello there" >/tmp/smoke.held.log 2>&1 &
+  shot signin-page
+  check signin-fake-signed-in wait_for 240 setup_is ready 'Signed in to Fake' fake
+  check signin-fake-panel-away wait_for 90 panel_away
+  shot signin-done
+  check signin-held-prompt-ran wait_for 240 held_prompt_ran
+  # The printed page, which ends on a code: the code is typed into the CLI for the user.
+  rm -f /home/user/.fake-signin
+  check signin-code-pasted signin_manual
+  # The panel slid out, then the browser closed: the pill says so and brings the page back.
+  rm -f /home/user/.fake-signin
+  check signin-waits restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never
+  check signin-waiting wait_for 240 setup_is signing_in 'in the browser' fake waiting shown
+  check signin-slid-out slid_out
+  shot signin-hidden
+  check signin-browser-closed browser_closed
+  check signin-page-again page_again
+  check signin-esc-cancels called_off fake
+  check signin-cli-ended wait_for 30 gone fake_signin.py
+  # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
+  check signin-times-out times_out
+  check signin-offline offline
+  shot signin-offline
+  python3 -m http.server --bind 127.0.0.1 47811 >/dev/null 2>&1 &
+  online=$!
+  check signin-back-online wait_for 240 setup_is ready 'Signed in to Fake' fake
+  kill "$online" 2>/dev/null
+  # Back to the session as it booted (no AI picked yet), for what follows.
+  rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
+  check agentd-restored restart_agentd
+  agentd_log
+fi
+
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
 fi
@@ -140,6 +264,7 @@ fi
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
+    check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'

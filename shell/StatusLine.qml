@@ -51,7 +51,7 @@ Rectangle {
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
             if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.dismiss()
-            if (bar.pill.welcomeDone(bar.now)) bar.pill.dismiss()
+            if (bar.pill.welcomeDone(bar.now)) bar.pill.dismissWelcome()
         }
     }
 

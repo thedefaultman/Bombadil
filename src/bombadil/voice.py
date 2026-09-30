@@ -166,9 +166,9 @@ class Voice:
 
     # -- the card --
 
-    def _due(self) -> bool:
+    def due(self) -> bool:
         a = self.agentd
-        return (not persona.exists() and bool(a.configured) and a._setup_ready()
+        return (not persona.exists() and bool(a.chosen) and a._setup_ready()
                 and bool(a.provider.installed))
 
     async def ask(self, line: str | None = None, current: bool = False) -> bool:
@@ -185,7 +185,7 @@ class Voice:
                 return False
             self.asking = {"line": line or CARD_LINE, "current": True, "first": False}
         else:
-            if not self._due():
+            if not self.due():
                 return False
             self._begin()
             self.asking = {"line": line or ASK_LINE, "current": False, "first": True}
