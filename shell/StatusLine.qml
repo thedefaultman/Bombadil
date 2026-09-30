@@ -45,11 +45,11 @@ Rectangle {
         interval: 250; repeat: true; running: bar.shown
         onTriggered: {
             bar.now = Date.now()
-            if (bar.pill.flash && bar.now - bar.pill.flashAt > 3500) bar.pill.flash = ""
+            if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
             // The line shows on every screen; hovering it on any of them keeps it.
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
             if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
-                bar.pill.dismiss()
+                bar.pill.fade()
         }
     }
 
@@ -83,8 +83,9 @@ Rectangle {
                 font.pixelSize: Kit.Theme.lineSize
                 textFormat: Text.PlainText
                 // Working: one line. The agent's own words show their newest end.
-                wrapMode: bar.pill.mode === "working" || bar.pill.flash !== "" ? Text.NoWrap : Text.Wrap
-                maximumLineCount: bar.pill.mode === "working" || bar.pill.flash !== "" ? 1 : 4
+                wrapMode: bar.pill.mode === "working" && bar.pill.flash === "" ? Text.NoWrap : Text.Wrap
+                // A flash (the answer to "why") may take two lines; the working line is one.
+                maximumLineCount: bar.pill.flash !== "" ? 2 : bar.pill.mode === "working" ? 1 : 4
                 elide: bar.pill.mode === "working" && bar.pill.source === "agent" ? Text.ElideLeft : Text.ElideRight
             }
 
@@ -107,6 +108,40 @@ Rectangle {
             text: bar.pill.command
             color: bar.pill.risk === "irreversible" ? Kit.Theme.badInk : Kit.Theme.warnInk
             font.family: Kit.Theme.monoFamily
+            font.pixelSize: Kit.Theme.captionSize
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            maximumLineCount: 1
+        }
+
+        // Why this step happens: the agent's own sentence from just before it acted. Quiet, and
+        // there when you rest the mouse on the line; a step that touches the system always shows it,
+        // because that is the one you would want it for while Esc is still in reach.
+        Text {
+            objectName: "because"
+            Layout.fillWidth: true
+            visible: bar.pill.mode === "working" && bar.pill.flash === "" && bar.pill.because !== ""
+                     && (bar.hovered || bar.pill.risk !== "")
+            text: bar.pill.because
+            font.family: Kit.Theme.fontFamily
+            color: Kit.Theme.muted
+            font.pixelSize: Kit.Theme.smallSize
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            maximumLineCount: 2
+            elide: Text.ElideRight
+        }
+
+        // Where the idea may have come from: the machine read something outside before this step.
+        // Said by order, not guessed by cause.
+        Text {
+            objectName: "after"
+            Layout.fillWidth: true
+            visible: bar.pill.mode === "working" && bar.pill.flash === "" && bar.pill.after !== "" && bar.pill.risk !== ""
+            text: bar.pill.after
+            font.family: Kit.Theme.fontFamily
+            color: Kit.Theme.warnInk
+            opacity: 0.8
             font.pixelSize: Kit.Theme.captionSize
             textFormat: Text.PlainText
             elide: Text.ElideRight

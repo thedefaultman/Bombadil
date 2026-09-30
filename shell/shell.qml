@@ -194,6 +194,7 @@ ShellRoot {
             exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
+                Region { item: cardHost }
                 Region { item: statusLine }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
@@ -247,6 +248,20 @@ ShellRoot {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
+
+                // A picture the machine drew from itself, or the agent drew: above the line, over the
+                // windows. It draws with the kit's Diagram, so it loads on its own: a picture
+                // that will not draw costs the pictures, never the bar.
+                Loader {
+                    id: cardHost
+                    visible: status === Loader.Ready && item !== null && item.opacity > 0
+                    Layout.fillWidth: true
+                    // As wide as the pill, so it stays between the desk's rails.
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
+                    Layout.alignment: Qt.AlignHCenter
+                    Component.onCompleted: setSource("CardHost.qml", {
+                        pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
+                }
 
                 StatusLine {
                     id: statusLine
@@ -412,8 +427,8 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then puts the line and
-                                // the drawer away and gives the keyboard back.
+                                // Esc stops a running turn; otherwise it clears, then puts the line, the
+                                // picture and the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""
