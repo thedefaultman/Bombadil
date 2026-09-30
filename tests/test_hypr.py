@@ -5,6 +5,12 @@ import pytest
 from bombadil import hypr
 
 
+@pytest.fixture(autouse=True)
+def _isolated(home):
+    """Nothing here may reach a real compositor (HYPRLAND_INSTANCE_SIGNATURE is cleared) or write
+    the real runtime dir, where the slots handed out are kept."""
+
+
 def _monitor(w=1600, h=900, reserved=(0, 0, 0, 64), scale=1, x=0, y=0, transform=0):
     return {"name": "DP-1", "focused": True, "width": w, "height": h, "scale": scale, "x": x, "y": y,
             "transform": transform, "reserved": list(reserved)}
@@ -123,3 +129,44 @@ def test_it_never_raises_and_says_why_it_did_not_pick():
 def test_a_name_that_is_not_an_app_name_never_reaches_lua(name):
     h = Ipc()
     assert h.place_app(name) == "" and h.sent == []
+
+
+def test_two_apps_opened_a_moment_apart_do_not_share_a_slot():
+    # A window takes seconds to map, so the second open sees no window of the first.
+    h = Ipc()
+    assert h.place_app("passwords") == "passwords opens at 690,178"
+    assert h.place_app("memory-monitor") == "memory-monitor opens at 738,226"
+    assert h.place_app("notes") == "notes opens at 786,274"
+
+
+def test_the_same_app_asking_again_keeps_its_own_slot():
+    h = Ipc()
+    assert h.place_app("passwords") == h.place_app("passwords") == "passwords opens at 690,178"
+
+
+def test_a_slot_handed_out_is_the_windows_once_it_maps_and_free_again_when_it_never_does(monkeypatch):
+    import time
+    from types import SimpleNamespace
+    now = [1000.0]
+    monkeypatch.setattr(hypr, "time", SimpleNamespace(time=lambda: now[0], sleep=time.sleep))
+    h = Ipc()
+    h.place_app("passwords")
+    # Its window mapped where it was told: one slot taken, not counted twice.
+    h._clients = [_card((690, 178))]
+    assert h.place_app("memory-monitor") == "memory-monitor opens at 738,226"
+    # memory-monitor never mapped: ten seconds later its slot is free again.
+    now[0] += hypr.PENDING_SECS + 1
+    assert h.place_app("notes") == "notes opens at 738,226"
+
+
+def test_a_spot_that_was_not_set_is_not_held():
+    h = Ipc(reply="error: bad")
+    assert "no spot picked" in h.place_app("passwords")
+    h.reply = "ok"
+    assert h.place_app("memory-monitor") == "memory-monitor opens at 690,178"
+
+
+def test_a_broken_placements_file_is_ignored(home):
+    (home / "run").mkdir(parents=True, exist_ok=True)
+    (home / "run" / "app-placements.json").write_text('[{"name": 3}, "x", {"name": "a", "t": "now", "at": []}]')
+    assert Ipc().place_app("passwords") == "passwords opens at 690,178"

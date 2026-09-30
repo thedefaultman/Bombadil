@@ -5,6 +5,7 @@ current one and slides back out. `panel("browser")` shows the browser panel, lau
 Chromium into it if it is not running yet.
 """
 
+import fcntl
 import json
 import os
 import re
@@ -12,7 +13,10 @@ import shutil
 import socket
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+from . import paths
 
 PANELS: dict[str, list[str]] = {
     "browser": ["chromium", "--ozone-platform=wayland", "--remote-debugging-port=9222",
@@ -48,6 +52,47 @@ def app_slots(monitor: dict, card: tuple[int, int] = APP_CARD) -> list[tuple[int
     step = min(APP_STEP, (room + back) / (APP_SLOTS - 1))
     bx = min(back, x0 - left)
     return [(round(x0 - bx + step * k), round(y0 - back + step * k)) for k in range(APP_SLOTS)]
+
+
+PENDING_SECS = 10.0   # how long a slot stays given to an app whose window has not appeared
+
+
+class _Pending:
+    """The slots just handed out, in a file under the runtime dir: agentd (the launcher) and
+    os-mcp are separate processes that open apps, and each must see the other's."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def load(self) -> list[dict]:
+        try:
+            rows = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return []
+        return [r for r in rows if isinstance(r, dict) and isinstance(r.get("name"), str)
+                and isinstance(r.get("t"), (int, float)) and isinstance(r.get("at"), list) and len(r["at"]) == 2]
+
+    def save(self, rows: list[dict]):
+        try:
+            self.path.write_text(json.dumps(rows))
+        except OSError:
+            pass
+
+
+@contextmanager
+def _placements():
+    """Picking a slot and recording it happen under one lock, so two opens at once do not both
+    see the same free slot."""
+    base = paths.runtime_dir()
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        lock = open(base / "app-placements.lock", "a")
+    except OSError:
+        yield _Pending(base / "app-placements.json")
+        return
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield _Pending(base / "app-placements.json")
 
 
 def _socket_path() -> Path | None:
@@ -100,23 +145,35 @@ class Hyprland:
 
     def place_app(self, name: str) -> str:
         """Before an app starts: a window rule that opens it on the first free slot of app_slots,
-        so a second app does not open exactly on top of the first. Never raises; without Hyprland
-        (or if it does not answer) the app opens where hyprland.lua's rule puts it."""
+        so a second app does not open exactly on top of the first. A slot is also taken by an app
+        that was given it a moment ago and has not mapped its window yet (a window takes seconds).
+        Never raises; without Hyprland (or if it does not answer) the app opens where
+        hyprland.lua's rule puts it."""
         if not self.available or not _APP_NAME.fullmatch(name):
             return ""
         try:
-            monitors = json.loads(self.request("j/monitors"))
-            mon = next((m for m in monitors if m.get("focused")), monitors[0])
-            slots = app_slots(mon)
-            cards = [c for c in self.clients()
-                     if str(c.get("class", "")).startswith("bombadil-app-") and c.get("floating")]
-            taken = {tuple(c.get("at") or ()) for c in cards}
-            x, y = next(((sx, sy) for sx, sy in slots
-                         if (sx + mon.get("x", 0), sy + mon.get("y", 0)) not in taken),
-                        slots[len(cards) % APP_SLOTS])
-            rule = (f'hl.window_rule({{ name = "bombadil-app-{name}", '
-                    f'match = {{ class = "^(bombadil-app-{name})$" }}, move = {{ {x}, {y} }} }})')
-            reply = self.request("eval " + rule).strip()
+            with _placements() as pending:
+                monitors = json.loads(self.request("j/monitors"))
+                mon = next((m for m in monitors if m.get("focused")), monitors[0])
+                slots = app_slots(mon)
+                clients = self.clients()
+                cards = [c for c in clients
+                         if str(c.get("class", "")).startswith("bombadil-app-") and c.get("floating")]
+                mapped = {str(c.get("class", "")) for c in clients}
+                now = time.time()
+                waiting = [p for p in pending.load()
+                           if now - p["t"] < PENDING_SECS and p["name"] != name
+                           and f"bombadil-app-{p['name']}" not in mapped]
+                taken = {tuple(c.get("at") or ()) for c in cards} | {tuple(p["at"]) for p in waiting}
+                x, y = next(((sx, sy) for sx, sy in slots
+                             if (sx + mon.get("x", 0), sy + mon.get("y", 0)) not in taken),
+                            slots[(len(cards) + len(waiting)) % APP_SLOTS])
+                rule = (f'hl.window_rule({{ name = "bombadil-app-{name}", '
+                        f'match = {{ class = "^(bombadil-app-{name})$" }}, move = {{ {x}, {y} }} }})')
+                reply = self.request("eval " + rule).strip()
+                if reply == "ok":
+                    pending.save(waiting + [{"name": name, "t": now,
+                                             "at": [x + mon.get("x", 0), y + mon.get("y", 0)]}])
         except (OSError, RuntimeError, ValueError, KeyError, IndexError, TypeError) as e:
             return f"no spot picked for {name}: {e}"
         return f"{name} opens at {x},{y}" if reply == "ok" else f"no spot picked for {name}: {reply}"
