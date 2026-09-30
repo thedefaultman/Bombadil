@@ -60,7 +60,10 @@ shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
 # Ask the host to press keys on the VM's keyboard, over QMP: "meta_l" taps Super, "meta_l+esc"
 # is Super+Escape, "b r o w s e r ret" types a word and Enter.
 nkeys=0
-keys() { nkeys=$((nkeys+1)); say "KEYS $nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
+# The host sends each numbered request once; a reboot (the undo round trip) starts the numbers again,
+# so they carry the boot's id.
+bootid=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
+keys() { nkeys=$((nkeys+1)); say "KEYS $bootid-$nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
 history_has() { as_user bombadil history | grep -q "$1"; }
 # Launcher actions read "  HH:MM  <word you typed>: <what it did>". Match the word at the start of
 # the line, so "open the browser: Opened the browser." from an earlier test cannot stand in for it.

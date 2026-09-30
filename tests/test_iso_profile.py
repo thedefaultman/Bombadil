@@ -154,3 +154,14 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
     assert 'cp "$kernel" /mnt/boot/vmlinuz-linux' in install
     # It is found, and checked, before the disk is erased.
     assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')
+
+
+def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
+    import re
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    host = (ISO.parent / "scripts/test-vm.sh").read_text()
+    assert 'say "KEYS $bootid-$nkeys $*"' in smoke and "/proc/sys/kernel/random/boot_id" in smoke
+    pattern = re.search(r'grep -ao "(BOMBADIL-SMOKE: KEYS [^"]*)"', host).group(1)
+    # The undo round trip boots twice; each boot's first request has its own number.
+    log = "BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l\nBOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l\n"
+    assert re.findall(pattern, log) == ["BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l", "BOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l"]
