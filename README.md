@@ -1,4 +1,9 @@
-# Bombadil
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/bombadil-lockup.svg">
+    <img alt="bombadil" src="docs/brand/bombadil-lockup-light.svg" height="72">
+  </picture>
+</p>
 
 A Linux distro whose main interface is an AI agent. You boot it, pick Claude or Codex,
 and from then on you talk to the machine: the browser slides in when you ask for it,

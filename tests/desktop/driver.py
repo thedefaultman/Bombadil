@@ -60,6 +60,17 @@ def shot(name):
         print("grim failed:", r.stderr, flush=True)
 
 
+def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
+    """How many pixels in the pill's rows are the stone's green (the pill draws no other green)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    for y in range(*rows):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
 # -- start everything --
 start("fake-api", [sys.executable, str(E2E / "fake_api.py"), "18555", str(OUT / "api-requests.jsonl")])
 (xdg / "sway.conf").write_text(
@@ -166,6 +177,7 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
+check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
@@ -186,6 +198,7 @@ check(
 inst = wait(ev("status", text=lambda t: (t or "").startswith("Installing ffmpeg")), 40, n)
 time.sleep(0.4)
 shot("03-installing-ffmpeg")
+check("the stone is not green while a turn runs", stone_pixels("03-installing-ffmpeg") < 20, stone_pixels("03-installing-ffmpeg"))
 check(
     "step reads Installing ffmpeg, marked system, with the exact command",
     inst and inst.get("risk") == "system" and "pacman -S" in (inst.get("command") or ""),

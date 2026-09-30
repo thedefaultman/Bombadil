@@ -58,6 +58,28 @@ QtObject {
     // while a sign-in is under way (they call it off).
     readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
 
+    // The mark's face (Stone.qml): what the machine is doing, in a word. The pill adds "listening" for
+    // the screen that holds the keyboard.
+    //   starting  since boot, until agentd first answers (not yet offline)
+    //   offline   agentd was there and is gone, or never came
+    //   needs     the machine waits on you: a session asks (needsYou, the desk sets it), or setup does
+    //   working   a turn runs, "On it" is showing, or a sign-in is under way
+    //   stopped   the closing line says it was stopped
+    //   done      a turn just finished (the stone hops once, then sits as at rest)
+    //   rest      otherwise
+    property bool booting: true      // the shell turns this off a while after it starts
+    property bool seen: false        // agentd has answered since the bar started
+    property bool needsYou: false
+    readonly property string face: {
+        if (!connected) return !seen && booting ? "starting" : "offline"
+        if (needsYou || (mode === "setup" && (setupState === "choose" || setupState === "signed_out" || setupState === "offline")))
+            return "needs"
+        if (busy || optimistic || mode === "working" || setupState === "signing_in") return "working"
+        if (mode === "closing") return stopped ? "stopped" : (source === "error" ? "rest" : "done")
+        return "rest"
+    }
+    onConnectedChanged: if (connected) seen = true
+
     property string _result: ""
     property bool _resultOk: true
     property string _error: ""
