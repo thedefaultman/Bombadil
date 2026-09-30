@@ -1,0 +1,4 @@
+# Bombadil: active mirrors, so the first install works without a mirror hunt. The pacman-mirrorlist
+# package ships every server commented out. Replace or add servers here as needed.
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://fastly.mirror.pkgbuild.com/$repo/os/$arch
