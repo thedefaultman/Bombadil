@@ -1,0 +1,27 @@
+# Review-fix build (commit 1ed8f46), 2026-09-27 — live session, then install to a scratch disk
+BOMBADIL-SMOKE: START mode=install
+BOMBADIL-SMOKE: PASS user-exists
+BOMBADIL-SMOKE: PASS tools-installed
+BOMBADIL-SMOKE: PASS pyside6-imports
+BOMBADIL-SMOKE: PASS greetd-active
+BOMBADIL-SMOKE: PASS hyprland-running
+BOMBADIL-SMOKE: PASS agentd-socket
+BOMBADIL-SMOKE: PASS quickshell-running
+BOMBADIL-SMOKE: PASS hypr-config-ok
+BOMBADIL-SMOKE: PASS bar-layer
+BOMBADIL-SMOKE: PASS agentd-status
+BOMBADIL-SMOKE: PASS claude-cli
+BOMBADIL-SMOKE: PASS codex-cli
+BOMBADIL-SMOKE: PASS os-mcp-lists-tools
+BOMBADIL-SMOKE: SHOT desktop
+BOMBADIL-SMOKE: PASS browser-panel
+BOMBADIL-SMOKE: PASS browser-window
+BOMBADIL-SMOKE: PASS browser-shown
+BOMBADIL-SMOKE: SHOT browser
+BOMBADIL-SMOKE: PASS browser-hide
+BOMBADIL-SMOKE: PASS create-app
+BOMBADIL-SMOKE: PASS app-window
+BOMBADIL-SMOKE: SHOT app
+BOMBADIL-SMOKE: PASS screenshot
+BOMBADIL-SMOKE: PASS install
+BOMBADIL-SMOKE: DONE pass=21 fail=0

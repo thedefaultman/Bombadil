@@ -32,10 +32,12 @@ Window {
     color: "#3b4a5a"
     property var sent: []
     property int screens: 1
+    property int handOffs: 0
     PillState {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onHandOff: w.handOffs += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
@@ -145,6 +147,10 @@ def bar(app, tmp_path):
                                      "words": ["passwords"]},
                                     {"name": "browser", "title": "Browser", "kind": "panel",
                                      "words": ["browser", "chrome"]},
+                                    {"name": "machine", "title": "Machine", "kind": "widget",
+                                     "words": ["machine"]},
+                                    {"name": "now", "title": "Now", "kind": "widget", "words": ["now", "route"]},
+                                    {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]},
                                     {"name": "undo", "title": "Undo", "kind": "command", "words": ["undo"]}])
     yield b
     b.win.close()
@@ -193,6 +199,27 @@ def test_undo_on_the_line_does_not_also_open_details(bar):
     assert bar.sent[before:] == [{"type": "local", "action": "undo"}]
     bar.click("detailsButton")
     assert bar.sent[-1] == {"type": "details", "turn": 1}
+
+
+def test_details_hands_the_keyboard_to_the_drawer_and_esc_closes_it(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    # A summoned pill holds the keyboard exclusively, and Hyprland then refuses to focus the
+    # drawer: the bar lets go before it asks for the drawer.
+    bar.click("detailsButton")
+    assert bar.win.property("handOffs") == 1 and bar.sent[-1] == {"type": "details", "turn": 1}
+    bar.click("line")   # a click on the finished line itself opens (or closes) them too
+    assert bar.win.property("handOffs") == 2 and bar.sent[-1] == {"type": "details", "turn": 1}
+    bar.call("closeDetails")
+    assert bar.sent[-1] == {"type": "close_details"}
+    before = len(bar.sent)
+    bar.send(type="status", busy=False, provider="claude", queue=[])
+    QtCore.QMetaObject.invokeMethod(bar.pill, "lost")
+    bar.pump()
+    bar.call("closeDetails")
+    bar.call("details")
+    assert bar.sent[before:] == []   # nothing reaches agentd while the socket is down
 
 
 def test_an_irreversible_step_is_red_and_says_so_after(bar):
@@ -299,6 +326,17 @@ def test_tab_completes_names_and_exact_words_show_where_they_go(bar):
     assert bar.call("completion", "open un") == ""      # commands take no verb
     assert bar.call("exact", "Passwords.") == "Passwords"
     assert bar.call("exact", "open the browser and search") == ""
+
+
+def test_a_widgets_name_is_a_launcher_word_only_after_a_verb_that_puts_a_thing_on_screen(bar):
+    assert bar.call("exact", "show machine") == "Machine"
+    assert bar.call("exact", "hide route") == "Now" and bar.call("exact", "close now.") == "Now"
+    assert bar.call("exact", "machine") == "" and bar.call("exact", "now") == ""   # bare, it is a sentence
+    assert bar.call("exact", "start now") == "" and bar.call("exact", "launch machine") == ""
+    assert bar.call("completion", "show mach") == "ine" and bar.call("completion", "mach") == ""
+    assert bar.call("completion", "start mach") == ""
+    assert bar.call("exact", "desk") == "Desk" and bar.call("exact", "desk.") == "Desk"
+    assert bar.call("exact", "desk?") == "" and bar.call("exact", "show machine?") == ""
 
 
 def test_the_bar_loads_without_qml_warnings(bar):

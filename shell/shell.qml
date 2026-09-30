@@ -3,8 +3,8 @@
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
 // while it works and how the turn ended. The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
-// Left of the pill, a chip per project holds a dot per coding session; when one waits for
-// you the pill's empty line says so, and Tab goes there.
+// Above the pill's left end, a chip per project holds a dot per coding session; when one waits
+// for you the pill's empty line says so, and Tab goes there.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
 import Quickshell.Io
@@ -19,18 +19,72 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
         onSummoned: root.summon()
+        onHandOff: root.release()
+    }
+
+    // The desk: cards on two rails under every window, strips beside the pill when they fold.
+    DeskState {
+        id: deskState
+        pill: pillState
+        onOutgoing: msg => root.write(msg)
+    }
+    // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
+    // that is not plugged in (a desk on no screen would hide Needs you too).
+    readonly property string deskScreen: {
+        if (deskState.screen !== "")
+            for (const s of Quickshell.screens) if (s.name === deskState.screen) return s.name
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0].name : ""
+    }
+    // The desk screen's size, in the pixels windows and cards are laid out in.
+    readonly property var deskScreenObject: {
+        for (const s of Quickshell.screens) if (s.name === root.deskScreen) return s
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    }
+    Binding { target: deskState; property: "screenWidth"; value: root.deskScreenObject ? root.deskScreenObject.width : 1920 }
+    Binding { target: deskState; property: "screenHeight"; value: root.deskScreenObject ? root.deskScreenObject.height : 1080 }
+    HyprCover { desk: deskState; screenName: root.deskScreen }
+    Variants {
+        model: Quickshell.screens
+        DeskRails {
+            required property var modelData
+            desk: deskState
+            screen: modelData
+            active: modelData.name === root.deskScreen
+        }
+    }
+    IpcHandler {
+        target: "desk"
+        // What the desk is showing, as JSON.
+        function state(): string { return JSON.stringify(deskState.snapshot()) }
+        // Stand-in windows for a session without Hyprland: {"windows": [{x, y, w, h, fullscreen}]}.
+        // (The command line takes the brackets off a bare list, so the list goes in an object.)
+        function cover(windows: string): void {
+            const v = JSON.parse(windows)
+            deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
+        }
+        // A message as agentd would send it, for demos and the VM smoke check.
+        function inject(message: string): void { root.handle(message) }
     }
 
     // The coding sessions (dev.py): their dots, and the line the pill shows while one waits.
     DevState {
         id: devState
         onOutgoing: msg => root.write(msg)
+    }
+    IpcHandler {
+        target: "dev"
+        // Where the first screen's chips sit, as JSON.
+        function chips(): string {
+            const w = bars.instances.length > 0 ? bars.instances[0] : null
+            return JSON.stringify(w ? w.chipsGeometry() : {})
+        }
     }
 
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
@@ -46,8 +100,9 @@ ShellRoot {
             }
             onConnectionStateChanged: {
                 root.connected = connected
+                deskState.connected = connected
                 if (connected) pillState.connected = true
-                else { pillState.lost(); devState.lost() }
+                else { pillState.lost(); deskState.lost(); devState.lost() }
             }
         }
     }
@@ -62,8 +117,9 @@ ShellRoot {
     function handle(message) {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
-        if (ev && ev.type === "dev") devState.handle(ev)
-        else pillState.handle(ev)
+        pillState.handle(ev)
+        deskState.handle(ev)
+        devState.handle(ev)   // only its own "dev" messages
     }
 
     function write(msg) {
@@ -83,33 +139,60 @@ ShellRoot {
     function release() { root.summonedOn = "" }
 
     Variants {
+        id: bars
         model: Quickshell.screens
         PanelWindow {
             id: win
             required property var modelData
             screen: modelData
             readonly property bool summoned: root.summonedOn !== "" && root.summonedOn === modelData.name
+            // The desk narrows the pill and turns it into a capsule under a full-screen window on the
+            // screen it lives on; the pill on another screen is as it always was.
+            readonly property bool onDesk: modelData.name === root.deskScreen
+            readonly property bool capsule: onDesk && deskState.capsule
+            readonly property real pillMax: onDesk ? deskState.pillWidth : 900
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
+            // Where the session chips sit against the pill, for the desktop test (`quickshell ipc call dev chips`).
+            function chipsGeometry() {
+                const c = sessionChips.mapToItem(null, 0, 0)
+                const p = pillBox.mapToItem(null, 0, 0)
+                return { visible: sessionChips.visible, x: c.x, y: c.y, width: sessionChips.width,
+                         height: sessionChips.height, pillX: p.x, pillY: p.y, pillWidth: pillBox.width }
+            }
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
-            // Keys on demand (click the pill), and at once after Super: Exclusive focuses the layer
-            // immediately; going back to OnDemand on Enter or Esc hands the keyboard back.
-            WlrLayershell.keyboardFocus: summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+            // On Hyprland the pill takes keys only while summoned (a tap on Super, or a click on the
+            // pill). The focus grab below gives it the keyboard at once, and a click anywhere else
+            // takes it away. Going from OnDemand back to None makes Hyprland hand the keyboard to the
+            // window you were in when we let go (Enter, Esc, idle). Never Exclusive there: that
+            // commit reaches Hyprland after the grab (Quickshell applies it at the next polish) and
+            // Hyprland ends any grab when a layer turns exclusive, so the keys went to the window
+            // under the pointer. Other compositors have no focus grab, so Exclusive it is (this is
+            // also what the headless sway test runs).
+            WlrLayershell.keyboardFocus: root.hyprland
+                ? (summoned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
+                : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
             exclusiveZone: 64
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
                 Region { item: chips }
-                Region { item: pillBox }
                 Region { item: sessionChips }
+                Region { item: pillBox }
+                Region { item: stripsLeft }
+                Region { item: stripsRight }
             }
 
             onSummonedChanged: {
                 if (summoned) input.forceActiveFocus()
                 grab.active = summoned
             }
+
+            // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
+            // layer takes clicks on demand by itself.)
+            function summonHere() { if (root.hyprland) root.summonedOn = modelData.name }
 
             // While summoned the pill holds the keyboard; a click anywhere else hands it back,
             // so typing meant for another window (a password prompt) never lands in the pill.
@@ -128,24 +211,30 @@ ShellRoot {
                 onTriggered: root.release()
             }
 
+            // The cards that folded, beside the pill.
+            DeskStrips {
+                id: stripsLeft
+                desk: deskState; side: "left"; active: win.onDesk
+                pillEdge: column.x + pillBox.x
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+            DeskStrips {
+                id: stripsRight
+                desk: deskState; side: "right"; active: win.onDesk
+                pillEdge: column.x + pillBox.x + pillBox.width
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+
             ColumnLayout {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
 
-                // A hovered dot's last few lines, over its chip. It takes no clicks.
-                SessionPeek {
-                    id: sessionPeek
-                    dev: devState
-                    Layout.alignment: Qt.AlignLeft
-                    Layout.leftMargin: Math.max(0, Math.min(sessionChips.x, column.width - width))
-                }
-
                 StatusLine {
                     id: statusLine
                     pill: pillState
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
                 }
 
@@ -156,141 +245,158 @@ ShellRoot {
                     // so the input mask lets clicks beside them through.
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                 }
 
-                // The pill, and left of it the sessions' chips. The pill stays centred; without
-                // room beside it the chips sit above its left end.
-                Item {
-                    id: pillRow
-                    Layout.fillWidth: true
-                    readonly property bool beside: (width - pillBox.width) / 2 >= sessionChips.implicitWidth + 10
-                    readonly property bool above: sessionChips.visible && !beside
-                    implicitHeight: pillBox.height + (above ? sessionChips.implicitHeight + 8 : 0)
+                // A hovered dot's last few lines, over its chip. It takes no clicks.
+                SessionPeek {
+                    id: sessionPeek
+                    dev: devState
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: implicitWidth
+                    // Over its chip, at the pill's left end.
+                    Layout.leftMargin: Math.max(0, Math.min(sessionChips.x, column.width - implicitWidth))
+                    Layout.rightMargin: 0
+                }
 
+                // The sessions' chips, above the pill's left end (the desk's strips keep the row beside it).
+                Item {
+                    id: sessionRow
+                    // Not sessionChips.visible: a child is only visible while its parent is, so the row
+                    // would never come back once hidden.
+                    visible: devState.sessions.length > 0
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: win.pillMax
+                    Layout.alignment: Qt.AlignHCenter
+                    implicitHeight: sessionChips.implicitHeight
                     SessionChips {
                         id: sessionChips
                         dev: devState
-                        x: pillRow.beside ? pillBox.x - width - 10 : pillBox.x + 14
-                        y: pillRow.beside ? pillBox.y + (pillBox.height - height) / 2 : 0
+                        x: 14
                         width: implicitWidth
                         height: implicitHeight
                     }
+                }
 
-                    // Prompt bar
-                    Rectangle {
-                        id: pillBox
-                        width: Math.min(pillRow.width, 900)
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
-                        height: 52
-                        radius: 26
-                        color: "#f01a1d21"
-                        border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
-                        border.width: 1.5
-                        Behavior on border.color { ColorAnimation { duration: 300 } }
+                // Prompt bar
+                Rectangle {
+                    id: pillBox
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: win.pillMax
+                    Layout.alignment: Qt.AlignHCenter
+                    implicitHeight: 52
+                    radius: 26
+                    color: "#f01a1d21"
+                    border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
+                    border.width: 1.5
+                    Behavior on border.color { ColorAnimation { duration: 300 } }
+                    TapHandler { onTapped: win.summonHere() }
 
-                        RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
-                            spacing: 8
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                        spacing: 8
 
-                            // The dot. While a turn runs it is orange; hover turns it into Stop.
+                        // The dot. While a turn runs it is orange; hover turns it into Stop.
+                        Rectangle {
+                            id: dotBox
+                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
+                            implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
+                            implicitHeight: 24
+                            radius: 12
+                            color: stoppable ? "#3a2a26" : "transparent"
+                            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
                             Rectangle {
-                                id: dotBox
-                                readonly property bool stoppable: pillState.stoppable && dotHover.hovered
-                                implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
-                                implicitHeight: 24
-                                radius: 12
-                                color: stoppable ? "#3a2a26" : "transparent"
-                                Behavior on implicitWidth { NumberAnimation { duration: 120 } }
-                                Rectangle {
-                                    visible: !dotBox.stoppable
-                                    anchors.centerIn: parent
-                                    width: 10; height: 10; radius: 5
-                                    color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
-                                    SequentialAnimation on opacity {
-                                        running: pillState.busy; loops: Animation.Infinite
-                                        NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
-                                    }
+                                visible: !dotBox.stoppable
+                                anchors.centerIn: parent
+                                width: 10; height: 10; radius: 5
+                                color: pillState.busy ? "#d97757" : (root.connected ? "#5fb36b" : "#c04a4a")
+                                SequentialAnimation on opacity {
+                                    running: pillState.busy; loops: Animation.Infinite
+                                    NumberAnimation { to: 0.3; duration: 500 } NumberAnimation { to: 1; duration: 500 }
                                 }
-                                Row {
-                                    id: stopRow
-                                    visible: dotBox.stoppable
-                                    anchors.centerIn: parent
-                                    spacing: 6
-                                    Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
-                                }
-                                HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                                TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
                             }
+                            Row {
+                                id: stopRow
+                                visible: dotBox.stoppable
+                                anchors.centerIn: parent
+                                spacing: 6
+                                Rectangle { width: 9; height: 9; radius: 2; color: "#d97757"; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: "Stop"; color: "#f2c4b3"; font.pixelSize: 13 }
+                            }
+                            HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                            TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
+                        }
 
-                            Item {
-                                Layout.fillWidth: true
-                                implicitHeight: input.implicitHeight
+                        Item {
+                            visible: !win.capsule     // a full-screen window: the pill is the dot and the clock
+                            Layout.fillWidth: true
+                            implicitHeight: input.implicitHeight
 
-                                TextField {
-                                    id: input
-                                    anchors.fill: parent
-                                    // While a coding session waits for you, the empty pill says so ("reviewer on
-                                    // Bombadil: run the migration?") and Tab goes there.
-                                    placeholderText: !root.connected ? "Waiting for agentd…"
-                                                     : (devState.line !== "" ? devState.line + "   ⇥" : "Ask anything")
-                                    color: "#e6e8eb"
-                                    placeholderTextColor: devState.line !== "" && root.connected ? "#ffd9b8" : "#8b939c"
-                                    font.pixelSize: 16
-                                    background: null
-                                    focus: true
-                                    onAccepted: {
-                                        if (pillState.submit(text)) {
-                                            text = ""
-                                            root.release()
-                                        }
-                                    }
-                                    onTextChanged: if (win.summoned) idle.restart()
-                                    // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
-                                    // pill it walks to the next session waiting for you.
-                                    Keys.onTabPressed: {
-                                        if (text === "" && devState.sessions.length > 0) {
-                                            devState.next()
-                                            root.release()
-                                            return
-                                        }
-                                        const rest = pillState.completion(text)
-                                        if (rest) text = text + rest
-                                    }
-                                    // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
-                                    Keys.onEscapePressed: {
-                                        if (pillState.stoppable) pillState.stop()
-                                        else if (text !== "") text = ""
-                                        else { pillState.dismiss(); root.release() }
+                            TextField {
+                                id: input
+                                anchors.fill: parent
+                                enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
+                                // While a coding session waits for you, the empty pill says so ("reviewer on
+                                // Bombadil: run the migration?") and Tab goes there.
+                                placeholderText: !root.connected ? "Waiting for agentd…"
+                                                 : (devState.line !== "" ? devState.line + "   ⇥" : "Ask anything")
+                                color: "#e6e8eb"
+                                placeholderTextColor: devState.line !== "" && root.connected ? "#ffd9b8" : "#8b939c"
+                                font.pixelSize: 16
+                                background: null
+                                focus: true
+                                // The field takes the press itself, so the pill's own handler never sees it.
+                                TapHandler { onTapped: win.summonHere() }
+                                onAccepted: {
+                                    if (pillState.submit(text)) {
+                                        text = ""
+                                        root.release()
                                     }
                                 }
-
-                                // The rest of a name Tab would complete, drawn after what was typed.
-                                Row {
-                                    x: input.leftPadding
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: input.text !== "" && ghost.text !== ""
-                                    Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
-                                    Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
+                                onTextChanged: if (win.summoned) idle.restart()
+                                // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
+                                // pill it walks to the next session waiting for you.
+                                Keys.onTabPressed: {
+                                    if (text === "" && devState.sessions.length > 0) {
+                                        devState.next()
+                                        root.release()
+                                        return
+                                    }
+                                    const rest = pillState.completion(text)
+                                    if (rest) text = text + rest
+                                }
+                                // Esc stops a running turn; otherwise it clears, then puts the line and
+                                // the drawer away and gives the keyboard back.
+                                Keys.onEscapePressed: {
+                                    if (pillState.stoppable) pillState.stop()
+                                    else if (text !== "") text = ""
+                                    else { pillState.dismiss(); pillState.closeDetails(); root.release() }
                                 }
                             }
 
-                            // An exact launcher word: say it opens here, without the model.
-                            Text {
-                                readonly property string target: pillState.exact(input.text)
-                                visible: target !== ""
-                                text: "↵ " + target
-                                color: "#8b939c"
-                                font.pixelSize: 12
+                            // The rest of a name Tab would complete, drawn after what was typed.
+                            Row {
+                                x: input.leftPadding
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: input.text !== "" && ghost.text !== ""
+                                Text { text: input.text; font: input.font; color: "transparent"; textFormat: Text.PlainText }
+                                Text { id: ghost; text: pillState.completion(input.text); font: input.font; color: "#5d646c"; textFormat: Text.PlainText }
                             }
+                        }
 
-                            Text {
-                                id: clock
-                                text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
-                                Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
-                            }
+                        // An exact launcher word: say it opens here, without the model.
+                        Text {
+                            readonly property string target: pillState.exact(input.text)
+                            visible: target !== "" && !win.capsule
+                            text: "↵ " + target
+                            color: "#8b939c"
+                            font.pixelSize: 12
+                        }
+
+                        Text {
+                            id: clock
+                            text: Qt.formatTime(new Date(), "HH:mm"); color: "#8b939c"; font.pixelSize: 13
+                            Timer { interval: 30000; running: true; repeat: true; onTriggered: clock.text = Qt.formatTime(new Date(), "HH:mm") }
                         }
                     }
                 }

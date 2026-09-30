@@ -323,7 +323,158 @@ shot("20-details")
 tree = run("swaymsg", "-t", "get_tree").stdout
 check("details drawer opened", "bombadil-details" in tree)
 
-# 7. Coding sessions: the real Claude Code in zellij, a window that is only a viewer, the dots.
+
+def drawer_open():
+    return "bombadil-details" in run("swaymsg", "-t", "get_tree").stdout
+
+
+def focused_app():
+    todo = [json.loads(run("swaymsg", "-t", "get_tree").stdout or "{}")]
+    while todo:
+        node = todo.pop()
+        if node.get("focused"):
+            return node.get("app_id") or node.get("name")
+        todo += node.get("nodes", []) + node.get("floating_nodes", [])
+    return None
+
+
+def until(pred, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+# 7. every way out of the drawer: Esc in it, Details again, Esc in the pill. (Clicks on the line
+# and its Details button are covered offscreen in tests/test_pill_qml.py: headless sway has no pointer.)
+check("details drawer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("Esc in the drawer closes it", until(lambda: not drawer_open()))
+send({"type": "details", "turn": docker_turn})
+until(drawer_open)
+time.sleep(1)
+send({"type": "details", "turn": docker_turn})
+check("Details again closes it", until(lambda: not drawer_open()))
+send({"type": "details", "turn": docker_turn})
+until(drawer_open)
+time.sleep(1)
+summon()
+key("Escape")
+check("Esc in the pill closes it", until(lambda: not drawer_open()))
+shot("21-details-closed")
+
+# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
+# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
+def desk_ipc(*args):
+    return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "desk", *args)
+
+
+def desk_state():
+    try:
+        return json.loads(desk_ipc("state").stdout)
+    except ValueError:
+        return {}
+
+
+summon()
+typ("show me the route")
+n = mark()
+key("Return")
+n0 = n
+pl = wait(ev("plan", steps=lambda s: bool(s) and len(s) == 2), 40, n)
+check("the plan arrives as two steps with the first running", pl and [x["status"] for x in pl["steps"]] in (
+    ["pending", "pending"], ["in_progress", "pending"]), pl and pl.get("steps"))
+st = None
+for _ in range(100):
+    st = desk_state()
+    if st.get("faces", {}).get("now") == "full":
+        break
+    time.sleep(0.2)
+time.sleep(0.6)
+shot("22-desk-now")
+check("Now is on the desk while the plan runs", st and st["present"]["now"] and st["faces"]["now"] == "full", st and st.get("faces"))
+check("Now is one of the left rail's slots, 300 wide", st and st["slots"]["now"]["x"] == 16 and st["slots"]["now"]["w"] == 300, st and st.get("slots"))
+check("Now lists both steps", st and [x["label"] for x in st["now"]["model"]["steps"]][-1] == "Write it down", st and st["now"]["model"]["steps"])
+desk_ipc("cover", json.dumps({"windows": [{"x": 0, "y": 560, "w": 500, "h": 160}]}))
+time.sleep(0.4)
+st = desk_state()
+shot("23-desk-covered")
+check("a window over Now folds it to a strip", st.get("faces", {}).get("now") == "strip" and st.get("mode") == "shared", st.get("faces"))
+check("the pill narrows to 360 while a window shares the stage", st.get("pillWidth") == 360, st.get("pillWidth"))
+desk_ipc("cover", '{"windows": []}')
+time.sleep(1.0)
+st = desk_state()
+check("Now comes back once the window is gone", st.get("faces", {}).get("now") == "full" and st.get("mode") == "open", st.get("faces"))
+summon()
+typ("desk")
+n = mark()
+key("Return")
+d = wait(ev("local", action="desk", phase="done"), 10, n)
+time.sleep(0.6)
+st = desk_state()
+shot("25-desk-folded")
+check("the desk word folds every card", d and d.get("ok") and st.get("folded") and st["faces"]["now"] == "strip", (d, st.get("faces")))
+summon()
+typ("desk")
+n = mark()
+key("Return")
+wait(ev("local", action="desk", phase="done"), 10, n)
+time.sleep(0.6)
+check("and again brings them back", not desk_state().get("folded"))
+end = wait(ev("turn_end"), 60, n0)
+time.sleep(0.5)
+shot("24-desk-done")
+summon()
+typ("hide needs you")
+n = mark()
+key("Return")
+h = wait(ev("local", phase="done"), 10, n)
+check("Needs you cannot be hidden", h and not h.get("ok") and "cannot be hidden" in (h.get("text") or ""), h and h.get("text"))
+key("Escape")
+
+# 9. Watching and Needs you: the jobs table and the coding sessions agentd sends, injected as the
+# shell would get them (real jobs run under systemd in the VM smoke; no systemd here).
+def inject(msg):
+    desk_ipc("inject", json.dumps(msg))
+
+
+now_s = time.time()
+inject({"type": "jobs", "jobs": [
+    {"id": "a1b2c3", "title": "Ubuntu 26.04 ISO", "kind": "job", "state": "running", "started": now_s - 240,
+     "deadline": None, "ended": None, "pct": 43.0, "last": "12 MB/s", "unit": "bombadil-job-a1b2c3"},
+    {"id": "d4e5f6", "title": "Timer, 10 min", "kind": "timer", "state": "running", "started": now_s - 200,
+     "deadline": now_s + 400, "ended": None, "pct": None, "last": "", "unit": "bombadil-timer-d4e5f6"},
+    {"id": "0a0b0c", "title": "Build the image", "kind": "watch", "state": "failed", "started": now_s - 60,
+     "deadline": None, "ended": now_s - 5, "pct": None, "last": "pacman: could not resolve host",
+     "unit": "bombadil-job-0a0b0c"}]})
+inject({"type": "dev", "sessions": [
+    {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
+     "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
+     "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
+     "lines": []},
+    {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
+     "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
+     "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
+    "attention": ["rev", "bld"], "front": "", "line": ""})
+time.sleep(1.5)
+st = desk_state()
+shot("26-desk-watching-needs")
+w, nd = st.get("watching", {}), st.get("needs", {})
+check("Watching shows the meter, the timer and the failed job", [r["key"] for r in w.get("rows", [])] == ["a1b2c3", "d4e5f6", "0a0b0c"], w.get("rows"))
+check("the meter row carries 43% and a stop", w["rows"][0]["kind"] == "meter" and abs(w["rows"][0]["meter"] - 0.43) < 1e-6 and w["rows"][0]["remove"], w["rows"][0])
+check("the failed row says why in one line, with Why?", w["rows"][2]["button"] == "Why?" and "resolve host" in w["rows"][2]["sub"], w["rows"][2])
+check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
+check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
+      and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
+inject({"type": "jobs", "jobs": []})
+time.sleep(0.8)
+st = desk_state()
+check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+
+# 10. Coding sessions: the real Claude Code in zellij, a window that is only a viewer, the dots.
 home = Path.home()
 proj = home / "Projects" / "spike"
 proj.mkdir(parents=True, exist_ok=True)
@@ -361,15 +512,6 @@ def viewer_open(app_id):
     return f'"app_id": "{app_id}"' in run("swaymsg", "-t", "get_tree").stdout
 
 
-def until(pred, timeout=20):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if pred():
-            return True
-        time.sleep(0.2)
-    return False
-
-
 # a. "claude spike" starts the unchanged TUI in the project, in a window of its own.
 summon()
 typ("claude spike")
@@ -399,6 +541,13 @@ d = devmsg(lambda m: states(m).get("spike/claude") == "done", 30, n)
 check("its dot is lit when it finishes", d is not None and "finished" in (d or {}).get("line", ""), d and d.get("line"))
 time.sleep(1)
 shot("32-joke-done-dot-lit")
+try:
+    geo = json.loads(run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "dev", "chips").stdout)
+except ValueError:
+    geo = {}
+check("the bar shows the project's chip above the pill's left end",
+      geo.get("visible") and geo["width"] > 40 and geo["height"] == 28 and geo["y"] + geo["height"] <= geo["pillY"]
+      and geo["pillX"] <= geo["x"] < geo["pillX"] + geo["pillWidth"] / 2, geo)
 
 # c. Shift+Enter reaches Claude Code through foot and zellij: a newline, not a send.
 before = api_requests()

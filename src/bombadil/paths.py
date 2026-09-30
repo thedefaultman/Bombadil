@@ -51,3 +51,11 @@ def projects_dir() -> Path:
 def dev_dir() -> Path:
     """Where the coding sessions' registry and last screens live."""
     return state_dir() / "dev"
+
+
+def desk_file() -> Path:
+    return state_dir() / "desk.toml"
+
+
+def jobs_dir() -> Path:
+    return state_dir() / "jobs"
