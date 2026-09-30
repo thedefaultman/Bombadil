@@ -596,6 +596,17 @@ class LoopStore:
             g.state, g.form = "offered", rec.form.letter
             return offers.Offer(cur.lastrowid, g, rec, now)
 
+    def peek_offer(self, now: float | None = None) -> tuple[Group, forms.Recommendation] | None:
+        """The group and form `ripe_offer` would make a new offer of right now, recording nothing: for
+        the one optional model call that may look at a group before it is shown. None while an offer
+        waits, or when nothing is ripe."""
+        now = time.time() if now is None else now
+        with self._lock:
+            if self.waiting():
+                return None
+            return offers.next_offer(self.groups(("counting",), now), self._history(), now, self.cfg,
+                                     built=self.built, stopped=self._stopped(), titles=self._titles())
+
     def waiting(self) -> int:
         """How many offers are showing and unanswered (at most one)."""
         return self.conn.execute("SELECT COUNT(*) FROM offers WHERE outcome=''").fetchone()[0]
@@ -636,6 +647,20 @@ class LoopStore:
         n = self.conn.execute("SELECT n FROM asks WHERE id=?", (group_id,)).fetchone()
         self.conn.execute("UPDATE asks SET state=?, snooze_n=?, snooze_t=?, form=CASE WHEN ?='' THEN form ELSE ? END "
                           "WHERE id=?", (state, n["n"] if n else 0, now, form or "", form or "", group_id))
+
+    def rename_group(self, group_id: str, label: str) -> bool:
+        """Give a group another label (the model's answer when it names one, `refine.py`). Only the
+        label changes: members, counts and state stay. False when there is no such group."""
+        with self._lock, db.transaction(self.conn):
+            row = self.conn.execute("SELECT data FROM asks WHERE id=?", (group_id,)).fetchone()
+            if row is None:
+                return False
+            data = json.loads(row["data"])
+            data["label"] = label
+            self.conn.execute("UPDATE asks SET label=?, data=? WHERE id=?",
+                              (label, json.dumps(data), group_id))
+            self._bump()
+        return True
 
     def _never(self, g: Group, letter: str, now: float) -> None:
         """Remember a group he said Never to: what it looked like, not a sentence of his, so it survives
@@ -695,6 +720,12 @@ class LoopStore:
             "INSERT INTO words_used(phrase, count, last_used, made_t) VALUES(?,1,?,?) "
             "ON CONFLICT(phrase) DO UPDATE SET count=count+1, last_used=excluded.last_used WHERE excluded.last_used>last_used",
             (phrase, t, t))
+
+    def words_last_used(self) -> dict[str, float]:
+        """When each word last opened something (a word never used shows when it was first made): what
+        `words.words_unused` takes."""
+        rows = self.conn.execute("SELECT phrase, last_used FROM words_used")
+        return {r["phrase"]: r["last_used"] for r in rows}
 
     def words_unused(self, days: float = 28, now: float | None = None) -> list[str]:
         """The words that have not been used for `days` (28): time to put them away."""

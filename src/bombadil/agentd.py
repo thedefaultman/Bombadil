@@ -163,7 +163,7 @@ class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, desk: Desk | None = None, jobs: Jobs | None = None,
-                 chosen: bool = True, auto_signin: bool = False, panel=None):
+                 chosen: bool = True, auto_signin: bool = False, panel=None, loop_service: bool = False):
         self.provider = provider
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
@@ -226,6 +226,7 @@ class AgentD:
         self.signals = Signals()                    # what the bar says about itself
         self._bar: asyncio.StreamWriter | None = None
         self.loop = None                            # the self-improvement loop's service, once it exists
+        self._loop_service = loop_service           # make and start one when serving (the real daemon does)
 
     # -- socket --
 
@@ -237,6 +238,7 @@ class AgentD:
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
+        self._start_loop()
         self._background(asyncio.to_thread(self.signals.agentd_started, self.socket_path))   # may run git
         worker = asyncio.create_task(self._worker())
         self._background(self.check_access(start=self.auto_signin))
@@ -249,6 +251,7 @@ class AgentD:
                 for task in (worker, watcher, self._jobs_task):
                     if task is not None:
                         task.cancel()
+                self._stop_loop()
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         queue: asyncio.Queue = asyncio.Queue(CLIENT_BACKLOG)
@@ -694,9 +697,9 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str, via: str = "typed"):
         doing = self.launcher.doing(action)
-        verb = action.verb if action.kind in ("app", "panel") else action.kind   # run() may change a panel's
+        verb = action.verb if action.kind in ("app", "panel", "noticed") else action.kind   # run() may change a panel's
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="start", text=doing)
-        ok, text = await asyncio.to_thread(self.launcher.run, action)
+        ok, text = await self._run_action(action)
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
                          text=text)
         if ok:
@@ -706,6 +709,17 @@ class AgentD:
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
                         "target": action.target, "result": text, "ok": ok,
                         **_local_keys(action, verb, via, **undid)})
+
+    async def _run_action(self, action: launcher.Action) -> tuple[bool, str]:
+        """Do a launcher action. "noticed" is the loop service's: without one it is the launcher's
+        own answer, that Noticed is not running."""
+        word = getattr(self.loop, "noticed_word", None)
+        if action.kind == "noticed" and word is not None:
+            try:
+                return await word(action.verb)
+            except Exception as e:  # noqa: BLE001 - the loop is a guest here
+                print(f"agentd: loop noticed: {type(e).__name__}: {e}", file=sys.stderr)
+        return await asyncio.to_thread(self.launcher.run, action)
 
     async def _undid(self, action: launcher.Action, ok: bool) -> dict:
         """For an undo row: the restore point it went back to, and the turn that point was for."""
@@ -1447,6 +1461,28 @@ class AgentD:
             keys["drift"] = dict(f.drift)
         return {**keys, "v": LEDGER_V, "n": f.n}
 
+    def _start_loop(self):
+        """The socket listens: start the loop's service (making it first when the daemon was asked to). A
+        service that cannot start leaves agentd without one, and one line says so."""
+        try:
+            if self.loop is None and self._loop_service:
+                from .loop.service import LoopService
+                self.loop = LoopService(self)
+            start = getattr(self.loop, "start", None)
+            if start is not None:
+                start()
+        except Exception as e:  # noqa: BLE001 - agentd runs without the loop rather than not at all
+            print(f"agentd: the self-improvement loop did not start: {type(e).__name__}: {e}", file=sys.stderr)
+            self.loop = None
+
+    def _stop_loop(self):
+        stop = getattr(self.loop, "stop", None)
+        if stop is not None:
+            try:
+                stop()
+            except Exception as e:  # noqa: BLE001
+                print(f"agentd: loop stop: {type(e).__name__}: {e}", file=sys.stderr)
+
     def _loop_hook(self, name: str, *args):
         """Tell the loop's service (when there is one) that `name` happened: it gets `on_<name>(*args)`,
         and an async one is run beside everything else. Nothing it does reaches a turn or a client."""
@@ -1551,7 +1587,7 @@ def main(argv: list[str] | None = None) -> int:
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
     # Picked means the user chose (first boot asks in the pill) or the environment says so.
     chosen = cfg.configured or bool(os.environ.get("BOMBADIL_PROVIDER"))
-    daemon = AgentD(provider, snaps, chosen=chosen, auto_signin=True)
+    daemon = AgentD(provider, snaps, chosen=chosen, auto_signin=True, loop_service=True)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
 
     async def run():
