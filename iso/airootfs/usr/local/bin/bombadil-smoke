@@ -40,6 +40,11 @@ has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
 # A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
 virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
+# A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
+# no ALSA plugin to read one.
+audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
+# Every generated app card sits at its own spot (a second one does not hide the first).
+apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -67,6 +72,8 @@ check quickshell-running wait_for 60 pgrep -x quickshell
 check hypr-config-ok no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
 check virtual-display-size virtual_display_size
+check audio-output wait_for 60 audio_sink
+check pacman-mirror grep -q '^Server = ' /etc/pacman.d/mirrorlist
 check agentd-status as_user bombadil status
 check claude-cli as_user claude --version
 check codex-cli as_user codex --version
@@ -81,6 +88,9 @@ qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
 shot app
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-spots wait_for 30 apps_apart
 check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
@@ -92,6 +102,12 @@ check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
+# Alt+Space opens the pill too, for hosts that keep Super.
+before=$(launcher_done browser "Opened the browser")
+keys alt+spc
+keys b r o w s e r ret
+check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
+check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
 check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
 shot pill-working
@@ -233,6 +249,7 @@ fi
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
+    check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
