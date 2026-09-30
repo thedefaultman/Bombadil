@@ -3,7 +3,7 @@ Description=Bombadil bar and pill (Quickshell)
 After=bombadil-agentd.service
 
 [Service]
-ExecStart=/usr/bin/quickshell -p /usr/share/bombadil/shell/shell.qml
+ExecStart=/usr/local/bin/bombadil-shell
 Restart=always
 RestartSec=1
 StartLimitIntervalSec=0

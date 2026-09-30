@@ -118,7 +118,7 @@ def test_the_daemon_the_bar_and_the_notifications_come_back_when_they_die():
     # Apps the agent started keep running when only the daemon restarts.
     assert _unit(units[0])["Service"]["KillMode"] == "process"
     assert _unit(units[0])["Service"]["ExecStart"] == "/usr/local/bin/agentd"
-    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/bin/quickshell -p /usr/share/bombadil/shell/shell.qml"
+    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/local/bin/bombadil-shell"
 
 
 def test_the_session_starts_them_after_handing_over_its_environment():

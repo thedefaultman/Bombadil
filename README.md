@@ -1,4 +1,9 @@
-# Bombadil
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/bombadil-lockup.svg">
+    <img alt="bombadil" src="docs/brand/bombadil-lockup-light.svg" height="72">
+  </picture>
+</p>
 
 A Linux distro whose main interface is an AI agent. You boot it, pick Claude or Codex,
 and from then on you talk to the machine: the browser slides in when you ask for it,
@@ -25,8 +30,9 @@ permission prompt.
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) in its own slide-in drawer with hot reload; `bombadil-app check` loads one offscreen and returns errors and a screenshot. |
 | `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`. |
 | `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
-| `shell/shell.qml` | The Quickshell bar. |
-| `share/qml/Bombadil` | The app kit (`import Bombadil`): the OS look for every Qt Quick control, components (AppWindow, Panel, lists, tables, forms, editor, charts) and native bindings (System, Processes, Store, Vault, Command, ...). |
+| `bin/bombadil-shell` | Starts the bar: Quickshell on `shell/shell.qml`, with `share/qml` on its import path so the shell can `import Bombadil`. Every launcher (Hyprland, a unit, `scripts/dev-session.sh`) runs this, never `quickshell` directly. |
+| `shell/shell.qml` | The Quickshell bar: the pill, the line above it, the desk. Its colours, sizes and type are `Theme`'s (`shell/DeskTheme.js` mirrors them for the desk; `tests/test_theme.py` keeps the two equal). |
+| `share/qml/Bombadil` | The app kit (`import Bombadil`): `Theme`, the tokens the shell and every app share, the OS look for every Qt Quick control, components (AppWindow, Panel, lists, tables, forms, editor, charts) and native bindings (System, Processes, Store, Vault, Command, ...). |
 | `share/skills/bombadil-apps` | The skill both CLIs load to build apps with the kit in one shot, with two example apps. |
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
 
