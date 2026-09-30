@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""vmlink up|down : set the VM's network link over QMP (netdev n0), to test what a person sees
+with no network. The socket is $QMP, else $VMDIR/qmp.sock."""
+import json, os, socket, sys
+
+tree = os.environ.get("BOMBADIL_TREE", "/root/Bombadil")
+sock = os.environ.get("QMP") or os.path.join(os.environ.get("VMDIR", f"{tree}/out/vm"), "qmp.sock")
+if len(sys.argv) != 2 or sys.argv[1] not in ("up", "down"):
+    sys.exit(__doc__)
+s = socket.socket(socket.AF_UNIX); s.connect(sock); f = s.makefile("rw"); f.readline()
+
+
+def cmd(e, **a):
+    f.write(json.dumps({"execute": e, "arguments": a}) + "\n"); f.flush()
+    while True:
+        r = json.loads(f.readline())
+        if "return" in r or "error" in r: return r
+
+
+cmd("qmp_capabilities")
+print(cmd("set_link", name="n0", up=(sys.argv[1] == "up")))

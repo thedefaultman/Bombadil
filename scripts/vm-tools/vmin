@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""vmin: drive the VM's input and screen over QMP.
+  vmin click X Y [W H]    left click at pixel X,Y of a W x H screen (default: the current screenshot size)
+  vmin hover X Y [W H]    move the pointer there without clicking
+  vmin type TEXT          type TEXT (US layout)
+  vmin keys K1 K2+K3 ...  qcodes; + makes a chord (meta_l is the Super key, spc the space bar)
+  vmin shot FILE.png      screenshot
+The socket is $QMP, else $VMDIR/qmp.sock."""
+import json, os, socket, sys, time
+
+tree = os.environ.get("BOMBADIL_TREE", "/root/Bombadil")
+QMP = os.environ.get("QMP") or os.path.join(os.environ.get("VMDIR", f"{tree}/out/vm"), "qmp.sock")
+s = socket.socket(socket.AF_UNIX); s.connect(QMP); f = s.makefile("rw"); f.readline()
+
+
+def cmd(e, **a):
+    f.write(json.dumps({"execute": e, "arguments": a}) + "\n"); f.flush()
+    while True:
+        r = json.loads(f.readline())
+        if "return" in r or "error" in r:
+            if "error" in r: print(r, file=sys.stderr)
+            return r
+
+
+cmd("qmp_capabilities")
+SHIFTED = {'~': 'grave_accent', '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8',
+           '(': '9', ')': '0', '_': 'minus', '+': 'equal', '{': 'bracket_left', '}': 'bracket_right', '|': 'backslash',
+           ':': 'semicolon', '"': 'apostrophe', '<': 'comma', '>': 'dot', '?': 'slash'}
+PLAIN = {' ': 'spc', '`': 'grave_accent', '-': 'minus', '=': 'equal', '[': 'bracket_left', ']': 'bracket_right',
+         '\\': 'backslash', ';': 'semicolon', "'": 'apostrophe', ',': 'comma', '.': 'dot', '/': 'slash', '\n': 'ret', '\t': 'tab'}
+
+
+def key(*codes):
+    cmd("send-key", keys=[{"type": "qcode", "data": c} for c in codes]); time.sleep(0.02)
+
+
+def ch(c):
+    if c.isalpha(): key(*(['shift', c.lower()] if c.isupper() else [c]))
+    elif c.isdigit(): key(c)
+    elif c in PLAIN: key(PLAIN[c])
+    elif c in SHIFTED: key('shift', SHIFTED[c])
+    else: raise SystemExit(f"no key for {c!r}")
+
+
+def screen_size():
+    ppm = "/tmp/vmin-size.ppm"; cmd("screendump", filename=ppm)
+    with open(ppm, "rb") as fh: parts = fh.read(64).split()
+    return int(parts[1]), int(parts[2])
+
+
+def move(x, y, w, h):
+    cmd("input-send-event", events=[{"type": "abs", "data": {"axis": "x", "value": x * 32767 // (w - 1)}},
+                                    {"type": "abs", "data": {"axis": "y", "value": y * 32767 // (h - 1)}}])
+
+
+what, *rest = sys.argv[1:]
+if what in ("click", "hover"):
+    x, y = int(rest[0]), int(rest[1])
+    w, h = (int(rest[2]), int(rest[3])) if len(rest) >= 4 else screen_size()
+    move(x, y, w, h)
+    if what == "click":
+        time.sleep(0.1)
+        for down in (True, False):
+            cmd("input-send-event", events=[{"type": "btn", "data": {"down": down, "button": "left"}}]); time.sleep(0.05)
+elif what == "type":
+    for c in " ".join(rest): ch(c)
+elif what == "keys":
+    for k in rest: key(*k.split("+"))
+elif what == "shot":
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+    from qmp import ppm_to_png
+    cmd("screendump", filename=rest[0] + ".ppm"); ppm_to_png(rest[0] + ".ppm", rest[0]); os.remove(rest[0] + ".ppm")
+else:
+    sys.exit(__doc__)

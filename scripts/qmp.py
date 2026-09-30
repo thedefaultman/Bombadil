@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Tiny QMP client for test-vm.sh: `qmp.py SOCK send-keys down ret` or `qmp.py SOCK screenshot out.png`.
+"""Tiny QMP client for test-vm.sh: `qmp.py SOCK send-keys down ret`, `qmp.py SOCK screenshot out.png`
+or `qmp.py SOCK powerdown` (the ACPI power button: the guest shuts itself down).
 
 A key joined with + is a chord: `meta_l+esc` holds both together."""
 import json
@@ -58,6 +59,8 @@ def main():
         ppm = rest[0] + ".ppm"
         cmd("screendump", filename=ppm)
         ppm_to_png(ppm, rest[0])
+    elif what == "powerdown":
+        cmd("system_powerdown")
     else:
         sys.exit(2)
 
