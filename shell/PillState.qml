@@ -321,23 +321,26 @@ QtObject {
     // Esc in the pill with nothing to stop or clear: put the drawer away too.
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
-    // Esc: put the line and the picture away.
-    function dismiss() {
+    // The finished line goes; before sign-in the setup line comes back rather than an empty pill.
+    function _putLineAway() {
         if (mode === "closing" || mode === "local") {
             sticky = false
-            // Not signed in yet: the setup line comes back rather than an empty pill.
             if (!ready && setupLine) _showSetup()
             else { mode = "idle"; line = "" }
         }
         flash = ""
+    }
+
+    // Esc: put the line and the picture away.
+    function dismiss() {
+        _putLineAway()
         card = null
     }
 
     // A finished line nobody is looking at fades, and takes a receipt picture with it; a picture the
     // user asked for stays until Esc or the next turn.
     function fade() {
-        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
-        flash = ""
+        _putLineAway()
         if (card && card.receipt) card = null
     }
 

@@ -747,6 +747,17 @@ def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
     assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
 
 
+def test_a_line_that_fades_before_sign_in_brings_the_setup_back_and_leaves_a_picture_you_asked_for(bar):
+    bar.send(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    bar.send(kind="local", turn=None, action="picture", phase="done", ok=True, text="Showing how you're connected.")
+    _card_event(bar, _diagram())
+    bar.call("fade")                 # the line's own timer, not Esc
+    assert bar.text() == "Sign in to Claude to start." and bar.pill.property("card") is not None
+    bar.call("dismiss")
+    assert bar.pill.property("card") is None
+
+
 READY = dict(type="setup", state="ready", tone="done", actions=[])
 
 
