@@ -53,13 +53,13 @@ boot() {
     for shot in $(grep -ao "BOMBADIL-SMOKE: SHOT [a-z0-9-]*" "$log" | awk '{print $3}'); do
       [[ -f "$out/$name-$shot.png" ]] || python3 "$root/scripts/qmp.py" "$qmp" screenshot "$out/$name-$shot.png" || true
     done
-    # ...and key presses: "BOMBADIL-SMOKE: KEYS <n> <qcode>..." (a Super tap, a word), each once.
+    # ...and key presses: "BOMBADIL-SMOKE: KEYS <boot>-<n> <qcode>..." (a Super tap, a word), each once.
     while read -r n keys; do
       [[ -f "$out/$name.keys.$n" ]] && continue
       touch "$out/$name.keys.$n"
       # shellcheck disable=SC2086
       python3 "$root/scripts/qmp.py" "$qmp" send-keys $keys || true
-    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
+    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9a-f]*-[0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
     if (( $(date +%s) - start > timeout )); then echo "$name: timed out after ${timeout}s"; break; fi
     sleep 2
   done
@@ -81,4 +81,6 @@ else
   logs=("$out/live.serial.log")
 fi
 for l in "${logs[@]}"; do grep -aqE "BOMBADIL-SMOKE: DONE pass=[0-9]+ fail=0" "$l" || exit 1; done
+# The sign-in checks skip themselves on a machine that has a provider chosen; a fresh ISO has none.
+if grep -aq "BOMBADIL-SMOKE: SKIP signin" "${logs[0]}"; then echo "the sign-in checks were skipped on a fresh ISO"; exit 1; fi
 ! grep -aq "BOMBADIL-SMOKE: FAIL" "${logs[@]}"

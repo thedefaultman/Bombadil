@@ -142,6 +142,146 @@ async def test_a_dead_session_is_dropped(home):
     server.cancel()
 
 
+ONE_TURN = (
+    "import json, sys\nsys.stdin.read()\n"
+    "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_restarted_daemon_keeps_the_conversation_and_the_turn_count(home):
+    # systemd brings agentd back after a crash; the next prompt must still continue the same
+    # conversation, and turn N must not be saved as a second "turn:1".
+    p = Scripted(ONE_TURN)
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "first")
+    await _read_until(r, "turn_end")
+    assert (d.session_id, d.turns) == ("s1", 1)
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()   # what a crash leaves behind is replaced by serve(); _start must not race it
+
+    p2 = Scripted(ONE_TURN)
+    d2 = agentd.AgentD(p2, agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    assert (d2.session_id, d2.turns) == ("s1", 1)
+    await _ask(w, "second")
+    await _read_until(r, "turn_end")
+    assert p2.seen_sessions == ["s1"] and d2.turns == 2
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_dead_conversation_is_not_brought_back_by_a_restart(home):
+    p = Scripted("import json, sys\nsys.stdin.read()\n"
+                 "print(json.dumps({'type': 'result', 'is_error': True, 'num_turns': 0, 'session_id': 'gone',"
+                 " 'errors': ['No conversation found with session ID: gone']}))\n")
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    d.session_id = "gone"
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()
+    d2 = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    assert d2.session_id is None
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.parametrize("saved", [
+    "not json", "[]", '{"provider": "codex", "session_id": "theirs", "turns": 9}',
+    '{"provider": "claude", "session_id": 7, "turns": -3}',
+])
+def test_saved_state_that_is_not_for_this_daemon_is_ignored(home, saved):
+    d = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    d._state_file().parent.mkdir(parents=True, exist_ok=True)
+    d._state_file().write_text(saved)
+    d._load_state()
+    assert (d.session_id, d.turns) == (None, 0)
+
+
+def test_the_state_file_lives_where_a_reboot_clears_it(home):
+    d = agentd.AgentD(Scripted(ONE_TURN), agentd._NoSnapshots())
+    assert d._state_file().parent == paths.runtime_dir()
+
+
+class Spy(Scripted):
+    """Records the model each turn is started with."""
+
+    def __init__(self, script, model=None):
+        super().__init__(script)
+        self.model = model
+        self.models = []
+
+    def command(self, turn, workdir):
+        self.models.append(self.model)
+        return super().command(turn, workdir)
+
+
+async def _local_text(r, w, text):
+    await _ask(w, text)
+    while True:
+        m = json.loads(await asyncio.wait_for(r.readline(), 5))
+        if m.get("kind") == "local" and m.get("phase") == "done":
+            return m["ok"], m["text"]
+
+
+@pytest.mark.asyncio
+async def test_use_opus_and_use_sonnet_switch_the_model_for_the_next_turns(home):
+    p = Spy(ONE_TURN, model="claude-sonnet-5-5")
+    d = agentd.AgentD(p, agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "first")
+    await _read_until(r, "turn_end")
+    ok, text = await _local_text(r, w, "use opus")
+    assert ok and text.startswith("Using Opus from the next message.") and '"use sonnet"' in text
+    assert any("use opus" in n for n in d.notes)   # the model is told about it with its next prompt
+    await _ask(w, "hard one")
+    await _read_until(r, "turn_end")
+    ok, text = await _local_text(r, w, "use sonnet")
+    assert ok and text == "Using Sonnet from the next message."
+    await _ask(w, "easy again")
+    await _read_until(r, "turn_end")
+    assert p.models == ["claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5-5"]
+    assert d.turns == 3   # the switch is a setting, not a turn
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_switched_model_survives_a_restart_of_the_daemon(home):
+    d = agentd.AgentD(Spy(ONE_TURN, model="claude-sonnet-5-5"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _local_text(r, w, "use opus")
+    w.close()
+    server.cancel()
+    d.socket_path.unlink()
+    p2 = Spy(ONE_TURN, model="claude-sonnet-5-5")
+    d2 = agentd.AgentD(p2, agentd._NoSnapshots())
+    server, r, w = await _start(d2)
+    await _ask(w, "hello")
+    await _read_until(r, "turn_end")
+    assert p2.models == ["claude-opus-5-5"]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_use_opus_says_so_when_the_machine_runs_another_provider(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    ok, text = await _local_text(r, w, "use opus")
+    assert not ok and text == "Opus is a Claude model; this machine is set to use fake."
+    assert d.provider.model is None
+    w.close()
+    server.cancel()
+
+
 @pytest.mark.asyncio
 async def test_prompts_get_turn_ids_and_empty_ones_are_refused(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
@@ -1829,5 +1969,36 @@ async def test_a_search_that_nothing_answers_does_not_switch_the_watchdog_off(ho
     await _ask(w, "look it up")
     msgs = await _read_until(r, "turn_end")
     assert "Codex is not answering; check the connection" in _step_texts(msgs)
+    w.close()
+    server.cancel()
+
+
+class Choking(Scripted):
+    """A parser that raises on one line, as an unguarded .get on a field of the wrong type did."""
+
+    def parse(self, line):
+        if "boom" in line:
+            raise AttributeError("'str' object has no attribute 'get'")
+        yield from super().parse(line)
+
+
+@pytest.mark.asyncio
+async def test_a_line_the_parser_chokes_on_is_skipped_and_the_answer_still_arrives(home, capsys):
+    script = (
+        "import json, sys\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'boom'}), flush=True)\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'still here'}]}}),"
+        " flush=True)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Choking(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert [m["text"] for m in msgs if m.get("kind") == "text"] == ["still here"]
+    assert next(m for m in msgs if m.get("kind") == "result")["text"] == "done"
+    assert not [m for m in msgs if m.get("kind") == "error"]
+    assert d.session_id == "s1"
+    assert "skipped a claude line it could not read (AttributeError" in capsys.readouterr().err
     w.close()
     server.cancel()

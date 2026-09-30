@@ -25,7 +25,7 @@ permission prompt.
 
 | Piece | What it does |
 |---|---|
-| `bin/agentd` | Starts at login. Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, snapshots, runs one provider turn, streams events to every connected client, logs the turn. |
+| `bin/agentd` | Starts at login as a systemd user service (`bombadil-agentd`, like the bar's `bombadil-shell`), which systemd starts again if it dies. Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, snapshots, runs one provider turn, streams events to every connected client, logs the turn. |
 | `bin/bombadil-os-mcp` | MCP server both CLIs load. Tools: `show_panel`, `hide_panel`, the app tools (`app_guide`, `create_app`, `check_app`, `open_app`, `show_app`, `hide_app`, `close_app`, `app_status`, `list_apps`, `app_template`), `screenshot`, `snapshot`, `list_snapshots`, `rollback`, `notify`, `desk` (arranges the widgets beside the pill, only when the person asked for the desk), `job` (background jobs, watchers and timers for the Watching card). |
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) in its own slide-in drawer with hot reload; `bombadil-app check` loads one offscreen and returns errors and a screenshot. |
 | `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`. |
@@ -37,7 +37,10 @@ permission prompt.
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools
-are the same MCP server either way.
+are the same MCP server either way. The model is set per provider in the same file
+(`[models]` with `claude = "..."` and `codex = "..."`); Claude defaults to Sonnet, and Codex
+keeps its own default. Typing `use opus` in the pill runs the next turns of a session on Opus,
+`use sonnet` goes back.
 
 ## Try it
 

@@ -146,6 +146,8 @@ class AgentD:
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
         self.turns = 0
+        self.base_model = provider.model            # what the config says; "use opus" overrides it
+        self.session_model: str | None = None       # "opus" or "sonnet" once the user switched
         self.proc: asyncio.subprocess.Process | None = None
         self.pending: list[tuple[int, str]] = []   # prompts waiting for the running turn
         self._wake = asyncio.Event()
@@ -193,12 +195,60 @@ class AgentD:
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
 
+    # -- state that outlives a restart --
+
+    def _state_file(self) -> Path:
+        return paths.runtime_dir() / "agentd-state.json"
+
+    def _load_state(self):
+        """The conversation and the turn count survive a restart of the daemon (systemd brings it
+        back after a crash), but not a reboot or a new login: they live under the runtime dir."""
+        try:
+            data = json.loads(self._state_file().read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(data, dict) or data.get("provider") != self.provider.name:
+            return
+        if isinstance(data.get("session_id"), str) and data["session_id"]:
+            self.session_id = data["session_id"]
+        if isinstance(data.get("turns"), int) and data["turns"] >= 0:
+            self.turns = data["turns"]
+        if data.get("model") in config.CLAUDE_MODELS and self.provider.name == "claude":
+            self._use_model(data["model"])
+
+    def _save_state(self):
+        path = self._state_file()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"provider": self.provider.name, "session_id": self.session_id,
+                                       "turns": self.turns, "model": self.session_model}))
+            tmp.replace(path)
+        except OSError as e:
+            print(f"agentd: could not save its state: {e}", file=sys.stderr)
+
+    def _use_model(self, choice: str | None):
+        self.session_model = choice
+        self.provider.model = config.CLAUDE_MODELS[choice] if choice else self.base_model
+
+    def _switch_model(self, choice: str) -> tuple[bool, str]:
+        """"use opus" / "use sonnet": the next turns of this session run that model. The running
+        turn, if any, finishes on the one it started with."""
+        title = launcher.MODEL_TITLES[choice]
+        if self.provider.name != "claude":
+            return False, f"{title} is a Claude model; this machine is set to use {self.provider.name}."
+        self._use_model(choice)
+        self._save_state()
+        back = ' Say "use sonnet" to go back.' if choice == "opus" else ""
+        return True, f"Using {title} from the next message.{back}"
+
     # -- socket --
 
     async def serve(self):
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             self.socket_path.unlink()
+        self._load_state()
         # Probe for systemd scopes now, not on the first Enter.
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
@@ -598,6 +648,16 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
+        if action.kind == "model":
+            ok, text = self._switch_model(action.target)
+            await self.event("local", turn=None, action="model", target=action.target, phase="done", ok=ok,
+                             text=text)
+            if ok:
+                self.notes.append(f"{typed!r}: {text}")
+                self.notes = self.notes[-10:]
+            self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "model",
+                            "target": action.target, "result": text, "ok": ok})
+            return
         if action.kind in ("signin", "provider"):
             if action.kind == "signin":
                 await self.signin_asked()
@@ -910,10 +970,15 @@ class AgentD:
             return
         await self._end_signin()
         self._login_gone = False
-        model = self.provider.model if name == self.provider.name else None
-        await asyncio.to_thread(config.save_user, name, model)
-        if name != self.provider.name:
-            self.provider = providers.get(name, model=model)
+        same = name == self.provider.name
+        # Only a model the config file itself names is written back, never the default or a
+        # session's "use opus"; another provider starts on its own configured or default model.
+        written = await asyncio.to_thread(_written_model) if same else None
+        await asyncio.to_thread(config.save_user, name, written)
+        if not same:
+            self.provider = providers.get(name, model=await asyncio.to_thread(_model_for, name))
+            self.base_model = self.provider.model
+            self.session_model = None
             self.session_id = None   # the other provider's conversation means nothing to this one
         self.chosen = True
         await self.check_access(start=True, announce=True)
@@ -1080,6 +1145,7 @@ class AgentD:
                              stopped=False, line="")
             return
         self.turns += 1
+        self._save_state()
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
@@ -1166,7 +1232,7 @@ class AgentD:
                         state["quiet"] = False
                         if not self.stopping:
                             await self._step_line("Thinking")
-                for ev in source.parse(line):
+                for ev in _safely(source.parse(line), source, line):
                     # Running from the tool call to its result; the turn's result ends all of it.
                     if ev["kind"] == "tool" and ev.get("id"):
                         state["tools"].add(ev["id"])
@@ -1203,7 +1269,7 @@ class AgentD:
                 self._background(_drain(proc.stdout))
             pending_session, reported_error = state["session"], state["error"]
             source.returncode = proc.returncode
-            for ev in source.finish():
+            for ev in _safely(source.finish(), source, "(end of output)"):
                 pending_session, reported_error = await self._on_event(
                     ev, turn, result, pending_session, reported_error)
             try:
@@ -1277,6 +1343,7 @@ class AgentD:
                 # Adopt a session id only from a turn that worked, so a dead one is not kept.
                 if self._turn_provider in (None, self.provider):   # (not after "use codex" mid-turn)
                     self.session_id = ev.get("session_id") or pending_session or self.session_id
+                self._save_state()
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
@@ -1284,6 +1351,7 @@ class AgentD:
                     text = _limit_text(text)
                 if turn.session_id and (ev.get("num_turns") == 0 or "no conversation found" in text.lower()):
                     self.session_id = None
+                    self._save_state()
                     text += " (the previous conversation is gone; the next prompt starts a new one)"
                 if not turn.prompt.startswith("!") and (self._signed_out or self._turn_provider.signed_out(text)):
                     self._signed_out = True
@@ -1302,6 +1370,7 @@ class AgentD:
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
+                        "model": None if prompt.startswith("!") else self.provider.model,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
                         "details": str(self.turn_logs.get(self.current, ""))})
 
@@ -1321,6 +1390,30 @@ def _limit_text(text: str) -> str:
     if any(w in low for w in RATE_WORDS):
         return RATE_TEXT
     return text
+
+
+def _written_model() -> str | None:
+    try:
+        return config.load().model
+    except (OSError, ValueError):
+        return None
+
+
+def _model_for(name: str) -> str | None:
+    try:
+        return config.load().model_for(name)
+    except (OSError, ValueError):
+        return config.DEFAULT_MODELS.get(name)
+
+
+def _safely(events, source, raw: str):
+    """The events of one provider line. A line the parser cannot read is logged and skipped: one
+    odd line from the CLI must not end the turn and lose the answer that follows it."""
+    try:
+        yield from events
+    except Exception as e:  # noqa: BLE001 - whatever the line held, the turn goes on
+        print(f"agentd: skipped a {source.name} line it could not read ({type(e).__name__}: {e}): "
+              f"{raw[:200]!r}", file=sys.stderr)
 
 
 def _bombadil_browser() -> str:
@@ -1377,7 +1470,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cfg = config.load()
     name = os.environ.get("BOMBADIL_PROVIDER", cfg.provider)
-    provider = providers.get(name, model=cfg.model)
+    provider = providers.get(name, model=cfg.model_for(name))
     if not provider.installed:
         # Keep serving so the bar connects and can say what is missing; turns report it.
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)

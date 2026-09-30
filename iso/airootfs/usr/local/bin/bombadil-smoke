@@ -39,8 +39,9 @@ mcp_call() {
 hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl -j $1: $o" >&2; return 1; }
 has_client() { local o; o=$(hypr_json clients) && python3 -c "import json,sys; sys.exit(not any($1 for c in json.loads(sys.argv[1])))" "$o"; }
 no_config_errors() { local o; o=$(hypr_json configerrors) && python3 -c 'import json,sys; e=[x for x in json.loads(sys.argv[1]) if x]; print(e); sys.exit(bool(e))' "$o"; }
-# A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
-virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
+# A virtual display must not stay at the 640x480 QEMU's EDID can report as preferred. It is fine at
+# any width a desktop fits in: a hypervisor may cap it (or the host window) below 1920x1080.
+virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any(x["width"] < 1280 for x in m))'; }
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
@@ -60,12 +61,15 @@ shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
 # Ask the host to press keys on the VM's keyboard, over QMP: "meta_l" taps Super, "meta_l+esc"
 # is Super+Escape, "b r o w s e r ret" types a word and Enter.
 nkeys=0
-keys() { nkeys=$((nkeys+1)); say "KEYS $nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
+# The host sends each numbered request once; a reboot (the undo round trip) starts the numbers again,
+# so they carry the boot's id.
+bootid=$(cut -c1-8 /proc/sys/kernel/random/boot_id)
+keys() { nkeys=$((nkeys+1)); say "KEYS $bootid-$nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
 history_has() { as_user bombadil history | grep -q "$1"; }
 # Launcher actions read "  HH:MM  <word you typed>: <what it did>". Match the word at the start of
 # the line, so "open the browser: Opened the browser." from an earlier test cannot stand in for it.
 launcher_done() { as_user bombadil history | grep -Ec "^ +[0-9]{2}:[0-9]{2} +$1: $2"; }
-launcher_ran() { [[ $(launcher_done "$1" "$2") -gt $3 ]]; }
+launcher_ran() { [[ $(launcher_done "$1" "$2") -gt $3 ]] || { as_user bombadil history </dev/null | tail -n 3; return 1; }; }
 agentd_send() { as_user python3 -c 'import json, socket, sys; s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall((sys.argv[2] + "\n").encode()); s.shutdown(socket.SHUT_WR); s.recv(1 << 20)' "$sock" "$1"; }
 
 check agentd-socket wait_for 90 test -S "$sock"
@@ -114,8 +118,13 @@ check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
+# A key press only means something to a machine that is not flat out: under emulation an app that is
+# still starting can make the handover to the pill take longer than the test waits. Wait for calm.
+calm() { awk '{exit !($1 < 1.5)}' /proc/loadavg; }
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
 before=$(launcher_done browser "Opened the browser")
 keys meta_l
+SHOT_WAIT=1 shot after-super-tap
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
@@ -131,8 +140,10 @@ fi
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 # Alt+Space opens the pill too, for hosts that keep Super.
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
 before=$(launcher_done browser "Opened the browser")
 keys alt+spc
+SHOT_WAIT=1 shot after-alt-space
 keys b r o w s e r ret
 check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
 check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
@@ -161,6 +172,21 @@ keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
+# A service that dies comes back by itself, as a new process (systemd, Restart=always).
+main_pid() { as_user systemctl --user show -p MainPID --value "$1"; }
+restarted() { local p; p=$(main_pid "$1"); [[ -n $p && $p != 0 && $p != "$2" ]]; }
+revives() {
+  local old; old=$(main_pid "$1"); [[ -n $old && $old != 0 ]] || return 1
+  kill -9 "$old"
+  wait_for 90 restarted "$1" "$old"
+}
+check agentd-comes-back revives bombadil-agentd
+check agentd-answers-again wait_for 60 as_user bombadil status
+check bar-comes-back revives bombadil-shell
+check bar-layer-again wait_for 60 has_layer bombadil-bar
+check notifications-come-back revives mako
+units_active() { local u; for u in bombadil-agentd bombadil-shell mako; do as_user systemctl --user is-active --quiet "$u" || return 1; done; }
+check services-are-units units_active
 
 # Signing in (the live system has no provider picked and no login). agentd asks which AI in the
 # pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
@@ -193,6 +219,9 @@ panel_away() { ! special_shown browser; }
 gone() { ! pgrep -u user -f "$1"; }
 # restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
 restart_agentd() {
+  # agentd is a user service that systemd starts again when it is killed, in the normal environment:
+  # stop the unit first, so the one started here is the only one.
+  as_user systemctl --user stop bombadil-agentd
   pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
   echo "--- agentd $*" >>/tmp/smoke.agentd.log
   as_user env "$@" setsid -f agentd >>/tmp/smoke.agentd.log 2>&1 </dev/null
@@ -214,11 +243,35 @@ signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=man
 slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
 browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
 page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
+# What the browser looked like when a check on its page failed: its processes, every target the
+# debugging port lists (with its type), the profile's singleton files and agentd's last words.
+browser_diag() {
+  say "DIAG browser processes: $(pgrep -af -- '--class=bombadil-browser' | cut -c1-200 | tr '\n' '|')"
+  say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
+for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
+    print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
+  say "DIAG browser profile: $(ls -la /home/user/.local/share/bombadil/browser 2>&1 | grep -i singleton | tr '\n' '|')"
+  agentd_log
+}
+page_again_or_diag() { page_again || { browser_diag; return 1; }; }
 times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
 offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
+# Back to the unit's agentd, as the session booted.
+agentd_unit_again() {
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  as_user systemctl --user start bombadil-agentd
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
 agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
-if [[ "$mode" != "undo" ]]; then
+# The block below picks other providers, starts and cancels their logins (`codex login` revokes a
+# stored Codex login) and deletes the config file at its end. It is for a system with no provider
+# chosen yet (the live ISO), never one a person has signed in on.
+signin_config=/home/user/.config/bombadil/config.toml
+if [[ "$mode" != "undo" && -e "$signin_config" ]]; then
+  say "SKIP signin: a provider is already chosen here, and these checks would change it"
+fi
+if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   : >/tmp/smoke.agentd.log
   check signin-agentd-starts restart_agentd
   check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
@@ -253,7 +306,8 @@ if [[ "$mode" != "undo" ]]; then
   check signin-slid-out slid_out
   shot signin-hidden
   check signin-browser-closed browser_closed
-  check signin-page-again page_again
+  check signin-page-again page_again_or_diag
+  shot signin-page-again
   check signin-esc-cancels called_off fake
   check signin-cli-ended wait_for 30 gone fake_signin.py
   # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
@@ -266,7 +320,7 @@ if [[ "$mode" != "undo" ]]; then
   kill "$online" 2>/dev/null
   # Back to the session as it booted (no AI picked yet), for what follows.
   rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
-  check agentd-restored restart_agentd
+  check agentd-restored agentd_unit_again
   agentd_log
 fi
 
@@ -281,6 +335,9 @@ if [[ "$mode" == "undo" ]]; then
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
+    # Every restore point is one snapper may prune, and the installed config keeps only 30.
+    check snapshot-is-prunable bash -c 'snapper -c root --jsonout list | grep -Eq "\"cleanup\": *\"number\""'
+    check snapshots-are-pruned bash -c 'grep -q "^NUMBER_LIMIT=\"30\"" /etc/snapper/configs/root && grep -q "^TIMELINE_CREATE=\"no\"" /etc/snapper/configs/root && systemctl is-enabled --quiet snapper-cleanup.timer'
     check undo as_user bombadil undo
     echo 2 > "$phase"; chown user: "$phase"
     say "REBOOT pass=$ok fail=$fail"

@@ -28,7 +28,7 @@ def talk(msg: dict, until: str | None = "turn_end"):
         try:
             s.connect(str(paths.socket_path()))
         except OSError as e:
-            print(f"agentd is not running ({e}); it starts with the Hyprland session", file=sys.stderr)
+            print(f"agentd is not running ({e}); it starts with the desktop and comes back by itself; see journalctl --user -u bombadil-agentd", file=sys.stderr)
             return 1
         s.sendall((json.dumps(msg) + "\n").encode())
         mine = None  # the turn id agentd gave this prompt; other clients' turns are skipped
@@ -143,7 +143,7 @@ def main() -> int:
             return 2
         if paths.socket_path().exists():
             return follow_setup({"type": "setup_action", "id": f"provider:{args[0]}"})
-        print(f"wrote {config.save_user(args[0])}; it applies when agentd starts")
+        print(f"wrote {config.save_user(args[0])}; apply it with: systemctl --user restart bombadil-agentd")
     elif cmd == "signin":
         if args and args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")

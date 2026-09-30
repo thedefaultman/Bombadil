@@ -43,8 +43,10 @@ def system_prompt() -> str:
         "Take screenshots to check your work, and use rollback when the user says "
         "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
         "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
-        "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
-        "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
+        "`pacman -Sy` alone (Arch breaks on a partial upgrade). That also updates every other package, so "
+        "say so in one plain sentence before you run it. If an upgrade replaced the kernel, tell the "
+        "user a restart is needed: until then modprobe cannot load modules. When the user names their time "
+        "zone or city, set it with `sudo timedatectl set-timezone <Area/City>`. The user sees your work on "
         "screen and your final reply as at most four lines above the bar: one or two plain sentences saying "
         "what you did, no markdown, no lists."
     )
@@ -194,6 +196,12 @@ def _json(line: str) -> dict | None:
     return m if isinstance(m, dict) else None
 
 
+def _obj(x) -> dict:
+    """x when it is a JSON object, else {}: a CLI line is data, and a field of the wrong type
+    ("message": "text") must read as empty, not raise."""
+    return x if isinstance(x, dict) else {}
+
+
 def _result_text(content) -> str:
     """A tool result's text: a string, or a list of text (and image) blocks."""
     if isinstance(content, str):
@@ -250,23 +258,23 @@ class Claude(Provider):
         t = m.get("type")
         if t == "system" and m.get("subtype") == "init":
             yield {"kind": "session", "session_id": m.get("session_id")}
-            servers = {s.get("name"): s.get("status") for s in m.get("mcp_servers", []) if isinstance(s, dict)}
+            servers = {s.get("name"): s.get("status") for s in m.get("mcp_servers") or [] if isinstance(s, dict)}
             if servers.get("bombadil-os") not in ("connected", "pending"):
                 yield {"kind": "error", "text": f"the OS tools did not start (bombadil-os: {servers.get('bombadil-os', 'missing')})"}
         elif t == "stream_event":
             # --include-partial-messages: the reply and each tool call as they are written, for the
             # live line only (the complete message follows as "assistant").
-            e = m.get("event") or {}
+            e = _obj(m.get("event"))
             et = e.get("type")
             if et == "content_block_start":
-                block = e.get("content_block") or {}
+                block = _obj(e.get("content_block"))
                 if block.get("type") == "tool_use":
                     yield {"kind": "tool_start", "index": e.get("index", 0), "name": block.get("name", ""),
                            "id": block.get("id")}
                 elif block.get("type") in ("thinking", "redacted_thinking"):
                     yield {"kind": "thinking"}
             elif et == "content_block_delta":
-                d = e.get("delta") or {}
+                d = _obj(e.get("delta"))
                 if d.get("type") == "text_delta" and d.get("text"):
                     yield {"kind": "text_delta", "text": d["text"]}
                 elif d.get("type") == "input_json_delta":
@@ -276,14 +284,16 @@ class Claude(Provider):
             # line that follows carries the words; this is the structured sign.
             yield {"kind": "signed_out"}
         elif t == "assistant":
-            for block in m.get("message", {}).get("content", []):
-                if block.get("type") == "text" and block.get("text"):
+            content = _obj(m.get("message")).get("content")
+            for block in content if isinstance(content, list) else []:
+                block = _obj(block)
+                if block.get("type") == "text" and isinstance(block.get("text"), str) and block["text"]:
                     yield {"kind": "text", "text": block["text"]}
                 elif block.get("type") == "tool_use":
                     yield {"kind": "tool", "name": block.get("name"), "input": block.get("input", {}),
                            "id": block.get("id")}
         elif t == "user":
-            content = m.get("message", {}).get("content", [])
+            content = _obj(m.get("message")).get("content")
             for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     yield {"kind": "tool_result", "id": block.get("tool_use_id"),
@@ -291,13 +301,17 @@ class Claude(Provider):
         elif t == "result":
             ok = not m.get("is_error", False)
             text = m.get("result") or ""
+            if not isinstance(text, str):
+                text = json.dumps(text)
             if text.startswith(DIAGNOSTIC):
                 text = ""
             if not ok and not text:
-                errs = [e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in m.get("errors") or []]
+                errs = m.get("errors")
+                lines = [e.get("message", str(e)) if isinstance(e, dict) else str(e)
+                         for e in (errs if isinstance(errs, list) else [errs] if errs else [])]
                 # A Stop leaves the CLI's own diagnostic in errors[] with result null
                 # ({"is_error": true, "terminal_reason": "aborted_streaming"}): not words for the user.
-                text = "\n".join(e for e in errs if not e.startswith(DIAGNOSTIC))
+                text = "\n".join(line for line in lines if not line.startswith(DIAGNOSTIC))
             yield {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
                    "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
                    "num_turns": m.get("num_turns")}
@@ -419,7 +433,7 @@ class Codex(Provider):
         if m is None:
             return
         t = m.get("type", "")
-        item = m.get("item", {})
+        item = _obj(m.get("item"))
         if t == "thread.started":
             yield {"kind": "session", "session_id": m.get("thread_id")}
         elif t == "item.completed" and item.get("type") == "agent_message":
@@ -432,7 +446,7 @@ class Codex(Provider):
                    "input": item.get("arguments") or {}, "id": item.get("id")}
         elif t == "item.completed" and item.get("type") == "reasoning":
             # Codex streams no text, but its reasoning summary is a plain heading: "**Installing ffmpeg**".
-            head = (item.get("text") or "").strip().splitlines()
+            head = str(item.get("text") or "").strip().splitlines()
             yield {"kind": "thinking", "text": head[0].strip("*# ").strip() if head else ""}
         elif t in ("item.started", "item.updated", "item.completed") and item.get("type") == "todo_list":
             # The whole plan on every change, the way Claude's TodoWrite sends it.
@@ -468,7 +482,7 @@ class Codex(Provider):
             yield {"kind": "signed_out"}
         elif t == "error":
             # Top-level errors are retry notices ("Reconnecting... 2/5"); turn.failed is the failure.
-            yield {"kind": "text", "text": m.get("message", "")}
+            yield {"kind": "text", "text": str(m.get("message") or "")}
 
     def login_command(self):
         return [self.binary, "login"]

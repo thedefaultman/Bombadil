@@ -33,6 +33,15 @@ def _apps(home):
     ("open wi-fi", "wifi", "", "open"),
     ("battery", "battery", "", "open"),
     ("shut down", "shutdown", "", "open"),
+    ("volume up", "volume_up", "", "open"),
+    ("Louder!", "volume_up", "", "open"),
+    ("turn the volume down", "volume_down", "", "open"),
+    ("quieter", "volume_down", "", "open"),
+    ("mute", "mute", "", "open"),
+    ("unmute", "unmute", "", "open"),
+    ("use opus", "model", "opus", "open"),
+    ("Use Sonnet.", "model", "sonnet", "open"),
+    ("switch to opus", "model", "opus", "open"),
     ("desk", "desk", "", "open"),
     ("Desk.", "desk", "", "open"),
     ("show machine", "widget", "machine", "open"),
@@ -62,6 +71,8 @@ def test_exact_words_open_locally(home, text, kind, target, verb):
     # A sentence in another script keeps its one launcher word only in ASCII; it is still a sentence.
     "Как сделать restart?", "shutdownしないで", "不要 undo", "为什么 browser 很慢", "почему wifi не работает?",
     "¿restart?", "电脑 restart 以后很慢", "turn off", "restart?", "open the browser, please",
+    "use opus to write me a poem", "what is opus", "opus", "sonnet", "use the sonnet app",
+    "the volume is too low", "volume up a bit more please", "mute the video", "play something louder",
     # "!" always means a shell command, even before a launcher word.
     "!shutdown", "!restart", "!undo", "!files", " !history",
     # The desk word is exact; a sentence with it in is for the agent.
@@ -363,6 +374,60 @@ def test_a_drawer_slow_to_map_still_slides_in(home, monkeypatch):
     lx, _, _ = _drawer(monkeypatch, h)
     lx._focus_drawer(Foot(4242), wait=0.2)
     assert h.calls == [("dispatch", 'hl.dsp.focus({ workspace = "special:details" })')]
+
+
+class Wpctl:
+    """wpctl answering from a volume level; records what it was told."""
+
+    def __init__(self, volume=0.40, muted=False, fail=False):
+        self.volume, self.muted, self.fail, self.calls = volume, muted, fail, []
+
+    def __call__(self, cmd, **kw):
+        import subprocess
+        self.calls.append(cmd[1:])
+        if self.fail:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no sink")
+        if cmd[1] == "set-volume":
+            step = float(cmd[-1].rstrip("%+-")) / 100
+            self.volume = round(min(1.0, self.volume + step) if cmd[-1].endswith("+") else max(0.0, self.volume - step), 2)
+        elif cmd[1] == "set-mute":
+            self.muted = cmd[-1] == "1"
+        out = f"Volume: {self.volume:.2f}" + (" [MUTED]" if self.muted else "") + "\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+
+def _sound(monkeypatch, wpctl):
+    monkeypatch.setattr(launcher.shutil, "which", lambda b: f"/usr/bin/{b}")
+    return launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0), runner=wpctl)
+
+
+def test_volume_words_change_the_volume_and_say_where_it_is_now(monkeypatch):
+    w = Wpctl(0.40)
+    lx = _sound(monkeypatch, w)
+    assert lx.run(launcher.match("volume up", [])) == (True, "Volume 45%.")
+    assert lx.run(launcher.match("quieter", [])) == (True, "Volume 40%.")
+    assert lx.run(launcher.match("mute", [])) == (True, "Volume 40%, muted.")
+    assert lx.run(launcher.match("unmute", [])) == (True, "Volume 40%.")
+    assert w.calls[0] == ["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "5%+"]   # never past 100%
+    assert [c[0] for c in w.calls] == ["set-volume", "get-volume"] * 2 + ["set-mute", "get-volume"] * 2
+
+
+def test_volume_up_stops_at_full(monkeypatch):
+    lx = _sound(monkeypatch, Wpctl(0.98))
+    assert lx.run(launcher.match("louder", [])) == (True, "Volume 100%.")
+
+
+def test_volume_words_say_plainly_when_there_is_no_sound_output(monkeypatch):
+    ok, text = _sound(monkeypatch, Wpctl(fail=True)).run(launcher.match("volume up", []))
+    assert not ok and text == "Could not change the volume: no sound output found."
+    monkeypatch.setattr(launcher.shutil, "which", lambda b: None)
+    ok, text = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.match("mute", []))
+    assert not ok and "PipeWire" in text
+
+
+def test_volume_words_are_not_offered_as_completions():
+    names = {e["name"] for e in launcher.entries([])}
+    assert "sound" in names and not names & {"volume_up", "volume_down", "mute", "unmute"}
 
 
 def _placing(monkeypatch, said):

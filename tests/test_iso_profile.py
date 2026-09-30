@@ -26,6 +26,8 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
     from bombadil import providers
     assert "pacman -Syu --noconfirm --needed" in providers.system_prompt()
     assert "never `pacman -Sy` alone" in providers.system_prompt()
+    # An install that updates everything is said out loud, not done quietly.
+    assert "That also updates every other package, so say so in one plain sentence" in providers.system_prompt()
 
 
 ARCH_GRUB_DEFAULTS = """\
@@ -85,3 +87,127 @@ def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers
     assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.system_prompt()
+
+
+USER_UNITS = ISO / "airootfs/etc/systemd/user"
+
+
+def _unit(path: Path) -> dict[str, dict[str, str]]:
+    sections: dict[str, dict[str, str]] = {}
+    current = None
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            current = sections.setdefault(line.strip("[]"), {})
+        elif current is not None and "=" in line:
+            key, _, value = line.partition("=")
+            current[key.strip()] = value.strip()
+    return sections
+
+
+def test_the_daemon_the_bar_and_the_notifications_come_back_when_they_die():
+    units = [USER_UNITS / "bombadil-agentd.service", USER_UNITS / "bombadil-shell.service",
+             USER_UNITS / "mako.service.d/restart.conf"]
+    for path in units:
+        u = _unit(path)
+        assert u["Service"]["Restart"] == "always", path.name
+        # systemd's default of five restarts in ten seconds would leave a crash loop with no bar.
+        assert u.get("Unit", {}).get("StartLimitIntervalSec", u["Service"].get("StartLimitIntervalSec")) == "0", path.name
+    # Apps the agent started keep running when only the daemon restarts.
+    assert _unit(units[0])["Service"]["KillMode"] == "process"
+    assert _unit(units[0])["Service"]["ExecStart"] == "/usr/local/bin/agentd"
+    assert _unit(units[1])["Service"]["ExecStart"] == "/usr/local/bin/bombadil-shell"
+
+
+def test_the_session_starts_them_after_handing_over_its_environment():
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    start = lua[lua.index('hl.on("hyprland.start"'):].split("\nend)")[0]
+    # WAYLAND_DISPLAY and the Hyprland signature exist only in the session, not in the user manager.
+    assert start.index("import-environment") < start.index("restart bombadil-agentd bombadil-shell mako")
+    assert "exec_cmd(\"agentd\")" not in start and "quickshell" not in start.replace("bombadil-shell", "")
+    # The key for a hung bar restarts the service instead of racing a second quickshell against it.
+    assert 'hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell"))' in lua
+
+
+def test_setup_and_the_cli_restart_the_daemon_through_systemd():
+    setup = (ISO / "airootfs/usr/local/bin/bombadil-setup").read_text()
+    assert "systemctl --user restart bombadil-agentd" in setup and "pkill" not in setup
+    cli = (ISO.parent / "bin/bombadil").read_text()
+    assert "systemctl --user restart bombadil-agentd" in cli
+
+
+def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones():
+    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    assert "set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30" in install
+    assert "systemctl enable snapper-cleanup.timer" in install
+    # The config has to exist before it is changed.
+    assert install.index("create-config") < install.index("set-config")
+
+
+def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_boot_medium():
+    # With copytoram (a USB stick with RAM to spare) /run/archiso/bootmnt is gone by the time the
+    # kernel is copied, which used to stop the script after the disk was wiped and copied.
+    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    assert "bootmnt" not in install
+    assert 'cp "$kernel" /mnt/boot/vmlinuz-linux' in install
+    # It is found, and checked, before the disk is erased.
+    assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')
+
+
+def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
+    import re
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    host = (ISO.parent / "scripts/test-vm.sh").read_text()
+    assert 'say "KEYS $bootid-$nkeys $*"' in smoke and "/proc/sys/kernel/random/boot_id" in smoke
+    pattern = re.search(r'grep -ao "(BOMBADIL-SMOKE: KEYS [^"]*)"', host).group(1)
+    # The undo round trip boots twice; each boot's first request has its own number.
+    log = "BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l\nBOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l\n"
+    assert re.findall(pattern, log) == ["BOMBADIL-SMOKE: KEYS 1a2b3c4d-1 meta_l", "BOMBADIL-SMOKE: KEYS 9f8e7d6c-1 meta_l"]
+
+
+def test_the_smokes_sign_in_block_never_runs_where_a_provider_is_already_chosen():
+    # It picks other providers, cancels their logins and deletes the config file at its end.
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    gate = 'if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then'
+    assert 'signin_config=/home/user/.config/bombadil/config.toml' in smoke and gate in smoke
+    assert smoke.index(gate) < smoke.index("check signin-agentd-starts") < smoke.index("rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml")
+    # The gate is one block: what the fresh ISO runs is inside it, up to the install step.
+    assert smoke.index(gate) < smoke.index('if [[ "$mode" == "install" ]]; then')
+    host = (ISO.parent / "scripts/test-vm.sh").read_text()
+    assert "SKIP signin" in smoke and "SKIP signin" in host
+
+
+def _run_gate(home, with_config):
+    """The gate's own lines, run in bash against a home with or without a config file."""
+    import subprocess
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    start = smoke.index("signin_config=")
+    end = smoke.index(": >/tmp/smoke.agentd.log")
+    home.mkdir()
+    cfg = home / "config.toml"
+    if with_config:
+        cfg.write_text('provider = "claude"\n')
+    body = smoke[start:end].replace("/home/user/.config/bombadil/config.toml", str(cfg))
+    script = f'say() {{ echo "SAY $*"; }}\nmode=live\n{body}\necho RUNS\nfi\n'
+    return subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True).stdout
+
+
+def test_the_gate_skips_with_a_config_and_runs_without_one(tmp_path):
+    chosen = _run_gate(tmp_path / "chosen", with_config=True)
+    assert "SKIP signin" in chosen and "RUNS" not in chosen
+    fresh = _run_gate(tmp_path / "fresh", with_config=False)
+    assert "RUNS" in fresh and "SKIP" not in fresh
+
+
+def test_the_smoke_replaces_agentd_through_its_unit_and_checks_the_units_with_a_function():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    # systemd starts a killed agentd again in the normal environment, so the smoke's own agentd
+    # (another provider, a fake login) needs the unit stopped first, and the unit back after.
+    restart = smoke[smoke.index("restart_agentd() {"):smoke.index("page_or_offline()")]
+    assert restart.index("systemctl --user stop bombadil-agentd") < restart.index("setsid -f agentd")
+    assert "systemctl --user start bombadil-agentd" in smoke and "check agentd-restored agentd_unit_again" in smoke
+    # as_user is a shell function: a `bash -c` would not find it.
+    assert "check services-are-units units_active" in smoke
+    assert "bash -c 'for u in bombadil-agentd" not in smoke

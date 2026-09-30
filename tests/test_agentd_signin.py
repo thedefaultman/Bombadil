@@ -638,3 +638,28 @@ async def test_calling_off_a_sign_in_says_cancelling_at_once(signed_out, monkeyp
     assert not panel.visible
     w.close()
     server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_choosing_claude_starts_it_on_sonnet_and_a_model_switch_is_not_written_to_the_config(home, monkeypatch):
+    class Claudish(Browsing):
+        name = "claude"
+
+    monkeypatch.setitem(providers.PROVIDERS, "claude", Claudish)
+    (Path.home() / ".fake-signin").write_text("signed in")
+    d = agentd.AgentD(Browsing("x"), agentd._NoSnapshots(), panel=FakePanel())
+    server, r, w, setup = await _start(d)
+    await _send(w, {"type": "setup_action", "id": "provider:claude"})
+    for _ in range(100):
+        if d.provider.name == "claude":
+            break
+        await asyncio.sleep(0.05)
+    assert d.provider.model == config.DEFAULT_MODELS["claude"] == d.base_model and d.session_model is None
+    # "use opus" is a session's switch: choosing Claude again keeps it, and writes no model down.
+    d._use_model("opus")
+    await _send(w, {"type": "setup_action", "id": "provider:claude"})
+    await asyncio.sleep(0.5)
+    assert d.provider.model == "claude-opus-5-5"
+    assert config.load().provider == "claude" and config.load().model is None
+    w.close()
+    server.cancel()
