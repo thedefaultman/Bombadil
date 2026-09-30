@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""bombadil-browser URL...: the system's web browser. Every link opens in the browser panel.
+
+It is $BROWSER and the https handler xdg-open uses (bombadil-browser.desktop), so a link
+clicked in the terminal, an app's "open in browser", and the sign-in page of `claude auth
+login`, `/login` or `codex login` all slide the browser in. It asks agentd, which knows when
+the page is a sign-in it is running; without agentd it opens the panel itself.
+"""
+import json
+import os
+import socket
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from bombadil import paths  # noqa: E402
+
+
+def tell_agentd(url: str) -> bool:
+    msg = {"type": "open_url", "url": url, "signin": os.environ.get("BOMBADIL_SIGNIN")}
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        s.settimeout(3)
+        try:
+            s.connect(str(paths.socket_path()))
+            s.sendall((json.dumps(msg) + "\n").encode())
+            s.shutdown(socket.SHUT_WR)
+        except OSError:
+            return False
+        try:
+            while s.recv(65536):   # agentd hangs up once it has read the line
+                pass
+        except OSError:
+            pass   # slow to hang up, but it has the URL: opening it here too would open it twice
+    return True
+
+
+def main() -> int:
+    urls = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if not urls:
+        print(__doc__.strip().splitlines()[0], file=sys.stderr)
+        return 2
+    for url in urls:
+        if "://" not in url:
+            if Path(url).exists():
+                url = Path(url).resolve().as_uri()
+            elif not url.startswith(("about:", "data:", "javascript:", "mailto:")):
+                host = url.split("/", 1)[0].split(":", 1)[0]
+                url = ("http://" if host in ("localhost", "127.0.0.1") else "https://") + url   # "example.com"
+        if tell_agentd(url):
+            continue
+        from bombadil import browser
+        try:
+            browser.open_url(url)
+        except Exception as e:  # noqa: BLE001
+            print(f"bombadil-browser: {e}", file=sys.stderr)
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

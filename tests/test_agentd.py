@@ -28,16 +28,15 @@ async def _read_until(r, kind):
 async def test_turn_round_trip(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
-            break
-        await asyncio.sleep(0.02)
+    await _ready(d)
     r, w = await _client(d.socket_path)
     first = json.loads(await r.readline())
-    assert first == {"type": "status", "busy": False, "provider": "fake", "turns": 0,
+    assert first == {"type": "status", "busy": False, "provider": "fake", "setup": "ready", "turns": 0,
                      "snapshots": False, "queued": 0, "turn": None, "queue": []}
     entries = json.loads(await r.readline())
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
+    setup = json.loads(await r.readline())
+    assert setup["type"] == "setup" and setup["state"] == "ready" and setup["actions"] == []
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
     await w.drain()
     msgs = await _read_until(r, "turn_end")
@@ -67,16 +66,26 @@ class Scripted(providers.Claude):
         self.seen_sessions.append(turn.session_id)
         return ["python3", "-c", self.script]
 
+    def signed_in(self):
+        return True
 
-async def _start(d):
-    server = asyncio.create_task(d.serve())
-    for _ in range(50):
-        if d.socket_path.exists():
+
+async def _ready(d, state="ready"):
+    """Wait for the socket, and for agentd to know whether its provider is signed in."""
+    for _ in range(250):
+        if d.socket_path.exists() and d.access != "checking":
             break
         await asyncio.sleep(0.02)
+    assert d.access == state
+
+
+async def _start(d, state="ready"):
+    server = asyncio.create_task(d.serve())
+    await _ready(d, state)
     r, w = await _client(d.socket_path)
     await r.readline()   # status
     await r.readline()   # entries
+    await r.readline()   # setup
     return server, r, w
 
 
