@@ -65,6 +65,7 @@ A model turn (no `kind`):
 | `tools` | `{"n": steps, "names": [unique tool names in order of first use]}` |
 | `model`, `cost`, `usage` | the provider's model name, dollars, `{input, output, cache_read, cache_write}`; null when the provider does not say |
 | `rate_limit` | the provider's rate-limit event when it sent one, else null |
+| `drift` | only when non-empty: `{"<type>": n}`, how many stream lines were valid JSON of a `type` the adapter does not know (the tripwire for a vendor CLI changing) |
 | `v` | 2 |
 
 A launcher action (`kind: "local"`): `t`, `prompt` (what he typed, or the action's name for a
@@ -100,12 +101,13 @@ Existing messages are unchanged. New (client → agentd):
 - `{"type":"prompt","text":…,"origin":"typed"|"cli"|"app"|…}`: `origin` optional (`typed` when absent; `app` when the text starts with "[from app ").
 - `{"type":"hello","client":"bar","pid":n,"build":"…"}`, `{"type":"alive","t":…}` every 5 s,
   `{"type":"rects","screen":"Virtual-1","w":1920,"h":1080,"rects":[{"name","x","y","w","h"}]}`,
-  `{"type":"focus_ack","ms":n}` after a summon once the input has the keyboard,
+  `{"type":"focus_ack","id":n,"ms":120}` after a summon once the input has the keyboard (`id` is the
+  `id` of the summon message agentd broadcast, which now carries one: `{"type":"summon","id":n}`),
   `{"type":"friction","what":"esc","count":3,"seconds":10,"drawer":true}`.
 - `{"type":"ping"}` → `{"type":"pong","t":…,"pid":n}`.
-- `{"type":"noticed_do","op":…,"id":…,"form":…}`; ops: `accept`, `not_now`, `never`, `got_it`,
-  `other_ways`, `preview`, `report`, `send`, `undo`, `bring_back`, `forget_asks`, `clear_found`,
-  `hide`, `show`. agentd answers the sender with `{"type":"noticed_result","op","id","ok","text","preview"?}`.
+- `{"type":"noticed_do","op":…,"id":…,"form":…}`; ops: `open` (the Noticed window), `accept`,
+  `not_now`, `never`, `got_it`, `other_ways`, `preview`, `report`, `send`, `undo`, `bring_back`,
+  `forget_asks`, `clear_found`, `hide`, `show`. agentd answers the sender with `{"type":"noticed_result","op","id","ok","text","preview"?}`.
 - `{"type":"noticed_state"}` → agentd sends `noticed` to that client.
 
 New (agentd → clients):
