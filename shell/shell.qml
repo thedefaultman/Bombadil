@@ -175,14 +175,17 @@ ShellRoot {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
 
-                // A picture the machine drew from itself, or the agent drew: above the line, over the windows.
-                CardHost {
+                // A picture the machine drew from itself, or the agent drew: above the line, over the
+                // windows. It draws with the kit (shell/Bombadil, a symlink to share/qml/Bombadil), so it
+                // loads on its own: a kit that will not load costs the pictures, never the bar.
+                Loader {
                     id: cardHost
-                    pill: pillState
-                    maxHeight: Math.round(modelData.height * 0.6)
+                    visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
                     Layout.maximumWidth: 900
                     Layout.alignment: Qt.AlignHCenter
+                    Component.onCompleted: setSource("CardHost.qml", {
+                        pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
                 }
 
                 StatusLine {

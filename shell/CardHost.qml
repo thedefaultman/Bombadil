@@ -1,6 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
-import "../share/qml/Bombadil" as Kit
+import "Bombadil" as Kit   // shell/Bombadil is a symlink to the kit: Quickshell cannot import from outside its own folder
 
 // The picture above the line: a diagram the machine drew from itself (system_map, a receipt) or
 // the agent drew with show_card. One at a time. It draws with the kit's Diagram, so it looks like
@@ -10,6 +10,7 @@ import "../share/qml/Bombadil" as Kit
 // diagram here.)
 Rectangle {
     id: host
+    objectName: "cardHost"
     required property var pill       // a PillState
     property int maxHeight: 560      // taller pictures scroll
 

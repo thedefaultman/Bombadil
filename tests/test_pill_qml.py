@@ -48,7 +48,13 @@ Window {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
             anchors.bottomMargin: 12 + index * 200
             spacing: 8
-            CardHost { objectName: "cardHost"; pill: pillState; maxHeight: 520; Layout.fillWidth: true }
+            // As in shell.qml: loaded on its own, so a kit that will not load costs the pictures only.
+            Loader {
+                id: cardHost
+                visible: status === Loader.Ready && item !== null && item.opacity > 0
+                Layout.fillWidth: true
+                Component.onCompleted: setSource("%s/CardHost.qml", { pill: pillState, maxHeight: 520 })
+            }
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
@@ -67,7 +73,7 @@ class Bar:
     def __init__(self, app, tmp_path):
         self.app = app
         qml = tmp_path / "harness.qml"
-        qml.write_text(HARNESS % SHELL.as_uri())
+        qml.write_text(HARNESS % (SHELL.as_uri(), SHELL.as_uri()))
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
         self.engine.warnings.connect(lambda ws: self.warnings.extend(w.toString() for w in ws))
