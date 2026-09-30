@@ -42,3 +42,18 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def loop_dir() -> Path:
+    """What the self-improvement loop keeps: counts, findings, reports, and what the bar and agentd
+    report about themselves. Outside the restore points, so an undo never rewinds a count."""
+    return _env_path("BOMBADIL_LOOP", state_dir() / "loop")
+
+
+def loop_db() -> Path:
+    return loop_dir() / "loop.db"
+
+
+def words_file() -> Path:
+    """The words Bombadil made from what you keep asking (launcher.py reads them)."""
+    return config_dir() / "words.toml"
