@@ -13,16 +13,20 @@ def test_claude_command_and_events(tmp_path):
     assert cfg["mcpServers"]["bombadil-os"]["command"] == "/usr/bin/bombadil-os-mcp"
 
     lines = [
-        json.dumps({"type": "system", "subtype": "init", "session_id": "s1",
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s1", "model": "claude-sonnet-4-5",
                     "mcp_servers": [{"name": "bombadil-os", "status": "connected"}]}),
         json.dumps({"type": "assistant", "message": {"content": [
             {"type": "text", "text": "Opening"}, {"type": "tool_use", "name": "show_panel", "input": {"name": "browser"}}]}}),
         "garbage",
-        json.dumps({"type": "result", "result": "done", "is_error": False, "session_id": "s1"}),
+        json.dumps({"type": "result", "result": "done", "is_error": False, "session_id": "s1",
+                    "total_cost_usd": 0.02, "usage": {"input_tokens": 5, "output_tokens": 7}}),
     ]
     ev = list(p.events(lines))
-    assert [e["kind"] for e in ev] == ["session", "text", "tool", "result"]
-    assert ev[2]["input"] == {"name": "browser"}
+    # What the CLI says about the turn comes as meta events, before the result they belong with.
+    assert [e["kind"] for e in ev] == ["session", "meta", "text", "tool", "meta", "result"]
+    assert ev[1] == {"kind": "meta", "model": "claude-sonnet-4-5"}
+    assert ev[4] == {"kind": "meta", "cost": 0.02, "usage": {"input": 5, "output": 7, "cache_read": 0, "cache_write": 0}}
+    assert ev[3]["input"] == {"name": "browser"}
 
 
 def test_claude_error_results_keep_their_reason_and_mcp_failures_show():
@@ -33,7 +37,7 @@ def test_claude_error_results_keep_their_reason_and_mcp_failures_show():
         json.dumps({"type": "result", "is_error": True, "subtype": "error_during_execution",
                     "errors": ["No conversation found with session ID: s0"], "num_turns": 0}),
     ]))
-    assert [e["kind"] for e in ev] == ["session", "error", "result"]
+    assert [e["kind"] for e in ev] == ["session", "error", "result"]   # says nothing of model or cost: no meta
     assert "failed" in ev[1]["text"]
     assert ev[2]["ok"] is False and "No conversation found" in ev[2]["text"] and ev[2]["num_turns"] == 0
 
@@ -58,7 +62,7 @@ def test_codex_command_and_events(tmp_path):
         json.dumps({"type": "turn.completed"}),
     ]
     ev = list(p.events(lines))
-    assert [e["kind"] for e in ev] == ["session", "tool", "text", "text", "result"]
+    assert [e["kind"] for e in ev] == ["session", "tool", "text", "text", "result"]   # no usage, no model: no meta
     assert ev[-1]["text"] == "Hello"
     failed = list(p.events([json.dumps({"type": "turn.failed", "error": {"message": "quota"}})]))
     assert failed == [{"kind": "result", "ok": False, "text": "quota"}]
@@ -146,3 +150,110 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def _metas(events):
+    return [e for e in events if e["kind"] == "meta"]
+
+
+def test_claude_keeps_the_model_the_cost_the_tokens_and_a_rate_limit_notice():
+    ev = _kinds(providers.Claude("x"), "claude-meta.jsonl")
+    assert [e["kind"] for e in ev] == ["session", "meta", "meta", "text", "meta", "meta", "result"]
+    model, limit, drift, result_meta = _metas(ev)
+    assert model == {"kind": "meta", "model": "claude-sonnet-4-5"}
+    assert limit == {"kind": "meta", "rate_limit": {
+        "status": "allowed", "resetsAt": 1790684400, "rateLimitType": "five_hour", "overageStatus": "rejected",
+        "overageDisabledReason": "org_level_disabled", "isUsingOverage": False}}
+    assert drift == {"kind": "meta", "drift": "prompt_suggestion"}
+    assert result_meta == {"kind": "meta", "cost": 0.0412, "usage": {
+        "input": 310, "output": 188, "cache_read": 18240, "cache_write": 2100}}
+    assert ev[-1]["kind"] == "result" and ev[-1]["text"] == "You have 212 GB free."
+
+
+def test_the_fixtures_the_adapter_was_written_against_show_no_drift():
+    """Every line a real Claude turn prints is of a type the parser knows; if this fails the parser is wrong,
+    or the fixture is newer than it."""
+    for name in ("claude-install-ffmpeg.jsonl", "claude-interrupted.jsonl"):
+        ev = _kinds(providers.Claude("x"), name)
+        assert not [m for m in _metas(ev) if "drift" in m], name
+    ev = _kinds(providers.Claude("x"), "claude-install-ffmpeg.jsonl")
+    assert _metas(ev) == [
+        {"kind": "meta", "model": "claude-sonnet-4-5"},
+        {"kind": "meta", "cost": 0.0015599999999999998, "usage": {"input": 100, "output": 84, "cache_read": 0,
+                                                                   "cache_write": 0}}]
+    assert _metas(_kinds(providers.Claude("x"), "claude-interrupted.jsonl"))[-1]["cost"] == 0.0007799999999999999
+
+
+def test_a_line_of_an_unknown_type_is_drift_and_does_nothing_else():
+    p = providers.Claude("x")
+    known = json.dumps({"type": "user", "message": {"content": "hello"}})
+    assert list(p.parse(known)) == []
+    assert list(p.parse(json.dumps({"type": "hologram", "x": 1}))) == [{"kind": "meta", "drift": "hologram"}]
+    # Not JSON, JSON that is not an object, and an object with no type are not drift: there is nothing to name.
+    for line in ("garbage", "[1, 2]", "3", '"type"', json.dumps({"no": "type"}), ""):
+        assert list(p.parse(line)) == [], line
+    # A type that is not even a word still counts, and cannot break the parser.
+    for odd, name in ((None, "None"), (7, "7"), (["a"], "['a']"), ({"a": 1}, "{'a': 1}"), ("", "(empty)")):
+        assert list(p.parse(json.dumps({"type": odd}))) == [{"kind": "meta", "drift": name}]
+    assert next(iter(p.parse(json.dumps({"type": "x" * 500}))))["drift"] == "x" * 60
+
+
+def test_every_type_the_claude_parser_handles_is_one_it_knows():
+    handled = {"system", "stream_event", "assistant", "user", "result", "rate_limit_event"}
+    assert providers.Claude.known_types == handled
+    for t in handled:
+        assert not [e for e in providers.Claude("x").parse(json.dumps({"type": t})) if e.get("drift")]
+
+
+def test_claude_meta_ignores_what_it_cannot_use():
+    p = providers.Claude("x")
+    assert list(p.parse(json.dumps({"type": "system", "subtype": "init", "model": ""}))) == [
+        {"kind": "session", "session_id": None},
+        {"kind": "error", "text": "the OS tools did not start (bombadil-os: missing)"}]
+    assert list(p.parse(json.dumps({"type": "rate_limit_event", "rate_limit_info": "soon"}))) == []
+    odd = json.dumps({"type": "result", "result": "ok", "total_cost_usd": True,
+                      "usage": {"input_tokens": "many", "output_tokens": -1}})
+    assert [e["kind"] for e in p.parse(odd)] == ["result"]
+    part = json.dumps({"type": "result", "result": "ok", "usage": {"output_tokens": 9}})
+    assert next(iter(p.parse(part))) == {"kind": "meta", "usage": {"input": 0, "output": 9, "cache_read": 0,
+                                                                "cache_write": 0}}
+    assert [e["kind"] for e in p.parse(json.dumps({"type": "result", "result": "ok", "usage": {}}))] == ["result"]
+
+
+def test_codex_keeps_its_token_counts_and_the_model_only_when_one_was_asked_for():
+    lines = [json.dumps({"type": "thread.started", "thread_id": "t1"}), json.dumps({"type": "turn.started"}),
+             json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Hello"}}),
+             json.dumps({"type": "turn.completed", "usage": {"input_tokens": 24763, "cached_input_tokens": 24448,
+                                                              "output_tokens": 122}})]
+    plain = providers.Codex("x")
+    plain.command(providers.Turn("hi"), Path("/tmp"))
+    ev = list(plain.events(lines))
+    # Its input_tokens include the cached ones; a row's input does not.
+    assert _metas(ev) == [{"kind": "meta", "usage": {"input": 315, "output": 122, "cache_read": 24448,
+                                                     "cache_write": 0}}]
+    assert [e["kind"] for e in ev] == ["session", "text", "meta", "result"]   # turn.started is known, says nothing
+    asked = providers.Codex("x", model="some-model")
+    asked.command(providers.Turn("hi"), Path("/tmp"))
+    assert _metas(list(asked.events(lines)))[0]["model"] == "some-model"
+    # A model but no usage: the model alone.
+    assert list(asked.parse(json.dumps({"type": "turn.completed"}))) == [
+        {"kind": "meta", "model": "some-model"}, {"kind": "result", "ok": True, "text": "Hello"}]
+    # Counts that do not add up are not made to.
+    sums = json.dumps({"type": "turn.completed", "usage": {"input_tokens": 5, "cached_input_tokens": 9}})
+    assert next(iter(plain.parse(sums)))["usage"] == {"input": 0, "output": 0, "cache_read": 9, "cache_write": 0}
+
+
+def test_codex_counts_an_event_type_it_does_not_know_as_drift():
+    p = providers.Codex("x")
+    assert list(p.parse(json.dumps({"type": "turn.interrupted"}))) == [{"kind": "meta", "drift": "turn.interrupted"}]
+    for t in p.known_types:
+        assert not [e for e in p.parse(json.dumps({"type": t})) if e.get("drift")], t
+    assert list(p.parse(json.dumps({"item": {"type": "agent_message"}}))) == []   # no type, nothing to name
+
+
+def test_the_shell_and_the_fake_provider_say_nothing_about_themselves():
+    sh = providers.Shell()
+    assert not _metas(list(sh.parse("line\n")) + list(sh.finish()))
+    fake = providers.Fake("x")
+    fake.command(providers.Turn("hi"), Path("/tmp"))
+    assert not _metas(list(fake.events(["hi"])))
