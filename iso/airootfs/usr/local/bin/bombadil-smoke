@@ -37,16 +37,17 @@ mcp_call() {
     | as_user timeout 60 bombadil-os-mcp | tail -1 | tee /dev/stderr | grep -qv '"isError": true'
 }
 # hyprctl -j WHAT, retried: under software emulation Hyprland's IPC can miss its deadline.
-hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl $1: $o"; return 1; }
-has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any($1 for c in json.load(sys.stdin)))"; }
-no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
+# On failure it prints nothing and puts hyprctl's last answer on stderr, which lands in the check's log.
+hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl -j $1: $o" >&2; return 1; }
+has_client() { local o; o=$(hypr_json clients) && python3 -c "import json,sys; sys.exit(not any($1 for c in json.loads(sys.argv[1])))" "$o"; }
+no_config_errors() { local o; o=$(hypr_json configerrors) && python3 -c 'import json,sys; e=[x for x in json.loads(sys.argv[1]) if x]; print(e); sys.exit(bool(e))' "$o"; }
 # A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
 virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
-# Every generated app card sits at its own spot (a second one does not hide the first).
-apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
+# Every generated app has its own drawer (a special workspace), so a second never hides the first.
+apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -71,7 +72,8 @@ agentd_send() { as_user python3 -c 'import json, socket, sys; s = socket.socket(
 
 check agentd-socket wait_for 90 test -S "$sock"
 check quickshell-running wait_for 60 pgrep -x quickshell
-check hypr-config-ok no_config_errors
+# Right after login Hyprland can be too busy to answer for a while (the bar is still starting).
+check hypr-config-ok wait_for 6 no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
 check virtual-display-size virtual_display_size
 check audio-output wait_for 60 audio_sink
@@ -89,10 +91,27 @@ check browser-hide mcp_call hide_panel '{"name":"browser"}'
 qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title: \"Smoke\"; subtitle: \"generated on the spot\"; Label { text: \"Hello from a native app\"; color: Theme.fg; font: Theme.font } }'
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
+# The app kit: each app slides in from its own drawer, reports its load, and the skill is installed.
+app_ok() { as_user bombadil-app status "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d.get("ok") and d.get("running")))'; }
+# Gone only if hide said so and Hyprland then answered without the drawer (no answer never counts as gone).
+app_hidden() { local h o; h=$(as_user bombadil-app hide "$1"); echo "$h"; [[ "$h" == *" hidden" ]] && sleep 2 && o=$(hypr_json monitors) && ! grep -q "\"special:app-$1\"" <<<"$o"; }
+open_example() { as_user cp -rT "/usr/share/bombadil/share/skills/bombadil-apps/examples/$1" "/home/user/Apps/$1" && mcp_call open_app "{\"name\":\"$1\"}"; }
+check app-shown wait_for 30 special_shown app-smoke-test
+check app-status wait_for 30 app_ok smoke-test
+check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 shot app
 check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
 check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
-check apps-have-own-spots wait_for 30 apps_apart
+check apps-have-own-drawers wait_for 30 apps_in_own_drawers
+check second-app-shown wait_for 30 special_shown app-smoke-two
+check app-hide app_hidden smoke-two
+for ex in memory password-manager; do
+  [[ -d "/usr/share/bombadil/share/skills/bombadil-apps/examples/$ex" ]] || continue
+  check "example-$ex" open_example "$ex"
+  check "example-$ex-shown" wait_for 60 special_shown "app-$ex"
+  check "example-$ex-status" wait_for 30 app_ok "$ex"
+  shot "$ex"
+done
 check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
@@ -102,6 +121,15 @@ keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
+# A tap that did nothing: was it the bind (Hyprland never ran `bombadil pill`) or the pill? Say which
+# in the log: ask for the pill by hand and type the word again.
+if ! launcher_ran browser "Opened the browser" "$before"; then
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1)"
+  as_user bombadil pill; sleep 3
+  keys b r o w s e r ret
+  if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
+  else say "DIAG by hand the pill did not take the word either"; fi
+fi
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 # Alt+Space opens the pill too, for hosts that keep Super.
