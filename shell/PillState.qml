@@ -19,8 +19,18 @@ QtObject {
     property var entries: []         // launcher words: [{name, title, kind, words}]
     property var queue: []           // prompts waiting their turn: [{turn, prompt}]
 
+    // Whether the machine can talk to its AI yet (agentd's "setup"): which AI (first boot),
+    // signed in, the sign-in under way in the browser. Its line shows when no turn runs, with
+    // chips under it; prompts typed meanwhile wait in the queue.
+    property string setupState: ""   // choose, checking, signed_out, offline, signing_in, ready
+    property string setupLine: ""
+    property string setupTone: "step" // step, ask, error, done
+    property var setupActions: []    // chips: [{id, label, style: big | primary | quiet}]
+    readonly property bool ready: setupState === "" || setupState === "ready" || setupState === "checking"
+
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
-    // open/undo/stop answered without the model, "idle" when there is nothing to say.
+    // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
+    // "idle" when there is nothing to say.
     property string mode: "idle"
     property string line: ""
     property string source: "step"   // step (plain words), agent (its own words), error
@@ -38,8 +48,9 @@ QtObject {
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
-    // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
-    readonly property bool stoppable: busy || optimistic
+    // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
+    // while a sign-in is under way (they call it off).
+    readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
 
     property string _result: ""
     property bool _resultOk: true
@@ -69,6 +80,7 @@ QtObject {
             return
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
+        if (ev.type === "setup") { _setup(ev); return }
         if (ev.type === "summon") { summoned(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
@@ -153,6 +165,40 @@ QtObject {
         }
     }
 
+    function _showSetup() {
+        mode = "setup"; line = setupLine; source = setupTone === "error" ? "error" : "step"
+        risk = ""; command = ""; sticky = false; flash = ""
+    }
+
+    function _setup(ev) {
+        const was = setupState, wasLine = setupLine
+        setupState = ev.state || ""
+        setupLine = ev.line || ""
+        setupTone = ev.tone || "step"
+        setupActions = ev.actions || []
+        if (mode === "working" && !optimistic) return   // a turn has the line; the setup waits for it
+        if (!ready && setupLine) {
+            optimistic = false
+            _showSetup()
+        } else if (setupState === "ready" && setupLine && was !== "" && (was !== "ready" || setupLine !== wasLine)) {
+            // "Signed in to Claude. Ask me for anything.": said once, then it fades. (Not said
+            // again to a bar that has just started: it was not there for it.)
+            optimistic = false
+            mode = "local"; line = setupLine; source = "step"; risk = ""; command = ""
+            sticky = false; lineAt = _now(); fadeAfter = 8000
+        } else if (mode === "setup") {
+            mode = "idle"; line = ""
+        }
+    }
+
+    function setupAction(id) {
+        if (_offline()) return
+        // The sign-in page and the Wi-Fi list open a window that must take the keyboard (a summoned
+        // pill holds it, and the password would go into the pill); Cancel opens nothing.
+        if (id !== "cancel") handOff()
+        outgoing({ type: "setup_action", id: id })
+    }
+
     function submit(text) {
         const t = String(text || "").trim()
         if (!t) return false
@@ -162,6 +208,15 @@ QtObject {
             return false
         }
         outgoing({ type: "prompt", text: t })
+        if (!ready && !t.startsWith("!")) {
+            // No AI to answer yet: the prompt waits in the queue, the setup line stays (or
+            // comes back over a finished line that would hide it).
+            if (mode === "closing" || mode === "local") {
+                sticky = false
+                if (setupLine) _showSetup()
+            }
+            return true
+        }
         if (!busy && mode !== "working") {
             // Something true on screen at once; agentd confirms with turn_start (or a local answer).
             optimistic = true
@@ -220,7 +275,12 @@ QtObject {
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
     function dismiss() {
-        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
+        if (mode === "closing" || mode === "local") {
+            sticky = false
+            // Not signed in yet: the setup line comes back rather than an empty pill.
+            if (!ready && setupLine) _showSetup()
+            else { mode = "idle"; line = "" }
+        }
         flash = ""
     }
 

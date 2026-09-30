@@ -88,6 +88,21 @@ def test_create_app_writes_files(home, monkeypatch):
     assert listed[0]["name"] == "todo"
 
 
+def test_a_new_app_picks_its_spot_before_it_starts_and_a_running_one_does_not(home, monkeypatch):
+    order = []
+    monkeypatch.setattr(mcp_server.apps, "run", lambda name: order.append(("run", name)))
+    monkeypatch.setattr(mcp_server, "_is_running", lambda name: False)
+    s = make()
+    s.hypr.place_app = lambda name: order.append(("place", name))
+    call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
+    call(s, "open_app", name="todo")
+    assert order == [("place", "todo"), ("run", "todo"), ("place", "todo"), ("run", "todo")]
+    order.clear()
+    monkeypatch.setattr(mcp_server, "_is_running", lambda name: True)
+    call(s, "create_app", title="Todo", qml="import QtQuick\nItem{}\n")
+    assert order == []
+
+
 def test_snapshot_and_undo(monkeypatch):
     monkeypatch.delenv("BOMBADIL_TURN_SNAPSHOT", raising=False)
     s = make()
