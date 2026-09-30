@@ -20,7 +20,9 @@ from . import paths
 
 PANELS: dict[str, list[str]] = {
     "browser": ["chromium", "--ozone-platform=wayland", "--remote-debugging-port=9222",
-                "--class=bombadil-browser", "--no-first-run", "--no-default-browser-check"],
+                "--class=bombadil-browser", "--no-first-run", "--no-default-browser-check",
+                # After a kill or a rollback Chromium offers to "restore pages" over the page.
+                "--hide-crash-restore-bubble"],
     "terminal": ["foot", "--app-id=bombadil-terminal"],
     "files": ["nautilus"],
 }

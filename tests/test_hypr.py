@@ -170,3 +170,7 @@ def test_a_broken_placements_file_is_ignored(home):
     (home / "run").mkdir(parents=True, exist_ok=True)
     (home / "run" / "app-placements.json").write_text('[{"name": 3}, "x", {"name": "a", "t": "now", "at": []}]')
     assert Ipc().place_app("passwords") == "passwords opens at 690,178"
+
+
+def test_the_browser_panel_does_not_offer_to_restore_pages_after_a_kill():
+    assert "--hide-crash-restore-bubble" in hypr.PANELS["browser"]
