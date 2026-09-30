@@ -51,13 +51,52 @@ that, and maps paths back through `/proc/self/mountinfo` (`/run/bombadil-brain/t
 is `/home/user/a`). Checked on Arch's own kernel under QEMU with the installer's layout,
 including a nested subvolume (`tests/vm/btrfs-kernel.sh`).
 
-## What the watcher sends
+## The watcher's edge (what a replacement must do)
 
-One JSON line per event: `op` (create, write, delete, rename, offline), `t`, `path`, `old`
-(renames), `dir`, `ino`, `size`, then the writer: `pid`, `uid`, `comm`, `cgroup`, `chain` (the
-writer and its ancestors as `[pid, comm, command line]`) and `gone`. The chain is most of the
-bytes, and a build writes 20,000 files, so events by one writer in a row (within one read of the
-kernel's queue, at most 1,000 or about 190 KB) go as one line that names the writer once:
+The watcher is meant to be swappable: it collects facts from the kernel and hands them over one
+small interface, and every decision about what they mean lives in the brain (Python). Swapping
+it, for a Rust program say, is a change to `watch.py`, `fanotify.py` and `forks.py` and nothing
+else, as long as it keeps the contract below. `tests/test_brain_watch.py::test_the_service_end_to_end`
+runs the real program against it; set `BOMBADIL_WATCHER_CMD` to run it against another binary.
+
+**Runs as** root, `bombadil-brain-watch [--path DIR] [--socket SOCK] [--state DIR] [--top DIR]
+[--spool-cap N] [--home UID:DIR]...` (defaults in `watch.py`). No `--path` means "the btrfs
+filesystem holding /home, through a private mount of its top level" (see above); `--path`
+watches the filesystem holding DIR and treats DIR as the home root (development, tests).
+
+**Talks over** a Unix stream socket, `/run/bombadil-brain/watch.sock`, one JSON object per
+line. A connection is a user (SO_PEERCRED); root gets everything, anyone else the events under
+their own home and `/etc`, `/var/log/pacman.log`. The brain sends `{"op":"ping"}`, the watcher
+answers `{"op":"pong"}`; nothing else is read.
+
+**Says**, in this order: `hello` (`v`, `watching`, `fs`, `top`, `reason`; `watching:false`
+with a reason when the root is not btrfs, and then no events come); the spool of what
+happened while that user's brain was away, if any; then live lines. Lines:
+
+| op | fields |
+|---|---|
+| `create` `write` `delete` `rename` `offline` | `t`, `path`, `old` (rename), `dir`, `ino`, `size`, then the writer |
+| `overflow` | the kernel's queue overflowed or the spool was cut: the brain walks |
+| `caught_up` | after a start: `offline` files were written while it was stopped (from `btrfs subvolume find-new`) |
+| `batch` | see below |
+
+The writer is `pid`, `uid`, `comm`, `cgroup` (the unified-hierarchy path), `chain` (the writer
+then its ancestors, at most 10, as `[pid, comm, command line]`) and `gone` (the writer had
+exited: it is named by its nearest live ancestor). These are facts; which of them makes an
+event "a turn", "a coding session", "an app" or "you" is `actors.py`'s job, not the watcher's.
+
+**Keeps** what only root can: the fanotify mark and the handle-to-path work, the writer's
+/proc facts and a fork tracker for writers that left before anyone looked, a spool per user
+while their brain is away (capped; past the cap it becomes one `overflow`), the
+`generations.json` markers for the offline catch-up, and the two policy lists at the top of
+`watch.py` (`HOME_NOISE`, `ANY_NOISE`: caches and build output are not sent, whatever wrote
+them, so a browser's cache does not cost a line each).
+
+Order is kept per writer and across writers: an event is never delivered before one that
+happened earlier, `overflow` and `caught_up` come after the events queued before them. The
+chain is most of an event's bytes and a build writes 20,000 files, so events by one writer in
+a row (within one read of the kernel's queue, at most 1,000 or about 190 KB) go as one line
+that names the writer once:
 
 ```
 {"op":"batch","pid":..,"uid":..,"comm":..,"cgroup":..,"chain":[..],"gone":..,"events":[{"op":"write","t":..,"path":..,...}, ...]}
@@ -65,8 +104,8 @@ kernel's queue, at most 1,000 or about 190 KB) go as one line that names the wri
 
 The brain unpacks it into the events it stands for, in order (`service._unbatch`); a run of
 one is an ordinary line. Every line stands alone, so a spool, a late reader and a reconnect
-need nothing from the lines before. A user's line holds only the events under their home and
-`/etc`. 20,000 files written by one process (a create and a write each) is about 3 MB of lines rather than 52.
+need nothing from the lines before. 20,000 files written by one process (a create and a write
+each) is about 3 MB of lines rather than 52.
 
 ## What gets in, and what stays out
 

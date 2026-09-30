@@ -2,6 +2,7 @@ import argparse
 import errno
 import json
 import os
+import shlex
 import signal
 import socket
 import struct
@@ -797,7 +798,9 @@ def test_the_service_end_to_end(tmp_path):
     sock = f"{run}/watch.sock"
     state = tmp_path / "state"
     env = {**os.environ, "PYTHONPATH": str(Path(W.__file__).resolve().parents[2])}
-    w = subprocess.Popen([sys.executable, "-m", "bombadil.brain.watch", "--path", str(tmp_path / "w"),
+    # The same test runs any program that keeps the contract in docs/BRAIN.md ("The watcher's edge").
+    cmd = shlex.split(os.environ.get("BOMBADIL_WATCHER_CMD", "")) or [sys.executable, "-m", "bombadil.brain.watch"]
+    w = subprocess.Popen([*cmd, "--path", str(tmp_path / "w"),
                           "--socket", sock, "--state", str(state), "--home", f"65534:{home}"],
                          env=env, stderr=subprocess.PIPE)
     cg_dir = None
