@@ -292,3 +292,425 @@ def test_a_tool_that_has_not_said_its_argument_yet_gets_plain_words():
 ])
 def test_odd_input_never_raises(ev):
     narrate.Narrator().on_event(ev)
+
+
+# -- the plan --
+
+def _tool(name, call=None, **inp):
+    return {"kind": "tool", "name": name, "id": call, "input": inp}
+
+
+def _result(call, output, error=False):
+    return {"kind": "tool_result", "id": call, "output": output, "error": error}
+
+
+def _made(n, call, tid, subject, **inp):
+    """A TaskCreate and the result that names the task."""
+    n.on_event(_tool("TaskCreate", call, subject=subject, description="d", **inp))
+    n.on_event(_result(call, f"Task #{tid} created successfully: {subject}"))
+
+
+def _rows(n):
+    return [(r["id"], r["subject"], r["active"], r["status"]) for r in n.plan]
+
+
+def test_a_created_task_is_a_row_that_its_result_then_names():
+    n = narrate.Narrator()
+    assert n.take_plan() is None   # nothing yet, so nothing to send
+    n.on_event(_tool("TaskCreate", "c1", subject="Install ffmpeg", description="d", activeForm="Installing ffmpeg"))
+    n.on_event(_tool("TaskCreate", "c2", subject="Open the browser", description="d"))
+    # Not confirmed yet: no id, in the order made. Without an activeForm the subject read as a verb.
+    assert n.take_plan() == [
+        {"id": None, "subject": "Install ffmpeg", "active": "Installing ffmpeg", "status": "pending"},
+        {"id": None, "subject": "Open the browser", "active": "Opening the browser", "status": "pending"}]
+    assert n.take_plan() is None   # unchanged since it was taken
+    # The second finishes first: rows the CLI has confirmed come before the ones it has not.
+    n.on_event(_result("c2", "Task #2 created successfully: Open the browser"))
+    assert [r[0] for r in _rows(n)] == ["2", None]
+    n.on_event(_result("c1", "Task #1 created successfully: Install ffmpeg"))
+    assert [r[0] for r in _rows(n)] == ["1", "2"]
+    # A subject that is not a verb has no present-tense form; the desk shows the subject.
+    _made(n, "c3", 3, "ffmpeg works")
+    assert _rows(n)[2] == ("3", "ffmpeg works", None, "pending")
+
+
+def test_task_updates_move_a_step_along_and_only_a_real_change_is_sent():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg", activeForm="Installing ffmpeg")
+    _made(n, "c2", 2, "Open the browser")
+    n.take_plan()
+    line = n.on_event(_tool("TaskUpdate", "u1", taskId="1", status="in_progress"))
+    assert line["text"] == "Installing ffmpeg"
+    assert [r["status"] for r in n.take_plan()] == ["in_progress", "pending"]
+    # Ticking a step off changes the plan but not the line, so it is the plan that says so.
+    assert n.on_event(_tool("TaskUpdate", "u2", taskId="1", status="completed")) is None
+    assert [r["status"] for r in n.take_plan()] == ["completed", "pending"]
+    # Nothing a person could see changed: nothing to send.
+    n.on_event(_tool("TaskUpdate", "u3", taskId="2", owner="me", description="more words"))
+    n.on_event(_tool("TaskUpdate", "u4", taskId="1", status="completed"))
+    assert n.take_plan() is None
+    # New words for a task come with it, and a new subject drops the old present tense.
+    n.on_event(_tool("TaskUpdate", "u5", taskId="2", subject="Open the browser and log in"))
+    assert _rows(n)[1] == ("2", "Open the browser and log in", "Opening the browser and log in", "pending")
+    n.on_event(_tool("TaskUpdate", "u6", taskId="2", activeForm="Logging in"))
+    assert _rows(n)[1][2] == "Logging in"
+    assert n.take_plan()[1]["active"] == "Logging in"
+
+
+def test_a_failed_create_leaves_no_row_and_the_plan_says_so():
+    n = narrate.Narrator()
+    n.on_event(_tool("TaskCreate", "c1", subject="Install ffmpeg", description="d"))
+    assert len(n.take_plan()) == 1
+    n.on_event(_result("c1", "InputValidationError: description is required", error=True))
+    assert n.take_plan() == []   # changed: the row is gone
+    # A result that names no task leaves nobody able to update it later, so there is no row either.
+    n.on_event(_tool("TaskCreate", "c2", subject="Install ffmpeg", description="d"))
+    n.on_event(_result("c2", "Something else happened"))
+    assert n.plan == []
+    # A create the CLI never gave an id is ignored rather than left waiting for a result.
+    n.on_event(_tool("TaskCreate", None, subject="Install ffmpeg", description="d"))
+    assert n.plan == []
+
+
+def test_deleted_tasks_leave_the_plan_and_unknown_ones_are_not_shown_as_a_number():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg")
+    _made(n, "c2", 2, "Open the browser")
+    n.on_event(_tool("TaskUpdate", "u1", taskId="1", status="deleted"))
+    assert [r[0] for r in _rows(n)] == ["2"]
+    n.on_event(_tool("TaskUpdate", "u2", taskId="9", status="deleted"))   # never seen: nothing
+    n.take_plan()
+    # Made in an earlier turn: with no words of its own there is nothing to show.
+    n.on_event(_tool("TaskUpdate", "u3", taskId="7", status="in_progress"))
+    n.on_event(_tool("TaskUpdate", "u4", taskId="8", status="completed", owner="me"))
+    assert n.take_plan() is None
+    # With its subject, an unknown task is added as it stands.
+    n.on_event(_tool("TaskUpdate", "u5", taskId="7", status="in_progress", subject="Check the sound"))
+    assert _rows(n)[-1] == ("7", "Check the sound", "Checking the sound", "in_progress")
+
+
+def test_claudes_own_spellings_of_a_task_update_are_read():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg")
+    _made(n, "c2", 2, "Open the browser")
+    n.on_event(_tool("TaskUpdate", "u1", id="1", status="in_progress", active_form="Installing ffmpeg now"))
+    assert _rows(n)[0] == ("1", "Install ffmpeg", "Installing ffmpeg now", "in_progress")
+    line = n.on_event(_tool("TaskUpdate", "u2", task_id="2", status="in_progress"))
+    assert line["text"] == "Opening the browser"
+    n.on_event(_tool("TaskCreate", "c3", subject="Check the sound", description="d", active_form="Listening"))
+    assert n.plan[-1]["active"] == "Listening"
+    # A status the schema does not have changes nothing.
+    n.on_event(_tool("TaskUpdate", "u3", taskId="1", status="blocked"))
+    assert n.plan[0]["status"] == "in_progress"
+
+
+def test_a_subagents_tasks_are_not_the_turns_plan():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg", activeForm="Installing ffmpeg")
+    n.take_plan()
+    sub = {"parent": "toolu_agent"}
+    # Its list is numbered from 1 like ours: it must neither add rows nor change ours.
+    n.on_event({**_tool("TaskCreate", "s1", subject="Read the config", description="d"), **sub})
+    n.on_event({**_result("s1", "Task #1 created successfully: Read the config"), **sub})
+    line = n.on_event({**_tool("TaskUpdate", "s2", taskId="1", status="in_progress"), **sub})
+    n.on_event({**_tool("TaskUpdate", "s3", taskId="1", status="completed"), **sub})
+    n.on_event({**_tool("TodoWrite", "s4", todos=[{"content": "Read", "status": "pending"}]), **sub})
+    assert line is None   # ours is "Installing ffmpeg", not the subagent's task
+    assert n.take_plan() is None
+    assert _rows(n) == [("1", "Install ffmpeg", "Installing ffmpeg", "pending")]
+
+
+def test_todowrite_replaces_the_whole_plan_with_places_for_ids():
+    n = narrate.Narrator()
+    line = n.on_event(_tool("TodoWrite", "w1", todos=[
+        {"content": "Install ffmpeg", "status": "in_progress", "activeForm": "Installing ffmpeg"},
+        {"content": "Open the browser", "status": "pending"},
+        {"content": "", "status": "pending"},
+        {"content": "Check the sound", "status": "surprise"},
+        "not a todo"]))
+    assert line["text"] == "Installing ffmpeg"
+    assert n.take_plan() == [
+        {"id": "1", "subject": "Install ffmpeg", "active": "Installing ffmpeg", "status": "in_progress"},
+        {"id": "2", "subject": "Open the browser", "active": "Opening the browser", "status": "pending"},
+        {"id": "3", "subject": "Check the sound", "active": "Checking the sound", "status": "pending"}]
+    # The next call is the whole list again: what it leaves out is gone.
+    n.on_event(_tool("TodoWrite", "w2", todos=[
+        {"content": "Install ffmpeg", "status": "completed"},
+        {"content": "Open the browser", "status": "in_progress"}]))
+    assert [(r["id"], r["status"]) for r in n.take_plan()] == [("1", "completed"), ("2", "in_progress")]
+    n.on_event(_tool("TodoWrite", "w3", todos="nothing to see"))
+    assert n.take_plan() is None
+    n.on_event(_tool("TodoWrite", "w4", todos=[]))
+    assert n.take_plan() == []
+
+
+def test_the_last_step_under_way_is_the_current_one_and_a_finished_list_is_not_a_new_line():
+    n = narrate.Narrator()
+    todos = [{"content": "Install ffmpeg", "status": "in_progress"},
+             {"content": "Open the browser", "status": "in_progress"}]
+    assert n.on_event(_tool("TodoWrite", "w1", todos=todos))["text"] == "Opening the browser"
+    done = [{**t, "status": "completed"} for t in todos]
+    # Ticking the last one off: the plan changes, the line stays what it was.
+    assert n.on_event(_tool("TodoWrite", "w2", todos=done)) is None
+    assert [r["status"] for r in n.take_plan()] == ["completed", "completed"]
+
+
+def test_a_task_list_result_brings_the_table_to_what_the_list_says():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg (with x264)", activeForm="Installing ffmpeg with x264")
+    n.on_event(_tool("TaskCreate", "c2", subject="Pending create", description="d"))
+    n.take_plan()
+    n.on_event(_tool("TaskList", "l1"))
+    n.on_event(_result("l1", "#1 [completed] Install ffmpeg (with x264) (me)\n"
+                             "#4 [in_progress] Open the browser [blocked by #1]\n"
+                             "#5 [pending] Check the sound (you) [blocked by #4]"))
+    # A task we know keeps our words, the list only says where it stands; new ones are read from it.
+    # The create still waiting for its result is not lost.
+    assert _rows(n) == [
+        ("1", "Install ffmpeg (with x264)", "Installing ffmpeg with x264", "completed"),
+        ("4", "Open the browser", "Opening the browser", "in_progress"),
+        ("5", "Check the sound", "Checking the sound", "pending"),
+        (None, "Pending create", None, "pending")]
+    # An empty list is a real answer; an error is not one.
+    n.on_event(_tool("TaskList", "l2"))
+    n.on_event(_result("l2", "Error: could not read the list", error=True))
+    assert len(n.plan) == 4
+    n.on_event(_tool("TaskList", "l3"))
+    n.on_event(_result("l3", "No tasks found"))
+    assert [r["id"] for r in n.plan] == [None]
+    # The result of a call that was not a TaskList is not read as one.
+    n.on_event(_result("bash1", "#9 [pending] Not a task"))
+    assert [r["id"] for r in n.plan] == [None]
+
+
+def test_a_number_made_again_is_the_task_made_last():
+    n = narrate.Narrator()
+    _made(n, "c1", 1, "Install ffmpeg")
+    _made(n, "c2", 1, "Install x264")   # the list was started over
+    assert _rows(n) == [("1", "Install x264", "Installing x264", "pending")]
+
+
+def test_a_long_plan_is_cut_and_long_words_too():
+    n = narrate.Narrator()
+    for i in range(narrate.MAX_PLAN + 5):
+        _made(n, f"c{i}", i + 1, f"Step {i} " + "very long " * 30)
+    assert len(n.plan) == narrate.MAX_PLAN
+    assert all(len(r["subject"]) <= narrate.MAX_TASK_TEXT for r in n.plan)
+    n.on_event(_tool("TaskUpdate", "u1", taskId="99", status="in_progress", subject="One too many"))
+    assert len(n.plan) == narrate.MAX_PLAN
+    n.on_event(_tool("TodoWrite", "w1", todos=[{"content": f"Step {i}"} for i in range(narrate.MAX_PLAN + 5)]))
+    assert len(n.plan) == narrate.MAX_PLAN
+
+
+def test_a_real_claude_stream_with_a_task_list_builds_the_plan_as_it_goes():
+    """A turn that keeps a task list, a subagent's own list inside it. Reconstructed from the schemas
+    of Claude Code 2.1.284 in the envelope of the real capture (see claude-plan.jsonl)."""
+    p = providers.Claude("x")
+    n = narrate.Narrator()
+    plans, lines = [], []
+    for raw in (FIXTURES / "claude-plan.jsonl").read_text().splitlines():
+        for ev in p.parse(raw):
+            line = n.on_event(ev)
+            if line and line["source"] == "step":
+                lines.append((line["text"], line["risk"]))
+            plan = n.take_plan()
+            if plan is not None:
+                plans.append(" ".join(f"{r['id']}:{r['status']}" for r in plan))
+    assert plans == [
+        "None:pending",
+        "None:pending None:pending",
+        "1:pending None:pending",
+        "1:pending 2:pending",
+        "1:in_progress 2:pending",
+        "1:completed 2:pending",
+        "1:completed 2:in_progress",
+        "1:completed 2:completed"]
+    assert [r["subject"] for r in n.plan] == ["Install ffmpeg", "Open the browser"]
+    # The line names the step it starts, then what runs under it with its mark.
+    assert lines[:4] == [("Planning the steps", None), ("Installing ffmpeg", None), ("Installing ffmpeg", "system"),
+                         ("Opening the browser", None)]
+    assert n.touched_counts() == {"package": 1} and n.touched_text() == "1 package so far"
+    assert n.summary() == "Installed ffmpeg and opened the browser."
+
+
+@pytest.mark.parametrize("ev", [
+    {"kind": "tool", "name": "TaskCreate", "id": ["x"], "input": {"subject": ["a"]}},
+    {"kind": "tool", "name": "TaskCreate", "id": "c", "input": {"subject": {"a": 1}, "activeForm": 3}},
+    {"kind": "tool", "name": "TaskCreate", "id": "c", "input": None},
+    {"kind": "tool", "name": "TaskUpdate", "input": {"taskId": ["1"], "status": ["done"]}},
+    {"kind": "tool", "name": "TaskUpdate", "input": {"taskId": 1, "status": "in_progress", "subject": 5}},
+    {"kind": "tool", "name": "TaskUpdate", "input": None},
+    {"kind": "tool", "name": "TodoWrite", "input": {"todos": [None, 3, {"content": None}, {"content": ["a"], "status": []}]}},
+    {"kind": "tool", "name": "TodoWrite", "input": {"todos": "nope"}},
+    {"kind": "tool", "name": "TaskList", "id": ["l"], "input": {}},
+    {"kind": "tool_result", "id": None, "output": 5, "error": None},
+    {"kind": "tool_result", "id": {"a": 1}, "output": None},
+])
+def test_odd_plan_events_never_raise(ev):
+    n = narrate.Narrator()
+    n.on_event(ev)
+    n.take_plan()
+    n.on_event(_tool("TaskList", "l1"))
+    n.on_event(_result("l1", None))
+    n.take_plan()
+
+
+# -- what the turn has touched --
+
+@pytest.mark.parametrize("command, counts", [
+    ("sudo pacman -S --noconfirm ffmpeg", {"package": 1}),
+    ("sudo pacman -S --needed ffmpeg x264 lame", {"package": 3}),
+    ("sudo pacman -Rns docker", {"package": 1}),
+    ("pip install --user requests rich", {"package": 2}),
+    ("pip uninstall -y requests", {"package": 1}),
+    ("sudo systemctl enable --now docker.service", {"service": 1}),
+    ("systemctl --user restart pipewire wireplumber", {"service": 2}),
+    # One command line, two kinds: the line names the first change, the count keeps them all.
+    ("sudo sh -c 'pacman -S --noconfirm docker && systemctl enable --now docker'", {"package": 1, "service": 1}),
+    ("sudo pacman -S --noconfirm docker && sudo systemctl enable docker", {"package": 1, "service": 1}),
+    ("mkdir -p ~/a/b && touch ~/a/b/c.txt", {"file": 2}),
+    ("echo hi > notes.txt", {"file": 1}),
+    ("cat > ~/x.sh <<'EOF'\necho hi\nEOF\nchmod +x ~/x.sh", {"file": 1}),
+    ("cp a.txt b.txt", {"file": 1}),
+    ("mv a b c dir/", {"file": 3}),
+    ("rm -f /tmp/a /tmp/b", {"file": 2}),
+    ("chmod 755 run.sh", {"file": 1}),
+    ("chown -R me:me ~/data", {"file": 1}),
+    ("sudo sed -i 's/a/b/' /etc/pacman.conf", {"file": 1}),
+    ("echo x | sudo tee -a /etc/motd", {"file": 1}),
+    ("ln -s /usr/bin/python3 ~/bin/python", {"file": 1}),
+    # Looking is not changing, and what has no countable thing in it counts nothing.
+    ("ls ~/Downloads", {}),
+    ("cat ~/a.txt", {}),
+    ("pacman -Ss ffmpeg", {}),
+    ("sudo pacman -Syu --noconfirm", {}),
+    ("npm install", {}),
+    ("systemctl status sshd", {}),
+    ("sudo systemctl daemon-reload", {}),
+    ("echo hi > /dev/null", {}),
+])
+def test_a_shell_command_says_what_it_touches(home, command, counts):
+    n = narrate.Narrator()
+    n.on_event(_tool("Bash", "b1", command=command))
+    assert n.touched_counts() == counts
+
+
+def test_the_tools_that_write_say_what_they_touch(home):
+    n = narrate.Narrator()
+    n.on_event(_tool("Write", "w", file_path="/home/u/notes.md", content="a\nb\n"))
+    n.on_event(_tool("Edit", "e", file_path="/home/u/.bashrc", old_string="a", new_string="b"))
+    n.on_event(_tool("Read", "r", file_path="/home/u/other.md"))
+    n.on_event({"kind": "file_change", "id": "f", "changes": [{"path": "/etc/hosts", "kind": "update"},
+                                                               {"path": "/home/u/new.txt", "kind": "add"}]})
+    n.on_event(_tool("mcp__bombadil-os__create_app", "a", title="Passwords", qml="Item {}"))
+    n.on_event(_tool("mcp__bombadil-os__create_app", "a2", title="Passwords", qml="Item { }"))   # again: the same app
+    n.on_event(_tool("mcp__bombadil-os__create_app", "a3", title="Notes", qml="Item {}"))
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__show_panel", "id": "p", "input": {"name": "browser"}})
+    assert n.touched_counts() == {"file": 4, "app": 2}
+
+
+def test_a_file_counts_once_however_it_was_changed_and_spelled(home):
+    n = narrate.Narrator()
+    doc = str(home / "notes.md")
+    n.on_event(_tool("Write", "w1", file_path=doc, content="a"))
+    n.on_event(_tool("Edit", "e1", file_path=doc, old_string="a", new_string="b"))
+    n.on_event(_tool("Bash", "b1", command="echo more >> ~/notes.md"))
+    n.on_event(_tool("Bash", "b2", command="sed -i s/b/c/ $HOME/notes.md"))
+    assert n.touched_counts() == {"file": 1}
+    n.on_event(_tool("Write", "w2", file_path=str(home / "other.md"), content="x"))
+    assert n.touched_counts() == {"file": 2}
+
+
+def test_a_step_still_being_written_counts_only_once_it_is_whole(home):
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool_start", "index": 0, "name": "Write"})
+    n.on_event({"kind": "tool_input", "index": 0, "partial": '{"file_path": "/home/u/a.txt", "content": "x'})
+    n.on_event({"kind": "tool_start", "index": 1, "name": "mcp__bombadil-os__create_app"})
+    n.on_event({"kind": "tool_input", "index": 1, "partial": '{"title": "Passwords", "qml": "a\\nb\\nc'})
+    assert n.touched == {} and n.touched_text() == ""
+    n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x"))
+    assert n.touched_counts() == {"file": 1}
+
+
+def test_the_whole_step_is_said_again_when_it_adds_to_the_count(home):
+    """The stream shows "Writing a.txt" before the file counts; the whole message repeats the
+    line and carries the count, so the desk's "1 file so far" does not wait for the next step."""
+    n = narrate.Narrator()
+    first = n.on_event({"kind": "tool_start", "index": 0, "name": "Write"})
+    partial = n.on_event({"kind": "tool_input", "index": 0, "partial": '{"file_path": "/home/u/a.txt", "content": "x'})
+    assert (first or partial) and n.touched_counts() == {}
+    whole = n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x"))
+    assert whole is not None and whole["text"] == (partial or first)["text"]
+    assert n.touched_counts() == {"file": 1}
+    assert n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x")) is None   # nothing new
+
+
+def test_the_count_in_words():
+    n = narrate.Narrator()
+    assert n.touched_text() == "" and n.touched_counts() == {}
+    n.on_event(_tool("Bash", "b1", command="sudo pacman -S --noconfirm ffmpeg"))
+    assert n.touched_text() == "1 package so far"
+    n.on_event(_tool("Bash", "b2", command="sudo pacman -S --noconfirm x264 lame"))
+    assert n.touched_text() == "3 packages so far"
+    n.on_event(_tool("Write", "w", file_path="/home/u/a.txt", content="x"))
+    assert n.touched_text() == "3 packages and 1 file so far"
+    n.on_event(_tool("Bash", "b3", command="sudo systemctl enable --now docker"))
+    assert n.touched_text() == "3 packages, 1 service and 1 file so far"
+    n.on_event(_tool("mcp__bombadil-os__create_app", "a", title="Passwords", qml="Item {}"))
+    assert n.touched_text() == "3 packages, 1 service, 1 file and 1 app so far"
+    assert n.touched_counts() == {"package": 3, "service": 1, "file": 1, "app": 1}
+
+
+# -- the job tool: the line says what it did --
+
+JOB = "mcp__bombadil-os__job"
+
+
+@pytest.mark.parametrize("args, text", [
+    ({"op": "start", "title": "Ubuntu 26.04 ISO", "command": "curl -O https://x/y.iso"}, "Watching Ubuntu 26.04 ISO"),
+    ({"op": "start", "title": "the build", "command": "tail --pid=1 -f /dev/null", "kind": "watch"},
+     "Watching the build"),
+    ({"op": "start", "title": "  Two   words\n", "command": "x"}, "Watching Two words"),
+    ({"op": "start", "seconds": 600}, "Watching Timer, 10 min"),
+    ({"op": "start", "title": "Tea", "seconds": 300}, "Watching Tea"),
+    ({"op": "start", "command": "sleep 100"}, "Starting a background job"),
+    ({"op": "start", "seconds": 0, "command": "x"}, "Starting a background job"),
+    ({"op": "start", "title": "x" * 80, "command": "x"}, "Watching " + "x" * 40),
+    ({"op": "list"}, "Checking the background jobs"),
+    ({}, "Checking the background jobs"),
+])
+def test_the_line_says_what_the_job_tool_did(home, args, text):
+    step = narrate.tool_step(JOB, args)
+    # A background job is nothing a restore point could undo, so it is no change and has no closing sentence.
+    assert (step.text, step.done, step.risk, step.command) == (text, None, None, None)
+
+
+def test_a_stop_names_the_job_it_stops(home):
+    from bombadil import jobs
+    j = jobs.Jobs(runner=lambda argv, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    rec = j.start("Ubuntu 26.04 ISO", "curl -O https://x/y.iso")
+    step = narrate.tool_step(JOB, {"op": "stop", "id": rec["id"]})
+    assert (step.text, step.done) == ("Stopped Ubuntu 26.04 ISO", None)
+    # A job that is not there, or an id that is not one, is still said plainly and reads nothing odd.
+    for a in ({"op": "stop", "id": "ffffff"}, {"op": "stop"}, {"op": "stop", "id": "../../etc/passwd"},
+              {"op": "stop", "id": ["x"]}, {"op": "stop", "id": 5}):
+        assert narrate.tool_step(JOB, a).text == "Stopped a background job"
+
+
+def test_the_job_line_goes_to_the_pill_and_leaves_no_undo_behind(home):
+    n = narrate.Narrator()
+    line = n.on_event({"kind": "tool", "name": JOB, "input": {"op": "start", "title": "Ubuntu 26.04 ISO",
+                                                              "command": "curl"}})
+    assert line == {"text": "Watching Ubuntu 26.04 ISO", "risk": None, "command": None, "source": "step"}
+    n.on_event({"kind": "tool", "name": JOB, "input": {"op": "list"}})
+    assert n.summary() == "" and n.done == [] and n.touched_counts() == {} and not n.system
+    assert n.stopped_line() == "Stopped while checking the background jobs."
+
+
+@pytest.mark.parametrize("args", [
+    {"op": ["start"], "title": ["x"], "seconds": ["5"]}, {"op": 5, "title": {"a": 1}},
+    {"op": "start", "title": None, "seconds": True}, {"op": "start", "seconds": "soon"},
+    {"op": "start", "seconds": float("inf")}, {"op": "start", "seconds": "1e999"}, {"op": "stop", "id": None},
+])
+def test_odd_job_arguments_never_break_the_line(home, args):
+    assert narrate.tool_step(JOB, args).text

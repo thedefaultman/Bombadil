@@ -18,8 +18,18 @@ QtObject {
     property var entries: []         // launcher words: [{name, title, kind, words}]
     property var queue: []           // prompts waiting their turn: [{turn, prompt}]
 
+    // Whether the machine can talk to its AI yet (agentd's "setup"): which AI (first boot),
+    // signed in, the sign-in under way in the browser. Its line shows when no turn runs, with
+    // chips under it; prompts typed meanwhile wait in the queue.
+    property string setupState: ""   // choose, checking, signed_out, offline, signing_in, ready
+    property string setupLine: ""
+    property string setupTone: "step" // step, ask, error, done
+    property var setupActions: []    // chips: [{id, label, style: big | primary | quiet}]
+    readonly property bool ready: setupState === "" || setupState === "ready" || setupState === "checking"
+
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
-    // open/undo/stop answered without the model, "idle" when there is nothing to say.
+    // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
+    // "idle" when there is nothing to say.
     property string mode: "idle"
     property string line: ""
     property string source: "step"   // step (plain words), agent (its own words), error
@@ -37,8 +47,9 @@ QtObject {
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
-    // Esc and the Stop dot act while a turn runs, and from the moment Enter showed "On it".
-    readonly property bool stoppable: busy || optimistic
+    // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
+    // while a sign-in is under way (they call it off).
+    readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
 
     property string _result: ""
     property bool _resultOk: true
@@ -68,6 +79,7 @@ QtObject {
             return
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
+        if (ev.type === "setup") { _setup(ev); return }
         if (ev.type === "summon") { summoned(); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
@@ -152,6 +164,40 @@ QtObject {
         }
     }
 
+    function _showSetup() {
+        mode = "setup"; line = setupLine; source = setupTone === "error" ? "error" : "step"
+        risk = ""; command = ""; sticky = false; flash = ""
+    }
+
+    function _setup(ev) {
+        const was = setupState, wasLine = setupLine
+        setupState = ev.state || ""
+        setupLine = ev.line || ""
+        setupTone = ev.tone || "step"
+        setupActions = ev.actions || []
+        if (mode === "working" && !optimistic) return   // a turn has the line; the setup waits for it
+        if (!ready && setupLine) {
+            optimistic = false
+            _showSetup()
+        } else if (setupState === "ready" && setupLine && was !== "" && (was !== "ready" || setupLine !== wasLine)) {
+            // "Signed in to Claude. Ask me for anything.": said once, then it fades. (Not said
+            // again to a bar that has just started: it was not there for it.)
+            optimistic = false
+            mode = "local"; line = setupLine; source = "step"; risk = ""; command = ""
+            sticky = false; lineAt = _now(); fadeAfter = 8000
+        } else if (mode === "setup") {
+            mode = "idle"; line = ""
+        }
+    }
+
+    function setupAction(id) {
+        if (_offline()) return
+        // The sign-in page and the Wi-Fi list open a window that must take the keyboard (a summoned
+        // pill holds it, and the password would go into the pill); Cancel opens nothing.
+        if (id !== "cancel") handOff()
+        outgoing({ type: "setup_action", id: id })
+    }
+
     function submit(text) {
         const t = String(text || "").trim()
         if (!t) return false
@@ -161,6 +207,15 @@ QtObject {
             return false
         }
         outgoing({ type: "prompt", text: t })
+        if (!ready && !t.startsWith("!")) {
+            // No AI to answer yet: the prompt waits in the queue, the setup line stays (or
+            // comes back over a finished line that would hide it).
+            if (mode === "closing" || mode === "local") {
+                sticky = false
+                if (setupLine) _showSetup()
+            }
+            return true
+        }
         if (!busy && mode !== "working") {
             // Something true on screen at once; agentd confirms with turn_start (or a local answer).
             optimistic = true
@@ -219,13 +274,20 @@ QtObject {
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
     function dismiss() {
-        if (mode === "closing" || mode === "local") { mode = "idle"; line = ""; sticky = false }
+        if (mode === "closing" || mode === "local") {
+            sticky = false
+            // Not signed in yet: the setup line comes back rather than an empty pill.
+            if (!ready && setupLine) _showSetup()
+            else { mode = "idle"; line = "" }
+        }
         flash = ""
     }
 
     // -- the launcher: completing and recognising names --
 
     readonly property var _verbs: ["open ", "show ", "launch ", "start ", "close ", "quit ", "hide "]
+    // A widget's name means the desk only after one of these ("start now" is for the agent).
+    readonly property var _widgetVerbs: ["open ", "show ", "close ", "hide "]
 
     function _split(text) {
         const t = String(text || "").toLowerCase().replace(/^\s+/, "")
@@ -249,6 +311,7 @@ QtObject {
         if (s.rest.length < 2) return ""
         for (const e of entries) {
             if (s.verb && e.kind === "command") continue
+            if (e.kind === "widget" && _widgetVerbs.indexOf(s.verb) < 0) continue
             for (const w of (e.words || [])) {
                 if (w.length > s.rest.length && w.startsWith(s.rest)) return w.slice(s.rest.length)
             }
@@ -264,9 +327,13 @@ QtObject {
         const k = _key(rest)
         const title = _title(rest)
         if (!k && !title) return ""
+        // A question about the desk ("desk?", "show machine?") goes to the agent, not the launcher.
+        const asks = /\?\s*$/.test(String(text || ""))
         for (const e of entries) {
             if (e.kind === "app" && title === _title(e.title)) return e.title || e.name
             if (!k || (s.verb && e.kind === "command")) continue
+            if (e.kind === "widget" && (asks || _widgetVerbs.indexOf(s.verb) < 0)) continue
+            if (asks && e.name === "desk") continue
             for (const w of (e.words || []).concat([e.name, String(e.title || "").toLowerCase()])) {
                 if (_key(w) === k) return e.title || e.name
             }
