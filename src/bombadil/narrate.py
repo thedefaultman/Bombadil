@@ -21,7 +21,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from . import paths
+from . import desk, paths
 
 SYSTEM = "system"
 IRREVERSIBLE = "irreversible"
@@ -884,6 +884,18 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         return Step("Undoing the last change", "Undid the last change", SYSTEM)
     if tool == "notify":
         return Step("Sending a notification")
+    if tool == "desk":
+        op, widget = str(a.get("op") or ""), desk.title(a.get("widget"))
+        if op == "hide":
+            return Step(f"Putting {widget} away", f"Put {widget} away")
+        if op == "show":
+            return Step(f"Putting {widget} on the desk", f"Put {widget} on the desk")
+        if op == "move":
+            to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
+            return Step(f"Moving {widget}{to}", f"Moved {widget}{to}")
+        if op in ("fold", "unfold"):
+            return Step(f"{op.capitalize()}ing the desk", f"{op.capitalize()}ed the desk")
+        return Step("Looking at the desk")
     if tool == "show_card":
         return Step("Showing a card")
     if tool == "open_url":
