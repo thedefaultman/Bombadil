@@ -26,6 +26,8 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
     from bombadil import providers
     assert "pacman -Syu --noconfirm --needed" in providers.SYSTEM_PROMPT
     assert "never `pacman -Sy` alone" in providers.SYSTEM_PROMPT
+    # An install that updates everything is said out loud, not done quietly.
+    assert "That also updates every other package, so say so in one plain sentence" in providers.SYSTEM_PROMPT
 
 
 ARCH_GRUB_DEFAULTS = """\
