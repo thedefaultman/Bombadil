@@ -171,3 +171,24 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def test_only_the_clis_own_retry_notices_are_not_progress():
+    p = providers.Claude("x")
+    delta = json.dumps({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                          "delta": {"type": "thinking_delta", "thinking": "..."}}})
+    assert list(p.events([delta])) == []   # shows nothing ...
+    assert p.is_progress(delta)            # ... but it is the model working
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "thinking_tokens", "tokens": 12}))
+    assert p.is_progress(json.dumps({"type": "system", "subtype": "init"}))
+    assert p.is_progress("not json at all")
+    for subtype in ("api_retry", "status"):
+        assert not p.is_progress(json.dumps({"type": "system", "subtype": subtype}))
+    assert providers.Codex("x").is_progress("anything")
+
+
+def test_codex_reports_a_search_once_with_no_id_to_wait_for():
+    p = providers.Codex("x")
+    ev = list(p.events([json.dumps({"type": "item.completed",
+                                    "item": {"id": "w1", "type": "web_search", "query": "arch news"}})]))
+    assert ev == [{"kind": "tool", "name": "WebSearch", "input": {"query": "arch news"}}]

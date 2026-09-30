@@ -465,16 +465,23 @@ class AgentD:
 
         async def pump():
             async for raw in proc.stdout:
-                for ev in source.parse(raw.decode(errors="replace")):
+                line = raw.decode(errors="replace")
+                # Any output line counts, also one that shows nothing (a thinking delta): a long think
+                # is not a dead connection. Only the CLI's own notices about retrying do not.
+                if source.is_progress(line):
                     state["last"] = time.monotonic()
-                    if ev["kind"] in ("tool_start", "tool") and ev.get("id"):
-                        state["tools"].add(ev["id"])
-                    elif ev["kind"] == "tool_result":
-                        state["tools"].discard(ev.get("id"))
                     if state["quiet"]:
                         state["quiet"] = False
                         if not self.stopping:
                             await self.event("status", text="Thinking", risk=None, command=None, source="step")
+                for ev in source.parse(line):
+                    # Running from the tool call to its result; the turn's result ends all of it.
+                    if ev["kind"] == "tool" and ev.get("id"):
+                        state["tools"].add(ev["id"])
+                    elif ev["kind"] == "tool_result":
+                        state["tools"].discard(ev.get("id"))
+                    elif ev["kind"] == "result":
+                        state["tools"].clear()
                     state["session"], state["error"] = await self._on_event(
                         ev, turn, result, state["session"], state["error"])
 
@@ -482,7 +489,7 @@ class AgentD:
             while True:
                 await asyncio.sleep(WATCHDOG_TICK)
                 if (not state["quiet"] and not state["tools"] and not self.stopping
-                        and time.monotonic() - state["last"] > NO_PROGRESS_SECS):
+                        and time.monotonic() - state["last"] > NO_PROGRESS_SECS * self.provider.quiet_factor):
                     state["quiet"] = True
                     await self.event("status", risk=None, command=None, source="step",
                                      text=f"{self.provider.name.capitalize()} is not answering; check the connection")

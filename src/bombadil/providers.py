@@ -49,6 +49,9 @@ class Provider:
     `parse` as it arrives, so the bar streams the reply."""
     name = ""
     binary = ""
+    # How many times agentd's no-progress wait (agentd.NO_PROGRESS_SECS) this CLI may stay silent
+    # before the line says it is not answering.
+    quiet_factor = 1.0
 
     def __init__(self, mcp_command: str, model: str | None = None):
         self.mcp_command = mcp_command
@@ -64,6 +67,12 @@ class Provider:
     def parse(self, line: str) -> Iterator[dict]:
         """Events for one line of the CLI's output."""
         raise NotImplementedError
+
+    def is_progress(self, line: str) -> bool:
+        """Does this output line show the provider is working? Lines that parse to no event
+        still do (a thinking delta is nothing to show and everything to a watchdog); only a
+        CLI's own notices about a connection that is not working do not."""
+        return True
 
     def finish(self) -> Iterator[dict]:
         """Events once the output has ended."""
@@ -114,6 +123,11 @@ class Claude(Provider):
         if turn.session_id:
             cmd += ["--resume", turn.session_id]
         return cmd
+
+    def is_progress(self, line):
+        m = _json(line)
+        # "status" and "api_retry" are the CLI talking about itself (retrying an unreachable API).
+        return not (m and m.get("type") == "system" and m.get("subtype") in ("status", "api_retry"))
 
     def parse(self, line):
         m = _json(line)
@@ -184,6 +198,8 @@ MCP_ENV = ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", 
 class Codex(Provider):
     name = "codex"
     binary = "codex"
+    # It prints nothing while it reasons, so a long think looks like a dead connection: wait longer.
+    quiet_factor = 6.0
 
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         self._last_text = ""
@@ -244,7 +260,9 @@ class Codex(Provider):
             yield {"kind": "tool_result", "id": item.get("id"), "output": "",
                    "error": item.get("status") == "failed"}
         elif t == "item.completed" and item.get("type") == "web_search":
-            yield {"kind": "tool", "name": "WebSearch", "input": {"query": item.get("query", "")}, "id": item.get("id")}
+            # No id: it arrives once, already finished, and nothing ever answers it (an id would
+            # mark a tool as running for the rest of the turn).
+            yield {"kind": "tool", "name": "WebSearch", "input": {"query": item.get("query", "")}}
         elif t == "turn.completed":
             yield {"kind": "result", "ok": True, "text": getattr(self, "_last_text", "")}
         elif t == "turn.failed":

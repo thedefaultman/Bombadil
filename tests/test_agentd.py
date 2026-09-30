@@ -536,7 +536,9 @@ def _steps(msgs):
 
 
 def _quiet_watch(monkeypatch):
-    monkeypatch.setattr(agentd, "NO_PROGRESS_SECS", 0.4)
+    # A generous threshold, so a loaded runner's late scheduling cannot read as silence; the scripts
+    # that must be called silent stay quiet for twice that.
+    monkeypatch.setattr(agentd, "NO_PROGRESS_SECS", 1.5)
     monkeypatch.setattr(agentd, "WATCHDOG_TICK", 0.1)
 
 
@@ -560,7 +562,7 @@ async def test_the_line_says_waiting_once_the_cli_is_up(home):
 async def test_a_provider_that_goes_quiet_is_named_once_and_thinking_returns_with_it(home, monkeypatch):
     _quiet_watch(monkeypatch)
     script = (
-        "import json, sys, time\nsys.stdin.read()\ntime.sleep(1.5)\n"
+        "import json, sys, time\nsys.stdin.read()\ntime.sleep(3.0)\n"
         "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'back'}]}}), flush=True)\n"
         "print(json.dumps({'type': 'result', 'result': 'back', 'session_id': 's1'}), flush=True)\n"
     )
@@ -582,7 +584,7 @@ async def test_a_long_tool_is_not_a_silent_provider(home, monkeypatch):
         "import json, sys, time\nsys.stdin.read()\n"
         "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 't1',"
         " 'name': 'Bash', 'input': {'command': 'sudo pacman -S docker'}}]}}), flush=True)\n"
-        "time.sleep(1.5)\n"
+        "time.sleep(3.0)\n"
         "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
         " 'content': 'ok'}]}}), flush=True)\n"
         "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
@@ -606,7 +608,7 @@ async def test_a_silent_provider_after_its_tool_finished_is_named(home, monkeypa
         " 'name': 'Bash', 'input': {'command': 'ls'}}]}}), flush=True)\n"
         "print(json.dumps({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 't1',"
         " 'content': 'ok'}]}}), flush=True)\n"
-        "time.sleep(1.0)\n"
+        "time.sleep(3.0)\n"
         "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
     )
     d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
@@ -648,3 +650,97 @@ async def test_a_limit_is_said_plainly_and_other_errors_are_left_alone(home):
         w.close()
         server.cancel()
         d.socket_path.unlink(missing_ok=True)
+
+
+def _thinking(every, count):
+    return (
+        "import json, sys, time\nsys.stdin.read()\n"
+        f"for _ in range({count}):\n"
+        "    print(json.dumps({'type': 'stream_event', 'event': {'type': 'content_block_delta', 'index': 0,"
+        " 'delta': {'type': 'thinking_delta', 'thinking': '...'}}}), flush=True)\n"
+        f"    time.sleep({every})\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_long_think_is_not_a_dead_connection(home, monkeypatch):
+    # The CLI prints thinking deltas that show as nothing; for longer than the threshold.
+    _quiet_watch(monkeypatch)
+    d = agentd.AgentD(Scripted(_thinking(0.2, 15)), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hard question")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _steps(msgs) if "not answering" in t]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_clis_retry_notices_are_not_progress(home, monkeypatch):
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "for n in range(1, 16):\n"
+        "    print(json.dumps({'type': 'system', 'subtype': 'api_retry', 'attempt': n}), flush=True)\n"
+        "    time.sleep(0.2)\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'session_id': 's1'}), flush=True)\n"
+    )
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert "Claude is not answering; check the connection" in _steps(msgs)
+    w.close()
+    server.cancel()
+
+
+class ScriptedCodex(providers.Codex):
+    def __init__(self, script):
+        super().__init__("x")
+        self.script = script
+
+    @property
+    def installed(self):
+        return True
+
+    def command(self, turn, workdir):
+        return ["python3", "-c", self.script]
+
+
+@pytest.mark.asyncio
+async def test_codex_may_reason_silently_for_longer_before_the_line_says_so(home, monkeypatch):
+    # Codex streams nothing while it reasons, so the same silence is normal for it.
+    _quiet_watch(monkeypatch)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\ntime.sleep(3.0)\n"
+        "print(json.dumps({'type': 'turn.completed'}), flush=True)\n"
+    )
+    d = agentd.AgentD(ScriptedCodex(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _read_until(r, "turn_end")
+    assert not [t for t in _steps(msgs) if "not answering" in t]
+    assert providers.Codex.quiet_factor > providers.Claude.quiet_factor
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_nothing_answers_does_not_switch_the_watchdog_off(home, monkeypatch):
+    # Codex reports web_search once, already done, with no result after it.
+    _quiet_watch(monkeypatch)
+    monkeypatch.setattr(providers.Codex, "quiet_factor", 1.0)
+    script = (
+        "import json, sys, time\nsys.stdin.read()\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'id': 'w1', 'type': 'web_search', 'query': 'x'}}), flush=True)\n"
+        "time.sleep(3.0)\n"
+        "print(json.dumps({'type': 'turn.completed'}), flush=True)\n"
+    )
+    d = agentd.AgentD(ScriptedCodex(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "look it up")
+    msgs = await _read_until(r, "turn_end")
+    assert "Codex is not answering; check the connection" in _steps(msgs)
+    w.close()
+    server.cancel()
