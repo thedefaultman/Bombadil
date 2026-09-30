@@ -245,8 +245,8 @@ ShellRoot {
                 spacing: 8
 
                 // A picture the machine drew from itself, or the agent drew: above the line, over the
-                // windows. It draws with the kit (shell/Bombadil, a symlink to share/qml/Bombadil), so it
-                // loads on its own: a kit that will not load costs the pictures, never the bar.
+                // windows. It draws with the kit's Diagram, so it loads on its own: a picture
+                // that will not draw costs the pictures, never the bar.
                 Loader {
                     id: cardHost
                     visible: status === Loader.Ready && item !== null && item.opacity > 0

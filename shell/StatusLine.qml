@@ -123,8 +123,9 @@ Rectangle {
             visible: bar.pill.mode === "working" && bar.pill.flash === "" && bar.pill.because !== ""
                      && (bar.hovered || bar.pill.risk !== "")
             text: bar.pill.because
-            color: "#8b939c"
-            font.pixelSize: 13
+            font.family: Kit.Theme.fontFamily
+            color: Kit.Theme.muted
+            font.pixelSize: Kit.Theme.smallSize
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             maximumLineCount: 2
@@ -138,8 +139,10 @@ Rectangle {
             Layout.fillWidth: true
             visible: bar.pill.mode === "working" && bar.pill.flash === "" && bar.pill.after !== "" && bar.pill.risk !== ""
             text: bar.pill.after
-            color: "#b9925a"
-            font.pixelSize: 12
+            font.family: Kit.Theme.fontFamily
+            color: Kit.Theme.warnInk
+            opacity: 0.8
+            font.pixelSize: Kit.Theme.captionSize
             textFormat: Text.PlainText
             elide: Text.ElideRight
             maximumLineCount: 1

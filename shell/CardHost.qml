@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
-import "Bombadil" as Kit   // shell/Bombadil is a symlink to the kit: Quickshell cannot import from outside its own folder
+// The kit is on the import path (bin/bombadil-shell), like for every other file in the shell.
+import Bombadil as Kit
 
 // The picture above the line: a diagram the machine drew from itself (system_map, a receipt) or
 // the agent drew with show_card. One at a time. It draws with the kit's Diagram, so it looks like
@@ -22,15 +23,15 @@ Rectangle {
     readonly property bool partial: !!(last && last.partial)
 
     implicitHeight: shown ? content.implicitHeight + 28 : 0
-    radius: 14
-    color: "#e61a1d21"
+    radius: Kit.Theme.radiusLine
+    color: Kit.Theme.glassLine
     border.width: 1
-    border.color: "#2a2f36"
+    border.color: Kit.Theme.border
     opacity: shown ? 1 : 0
     visible: opacity > 0
     clip: true
-    Behavior on opacity { NumberAnimation { duration: 200 } }
-    Behavior on implicitHeight { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration: Kit.Theme.normal } }
+    Behavior on implicitHeight { NumberAnimation { duration: Kit.Theme.fast; easing.type: Easing.OutCubic } }
 
     // Resting the mouse on a picture keeps the closing line (and a receipt with it) from fading.
     HoverHandler {
@@ -55,8 +56,9 @@ Rectangle {
                 objectName: "cardTitle"
                 Layout.fillWidth: true
                 text: host.last && host.last.title ? host.last.title : ""
-                color: "#e6e8eb"
-                font.pixelSize: 15
+                font.family: Kit.Theme.fontFamily
+                color: Kit.Theme.fg
+                font.pixelSize: Kit.Theme.lineSize
                 font.weight: Font.DemiBold
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
@@ -67,14 +69,16 @@ Rectangle {
                 text: host.partial ? "drawing…"
                     : host.last && host.last.source ? "from this machine"
                     : "drawn by the agent"
-                color: "#8b939c"
-                font.pixelSize: 12
+                font.family: Kit.Theme.fontFamily
+                color: Kit.Theme.muted
+                font.pixelSize: Kit.Theme.captionSize
             }
             Text {
                 objectName: "cardClose"
                 text: "×"
-                color: closeArea.containsMouse ? "#e6e8eb" : "#8b939c"
-                font.pixelSize: 18
+                font.family: Kit.Theme.fontFamily
+                color: closeArea.containsMouse ? Kit.Theme.fg : Kit.Theme.muted
+                font.pixelSize: Kit.Theme.headingSize
                 Accessible.role: Accessible.Button
                 Accessible.name: "Close the picture"
                 MouseArea {
@@ -113,8 +117,9 @@ Rectangle {
             Layout.fillWidth: true
             visible: !!(host.last && host.last.say)
             text: host.last && host.last.say ? host.last.say : ""
-            color: "#e6e8eb"
-            font.pixelSize: 14
+            font.family: Kit.Theme.fontFamily
+            color: Kit.Theme.fg
+            font.pixelSize: Kit.Theme.textSize
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             maximumLineCount: 3

@@ -92,8 +92,9 @@ box that names a file, service, package, page or turn comes back as `{"type":"op
 package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
 closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
 was there. A picture that cannot be drawn takes the last one away.
-`shell/Bombadil` is a symlink to `share/qml/Bombadil`: Quickshell cannot import from outside its
-own folder.
+The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
+the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
+import from outside its own folder any other way.)
 
 ## Next
 
