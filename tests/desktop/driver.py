@@ -365,6 +365,55 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
+# the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
+def dark_pixels(x, y, h):
+    """How many pixels of a one-pixel-wide strip are the bar's dark glass rather than the wallpaper."""
+    r = subprocess.run(["grim", "-g", f"{x},{y} 1x{h}", "-t", "ppm", "-"], env=env, capture_output=True)
+    data = r.stdout
+    try:
+        head, rest = data.split(b"\n255\n", 1)
+    except ValueError:
+        return -1
+    return sum(1 for i in range(0, len(rest) - 2, 3) if rest[i] < 45 and rest[i + 1] < 48)
+
+
+m = mark()
+summon()
+typ("explain the vpn")
+key("Return")
+half = wait(ev("card", card=lambda c: bool(c and c.get("partial"))), 60, m)
+check("a picture streams into the bar while the model writes it", half is not None, half and half["card"].get("id"))
+full = wait(ev("card", card=lambda c: bool(c and not c.get("partial") and not c.get("gone"))), 60, m)
+check("the finished picture takes the streamed one's id",
+      full is not None and half is not None and full["card"]["id"] == half["card"]["id"], full and full["card"].get("id"))
+end = wait(ev("turn_end"), 60, m)
+check("the turn that drew it ends plainly", end is not None and not end.get("stopped"), end and end.get("summary"))
+time.sleep(1.0)
+shot("22-picture")
+with_card = dark_pixels(200, 300, 420)
+check("Quickshell draws the picture above the line", with_card > 150, with_card)
+qs_log = (OUT / "quickshell.log").read_text() if (OUT / "quickshell.log").exists() else ""
+bad = [ln for ln in qs_log.splitlines() if re.search(r"CardHost|Diagram|Theme\.qml|ReferenceError|TypeError", ln)]
+check("the bar loads the kit's Diagram without QML errors", not bad, bad[:3])
+summon()
+key("Escape")
+time.sleep(0.8)
+shot("22-picture-away")
+without = dark_pixels(200, 300, 420)
+check("Esc puts the picture away", without < with_card // 2, f"{with_card} -> {without}")
+
+before = api_requests()
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+pic = wait(ev("local", action="picture", phase="done"), 20, m)
+check("a picture word is answered with no model and no turn", pic is not None and api_requests() == before
+      and wait(ev("turn_start"), 1, m) is None, pic and pic.get("text"))
+time.sleep(0.8)
+shot("23-picture-word")
+
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
     p.terminate()

@@ -101,6 +101,24 @@ for ex in memory password-manager; do
 done
 check screenshot grab
 
+# Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
+# was there to draw it) and comes back as words. How long it took goes in the log: a capture over
+# 500 ms on real hardware is a finding, not a failure.
+picture() {
+  local t0 out args="{\"kind\":\"$1\"}"
+  [[ -n "${2:-}" ]] && args="{\"kind\":\"$1\",\"target\":\"$2\"}"
+  t0=$(date +%s%N)
+  out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
+    | as_user timeout 60 bombadil-os-mcp | tail -1) || return 1
+  echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms: ${out:0:400}" >&2
+  grep -q 'shown above the bar' <<<"$out"
+}
+check os-mcp-lists-pictures bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q system_map'
+for kind in network boot disks sound screens; do check "picture-$kind" picture "$kind"; done
+check picture-service picture service systemd-logind
+shot picture
+
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
 before=$(launcher_done browser "Opened the browser")
