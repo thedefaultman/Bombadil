@@ -474,6 +474,87 @@ time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
 
+# 10. The loop: one thing asked three times on three days is counted by agentd (nothing model-made), offered
+# in the "noticed" chip beside the pill, and a press on the offer makes the word. The asks are written to
+# the ledger as earlier days' turns; the next row agentd writes (a word that fails) makes it look again.
+sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "tests" / "fixtures" / "loop"))
+import golden_corpus as gc  # noqa: E402
+from bombadil import apps as bapps  # noqa: E402
+from bombadil import paths as bpaths  # noqa: E402
+
+
+def loop_ipc(*args):
+    return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "loop", *args)
+
+
+def loop_state():
+    try:
+        return json.loads(loop_ipc("state").stdout)
+    except ValueError:
+        return {}
+
+
+check("nothing is noticed before anything is asked three times", loop_state().get("count") == 0, loop_state())
+bapps.create("Passwords", "import QtQuick\nItem {}\n")
+logs = bpaths.state_dir() / "turns"
+logs.mkdir(parents=True, exist_ok=True)
+with bpaths.turns_log().open("a") as f:
+    for i, (days_ago, said) in enumerate([(3, "show me my passwords"), (2, "open my passwords"),
+                                          (1, "can you open passwords please")]):
+        ask = {"id": f"seed{i}", "text": said, "seconds": 7, "changed": False, "t": time.time() - days_ago * 86400,
+               "events": [["mcp__bombadil-os__open_app", {"name": "passwords"}]]}
+        (logs / f"{ask['id']}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in gc.tool_events(ask)))
+        f.write(json.dumps(gc.row_of(ask, logs)) + "\n")
+summon()
+typ("hide needs you")
+key("Return")
+time.sleep(0.3)
+key("Escape")
+st = {}
+for _ in range(100):
+    st = loop_state()
+    if st.get("count", 0) >= 1 and st.get("chip"):
+        break
+    time.sleep(0.3)
+time.sleep(0.4)
+shot("27-noticed-chip")
+check("three asks on three days put one offer in the chip", st.get("count") == 1 and st.get("chip")
+      and [r["kind"] for r in st.get("rows", [])] == ["offer"], st)
+asked = {"show me my passwords", "open my passwords", "can you open passwords please"}
+row = (st.get("rows") or [{}])[0]
+check("the offer is in his own words, says how often and what would happen",
+      row.get("title") in asked and row.get("meta") == "3 times on 3 days"
+      and "my passwords" in row.get("what", "") and row.get("primary") == "Make the word", row)
+loop_ipc("chip", "HEADLESS-1")
+time.sleep(0.8)
+st2 = loop_state()
+shot("28-noticed-card")
+check("a click on the chip keeps the card up", st2.get("card") and st2.get("kept"), st2)
+# (The line "Made ... Undo" goes to the bar that was tapped, not to this listener: the screenshot shows
+# it, and the ledger row below is what it undoes.)
+loop_ipc("press", row.get("id", ""))
+word_file = ""
+for _ in range(60):
+    word_file = bpaths.words_file().read_text() if bpaths.words_file().exists() else ""
+    if 'phrase = "my passwords"' in word_file:
+        break
+    time.sleep(0.25)
+time.sleep(0.8)
+shot("29-noticed-made")
+check("pressing the offer makes the word", 'phrase = "my passwords"' in word_file
+      and 'opens = { kind = "app", name = "passwords" }' in word_file, word_file)
+for _ in range(50):
+    st3 = loop_state()
+    if st3.get("count") == 0:
+        break
+    time.sleep(0.2)
+check("the chip goes once nothing waits", st3.get("count") == 0 and not st3.get("chip"), st3)
+improve = [json.loads(x) for x in bpaths.turns_log().read_text().splitlines() if '"improve"' in x]
+check("the change is in the ledger as his own tap, with an undo that takes the word away again",
+      improve and improve[-1].get("title") == "Made “my passwords” open Passwords."
+      and improve[-1].get("undo", {}).get("op") == "remove_word", improve[-1:])
+
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()

@@ -61,6 +61,15 @@ ShellRoot {
         }
     }
     IpcHandler {
+        target: "loop"
+        // What the chip and card show, as JSON.
+        function state(): string { return JSON.stringify(loopState.snapshot()) }
+        // The taps, for the headless test (no pointer there): the chip, and a row's buttons.
+        function chip(screen: string): void { loopState.chipClicked(screen) }
+        function press(id: string): void { loopState.press(loopState.rowById(id)) }
+        function notNow(id: string): void { loopState.notNow(loopState.rowById(id)) }
+    }
+    IpcHandler {
         target: "desk"
         // What the desk is showing, as JSON.
         function state(): string { return JSON.stringify(deskState.snapshot()) }

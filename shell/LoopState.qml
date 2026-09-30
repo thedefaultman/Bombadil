@@ -257,6 +257,19 @@ QtObject {
     function notNow(row) { act(row, { op: "not_now" }) }
     function never(row) { act(row, { op: "never" }) }
 
+    // What the bar shows of this, as JSON for the headless desktop test (`quickshell ipc call loop state`).
+    function snapshot() {
+        return {
+            connected: connected, count: count, hidden: hidden, chip: chipVisible, card: cardOpen,
+            kept: kept, pending: pending, resting: restingLine(), lately: latelyLine(), why: why(),
+            rows: shownRows.map(r => ({ id: String(r.id), kind: r.kind, title: String(r.title || ""),
+                                        meta: String(r.meta || ""), what: String(r.what || ""),
+                                        primary: primary(r).label })),
+            result: result
+        }
+    }
+    function rowById(id) { return rows.find(r => String(r.id) === String(id)) || null }
+
     // -- the words on the card --
 
     // "1 idea · 1 change to look at", from the kinds of the rows it shows.
