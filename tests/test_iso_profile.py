@@ -142,3 +142,13 @@ def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones
     assert "systemctl enable snapper-cleanup.timer" in install
     # The config has to exist before it is changed.
     assert install.index("create-config") < install.index("set-config")
+
+
+def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_boot_medium():
+    # With copytoram (a USB stick with RAM to spare) /run/archiso/bootmnt is gone by the time the
+    # kernel is copied, which used to stop the script after the disk was wiped and copied.
+    install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    assert "bootmnt" not in install
+    assert 'cp "$kernel" /mnt/boot/vmlinuz-linux' in install
+    # It is found, and checked, before the disk is erased.
+    assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')

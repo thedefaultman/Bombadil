@@ -8,6 +8,11 @@ if [[ "${2:-}" != "--yes" ]]; then
   read -r -p "This erases $disk. Type the disk name to continue: " ok
   [[ "$ok" == "$disk" ]] || exit 1
 fi
+# The kernel comes from the root that is about to be copied, not from the boot medium: with
+# copytoram (a USB stick with RAM to spare) the medium is unmounted by now. Checked before the
+# disk is touched.
+kernel=$(ls -d /usr/lib/modules/*/vmlinuz | sort -V | tail -n 1)
+[[ -f "$kernel" ]] || { echo "No kernel found under /usr/lib/modules" >&2; exit 1; }
 sgdisk -Z "$disk"
 sgdisk -n1:0:+1G -t1:ef00 -n2:0:0 -t2:8300 "$disk"
 partprobe "$disk" 2>/dev/null || true; udevadm settle
@@ -33,7 +38,7 @@ done
 rm -f /mnt/etc/systemd/system/{bombadil-live,pacman-init}.service
 mkdir -p /mnt/boot
 mount "$p1" /mnt/boot
-cp /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux /mnt/boot/
+cp "$kernel" /mnt/boot/vmlinuz-linux
 
 genfstab -U /mnt > /mnt/etc/fstab
 # Mount / by subvolume *name*, not id: undo swaps a snapshot in under the name @.
