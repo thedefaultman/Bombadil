@@ -811,6 +811,11 @@ def shell_step(command: str, description: str | None = None) -> Step:
 
 # -- tools --
 
+_MAP_WORDS = {"network": "Drawing how you're connected", "boot": "Drawing what starts when you boot",
+              "service": "Drawing what {target} needs", "disks": "Drawing your disks",
+              "sound": "Drawing what's playing where", "screens": "Drawing your screens"}
+
+
 def _os_tool(tool: str, a: dict) -> Step | None:
     """bombadil-os tools (os-mcp), for both providers."""
     name = str(a.get("name") or "")
@@ -850,7 +855,11 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     if tool == "notify":
         return Step("Sending a notification")
     if tool == "show_card":
-        return Step("Showing a card")
+        title = " ".join(str(a.get("title") or "").split())
+        return Step(f"Drawing {_quote(title, 40)}" if title else "Drawing a picture")
+    if tool == "system_map":
+        return Step(_MAP_WORDS.get(str(a.get("kind") or ""), "Drawing a picture of the machine")
+                    .format(target=_unit(str(a.get("target") or "")) or "a service"))
     if tool == "open_url":
         host = _host(str(a.get("url", "")))
         return Step(f"Opening {host}" if host else "Opening the browser")
@@ -960,6 +969,13 @@ def partial_step(name: str, partial: str) -> Step | None:
         again = _app_exists(title) if m else False
         return Step(f"{'Changing' if again else 'Building'} {title}" + (f", {n} lines" if n > 1 else ""),
                     f"{'Changed' if again else 'Made'} {title}")
+    if name.endswith("__show_card"):
+        m = _TITLE_RE.search(partial)
+        try:
+            title = json.loads(f'"{m.group(1)}"') if m else ""
+        except json.JSONDecodeError:
+            title = ""
+        return Step(f"Drawing {_quote(title, 40)}" if title else "Drawing a picture")
     if name == "Write":
         m = _PATH_RE.search(partial)
         n = partial.count("\\n")
@@ -972,6 +988,153 @@ def partial_step(name: str, partial: str) -> Step | None:
             p = json.loads(f'"{m.group(1)}"')
             return Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
     return None
+
+
+# -- what a turn touched, for receipts --
+
+# Which drawable part of the machine a step changes: the network, one service, the sound, the
+# screens, the disks. The turn's receipt (before and after) is shown only for what it touched,
+# so a Wi-Fi drop mid-turn is never blamed on the agent.
+_NET_UNIT = re.compile(r"^(networkmanager|systemd-networkd|systemd-resolved|wpa_supplicant|iwd|dhcpcd|openvpn|"
+                       r"wg-quick|tailscaled|connman|netctl)", re.I)
+_AUDIO_UNIT = re.compile(r"^(pipewire|wireplumber|pulseaudio)", re.I)
+_UNIT_CHANGES = {"start", "stop", "restart", "reload", "try-restart", "reload-or-restart", "enable", "disable",
+                 "mask", "unmask", "reset-failed"}
+_NET_WORDS = {"connect", "disconnect", "up", "down", "modify", "mod", "add", "delete", "import", "reload", "on",
+              "off", "reapply", "set", "hotspot", "clone"}
+_IP_OBJECTS = {"link", "addr", "address", "route", "rule", "neigh", "netns", "tunnel", "l2tp"}
+_IP_CHANGES = {"add", "del", "delete", "set", "flush", "change", "replace", "append"}
+_NET_PROGS = {"wg-quick", "openvpn", "dhcpcd", "iwctl", "netctl", "nmtui", "nm-connection-editor", "wpa_cli"}
+_DISK_PROGS = {"mount", "umount", "mkswap", "swapon", "swapoff", "wipefs", "cryptsetup", "losetup", "resize2fs",
+               "mkfs", "fdisk", "gdisk", "sgdisk", "sfdisk", "parted"}
+_UNIT_PATH_RE = re.compile(r"/systemd/(?:system|user)/([\w@.:-]+?)(?:\.service)?$")
+_PATH_KINDS = ((re.compile(r"^/etc/(resolv\.conf|NetworkManager/|wireguard/|systemd/network/|netctl/|iwd/|"
+                           r"dhcpcd\.conf|wpa_supplicant)"), "network"),
+               (re.compile(r"^/etc/(fstab|crypttab)$"), "disks"),
+               (re.compile(r"(^|/)(pipewire|wireplumber|pulse)/"), "sound"))
+
+
+def _touch_path(p: str, text: str = "") -> list[tuple[str, str]]:
+    p = _expand_home(str(p))
+    out: list[tuple[str, str]] = []
+    for pattern, kind in _PATH_KINDS:
+        if pattern.search(p):
+            out.append((kind, ""))
+    m = _UNIT_PATH_RE.search(p)
+    if m and not m.group(1).endswith("@"):
+        out.append(("service", m.group(1)))
+    if "/hypr/" in p and "monitor" in text:
+        out.append(("screens", ""))
+    return out
+
+
+def _touch_unit(unit: str) -> list[tuple[str, str]]:
+    name = _unit(unit)
+    out = [("service", name)]
+    if _NET_UNIT.match(name):
+        out.append(("network", ""))
+    if _AUDIO_UNIT.match(name):
+        out.append(("sound", ""))
+    return out
+
+
+def _touch_segment(argv: list[str]) -> list[tuple[str, str]]:
+    words, redirects = _strip_redirects(argv)
+    words, _sudo = _strip_wrappers(words)
+    out: list[tuple[str, str]] = []
+    for r in redirects:
+        out += _touch_path(r)
+    if not words:
+        return out
+    prog = PurePosixPath(words[0]).name
+    script = _shell_script(words)
+    if script is not None:
+        return out + touched_command(script)
+    args = _args(words)
+    a0 = args[0] if args else ""
+    for path in _changed_paths(prog, words):
+        out += _touch_path(path)
+    if prog == "systemctl" and a0 in _UNIT_CHANGES:
+        for u in args[1:]:
+            out += _touch_unit(u)
+    elif prog == "nmcli" and any(a in _NET_WORDS for a in args):
+        out.append(("network", ""))
+    elif prog == "ip" and any(a in _IP_OBJECTS for a in args) and any(a in _IP_CHANGES for a in args):
+        out.append(("network", ""))
+    elif prog == "wg" and a0 in ("set", "setconf", "addconf", "syncconf"):
+        out.append(("network", ""))
+    elif prog == "resolvectl" and a0 in ("dns", "domain", "llmnr", "mdns", "dnssec", "revert", "default-route"):
+        out.append(("network", ""))
+    elif prog == "tailscale" and a0 in ("up", "down", "set", "login", "logout"):
+        out.append(("network", ""))
+    elif prog == "rfkill" and a0 in ("block", "unblock"):
+        out.append(("network", ""))
+    elif prog in _NET_PROGS and prog != "wpa_cli":
+        out.append(("network", ""))
+    elif prog == "wpctl" and a0.startswith("set-"):
+        out.append(("sound", ""))
+    elif prog == "pactl" and (a0.startswith("set-") or a0 in ("load-module", "unload-module", "move-sink-input",
+                                                                 "move-source-output", "suspend-sink")):
+        out.append(("sound", ""))
+    elif prog in ("amixer", "alsactl") and a0 in ("set", "sset", "cset", "store", "restore"):
+        out.append(("sound", ""))
+    elif prog == "pamixer" and any(a.startswith("-") for a in words[1:]) and not {"--get-volume", "--get-mute"} & set(words):
+        out.append(("sound", ""))
+    elif prog == "hyprctl" and a0 in ("keyword", "eval", "dispatch") and any("monitor" in a for a in args[1:]):
+        out.append(("screens", ""))
+    elif prog in ("wlr-randr", "kanshictl", "kanshi", "way-displays"):
+        out.append(("screens", ""))
+    elif prog == "udisksctl" and a0 in ("mount", "unmount", "power-off", "loop-setup", "unlock", "lock"):
+        out.append(("disks", ""))
+    elif prog in _DISK_PROGS or prog.startswith("mkfs.") or prog.startswith("mkfs"):
+        if prog in ("fdisk", "gdisk", "sgdisk", "sfdisk", "parted", "cryptsetup") and not _irreversible(
+                prog, words, " ".join(words)) and not {"open", "close", "luksOpen", "luksClose", "luksFormat"} & set(args):
+            pass   # only reading (fdisk -l, parted print)
+        elif prog in ("mount", "umount") and not args:
+            pass   # a bare `mount` lists the mounts
+        else:
+            out.append(("disks", ""))
+    elif prog == "btrfs" and a0 in ("subvolume", "filesystem", "device", "balance", "scrub") and any(
+            a in args for a in ("create", "delete", "snapshot", "resize", "add", "remove", "start")):
+        out.append(("disks", ""))
+    elif prog == "dd" and (_dd_of(words) or "").startswith("/dev/"):
+        out.append(("disks", ""))
+    return out
+
+
+def touched_command(command: str) -> list[tuple[str, str]]:
+    """The parts of the machine a shell command changes, as (kind, target), in order."""
+    out: list[tuple[str, str]] = []
+    for argv in _segments(_unwrap(command)):
+        for t in _touch_segment(argv):
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def touched(name: str, a: dict | None) -> list[tuple[str, str]]:
+    """What a tool call changes: kind is network, service (target: the unit), sound, screens or disks."""
+    a = a if isinstance(a, dict) else {}
+    name = str(name or "")
+    if name == "Bash":
+        return touched_command(str(a.get("command", "")))
+    if name in ("Write", "Edit", "MultiEdit"):
+        edits = a.get("edits") if isinstance(a.get("edits"), list) else []
+        text = " ".join(str(x) for x in [a.get("content"), a.get("new_string"), *(e.get("new_string") for e in edits
+                                                                                  if isinstance(e, dict))] if x)
+        return _touch_path(str(a.get("file_path") or ""), text)
+    return []
+
+
+def touched_changes(changes: list) -> list[tuple[str, str]]:
+    """Codex's file_change item."""
+    out: list[tuple[str, str]] = []
+    for c in changes if isinstance(changes, list) else []:
+        if isinstance(c, dict):
+            for t in _touch_path(str(c.get("path") or "")):
+                if t not in out:
+                    out.append(t)
+    return out
 
 
 # -- why, and after reading what --
@@ -1183,6 +1346,8 @@ class Narrator:
         self.because = ""        # why the current step happens: the sentence written just before it
         self.reads: list[Read] = []   # what the turn read, in order (yours and outside)
         self.last_notes: dict = {}    # because and after of the step the last tool event started
+        self.touched: list[tuple[str, str]] = []   # parts of the machine the turn changed, in order
+        self.drew = False        # the agent drew a picture itself (show_card, system_map)
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
 
@@ -1267,6 +1432,11 @@ class Narrator:
             a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
             for r in tool_reads(ev.get("name", ""), a):
                 self._read(r)
+            for t in touched(ev.get("name", ""), a):
+                if t not in self.touched:
+                    self.touched.append(t)
+            if str(ev.get("name", "")).endswith(("__show_card", "__system_map")):
+                self.drew = True
             self._reason(a.get("description") if ev.get("name") == "Bash" else None)
             if ev.get("name") == "TaskCreate" and ev.get("id"):
                 form = a.get("activeForm") or from_description(a.get("subject", "")) or a.get("subject")
@@ -1283,6 +1453,9 @@ class Narrator:
             self.said = ""
             return self._set(step)
         if kind == "file_change":
+            for t in touched_changes(ev.get("changes") or []):
+                if t not in self.touched:
+                    self.touched.append(t)
             self._reason()
             return self._set(file_change_step(ev.get("changes") or []))
         if kind == "tool_start":

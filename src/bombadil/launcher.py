@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, hypr, paths, snapshots
+from . import apps, hypr, paths, snapshots, sysmap
 
 PANEL_WORDS = {
     "browser": ["browser", "web browser", "web", "chrome", "chromium", "google", "internet"],
@@ -44,6 +44,23 @@ UTILITY_COMMANDS = {
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
+# Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
+# ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
+# longer or different goes to the agent, which has system_map for the same pictures.
+PICTURE_PHRASES = {
+    "network": ["how am i connected", "am i connected", "am i online", "how is my internet connected",
+                "network map", "connection map"],
+    "boot": ["what starts when i boot", "what starts at boot", "what starts on boot", "what runs at boot",
+             "what runs when i boot", "boot map"],
+    "disks": ["where did my disk go", "where did my space go", "where did my disk space go", "my disks",
+              "disk map", "what disks do i have"],
+    "sound": ["what's playing where", "whats playing where", "what is playing where", "sound map",
+              "where is my sound going"],
+    "screens": ["my screens", "my monitors", "screen map", "what screens do i have"],
+}
+PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
+                  "sound": "what's playing where", "screens": "your screens"}
+_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$")
 # Only while a turn runs: the reason for the step in front of you, answered from what the agent
 # said just before it, with no model. At any other time "why" is a question for the agent.
 WHY_WORDS = {"why"}
@@ -127,6 +144,19 @@ def known_apps() -> list:
     return out
 
 
+def _picture(t: str) -> Action | None:
+    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's."""
+    t = t.replace("’", "'")
+    for kind, phrases in PICTURE_PHRASES.items():
+        if t in phrases:
+            return Action("picture", kind, "open", PICTURE_TITLES[kind])
+    m = _NEEDS_RE.match(t)
+    if m and sysmap.service_exists(m.group(1)):
+        name = sysmap.unit_name(m.group(1)).removesuffix(".service")
+        return Action("picture", f"service:{name}", "open", f"what {name} needs")
+    return None
+
+
 def match(text: str, app_list: list | None = None, busy: bool = False) -> Action | None:
     """The local action for exactly this text, or None to send it to the agent. `busy`: a turn
     is running, so a bare "why" asks about its current step."""
@@ -142,6 +172,9 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     plain = t.isascii()
     if busy and plain and t in WHY_WORDS:
         return Action("why")
+    picture = _picture(t) if plain else None
+    if picture is not None and _find_app(t, app_list) is None:
+        return picture
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown") and raw.endswith("?"):
@@ -211,6 +244,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "picture":
+            return f"Drawing {action.title}"
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
@@ -221,6 +256,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
+        if action.kind == "picture":
+            return f"Could not draw {action.title}"
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",

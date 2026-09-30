@@ -13,10 +13,12 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         again while it shows closes it
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
                    {"type": "summon"}                   ask the bar to take the keyboard (Super)
+                   {"type": "card", "card": {...}}      a picture to draw (os-mcp's show_card and system_map);
+                                                        answered with {"type": "card_ack", "shown": bool}
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
-                    "local", "turn": n, ...}
+                    "local"|"card", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "summon"}
@@ -31,6 +33,14 @@ turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.",
 "irreversible", "stopped", "line": "Stopped while installing ffmpeg.", "read": [{"label", "kind",
 "outside"}]}; the same list goes into turns.jsonl.
 
+"card" events carry a picture for the bar: {"card": {"type": "diagram", "id", "shape", "title", "nodes",
+"links", "highlight", "say", "text", ...}}. One drawn from a request the user typed ("how am I connected")
+has turn null; one os-mcp sent while a turn runs carries that turn; a receipt (what the turn changed
+in the network, a service, the disks, the sound or the screens, as a before and after, "receipt": true)
+follows turn_end. While Claude still writes a show_card call, cards with "partial": true (the frame and
+the boxes finished so far) arrive under the id the finished card then keeps; {"id", "gone": true} takes
+one back. Partial cards are not logged.
+
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
@@ -44,7 +54,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
+from . import cards, config, launcher, narrate, paths, procs, providers, snapshots, sysmap, watch
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
@@ -61,8 +71,9 @@ OUTPUT_GRACE = 1.0
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None):
+                 stopper: procs.Stopper | None = None, explain: str = "normal"):
         self.provider = provider
+        self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
         self.launcher = launch or launcher.Launcher(snaps=self.snaps)
@@ -86,6 +97,11 @@ class AgentD:
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
+        self._card_seq = 0
+        self._card_stream: cards.CardStream | None = None   # show_card calls being written (Claude)
+        self._stream_ids: list[str] = []            # their card ids, until the finished card takes one
+        self._closed_turn: int | None = None        # the turn whose closing line is on screen
+        self._befores: dict[str, asyncio.Task] = {}   # a service's facts from when a step first touched it
 
     # -- socket --
 
@@ -174,6 +190,8 @@ class AgentD:
             self._background(asyncio.to_thread(self.launcher.close_details))
         elif t == "summon":
             await self.broadcast({"type": "summon"})
+        elif t == "card":
+            await self._card_message(msg, writer)
         elif t == "status":
             await self._send(writer, self._status())
 
@@ -264,6 +282,9 @@ class AgentD:
             text = self.narrator.why_text() if self.narrator else "Nothing is running."
             await self.event("local", turn=None, action="why", phase="done", ok=True, text=text)
             return
+        if action.kind == "picture":
+            await self.picture(action, typed)
+            return
         if action.kind == "stop":
             stopping = await self.stop()
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
@@ -297,6 +318,102 @@ class AgentD:
             self.notes = self.notes[-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
                         "target": action.target, "result": text, "ok": ok})
+
+    # -- pictures --
+
+    async def _show(self, card: dict, turn: int | None, card_id: str | None = None):
+        """Send a finished card to the bars. One drawn while it streamed keeps that card's id, so
+        the bar swaps the picture in place."""
+        self._card_seq += 1
+        await self.event("card", turn=turn, card={**card, "id": card_id or f"card-{self._card_seq}"})
+
+    async def _card_message(self, msg: dict, writer: asyncio.StreamWriter):
+        card, errors = cards.accept(msg.get("card"))
+        if card is None:
+            await self._send(writer, {"type": "card_ack", "shown": False, "errors": errors})
+            return
+        streamed = self._stream_ids.pop(0) if self._stream_ids and self.current is not None else None
+        await self._show(card, self.current, streamed)
+        # Shown when a client besides the sender is there to draw it.
+        await self._send(writer, {"type": "card_ack", "shown": len(self.clients) > 1})
+
+    async def picture(self, action: launcher.Action, typed: str):
+        """A picture word ("how am I connected") is answered here: captured from the machine, drawn
+        by the bar, no model and no turn."""
+        kind, _, unit = action.target.partition(":")
+        await self.event("local", turn=None, action="picture", target=action.target, phase="start",
+                         text=self.launcher.doing(action))
+        try:
+            card = (await asyncio.to_thread(sysmap.capture, kind, unit, provider=self.provider.name))["card"]
+            text, ok = card.get("say") or card["title"], True
+        except sysmap.Unavailable as e:
+            card, text, ok = None, str(e), False
+        if card is not None:
+            await self._show(card, None)
+        await self.event("local", turn=None, action="picture", target=action.target, phase="done", ok=ok, text=text)
+        if ok:
+            self.notes.append(f"{typed!r}: showed a picture. {card['text'][:400]}")
+            self.notes = self.notes[-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "picture",
+                        "target": action.target, "result": text, "ok": ok})
+
+    def _stream_card(self, ev: dict):
+        """Feed a provider event to the show_card follower; the card so far, when it grew."""
+        if self._card_stream is None:
+            return None
+        try:
+            card = self._card_stream.feed(ev)
+        except Exception as e:  # noqa: BLE001 - a picture that cannot be followed is drawn when it is whole
+            print(f"agentd: card stream: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+        if card is not None and card["id"] not in self._stream_ids:
+            self._stream_ids.append(card["id"])
+        return card
+
+    async def _clear_streams(self, only: str | None = None):
+        """Take back partial cards whose show_card call failed or never finished."""
+        for sid in [only] if only else list(self._stream_ids):
+            if sid in self._stream_ids:
+                self._stream_ids.remove(sid)
+                await self.broadcast({"type": "event", "kind": "card", "turn": self.current,
+                                      "card": {"id": sid, "gone": True}})
+
+    async def _receipt(self, turn: int, narrator: narrate.Narrator, before: "asyncio.Task | None",
+                       befores: dict[str, asyncio.Task]):
+        """After the closing line: what the turn changed in a part of the machine it touched, as a
+        before and after. Nothing when nothing changed, when the agent drew a picture itself, or
+        when another turn has started."""
+        if before is None or narrator.drew:
+            return
+        kinds = [k for k in dict.fromkeys(k for k, _ in narrator.touched) if k != "service"]
+        services = [u for k, u in narrator.touched if k == "service"][:2]
+        if not kinds and not services:
+            return
+        try:
+            was = await asyncio.wait_for(asyncio.shield(before), sysmap.BUDGET + 1.0)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - no before, no receipt
+            return
+        found = None
+        if kinds:
+            now = await asyncio.to_thread(sysmap.snapshot, tuple(kinds), self.provider.name)
+            for k in kinds:
+                if (was or {}).get(k) is not None and now.get(k) is not None:
+                    found = sysmap.receipt(k, was[k], now[k])
+                    if found:
+                        break
+        if found is None:
+            for unit in services:
+                task = befores.get(unit)
+                b = await task if task is not None else None
+                if not b or any("activating" in str(f.get("value")) or "reloading" in str(f.get("value"))
+                                for f in b if f["key"] == "state"):
+                    continue   # captured while it was already changing: not a before
+                a = await asyncio.to_thread(sysmap.snapshot_service, unit)
+                found = sysmap.receipt("service", b, a, unit) if a else None
+                if found:
+                    break
+        if found is not None and self.current is None and self._closed_turn == turn:
+            await self._show(found, turn)
 
     async def details(self, turn):
         path = self.turn_logs.get(turn) if turn is not None else watch.last_turn_file()
@@ -396,6 +513,13 @@ class AgentD:
                              stopped=False, line="")
             return
         self.turns += 1
+        # What this part of the machine looks like now, for the receipt; nobody waits for it.
+        before = None
+        self._card_stream, self._stream_ids = cards.CardStream(), []
+        self._closed_turn = None
+        self._befores = {}
+        if not shell and self.explain != "brief":
+            before = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot, sysmap.BEFORE_KINDS, self.provider.name))
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
@@ -511,10 +635,13 @@ class AgentD:
                 line = self._stopped_line or narrator.stopped_line()
             else:
                 line = summary
+            await self._clear_streams()
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary=summary,
                              changed=bool(narrator.done), irreversible=narrator.irreversible,
                              stopped=stopped, line=line, read=narrator.read_list())
             self._log(prompt, result, snap, cmd, stopped, summary, narrator.read_list())
+            self._closed_turn = self.current
+            self._background(self._receipt(self.current, narrator, before, self._befores))
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
@@ -527,6 +654,17 @@ class AgentD:
             line = None
         if line is not None and not self.stopping:
             await self.event("status", **line)
+        partial = self._stream_card(ev) if kind in ("tool_start", "tool_input") else None
+        if partial is not None and not self.stopping:
+            # Not logged: only the finished card is (see _show).
+            await self.broadcast({"type": "event", "kind": "card", "turn": self.current, "card": partial})
+        if kind == "tool" and self.narrator is not None and self.explain != "brief":
+            for k, unit in self.narrator.touched:
+                if k == "service" and unit not in self._befores and len(self._befores) < 3:
+                    # As the step is read, before it has run; a state already changing is dropped later.
+                    self._befores[unit] = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot_service, unit))
+        if kind == "tool_result" and ev.get("id"):
+            await self._clear_streams(f"stream-{ev['id']}")   # a show_card call that failed drew nothing
         if kind in LINE_ONLY:
             return pending_session, reported_error
         if kind == "result":
@@ -622,7 +760,7 @@ def main(argv: list[str] | None = None) -> int:
         # Keep serving so the bar connects and can say what is missing; turns report it.
         print(f"provider {name!r} ({provider.binary}) is not installed; run bombadil-setup", file=sys.stderr)
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
-    daemon = AgentD(provider, snaps)
+    daemon = AgentD(provider, snaps, explain=cfg.explain)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
     try:
         asyncio.run(daemon.serve())
