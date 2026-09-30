@@ -6,6 +6,10 @@ in a fraction of a second and offline. Everything else goes to the agent. The li
 deliberately exact (after lowercasing and trimming, with an optional "open"/"close" in
 front): a parser that guesses would give the machine two brains that sometimes disagree.
 
+The last thing tried is words.toml, the phrases Bombadil made from what he keeps asking
+("my passwords" opens Passwords). A word can only open an app or show a panel, and it never
+takes the place of a name the machine already has.
+
 `match()` decides; `Launcher` does the work by calling Hyprland, the apps and snapper
 directly. Every action returns one plain sentence for the line above the pill.
 """
@@ -19,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from . import apps, hypr, paths, snapshots
+from .loop import words as wordbook  # not "words": _lookup and entries() have locals of that name
 
 PANEL_WORDS = {
     "browser": ["browser", "web browser", "web", "chrome", "chromium", "google", "internet"],
@@ -51,14 +56,18 @@ HIDE_VERBS = ("hide", "put away")
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop"}
 
 DETAILS_CLASS = "bombadil-details"
+# The widget's name. Not a command table entry: an app he made called Noticed must win, and the
+# loop service (not the launcher) does what it says.
+NOTICED = "noticed"
 
 
 @dataclass
 class Action:
-    kind: str          # "panel", "app", or a command name ("undo", "stop", ...)
-    target: str = ""   # panel or app name
+    kind: str          # "panel", "app", "noticed", or a command name ("undo", "stop", ...)
+    target: str = ""   # panel or app name; for "noticed" the same as verb
     verb: str = "open"  # open, close, hide
     title: str = ""    # what the line calls it: "the browser", "Passwords"
+    word: str = ""     # the words.toml phrase that matched, when one did
 
 
 def normalize(text: str) -> str:
@@ -124,8 +133,9 @@ def known_apps() -> list:
     return out
 
 
-def match(text: str, app_list: list | None = None) -> Action | None:
-    """The local action for exactly this text, or None to send it to the agent."""
+def match(text: str, app_list: list | None = None, *, use_words: bool = True) -> Action | None:
+    """The local action for exactly this text, or None to send it to the agent.
+    `use_words=False` leaves words.toml out: it is how `means` asks what a phrase already does."""
     raw = str(text).strip()
     if not raw or raw.startswith("!"):
         return None   # "!cmd" is a shell command, whatever follows the "!"
@@ -157,7 +167,41 @@ def match(text: str, app_list: list | None = None) -> Action | None:
             util = _lookup(word, UTILITY_COMMANDS)
             if util and (verbs or word == t):
                 return Action(util)
+        if verb != "close" and word == NOTICED:
+            # After the app lookup above, so an app called Noticed keeps its name. The verb is
+            # in target too: the loop service reads whichever it likes.
+            return Action("noticed", verb, verb, "Noticed")
+    # Projects, sessions and aliases go above this line, never below it.
+    return _word_action(t, app_list) if use_words else None
+
+
+def _word_action(t: str, app_list: list) -> Action | None:
+    """A word he made: the whole text, or the text after an opening verb, as an app's name can
+    be. Tried last, so a word never shadows anything; one put away, or whose app is gone,
+    matches nothing and the text goes to the agent."""
+    for phrase in [t] + [t[len(v) + 1:] for v in OPEN_VERBS if t.startswith(v + " ")]:
+        w = wordbook.lookup(phrase)
+        if w is None:
+            continue
+        if w.kind == "panel":
+            if w.name in PANEL_TITLES:
+                return Action("panel", w.name, "open", PANEL_TITLES[w.name], w.phrase)
+        else:
+            app = next((a for a in app_list if a.name == w.name), None)
+            if app is not None:
+                return Action("app", app.name, "open", app.title, w.phrase)
     return None
+
+
+def means(text: str, app_list: list | None = None) -> str:
+    """What this text already does without a word of his: "an app", "a panel", "a command",
+    "a utility word", or "" when it is free. words.add asks this before it makes a word."""
+    a = match(text, app_list, use_words=False)
+    if a is None:
+        return ""
+    if a.kind in ("app", "panel"):
+        return {"app": "an app", "panel": "a panel"}[a.kind]
+    return "a utility word" if a.kind in UTILITY_COMMANDS else "a command"
 
 
 def entries(app_list: list | None = None) -> list[dict]:
@@ -170,6 +214,8 @@ def entries(app_list: list | None = None) -> list[dict]:
     for table in (CORE_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
+    if _find_app(NOTICED, app_list) is None:   # an app called Noticed is listed above already
+        out.append({"name": NOTICED, "title": "Noticed", "kind": "command", "words": [NOTICED]})
     return out
 
 
@@ -205,6 +251,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "noticed":
+            return "Hiding Noticed" if action.verb == "hide" else "Opening Noticed"
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
@@ -215,6 +263,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
+        if action.kind == "noticed":
+            return "Could not hide Noticed" if action.verb == "hide" else "Could not open Noticed"
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
@@ -274,6 +324,11 @@ class Launcher:
                 self.hypr.dispatch(f'hl.dsp.workspace.toggle_special("{name.removeprefix("special:")}")')
                 hidden.append(name)
         return True, "Put everything away." if hidden else "Nothing to put away."
+
+    def _noticed(self, _a: Action) -> tuple[bool, str]:
+        # agentd hands "noticed" to the loop service before it gets here; this is only what is
+        # left when the service is not running (it failed to start, or the loop is off).
+        return False, "Noticed is not running."
 
     # -- undo --
 
