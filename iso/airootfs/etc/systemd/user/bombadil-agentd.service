@@ -1,0 +1,14 @@
+[Unit]
+Description=Bombadil agent daemon: the session every turn runs in
+Documentation=file:///usr/share/bombadil/docs/ARCHITECTURE.md
+# A daemon that crashed is started again, however many times: the pill is dead without it. The
+# loop reads the restarts (Bombadil's own checks) as signals, so systemd is what sees them.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/agentd
+Restart=always
+RestartSec=1
+# Hyprland starts this after importing its environment (hyprland.lua): the session's display,
+# its instance signature and PATH are what turns and the OS tools need.

@@ -118,6 +118,25 @@ check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
 
 
+# Bombadil's own checks (the self-improvement loop): agentd and the bar are user units that come
+# back after a crash, and what they report about themselves is where the loop reads it.
+user_ctl() { sudo -u user env XDG_RUNTIME_DIR="$run" systemctl --user "$@"; }
+loopdir=/home/user/.local/state/bombadil/loop
+bar_alive_fresh() { python3 -c 'import json,sys,time; b=json.load(open(sys.argv[1])); sys.exit(time.time()-b["alive_at"]>15)' "$loopdir/bar.json"; }
+hellos() { grep -c '"hello"' "$loopdir/signals.jsonl" 2>/dev/null || echo 0; }
+agentd_restarted() { local old new; old=$(pgrep -x agentd | head -1); pkill -x agentd; for _ in $(seq 30); do new=$(pgrep -x agentd | head -1); [[ -n "$new" && "$new" != "$old" ]] && return 0; sleep 1; done; return 1; }
+check agentd-unit-active user_ctl is-active --quiet bombadil-agentd.service
+check shell-unit-active user_ctl is-active --quiet bombadil-shell.service
+check loop-agentd-json wait_for 30 test -s "$loopdir/agentd.json"
+check loop-bar-hello wait_for 60 bash -c "grep -q '\"hello\"' $loopdir/signals.jsonl"
+check loop-bar-alive wait_for 30 bar_alive_fresh
+check coredump-handler bash -c 'sysctl -n kernel.core_pattern | grep -q systemd-coredump'
+hello_before=$(hellos)
+check agentd-comes-back agentd_restarted
+check agentd-socket-again wait_for 30 test -S "$sock"
+check bar-says-hello-again wait_for 60 bash -c "[[ \$(grep -c '\"hello\"' $loopdir/signals.jsonl) -gt $hello_before ]]"
+
+
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
 fi

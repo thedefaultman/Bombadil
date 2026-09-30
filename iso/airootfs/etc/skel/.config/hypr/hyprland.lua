@@ -5,8 +5,11 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", scale = 1 })
 
 hl.on("hyprland.start", function()
-    hl.exec_cmd("agentd")
-    hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
+    -- agentd and the bar are user units with Restart=always, so a crash is a restart and the loop
+    -- can see it. They need this session's environment (display, instance signature, PATH), so
+    -- import it first; if systemd's user manager is not there, start them the old way.
+    hl.exec_cmd("systemctl --user import-environment && systemctl --user start bombadil-agentd.service bombadil-shell.service"
+        .. " || { agentd & quickshell -p /usr/share/bombadil/shell/shell.qml & }")
     hl.exec_cmd("mako")
     hl.exec_cmd("bombadil-setup --first-run")
 end)
@@ -53,7 +56,8 @@ hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("bombadil pill"), { release = true })
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
-hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml"))
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell.service"
+    .. " || { pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml; }"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({

@@ -1,0 +1,14 @@
+[Unit]
+Description=Bombadil bar: the pill, the line above it and the chips
+Documentation=file:///usr/share/bombadil/docs/ARCHITECTURE.md
+After=bombadil-agentd.service
+Wants=bombadil-agentd.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/quickshell -p /usr/share/bombadil/shell/shell.qml
+Restart=always
+RestartSec=1
+# The bar says hello to agentd when it connects; a second hello from another process is how a
+# restart shows up in the loop's signals.
