@@ -418,6 +418,189 @@ def test_vault_auto_lock_counts_time_asleep(kit, fast_kdf, monkeypatch):
     assert vault(kit, "slept").property("unlocked") is False
 
 
+@pytest.fixture
+def clock(monkeypatch):
+    """The Vault clock, held still until a test moves it (a list of one: the seconds)."""
+    from bombadil.appkit.native import vault as vault_mod
+
+    now = [vault_mod._now()]
+    monkeypatch.setattr(vault_mod, "_now", lambda: now[0])
+    return now
+
+
+def test_vault_read_after_the_deadline_returns_nothing(kit, fast_kdf, clock):
+    """After a resume a read can come before the next tick: it must not keep the vault open."""
+    v = vault(kit, "late-read", "autoLock: 60")
+    assert v.create("pw")
+    v.setProperty("data", [{"pw": "x"}])
+    clock[0] += 3600
+    assert js(v.property("data")) is None
+    assert wait_until(lambda: not v.property("unlocked"), 500)       # queued by the read, not the 1 s tick
+
+
+def test_vault_assigning_after_the_deadline_is_refused(kit, fast_kdf, clock):
+    v = vault(kit, "late-write", "autoLock: 60")
+    assert v.create("pw")
+    v.setProperty("data", [1])
+    clock[0] += 3600
+    v.setProperty("data", [1, 2])
+    assert v.property("error") == "the vault is locked" and v.property("unlocked") is False
+    assert v.unlock("pw") is True and js(v.property("data")) == [1]
+
+    clock[0] += 3600
+    v.setProperty("autoLock", 0)                          # nor may this keep it open
+    assert v.property("unlocked") is False
+
+
+def test_vault_data_can_be_read_while_it_unlocks(kit, fast_kdf):
+    """A first unlock has no cached key yet when unlockedChanged is delivered: handlers still get the data."""
+    root = make(kit, '''Item { property var v: v; property string got: "unset"
+        Vault { id: v; name: "on-unlock-read"
+            onUnlockedChanged: if (unlocked) got = JSON.stringify(data) } }''')
+    v = root.property("v")
+    assert v.create("pw") is True
+    assert root.property("got") == "[]"
+    v.setProperty("data", ["kept"])
+    v.lock()
+    root.setProperty("got", "unset")
+    assert v.unlock("pw") is True
+    assert root.property("got") == '["kept"]'
+
+
+def test_vault_data_can_be_assigned_while_it_unlocks(kit, fast_kdf):
+    root = make(kit, '''Item { property var v: v; property bool seed: true
+        Vault { id: v; name: "on-unlock-write"
+            onUnlockedChanged: if (unlocked && seed) data = ["seed"] } }''')
+    v = root.property("v")
+    assert v.create("pw") is True
+    assert v.property("unlocked") is True and js(v.property("data")) == ["seed"] and v.property("error") == ""
+    v.lock()
+    assert v.unlock("pw") is True
+    assert v.property("unlocked") is True and js(v.property("data")) == ["seed"]
+    root.setProperty("seed", False)
+    v.lock()
+    assert v.unlock("pw") is True and js(v.property("data")) == ["seed"]      # what the handler saved is on disk
+
+
+def test_vault_bindings_on_data_do_not_fail_while_it_unlocks(kit, fast_kdf):
+    """The password manager's bindings (`unlocked ? data : []`, then `.length`) run on every unlock."""
+    from PySide6.QtCore import qInstallMessageHandler
+
+    messages = []
+    root = make(kit, '''Item { property var v: v
+        readonly property var entries: v.unlocked ? v.data : []
+        property int page: !v.unlocked ? 0 : entries.length === 0 ? 1 : 2
+        Vault { id: v; name: "on-unlock-bind" } }''')
+    v = root.property("v")
+    qInstallMessageHandler(lambda mode, context, text: messages.append(text))
+    try:
+        assert v.create("pw") is True
+        assert root.property("page") == 1
+        v.setProperty("data", [1])
+        v.lock()
+        assert root.property("page") == 0
+        assert v.unlock("pw") is True
+        assert root.property("page") == 2
+        spin(50)
+    finally:
+        qInstallMessageHandler(None)
+    assert not messages, messages
+
+
+@pytest.mark.parametrize("how", ["renamed", "destroyed"])
+def test_vault_object_that_left_the_file_no_longer_sets_its_deadline(kit, fast_kdf, clock, how):
+    main = vault(kit, f"left-{how}", "autoLock: 0")
+    assert main.create("pw")
+    dialog = make(kit, f'Item {{ property var v: v; Vault {{ id: v; name: "left-{how}" }} }}')   # 300 s
+    assert dialog.property("v").property("unlocked") is True
+    if how == "renamed":
+        dialog.property("v").setProperty("name", f"left-{how}-elsewhere")
+    else:
+        destroy(dialog)
+    clock[0] += 301
+    spin(1200)
+    assert main.property("unlocked") is True              # 0 = never: what is left of the group is main
+
+
+@pytest.mark.parametrize("how", ["renamed", "destroyed"])
+def test_vault_key_is_forgotten_once_no_object_is_left_to_show_it(kit, fast_kdf, clock, how):
+    from bombadil.appkit.native import vault as vault_mod
+
+    name = f"orphan-{how}"
+    root = make(kit, f'Item {{ property var v: v; Vault {{ id: v; name: "{name}"; autoLock: 60 }} }}')
+    assert root.property("v").create("pw")
+    if how == "renamed":
+        root.property("v").setProperty("name", f"{name}-elsewhere")
+    else:
+        destroy(root)
+    path = str(kit.ctx.resolve(f"{name}.vault"))
+    spin(1100)
+    assert path in vault_mod._keys                        # until the deadline, a hot reload reopens it
+
+    clock[0] += 3600
+    assert wait_until(lambda: path not in vault_mod._keys, 3000)
+    assert vault(kit, name, "autoLock: 0").property("unlocked") is False
+
+
+def test_vault_renamed_shows_nothing_of_the_old_file(kit, fast_kdf):
+    """A binding on name and data runs while `name` changes: it must not see the old vault under the new name."""
+    root = make(kit, '''Item { property var a: a; property var b: b
+        property string label: a.name + ":" + JSON.stringify(a.data)
+        property var seen: []
+        onLabelChanged: seen = seen.concat([label])
+        Vault { id: a; name: "moves-one" }
+        Vault { id: b; name: "moves-two" } }''')
+    a, b = root.property("a"), root.property("b")
+    assert a.create("one") and b.create("two")
+    a.setProperty("data", [{"secret": "ONE"}])
+    b.setProperty("data", [{"secret": "TWO"}])
+    a.setProperty("name", "moves-two")
+    assert not [s for s in js(root.property("seen")) if s.startswith("moves-two:") and "ONE" in s]
+    assert a.property("unlocked") is True and js(a.property("data")) == [{"secret": "TWO"}]
+    assert b.property("unlocked") is True
+    assert vault(kit, "moves-two").property("unlocked") is True       # as after a hot reload
+
+
+def test_vault_renamed_away_and_back_is_still_unlocked(kit, fast_kdf):
+    root = make(kit, '''Item { property var v: v
+        property string heading: v.name + " " + (v.unlocked ? JSON.stringify(v.data) : "locked")
+        Vault { id: v; name: "switch-home" } }''')
+    v = root.property("v")
+    assert v.create("h")
+    v.setProperty("data", ["home secret"])
+    v.setProperty("name", "switch-work")
+    assert v.property("unlocked") is False and js(v.property("data")) is None
+    assert v.create("w")
+    v.setProperty("data", ["work secret"])
+    v.setProperty("name", "switch-home")
+    assert v.property("unlocked") is True and js(v.property("data")) == ["home secret"]
+    assert vault(kit, "switch-home").property("unlocked") is True
+
+
+@pytest.mark.parametrize("props", ['autoLock: 0; name: "elsewhere-a"', 'name: "elsewhere-b"; autoLock: 0'])
+def test_vault_being_made_does_not_use_the_default_vault(kit, fast_kdf, clock, props):
+    """Until QML has set `name` a Vault is on the default file: that must not count as using it."""
+    from bombadil.appkit.native import vault as vault_mod
+
+    path = kit.ctx.data_dir / "vault.vault"
+    path.unlink(missing_ok=True)
+    vault_mod._keys.pop(str(path), None)
+    main = make(kit, 'Item { property var v: v; Vault { id: v; autoLock: 60 } }')
+    try:
+        assert main.property("v").create("pw")
+        start = clock[0]
+        clock[0] += 50
+        other = make(kit, f'Item {{ Vault {{ {props} }} }}')
+        assert vault_mod._keys[str(path)]["touched"] == start
+        assert vault_mod._keys[str(path)]["expires"] == start + 60
+        clock[0] += 20                                    # 70 s since main was last used
+        assert wait_until(lambda: not main.property("v").property("unlocked"), 3000), other
+    finally:
+        destroy(main)
+        path.unlink(missing_ok=True)
+        vault_mod._keys.pop(str(path), None)
+
+
 def test_vault_in_check_works_in_memory_only(kit, checking, fast_kdf):
     v = vault(kit, "dryrun")
     assert v.create("pw") is True and v.property("unlocked") is True and v.property("exists") is True
@@ -795,7 +978,8 @@ Item {
     property bool procs: Array.isArray(p.list) && p.list.length > 0 && p.details(p.list[0].pid).pid === p.list[0].pid
     property bool lines: Array.isArray(c.lines) && c.lines.length === 2
     property bool json: Array.isArray(c2.json) && c2.json[1].b === null
-    property bool vault: v.create("pw") && Array.isArray(v.data) && Array.isArray(v.data.concat([1]))
+    property bool vault: false
+    Component.onCompleted: vault = v.create("pw") && Array.isArray(v.data) && Array.isArray(v.data.concat([1]))
     Processes { id: p; interval: 0 }
     Command { id: c; command: "printf 'a\\nb\\n'"; running: true }
     Command { id: c2; command: "echo '[1, {\\"b\\": null}]'"; running: true }
