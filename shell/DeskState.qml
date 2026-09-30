@@ -14,9 +14,15 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // A button on a card was pressed (Needs you and Watching, later).
+    // A button or a small x on a rows card was pressed. DeskState answers the ones that are its own
+    // (Why? and the x on Watching, Open on Needs you); the signals stay open for anyone else.
     signal rowAction(string widget, string key, string action)
     signal rowRemove(string widget, string key)
+    onRowAction: (widget, key, action) => {
+        if (widget === "watching" && action === "Why?") outgoing({ type: "jobs", op: "why", id: key })
+        else if (widget === "needs" && action === "Open") outgoing({ type: "dev", action: "open", key: key })
+    }
+    onRowRemove: (widget, key) => { if (widget === "watching") _removeJob(key) }
 
     // Left rail first, in the default order, then right.
     readonly property var widgetIds: ["now", "watching", "alive", "needs", "away", "machine"]
@@ -47,8 +53,9 @@ QtObject {
     property var nowModel: ({ title: "", why: "", steps: [], edge: "machine", command: "", caption: "",
                               done: false, running: false })
     property string nowStripText: "working"
-    // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, button, remove}]}
-    // and an optional strip: {text, dot, ring, mark, textColor, outlined}. Filled by later pieces.
+    // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, pulse, button,
+    // remove}]} and an optional strip: {text, dot, ring, mark, textColor, outlined}. Watching and
+    // Needs you are filled from agentd's `jobs` and `dev` messages (below), the others by later pieces.
     property var watchModel: ({ title: "Watching", why: "", rows: [] })
     property var needsModel: ({ title: "Needs you", why: "", rows: [] })
     property var awayModel: null
@@ -72,6 +79,24 @@ QtObject {
     property string _error: ""
     property string _result: ""
     property bool _resultOk: true
+
+    // -- what Watching and Needs you read --
+
+    // agentd's jobs table as it last sent it: [{id, title, kind, state, started, deadline, ended, pct,
+    // last}], times in epoch seconds, in agentd's order.
+    property var jobs: []
+    // The clock the rows read, in epoch milliseconds (tests set it). The timer below moves it once a
+    // tickMs while agentd lists a job that is counting or finished (a finished row has to leave on
+    // time), so a desk with nothing counting wakes nothing.
+    property double now: Date.now()
+    property int tickMs: 1000
+    property int doneStaysMs: 12000     // a finished job's row leaves this long after it ended
+    property var _gone: ({})            // rows the person removed that agentd's table has yet to drop
+    readonly property bool ticking: jobs.some(j => !_gone[j.id] && j.state !== "failed")
+    readonly property bool clockRunning: clock.running
+    // The coding sessions and the keys that want you, in Tab's order, as agentd's `dev` message has them.
+    property var sessions: []
+    property var attention: []
 
     readonly property string pillMode: pill ? pill.mode : ""
     // Two steps are a route; one step is only worth a card when it touches the system.
@@ -214,6 +239,15 @@ QtObject {
                 onTriggered: desk._unfold(wid)
             }
         },
+        Timer {
+            // The first tick is at once, for the time the clock stood still.
+            id: clock
+            interval: desk.tickMs
+            repeat: true
+            running: desk.ticking
+            triggeredOnStart: true
+            onTriggered: desk.now = Date.now()
+        },
         Connections {
             target: desk.pill
             ignoreUnknownSignals: true
@@ -330,6 +364,8 @@ QtObject {
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
         if (ev.type === "desk") { _applyDesk(ev); return }
+        if (ev.type === "jobs") { _applyJobs(ev); return }
+        if (ev.type === "dev") { _applyDev(ev); return }
         if (ev.type === "status") {
             if (ev.busy && ev.turn !== undefined && ev.turn !== null && _phase === "idle") {
                 // The bar (re)connected in the middle of a turn; agentd sends its plan next.
@@ -402,6 +438,9 @@ QtObject {
     function lost() {
         connected = false
         if (_phase === "running") _clear()
+        // Nothing on Watching or Needs you can be answered now, and agentd sends both tables again.
+        if (jobs.length > 0 || Object.keys(_gone).length > 0) { jobs = []; _gone = {} }
+        if (sessions.length > 0 || attention.length > 0) { sessions = []; attention = []; _refreshNeeds() }
     }
 
     onConnectedChanged: if (connected) outgoing({ type: "desk", op: "get" })
@@ -474,6 +513,178 @@ QtObject {
         }
         rails = r
         order = next
+    }
+
+    // -- Watching: agentd's jobs --
+
+    // The table as the desk keeps it: known states only, times as numbers or null, pct in 0..100 or null.
+    function _cleanJobs(list) {
+        const blank = v => v === null || v === undefined || v === "" || !isFinite(Number(v))
+        const number = v => blank(v) ? null : Number(v)
+        const seen = {}
+        const out = []
+        for (const j of list) {
+            if (!j || typeof j !== "object" || j.id === undefined || j.id === null) continue
+            const id = String(j.id)
+            if (seen[id] || ["running", "done", "failed"].indexOf(j.state) < 0) continue
+            seen[id] = true
+            const pct = number(j.pct)
+            out.push({ id: id, title: String(j.title || ""), state: j.state,
+                       kind: j.kind === "watch" || j.kind === "timer" ? j.kind : "job",
+                       started: number(j.started), deadline: number(j.deadline), ended: number(j.ended),
+                       pct: pct === null ? null : Math.max(0, Math.min(100, pct)),
+                       last: String(j.last || "") })
+        }
+        return out
+    }
+
+    // agentd's jobs message replaces the table. A row the person removed stays gone until a table
+    // without it comes, which is agentd saying it stopped or dropped the job, so a table that was
+    // already on its way cannot bring the row back for a moment.
+    function _applyJobs(ev) {
+        if (!Array.isArray(ev.jobs)) return
+        const next = _cleanJobs(ev.jobs)
+        const gone = {}
+        for (const j of next) if (_gone[j.id]) gone[j.id] = true
+        _gone = gone
+        jobs = next
+    }
+
+    // The x on a row: stop a running job, drop a finished one. The row goes at once; the table that
+    // comes back confirms it. A second press, or a row that is not there, sends nothing.
+    function _removeJob(id) {
+        const j = jobs.find(j => j.id === id)
+        if (!j || _gone[id]) return
+        outgoing({ type: "jobs", op: j.state === "running" ? "stop" : "dismiss", id: id })
+        const gone = Object.assign({}, _gone)
+        gone[id] = true
+        _gone = gone
+        _refreshWatch()
+    }
+
+    // "40 s", "4 min", "2 h 10 min": how long a job has been going, or took.
+    function _span(seconds) {
+        const s = Math.max(0, Math.round(seconds))
+        if (s < 60) return s + " s"
+        const m = Math.floor(s / 60)
+        if (m < 60) return m + " min"
+        return Math.floor(m / 60) + " h" + (m % 60 > 0 ? " " + (m % 60) + " min" : "")
+    }
+
+    // "6:40", or "1:05:00" past the hour: what a timer has left, rounded up so 0:00 is when it is up.
+    function _left(seconds) {
+        const s = Math.max(0, Math.ceil(seconds - 1e-6))
+        const pad = n => (n < 10 ? "0" : "") + n
+        const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60)
+        return (h > 0 ? h + ":" + pad(m) : m) + ":" + pad(s % 60)
+    }
+
+    // One job as the rows card draws it, at time t (epoch seconds).
+    function _jobRow(j, t) {
+        const name = j.kind === "timer" ? "Timer" : j.kind === "watch" ? "Watching" : "Job"
+        const row = { key: j.id, kind: "dot", title: j.title || name, sub: "", meter: null, meterText: "",
+                      tone: "machine", pulse: false, button: "", remove: true }
+        const elapsed = j.started === null ? 0 : t - j.started
+        if (j.state === "done") {
+            row.tone = "ok"
+            row.sub = j.ended === null || j.started === null ? "done"
+                    : "done in " + _span(j.ended - j.started)
+        } else if (j.state === "failed") {
+            row.tone = "red"
+            row.sub = j.last
+            row.button = "Why?"
+        } else if (j.kind === "timer" && j.deadline !== null) {
+            row.tone = "sessions"
+            row.sub = _left(j.deadline - t) + " left"
+            row.pulse = true
+        } else if (j.pct !== null) {
+            row.kind = "meter"
+            row.meter = j.pct / 100
+            row.meterText = _span(elapsed)
+        } else {
+            row.sub = _span(elapsed) + " so far"
+            row.pulse = true
+        }
+        return row
+    }
+
+    // Watching, from the table and the clock. A done row leaves doneStaysMs after it ended; a failed
+    // one stays until it is dismissed. The card says how many are counting; its strip is the first
+    // meter's first word and percent, or the count.
+    function _refreshWatch() {
+        const t = now / 1000
+        const rows = []
+        let counting = 0, failed = 0, meter = null
+        for (const j of jobs) {
+            if (_gone[j.id]) continue
+            if (j.state === "done" && j.ended !== null && (t - j.ended) * 1000 >= doneStaysMs) continue
+            const row = _jobRow(j, t)
+            rows.push(row)
+            if (j.state === "failed") failed++
+            else if (j.state === "running") {
+                counting++
+                if (!meter && row.kind === "meter") meter = row
+            }
+        }
+        let next = { title: "Watching", why: "", rows: [] }
+        if (rows.length > 0) {
+            const word = meter ? meter.title.trim().split(/\s+/)[0] : ""
+            // With nothing counting, what is left is what finished: the strip says so, in its colour.
+            const strip = counting === 0
+                ? { text: "finished", dot: failed > 0 ? T.red : T.ok, ring: false }
+                : { text: meter ? word + " " + Math.round(meter.meter * 100) + "%" : counting + " counting",
+                    dot: T.machine, ring: true }
+            const why = counting > 0 ? counting + " counting · each ends with one line in the pill"
+                                     : "finished"
+            next = { title: "Watching", why: why, rows: rows, strip: strip }
+        }
+        // Left alone when nothing changed, so a model that was set by hand is not written over.
+        if (JSON.stringify(next) !== JSON.stringify(watchModel)) watchModel = next
+    }
+
+    onJobsChanged: _refreshWatch()
+    onNowChanged: if (jobs.length > 0) _refreshWatch()
+
+    // -- Needs you: the coding sessions that want you --
+
+    // agentd's dev message: the sessions, and the keys that want you in Tab's order. What it leaves out
+    // stays as it was.
+    function _applyDev(ev) {
+        if (Array.isArray(ev.sessions)) {
+            sessions = ev.sessions.filter(s => s && typeof s === "object" && s.key !== undefined
+                                               && s.key !== null)
+        }
+        if (Array.isArray(ev.attention))
+            attention = ev.attention.filter(k => k !== undefined && k !== null).map(String)
+        _refreshNeeds()
+    }
+
+    // "reviewer on Bombadil"; just the project for a session with no role.
+    function _needsTitle(s) {
+        const project = String(s.projectTitle || s.project || "")
+        const role = String(s.role || "")
+        return role && project ? role + " on " + project : project || role || String(s.key)
+    }
+
+    // One row for each key in attention, in its order; a key with no session is skipped. The row says
+    // what the session asked, or the line it finished with, on one line.
+    function _refreshNeeds() {
+        const by = {}
+        for (const s of sessions) by[String(s.key)] = s
+        const rows = []
+        const seen = {}
+        for (const key of attention) {
+            const s = by[key]
+            if (!s || seen[key]) continue
+            seen[key] = true
+            const line = String(s.last || "").split(/\r?\n/).find(l => l.trim() !== "") || ""
+            rows.push({ key: key, kind: "dot", title: _needsTitle(s), sub: _oneLine(line, 70), meter: null,
+                        meterText: "", tone: "sessions", pulse: s.state === "asked", button: "Open",
+                        remove: false })
+        }
+        const why = rows.length > 0 ? "Tab walks these · one alone is just the line" : ""
+        const next = { title: "Needs you", why: why, rows: rows }
+        if (JSON.stringify(next) !== JSON.stringify(needsModel)) needsModel = next
     }
 
     // -- what the desk asks agentd to do (the state comes back as a `desk` message) --

@@ -4,8 +4,9 @@ import QtQuick.Layouts
 import "DeskTheme.js" as T
 
 // A card of rows: Watching (what is counting) and Needs you (what is waiting for you). A row is a
-// meter (a label, what it says, a percent and a track filled in the colour of who is using it), a
-// dot row (a title, one line under it, a button or a small x) or a plain one without the dot.
+// meter (a label, what it says, a percent and a track filled in the colour of who is using it, and
+// a small x when it may be removed), a dot row (a title, one line under it, a button or a small x)
+// or a plain one without the dot.
 // A button never starts work by itself: it reports the press and the shell decides.
 // model is DeskState's watchModel or needsModel:
 // {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, pulse, button, remove}]}.
@@ -75,6 +76,9 @@ DeskCard {
                 readonly property bool pulsing: spec.pulse === true && (tone === "machine" || tone === "sessions")
                 // Where the words must stop: short of the buttons, when there are any.
                 readonly property real textRight: buttons.visible ? buttons.x - 8 : card.width - 14
+                // A meter row with a small x gives it this much of its right edge; the percent and the
+                // words beside it move left by it. A meter row without one does not move.
+                readonly property real meterRoom: kind === "meter" && removable ? 22 : 0
 
                 width: card.width
                 height: kind === "meter" ? 34 : T.rowHeight
@@ -96,7 +100,7 @@ DeskCard {
                     id: meta
                     objectName: "rowsMeta"
                     visible: row.kind === "meter"
-                    x: 250 - Math.min(implicitWidth, 150)
+                    x: 250 - row.meterRoom - Math.min(implicitWidth, 150)
                     y: Math.round(22 - baselineOffset)
                     width: Math.min(implicitWidth, 150)
                     text: row.spec.meterText || ""
@@ -109,7 +113,7 @@ DeskCard {
                 Text {
                     objectName: "rowsPercent"
                     visible: row.kind === "meter" && row.hasMeter
-                    x: 286 - implicitWidth
+                    x: 286 - row.meterRoom - implicitWidth
                     y: Math.round(22 - baselineOffset)
                     text: Math.round(row.fraction * 100) + "%"
                     color: T.muted
@@ -163,18 +167,19 @@ DeskCard {
                     maximumLineCount: 1
                 }
 
-                // The button, and the small x that stops or drops the row. Right edge at 286.
+                // The button, and the small x that stops or drops the row. Right edge at 286. A meter
+                // row has no button, only the x, up by the label's line because the track is under it.
                 Row {
                     id: buttons
-                    visible: row.kind !== "meter" && (row.button !== "" || row.removable)
+                    visible: row.kind === "meter" ? row.removable : (row.button !== "" || row.removable)
                     x: 286 - width
-                    y: 12
+                    y: row.kind === "meter" ? 6 : 12
                     spacing: 6
 
                     Rectangle {
                         id: pressButton
                         objectName: "rowsButton"
-                        visible: row.button !== ""
+                        visible: row.kind !== "meter" && row.button !== ""
                         readonly property string text: row.button
                         readonly property bool primary: row.button === "Do it"
                         // What was under the finger at the press: the rows may shift before the release.
