@@ -43,6 +43,8 @@ virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x 
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
+# Every generated app card sits at its own spot (a second one does not hide the first).
+apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -86,6 +88,9 @@ qml='import QtQuick\nimport QtQuick.Controls\nimport Bombadil\nAppWindow { title
 check create-app mcp_call create_app "{\"title\":\"Smoke Test\",\"qml\":\"$qml\"}"
 check app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-test" and c["floating"]'
 shot app
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-spots wait_for 30 apps_apart
 check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and

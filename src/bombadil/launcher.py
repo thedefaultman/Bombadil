@@ -250,6 +250,7 @@ class Launcher:
             if _app_running(a.target):
                 self._focus_class(f"bombadil-app-{a.target}")
             else:
+                self.hypr.place_app(a.target)   # its own spot, before the window maps
                 apps.run(a.target)
         elif a.verb == "close":
             self._run(["pkill", "-f", f"bombadil-app run {a.target}$"], capture_output=True, check=False)

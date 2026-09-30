@@ -7,6 +7,7 @@ Chromium into it if it is not running yet.
 
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -19,6 +20,30 @@ PANELS: dict[str, list[str]] = {
     "terminal": ["foot", "--app-id=bombadil-terminal"],
     "files": ["nautilus"],
 }
+
+
+# A generated app opens as a card this big (hyprland.lua's bombadil-apps rule), centered, and the next
+# one a step down and to the right, so a second never hides the first.
+APP_CARD = (540, 660)
+APP_STEP = 32
+APP_SLOTS = 3
+_APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+
+
+def app_slots(monitor: dict, card: tuple[int, int] = APP_CARD) -> list[tuple[int, int]]:
+    """Where an app card can open on this monitor, in its coordinates: centered in the room the
+    bar leaves, then down and right by a step each. The steps shrink to what the room allows, so
+    the last slot's bottom edge is still above the bar; a card as tall as the room has one slot."""
+    scale = float(monitor.get("scale") or 1)
+    w, h = float(monitor["width"]) / scale, float(monitor["height"]) / scale
+    if int(monitor.get("transform") or 0) % 2:
+        w, h = h, w
+    left, top, right, bottom = ([float(x) for x in monitor.get("reserved") or []] + [0.0] * 4)[:4]
+    x0 = left + max(0.0, (w - left - right - card[0]) / 2)
+    y0 = top + max(0.0, (h - top - bottom - card[1]) / 2)
+    room = max(0.0, (h - top - bottom - card[1]) / 2)   # what is left below the centered card
+    step = min(APP_STEP, room / (APP_SLOTS - 1))
+    return [(round(x0 + step * k), round(y0 + step * k)) for k in range(APP_SLOTS)]
 
 
 def _socket_path() -> Path | None:
@@ -68,6 +93,29 @@ class Hyprland:
 
     def clients(self) -> list[dict]:
         return json.loads(self.request("j/clients"))
+
+    def place_app(self, name: str) -> str:
+        """Before an app starts: a window rule that opens it on the first free slot of app_slots,
+        so a second app does not open exactly on top of the first. Never raises; without Hyprland
+        (or if it does not answer) the app opens where hyprland.lua's rule puts it."""
+        if not self.available or not _APP_NAME.fullmatch(name):
+            return ""
+        try:
+            monitors = json.loads(self.request("j/monitors"))
+            mon = next((m for m in monitors if m.get("focused")), monitors[0])
+            slots = app_slots(mon)
+            cards = [c for c in self.clients()
+                     if str(c.get("class", "")).startswith("bombadil-app-") and c.get("floating")]
+            taken = {tuple(c.get("at") or ()) for c in cards}
+            x, y = next(((sx, sy) for sx, sy in slots
+                         if (sx + mon.get("x", 0), sy + mon.get("y", 0)) not in taken),
+                        slots[len(cards) % APP_SLOTS])
+            rule = (f'hl.window_rule({{ name = "bombadil-app-{name}", '
+                    f'match = {{ class = "^(bombadil-app-{name})$" }}, move = {{ {x}, {y} }} }})')
+            reply = self.request("eval " + rule).strip()
+        except (OSError, RuntimeError, ValueError, KeyError, IndexError, TypeError) as e:
+            return f"no spot picked for {name}: {e}"
+        return f"{name} opens at {x},{y}" if reply == "ok" else f"no spot picked for {name}: {reply}"
 
     def _panel_has_window(self, name: str) -> bool:
         return any(c.get("workspace", {}).get("name") == f"special:{name}" for c in self.clients())
