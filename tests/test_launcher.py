@@ -365,6 +365,50 @@ def test_a_drawer_slow_to_map_still_slides_in(home, monkeypatch):
     assert h.calls == [("dispatch", 'hl.dsp.focus({ workspace = "special:details" })')]
 
 
+def _placing(monkeypatch, said):
+    """The app kit's placement, saying `said` whatever it is asked; and what it was asked."""
+    import types
+    asked = []
+
+    def do(verb):
+        return lambda name: asked.append((verb, name)) or said
+    monkeypatch.setattr(launcher, "_placement", lambda: types.SimpleNamespace(
+        show=do("show"), hide=do("hide"), close=do("close")))
+    return asked
+
+
+@pytest.mark.parametrize("text, said, expected", [
+    ("passwords", "passwords shown", (True, "Opened Passwords.")),
+    ("passwords", "started passwords; it slides in when its window opens", (True, "Opened Passwords.")),
+    ("hide passwords", "passwords hidden", (True, "Put Passwords away.")),
+    ("quit passwords", "passwords closed", (True, "Closed Passwords.")),
+    ("quit passwords", "passwords did not quit within 3 s (stuck?) and was killed; unsaved changes are lost",
+     (True, "Closed Passwords.")),
+    # What placement found instead of the thing done: said as it is, with the app's title.
+    ("quit memory viewer", "memory-viewer is not running", (True, "Memory Viewer is not running.")),
+    ("hide memory viewer", "memory-viewer is not on screen", (True, "Memory Viewer is not on screen.")),
+    ("hide passwords", "Hyprland is not running; nothing to hide", (True, "Hyprland is not running; nothing to hide.")),
+    ("quit passwords", "passwords did not quit within 3 s and could not be killed",
+     (False, "Could not close Passwords: passwords did not quit within 3 s and could not be killed")),
+])
+def test_an_app_action_says_what_placement_found(home, monkeypatch, text, said, expected):
+    _apps(home)
+    asked = _placing(monkeypatch, said)
+    a = launcher.match(text)
+    assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(a) == expected
+    assert asked == [({"open": "show", "hide": "hide", "close": "close"}[a.verb], a.target)]
+
+
+def test_closing_an_app_that_is_not_running_does_not_say_it_closed(home, monkeypatch):
+    from bombadil.appkit import placement
+    _apps(home)
+    monkeypatch.setattr(placement, "running", lambda: {})
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    assert lx.run(launcher.match("quit memory viewer")) == (True, "Memory Viewer is not running.")
+    # A drawer nobody can look at (no Hyprland here) was not put away either.
+    assert lx.run(launcher.match("hide passwords")) == (True, "Hyprland is not running; nothing to hide.")
+
+
 def _lx(home, **k):
     return launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0), desk=desk.Desk(), **k)
 

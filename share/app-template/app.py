@@ -1,4 +1,6 @@
-from PySide6.QtCore import QObject, Property, Signal, Slot
+"""Optional. Only for what the native bindings (System, Store, Command, ...) cannot do."""
+
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 
 class Backend(QObject):
