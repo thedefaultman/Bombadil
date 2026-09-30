@@ -177,6 +177,9 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
+# The first check of the provider runs the real CLI (a cold start can take seconds): typing before it says
+# ready would be typing into a pill that is still checking.
+check("agentd finds the provider ready", wait(lambda m: m.get("type") == "setup" and m.get("state") == "ready", 60) is not None)
 check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
