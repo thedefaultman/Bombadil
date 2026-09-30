@@ -230,6 +230,82 @@ def test_the_bars_text_is_set_in_the_themes_family(bar):
     assert {f for t, f in seen if t not in mono} == {THEME["fontFamily"]}
 
 
+def face(bar):
+    return bar.pill.property("face")
+
+
+def test_the_stone_starts_then_goes_offline_if_agentd_never_comes(app, tmp_path):
+    b = Bar(app, tmp_path)           # no status yet: agentd has not answered
+    try:
+        assert face(b) == "starting"
+        b.pill.setProperty("booting", False)       # the shell's 15 s are up
+        b.pump()
+        assert face(b) == "offline"
+        b.send(type="status", busy=False, provider="claude", queue=[])
+        assert face(b) == "rest"
+    finally:
+        b.win.close()
+        b.engine.deleteLater()
+
+
+def test_the_stone_goes_offline_when_agentd_goes_even_during_boot(bar):
+    assert face(bar) == "rest" and bar.pill.property("seen")
+    bar.call("lost")
+    assert face(bar) == "offline"
+    bar.pill.setProperty("booting", True)
+    bar.pump()
+    assert face(bar) == "offline"      # it was there, so this is a loss, not a start
+    bar.send(type="status", busy=False, provider="claude", queue=[])
+    assert face(bar) == "rest"
+
+
+def test_the_stone_follows_a_turn(bar):
+    bar.call("submit", "install ffmpeg")
+    assert face(bar) == "working"                  # "On it", before agentd confirms
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    assert face(bar) == "working"
+    bar.send(kind="turn_end", turn=1, seconds=9, changed=True, summary="Installed ffmpeg.")
+    assert face(bar) == "done"
+    bar.call("dismiss")
+    assert face(bar) == "rest"
+    bar.call("submit", "and stop it")
+    bar.send(kind="turn_start", turn=2, prompt="and stop it")
+    bar.send(kind="turn_end", turn=2, seconds=2, changed=False, stopped=True)
+    assert face(bar) == "stopped"
+    bar.call("dismiss")
+    assert face(bar) == "rest"
+    bar.call("submit", "break")
+    bar.send(kind="turn_start", turn=3, prompt="break")
+    bar.send(kind="error", turn=3, text="The CLI exited with 1.")
+    bar.send(kind="turn_end", turn=3, seconds=1, changed=False)
+    assert bar.pill.property("source") == "error" and face(bar) == "rest"
+
+
+def test_the_stone_asks_for_you_while_setup_does(bar):
+    bar.send(type="setup", state="choose", line="Which AI should run this computer?", tone="ask",
+             actions=[{"id": "provider:claude", "label": "Claude", "style": "big"}])
+    assert face(bar) == "needs"
+    bar.send(type="setup", state="signing_in", line="Sign in to Claude in the browser", tone="step", actions=[])
+    assert face(bar) == "working"
+    bar.send(type="setup", state="signed_out", line="Claude signed you out.", tone="step",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    assert face(bar) == "needs"
+    bar.send(type="setup", state="ready", line="", tone="done", actions=[])
+    assert face(bar) == "rest"
+
+
+def test_needs_you_outranks_a_running_turn(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    assert face(bar) == "working"
+    bar.pill.setProperty("needsYou", True)        # a session asks; the desk sets this
+    bar.pump()
+    assert face(bar) == "needs"
+    bar.pill.setProperty("needsYou", False)
+    bar.pump()
+    assert face(bar) == "working"
+
+
 def test_undo_on_the_line_does_not_also_open_details(bar):
     bar.call("submit", "install ffmpeg")
     bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
