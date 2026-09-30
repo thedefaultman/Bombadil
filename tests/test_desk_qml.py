@@ -80,6 +80,9 @@ Window {
                  pillEdge: pillBox.x; pillCentreY: pillBox.y + pillBox.height / 2 }
     DeskStrips { objectName: "stripsRight"; parent: w.contentItem; desk: deskState; side: "right"
                  pillEdge: pillBox.x + pillBox.width; pillCentreY: pillBox.y + pillBox.height / 2 }
+    // The same on a screen the desk does not live on: it must draw nothing.
+    DeskStrips { objectName: "stripsOther"; parent: w.contentItem; desk: deskState; side: "left"; active: false
+                 pillEdge: pillBox.x; pillCentreY: pillBox.y + pillBox.height / 2 }
 }
 """
 
@@ -237,14 +240,28 @@ class Desk:
             todo.extend(it.childItems())
         return None
 
-    def items(self, name, visible_only=True):
+    def items(self, name, visible_only=True, other=False):
+        """Items called `name` in the desk's own windows; `other` looks only under the strips of a
+        screen the desk is not on."""
         found, todo = [], [self.win.contentItem()]
         while todo:
             it = todo.pop()
+            if it.objectName() == "stripsOther" and not other:
+                continue
             if it.objectName() == name and (it.isVisible() or not visible_only):
                 found.append(it)
             todo.extend(it.childItems())
+        if other:
+            found = [it for it in found if self._under(it, "stripsOther")]
         return found
+
+    @staticmethod
+    def _under(item, name):
+        while item is not None:
+            if item.objectName() == name:
+                return True
+            item = item.parentItem()
+        return False
 
     def item(self, name, visible_only=False):
         found = self.items(name, visible_only)
@@ -1608,6 +1625,125 @@ def test_a_laptop_folds_the_jobs_card_by_the_height_rule_and_its_strip_reads_the
     assert laptop.faces["now"] == "full" and laptop.faces["watching"] == "strip"     # 172 + 12 + 454 > 600
     assert laptop.prop("leftStrips")[0]["text"] == "Ubuntu 43%"
     laptop.snap("laptop-watching")
+
+
+# -- what the shell review found --
+
+def test_a_screen_too_narrow_for_two_rails_and_a_pill_keeps_its_cards_as_strips(desk):
+    assert desk.prop("narrowLimit") == 2 * (300 + 16 + 12) + 360 == 1016
+    desk.resize(1000, 720)
+    desk.turn(1, steps=TWO)
+    assert desk.prop("narrow") is True and desk.faces["now"] == "strip"
+    assert desk.prop("anyFull") is False and desk.prop("pillWidth") > 360 - 1
+    assert [s["text"] for s in desk.prop("leftStrips")] == ["step 1 of 2"]
+    desk.resize(1016, 720)
+    assert desk.prop("narrow") is False and desk.faces["now"] == "full"
+
+
+def test_the_pill_does_not_widen_for_the_moments_the_cards_take_to_come_back(laptop):
+    laptop.turn(1, steps=TWO)
+    laptop.cover((0, 400, 1280, 300))
+    laptop.pump(0.3)
+    assert laptop.faces["now"] == "strip" and laptop.prop("pillTarget") == 360
+    laptop.cover()                                          # the window goes; the card waits its delay
+    assert laptop.prop("mode") == "open" and laptop.faces["now"] == "strip"
+    assert laptop.prop("pillTarget") == 1280 - 2 * (300 + 12 + 16)   # already the width it will keep
+    laptop.pump(0.7)
+    assert laptop.faces["now"] == "full" and laptop.prop("pillTarget") == 1280 - 2 * (300 + 12 + 16)
+
+
+def test_a_strip_whose_text_changes_is_redrawn_in_place_and_its_neighbours_do_not_blink(desk):
+    desk.turn(1, steps=TWO)
+    desk.jobs(ISO)
+    desk.clock(10)
+    desk.send(**desk_msg(folded=True))
+    desk.pump(0.5)
+    watching, now = desk.item("deskStrip-watching"), desk.item("deskStrip-now")
+    assert watching.property("text") == "Ubuntu 43%" and watching.property("opacity") == 1
+    desk.jobs(job("a1b2", "Ubuntu 26.04 ISO", pct=44.0, last="12 MB/s"))
+    desk.clock(12)
+    desk.pump(0.05)
+    assert desk.item("deskStrip-watching") is watching and watching.property("text") == "Ubuntu 44%"
+    assert desk.item("deskStrip-now") is now and now.property("opacity") == 1
+    assert watching.property("opacity") == 1
+
+
+def test_a_screen_the_desk_is_not_on_draws_no_strips(desk):
+    desk.turn(1, steps=TWO)
+    desk.send(**desk_msg(folded=True))
+    desk.pump(0.4)
+    assert desk.items("deskStrip-now") != [] and desk.items("deskStrip-now", other=True, visible_only=False) != []
+    assert desk.items("deskStrip-now", other=True) == []       # its strips exist but are not drawn
+
+
+def test_an_irreversible_step_is_red_with_its_words_even_when_no_step_is_marked_current(desk):
+    desk.turn(1, steps=[("Format the disk", None, "pending"), ("Mount it", None, "pending")])
+    desk.send(kind="status", turn=1, text="Formatting", source="step", risk="irreversible",
+              command="sudo mkfs.ext4 /dev/sdb1")
+    m = desk.now
+    assert m["edge"] == "red" and m["command"] == "sudo mkfs.ext4 /dev/sdb1"
+    assert m["caption"] == "can't be undone · Esc stops it"
+    desk.end(1, stopped=True)
+    desk.turn(2, steps=[("a", None, "completed"), ("b", None, "completed")])
+    desk.send(kind="status", turn=2, text="Installing", source="step", risk="system", command="sudo pacman -S x")
+    assert desk.now["edge"] == "amber" and desk.now["command"] == "sudo pacman -S x"
+
+
+def test_a_long_plan_shows_the_steps_around_the_current_one_and_counts_all_of_them(desk):
+    steps = [(f"step {i}", None, "completed" if i < 15 else "in_progress" if i == 15 else "pending")
+             for i in range(24)]
+    desk.turn(1, steps=steps)
+    m = desk.now
+    assert len(m["steps"]) == 12 and m["why"].startswith("Step 16 of 24")
+    assert m["steps"][0]["label"] == "step 11" and m["steps"][4]["status"] == "in_progress"
+    assert desk.slots["now"]["h"] == 68 + 26 * 12
+    desk.plan(1, [(f"step {i}", None, "in_progress" if i == 0 else "pending") for i in range(24)])
+    assert [s["label"] for s in desk.now["steps"]][:2] == ["step 0", "step 1"]      # the start, not before it
+    desk.plan(1, [(f"step {i}", None, "completed") for i in range(24)])
+    assert [s["label"] for s in desk.now["steps"]][-1] == "step 23"                   # the end
+    desk.plan(1, [(f"step {i}", None, "completed" if i < 5 else "pending") for i in range(9)])
+    assert len(desk.now["steps"]) == 9                                                # short enough: all of it
+
+
+def test_the_ask_gives_way_to_asked_by_and_the_counts_to_esc_stops(desk):
+    ask = "Install qemu-full so the VM tests can run on the laptop"
+    desk.turn(1, ask, steps=TWO, asked_by="builder")
+    title = desk.now["title"]
+    assert title.endswith(" · asked by builder") and len(title) <= 40 and title.startswith("Install qemu")
+    desk.end(1, stopped=True)
+    desk.turn(2, "fix it", steps=FOUR)
+    desk.send(kind="status", turn=2, text="Installing", source="step", risk=None, command=None,
+              touched_text="3 packages and 12 files so far")
+    assert desk.now["why"] == "Step 2 of 4 · Esc stops · 3 packages and 12 files so far"
+    desk.send(kind="status", turn=2, text="Installing", source="step", risk=None, command=None,
+              touched_text="1 package so far")
+    assert desk.now["why"] == "Step 2 of 4 · 1 package so far · Esc stops"               # short: the brief's order
+
+
+def test_a_row_the_person_removed_comes_back_if_the_job_is_still_listed_when_the_wait_ends(desk):
+    desk.jobs(ISO, BUILD)
+    desk.clock(10)
+    desk.pump(0.4)
+    desk.set("goneMs", 200)
+    desk.click(desk.inside(desk.card_row("a1b2"), "rowsRemove"))
+    assert [r["key"] for r in desk.watch["rows"]] == ["c3d4"]
+    desk.jobs(ISO, BUILD)                                   # the stop did not work: still listed
+    desk.clock(11)
+    assert [r["key"] for r in desk.watch["rows"]] == ["c3d4"]
+    desk.pump(0.4)
+    assert [r["key"] for r in desk.watch["rows"]] == ["a1b2", "c3d4"]
+
+
+def test_a_row_that_really_stopped_stays_gone(desk):
+    desk.jobs(ISO, BUILD)
+    desk.clock(10)
+    desk.pump(0.4)
+    desk.set("goneMs", 200)
+    desk.click(desk.inside(desk.card_row("a1b2"), "rowsRemove"))
+    desk.jobs(BUILD)
+    desk.clock(11)
+    desk.pump(0.5)
+    assert [r["key"] for r in desk.watch["rows"]] == ["c3d4"]
 
 
 def test_the_desk_loads_without_qml_warnings(desk):

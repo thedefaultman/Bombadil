@@ -15,7 +15,9 @@ Item {
     readonly property var entries: side === "left" ? desk.leftStrips : desk.rightStrips
     readonly property bool shown: active && entries.length > 0 && !desk.capsule
 
-    // Empty when there is nothing to show, so the bar's input mask takes no room for it.
+    // Empty when there is nothing to show, so the bar's input mask takes no room for it; and not
+    // drawn at all on a screen the desk does not live on (its row would spill out of the zero width).
+    visible: shown
     width: shown ? row.implicitWidth : 0
     height: shown ? T.stripHeight : 0
     x: side === "left" ? pillEdge - T.stripGap - width : pillEdge + T.stripGap
@@ -27,6 +29,9 @@ Item {
         property: strips.side === "left" ? "leftStripsWidth" : "rightStripsWidth"
         value: row.implicitWidth
         when: strips.active
+        // Another screen's instance takes over when the desk moves; this one must not put the old
+        // value back over what that one has just said.
+        restoreMode: Binding.RestoreNone
     }
 
     Row {
@@ -34,18 +39,22 @@ Item {
         spacing: T.stripGap
         layoutDirection: strips.side === "left" ? Qt.RightToLeft : Qt.LeftToRight
 
+        // One item per place, reading its strip by place: a strip whose text changes (an ISO's
+        // percent) updates in place, so the others neither blink nor lose the pointer.
         Repeater {
-            model: strips.entries
+            model: strips.entries.length
 
             DeskStrip {
-                required property var modelData
-                objectName: modelData.plus ? "deskStripMore" : "deskStrip-" + modelData.id
-                text: modelData.text
-                dot: modelData.dot
-                ring: modelData.ring
-                mark: modelData.mark
-                textColor: modelData.textColor
-                outlined: modelData.outlined
+                id: chip
+                required property int index
+                readonly property var entry: strips.entries[index] || ({})
+                objectName: entry.plus ? "deskStripMore" : "deskStrip-" + entry.id
+                text: entry.text || ""
+                dot: entry.dot || ""
+                ring: !!entry.ring
+                mark: !!entry.mark
+                textColor: entry.textColor !== undefined ? entry.textColor : T.muted
+                outlined: !!entry.outlined
                 opacity: 0
                 Behavior on opacity { NumberAnimation { duration: strips.desk.foldMs } }
                 Component.onCompleted: opacity = 1

@@ -92,6 +92,7 @@ QtObject {
     property int tickMs: 1000
     property int doneStaysMs: 12000     // a finished job's row leaves this long after it ended
     property var _gone: ({})            // rows the person removed that agentd's table has yet to drop
+    property int goneMs: 5000           // ...and how long they stay gone if the job is still listed
     readonly property bool ticking: jobs.some(j => !_gone[j.id] && j.state !== "failed")
     readonly property bool clockRunning: clock.running
     // The coding sessions and the keys that want you, in Tab's order, as agentd's `dev` message has them.
@@ -128,10 +129,17 @@ QtObject {
         return windows.length > 0 ? "shared" : "open"
     }
     readonly property bool capsule: mode === "immersive"
+    // Two rails and the smallest pill need this much width. A narrower screen (a 1280 panel at 125%,
+    // a 1920 one at 200%) keeps its cards as strips, so the line above the pill never covers one.
+    readonly property real narrowLimit: 2 * (T.cardWidth + T.railMargin + T.stripGap) + 360
+    readonly property bool narrow: screenWidth < narrowLimit
     // The pill is as wide as the stage leaves it: up to 900, less what the strips take on each side,
     // and less a rail's width while a card is showing in full (so the line above the pill never
     // covers a card on a small screen).
-    readonly property bool anyFull: widgetIds.some(id => faces[id] === "full")
+    // "Full" here is what the cards would be without a window's right of way: a window going away
+    // must not let the pill widen for the 400 ms the cards take to come back.
+    readonly property bool anyFull: widgetIds.some(id => present[id] && mode !== "immersive" && !folded
+                                                        && !narrow && _stack.fit[id] === true)
     readonly property real pillTarget: mode === "immersive" ? 100
         : mode === "shared" ? 360
         : Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
@@ -240,6 +248,13 @@ QtObject {
             }
         },
         Timer {
+            // A row the person removed comes back if the job is still listed when this runs out: the
+            // stop did not work, and the desk must not hide what is still counting.
+            id: goneTimer
+            interval: desk.goneMs
+            onTriggered: { desk._gone = ({}); desk._refreshWatch() }
+        },
+        Timer {
             // The first tick is at once, for the time the clock stood still.
             id: clock
             interval: desk.tickMs
@@ -289,7 +304,7 @@ QtObject {
         const f = {}
         for (const id of widgetIds) {
             if (!present[id] || mode === "immersive") f[id] = "hidden"
-            else if (folded || !_stack.fit[id] || coverFolded[id]) f[id] = "strip"
+            else if (folded || narrow || !_stack.fit[id] || coverFolded[id]) f[id] = "strip"
             else f[id] = "full"
         }
         return f
@@ -467,7 +482,8 @@ QtObject {
         const done = _phase === "done"
         const cur = route.findIndex(s => s.status === "in_progress")
         let edge = done ? "ok" : "machine", command = "", caption = ""
-        if (!done && cur >= 0 && _risk) {
+        // The card says so even with no step marked current: it hosts the command under the last one.
+        if (!done && _risk) {
             edge = _risk === "irreversible" ? "red" : "amber"
             command = _command
             if (_risk === "irreversible") caption = "can't be undone · Esc stops it"
@@ -479,16 +495,30 @@ QtObject {
         if (done) {
             why = "done in " + Math.round(_seconds) + " s" + (_changed ? " · Undo is above the pill" : "")
         } else {
-            const parts = []
-            if (n > 0) parts.push("Step " + at + " of " + n)
-            if (_touchedText) parts.push(_touchedText)
-            parts.push("Esc stops")
-            why = parts.join(" · ")
+            const head = n > 0 ? ["Step " + at + " of " + n] : []
+            const counts = _touchedText ? [_touchedText] : []
+            why = head.concat(counts, ["Esc stops"]).join(" · ")
+            // A line too long for the card loses its counts, not the words that stop the turn.
+            if (why.length > whyChars && counts.length > 0) why = head.concat(["Esc stops"], counts).join(" · ")
         }
-        const ask = _oneLine(prompt, 60) || "Working on it"
+        // A turn a coding session asked for keeps "asked by" whole; it is the ask that gives way.
+        const by = askedBy ? " · asked by " + askedBy : ""
+        const ask = _oneLine(prompt, askedBy ? Math.max(12, titleChars - by.length) : 60) || "Working on it"
         nowStripText = done ? "done" : n > 0 ? "step " + at + " of " + n : "working"
-        nowModel = { title: askedBy ? ask + " · asked by " + askedBy : ask, why: why, steps: route, edge: edge,
+        nowModel = { title: ask + by, why: why, steps: _window(route, cur), edge: edge,
                      command: command, caption: caption, done: done, running: !done }
+    }
+
+    // A plan too long for the rail shows the steps around the current one; "Step 7 of 20" still counts all.
+    readonly property int maxRows: 12
+    // About what a card's title and why line hold at their sizes.
+    readonly property int titleChars: 36
+    readonly property int whyChars: 44
+
+    function _window(route, cur) {
+        if (route.length <= maxRows) return route
+        const from = Math.max(0, Math.min((cur >= 0 ? cur : route.length - 1) - 4, route.length - maxRows))
+        return route.slice(from, from + maxRows)
     }
 
     // -- the desk state --
@@ -559,6 +589,7 @@ QtObject {
         const gone = Object.assign({}, _gone)
         gone[id] = true
         _gone = gone
+        goneTimer.restart()
         _refreshWatch()
     }
 

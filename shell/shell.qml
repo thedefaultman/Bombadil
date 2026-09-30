@@ -33,9 +33,13 @@ ShellRoot {
         pill: pillState
         onOutgoing: msg => root.write(msg)
     }
-    // The screen the desk lives on ("" = the first one).
-    readonly property string deskScreen: deskState.screen !== "" ? deskState.screen
-        : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+    // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
+    // that is not plugged in (a desk on no screen would hide Needs you too).
+    readonly property string deskScreen: {
+        if (deskState.screen !== "")
+            for (const s of Quickshell.screens) if (s.name === deskState.screen) return s.name
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0].name : ""
+    }
     // The desk screen's size, in the pixels windows and cards are laid out in.
     readonly property var deskScreenObject: {
         for (const s of Quickshell.screens) if (s.name === root.deskScreen) return s
@@ -124,6 +128,11 @@ ShellRoot {
             required property var modelData
             screen: modelData
             readonly property bool summoned: root.summonedOn !== "" && root.summonedOn === modelData.name
+            // The desk narrows the pill and turns it into a capsule under a full-screen window on the
+            // screen it lives on; the pill on another screen is as it always was.
+            readonly property bool onDesk: modelData.name === root.deskScreen
+            readonly property bool capsule: onDesk && deskState.capsule
+            readonly property real pillMax: onDesk ? deskState.pillWidth : 900
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
@@ -179,13 +188,13 @@ ShellRoot {
             // The cards that folded, beside the pill.
             DeskStrips {
                 id: stripsLeft
-                desk: deskState; side: "left"; active: modelData.name === root.deskScreen
+                desk: deskState; side: "left"; active: win.onDesk
                 pillEdge: column.x + pillBox.x
                 pillCentreY: column.y + pillBox.y + pillBox.height / 2
             }
             DeskStrips {
                 id: stripsRight
-                desk: deskState; side: "right"; active: modelData.name === root.deskScreen
+                desk: deskState; side: "right"; active: win.onDesk
                 pillEdge: column.x + pillBox.x + pillBox.width
                 pillCentreY: column.y + pillBox.y + pillBox.height / 2
             }
@@ -199,7 +208,7 @@ ShellRoot {
                     id: statusLine
                     pill: pillState
                     Layout.fillWidth: true
-                    Layout.maximumWidth: Math.max(360, deskState.pillWidth)
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
                 }
 
@@ -210,14 +219,14 @@ ShellRoot {
                     // so the input mask lets clicks beside them through.
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: Math.max(360, deskState.pillWidth)
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                 }
 
                 // Prompt bar
                 Rectangle {
                     id: pillBox
                     Layout.fillWidth: true
-                    Layout.maximumWidth: deskState.pillWidth
+                    Layout.maximumWidth: win.pillMax
                     Layout.alignment: Qt.AlignHCenter
                     implicitHeight: 52
                     radius: 26
@@ -234,7 +243,7 @@ ShellRoot {
                         // The dot. While a turn runs it is orange; hover turns it into Stop.
                         Rectangle {
                             id: dotBox
-                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered
+                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
                             implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
                             implicitHeight: 24
                             radius: 12
@@ -263,13 +272,14 @@ ShellRoot {
                         }
 
                         Item {
-                            visible: !deskState.capsule     // a full-screen window: the pill is the dot and the clock
+                            visible: !win.capsule     // a full-screen window: the pill is the dot and the clock
                             Layout.fillWidth: true
                             implicitHeight: input.implicitHeight
 
                             TextField {
                                 id: input
                                 anchors.fill: parent
+                                enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
                                 placeholderText: root.connected ? "Ask anything" : "Waiting for agentd…"
                                 color: "#e6e8eb"
                                 placeholderTextColor: "#8b939c"
@@ -312,7 +322,7 @@ ShellRoot {
                         // An exact launcher word: say it opens here, without the model.
                         Text {
                             readonly property string target: pillState.exact(input.text)
-                            visible: target !== "" && !deskState.capsule
+                            visible: target !== "" && !win.capsule
                             text: "↵ " + target
                             color: "#8b939c"
                             font.pixelSize: 12

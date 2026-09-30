@@ -14,12 +14,20 @@ Scope {
     property int pollMs: 300
     readonly property bool live: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
-    // Ask Hyprland where everything is. The answers arrive a moment later and settle() reads them.
+    // Ask Hyprland where everything is. The answers arrive a moment later and settle() reads them:
+    // soon, then again once a slow answer has surely come. A burst of events settles every 40 ms
+    // rather than waiting for the burst to end.
     function refresh() {
+        _waits = 0
+        _ask()
+    }
+
+    function _ask() {
         if (!live) return
         Hyprland.refreshMonitors()
         Hyprland.refreshToplevels()
-        settleTimer.restart()
+        if (!settleTimer.running) settleTimer.start()
+        lateTimer.restart()
     }
 
     function _monitor() {
@@ -28,12 +36,20 @@ Scope {
         return all.length > 0 ? all[0] : null
     }
 
+    property int _waits: 0   // how many times in a row the monitor's answer had not come yet
+
     // The windows a person can see on the desk's screen: on its workspace, or on the special one
     // (browser, terminal, details) that is shown over it.
     function settle() {
         const m = _monitor()
-        if (!m) return
-        const mi = m.lastIpcObject || {}
+        const mi = m ? (m.lastIpcObject || {}) : {}
+        // The monitor's own answer (its workspace) is what places every window. When the shell starts
+        // with windows open it is not there yet: look again shortly instead of calling the stage empty.
+        if (!mi.activeWorkspace) {
+            if (_waits++ < 20) retryTimer.restart()
+            return
+        }
+        _waits = 0
         const ws = mi.activeWorkspace ? mi.activeWorkspace.id : null
         const special = mi.specialWorkspace && mi.specialWorkspace.name ? mi.specialWorkspace.name : ""
         const out = []
@@ -45,7 +61,9 @@ Scope {
             const isSpecial = name.indexOf("special:") === 0
             if (isSpecial ? name !== special : (!o.workspace || o.workspace.id !== ws)) continue
             out.push({ x: o.at[0] - (mi.x || 0), y: o.at[1] - (mi.y || 0), w: o.size[0], h: o.size[1],
-                       kind: isSpecial ? "panel" : "window", fullscreen: o.fullscreen === 2 })
+                       kind: isSpecial ? "panel" : "window",
+                       // 2 is fullscreen, 3 fullscreen and maximized
+                       fullscreen: o.fullscreen === 2 || o.fullscreen === 3 })
         }
         desk.setWindows(out)
     }
@@ -54,6 +72,16 @@ Scope {
         id: settleTimer
         interval: 40
         onTriggered: cover.settle()
+    }
+    Timer {
+        id: lateTimer
+        interval: 250
+        onTriggered: cover.settle()
+    }
+    Timer {
+        id: retryTimer
+        interval: 100
+        onTriggered: cover._ask()
     }
 
     // While anything is on the stage, a drag is only seen by asking.
@@ -72,7 +100,7 @@ Scope {
             case "openwindow": case "closewindow": case "movewindow": case "movewindowv2":
             case "workspace": case "workspacev2": case "activespecial": case "activespecialv2":
             case "fullscreen": case "monitoradded": case "monitorremoved": case "focusedmon":
-            case "changefloatingmode": case "windowtitle": case "resizewindow":
+            case "changefloatingmode":
                 cover.refresh()
                 break
             }
