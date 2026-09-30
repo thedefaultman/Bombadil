@@ -3,6 +3,9 @@ base
 linux
 linux-firmware
 btrfs-progs
+cryptsetup
+amd-ucode
+intel-ucode
 gptfdisk
 dosfstools
 snapper

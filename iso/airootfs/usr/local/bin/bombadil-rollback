@@ -1,16 +1,51 @@
 #!/usr/bin/env bash
 # Undo: make snapper snapshot N the root filesystem from the next boot on.
 # The current root is kept as @.undone-<time> in the btrfs top level, so an undo can itself
-# be undone by hand. Usage: sudo bombadil-rollback N
+# be undone by hand.
+#
+#   bombadil-rollback N                       on the running system
+#   bombadil-rollback --device DEV N          from another system (the USB stick): DEV is the btrfs
+#                                             device, already unlocked if the disk is encrypted
+#   bombadil-rollback --device DEV refresh    put back the system that a refresh moved aside
 set -euo pipefail
-n="${1:?usage: bombadil-rollback SNAPSHOT_NUMBER}"
-dev="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+dev=""
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --device) dev="${2:?--device needs a device}"; shift 2 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+n="${1:?usage: bombadil-rollback [--device DEV] SNAPSHOT_NUMBER|refresh}"
+[[ -n "$dev" ]] || dev="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+[[ -e "$dev" ]] || { echo "$dev is not a device" >&2; exit 1; }
 top="$(mktemp -d)"
 mount -o subvolid=5 "$dev" "$top"
 trap 'umount "$top"; rmdir "$top"' EXIT
+stamp="$(date +%Y%m%d-%H%M%S)"
+
+if [[ "$n" == refresh ]]; then
+  old="$(find "$top" -maxdepth 1 -name '@.before-refresh-*' | sort | tail -n 1)"
+  [[ -n "$old" ]] || { echo "no system from before a refresh on $dev" >&2; exit 1; }
+  name="${old##*/}"
+  [[ -f "$old/boot/vmlinuz-linux" ]] || { echo "the system from before the refresh has no kernel to start" >&2; exit 1; }
+  mv "$top/@" "$top/@.after-refresh-$stamp"
+  mv "$old" "$top/@"
+  if [[ -d "$top/@snapshots.$name" ]]; then
+    mv "$top/@snapshots" "$top/@snapshots.after-refresh-$stamp"
+    mv "$top/@snapshots.$name" "$top/@snapshots"
+  fi
+  echo "the system from before the refresh starts next time; the refreshed one is kept as @.after-refresh-$stamp"
+  exit 0
+fi
+
 src="$top/@snapshots/$n/snapshot"
 [[ -d "$src" ]] || { echo "no snapshot $n" >&2; exit 1; }
-aside="@.undone-$(date +%Y%m%d-%H%M%S)"
+# From layout 1 on the kernel lives in the root's own /boot, so a restore point from before that has
+# none to start. A system from before layout 1 keeps its kernel on the EFI partition, outside every restore point.
+if [[ -f "$top/@/boot/vmlinuz-linux" && ! -f "$src/boot/vmlinuz-linux" ]]; then
+  echo "restore point $n has no kernel of its own and cannot start" >&2; exit 1
+fi
+aside="@.undone-$stamp"
 mv "$top/@" "$top/$aside"
 btrfs subvolume snapshot "$src" "$top/@" >/dev/null
 echo "root is snapshot $n from the next boot; the previous root is kept as $aside"
