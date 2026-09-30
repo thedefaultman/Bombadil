@@ -74,6 +74,10 @@ class Provider:
     def command(self, turn: Turn, workdir: Path) -> list[str]:
         raise NotImplementedError
 
+    def env(self) -> dict[str, str]:
+        """What the CLI needs in its environment on top of the daemon's own."""
+        return {}
+
     def parse(self, line: str) -> Iterator[dict]:
         """Events for one line of the CLI's output."""
         raise NotImplementedError
@@ -125,10 +129,22 @@ class Claude(Provider):
             cmd += ["--resume", turn.session_id]
         return cmd
 
+    def env(self):
+        # The plan on the desk is Claude Code's own task list, which some models only get when asked.
+        return {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+
     def parse(self, line):
         m = _json(line)
         if m is None:
             return
+        parent = m.get("parent_tool_use_id")
+        for ev in self._events(m):
+            # A subagent's tools are its own work, not the turn's: the plan must not read them.
+            if isinstance(parent, str) and parent and ev["kind"] in ("tool_start", "tool", "tool_result"):
+                ev["parent"] = parent
+            yield ev
+
+    def _events(self, m):
         t = m.get("type")
         if t == "system" and m.get("subtype") == "init":
             yield {"kind": "session", "session_id": m.get("session_id")}
@@ -184,7 +200,25 @@ class Claude(Provider):
 MCP_ENV = ["HYPRLAND_INSTANCE_SIGNATURE", "XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DISPLAY",
            "DBUS_SESSION_BUS_ADDRESS", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
            "XDG_SESSION_TYPE", "BOMBADIL_TURN_SNAPSHOT", "BOMBADIL_SOCKET", "BOMBADIL_APPS",
-           "BOMBADIL_STATE", "BOMBADIL_SHARE"]
+           "BOMBADIL_STATE", "BOMBADIL_SHARE", "BOMBADIL_TURN"]
+
+
+def _codex_todos(items) -> list[dict]:
+    """Codex's todo_list ({text, completed} per item) as TodoWrite's todos: the first item not
+    done is the one under way, the rest are waiting."""
+    todos = []
+    current = False
+    for i in items if isinstance(items, list) else []:
+        if not isinstance(i, dict):
+            continue
+        if i.get("completed"):
+            status = "completed"
+        elif not current:
+            status, current = "in_progress", True
+        else:
+            status = "pending"
+        todos.append({"content": str(i.get("text") or ""), "status": status, "activeForm": None})
+    return todos
 
 
 class Codex(Provider):
@@ -198,6 +232,8 @@ class Codex(Provider):
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
                      "-c", f"developer_instructions={json.dumps(system_prompt())}",
+                     # Codex offers update_plan (the plan on the desk) only when its config says so.
+                     "-c", "tools.update_plan.enabled=true",
                      "--skip-git-repo-check"]
         if self.model:
             overrides += ["--model", self.model]
@@ -229,11 +265,11 @@ class Codex(Provider):
             # Codex streams no text, but its reasoning summary is a plain heading: "**Installing ffmpeg**".
             head = (item.get("text") or "").strip().splitlines()
             yield {"kind": "thinking", "text": head[0].strip("*# ").strip() if head else ""}
-        elif t in ("item.started", "item.updated") and item.get("type") == "todo_list":
-            todo = next((i for i in item.get("items") or [] if isinstance(i, dict) and not i.get("completed")), None)
-            if todo:
-                yield {"kind": "tool", "name": "TodoWrite",
-                       "input": {"todos": [{"content": todo.get("text", ""), "status": "in_progress"}]}}
+        elif t in ("item.started", "item.updated", "item.completed") and item.get("type") == "todo_list":
+            # The whole plan on every change, the way Claude's TodoWrite sends it.
+            todos = _codex_todos(item.get("items"))
+            if todos:
+                yield {"kind": "tool", "name": "TodoWrite", "input": {"todos": todos}, "id": item.get("id")}
         elif t == "item.completed" and item.get("type") == "command_execution":
             code = item.get("exit_code")
             yield {"kind": "tool_result", "id": item.get("id"), "output": item.get("aggregated_output") or "",
