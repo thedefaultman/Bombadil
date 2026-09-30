@@ -34,6 +34,7 @@ boot() {
     -drive if=pflash,format=raw,readonly=on,file="$ovmf" \
     -device virtio-vga -display none -vnc "${VNC:-127.0.0.1:99}" \
     -device virtio-keyboard -device virtio-mouse \
+    -audiodev none,id=snd0 -device intel-hda -device hda-duplex,audiodev=snd0 \
     -netdev user,id=n0 -device virtio-net,netdev=n0 \
     -chardev "socket,id=s0,path=$out/$name.serial.sock,server=on,wait=off,logfile=$log" -serial chardev:s0 -qmp "unix:$qmp,server,nowait" "$@" &
   local pid=$!
