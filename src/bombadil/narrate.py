@@ -10,18 +10,19 @@ folder) is marked "irreversible". Nothing here pauses or asks: the marks are onl
 The narrator also keeps the plan the agent writes for itself (Claude's task list, Codex's plan)
 as one table for the desk, and counts what the turn has changed so far.
 
-Pure functions over the events, no I/O except checking whether an app folder exists, so the
-rule table is cheap to test and to extend.
+Pure functions over the events, no I/O except checking whether an app folder exists and reading
+a job's title by its id, so the rule table is cheap to test and to extend.
 """
 
 import json
+import math
 import os
 import re
 import shlex
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from . import paths
+from . import desk, jobs, paths
 
 SYSTEM = "system"
 IRREVERSIBLE = "irreversible"
@@ -111,6 +112,19 @@ def _lines(*texts) -> int:
 
 def _app_title(title: str) -> str:
     return " ".join(str(title).split())[:40] or "an app"
+
+
+def _job_title(title) -> str:
+    return " ".join(str(title if title is not None else "").split())[:40]
+
+
+def _timer_title(n) -> str:
+    """"Timer, 10 min" for a length the job registry would take, else ""."""
+    try:
+        ok = not isinstance(n, bool) and 1 <= float(n) <= jobs.MAX_SECONDS
+    except (TypeError, ValueError):
+        ok = False
+    return jobs.timer_title(math.ceil(float(n))) if ok else ""
 
 
 def _app_exists(title: str) -> bool:
@@ -889,6 +903,29 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         return Step("Undoing the last change", "Undid the last change", SYSTEM)
     if tool == "notify":
         return Step("Sending a notification")
+    if tool == "desk":
+        # The line only: the desk is not part of a restore point, and a call can be refused or change
+        # nothing, so no closing sentence claims it and no Undo is offered for it.
+        op, widget = str(a.get("op") or ""), desk.title(a.get("widget"))
+        if op == "hide":
+            return Step(f"Putting {widget} away")
+        if op == "show":
+            return Step(f"Putting {widget} on the desk")
+        if op == "move":
+            to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
+            return Step(f"Moving {widget}{to}")
+        if op in ("fold", "unfold"):
+            return Step(f"{op.capitalize()}ing the desk")
+        return Step("Looking at the desk")
+    if tool == "job":
+        op = str(a.get("op") or "")
+        if op == "start":
+            # Not a change to the system, so no closing sentence and no Undo: the desk counts it.
+            title = _job_title(a.get("title")) or _timer_title(a.get("seconds"))
+            return Step(f"Watching {title}" if title else "Starting a background job")
+        if op == "stop":
+            return Step(f"Stopped {jobs.title_of(a.get('id')) or 'a background job'}")
+        return Step("Checking the background jobs")
     if tool == "show_card":
         title = " ".join(str(a.get("title") or "").split())
         return Step(f"Drawing {_quote(title, 40)}" if title else "Drawing a picture")
@@ -1424,7 +1461,7 @@ class Narrator:
         self._plan: list[_Task] = []
         self._listing: set[str] = set()       # TaskList calls whose result is the whole table
         self._sent: list[dict] = []           # the plan take_plan gave last
-        self._shown: dict | None = None       # the line last returned
+        self._shown: tuple[dict, dict[str, int]] | None = None   # the line last returned, and the counts then
         self._said_msg = ""      # the agent's last text block in the current model message
         self._block = ""         # the text block being streamed
         self.because = ""        # why the current step happens: the sentence written just before it
@@ -1500,10 +1537,11 @@ class Narrator:
         line = self._line(ev)
         if line is not None and ev.get("kind") in ("tool", "file_change"):
             self.last_notes = {k: line[k] for k in ("because", "after") if k in line}
-        # The complete message repeats what its stream already showed; say each line once.
-        if line is None or line == self._shown:
+        # The complete message repeats what its stream already showed; say each line once, unless
+        # what it has touched so far moved on with it.
+        if line is None or (line, self.touched_counts()) == self._shown:
             return None
-        self._shown = line
+        self._shown = (line, self.touched_counts())
         return line
 
     def touched_counts(self) -> dict[str, int]:
