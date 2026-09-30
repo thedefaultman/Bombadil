@@ -199,3 +199,15 @@ def test_the_gate_skips_with_a_config_and_runs_without_one(tmp_path):
     assert "SKIP signin" in chosen and "RUNS" not in chosen
     fresh = _run_gate(tmp_path / "fresh", with_config=False)
     assert "RUNS" in fresh and "SKIP" not in fresh
+
+
+def test_the_smoke_replaces_agentd_through_its_unit_and_checks_the_units_with_a_function():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    # systemd starts a killed agentd again in the normal environment, so the smoke's own agentd
+    # (another provider, a fake login) needs the unit stopped first, and the unit back after.
+    restart = smoke[smoke.index("restart_agentd() {"):smoke.index("page_or_offline()")]
+    assert restart.index("systemctl --user stop bombadil-agentd") < restart.index("setsid -f agentd")
+    assert "systemctl --user start bombadil-agentd" in smoke and "check agentd-restored agentd_unit_again" in smoke
+    # as_user is a shell function: a `bash -c` would not find it.
+    assert "check services-are-units units_active" in smoke
+    assert "bash -c 'for u in bombadil-agentd" not in smoke
