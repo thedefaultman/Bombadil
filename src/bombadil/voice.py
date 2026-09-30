@@ -395,6 +395,8 @@ class Voice:
             facts = [] if installed else self._boot_facts(rows, dt)
             g = greet.build(moment, persona.load(), dt, facts=facts, ledger=ledger, tz_set=tz,
                             day=greet.days_since(ledger, dt))
+            if not greet.lines():
+                return   # the words are missing: a boot with nothing to say is not one that was spoken
             if g is None or not g.text:
                 self._commit(greet.Greeting("", moment=moment))   # nothing to say is still a boot
                 return
@@ -504,7 +506,7 @@ class Voice:
         path = (paths.dev_dir() if hasattr(paths, "dev_dir") else paths.state_dir() / "dev") / "sessions.json"
         try:
             sessions = json.loads(path.read_text(encoding="utf-8")).get("sessions")
-        except (OSError, ValueError, AttributeError):
+        except (OSError, ValueError, AttributeError, OverflowError, RecursionError):
             return []
         out = []
         for s in sessions if isinstance(sessions, list) else []:
@@ -517,7 +519,7 @@ class Voice:
                 out.append(greet.say(STOPS, title=title, done=int(done), total=int(total)))
             elif title:
                 out.append(greet.say(STOPS_BARE, title=title))
-        return out[:4]
+        return out   # greet.goodbye names a few and counts the rest
 
     async def flush(self, timeout: float = DRAIN) -> None:
         """Wait, for at most `timeout`, until what the clients were sent has gone out, so the line that

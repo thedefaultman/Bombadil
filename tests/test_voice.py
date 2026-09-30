@@ -1218,6 +1218,44 @@ async def test_a_hostile_session_title_cannot_make_a_long_goodbye(clock):
 
 
 @pytest.mark.asyncio
+async def test_every_working_session_reaches_the_goodbye_to_be_counted(clock):
+    known("Dan")
+    at_night(clock)
+    sessions(*({"title": f"job {n}", "state": "working", "alive": True, "progress": {"done": n, "total": 9}}
+               for n in range(1, 8)))
+    d = make(clock)
+    assert len(d.voice._stopping()) == 7
+    text = await d.voice.goodbye()
+    assert len(text) <= 100 and "more" in text and text.startswith("Good night")
+
+
+@pytest.mark.asyncio
+async def test_a_session_registry_nested_too_deep_leaves_a_plain_goodbye(clock):
+    known("Dan")
+    at_night(clock)
+    registry = paths.state_dir() / "dev" / "sessions.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text("[" * 200000 + "]" * 200000)
+    d = make(clock)
+    assert d.voice._stopping() == []
+    assert await d.voice.goodbye() == "Good night, Dan."   # the words, not the launcher's fallback
+
+
+@pytest.mark.asyncio
+async def test_a_missing_words_table_is_not_a_boot_that_was_spoken(clock, monkeypatch):
+    known()
+    d = make(clock)
+    monkeypatch.setenv("BOMBADIL_VOICE_LINES", str(paths.state_dir() / "no-such-lines.toml"))
+    async with running(d) as connect:
+        await (await hello(connect)).none("welcome")
+        assert not paths.greeted_marker().exists() and boot_rows() == []
+        assert greet.load_ledger().last_boot_day == ""
+        monkeypatch.delenv("BOMBADIL_VOICE_LINES")   # the table is back: the day's greeting was not used up
+        bar = await hello(connect)
+        assert (await bar.get("welcome"))["text"] == "Good morning, Daniel. Where to today?"
+
+
+@pytest.mark.asyncio
 async def test_the_drain_before_power_off_is_bounded_and_does_not_wait_for_nothing(clock):
     d = make(clock)
     loop = asyncio.get_running_loop()
