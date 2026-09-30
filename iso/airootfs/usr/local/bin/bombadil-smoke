@@ -130,6 +130,7 @@ fi
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
+    check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
