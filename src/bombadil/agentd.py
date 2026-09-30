@@ -7,6 +7,8 @@ app) can connect; every event is broadcast to all of them.
 Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher word ("browser", "undo");
                                                         "asked_by": "builder" says a coding session asks
                                                         (another helper's name works the same)
+                                                        "origin" (typed, cli, app, ...) says who asked,
+                                                        typed when absent, app for "[from app x] ..."
                    {"type": "stop"}                     end the running turn and all it started
                    {"type": "cancel"}                   the same as stop
                    {"type": "unqueue", "turn": n}       drop a prompt still waiting its turn
@@ -28,12 +30,19 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                     "command": ..., "kind": "job"|"watch", "seconds": n, "job": id}
                                                         the os-mcp `job` tool; answered with job-result
                    {"type": "status"}
+                   {"type": "ping"}                     answered with a pong, to this client only
+                   What the bar says about itself, kept for the self-improvement loop (loop/signals.py):
+                   {"type": "hello", "client": "bar", "pid": n, "build": "..."}   on connect
+                   {"type": "alive"}                    every 5 s
+                   {"type": "rects", "screen": "...", "w": n, "h": n, "rects": [{"name", "x", "y", "w", "h"}]}
+                   {"type": "focus_ack", "id": n, "ms": n}   the input has the keyboard after summon n
+                   {"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": true}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
                     "local"|"plan", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
-                   {"type": "summon"}
+                   {"type": "summon", "id": n}           n counts up, so the bar can acknowledge it
                    {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
@@ -43,6 +52,7 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         the jobs table: to whoever asks, and on change
                    {"type": "job-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a job-tool, to its sender only
+                   {"type": "pong", "t": seconds, "pid": n}
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
@@ -80,15 +90,20 @@ import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config, launcher, narrate, paths, procs, providers, snapshots, watch
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
+from .loop.signals import Signals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
 _WHO = re.compile(r"[a-z][a-z0-9_-]{0,23}")   # a helper's name in "asked_by"
+LEDGER_V = 2
+ORIGINS = {"typed", "button", "app", "session", "routine", "loop", "retry", "cli"}
+MAX_DRIFT_TYPES = 20   # kinds of unknown line counted on one row; a stream gone wild says "other"
 MAX_OUTPUT = 16_000   # characters of one command's output kept in events and the turn's log
 # A client that stops reading (a hung bar) is dropped rather than allowed to hold up the
 # others: its messages wait in a queue of this many, each write gets this long.
@@ -102,6 +117,19 @@ DESK_DEBOUNCE = 0.03
 # The same for the jobs table, which is also looked at this often (seconds) while it has anything in it.
 JOBS_DEBOUNCE = 0.03
 JOBS_POLL = 2.0
+
+
+@dataclass
+class _Facts:
+    """What one turn tells the ledger besides its words: read by `_log`, filled as events come."""
+    id: str                  # the per-turn log's stem, "<ms>-<n>"
+    n: int
+    started: float
+    origin: str
+    steps: int = 0
+    names: list[str] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)       # model, cost, usage, rate_limit: the provider's meta events
+    drift: dict[str, int] = field(default_factory=dict)
 
 
 class AgentD:
@@ -147,6 +175,12 @@ class AgentD:
         self._jobs_again = False                    # a job started while that task was deciding to stop
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
+        self._origins: dict[int, str] = {}          # who asked, for each queued turn
+        self._facts: _Facts | None = None           # the running turn's ledger facts
+        self._snap_turns: dict[int, str] = {}       # restore point -> id of the turn it was taken for
+        self.signals = Signals()                    # what the bar says about itself
+        self._bar: asyncio.StreamWriter | None = None
+        self.loop = None                            # the self-improvement loop's service, once it exists
 
     # -- socket --
 
@@ -158,6 +192,7 @@ class AgentD:
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
+        self._background(asyncio.to_thread(self.signals.agentd_started, self.socket_path))   # may run git
         worker = asyncio.create_task(self._worker())
         watcher = asyncio.create_task(self._watch_apps())
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
@@ -176,6 +211,7 @@ class AgentD:
         try:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
+            self._loop_hook("client", writer)
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -192,6 +228,9 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            if self._bar is writer:
+                self._bar = None
+                self.signals.bar_gone()
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
                 try:
@@ -218,6 +257,7 @@ class AgentD:
             who = msg.get("asked_by")
             if isinstance(who, str) and _WHO.fullmatch(who):
                 self.asked_by[self.next_id] = who
+            self._origins[self.next_id] = _origin(msg, text)
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
             if self.current is not None or self.pending:
@@ -226,23 +266,27 @@ class AgentD:
             self._wake.set()
             await self.broadcast(self._status())
         elif t in ("stop", "cancel"):
-            await self.stop()
+            of = self._turn_id()
+            if await self.stop():
+                self._log_stop(str(t), "button", of, "Stopping.")
         elif t == "unqueue":
             before = len(self.pending)
             self.pending = [(i, p) for i, p in self.pending if i != msg.get("turn")]
             if len(self.pending) != before:
+                self._origins.pop(msg.get("turn"), None)
                 await self.broadcast({"type": "event", "kind": "unqueued", "turn": msg.get("turn")})
                 await self.broadcast(self._status())
         elif t == "local":
             action = _action(msg)
             if action is not None:
-                self._background(self.local(action, str(msg.get("action"))))
+                self._background(self.local(action, str(msg.get("action")), via="button"))
         elif t == "details":
             self._background(self.details(msg.get("turn")))
         elif t == "close_details":
             self._background(asyncio.to_thread(self.launcher.close_details))
         elif t == "summon":
-            await self.broadcast({"type": "summon"})
+            # The id is what the bar acknowledges once its input has the keyboard.
+            await self.broadcast({"type": "summon", "id": self.signals.summon(str(msg.get("screen") or ""))})
         elif t == "desk":
             await self._desk_op(msg, writer)
         elif t == "desk-tool":
@@ -253,6 +297,22 @@ class AgentD:
             await self._send(writer, await self._job_tool(msg))
         elif t == "status":
             await self._send(writer, self._status())
+        elif t == "ping":
+            await self._send(writer, {"type": "pong", "t": time.time(), "pid": os.getpid()})
+        elif t == "hello":
+            if msg.get("client") == "bar":
+                self._bar = writer   # its hangup is the bar going, not any other client's
+                self.signals.hello(msg)
+        elif t == "alive":
+            self.signals.alive()
+        elif t == "rects":
+            self.signals.rects(msg)
+        elif t == "focus_ack":
+            self.signals.focus_ack(msg)
+        elif t == "friction":
+            self.signals.friction(msg)
+        else:
+            self._loop_hook("message", msg, writer)   # the loop's own messages (noticed_do, ...)
 
     def _status(self) -> dict:
         # Busy from the moment a prompt is accepted, so Esc stops it even before its turn starts.
@@ -289,6 +349,7 @@ class AgentD:
                         await self.broadcast(await self._entries_msg())
             except Exception as e:  # noqa: BLE001 - keep watching whatever one look found
                 print(f"agentd: watching apps: {type(e).__name__}: {e}", file=sys.stderr)
+            self.signals.tick()   # never raises, and writes a few bytes at most
 
     async def _sender(self, writer: asyncio.StreamWriter, queue: asyncio.Queue):
         """Write one client's messages in order. Nothing else waits on this client."""
@@ -525,11 +586,13 @@ class AgentD:
 
     # -- things that never wait for the model --
 
-    async def local(self, action: launcher.Action, typed: str):
+    async def local(self, action: launcher.Action, typed: str, via: str = "typed"):
         if action.kind == "stop":
+            of = self._turn_id()
             stopping = await self.stop()
-            await self.event("local", turn=None, action="stop", phase="done", ok=True,
-                             text="Stopping." if stopping else "Nothing is running.")
+            text = "Stopping." if stopping else "Nothing is running."
+            await self.event("local", turn=None, action="stop", phase="done", ok=True, text=text)
+            self._log_stop(typed, via, of if stopping else None, text)
             return
         if action.kind in ("undo", "restart", "shutdown"):
             # Undo takes back the turn that is running too, so end it first, and start no
@@ -541,15 +604,16 @@ class AgentD:
                         await self.stop()
                         while self.current is not None:
                             await asyncio.sleep(0.05)
-                    await self._local(action, typed)
+                    await self._local(action, typed, via)
             finally:
                 self._hold -= 1
                 self._wake.set()
             return
-        await self._local(action, typed)
+        await self._local(action, typed, via)
 
-    async def _local(self, action: launcher.Action, typed: str):
+    async def _local(self, action: launcher.Action, typed: str, via: str = "typed"):
         doing = self.launcher.doing(action)
+        verb = action.verb if action.kind in ("app", "panel") else action.kind   # run() may change a panel's
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="start", text=doing)
         ok, text = await asyncio.to_thread(self.launcher.run, action)
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
@@ -557,8 +621,25 @@ class AgentD:
         if ok:
             self.notes.append(f"{typed!r}: {text}")
             self.notes = self.notes[-10:]
+        undid = await self._undid(action, ok)
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
-                        "target": action.target, "result": text, "ok": ok})
+                        "target": action.target, "result": text, "ok": ok,
+                        **_local_keys(action, verb, via, **undid)})
+
+    async def _undid(self, action: launcher.Action, ok: bool) -> dict:
+        """For an undo row: the restore point it went back to, and the turn that point was for."""
+        if action.kind != "undo" or not ok:
+            return {}
+        try:
+            snap = await asyncio.to_thread(self.launcher.last_undo)
+        except Exception as e:  # noqa: BLE001 - the row is worth writing without its link
+            print(f"agentd: last undo: {type(e).__name__}: {e}", file=sys.stderr)
+            return {}
+        return {"of_snapshot": snap, "of": self._snap_turns.get(snap)}
+
+    def _log_stop(self, typed: str, via: str, of: str | None, text: str):
+        self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "stop", "target": "",
+                        "result": text, "ok": True, **_local_keys(launcher.Action("stop"), "stop", via, of)})
 
     async def details(self, turn):
         path = self.turn_logs.get(turn) if turn is not None else watch.last_turn_file()
@@ -652,6 +733,8 @@ class AgentD:
             self.turn_logs.pop(old, None)
         # Turns run in the order they were asked, so a mark left by one that was unqueued is dead.
         self.asked_by = {i: who for i, who in self.asked_by.items() if i > self.current}
+        origin = self._origins.pop(self.current, "typed")
+        self._facts = _Facts(log.stem, self.current, started, "session" if asked_by else origin)
         # Something true on screen before snapper, which can take a second.
         await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)
         await self.broadcast(self._status())
@@ -671,6 +754,7 @@ class AgentD:
             except subprocess.CalledProcessError as e:
                 await self.event("error", text=f"no undo point for this turn: snapper failed ({(e.stderr or '').strip()[-200:]})")
             if snap:
+                self._remember_snapshot(snap.number)
                 await self.event("snapshot", number=snap.number)
         if self.stopping:
             # Stopped while the restore point was saved: the CLI never starts.
@@ -789,6 +873,11 @@ class AgentD:
         kind = ev["kind"]
         if kind == "session":
             return ev.get("session_id") or pending_session, reported_error
+        if kind == "meta":
+            self._note_meta(ev)   # for the ledger row only: nobody is shown it, no log keeps it
+            return pending_session, reported_error
+        if kind == "tool":
+            self._note_tool(ev)
         try:
             line = self.narrator.on_event(ev) if self.narrator else None
         except Exception as e:  # noqa: BLE001 - odd input costs a line, never the turn
@@ -832,12 +921,73 @@ class AgentD:
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
-                        "details": str(self.turn_logs.get(self.current, ""))})
+                        "details": str(self.turn_logs.get(self.current, "")), **self._turn_keys()})
 
     def _log_line(self, entry: dict):
         paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
         with paths.turns_log().open("a") as f:
             f.write(json.dumps(entry) + "\n")
+        self._loop_hook("row", entry)
+
+    # -- what the ledger keeps beyond a turn's words (ledger v2, docs/LOOP.md) --
+
+    def _turn_id(self) -> str | None:
+        """The id of the turn that runs now, None between turns."""
+        return self._facts.id if self.current is not None and self._facts is not None else None
+
+    def _remember_snapshot(self, number: int):
+        """Which turn a restore point was taken for, so the undo that goes back to it can say so."""
+        if self._facts is not None:
+            self._snap_turns[number] = self._facts.id
+            for old in sorted(self._snap_turns)[:-200]:
+                self._snap_turns.pop(old, None)
+
+    def _note_tool(self, ev: dict):
+        f = self._facts
+        if f is None:
+            return
+        f.steps += 1
+        name = str(ev.get("name") or "")
+        if name and name not in f.names and len(f.names) < 50:
+            f.names.append(name)
+
+    def _note_meta(self, ev: dict):
+        f = self._facts
+        if f is None:
+            return
+        if ev.get("drift"):
+            label = str(ev["drift"])
+            if label not in f.drift and len(f.drift) >= MAX_DRIFT_TYPES:
+                label = "other"
+            f.drift[label] = f.drift.get(label, 0) + 1
+        for key in ("model", "cost", "usage", "rate_limit"):
+            if ev.get(key) is not None:
+                f.meta[key] = ev[key]
+
+    def _turn_keys(self) -> dict:
+        """The ledger v2 keys of a model turn's row."""
+        f = self._facts
+        if f is None:
+            return {"v": LEDGER_V}
+        keys = {"id": f.id, "started": round(f.started, 3), "seconds": round(time.time() - f.started, 1),
+                "origin": f.origin, "tools": {"n": f.steps, "names": list(f.names)},
+                **{k: f.meta.get(k) for k in ("model", "cost", "usage", "rate_limit")}}
+        if f.drift:
+            keys["drift"] = dict(f.drift)
+        return {**keys, "v": LEDGER_V, "n": f.n}
+
+    def _loop_hook(self, name: str, *args):
+        """Tell the loop's service (when there is one) that `name` happened: it gets `on_<name>(*args)`,
+        and an async one is run beside everything else. Nothing it does reaches a turn or a client."""
+        handler = getattr(self.loop, f"on_{name}", None)
+        if handler is None:
+            return
+        try:
+            result = handler(*args)
+            if asyncio.iscoroutine(result):
+                self._background(result)
+        except Exception as e:  # noqa: BLE001 - the loop is a guest here
+            print(f"agentd: loop {name}: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def _action(msg: dict) -> launcher.Action | None:
@@ -846,6 +996,23 @@ def _action(msg: dict) -> launcher.Action | None:
     if kind in launcher.CORE_COMMANDS or kind in launcher.UTILITY_COMMANDS:
         return launcher.Action(kind)
     return None
+
+
+def _origin(msg: dict, text: str) -> str:
+    """Who asked: what the message says, else app for an app's "[from app x]" prefix, else the pill."""
+    given = msg.get("origin")
+    if isinstance(given, str) and given in ORIGINS:
+        return given
+    return "app" if text.startswith("[from app ") else "typed"
+
+
+def _local_keys(action: launcher.Action, verb: str, via: str, of: str | None = None,
+                of_snapshot: int | None = None) -> dict:
+    """The ledger v2 keys of a launcher action's row. `via` is how it was asked for: typed, or a
+    button; a word the loop made (the action carries its phrase) overrides both."""
+    word = str(getattr(action, "word", "") or "")
+    return {"v": LEDGER_V, "verb": verb, "via": "word" if word else via, "word": word or None,
+            "of": of, "of_snapshot": of_snapshot}
 
 
 def _append(path: Path, entry: dict):

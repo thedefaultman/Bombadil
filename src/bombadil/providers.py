@@ -4,6 +4,12 @@ Each adapter builds the command for one turn and turns the CLI's streaming outpu
 Bombadil events: {"kind": "text"|"tool"|"result"|"error", ...}. Both run in their
 full-access mode; Bombadil has no guard rails, the undo is the snapshot.
 
+What the CLIs say about the turn itself (the model, the cost, the tokens, a rate-limit notice,
+a line of a type the adapter has never seen) comes out as one more event kind, "meta":
+{"kind": "meta", "model"?, "cost"?, "usage"?, "rate_limit"?, "drift"?}. agentd keeps it for the
+turn's ledger row and shows it to nobody. `usage` is {"input", "output", "cache_read",
+"cache_write"} for both CLIs, and "input" never counts what was read from the cache.
+
 The CLI flags live only here, so a CLI change is a one-file fix.
 """
 
@@ -85,6 +91,28 @@ def _json(line: str) -> dict | None:
     return m if isinstance(m, dict) else None
 
 
+def _drift(m: dict, known) -> Iterator[dict]:
+    """A line that is valid JSON with a `type` the adapter has never heard of. It is counted, not
+    acted on: a CLI that changes its stream shows up here before it breaks anything."""
+    if "type" in m:
+        t = m["type"]
+        if not isinstance(t, str) or t not in known:
+            yield {"kind": "meta", "drift": str(t)[:60] or "(empty)"}
+
+
+def _count(v) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+
+def _usage(input_tokens, output, cache_read, cache_write) -> dict | None:
+    """The four numbers every row carries. None when the CLI gave none of them; a number it
+    left out is 0."""
+    counts = [_count(v) for v in (input_tokens, output, cache_read, cache_write)]
+    if all(c is None for c in counts):
+        return None
+    return dict(zip(("input", "output", "cache_read", "cache_write"), (c or 0 for c in counts)))
+
+
 def _result_text(content) -> str:
     """A tool result's text: a string, or a list of text (and image) blocks."""
     if isinstance(content, str):
@@ -115,10 +143,14 @@ class Claude(Provider):
         # The plan on the desk is Claude Code's own task list, which some models only get when asked.
         return {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
 
+    # Every `type` this parser reads or knowingly lets pass; any other is drift.
+    known_types = frozenset({"system", "stream_event", "assistant", "user", "result", "rate_limit_event"})
+
     def parse(self, line):
         m = _json(line)
         if m is None:
             return
+        yield from _drift(m, self.known_types)
         parent = m.get("parent_tool_use_id")
         for ev in self._events(m):
             # A subagent's tools are its own work, not the turn's: the plan must not read them.
@@ -130,6 +162,8 @@ class Claude(Provider):
         t = m.get("type")
         if t == "system" and m.get("subtype") == "init":
             yield {"kind": "session", "session_id": m.get("session_id")}
+            if isinstance(m.get("model"), str) and m["model"]:
+                yield {"kind": "meta", "model": m["model"]}
             servers = {s.get("name"): s.get("status") for s in m.get("mcp_servers", []) if isinstance(s, dict)}
             if servers.get("bombadil-os") not in ("connected", "pending"):
                 yield {"kind": "error", "text": f"the OS tools did not start (bombadil-os: {servers.get('bombadil-os', 'missing')})"}
@@ -164,12 +198,27 @@ class Claude(Provider):
                 if isinstance(block, dict) and block.get("type") == "tool_result":
                     yield {"kind": "tool_result", "id": block.get("tool_use_id"),
                            "output": _result_text(block.get("content")), "error": bool(block.get("is_error"))}
+        elif t == "rate_limit_event":
+            if isinstance(m.get("rate_limit_info"), dict):
+                yield {"kind": "meta", "rate_limit": m["rate_limit_info"]}
         elif t == "result":
             ok = not m.get("is_error", False)
             text = m.get("result") or ""
             if not ok and not text:
                 errs = m.get("errors") or []
                 text = "\n".join(e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errs)
+            meta = {}
+            cost = m.get("total_cost_usd")
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                meta["cost"] = cost
+            u = m.get("usage")
+            if isinstance(u, dict):
+                usage = _usage(u.get("input_tokens"), u.get("output_tokens"),
+                               u.get("cache_read_input_tokens"), u.get("cache_creation_input_tokens"))
+                if usage:
+                    meta["usage"] = usage
+            if meta:
+                yield {"kind": "meta", **meta}
             yield {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
                    "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
                    "num_turns": m.get("num_turns")}
@@ -227,10 +276,14 @@ class Codex(Provider):
         return [*base, "--json", "--dangerously-bypass-approvals-and-sandbox", *overrides,
                 "-C", str(turn.cwd), "-"]
 
+    known_types = frozenset({"thread.started", "turn.started", "turn.completed", "turn.failed",
+                             "item.started", "item.updated", "item.completed", "error"})
+
     def parse(self, line):
         m = _json(line)
         if m is None:
             return
+        yield from _drift(m, self.known_types)
         t = m.get("type", "")
         item = m.get("item", {})
         if t == "thread.started":
@@ -270,6 +323,19 @@ class Codex(Provider):
         elif t == "item.completed" and item.get("type") == "web_search":
             yield {"kind": "tool", "name": "WebSearch", "input": {"query": item.get("query", "")}, "id": item.get("id")}
         elif t == "turn.completed":
+            meta = {}
+            if self.model:
+                meta["model"] = self.model   # Codex does not say which model answered, only what was asked for
+            u = m.get("usage")
+            if isinstance(u, dict):
+                # Codex's input_tokens counts the cached part too; a row's "input" does not.
+                fresh, cached = _count(u.get("input_tokens")), _count(u.get("cached_input_tokens"))
+                usage = _usage(None if fresh is None else max(fresh - (cached or 0), 0),
+                               u.get("output_tokens"), cached, None)
+                if usage:
+                    meta["usage"] = usage
+            if meta:
+                yield {"kind": "meta", **meta}
             yield {"kind": "result", "ok": True, "text": getattr(self, "_last_text", "")}
         elif t == "turn.failed":
             err = m.get("error") or {}
