@@ -9,7 +9,7 @@
 # the new one in and checks it matches. --reboot then restarts the guest so the shell and agentd
 # start from it.
 # It also copies the system files the ISO profile owns outright (SYSTEM below: the Chromium policy,
-# /etc/environment, the mime defaults, the setup/smoke/install scripts) and makes a /usr/local/bin
+# /etc/environment, the mime defaults, the icons, the setup/smoke/install scripts) and makes a /usr/local/bin
 # link for every program in bin/. --no-system leaves those alone.
 # What this does NOT move: packages, GRUB defaults, the pacman mirrorlist, and the user's own files
 # (~/.config/hypr/hyprland.lua, ~/.config/chromium-flags.conf): apply those by hand, see
@@ -21,6 +21,7 @@ tree="${BOMBADIL_TREE:-/root/Bombadil}"
 reboot=0; from=""; system=1
 # Files under iso/airootfs that belong to Bombadil and go to / as they are.
 SYSTEM=(etc/chromium etc/environment etc/xdg/mimeapps.list usr/share/applications/bombadil-browser.desktop
+        usr/share/icons/hicolor usr/share/pixmaps
         usr/local/bin/bombadil-setup usr/local/bin/bombadil-install usr/local/bin/bombadil-rollback
         usr/local/bin/bombadil-smoke)
 while [[ "${1:-}" == --* ]]; do
