@@ -17,6 +17,7 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
@@ -86,9 +87,17 @@ ShellRoot {
             color: "transparent"
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
-            // Keys on demand (click the pill), and at once after Super: Exclusive focuses the layer
-            // immediately; going back to OnDemand on Enter or Esc hands the keyboard back.
-            WlrLayershell.keyboardFocus: summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+            // On Hyprland the pill takes keys only while summoned (a tap on Super, or a click on the
+            // pill). The focus grab below gives it the keyboard at once, and a click anywhere else
+            // takes it away. Going from OnDemand back to None makes Hyprland hand the keyboard to the
+            // window you were in when we let go (Enter, Esc, idle). Never Exclusive there: that
+            // commit reaches Hyprland after the grab (Quickshell applies it at the next polish) and
+            // Hyprland ends any grab when a layer turns exclusive, so the keys went to the window
+            // under the pointer. Other compositors have no focus grab, so Exclusive it is (this is
+            // also what the headless sway test runs).
+            WlrLayershell.keyboardFocus: root.hyprland
+                ? (summoned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
+                : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
             exclusiveZone: 64
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
@@ -101,6 +110,10 @@ ShellRoot {
                 if (summoned) input.forceActiveFocus()
                 grab.active = summoned
             }
+
+            // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
+            // layer takes clicks on demand by itself.)
+            function summonHere() { if (root.hyprland) root.summonedOn = modelData.name }
 
             // While summoned the pill holds the keyboard; a click anywhere else hands it back,
             // so typing meant for another window (a password prompt) never lands in the pill.
@@ -154,6 +167,7 @@ ShellRoot {
                     border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
                     border.width: 1.5
                     Behavior on border.color { ColorAnimation { duration: 300 } }
+                    TapHandler { onTapped: win.summonHere() }
 
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
@@ -203,6 +217,8 @@ ShellRoot {
                                 font.pixelSize: 16
                                 background: null
                                 focus: true
+                                // The field takes the press itself, so the pill's own handler never sees it.
+                                TapHandler { onTapped: win.summonHere() }
                                 onAccepted: {
                                     if (pillState.submit(text)) {
                                         text = ""

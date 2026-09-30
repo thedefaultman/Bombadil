@@ -38,6 +38,8 @@ mcp_call() {
 hypr_json() { local o; for _ in 1 2 3 4 5; do o=$(as_user hyprctl -j "$1") && python3 -c 'import json,sys; json.loads(sys.argv[1])' "$o" 2>/dev/null && { printf '%s' "$o"; return 0; }; sleep 2; done; echo "hyprctl $1: $o"; return 1; }
 has_client() { hypr_json clients | python3 -c "import json,sys; sys.exit(not any($1 for c in json.load(sys.stdin)))"; }
 no_config_errors() { hypr_json configerrors | python3 -c 'import json,sys; e=[x for x in json.load(sys.stdin) if x]; print(e); sys.exit(bool(e))'; }
+# A virtual display runs at 1920x1080, not at the 640x480 QEMU's EDID can report as preferred.
+virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x for x in json.load(sys.stdin) if x["name"].startswith("Virtual-")]; print([(x["name"], x["width"], x["height"]) for x in m]); sys.exit(any((x["width"], x["height"]) != (1920, 1080) for x in m))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -54,12 +56,17 @@ shot() { say "SHOT $1"; sleep "${SHOT_WAIT:-8}"; }
 nkeys=0
 keys() { nkeys=$((nkeys+1)); say "KEYS $nkeys $*"; sleep "${KEYS_WAIT:-8}"; }
 history_has() { as_user bombadil history | grep -q "$1"; }
+# Launcher actions read "  HH:MM  <word you typed>: <what it did>". Match the word at the start of
+# the line, so "open the browser: Opened the browser." from an earlier test cannot stand in for it.
+launcher_done() { as_user bombadil history | grep -Ec "^ +[0-9]{2}:[0-9]{2} +$1: $2"; }
+launcher_ran() { [[ $(launcher_done "$1" "$2") -gt $3 ]]; }
 agentd_send() { as_user python3 -c 'import json, socket, sys; s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall((sys.argv[2] + "\n").encode()); s.shutdown(socket.SHUT_WR); s.recv(1 << 20)' "$sock" "$1"; }
 
 check agentd-socket wait_for 90 test -S "$sock"
 check quickshell-running wait_for 60 pgrep -x quickshell
 check hypr-config-ok no_config_errors
 check bar-layer wait_for 30 has_layer bombadil-bar
+check virtual-display-size virtual_display_size
 check agentd-status as_user bombadil status
 check claude-cli as_user claude --version
 check codex-cli as_user codex --version
@@ -78,10 +85,11 @@ check screenshot grab
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
+before=$(launcher_done browser "Opened the browser")
 keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
-check launcher-without-model history_has "browser: Opened the browser"
+check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
