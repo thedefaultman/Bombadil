@@ -8,7 +8,7 @@ hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", sca
 -- them again if it dies (Restart=always). They need the session's environment first.
 hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
-    hl.exec_cmd("bombadil-setup --first-run")
+    -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
 hl.config({

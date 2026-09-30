@@ -8,7 +8,9 @@
   bombadil watch [--file F] [--follow] every step, command and output of the last (or a) turn
   bombadil history                     recent turns and launcher actions
   bombadil undo                        roll back the last turn (reboot to apply)
-  bombadil provider claude|codex       switch provider (then: systemctl --user restart bombadil-agentd)
+  bombadil provider claude|codex       switch provider, signing in to it if needed
+  bombadil signin [claude|codex]       sign in (again): the page opens in the browser panel
+  bombadil open URL                    open a link in the browser panel (bombadil-browser)
 """
 import json
 import socket
@@ -17,6 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from bombadil import config, paths, snapshots, watch  # noqa: E402
+
+NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 
 
 def talk(msg: dict, until: str | None = "turn_end"):
@@ -59,6 +63,32 @@ def talk(msg: dict, until: str | None = "turn_end"):
             if ev.get("kind") == until:
                 return 0
     return 0
+
+
+def follow_setup(msg: dict) -> int:
+    """Send a setup message and print the setup line as it changes, until it settles. Exits 0 when
+    the AI is ready, 1 when the sign-in ended some other way, NO_AGENTD when agentd does not answer."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        try:
+            s.connect(str(paths.socket_path()))
+        except OSError as e:
+            print(f"agentd is not running ({e}); it starts with the Hyprland session", file=sys.stderr)
+            return NO_AGENTD
+        s.sendall((json.dumps(msg) + "\n").encode())
+        said, greeting = None, True
+        for line in s.makefile("r"):
+            ev = json.loads(line)
+            if ev.get("type") != "setup":
+                continue
+            if greeting:   # how things stood when we connected, before our message was read
+                greeting = False
+                continue
+            if ev.get("line") and ev["line"] != said:
+                said = ev["line"]
+                print(said, file=sys.stderr if ev.get("tone") == "error" else sys.stdout)
+            if ev.get("state") not in ("signing_in", "checking", "offline"):
+                return 0 if ev.get("state") == "ready" else 1
+    return 1
 
 
 def send(msg: dict) -> int:
@@ -108,10 +138,23 @@ def main() -> int:
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
         return 0 if s else 1
     elif cmd == "provider":
-        if args[0] not in config.PROVIDERS:
+        if not args or args[0] not in config.PROVIDERS:
             print(f"unknown provider; choose from {config.PROVIDERS}")
             return 2
+        if paths.socket_path().exists():
+            return follow_setup({"type": "setup_action", "id": f"provider:{args[0]}"})
         print(f"wrote {config.save_user(args[0])}; apply it with: systemctl --user restart bombadil-agentd")
+    elif cmd == "signin":
+        if args and args[0] not in config.PROVIDERS:
+            print(f"unknown provider; choose from {config.PROVIDERS}")
+            return 2
+        return follow_setup({"type": "signin", **({"provider": args[0]} if args else {})})
+    elif cmd == "open":
+        if not args:
+            print(__doc__)
+            return 2
+        import subprocess
+        return subprocess.run([str(Path(__file__).resolve().parent / "bombadil-browser"), *args]).returncode
     else:
         print(__doc__)
         return 2

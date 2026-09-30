@@ -32,6 +32,11 @@ def config_dir() -> Path:
     return _env_path("BOMBADIL_CONFIG", Path(base) / "bombadil")
 
 
+def data_dir() -> Path:
+    base = os.environ.get("XDG_DATA_HOME") or str(home() / ".local" / "share")
+    return _env_path("BOMBADIL_DATA", Path(base) / "bombadil")
+
+
 def apps_dir() -> Path:
     return _env_path("BOMBADIL_APPS", home() / "Apps")
 
@@ -42,3 +47,11 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def desk_file() -> Path:
+    return state_dir() / "desk.toml"
+
+
+def jobs_dir() -> Path:
+    return state_dir() / "jobs"

@@ -2,7 +2,8 @@
 
 Each prompt the driver types has a script: "install ffmpeg" runs sudo pacman, "make me a password
 manager" streams a create_app call slowly (so the line counts up), "set up docker" runs a root
-sleep for Stop to end, "tell me a joke" only talks.
+sleep for Stop to end, "show me the route" states a two-step plan and ticks it off (Now on the desk),
+"tell me a joke" only talks.
 """
 
 import json
@@ -243,8 +244,40 @@ class H(BaseHTTPRequestHandler):
             self.ev("content_block_stop", {"type": "content_block_stop", "index": i})
             idx[0] += 1
 
+        # How many tool rounds the newest prompt has had so far.
+        rounds = 0
+        for m in reversed(msgs):
+            if m.get("role") != "user":
+                continue
+            if isinstance(m.get("content"), list) and any(b.get("type") == "tool_result" for b in m["content"]):
+                rounds += 1
+            else:
+                break
+
         stop = "end_turn"
-        if "ffmpeg" in first:
+        if "route" in first:
+            # A plan of two steps, worked through with a pause on the second so the desk can be looked at.
+            if rounds == 0:
+                text("Two steps.")
+                tool(f"toolu_tc1{N[0]}", "TaskCreate", {"subject": "Look up the tide table", "description": "Find today's tides", "activeForm": "Looking up the tide table"})
+                tool(f"toolu_tc2{N[0]}", "TaskCreate", {"subject": "Write it down", "description": "Save the times", "activeForm": "Writing it down"})
+                stop = "tool_use"
+            elif rounds == 1:
+                tool(f"toolu_tu1{N[0]}", "TaskUpdate", {"taskId": "1", "status": "in_progress"})
+                stop = "tool_use"
+            elif rounds == 2:
+                tool(f"toolu_tb{N[0]}", "Bash", {"command": "sleep 6; echo tides", "description": "Look up the tide table"})
+                stop = "tool_use"
+            elif rounds == 3:
+                tool(f"toolu_tu2{N[0]}", "TaskUpdate", {"taskId": "1", "status": "completed"})
+                tool(f"toolu_tu3{N[0]}", "TaskUpdate", {"taskId": "2", "status": "in_progress"})
+                stop = "tool_use"
+            elif rounds == 4:
+                tool(f"toolu_tb2{N[0]}", "Bash", {"command": "sleep 6; echo done", "description": "Write it down"})
+                stop = "tool_use"
+            else:
+                text("Done: high tide is at 14:05.")
+        elif "ffmpeg" in first:
             if after_tool:
                 text("Installed ffmpeg 7.1. It is ready to use from any terminal or app.")
             else:

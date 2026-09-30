@@ -21,9 +21,10 @@ permission prompt.
 | Piece | What it does |
 |---|---|
 | `bin/agentd` | Starts at login as a systemd user service (`bombadil-agentd`, like the bar's `bombadil-shell`), which systemd starts again if it dies. Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, snapshots, runs one provider turn, streams events to every connected client, logs the turn. |
-| `bin/bombadil-os-mcp` | MCP server both CLIs load. Tools: `show_panel`, `hide_panel`, `create_app`, `open_app`, `list_apps`, `app_template`, `screenshot`, `snapshot`, `list_snapshots`, `rollback`, `notify`. |
+| `bin/bombadil-os-mcp` | MCP server both CLIs load. Tools: `show_panel`, `hide_panel`, `create_app`, `open_app`, `list_apps`, `app_template`, `screenshot`, `snapshot`, `list_snapshots`, `rollback`, `notify`, `desk` (arranges the widgets beside the pill, only when the person asked for the desk). |
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) as a Qt Quick window with hot reload. |
-| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`. |
+| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`. |
+| `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
 | `shell/shell.qml` | The Quickshell bar. |
 | `share/qml/Bombadil` | `Theme` and `Window` QML components so generated apps look like one system. |
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
@@ -60,7 +61,8 @@ scripts/run-vm.sh            # live
 scripts/run-vm.sh --disk     # then `sudo bombadil-install /dev/vda` inside
 ```
 
-On first boot a setup window asks which provider to use and runs its login.
+On first boot the pill asks which AI should run the computer and signs in to it, with the
+provider's page in the browser panel (see "Signing in" in `docs/ARCHITECTURE.md`).
 
 ## Status
 

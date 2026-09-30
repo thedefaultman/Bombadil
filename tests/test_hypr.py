@@ -173,4 +173,6 @@ def test_a_broken_placements_file_is_ignored(home):
 
 
 def test_the_browser_panel_does_not_offer_to_restore_pages_after_a_kill():
-    assert "--hide-crash-restore-bubble" in hypr.PANELS["browser"]
+    from bombadil import browser
+    assert "--hide-crash-restore-bubble" in browser.command()
+    assert "--hide-crash-restore-bubble" in hypr.panel_command("browser")

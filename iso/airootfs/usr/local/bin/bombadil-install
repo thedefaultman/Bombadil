@@ -76,6 +76,14 @@ done
 grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable
 grub-mkconfig -o /boot/grub/grub.cfg
 CH
+# Signed in on the live system: the sign-in and the chosen AI come along, so the installed
+# system starts signed in (the brief's "sign in once").
+for f in .claude .claude.json .codex .config/bombadil; do
+  [[ -e "/home/user/$f" ]] || continue
+  mkdir -p "/mnt/home/user/$(dirname "$f")"
+  cp -aT "/home/user/$f" "/mnt/home/user/$f"
+done
+arch-chroot /mnt chown -R user: /home/user
 # Extra kernel arguments for the installed system (the VM test boots it with the smoke test).
 if [[ -n "${BOMBADIL_INSTALL_CMDLINE:-}" ]]; then
   sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$BOMBADIL_INSTALL_CMDLINE |" /mnt/etc/default/grub
