@@ -27,6 +27,9 @@ SYSTEM_PROMPT = (
 )
 
 
+DIAGNOSTIC = "[ede_diagnostic]"   # what the CLI prints when a turn was cut short
+
+
 @dataclass
 class Turn:
     prompt: str
@@ -156,12 +159,13 @@ class Claude(Provider):
         elif t == "result":
             ok = not m.get("is_error", False)
             text = m.get("result") or ""
-            if text.startswith("[ede_diagnostic]"):
-                # What the CLI prints when its turn was cut short (Stop): not words for the user.
+            if text.startswith(DIAGNOSTIC):
                 text = ""
             if not ok and not text:
-                errs = m.get("errors") or []
-                text = "\n".join(e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errs)
+                errs = [e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in m.get("errors") or []]
+                # A Stop leaves the CLI's own diagnostic in errors[] with result null
+                # ({"is_error": true, "terminal_reason": "aborted_streaming"}): not words for the user.
+                text = "\n".join(e for e in errs if not e.startswith(DIAGNOSTIC))
             yield {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
                    "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
                    "num_turns": m.get("num_turns")}

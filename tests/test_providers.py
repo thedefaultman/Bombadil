@@ -110,6 +110,21 @@ def test_claude_raw_diagnostics_after_a_stop_are_not_the_result():
     assert ev[0]["text"] == "Done."
 
 
+def test_the_real_cli_puts_the_stop_diagnostic_in_errors_with_a_null_result():
+    # Captured from claude 2.x after Stop: the words are in errors[], "result" is null.
+    p = providers.Claude("x")
+    line = json.dumps({
+        "type": "result", "subtype": "error_during_execution", "is_error": True, "result": None,
+        "errors": ["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"],
+        "terminal_reason": "aborted_streaming", "session_id": "s1"})
+    ev = list(p.events([line]))[0]
+    assert ev["text"] == "" and ev["ok"] is False and ev["terminal_reason"] == "aborted_streaming"
+    # A real failure next to the diagnostic still says what failed.
+    line = json.dumps({"type": "result", "is_error": True, "result": None,
+                       "errors": ["[ede_diagnostic] x", "No conversation found with session ID: gone"]})
+    assert list(p.events([line]))[0]["text"] == "No conversation found with session ID: gone"
+
+
 def test_claude_tool_results_as_text_blocks():
     p = providers.Claude("x")
     line = json.dumps({"type": "user", "message": {"content": [{
