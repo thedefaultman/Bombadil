@@ -1,10 +1,12 @@
 """The pill is also the launcher: a small exact list of words that never wait for the model.
 
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
-or one of a few commands ("undo", "stop", "history", "wifi") is handled here, by agentd,
-in a fraction of a second and offline. Everything else goes to the agent. The list is
-deliberately exact (after lowercasing and trimming, with an optional "open"/"close" in
-front): a parser that guesses would give the machine two brains that sometimes disagree.
+or one of a few commands ("undo", "stop", "history", "wifi", "desk") is handled here, by
+agentd, in a fraction of a second and offline. So are the desk's widgets, but only with a
+verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the agent.
+Everything else goes to the agent. The list is deliberately exact (after lowercasing and
+trimming, with an optional "open"/"close" in front): a parser that guesses would give the
+machine two brains that sometimes disagree.
 
 `match()` decides; `Launcher` does the work by calling Hyprland, the apps and snapper
 directly. Every action returns one plain sentence for the line above the pill.
@@ -19,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from . import apps, hypr, paths, snapshots
+from .desk import WIDGETS, Desk
 
 PANEL_WORDS = {
     "browser": ["browser", "web browser", "web", "chrome", "chromium", "google", "internet"],
@@ -26,6 +29,9 @@ PANEL_WORDS = {
     "files": ["files", "file manager", "folders", "my files"],
 }
 PANEL_TITLES = {"browser": "the browser", "terminal": "the terminal", "files": "Files"}
+# The desk's widgets (desk.py has the table), each answering to its id and its words.
+WIDGET_WORDS = {w.id: list(dict.fromkeys((w.id, *w.words))) for w in WIDGETS.values()}
+WIDGET_TITLES = {w.id: w.title for w in WIDGETS.values()}
 
 # Checked before app names: these must always mean the same thing.
 CORE_COMMANDS = {
@@ -33,6 +39,7 @@ CORE_COMMANDS = {
     "undo": ["undo", "undo that", "undo it", "undo the last change"],
     "history": ["history", "rewind"],
     "hide": ["hide", "hide it", "hide that", "hide everything", "put it away", "put that away"],
+    "desk": ["desk"],
     "lock": ["lock", "lock screen", "lock the screen"],
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
@@ -47,6 +54,9 @@ UTILITY_COMMANDS = {
 OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "switch to")
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
+# A widget takes only the verbs that mean a thing on the screen: "start now" and "run now" are
+# sentences for the agent, not the desk.
+WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
 # Not offered as completions: Tab should never land on these by accident.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop"}
 
@@ -55,8 +65,8 @@ DETAILS_CLASS = "bombadil-details"
 
 @dataclass
 class Action:
-    kind: str          # "panel", "app", or a command name ("undo", "stop", ...)
-    target: str = ""   # panel or app name
+    kind: str          # "panel", "app", "widget", or a command name ("undo", "stop", ...)
+    target: str = ""   # panel, app or widget name
     verb: str = "open"  # open, close, hide
     title: str = ""    # what the line calls it: "the browser", "Passwords"
 
@@ -138,7 +148,7 @@ def match(text: str, app_list: list | None = None) -> Action | None:
     plain = t.isascii()
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
-        if cmd in ("restart", "shutdown") and raw.endswith("?"):
+        if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
@@ -157,16 +167,34 @@ def match(text: str, app_list: list | None = None) -> Action | None:
             util = _lookup(word, UTILITY_COMMANDS)
             if util and (verbs or word == t):
                 return Action(util)
+    return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
+
+
+def _widget_action(t: str, app_list: list) -> Action | None:
+    """"show machine", "hide the now", "put watching away". Apps and panels have been tried by
+    now, so an app you named Now still opens with its own name."""
+    for verbs, verb in WIDGET_VERBS:
+        word = _strip_verb(t, verbs)
+        widget = _lookup(word, WIDGET_WORDS) if word is not None else None
+        if widget is not None:
+            return Action("widget", widget, verb, WIDGET_TITLES[widget])
+    if t.startswith("put ") and t.endswith(" away"):
+        word = t[4:-5].removeprefix("the ")
+        widget = _lookup(word, WIDGET_WORDS)
+        if widget is not None and _find_app(word, app_list) is None:
+            return Action("widget", widget, "hide", WIDGET_TITLES[widget])
     return None
 
 
 def entries(app_list: list | None = None) -> list[dict]:
-    """What the pill can complete with Tab: apps first, then panels, then commands."""
+    """What the pill can complete with Tab: apps first, then panels, widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
            for a in app_list]
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
+    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
+            for w, words in WIDGET_WORDS.items()]
     for table in (CORE_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
@@ -191,11 +219,13 @@ class Launcher:
     """Does what `match` found, without the model. Blocking; agentd calls it in a thread."""
 
     def __init__(self, hyprland: hypr.Hyprland | None = None, snaps: snapshots.Snapshots | None = None,
-                 runner=subprocess.run, spawn=subprocess.Popen):
+                 runner=subprocess.run, spawn=subprocess.Popen, desk: Desk | None = None):
         self.hypr = hyprland or hypr.Hyprland()
         self.snaps = snaps or snapshots.Snapshots()
+        self.desk_state = desk if desk is not None else Desk().load()
         self._run = runner
         self._spawn = spawn
+        self._drawer: list[str] | None = None   # what the details drawer shows, as its argv
 
     # -- words for the line while it works --
 
@@ -204,21 +234,27 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "widget":
+            return f"Putting {action.title} " + ("on the desk" if action.verb == "open" else "away")
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
-                "battery": "Checking the battery", "stop": "Stopping"}.get(action.kind, "On it")
+                "battery": "Checking the battery", "stop": "Stopping",
+                "desk": "Changing the desk"}.get(action.kind, "On it")
 
     @staticmethod
     def failed(action: Action) -> str:
         if action.kind in ("panel", "app"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
+        if action.kind == "widget":
+            return (f"Could not put {action.title or action.target} "
+                    + ("on the desk" if action.verb == "open" else "away"))
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
-                }.get(action.kind, "That did not work")
+                "desk": "Could not change the desk"}.get(action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
         fn = getattr(self, f"_{action.kind}", None)
@@ -260,6 +296,14 @@ class Launcher:
     def _focus_class(self, cls: str) -> None:
         if self.hypr.available:
             self.hypr.dispatch(f'hl.dsp.focus({{ window = "class:^({cls})$" }})')
+
+    # -- the desk --
+
+    def _desk(self, _a: Action) -> tuple[bool, str]:
+        return self.desk_state.apply("toggle")
+
+    def _widget(self, a: Action) -> tuple[bool, str]:
+        return self.desk_state.apply("show" if a.verb == "open" else "hide", a.target)
 
     def _hide(self, _a: Action) -> tuple[bool, str]:
         if not self.hypr.available:
@@ -351,19 +395,64 @@ class Launcher:
 
     # -- things that open in the details drawer --
 
-    def details(self, argv: list[str]) -> str:
-        """Run a terminal program in the details drawer (a foot window in special:details)."""
+    def details(self, argv: list[str], toggle: bool = False) -> str:
+        """Run a terminal program in the details drawer (a foot window in special:details).
+        With toggle, the same drawer already open closes instead: a second click on Details."""
         foot = shutil.which("foot")
         if foot is None:
             raise RuntimeError("foot is not installed")
-        # "--" first: the pattern itself starts with dashes.
-        self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
-        self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        shows = [a for a in argv if a != "--follow"]   # following or not, it is the same turn
+        if toggle and shows == self._drawer and self._drawer_open():
+            self.close_details()
+            return "hidden"
+        self.close_details()
+        proc = self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self._drawer = shows
         if self.hypr.available:
-            # The window rule puts it in special:details; focus shows that drawer (never toggles it off).
-            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+            self._focus_drawer(proc)
         return "shown"
+
+    def _focus_drawer(self, proc, wait: float = 5.0) -> None:
+        """Slide the drawer in with the keyboard, so Esc (any key) closes it. Its window rule is
+        silent, so the window never takes the keyboard by itself, and showing the workspace before
+        the window maps opens it empty and leaves the keyboard where it was (the bar). So wait
+        for the window, then focus it: that shows the drawer and moves keys and pointer into it."""
+        pid = getattr(proc, "pid", None)
+
+        def gone() -> bool:   # closed meanwhile (Esc, a second click), or foot failed
+            poll = getattr(proc, "poll", None)
+            return poll is not None and poll() is not None
+
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if gone():
+                return
+            try:
+                mapped = any(c.get("class") == DETAILS_CLASS and (pid is None or c.get("pid") == pid)
+                             for c in self.hypr.clients())
+            except (OSError, ValueError, RuntimeError):   # a busy compositor: ask again
+                mapped = False
+            if mapped:
+                sel = f"pid:{pid}" if pid is not None else f"class:^({DETAILS_CLASS})$"
+                self.hypr.dispatch(f'hl.dsp.focus({{ window = "{sel}" }})')
+                return
+            time.sleep(0.05)
+        if not gone():
+            # Still starting: show the drawer anyway; a click in it gives it the keyboard.
+            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+
+    def _drawer_open(self) -> bool:
+        r = self._run(["pgrep", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
+        return getattr(r, "returncode", 1) == 0
+
+    def close_details(self) -> bool:
+        """Put the drawer away (Esc in the pill, a second click on Details). Hyprland hides a
+        special workspace when its last window closes."""
+        self._drawer = None
+        # "--" first: the pattern itself starts with dashes.
+        r = self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
+        return getattr(r, "returncode", 1) == 0
 
     def _history(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "history"])

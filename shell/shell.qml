@@ -17,12 +17,58 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
         onSummoned: root.summon()
+        onHandOff: root.release()
+    }
+
+    // The desk: cards on two rails under every window, strips beside the pill when they fold.
+    DeskState {
+        id: deskState
+        pill: pillState
+        onOutgoing: msg => root.write(msg)
+    }
+    // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
+    // that is not plugged in (a desk on no screen would hide Needs you too).
+    readonly property string deskScreen: {
+        if (deskState.screen !== "")
+            for (const s of Quickshell.screens) if (s.name === deskState.screen) return s.name
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0].name : ""
+    }
+    // The desk screen's size, in the pixels windows and cards are laid out in.
+    readonly property var deskScreenObject: {
+        for (const s of Quickshell.screens) if (s.name === root.deskScreen) return s
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    }
+    Binding { target: deskState; property: "screenWidth"; value: root.deskScreenObject ? root.deskScreenObject.width : 1920 }
+    Binding { target: deskState; property: "screenHeight"; value: root.deskScreenObject ? root.deskScreenObject.height : 1080 }
+    HyprCover { desk: deskState; screenName: root.deskScreen }
+    Variants {
+        model: Quickshell.screens
+        DeskRails {
+            required property var modelData
+            desk: deskState
+            screen: modelData
+            active: modelData.name === root.deskScreen
+        }
+    }
+    IpcHandler {
+        target: "desk"
+        // What the desk is showing, as JSON.
+        function state(): string { return JSON.stringify(deskState.snapshot()) }
+        // Stand-in windows for a session without Hyprland: {"windows": [{x, y, w, h, fullscreen}]}.
+        // (The command line takes the brackets off a bare list, so the list goes in an object.)
+        function cover(windows: string): void {
+            const v = JSON.parse(windows)
+            deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
+        }
+        // A message as agentd would send it, for demos and the VM smoke check.
+        function inject(message: string): void { root.handle(message) }
     }
 
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
@@ -38,8 +84,9 @@ ShellRoot {
             }
             onConnectionStateChanged: {
                 root.connected = connected
+                deskState.connected = connected
                 if (connected) pillState.connected = true
-                else pillState.lost()
+                else { pillState.lost(); deskState.lost() }
             }
         }
     }
@@ -55,6 +102,7 @@ ShellRoot {
         let ev
         try { ev = JSON.parse(message) } catch (e) { return }
         pillState.handle(ev)
+        deskState.handle(ev)
     }
 
     function write(msg) {
@@ -80,26 +128,45 @@ ShellRoot {
             required property var modelData
             screen: modelData
             readonly property bool summoned: root.summonedOn !== "" && root.summonedOn === modelData.name
+            // The desk narrows the pill and turns it into a capsule under a full-screen window on the
+            // screen it lives on; the pill on another screen is as it always was.
+            readonly property bool onDesk: modelData.name === root.deskScreen
+            readonly property bool capsule: onDesk && deskState.capsule
+            readonly property real pillMax: onDesk ? deskState.pillWidth : 900
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
-            // Keys on demand (click the pill), and at once after Super: Exclusive focuses the layer
-            // immediately; going back to OnDemand on Enter or Esc hands the keyboard back.
-            WlrLayershell.keyboardFocus: summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand
+            // On Hyprland the pill takes keys only while summoned (a tap on Super, or a click on the
+            // pill). The focus grab below gives it the keyboard at once, and a click anywhere else
+            // takes it away. Going from OnDemand back to None makes Hyprland hand the keyboard to the
+            // window you were in when we let go (Enter, Esc, idle). Never Exclusive there: that
+            // commit reaches Hyprland after the grab (Quickshell applies it at the next polish) and
+            // Hyprland ends any grab when a layer turns exclusive, so the keys went to the window
+            // under the pointer. Other compositors have no focus grab, so Exclusive it is (this is
+            // also what the headless sway test runs).
+            WlrLayershell.keyboardFocus: root.hyprland
+                ? (summoned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
+                : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
             exclusiveZone: 64
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
                 Region { item: chips }
                 Region { item: pillBox }
+                Region { item: stripsLeft }
+                Region { item: stripsRight }
             }
 
             onSummonedChanged: {
                 if (summoned) input.forceActiveFocus()
                 grab.active = summoned
             }
+
+            // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
+            // layer takes clicks on demand by itself.)
+            function summonHere() { if (root.hyprland) root.summonedOn = modelData.name }
 
             // While summoned the pill holds the keyboard; a click anywhere else hands it back,
             // so typing meant for another window (a password prompt) never lands in the pill.
@@ -118,6 +185,20 @@ ShellRoot {
                 onTriggered: root.release()
             }
 
+            // The cards that folded, beside the pill.
+            DeskStrips {
+                id: stripsLeft
+                desk: deskState; side: "left"; active: win.onDesk
+                pillEdge: column.x + pillBox.x
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+            DeskStrips {
+                id: stripsRight
+                desk: deskState; side: "right"; active: win.onDesk
+                pillEdge: column.x + pillBox.x + pillBox.width
+                pillCentreY: column.y + pillBox.y + pillBox.height / 2
+            }
+
             ColumnLayout {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
@@ -127,7 +208,7 @@ ShellRoot {
                     id: statusLine
                     pill: pillState
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
                 }
 
@@ -138,14 +219,14 @@ ShellRoot {
                     // so the input mask lets clicks beside them through.
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
                 }
 
                 // Prompt bar
                 Rectangle {
                     id: pillBox
                     Layout.fillWidth: true
-                    Layout.maximumWidth: 900
+                    Layout.maximumWidth: win.pillMax
                     Layout.alignment: Qt.AlignHCenter
                     implicitHeight: 52
                     radius: 26
@@ -153,6 +234,7 @@ ShellRoot {
                     border.color: pillState.busy ? "#d97757" : (win.summoned ? "#4a525c" : (root.connected ? "#2a2f36" : "#7a2e2e"))
                     border.width: 1.5
                     Behavior on border.color { ColorAnimation { duration: 300 } }
+                    TapHandler { onTapped: win.summonHere() }
 
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
@@ -161,7 +243,7 @@ ShellRoot {
                         // The dot. While a turn runs it is orange; hover turns it into Stop.
                         Rectangle {
                             id: dotBox
-                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered
+                            readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
                             implicitWidth: stoppable ? stopRow.implicitWidth + 16 : 24
                             implicitHeight: 24
                             radius: 12
@@ -190,18 +272,22 @@ ShellRoot {
                         }
 
                         Item {
+                            visible: !win.capsule     // a full-screen window: the pill is the dot and the clock
                             Layout.fillWidth: true
                             implicitHeight: input.implicitHeight
 
                             TextField {
                                 id: input
                                 anchors.fill: parent
+                                enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
                                 placeholderText: root.connected ? "Ask anything" : "Waiting for agentd…"
                                 color: "#e6e8eb"
                                 placeholderTextColor: "#8b939c"
                                 font.pixelSize: 16
                                 background: null
                                 focus: true
+                                // The field takes the press itself, so the pill's own handler never sees it.
+                                TapHandler { onTapped: win.summonHere() }
                                 onAccepted: {
                                     if (pillState.submit(text)) {
                                         text = ""
@@ -214,11 +300,12 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then gives the keyboard back.
+                                // Esc stops a running turn; otherwise it clears, then puts the line and
+                                // the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
                                     else if (text !== "") text = ""
-                                    else { pillState.dismiss(); root.release() }
+                                    else { pillState.dismiss(); pillState.closeDetails(); root.release() }
                                 }
                             }
 
@@ -235,7 +322,7 @@ ShellRoot {
                         // An exact launcher word: say it opens here, without the model.
                         Text {
                             readonly property string target: pillState.exact(input.text)
-                            visible: target !== ""
+                            visible: target !== "" && !win.capsule
                             text: "↵ " + target
                             color: "#8b939c"
                             font.pixelSize: 12
