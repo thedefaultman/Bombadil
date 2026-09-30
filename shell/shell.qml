@@ -21,6 +21,8 @@ ShellRoot {
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
+    // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
+    readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
@@ -29,6 +31,9 @@ ShellRoot {
         onSummoned: root.summon()
         onHandOff: root.release()
     }
+
+    // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
+    Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -381,7 +386,7 @@ ShellRoot {
                     implicitHeight: Kit.Theme.pillHeight
                     radius: Kit.Theme.radiusPill
                     color: Kit.Theme.glassPill
-                    border.color: pillState.busy ? Kit.Theme.accent : (win.summoned ? Kit.Theme.borderActive : (root.connected ? Kit.Theme.border : Kit.Theme.badLine))
+                    border.color: pillState.busy ? Kit.Theme.accent : (win.summoned ? Kit.Theme.borderActive : (pillState.face === "offline" ? Kit.Theme.badLine : Kit.Theme.border))
                     border.width: Kit.Theme.pillBorder
                     Behavior on border.color { ColorAnimation { duration: Kit.Theme.slow } }
                     TapHandler { onTapped: win.summonHere() }
@@ -390,7 +395,8 @@ ShellRoot {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
                         spacing: 8
 
-                        // The dot. While a turn runs it is orange; hover turns it into Stop.
+                        // The stone: Bombadil's mark, in the dot's place. Its face says what the machine is
+                        // doing (Stone.qml); while a turn runs, hover turns it into Stop.
                         Rectangle {
                             id: dotBox
                             readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
@@ -399,15 +405,14 @@ ShellRoot {
                             radius: 12
                             color: stoppable ? Kit.Theme.accentSoft : "transparent"
                             Behavior on implicitWidth { NumberAnimation { duration: Kit.Theme.fast } }
-                            Rectangle {
+                            Stone {
+                                id: stone
+                                objectName: "stone"
                                 visible: !dotBox.stoppable
                                 anchors.centerIn: parent
-                                width: 10; height: 10; radius: 5
-                                color: pillState.busy ? Kit.Theme.accent : (root.connected ? Kit.Theme.good : Kit.Theme.bad)
-                                SequentialAnimation on opacity {
-                                    running: pillState.busy; loops: Animation.Infinite
-                                    NumberAnimation { to: Kit.Theme.pulseLow; duration: 500 } NumberAnimation { to: 1; duration: 500 }
-                                }
+                                // The screen that holds the keyboard leans toward what you type.
+                                face: win.summoned && pillState.face === "rest" ? "listening" : pillState.face
+                                reducedMotion: root.reducedMotion
                             }
                             Row {
                                 id: stopRow
@@ -431,7 +436,7 @@ ShellRoot {
                                 font.family: Kit.Theme.fontFamily
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
-                                placeholderText: root.connected ? "Ask anything" : "Waiting for agentd…"
+                                placeholderText: pillState.face === "starting" ? "Starting" : (root.connected ? "Ask anything" : "Waiting for agentd…")
                                 color: Kit.Theme.fg
                                 placeholderTextColor: Kit.Theme.muted
                                 font.pixelSize: Kit.Theme.promptSize

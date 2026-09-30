@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+<title>Bombadil</title>
+<rect x="4" y="4" width="120" height="120" rx="28" fill="#1a1d21"/>
+<rect x="4.5" y="4.5" width="119" height="119" rx="27.5" fill="none" stroke="#2a2f36"/>
+<mask id="e-tl" maskUnits="userSpaceOnUse" x="-8" y="-8" width="144" height="144"><rect x="-8" y="-8" width="144" height="144" fill="#fff"/><path d="M43.85 58.473H70.2A17.05 17.05 0 0 1 70.2 92.573H46.95V42.973" fill="none" stroke="#000" stroke-width="8.2"/></mask>
+<path d="M57.7 23.688A12.6 12.6 0 0 1 70.3 23.688A71.4 71.4 0 0 1 106 85.522A12.6 12.6 0 0 1 99.7 96.434A71.4 71.4 0 0 1 28.3 96.434A12.6 12.6 0 0 1 22 85.522A71.4 71.4 0 0 1 57.7 23.688Z" fill="#e6e8eb" mask="url(#e-tl)"/>
+</svg>
