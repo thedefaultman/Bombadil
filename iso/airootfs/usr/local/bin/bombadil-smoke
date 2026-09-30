@@ -215,6 +215,17 @@ signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=man
 slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
 browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
 page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
+# What the browser looked like when a check on its page failed: its processes, every target the
+# debugging port lists (with its type), the profile's singleton files and agentd's last words.
+browser_diag() {
+  say "DIAG browser processes: $(pgrep -af -- '--class=bombadil-browser' | cut -c1-200 | tr '\n' '|')"
+  say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
+for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
+    print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
+  say "DIAG browser profile: $(ls -la /home/user/.local/share/bombadil/browser 2>&1 | grep -i singleton | tr '\n' '|')"
+  agentd_log
+}
+page_again_or_diag() { page_again || { browser_diag; return 1; }; }
 times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
 offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
 # Back to the unit's agentd, as the session booted.
@@ -267,7 +278,8 @@ if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   check signin-slid-out slid_out
   shot signin-hidden
   check signin-browser-closed browser_closed
-  check signin-page-again page_again
+  check signin-page-again page_again_or_diag
+  shot signin-page-again
   check signin-esc-cancels called_off fake
   check signin-cli-ended wait_for 30 gone fake_signin.py
   # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
