@@ -202,8 +202,21 @@ def boot_rows():
     return [r for r in rows if r.get("action") == "boot"]
 
 
+def card_up():
+    # An empty screen is a few KB of PNG; the card over it is tens of KB.
+    probe = OUT / "probe.png"
+    run("grim", str(probe))
+    try:
+        return probe.stat().st_size > 20000
+    except OSError:
+        return False
+
+
 check("the card is asked on the first sign-in", until(lambda: persona_now() is not None, 20), persona_now())
-time.sleep(1.5)
+# The card is asked when sign-in turns ready, and the bar may still be starting: it gets the card the moment
+# it says hello, so wait until it is on screen before typing into it.
+check("the card is on screen", until(card_up, 30))
+time.sleep(1.0)
 shot("00a-card")
 p0 = persona_now() or {}
 check("defaults are written and this login counts as greeted", p0.get("voice") == "merry" and greeted.exists(), p0)
