@@ -11,13 +11,13 @@ fifo = os.environ.get("VMFIFO", "/run/vmserial.in")
 log = f"{d}/serial.log"
 raw = os.environ.get("RAW")
 n = int(time.time() * 1000) % 10**9
-tag = "VMSH%dEND" % (n + 1)  # printed by $((n+1)), so the typed line itself never contains it
+tag = f"VMSH{n + 1}END"  # printed by $((n+1)), so the typed line itself never contains it
 line = " ".join(sys.argv[1:])
 CR = chr(13)
 start = os.path.getsize(log)
 with open(fifo, "w") as f:
     f.write(line + CR if raw else f"{chr(21)} {line}; echo VMSH$(({n}+1))END{CR}")
-deadline = time.time() + float(os.environ.get("T", 60))
+deadline = time.time() + float(os.environ.get("T", "60"))
 data = ""
 while time.time() < deadline:
     with open(log, "rb") as fh:

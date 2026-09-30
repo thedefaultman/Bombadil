@@ -19,7 +19,7 @@ def tail(n=600):
 
 
 def send(text):
-    subprocess.run([vmsh, text], env=dict(os.environ, RAW="1", T="2"), capture_output=True)
+    subprocess.run([vmsh, text], env=dict(os.environ, RAW="1", T="2"), capture_output=True, check=False)
 
 
 def state():

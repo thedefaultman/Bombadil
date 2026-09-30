@@ -19,9 +19,8 @@ while True:
     if not r:
         s.sendall(bytes([17]))  # XON
         continue
-    if s in r:
-        if not s.recv(65536):
-            sys.exit("serial socket closed")
+    if s in r and not s.recv(65536):
+        sys.exit("serial socket closed")
     if fd in r:
         data = os.read(fd, 4096)
         for i in range(0, len(data), 8):

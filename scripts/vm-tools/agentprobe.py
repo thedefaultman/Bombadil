@@ -16,7 +16,7 @@ while time.time() - t0 < dur:
         try: m = json.loads(line)
         except ValueError: continue
         if m.get("type") != "event": continue
-        k = m.get("kind"); now = "+%.3fs" % (time.time() - t0)
+        k = m.get("kind"); now = f"+{time.time() - t0:.3f}s"
         if k == "status": print(now, "status:", str(m.get("text"))[:90], "| risk", m.get("risk"), "| src", m.get("source"), ("| because: " + str(m.get("because"))) if m.get("because") else "", ("| after: " + json.dumps(m.get("after"))) if m.get("after") else "")
         elif k == "card":
             c = m.get("card") or {}
