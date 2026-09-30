@@ -122,6 +122,41 @@ ShellRoot {
 
     function release() { root.summonedOn = "" }
 
+    // Running apps, for the chips above the prompt. Each app window lives in its own special
+    // workspace "special:app-<name>" (bombadil-app's placement.py puts it there).
+    property var specials: ({})   // monitor name -> special workspace shown on it ("" = none)
+    readonly property string activeSpecial: {
+        const m = Hyprland.focusedMonitor
+        if (!m) return ""
+        if (m.name in root.specials) return root.specials[m.name]
+        const ipc = m.lastIpcObject
+        return ipc && ipc.specialWorkspace ? ipc.specialWorkspace.name : ""
+    }
+    readonly property var apps: {
+        const seen = {}
+        const out = []
+        for (const t of Hyprland.toplevels.values) {
+            const ws = t.workspace ? t.workspace.name : ""
+            if (!ws.startsWith("special:app-") || seen[ws]) continue
+            seen[ws] = true
+            out.push({ name: ws.slice(12), title: t.title || ws.slice(12) })
+        }
+        return out.sort((a, b) => a.name.localeCompare(b.name))
+    }
+    Connections {
+        target: Hyprland
+        function onRawEvent(event) {
+            if (event.name === "activespecial") {
+                const args = event.parse(2)   // "special:app-x,DP-1", or ",DP-1" when hidden
+                const s = Object.assign({}, root.specials)
+                s[args[1]] = args[0]
+                root.specials = s
+            } else if (event.name === "openwindow" || event.name === "closewindow" || event.name === "movewindowv2") {
+                Hyprland.refreshToplevels()
+            }
+        }
+    }
+
     Variants {
         model: Quickshell.screens
         PanelWindow {
@@ -150,12 +185,14 @@ ShellRoot {
             WlrLayershell.keyboardFocus: root.hyprland
                 ? (summoned ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None)
                 : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
-            exclusiveZone: 64
+            // The prompt bar, plus the app chips while apps run, so windows never cover them.
+            exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: statusLine }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
+                Region { item: appChips }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
                 Region { item: stripsRight }
@@ -231,6 +268,64 @@ ShellRoot {
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
                     Layout.maximumWidth: Math.max(360, win.pillMax)
+                }
+
+                // Running apps: a chip per app. Click slides it in or out, × quits it.
+                RowLayout {
+                    id: appChips
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.fillWidth: false
+                    Layout.maximumWidth: Kit.Theme.pillMaxWidth
+                    visible: root.apps.length > 0
+                    spacing: 6
+                    Repeater {
+                        model: root.apps
+                        Rectangle {
+                            id: chip
+                            required property var modelData
+                            readonly property bool shown: root.activeSpecial === "special:app-" + modelData.name
+                            implicitWidth: chipRow.implicitWidth + 28
+                            implicitHeight: 28
+                            radius: 14
+                            color: shown ? Kit.Theme.glassRaised : Kit.Theme.glassChip
+                            border.width: 1
+                            border.color: shown ? Kit.Theme.accent : Kit.Theme.border
+                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Hyprland.dispatch('hl.dsp.workspace.toggle_special("app-' + chip.modelData.name + '")')
+                            }
+                            RowLayout {
+                                id: chipRow
+                                anchors.centerIn: parent
+                                spacing: 8
+                                Text {
+                                    font.family: Kit.Theme.fontFamily
+                                    Layout.maximumWidth: 180
+                                    text: chip.modelData.title
+                                    color: chip.shown ? Kit.Theme.fg : Kit.Theme.muted
+                                    font.pixelSize: Kit.Theme.smallSize
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    font.family: Kit.Theme.fontFamily
+                                    text: "×"
+                                    color: closeArea.containsMouse ? Kit.Theme.fg : Kit.Theme.muted
+                                    font.pixelSize: 15
+                                    MouseArea {
+                                        id: closeArea
+                                        anchors.fill: parent
+                                        anchors.margins: -6
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: Quickshell.execDetached(["bombadil-app", "close", chip.modelData.name])
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Prompt bar

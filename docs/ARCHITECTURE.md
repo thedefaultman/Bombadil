@@ -64,9 +64,16 @@ credentials exactly as it would in a terminal of yours (`signin.py`).
 ## Generated apps
 
 `create_app` writes `main.qml`, optional `app.py` (a `Backend(QObject)` exposed as
-`backend`), `app.toml` and a `.desktop` entry, then starts `bombadil-app run <name>`.
-The runtime watches the directory and reloads the QML on every write, so the agent
-iterates by calling `create_app` again. `import Bombadil` gives `Theme` and `Window`.
+`backend`), `app.toml` and a `.desktop` entry, checks the app offscreen (errors with
+`file:line` plus a screenshot go back to the agent), then starts `bombadil-app run <name>`.
+The runtime owns the window and reloads the QML into it on every write, so the agent
+iterates by calling `create_app` again and the app keeps its place, size and saved state.
+Each app lives in its own Hyprland special workspace and gets a chip in the bar.
+
+`import Bombadil` is the app kit (`share/qml/Bombadil`, native types in
+`src/bombadil/appkit/native`), and the `bombadil-apps` skill in `share/skills` tells the
+agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
+`~/.agents/skills`) and through the `app_guide` tool.
 
 ## Next
 
