@@ -62,8 +62,11 @@ On first boot a setup window asks which provider to use and runs its login.
 On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an Arch WSL
 distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
 checkout has checked out, installs it onto a VM disk, and opens the VM as a window. Run it again
-to boot the same VM; `bombadil-vm reinstall` puts a newer build on it; `wsl --unregister bombadil`
-removes everything.
+to boot the same VM. `bombadil-vm refresh` keeps the disk (the login, apps and files on it), takes a
+`qemu-img` restore point first and moves the VM to this checkout in place; `bombadil-vm stop` shuts
+it down cleanly; `bombadil-vm reinstall` wipes the disk and asks first; `wsl --unregister bombadil`
+removes everything. `scripts/vm-tools/` drives a running VM without a window (keys, a shell,
+screenshots, the smoke checks, scratch copies to try a branch on); see its README.
 
 ## Status
 

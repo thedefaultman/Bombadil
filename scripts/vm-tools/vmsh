@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""vmsh CMD...: type CMD on the VM's serial console and print what it printed (T=seconds to wait).
+RAW=1 types CMD as is (for a login prompt) and prints whatever came back within T seconds.
+Needs serialpump running: it types through the FIFO ($VMFIFO, /run/vmserial.in) and reads QEMU's
+serial logfile ($VMDIR/serial.log). The shell must already be logged in (vmlogin)."""
+import os, re, sys, time
+
+tree = os.environ.get("BOMBADIL_TREE", "/root/Bombadil")
+d = os.environ.get("VMDIR", f"{tree}/out/vm")
+fifo = os.environ.get("VMFIFO", "/run/vmserial.in")
+log = f"{d}/serial.log"
+raw = os.environ.get("RAW")
+n = int(time.time() * 1000) % 10**9
+tag = "VMSH%dEND" % (n + 1)  # printed by $((n+1)), so the typed line itself never contains it
+line = " ".join(sys.argv[1:])
+CR = chr(13)
+start = os.path.getsize(log)
+with open(fifo, "w") as f:
+    f.write(line + CR if raw else f"{chr(21)} {line}; echo VMSH$(({n}+1))END{CR}")
+deadline = time.time() + float(os.environ.get("T", 60))
+data = ""
+while time.time() < deadline:
+    with open(log, "rb") as fh:
+        fh.seek(start); data = fh.read().decode("utf-8", "replace")
+    if not raw and tag in data.replace(CR, ""):
+        break
+    time.sleep(0.3)
+ESC, BEL, BS = chr(27), chr(7), chr(92)
+data = re.sub(ESC + "[]P][^" + ESC + BEL + "]*(?:" + BEL + "|" + ESC + BS + BS + ")", "", data)
+data = re.sub(ESC + BS + "[[0-9;?]*[A-Za-z]|" + ESC + "[78=>]", "", data)
+data = data.replace(CR, "")
+# drop the echoed command line itself
+if not raw and line in data:
+    data = data.split(line, 1)[1].split("\n", 1)[-1]
+print(data.replace(tag, "").strip())

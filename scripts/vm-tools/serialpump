@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""serialpump: stay connected to the VM's serial socket so the guest's output keeps flowing into
+QEMU's logfile (it stalls while no client is connected), and type whatever is written to the FIFO
+($VMFIFO, /run/vmserial.in) into the guest, a few bytes at a time. The guest's output also stalls
+until some input arrives, so it sends XON (Ctrl-Q) every second: the tty swallows it and resumes
+output. (GRUB in menu mode reads that XON as a key and stops its countdown; the hidden-menu build
+does not.)"""
+import os, select, socket, sys, time
+
+tree = os.environ.get("BOMBADIL_TREE", "/root/Bombadil")
+d = os.environ.get("VMDIR", f"{tree}/out/vm")
+fifo = os.environ.get("VMFIFO", "/run/vmserial.in")
+if not os.path.exists(fifo):
+    os.mkfifo(fifo)
+s = socket.socket(socket.AF_UNIX); s.connect(f"{d}/serial.sock")
+fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)  # RDWR: never sees EOF when writers come and go
+while True:
+    r, _, _ = select.select([s, fd], [], [], 1.0)
+    if not r:
+        s.sendall(bytes([17]))  # XON
+        continue
+    if s in r:
+        if not s.recv(65536):
+            sys.exit("serial socket closed")
+    if fd in r:
+        data = os.read(fd, 4096)
+        for i in range(0, len(data), 8):
+            s.sendall(data[i:i + 8]); time.sleep(0.03)
+            while select.select([s], [], [], 0)[0]:
+                if not s.recv(65536):
+                    sys.exit("serial socket closed")

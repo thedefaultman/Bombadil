@@ -28,6 +28,13 @@ newest_iso() { ls -t "$root"/out/*.iso 2>/dev/null | head -1 | grep . || { echo 
 case "${1:-}" in
   "") args+=(-cdrom "$(newest_iso)" -boot d) ;;
   --disk)
+    # The ISO's boot menu has an entry that erases /dev/vda without asking: never offer it a disk that
+    # already holds a system (an empty qcow2 is a few hundred KB, an installed one is GBs).
+    if [[ -f "$disk" && "${FORCE:-}" != 1 && $(stat -c %s "$disk") -gt 100000000 ]]; then
+      echo "$disk already holds an installed system. Booting the ISO with it attached offers to erase it," >&2
+      echo "so this will not. Boot the disk with --installed, delete the disk to start over, or set FORCE=1." >&2
+      exit 2
+    fi
     [[ -f "$disk" ]] || qemu-img create -q -f qcow2 "$disk" 40G
     args+=(-cdrom "$(newest_iso)" -boot d -drive file="$disk",if=virtio,format=qcow2) ;;
   --installed)

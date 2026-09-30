@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""vmpy [ARGS...] < script.py : run a python script (stdin) inside the VM via the serial console.
+The script is sent base64-encoded in chunks (the tty line limit is 4096) and run as
+`python3 /tmp/vmpy.py ARGS`. T=seconds to wait for output (default 60). ARGS are joined and typed
+into the guest's bash, so keep them to one word each (no quotes, no !)."""
+import base64, os, subprocess, sys
+
+vmsh = os.path.join(os.path.dirname(os.path.realpath(__file__)), "vmsh")
+src = sys.stdin.read().encode()
+b = base64.b64encode(src).decode()
+env = dict(os.environ, T="10")
+subprocess.run([vmsh, ": > /tmp/vmpy.b64"], env=env, capture_output=True)
+for i in range(0, len(b), 1200):
+    subprocess.run([vmsh, f"printf %s '{b[i:i+1200]}' >> /tmp/vmpy.b64"], env=env, capture_output=True)
+args = " ".join(sys.argv[1:])
+env["T"] = os.environ.get("T", "60")
+r = subprocess.run([vmsh, f"base64 -d /tmp/vmpy.b64 > /tmp/vmpy.py && python3 /tmp/vmpy.py {args}"],
+                   env=env, capture_output=True, text=True)
+print(r.stdout)

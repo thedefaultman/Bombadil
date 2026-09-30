@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""vmlogin: log in to the VM's serial console as "user" (empty password), whatever prompt it is at.
+Prints "logged in" or where it got stuck. Uses the same $VMDIR / $VMFIFO as vmsh."""
+import os, re, subprocess, sys, time
+
+tree = os.environ.get("BOMBADIL_TREE", "/root/Bombadil")
+log = os.path.join(os.environ.get("VMDIR", f"{tree}/out/vm"), "serial.log")
+vmsh = os.path.join(os.path.dirname(os.path.realpath(__file__)), "vmsh")
+
+
+def tail(n=600):
+    with open(log, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - n))
+        raw = f.read().decode("utf-8", "replace")
+    raw = re.sub(r"\x1b[\]P][^\x1b\x07]*(?:\x07|\x1b\\)", "", raw)   # OSC / DCS strings
+    raw = re.sub(r"\x1b\[[0-9;?!]*[A-Za-z]|\x1b[=>78]", "", raw)
+    return raw.replace("\r", "").replace("\x11", "").rstrip(" \n")
+
+
+def send(text):
+    subprocess.run([vmsh, text], env=dict(os.environ, RAW="1", T="2"), capture_output=True)
+
+
+def state():
+    lines = tail().splitlines()
+    last = lines[-1] if lines else ""
+    if re.search(r"login:$", last): return "login"
+    if re.search(r"Password:$", last): return "password"
+    if re.search(r"[$#]$", last): return "shell"
+    return "other"
+
+
+for _ in range(25):
+    st = state()
+    if st == "other":
+        send(""); time.sleep(1.5); st = state()
+    if st == "shell":
+        print("logged in"); sys.exit(0)
+    if st == "login":
+        send("user"); time.sleep(2)
+        for _ in range(8):
+            if state() == "password": break
+            time.sleep(1)
+        if state() == "password":
+            send(""); time.sleep(3)
+    elif st == "password":
+        send(""); time.sleep(3)
+    else:
+        time.sleep(2)
+if state() == "shell":
+    print("logged in"); sys.exit(0)
+print("could not log in; tail:", repr(tail(200)))
+sys.exit(1)

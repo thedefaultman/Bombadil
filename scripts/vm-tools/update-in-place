@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# update-in-place [--reboot] [--from URL] REF: move the running, installed VM to the Bombadil in git REF
+# without reinstalling, so the login and apps on its disk stay. REF is looked up in the clone the
+# launcher builds from ($BOMBADIL_TREE, /root/Bombadil); --from fetches it first, for example
+#   update-in-place --from /mnt/c/Users/me/Bombadil origin/main
+# It packs bin, src, shell, share and bombadil-smoke from REF (on Linux, so LF endings and symlinks
+# survive), serves the tarball to the guest on 127.0.0.1:8765 (the guest reaches it at 10.0.2.2),
+# takes a snapper restore point in the guest, keeps the old tree in /usr/share/bombadil.bak, copies
+# the new one in and checks it matches. --reboot then restarts the guest so the shell and agentd
+# start from it.
+# It also copies the system files the ISO profile owns outright (SYSTEM below: the Chromium policy,
+# /etc/environment, the mime defaults, the setup/smoke/install scripts) and makes a /usr/local/bin
+# link for every program in bin/. --no-system leaves those alone.
+# What this does NOT move: packages, GRUB defaults, the pacman mirrorlist, and the user's own files
+# (~/.config/hypr/hyprland.lua, ~/.config/chromium-flags.conf): apply those by hand, see
+# vm-tools/README.md.
+# Use with-scratch to rehearse on a copy first: `with-scratch update-in-place REF`.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+tree="${BOMBADIL_TREE:-/root/Bombadil}"
+reboot=0; from=""; system=1
+# Files under iso/airootfs that belong to Bombadil and go to / as they are.
+SYSTEM=(etc/chromium etc/environment etc/xdg/mimeapps.list usr/share/applications/bombadil-browser.desktop
+        usr/local/bin/bombadil-setup usr/local/bin/bombadil-install usr/local/bin/bombadil-rollback
+        usr/local/bin/bombadil-smoke)
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --reboot) reboot=1; shift ;;
+    --no-system) system=0; shift ;;
+    --from) from="$2"; shift 2 ;;
+    *) sed -n '2,14p' "$0"; exit 2 ;;
+  esac
+done
+ref="${1:?usage: update-in-place [--reboot] [--from URL] REF}"
+if [[ -n "$from" ]]; then
+  git -C "$tree" fetch -q "$from" "$ref"; ref=FETCH_HEAD
+fi
+rev="$(git -C "$tree" rev-parse --short "$ref")"
+up=/tmp/bombadil-update; mkdir -p "$up"
+paths=(bin src shell share iso/airootfs/usr/local/bin/bombadil-smoke)
+if (( system )); then   # only what this REF has (older ones lack some)
+  for f in "${SYSTEM[@]}"; do
+    [[ -n "$(git -C "$tree" ls-tree --name-only "$ref" "iso/airootfs/$f")" ]] && paths+=("iso/airootfs/$f")
+  done
+fi
+git -C "$tree" archive --format=tar "$ref" "${paths[@]}" -o "$up/$rev.tar"
+sha="$(sha1sum "$up/$rev.tar" | cut -c1-12)"
+pkill -f "http.server 8765" || true; sleep 1
+setsid nohup python3 -m http.server 8765 --bind 127.0.0.1 -d "$up" >"$up/http.log" 2>&1 < /dev/null &
+sleep 1
+echo "packed $rev ($sha), serving it; fetching it in the guest..."
+got="$(T=40 "$here/vmsh" "curl -sS -m 30 -o /tmp/upd.tar http://10.0.2.2:8765/$rev.tar && sha1sum /tmp/upd.tar | cut -c1-12" | grep -Eo '[0-9a-f]{12}' | head -1 || true)"
+[[ "$got" == *"$sha"* ]] || { echo "the guest got '$got', expected $sha"; exit 1; }
+"$here/vmpy" "$rev" "$system" <<'PY'
+import subprocess, sys
+rev = sys.argv[1]
+def run(c, tail=400):
+    r = subprocess.run(c, shell=True, capture_output=True, text=True)
+    out = (r.stdout + r.stderr).strip()
+    print("$", c[:130], "-> rc=%d" % r.returncode)
+    if out: print("   " + out[-tail:].replace(chr(10), chr(10) + "   "))
+    return r.returncode
+ok = run("sudo snapper -c root create -d 'before update to main %s' >/dev/null && echo restore-point" % rev) == 0
+ok = ok and run("rm -rf /tmp/new && mkdir /tmp/new && tar -xf /tmp/upd.tar -C /tmp/new && python3 -m compileall -q /tmp/new/src && echo compile-ok") == 0
+ok = ok and run("sudo rm -rf /usr/share/bombadil.bak && sudo cp -a /usr/share/bombadil /usr/share/bombadil.bak && echo backup-ok") == 0
+ok = ok and run("cd /usr/share/bombadil && sudo rm -rf bin src shell share && sudo cp -a /tmp/new/bin /tmp/new/src /tmp/new/shell /tmp/new/share /usr/share/bombadil/ && sudo find /usr/share/bombadil/src -name __pycache__ -prune -exec rm -rf {} + ; sudo chown -R root:root /usr/share/bombadil && echo copied") == 0
+ok = ok and run("sudo install -m755 /tmp/new/iso/airootfs/usr/local/bin/bombadil-smoke /usr/local/bin/bombadil-smoke && echo smoke-installed") == 0
+if ok and sys.argv[2] == "1":
+    # the rest of the files the ISO profile owns, with their modes; the tar has only those this REF has
+    ok = run("cd /tmp/new/iso/airootfs && sudo cp -a --parents $(find etc usr -type f -o -type l 2>/dev/null | grep -v /bombadil-smoke$) / && echo system-files") == 0
+    ok = ok and run("for b in /usr/share/bombadil/bin/*; do n=$(basename $b); [ -e /usr/local/bin/$n ] || sudo ln -sfn $b /usr/local/bin/$n; done; ls /usr/local/bin | wc -l") == 0
+ok = ok and run("cd /usr/share/bombadil && for d in bin src shell share; do diff -rq -x __pycache__ /tmp/new/$d $d; done && echo tree-matches") == 0
+print("UPDATE-OK" if ok else "UPDATE-FAILED (the old tree is in /usr/share/bombadil.bak)")
+PY
+if (( reboot )); then
+  log="${VMDIR:-$tree/out/vm}/serial.log"; start=$(stat -c %s "$log")
+  T=3 "$here/vmsh" 'sync; sudo systemctl reboot' >/dev/null || true
+  sleep 12
+  tail -c +$((start + 1)) "$log" | grep -aq "Loading Linux" || "$here/vmin" keys ret   # GRUB's menu waits for a key
+  for _ in $(seq 60); do tail -c +$((start + 1)) "$log" | tr -d '\r\021' | grep -aq "login: *" && break; sleep 2; done
+  sleep 5; "$here/vmlogin"
+fi
