@@ -547,6 +547,69 @@ def test_a_meter_row_has_label_meta_percent_and_a_track_filled_by_who(cards):
     cards.snap("rows-meter")
 
 
+def test_a_meter_row_that_may_be_removed_carries_a_small_x_and_gives_it_room(cards):
+    bare_spec = WATCHING[0]
+    removable = dict(bare_spec, key="iso2", remove=True)
+    (card,) = cards.show(("rows", "watching", rows(bare_spec, removable, title="Watching")))
+    bare, with_x = cards.find(card, "rowsRow")
+    assert bare.height() == 34 and with_x.height() == 34 and card.height() == 50 + 34 + 34 + 18
+    # The row without the x is where it always was.
+    pct, meta = cards.one(bare, "rowsPercent"), cards.one(bare, "rowsMeta")
+    assert abs(pct.x() + pct.width() - 286) < 0.01 and abs(meta.x() + meta.width() - 250) < 0.01
+    assert not cards.find(bare, "rowsRemove")
+    # The one with it keeps the track, and makes room: the x's 22 px at the right edge, up by the label.
+    drop = cards.one(with_x, "rowsRemove")
+    x, y, w, h = cards.geometry(drop, with_x)
+    assert (y, w, h) == (6, 22, 22) and abs(x + w - 286) < 0.01
+    assert cards.geometry(cards.one(with_x, "rowsMeter"), with_x) == (14, 28, 272, 6)
+    pct, meta = cards.one(with_x, "rowsPercent"), cards.one(with_x, "rowsMeta")
+    assert abs(pct.x() + pct.width() - (286 - 22)) < 0.01
+    assert abs(meta.x() + meta.width() - (250 - 22)) < 0.01
+    assert pct.x() + pct.width() <= x + 0.01
+    title = cards.one(with_x, "rowsRowTitle")
+    assert title.x() + title.width() <= meta.x()
+    cards.snap("rows-meter-removable")
+
+
+def test_a_meter_rows_x_is_the_size_of_a_dot_rows(cards):
+    removable = dict(WATCHING[0], remove=True)
+    (card,) = cards.show(("rows", "watching", rows(removable, WATCHING[1], title="Watching")))
+    meter, dot = cards.find(card, "rowsRow")
+    a, b = cards.one(meter, "rowsRemove"), cards.one(dot, "rowsRemove")
+    assert (a.width(), a.height()) == (b.width(), b.height()) == (22, 22)
+    assert abs(cards.geometry(a, meter)[0] - cards.geometry(b, dot)[0]) < 0.01
+
+
+def test_a_meter_rows_x_reports_its_row_and_the_meter_reports_nothing(cards):
+    removable = dict(WATCHING[0], remove=True)
+    (card,) = cards.show(("rows", "watching", rows(removable, WATCHING[1], title="Watching")))
+    meter, dot = cards.find(card, "rowsRow")
+    cards.click(cards.one(meter, "rowsMeter"))
+    cards.click(cards.one(meter, "rowsPercent"))
+    cards.click(cards.one(meter, "rowsRowTitle"))
+    assert cards.events == []
+    cards.click(cards.one(meter, "rowsRemove"))
+    cards.click(cards.one(dot, "rowsRemove"))
+    assert cards.events == [{"kind": "rowRemove", "card": "watching", "args": ["iso"]},
+                            {"kind": "rowRemove", "card": "watching", "args": ["build"]}]
+
+
+def test_a_meter_row_never_shows_a_button_only_its_x(cards):
+    odd = row("m", "meter", "Ubuntu 26.04 ISO", tone="machine", meter=0.4, button="Open", remove=True)
+    (card,) = cards.show(("rows", "c", rows(odd)))
+    assert not cards.find(card, "rowsButton") and len(cards.find(card, "rowsRemove")) == 1
+
+
+def test_a_long_meter_label_still_stops_short_of_the_words_beside_the_x(cards):
+    long = "a title that is far too long for a row in a card three hundred wide " * 3
+    (card,) = cards.show(("rows", "c", rows(row("c", "meter", long, meter=0.3, remove=True,
+                                                meter_text="14.6 of 16 GB · mostly builder"))))
+    r = cards.one(card, "rowsRow")
+    title, meta, pct = cards.one(r, "rowsRowTitle"), cards.one(r, "rowsMeta"), cards.one(r, "rowsPercent")
+    assert title.x() + title.width() <= meta.x() and meta.x() + meta.width() <= 228.01
+    assert pct.x() + pct.width() <= 264.01 and meta.x() + meta.width() <= pct.x()
+
+
 @pytest.mark.parametrize("tone", ["machine", "sessions", "you", "ok", "red"])
 def test_tones_map_to_who(cards, tone):
     (card,) = cards.show(("rows", "c", rows(row("m", "meter", meter=0.5, tone=tone),
