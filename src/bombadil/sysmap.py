@@ -8,7 +8,10 @@ the same on Claude and Codex, and it works offline.
 
 Each capture has a 500 ms budget: its commands run side by side in threads and what has not
 answered by then is treated as missing, so a picture always comes back at once, drawn from
-what could be read. The parsers take text, so the tests feed them real captured output.
+what could be read. Two readings get longer because they are slow by nature, not because
+something is wrong: the boot record (systemd-analyze reads the whole journal's boot, about a
+second on a small VM) and the check that the provider answers (a cold DNS lookup). The parsers
+take text, so the tests feed them real captured output.
 
 `facts` are what a receipt compares: before a turn and after it, the ones that changed become
 a small before and after (receipt()). Values that move by themselves (signal, latency, disk
@@ -28,6 +31,8 @@ from pathlib import Path
 from . import cards
 
 BUDGET = 0.5
+BOOT_BUDGET = 4.0    # systemd-analyze takes 0.7 to 1.4 s on a small VM, and the boot does not change
+PROBE_BUDGET = 1.6   # the provider check, when there is a link to check over: a cold DNS cache is slow once
 KINDS = ("network", "boot", "service", "disks", "sound", "screens")
 TITLES = {"network": "How you're connected", "boot": "What starts when you boot", "disks": "Your disks",
           "sound": "What's playing where", "screens": "Your screens"}
@@ -183,25 +188,39 @@ def resolv_servers(text: str | None) -> list[str]:
     return [m.group(1) for m in re.finditer(r"^\s*nameserver\s+(\S+)", text or "", re.M)]
 
 
-def _tcp_ms(host: str, port: int = 443, timeout: float = 0.4) -> int | None:
-    t0 = time.monotonic()
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            pass
-    except OSError:
-        return None
-    return round((time.monotonic() - t0) * 1000)
+def _tcp_ms(host: str, port: int = 443, timeout: float = PROBE_BUDGET - 0.4) -> int | None:
+    """Milliseconds to open a connection to host:port, or None. The first lookup after a restart can
+    fail or crawl while the DNS cache is cold, so a failed try is tried once more inside the timeout;
+    the time reported is the try that worked."""
+    start = time.monotonic()
+    for _ in range(2):
+        left = timeout - (time.monotonic() - start)
+        if left < 0.05:
+            break
+        t0 = time.monotonic()
+        try:
+            with socket.create_connection((host, port), timeout=left):
+                pass
+        except OSError:
+            continue
+        return round((time.monotonic() - t0) * 1000)
+    return None
 
 
 def capture_network(run_: Run = run, probe: Callable[[str], int | None] | None = None,
                     read: Callable[[str], str | None] | None = None, provider: str = "claude",
-                    budget: float = BUDGET, wireless: Callable[[str], bool] | None = None) -> dict:
+                    budget: float = BUDGET, wireless: Callable[[str], bool] | None = None,
+                    probe_budget: float = PROBE_BUDGET) -> dict:
     """The path from this laptop to the provider you are talking to, from `ip`, NetworkManager
-    and a real connection to the provider's host. The first broken link is red, with one sentence."""
+    and a real connection to the provider's host. The first broken link is red, with one sentence.
+    The connection is given `probe_budget` when there is a link to reach it over (a cold DNS cache
+    makes the first lookup slow); the rest answers within `budget`."""
     brand, host = PROVIDER_HOSTS.get(provider, PROVIDER_HOSTS["claude"])
     probe = probe or _tcp_ms
     read = read or _read_text
     wireless = wireless or (lambda dev: Path(f"/sys/class/net/{dev}/wireless").exists())
+    t0 = time.monotonic()
+    probing = _POOL.submit(lambda: probe(host))
     got = _gather({
         "route": lambda: _json(run_(["ip", "-j", "route", "get", "1.1.1.1"], budget)),
         "default": lambda: _json(run_(["ip", "-j", "route", "show", "default"], budget)),
@@ -211,7 +230,6 @@ def capture_network(run_: Run = run, probe: Callable[[str], int | None] | None =
                               "--rescan", "no"], budget),
         "connectivity": lambda: run_(["nmcli", "-t", "-g", "CONNECTIVITY", "general"], budget),
         "resolv": lambda: read("/etc/resolv.conf"),
-        "probe": lambda: probe(host),
     }, budget)
     route = (got["route"] or [None])[0] if isinstance(got["route"], list) else None
     defaults = got["default"] if isinstance(got["default"], list) else []
@@ -219,7 +237,13 @@ def capture_network(run_: Run = run, probe: Callable[[str], int | None] | None =
     wifi = parse_wifi_list(got["wifi"])
     conn = str(got["connectivity"] or "").strip().lower()
     servers = resolv_servers(got["resolv"])
-    latency = got["probe"] if isinstance(got["probe"], int) else None
+    linked = bool(route and route.get("dev"))
+    _wait([probing], timeout=max(0.0, (probe_budget if linked else budget) - (time.monotonic() - t0)))
+    try:
+        answered = probing.result(timeout=0) if probing.done() else None
+    except Exception:  # noqa: BLE001 - a probe that broke is a provider that did not answer
+        answered = None
+    latency = answered if isinstance(answered, int) else None
 
     if not route or not route.get("dev"):
         if got["route"] is None and got["default"] is None and not devices:
@@ -339,11 +363,14 @@ def parse_critical_chain(text: str | None) -> list[tuple[str, float, float]]:
 def capture_boot(run_: Run = run, budget: float = BUDGET) -> dict:
     """What holds the boot up, from the critical chain: each unit on the way to the desktop, the
     slow one in amber."""
+    t0 = time.monotonic()
     got = _gather({"chain": lambda: run_(["systemd-analyze", "critical-chain", "--no-pager"], budget),
                    "time": lambda: run_(["systemd-analyze", "time", "--no-pager"], budget)}, budget)
     rows = parse_critical_chain(got["chain"] if isinstance(got["chain"], str) else None)
     if not rows:
-        raise Unavailable("Could not read the boot: systemd-analyze did not answer (a live system has no boot record).")
+        if time.monotonic() - t0 >= budget * 0.9:
+            raise Unavailable("Could not read the boot: systemd-analyze took longer than expected.")
+        raise Unavailable("Could not read the boot: there is no boot record to read (a live system has none).")
     m = _TIME_RE.search(got["time"] if isinstance(got["time"], str) else "")
     total = _secs(m.group(2)) if m and m.group(2) else 0.0
     keep = rows
@@ -477,6 +504,16 @@ _READ_ONLY_FS = {"squashfs", "iso9660", "erofs", "udf", "cramfs"}   # full by de
 _DISK_TYPES = {"disk", "part", "crypt", "lvm", "raid0", "raid1", "raid5", "raid6", "raid10", "md"}
 
 
+MIN_DISK = 1_000_000    # a "disk" under a megabyte is a floppy drive or an empty card slot, not a place for files
+
+
+def _bytes(v) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _truthy(v) -> bool:
     return v is True or str(v).lower() in ("1", "true")
 
@@ -517,7 +554,9 @@ def capture_disks(run_: Run = run, budget: float = BUDGET) -> dict:
         raise Unavailable("Could not read the disks: lsblk did not answer.")
     use = _usage(got["findmnt"] if isinstance(got["findmnt"], dict) else None)
     disks = [d for d in lsblk["blockdevices"] if d.get("type") == "disk" and not str(d.get("name", "")).startswith(
-        ("zram", "loop", "ram"))]
+        ("zram", "loop", "ram", "fd")) and _bytes(d.get("size")) >= MIN_DISK]   # no floppy, no empty card slot
+    if not disks:
+        raise Unavailable("There are no disks to draw here.")
     facts: list[dict] = []
     nodes: list[dict] = []
     links: list[dict] = []
@@ -736,14 +775,16 @@ def capture_screens(run_: Run = run, budget: float = BUDGET) -> dict:
 
 # ---------------------------------------------------------------- the front door
 
-def capture(kind: str, target: str = "", *, run_: Run = run, budget: float = BUDGET, provider: str = "claude",
+def capture(kind: str, target: str = "", *, run_: Run = run, budget: float | None = None, provider: str = "claude",
             **kw) -> dict:
     """{"card": ..., "facts": [...]} for one part of the machine. Raises Unavailable, with one
-    plain sentence, when it could not be read at all."""
+    plain sentence, when it could not be read at all. `budget` is BUDGET unless the part is slow by
+    nature (the boot)."""
     if kind == "network":
-        return capture_network(run_, provider=provider, budget=budget, **kw)
+        return capture_network(run_, provider=provider, budget=BUDGET if budget is None else budget, **kw)
     if kind == "boot":
-        return capture_boot(run_, budget)
+        return capture_boot(run_, BOOT_BUDGET if budget is None else budget)
+    budget = BUDGET if budget is None else budget
     if kind == "service":
         if not target:
             raise Unavailable("Say which service.")
@@ -791,7 +832,8 @@ def snapshot(kinds=BEFORE_KINDS, provider: str = "claude", run_: Run = run, budg
     cannot be read here (no Hyprland, no PipeWire) is None."""
     def one(kind: str):
         try:
-            return capture(kind, run_=run_, budget=budget, provider=provider)["facts"]
+            extra = {"probe_budget": budget} if kind == "network" else {}   # a latency is never a change
+            return capture(kind, run_=run_, budget=budget, provider=provider, **extra)["facts"]
         except Unavailable:
             return None
     return _gather({k: (lambda k=k: one(k)) for k in kinds}, budget + 0.5, _OUTER)

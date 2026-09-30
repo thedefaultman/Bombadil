@@ -337,6 +337,25 @@ def test_boot_on_a_live_system_says_why_nothing_is_drawn():
         sysmap.capture_boot(fake({}))
 
 
+def test_boot_that_takes_too_long_says_so_not_that_the_system_is_live():
+    def slow(argv, budget=0.5):
+        time.sleep(0.5)
+        return CHAIN
+
+    with pytest.raises(sysmap.Unavailable, match="took longer than expected"):
+        sysmap.capture_boot(slow, budget=0.2)
+
+
+def test_the_boot_is_given_longer_than_the_other_parts_to_answer():
+    def slow(argv, budget=0.5):
+        time.sleep(0.8)            # a small VM: systemd-analyze takes about a second
+        return CHAIN if "critical-chain" in argv else TIME
+
+    assert sysmap.capture("boot", run_=slow)["card"]["shape"] == "timeline"
+    with pytest.raises(sysmap.Unavailable):
+        sysmap.capture("disks", run_=lambda argv, budget=0.5: time.sleep(0.8), budget=0.3)
+
+
 def test_boot_with_nothing_slow_says_so():
     chain = "graphical.target @3.0s\n└─multi-user.target @3.0s\n  └─a.service @2.0s +100ms\n"
     r = sysmap.capture_boot(fake({"systemd-analyze critical-chain": chain}))
@@ -451,6 +470,20 @@ def test_disks_over_the_limit_keep_the_mounted_ones():
     assert "sda3" in [n["label"] for n in card["nodes"]]
 
 
+def test_a_floppy_drive_and_an_empty_card_slot_are_not_disks():
+    tiny = json.dumps({"blockdevices": [
+        {"name": "fd0", "size": 4096, "type": "disk", "rm": True, "children": None},
+        {"name": "sdb", "size": 0, "type": "disk", "rm": True, "children": None},
+        {"name": "vda", "size": 64000000000, "type": "disk", "rm": False, "model": "QEMU", "children": [
+            {"name": "vda1", "size": 63000000000, "type": "part", "fstype": "ext4", "mountpoints": ["/"]}]}]})
+    r = sysmap.capture_disks(fake({"lsblk": tiny, "findmnt": FINDMNT}))
+    assert [n["label"] for n in r["card"]["nodes"]] == ["vda", "vda1"]
+    assert r["card"]["say"].startswith("vda1 is nearly full") and r["card"]["highlight"] == ["part:vda1"]
+    with pytest.raises(sysmap.Unavailable, match="no disks"):
+        sysmap.capture_disks(fake({"lsblk": json.dumps({"blockdevices": [
+            {"name": "fd0", "size": 4096, "type": "disk", "rm": True}]}), "findmnt": FINDMNT}))
+
+
 def test_disk_use_moving_is_not_a_change():
     a = sysmap.capture_disks(fake({"lsblk": LSBLK, "findmnt": FINDMNT}))["facts"]
     moved = FINDMNT.replace("487000000000", "300000000000")
@@ -536,9 +569,71 @@ def test_a_slow_probe_leaves_the_provider_unanswered_not_the_picture_missing():
 
     t0 = time.monotonic()
     r = sysmap.capture_network(fake(net_outputs()), probe=slow_probe, read=lambda p: "", wireless=lambda d: True,
-                               budget=0.2)
+                               budget=0.2, probe_budget=0.4)
     assert time.monotonic() - t0 < 1.0
     assert states(r["card"])["provider"] == "bad"
+
+
+def test_a_provider_check_slowed_by_a_cold_dns_cache_still_answers():
+    def cold(host):
+        time.sleep(0.6)
+        return 600
+
+    r = sysmap.capture_network(fake(net_outputs()), probe=cold, read=lambda p: "", wireless=lambda d: True,
+                               budget=0.2, probe_budget=1.5)
+    assert states(r["card"])["provider"] == "ok"
+    assert "replies in 600 ms" in r["card"]["say"]
+
+
+def test_without_a_link_the_provider_check_is_not_waited_for():
+    def slow(host):
+        time.sleep(3)
+        return 5
+
+    t0 = time.monotonic()
+    r = sysmap.capture_network(fake(net_outputs(**{"ip -j route get": "[]", "ip -j route show": "[]"})), probe=slow,
+                               read=lambda p: "", wireless=lambda d: False, budget=0.2, probe_budget=2.5)
+    assert time.monotonic() - t0 < 1.5
+    assert "not connected" in r["card"]["say"]
+
+
+def test_a_failed_first_try_to_reach_the_provider_is_tried_once_more(monkeypatch):
+    tries = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def connect(addr, timeout=None):
+        tries.append(timeout)
+        if len(tries) == 1:
+            raise OSError("name resolution failed")
+        return Conn()
+
+    monkeypatch.setattr(sysmap.socket, "create_connection", connect)
+    assert isinstance(sysmap._tcp_ms("api.example.test", timeout=1.0), int)
+    assert len(tries) == 2 and all(0 < t <= 1.0 for t in tries)
+
+
+def test_a_provider_that_never_answers_is_given_up_on_within_the_timeout(monkeypatch):
+    def connect(addr, timeout=None):
+        time.sleep(min(timeout or 0, 0.3))
+        raise OSError("timed out")
+
+    monkeypatch.setattr(sysmap.socket, "create_connection", connect)
+    t0 = time.monotonic()
+    assert sysmap._tcp_ms("api.example.test", timeout=0.5) is None
+    assert time.monotonic() - t0 < 1.0
+
+
+def test_a_before_picture_does_not_wait_for_the_provider_check(monkeypatch):
+    monkeypatch.setattr(sysmap, "_tcp_ms", lambda host: time.sleep(3))
+    t0 = time.monotonic()
+    sysmap.snapshot(("network",), run_=fake(net_outputs()))
+    assert time.monotonic() - t0 < 1.5
 
 
 def test_run_reads_real_commands_and_treats_failures_as_nothing():
