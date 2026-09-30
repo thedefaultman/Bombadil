@@ -106,12 +106,14 @@ def test_a_job_starts_as_a_user_unit_whose_wrapper_keeps_its_output_and_its_exit
     out = shlex.quote(str(tmp_path / "jobs" / f"{job_id}.log"))
     exit_file = shlex.quote(str(tmp_path / "jobs" / f"{job_id}.exit"))
     assert sd.calls == [[
-        "systemd-run", "--user", f"--unit=bombadil-job-{job_id}", "--description=Ubuntu 26.04 ISO", "/bin/sh", "-c",
+        "systemd-run", "--user", f"--unit=bombadil-job-{job_id}", "--description=Ubuntu 26.04 ISO",
+        "/bin/sh", "-c",
         (f"/bin/sh -c {shlex.quote('curl -O https://example.org/ubuntu.iso')} >> {out} 2>&1; "
          f"s=$$?; echo $$s > {exit_file}; exit $$s")]]
     assert rec == {"id": job_id, "title": "Ubuntu 26.04 ISO", "kind": "job",
                    "command": "curl -O https://example.org/ubuntu.iso", "started": T0, "deadline": None,
-                   "ended": None, "state": "running", "exit": None, "pct": None, "last": "", "dismissed": False}
+                   "ended": None, "state": "running", "exit": None, "pct": None, "last": "",
+                   "dismissed": False}
     assert json.loads((tmp_path / "jobs" / f"{job_id}.json").read_text()) == rec
     assert row(j, job_id) == {"id": job_id, "title": "Ubuntu 26.04 ISO", "kind": "job", "state": "running",
                               "started": T0, "deadline": None, "ended": None, "pct": None, "last": "",
@@ -148,7 +150,8 @@ def test_a_timer_with_a_command_runs_it_when_the_time_is_up(tmp_path):
     argv = sd.calls[0]
     assert argv[:5] == ["systemd-run", "--user", f"--unit=bombadil-timer-{job_id}", "--on-active=1500s",
                         "--timer-property=AccuracySec=1s"]
-    assert argv[5:7] == ["/bin/sh", "-c"] and argv[7].startswith("/bin/sh -c 'notify-send '\"'\"'Stretch'\"'\"''")
+    assert argv[5:7] == ["/bin/sh", "-c"]
+    assert argv[7].startswith("/bin/sh -c 'notify-send '\"'\"'Stretch'\"'\"''")
     assert f">> {tmp_path}/jobs/{job_id}.log 2>&1; s=$$?; echo $$s > " in argv[7]
 
 
@@ -193,7 +196,8 @@ def test_a_title_is_never_part_of_a_unit_name_or_a_command_line(tmp_path):
     rec = j.start(evil, "true")
     argv = sd.calls[0]
     assert rec["title"] == "x; rm -rf / $(touch pwned) `id` [31m — ü"
-    assert argv[2] == f"--unit=bombadil-job-{rec['id']}" and re.fullmatch(r"--unit=bombadil-job-[0-9a-f]{6}", argv[2])
+    assert argv[2] == f"--unit=bombadil-job-{rec['id']}"
+    assert re.fullmatch(r"--unit=bombadil-job-[0-9a-f]{6}", argv[2])
     assert argv[3] == f"--description={rec['title']}"     # one argument: nothing reads it as shell
     assert "rm -rf" not in argv[-1] and "pwned" not in argv[-1]
     assert len(j.start("t" * 300, "true")["title"]) == jobs.MAX_TITLE
@@ -665,9 +669,10 @@ def test_what_the_agent_is_told_when_it_starts_one(tmp_path):
     job, timer = j.start("Ubuntu ISO", "curl"), j.start("Timer, 10 min", "", seconds=600)
     said = jobs.started_text(job, j.log_path(job["id"]))
     assert said == (f"Started Ubuntu ISO as job {job['id']}. The desk counts it and says so when it ends; "
-                    f"its output goes to {tmp_path}/jobs/{job['id']}.log. Stop it with op stop and id {job['id']}.")
-    assert jobs.started_text(timer, None) == (f"Timer set for 10 min as job {timer['id']}. The desk counts it "
-                                              "down and says so when it is up.")
+                    f"its output goes to {tmp_path}/jobs/{job['id']}.log. "
+                    f"Stop it with op stop and id {job['id']}.")
+    assert jobs.started_text(timer, None) == (f"Timer set for 10 min as job {timer['id']}. "
+                                              "The desk counts it down and says so when it is up.")
     tea = j.start("Tea", "", seconds=300)
     assert jobs.started_text(tea, None).startswith("Timer set for 5 min (Tea) as job ")
 
@@ -705,7 +710,8 @@ def test_the_output_in_the_drawer(tmp_path):
     assert r.returncode == 0 and "Odd %s $HOME `x`" in r.stdout and "Press Esc to close." in r.stdout
     assert "line 499" in r.stdout and "line 200" in r.stdout and "line 199" not in r.stdout
     empty = j.start("Quiet", "true")      # no output yet: no log file, still a window with a title
-    r = subprocess.run(j.why(empty["id"]), input="\x1b", capture_output=True, text=True, check=False, timeout=10)
+    r = subprocess.run(j.why(empty["id"]), input="\x1b", capture_output=True, text=True, check=False,
+                       timeout=10)
     assert r.returncode == 0 and "Quiet" in r.stdout
 
 
