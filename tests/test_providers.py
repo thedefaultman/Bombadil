@@ -182,3 +182,10 @@ def test_every_turn_says_where_the_kit_lives_and_how_to_import_it(tmp_path, monk
 def test_kit_paths_on_this_checkout_exist():
     kit, skill = providers.kit_paths()
     assert (kit / "Theme.qml").is_file() and (skill / "SKILL.md").is_file()
+
+
+def test_the_system_prompt_asks_for_reasons_plans_and_pictures():
+    prompt = providers.system_prompt()
+    assert "say in one short plain sentence why" in prompt
+    assert "write the plan first with your task tool" in prompt
+    assert "show it as a picture (system_map for this machine, show_card otherwise), then say one line" in prompt

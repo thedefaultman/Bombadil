@@ -146,7 +146,6 @@ def known_apps() -> list:
 
 def _picture(t: str) -> Action | None:
     """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's."""
-    t = t.replace("’", "'")
     for kind, phrases in PICTURE_PHRASES.items():
         if t in phrases:
             return Action("picture", kind, "open", PICTURE_TITLES[kind])
@@ -172,7 +171,8 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     plain = t.isascii()
     if busy and plain and t in WHY_WORDS:
         return Action("why")
-    picture = _picture(t) if plain else None
+    apostrophe = t.replace("’", "'")   # "what’s playing where", typed on a phone
+    picture = _picture(apostrophe) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
     cmd = _lookup(t, CORE_COMMANDS) if plain else None

@@ -524,3 +524,79 @@ def test_why_answers_from_the_recorded_reason():
     n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S x264"}})
     assert n.why_text() == ("The site's build needs the shared libraries, so installing them first. "
                             "(after reading ffmpeg.org/download.html)")
+
+
+# -- what a turn touched (for receipts) --
+
+@pytest.mark.parametrize("command, touched", [
+    ("sudo systemctl restart NetworkManager", [("service", "NetworkManager"), ("network", "")]),
+    ("sudo systemctl enable --now wg-quick@wg0", [("service", "wg-quick@wg0"), ("network", "")]),
+    ("systemctl --user restart pipewire", [("service", "pipewire"), ("sound", "")]),
+    ("sudo systemctl restart sshd", [("service", "sshd")]),
+    ("sudo systemctl status sshd", []),
+    ("wg-quick up wg0", [("network", "")]),
+    ("sudo nmcli connection modify Home ipv4.dns 1.1.1.1", [("network", "")]),
+    ("nmcli device wifi list", []),
+    ("nmcli connection show", []),
+    ("sudo ip route add 10.0.0.0/8 via 1.2.3.4", [("network", "")]),
+    ("ip addr show", []),
+    ("echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf", [("network", "")]),
+    ("sudo sed -i 's/a/b/' /etc/NetworkManager/NetworkManager.conf", [("network", "")]),
+    ("cat > /etc/wireguard/wg0.conf <<EOF\nx\nEOF", [("network", "")]),
+    ("cat /etc/resolv.conf", []),
+    ("wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.5", [("sound", "")]),
+    ("wpctl status", []),
+    ("pactl set-default-sink 12", [("sound", "")]),
+    ("hyprctl keyword monitor eDP-1,2560x1600@165,0x0,1.6", [("screens", "")]),
+    ("hyprctl monitors", []),
+    ("sudo mount /dev/sda1 /mnt", [("disks", "")]),
+    ("mount", []),
+    ("lsblk", []),
+    ("fdisk -l", []),
+    ("sudo mkfs.ext4 /dev/sdb1", [("disks", "")]),
+    ("bash -c 'systemctl --user restart pipewire'", [("service", "pipewire"), ("sound", "")]),
+    ("sudo pacman -S wireguard-tools", []),
+    ("wg-quick up wg0 && sudo systemctl enable wg-quick@wg0",
+     [("network", ""), ("service", "wg-quick@wg0")]),
+])
+def test_what_a_shell_command_changes(command, touched):
+    assert narrate.touched("Bash", {"command": command}) == touched
+
+
+def test_what_a_file_write_changes(home):
+    assert narrate.touched("Write", {"file_path": "/etc/systemd/system/backup.service", "content": "x"}) == [
+        ("service", "backup")]
+    assert narrate.touched("Write", {"file_path": "/etc/resolv.conf", "content": "x"}) == [("network", "")]
+    hypr = str(home / ".config" / "hypr" / "hyprland.lua")
+    assert narrate.touched("Write", {"file_path": hypr, "content": "hl.monitor({output = 'eDP-1'})"}) == [("screens", "")]
+    assert narrate.touched("Edit", {"file_path": hypr, "new_string": "hl.monitor({})"}) == [("screens", "")]
+    assert narrate.touched("Edit", {"file_path": hypr, "new_string": "hl.bind({})"}) == []
+    assert narrate.touched("Write", {"file_path": str(home / "notes.txt"), "content": "monitor"}) == []
+    assert narrate.touched("Read", {"file_path": "/etc/resolv.conf"}) == []
+    assert narrate.touched_changes([{"path": "/etc/fstab", "kind": "update"}, "junk", {"path": 3}]) == [("disks", "")]
+    assert narrate.touched_changes(3) == []
+
+
+def test_the_narrator_remembers_what_a_turn_touched_and_whether_it_drew():
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "wg-quick up wg0"}, "id": "a"})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "wg-quick down wg0; wpctl set-mute @DEFAULT_SINK@ 1"},
+                "id": "b"})
+    n.on_event({"kind": "file_change", "changes": [{"path": "/etc/fstab", "kind": "update"}]})
+    assert n.touched == [("network", ""), ("sound", ""), ("disks", "")] and n.drew is False
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__system_map", "input": {"kind": "network"}, "id": "c"})
+    assert n.drew is True
+
+
+def test_the_picture_tools_have_words_for_the_line():
+    step = lambda tool, a: narrate.tool_step(f"mcp__bombadil-os__{tool}", a).text  # noqa: E731
+    assert step("system_map", {"kind": "network"}) == "Drawing how you're connected"
+    assert step("system_map", {"kind": "service", "target": "bluetooth.service"}) == "Drawing what bluetooth needs"
+    assert step("system_map", {"kind": "disks"}) == "Drawing your disks"
+    assert step("system_map", {}) == "Drawing a picture of the machine"
+    assert step("show_card", {"title": "How a VPN works"}) == "Drawing “How a VPN works”"
+    assert step("show_card", {}) == "Drawing a picture"
+    assert narrate.partial_step("mcp__bombadil-os__show_card", '{"shape": "chain", "title": "How a VP').text == (
+        "Drawing a picture")
+    assert narrate.partial_step("mcp__bombadil-os__show_card", '{"title": "How a VPN", "nodes": [').text == (
+        "Drawing “How a VPN”")

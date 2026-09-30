@@ -6,6 +6,13 @@ import pytest
 from bombadil import agentd, paths, providers
 
 
+@pytest.fixture(autouse=True)
+def no_machine_captures(monkeypatch):
+    """A turn looks at the network, disks, sound and screens before it starts (for its receipt);
+    these tests are not about the machine they run on."""
+    monkeypatch.setattr(agentd.sysmap, "snapshot", lambda *a, **k: {})
+
+
 async def _client(path):
     r, w = await asyncio.open_unix_connection(str(path), limit=1 << 24)
     return r, w
@@ -597,5 +604,313 @@ async def test_why_during_a_turn_is_answered_from_the_recorded_reason_without_th
     w.write(b'{"type": "stop"}\n')
     await w.drain()
     await _read_until(r, "turn_end")
+    w.close()
+    server.cancel()
+
+
+# -- pictures --
+
+def _diagram(title="How a VPN works", **over):
+    spec = {"shape": "chain", "title": title, "nodes": [{"label": "Laptop"}, {"label": "Tunnel"},
+                                                        {"label": "Internet"}]}
+    spec.update(over)
+    return spec
+
+
+async def _send_card(path, spec):
+    """What os-mcp does: a client of its own sends the card and reads agentd's answer."""
+    r, w = await _client(path)
+    w.write((json.dumps({"type": "card", "card": spec}) + "\n").encode())
+    await w.drain()
+    while True:
+        m = json.loads(await asyncio.wait_for(r.readline(), 5))
+        if m.get("type") == "card_ack":
+            w.close()
+            return m
+
+
+@pytest.mark.asyncio
+async def test_a_card_from_os_mcp_is_checked_and_drawn_by_every_bar(home):
+    from bombadil import cards
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    card, errors = cards.validate_diagram(_diagram())
+    assert errors == []
+    ack = await _send_card(d.socket_path, card)
+    assert ack == {"type": "card_ack", "shown": True}
+    m = await _events_until(r, lambda m: m.get("kind") == "card")
+    ev = m[-1]
+    assert ev["turn"] is None and ev["card"]["title"] == "How a VPN works" and ev["card"]["id"] == "card-1"
+    assert ev["card"]["text"].startswith("How a VPN works: Laptop → Tunnel → Internet")
+    # Not a card: nothing reaches the bar, and the sender is told what to fix.
+    bad = await _send_card(d.socket_path, {"shape": "chain", "title": "", "nodes": [{"label": "x" * 40}]})
+    assert bad["shown"] is False and any("title is required" in e for e in bad["errors"])
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_card_with_no_bar_to_draw_it_says_so(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    for _ in range(50):
+        if d.socket_path.exists():
+            break
+        await asyncio.sleep(0.02)
+    from bombadil import cards
+    ack = await _send_card(d.socket_path, cards.validate_diagram(_diagram())[0])
+    assert ack == {"type": "card_ack", "shown": False}
+    server.cancel()
+
+
+CARD_CHUNKS = ['{"shape": "chain", "title": "How a VP', 'N works", "nodes": [', '{"label": "Laptop"}, ',
+               '{"label": "Tunnel", "state": "new"}, ', '{"label": "Internet"}]}']
+CARD_SCRIPT = (
+    "import json, sys, time\n"
+    "sys.stdin.read()\n"
+    "def out(o): print(json.dumps(o), flush=True)\n"
+    "def ev(e): out({'type': 'stream_event', 'event': e})\n"
+    "ev({'type': 'message_start'})\n"
+    "ev({'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'tool_use', 'id': 'toolu_c1',"
+    " 'name': 'mcp__bombadil-os__show_card'}})\n"
+    f"for c in {CARD_CHUNKS!r}:\n"
+    "    ev({'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'input_json_delta', 'partial_json': c}})\n"
+    "    time.sleep(0.05)\n"
+    "out({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'toolu_c1',"
+    " 'name': 'mcp__bombadil-os__show_card', 'input': {}}]}})\n"
+    "time.sleep(2)\n"
+    "out({'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': 'toolu_c1',"
+    " 'content': 'fine', 'is_error': %s}]}})\n"
+    "out({'type': 'result', 'result': 'Drew it.', 'session_id': 's1'})\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_the_boxes_appear_while_the_card_is_written_and_the_finished_card_takes_their_place(home):
+    from bombadil import cards
+    d = agentd.AgentD(Scripted(CARD_SCRIPT % "False"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "how does a VPN work?")
+    seen = []
+    msgs = await _events_until(r, lambda m: (m.get("kind") == "card" and len(m["card"].get("nodes", [])) == 3
+                                             and seen.append(m) is None))
+    partials = [m["card"] for m in msgs if m.get("kind") == "card"]
+    assert all(c["partial"] and c["id"] == "stream-toolu_c1" for c in partials)
+    assert [len(c["nodes"]) for c in partials] == sorted(len(c["nodes"]) for c in partials)
+    assert partials[0]["title"] == "How a VPN works" and partials[0]["nodes"] == []
+    # The finished card arrives from os-mcp with the tool's result still to come.
+    final, _ = cards.validate_diagram({**_diagram("How a VPN works")})
+    ack = await _send_card(d.socket_path, final)
+    assert ack["shown"] is True
+    msgs = await _events_until(r, lambda m: m.get("kind") == "card" and not m["card"].get("partial"))
+    done = msgs[-1]["card"]
+    assert done["id"] == "stream-toolu_c1" and "partial" not in done and done["links"]
+    assert done["id"] not in d._stream_ids
+    await _read_until(r, "turn_end")
+    # Only the finished card is in the turn's log (Details), not its drafts.
+    log = paths.state_dir() / "turns"
+    logged = [json.loads(line) for f in log.iterdir() for line in f.read_text().splitlines()]
+    cards_logged = [e for e in logged if e.get("kind") == "card"]
+    assert len(cards_logged) == 1 and cards_logged[0]["turn"] == 1 and not cards_logged[0]["card"].get("partial")
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_card_call_that_failed_takes_its_half_drawn_card_back(home):
+    d = agentd.AgentD(Scripted(CARD_SCRIPT.replace("time.sleep(2)", "pass") % "True"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "how does a VPN work?")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "card" and m["card"].get("gone"))
+    assert msgs[-1]["card"] == {"id": "stream-toolu_c1", "gone": True}
+    await _read_until(r, "turn_end")
+    assert d._stream_ids == []
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_half_drawn_card_is_taken_back_when_the_turn_ends(home):
+    script = CARD_SCRIPT.replace("time.sleep(2)", "pass").split("out({'type': 'user'")[0] + (
+        "out({'type': 'result', 'result': 'Done.', 'session_id': 's1'})\n")
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "how does a VPN work?")
+    msgs = await _read_until(r, "turn_end")
+    gone = [m for m in msgs if m.get("kind") == "card" and m["card"].get("gone")]
+    assert [g["card"]["id"] for g in gone] == ["stream-toolu_c1"]
+    w.close()
+    server.cancel()
+
+
+def _machine(monkeypatch, **over):
+    from bombadil import sysmap
+    calls = []
+
+    def capture(kind, target="", **kw):
+        calls.append((kind, target))
+        card, _ = __import__("bombadil.cards", fromlist=["x"]).validate_diagram(
+            _diagram("How you're connected", nodes=[{"label": "This laptop"}, {"label": "Wi-Fi"},
+                                                   {"label": "Router"}], say="All of it answers."))
+        card["source"] = kind
+        return {"card": card, "facts": []}
+    monkeypatch.setattr(agentd.sysmap, "capture", over.get("capture", capture))
+    return calls, sysmap
+
+
+@pytest.mark.asyncio
+async def test_a_picture_word_draws_the_machine_with_no_model_and_no_turn(home, monkeypatch):
+    calls, _ = _machine(monkeypatch)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "How am I connected?")
+    assert json.loads(await r.readline()) == {"type": "local", "action": "picture"}
+    msgs = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    kinds = [(m["kind"], m.get("phase")) for m in msgs]
+    assert kinds == [("local", "start"), ("card", None), ("local", "done")]
+    assert msgs[0]["text"] == "Drawing how you're connected"
+    assert msgs[1]["turn"] is None and msgs[1]["card"]["source"] == "network"
+    assert msgs[2]["ok"] is True and msgs[2]["text"] == "All of it answers."
+    assert calls == [("network", "")] and d.turns == 0
+    # The agent is told at its next turn what the user was shown.
+    assert d.notes and "showed a picture" in d.notes[0] and "How you're connected" in d.notes[0]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_picture_that_cannot_be_drawn_says_why_in_a_line(home, monkeypatch):
+    from bombadil import sysmap
+
+    def nothing(kind, target="", **kw):
+        raise sysmap.Unavailable("Could not read the screens: Hyprland did not answer.")
+    _machine(monkeypatch, capture=nothing)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "my screens")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("phase") == "done")
+    assert not any(m.get("kind") == "card" for m in msgs)
+    assert msgs[-1]["ok"] is False and msgs[-1]["text"] == "Could not read the screens: Hyprland did not answer."
+    w.close()
+    server.cancel()
+
+
+VPN_FACTS_BEFORE = [{"key": "gateway", "label": "Router", "value": "192.168.1.1"}]
+VPN_FACTS_AFTER = VPN_FACTS_BEFORE + [{"key": "vpn", "label": "VPN tunnel", "value": "wg0"}]
+VPN_SCRIPT = (
+    "import json, sys\n"
+    "sys.stdin.read()\n"
+    "def out(o): print(json.dumps(o), flush=True)\n"
+    "out({'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': 'b1', 'name': 'Bash',"
+    " 'input': {'command': %r}}]}})\n"
+    "out({'type': 'result', 'result': 'Done.', 'session_id': 's1'})\n"
+)
+
+
+def _snapshots(monkeypatch, before, after):
+    seen = []
+
+    def snap(kinds=(), provider="claude", **kw):
+        seen.append(tuple(kinds))
+        return {"network": before if len(seen) == 1 else after}
+    monkeypatch.setattr(agentd.sysmap, "snapshot", snap)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_changed_the_network_ends_with_a_before_and_after(home, monkeypatch):
+    seen = _snapshots(monkeypatch, VPN_FACTS_BEFORE, VPN_FACTS_AFTER)
+    d = agentd.AgentD(Scripted(VPN_SCRIPT % "wg-quick up wg0"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "start the vpn")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "card")
+    end = next(m for m in msgs if m.get("kind") == "turn_end")   # the closing line comes first
+    card = msgs[-1]
+    assert msgs.index(end) < msgs.index(card)
+    assert card["turn"] == 1 and card["card"]["receipt"] is True and card["card"]["shape"] == "compare"
+    assert [n["label"] for n in card["card"]["nodes"]] == ["VPN tunnel"]
+    assert card["card"]["nodes"][0]["side"] == "after" and card["card"]["nodes"][0]["state"] == "new"
+    assert seen[0] == agentd.sysmap.BEFORE_KINDS and seen[1] == ("network",)   # only what it touched, after
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command,after", [("wg-quick up wg0", VPN_FACTS_BEFORE), ("ls ~", VPN_FACTS_AFTER)])
+async def test_no_receipt_when_nothing_it_touched_changed_or_it_touched_nothing(home, monkeypatch, command, after):
+    _snapshots(monkeypatch, VPN_FACTS_BEFORE, after)
+    d = agentd.AgentD(Scripted(VPN_SCRIPT % command), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "go")
+    msgs = await _read_until(r, "turn_end")
+    await _quiet(d)
+    w.write(b'{"type": "status"}\n')
+    await w.drain()
+    msgs += await _events_until(r, lambda m: m.get("type") == "status" and not m["busy"])
+    assert not any(m.get("kind") == "card" for m in msgs)
+    w.close()
+    server.cancel()
+
+
+DRAW_SCRIPT = (VPN_SCRIPT.replace("'name': 'Bash'", "'name': 'mcp__bombadil-os__system_map'")
+               .replace("{'command': %r}", "{'kind': 'network'}"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("script,explain", [(DRAW_SCRIPT, "normal"), (VPN_SCRIPT % "wg-quick up wg0", "brief")])
+async def test_no_receipt_when_the_agent_drew_a_picture_itself_or_explaining_is_off(home, monkeypatch, script,
+                                                                                     explain):
+    seen = _snapshots(monkeypatch, VPN_FACTS_BEFORE, VPN_FACTS_AFTER)
+    d = agentd.AgentD(Scripted(script), agentd._NoSnapshots(), explain=explain)
+    server, r, w = await _start(d)
+    await _ask(w, "go")
+    msgs = await _read_until(r, "turn_end")
+    await _quiet(d)
+    assert not any(m.get("kind") == "card" for m in msgs)
+    if explain == "brief":
+        assert seen == []   # not even looked at
+    w.close()
+    server.cancel()
+
+
+async def _quiet(d, limit=3.0):
+    """Until the receipt task, if any, has finished."""
+    loop = asyncio.get_running_loop()
+    end = loop.time() + limit
+    await asyncio.sleep(0.05)
+    while d._tasks and loop.time() < end:
+        await asyncio.sleep(0.05)
+
+
+def _service_facts(monkeypatch, before, after):
+    states = {"before": before}
+    monkeypatch.setattr(agentd.sysmap, "snapshot_service", lambda unit, *a, **k: states.pop("before", None) or after)
+
+
+@pytest.mark.asyncio
+async def test_a_service_receipt_shows_how_its_state_changed(home, monkeypatch):
+    _service_facts(monkeypatch, [{"key": "state", "label": "wg-quick@wg0", "value": "failed (failed)"}],
+                   [{"key": "state", "label": "wg-quick@wg0", "value": "active (exited)"}])
+    d = agentd.AgentD(Scripted(VPN_SCRIPT % "sudo systemctl restart wg-quick@wg0"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "restart the vpn")
+    msgs = await _events_until(r, lambda m: m.get("kind") == "card")
+    card = msgs[-1]["card"]
+    assert card["receipt"] and card["title"] == "wg-quick@wg0, before and after"
+    assert [n["sub"] for n in card["nodes"]] == ["failed (failed)", "active (exited)"]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_before_caught_while_the_service_was_already_restarting_is_no_before(home, monkeypatch):
+    _service_facts(monkeypatch, [{"key": "state", "label": "wg-quick@wg0", "value": "activating (start)"}],
+                   [{"key": "state", "label": "wg-quick@wg0", "value": "active (exited)"}])
+    d = agentd.AgentD(Scripted(VPN_SCRIPT % "sudo systemctl restart wg-quick@wg0"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "restart the vpn")
+    msgs = await _read_until(r, "turn_end")
+    await _quiet(d)
+    assert not any(m.get("kind") == "card" for m in msgs)
     w.close()
     server.cancel()

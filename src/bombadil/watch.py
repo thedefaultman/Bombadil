@@ -91,6 +91,13 @@ class Renderer:
                 yield f"  {line}"
         elif kind == "error":
             yield c(RED, f"  ! {ev.get('text', '')}")
+        elif kind == "card":
+            # A picture shown during or after the turn, in the words it has for screen readers and copying.
+            card = ev.get("card") if isinstance(ev.get("card"), dict) else {}
+            if card.get("text") and not card.get("partial"):
+                yield c(DIM, "  picture" + (" (what changed)" if card.get("receipt") else ""))
+                for line in str(card["text"]).splitlines():
+                    yield c(DIM, "  ┆ ") + line
         elif kind == "turn_end":
             end = ev.get("line") or ev.get("summary") or "Done."
             yield c(BOLD, f"  {end}") + c(DIM, f"   {ev.get('seconds', 0)} s")

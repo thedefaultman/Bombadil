@@ -126,3 +126,17 @@ def test_details_give_each_step_its_reason_and_what_it_followed():
     assert "  why: Checking the vendor's steps first." in lines
     assert lines[-3:] == ["  read", "    yours    notes.txt",
                           "    outside  wireguard.com/quickstart, lease.pdf (from rent-portal.example)"]
+
+
+def test_details_list_the_pictures_shown_in_words():
+    events = [
+        {"kind": "turn_start", "prompt": "start the vpn", "t": 0},
+        {"kind": "card", "card": {"id": "card-1", "title": "How you're connected", "partial": True, "text": "draft"}},
+        {"kind": "card", "card": {"id": "card-1", "title": "t", "text": "How you're connected: Laptop → Router\nAll answers."}},
+        {"kind": "turn_end", "seconds": 4, "summary": "Started the VPN."},
+        {"kind": "card", "card": {"id": "card-2", "receipt": True, "text": "Before: nothing\nAfter: VPN tunnel (wg0) [new]"}},
+    ]
+    lines = list(watch.Renderer().lines(events))
+    assert "draft" not in "\n".join(lines)
+    assert lines[1:4] == ["  picture", "  ┆ How you're connected: Laptop → Router", "  ┆ All answers."]
+    assert lines[-3:] == ["  picture (what changed)", "  ┆ Before: nothing", "  ┆ After: VPN tunnel (wg0) [new]"]

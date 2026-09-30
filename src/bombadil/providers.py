@@ -42,7 +42,9 @@ def system_prompt() -> str:
         "bar: one or two plain sentences saying what you did, no markdown, no lists. "
         "When a request takes three or more steps, write the plan first with your task tool, in short plain "
         "words the user will read (no file names, commands or tool names), and keep it updated. "
-        "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action."
+        "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action. "
+        "When an answer has parts, order or change, show it as a picture (system_map for this machine, "
+        "show_card otherwise), then say one line."
     )
 
 

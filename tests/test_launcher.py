@@ -358,3 +358,53 @@ def test_closing_an_app_that_is_not_running_does_not_say_it_closed(home, monkeyp
     assert lx.run(launcher.match("quit memory viewer")) == (True, "Memory Viewer is not running.")
     # A drawer nobody can look at (no Hyprland here) was not put away either.
     assert lx.run(launcher.match("hide passwords")) == (True, "Hyprland is not running; nothing to hide.")
+
+
+# -- picture words --
+
+@pytest.mark.parametrize("text, target", [
+    ("how am I connected?", "network"), ("Am I online", "network"), ("How am I connected", "network"),
+    ("what starts when I boot?", "boot"), ("what runs at boot", "boot"),
+    ("where did my disk go?", "disks"), ("Where did my space go", "disks"),
+    ("what's playing where", "sound"), ("whats playing where?", "sound"), ("what’s playing where", "sound"),
+    ("my screens", "screens"), ("my monitors.", "screens"),
+])
+def test_whole_questions_about_the_machine_draw_a_picture_locally(home, text, target):
+    a = launcher.match(text, [])
+    assert (a.kind, a.target) == ("picture", target)
+
+
+@pytest.mark.parametrize("text", [
+    "how am I connected to the printer?", "why is my wifi slow", "how do I get connected", "draw how am i connected",
+    "what starts when I boot up the vm and why", "where did my disk go wrong", "!how am I connected",
+    "how am I connected 😀", "как я подключён",
+])
+def test_anything_longer_or_different_goes_to_the_agent(home, text):
+    assert launcher.match(text, []) is None
+
+
+def test_what_does_a_service_need_asks_the_machine_whether_it_exists(home, monkeypatch):
+    seen = []
+    monkeypatch.setattr(launcher.sysmap, "service_exists", lambda name: seen.append(name) or name == "bluetooth")
+    a = launcher.match("What does bluetooth need?", [])
+    assert (a.kind, a.target, a.title) == ("picture", "service:bluetooth", "what bluetooth needs")
+    assert launcher.match("what does the bluetooth service depend on", [])
+    assert launcher.match("what does the moon need", []) is None     # no such service: a question for the agent
+    assert launcher.match("what does bluetooth; rm need", []) is None  # not even looked up
+    assert seen == ["bluetooth", "bluetooth", "moon"]
+
+
+def test_a_picture_word_never_hides_an_app_you_made(home):
+    apps.create("How am I connected", "import QtQuick\nItem {}\n")
+    a = launcher.match("how am i connected", apps.list_apps())
+    assert (a.kind, a.verb) == ("app", "open")
+
+
+def test_network_alone_still_opens_wifi(home):
+    assert launcher.match("network", []).kind == "wifi"
+
+
+def test_picture_actions_have_words_for_the_line(home):
+    a = launcher.match("my disks", [])
+    assert launcher.Launcher.doing(a) == "Drawing your disks"
+    assert launcher.Launcher.failed(a) == "Could not draw your disks"
