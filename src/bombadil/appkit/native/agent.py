@@ -7,6 +7,8 @@ agentd is away. `check` never connects or sends.
 agentd answers each prompt with {"type": "queued", "turn": id} on this connection only, and
 tags every event with its turn id, so the app follows its own turns by id. That also
 catches a turn that fails before it starts (provider missing): error and turn_end, no turn_start.
+A prompt that waits behind another turn is also announced to everyone as a "queued" event, which
+is not the start of that turn; one dropped from the queue gets an "unqueued" event and nothing more.
 """
 
 import json
@@ -122,9 +124,18 @@ class Agent(QObject):
         if msg.get("type") != "event":
             return
         kind, turn = msg.get("kind"), msg.get("turn")
+        if kind == "queued":                  # a prompt waiting behind another turn: nothing has run yet
+            return
         if kind == "turn_start":
             self._set("_busy", True, self.busyChanged)
         if turn is None or turn not in self._turns:
+            return
+        if kind == "unqueued":                # dropped from the queue: no turn_start or turn_end follows
+            self._turns.discard(turn)
+            text = "Error: dropped from the queue"
+            if self._current not in self._turns:    # no running turn of ours owns `reply`
+                self._set("_reply", text, self.replyChanged)
+            self.replied.emit(text)
             return
         if turn != self._current:             # the first event of a new turn of ours
             self._current = turn

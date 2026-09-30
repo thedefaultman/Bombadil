@@ -182,6 +182,7 @@ class Host:
         self._backend_failed = False  # app.py did not load: try it again on every reload
         self._module_name = ""
         self._next_backend = None     # (module name, Backend) from app.py, used once its QML compiles
+        self._unfocused = None        # the old UI's focus item, while a reload is under way
         self._sig: dict = {}
         self._top = None              # the app folder's (st_dev, st_ino), to notice it being replaced
         self._dirty = False
@@ -212,6 +213,8 @@ class Host:
 
     def load(self, changed: set[str] | None = None) -> bool:
         """Load main.qml (again). On failure whatever is on screen stays."""
+        from shiboken6 import isValid
+
         self.attempts += 1
         self.collector.reset()
         if self.root is not None:
@@ -219,7 +222,10 @@ class Host:
         self._refresh_meta()
         self.engine.clearComponentCache()
         obj = self._create() if self._load_backend(changed) else None
+        focus, self._unfocused = self._unfocused, None
         if obj is None:
+            if focus is not None and isValid(focus):
+                focus.forceActiveFocus()   # the old UI stays, as it was
             if not self.collector.errors:
                 self.collector.add("error", f"{self.ctx.main.name}: failed to load")
             self.loaded = False
@@ -252,6 +258,7 @@ class Host:
             return None
         if not self._use_backend():
             return None
+        self._unfocus()
         obj = comp.beginCreate(self.engine.rootContext())
         if obj is None:
             self.collector.add_qml_errors(comp.errors(), fatal=True)
@@ -417,14 +424,31 @@ class Host:
         self.collector.errors, self.collector.warnings = said
         return True
 
+    def _unfocus(self) -> None:
+        """Take keyboard focus off the old UI before the new one exists. A new UI that takes
+        focus as it is created (Component.onCompleted: field.forceActiveFocus()) makes the old
+        one report the loss, e.g. calling a slot the new Backend lacks: not about the new UI.
+        load() gives the focus back if the new UI does not come up."""
+        from PySide6.QtQuick import QQuickWindow
+
+        win = self.root if isinstance(self.root, QQuickWindow) else self.window
+        if self.root is None or win is None:
+            return
+        said = self.collector.errors[:], self.collector.warnings[:]
+        item = self._unfocused = win.activeFocusItem()
+        while item is not None and item is not win.contentItem():
+            item.setFocus(False)   # every scope up to the window, or it would keep the focus
+            item = item.parentItem()
+        self.collector.errors, self.collector.warnings = said
+
     def _release(self, backend) -> None:
         """Before a Backend is dropped: Qt aborts the whole process when a QThread is
         destroyed while it runs, so its threads are asked to stop. One that will not keeps
         its Backend alive."""
-        from PySide6.QtCore import QThread
+        from PySide6.QtCore import QObject, QThread
         from shiboken6 import isValid
 
-        if backend is None or not isValid(backend):
+        if not isinstance(backend, QObject) or not isValid(backend):   # None, or not a QObject
             return
         threads = backend.findChildren(QThread) + [t for t in vars(backend).values() if isinstance(t, QThread)]
         threads = [t for t in threads if isValid(t)]

@@ -234,19 +234,27 @@ FocusScope {
     // A press selects its row at once, so a refresh that moves the row before the click lands
     // takes the selection along. A press that turns into a touch scroll gives it back.
     property var _pressed: null
+    // Set while a press selects or gives back a row: the list must not scroll under the finger.
+    property bool _holding: false
 
     function _press(i) {
         view.forceActiveFocus()
         _pressed = i >= 0 ? { row: i, before: view.currentIndex } : null
         if (i >= 0)
-            view.currentIndex = i
+            _setCurrent(i)
+    }
+
+    function _setCurrent(i) {
+        _holding = true
+        view.currentIndex = i
+        _holding = false
     }
 
     function _cancelPress() {
         const p = _pressed
         _pressed = null
         if (p && view.currentIndex === p.row)
-            view.currentIndex = p.before < view.count ? p.before : -1
+            _setCurrent(p.before < view.count ? p.before : -1)
     }
 
     function _tapped(button, count) {
@@ -255,6 +263,7 @@ FocusScope {
         const row = current
         if (!pressed || !row)
             return
+        view.positionViewAtIndex(view.currentIndex, ListView.Contain)
         if (button === Qt.RightButton)
             contextRequested(row)
         else if (count === 2)
@@ -344,7 +353,7 @@ FocusScope {
 
         ScrollBar.vertical: ScrollBar {}
 
-        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
+        onCurrentIndexChanged: if (currentIndex >= 0 && !root._holding) positionViewAtIndex(currentIndex, ListView.Contain)
 
         delegate: Item {
             id: rowItem
