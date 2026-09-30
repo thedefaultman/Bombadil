@@ -109,6 +109,12 @@ Existing messages are unchanged. New (client → agentd):
   `not_now`, `never`, `got_it`, `other_ways`, `preview`, `report`, `send`, `undo`, `bring_back`,
   `forget_asks`, `clear_found`, `hide`, `show`. agentd answers the sender with `{"type":"noticed_result","op","id","ok","text","preview"?}`.
 - `{"type":"noticed_state"}` → agentd sends `noticed` to that client.
+- `{"type":"noticed_list"}` → agentd sends `noticed_full` to that client, for the Noticed window:
+  `{"type":"noticed_full","hidden":bool,"held":bool,"resting":"","asks":[{"id","title","n","days","last","state","sentences":[…],"became":""}],
+  "changes":[{"id","title","t","what","undone":bool,"can_undo":bool}],"found":[{"id","title","meta","fp","state","can_send":bool}],
+  "said_no":[{"id","title","t","form"}],"words":[{"phrase","opens","away":bool}]}`. `held` is true while offers are held
+  (hidden, resting). The window acts with the same `noticed_do` ops (`id` is the row's id in its own list) and
+  asks again after each answer or when it hears a `noticed` message.
 
 New (agentd → clients):
 
@@ -120,6 +126,17 @@ New (agentd → clients):
 - `{"type":"noticed_open"}`: he said "noticed": the bar keeps the card up.
 - A local event may carry `"undo_msg": {…}`: a message the line's Undo button sends instead of the
   machine's undo (the receipt of a made word puts the word away).
+
+## Service rules (agentd side)
+
+`loop/service.py` is the only thing that touches the store from agentd. One worker thread (a one-thread
+executor) owns the `LoopStore` and `FindingsStore` connections, since an SQLite connection belongs to its
+thread; the event loop never touches the database. Nothing the service does may delay a turn, the pill or a
+client: a failure prints one stderr line and costs the loop a count. The prober (`bin/bombadil-probe`, a
+user unit) is a separate process writing the same loop.db; the service reads findings from there about every
+20 s while a client is connected. An offer is only recorded as shown (`store.ripe_offer`) while no turn runs,
+nothing is queued and a bar is connected. Undoing a made word answers its group `not_now`. `hidden` (Noticed
+hidden, offers held) is kept in loop.db.
 
 ## Launcher
 
