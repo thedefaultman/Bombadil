@@ -57,3 +57,11 @@ def brain_socket() -> Path:
 
 def brain_db() -> Path:
     return _env_path("BOMBADIL_BRAIN_DB", state_dir() / "brain.db")
+
+
+def desk_file() -> Path:
+    return state_dir() / "desk.toml"
+
+
+def jobs_dir() -> Path:
+    return state_dir() / "jobs"

@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from bombadil import providers
 
 
@@ -135,7 +137,11 @@ def test_codex_items_become_steps_and_results():
     assert ev[3]["name"] == "mcp__bombadil-os__show_panel" and ev[3]["input"] == {"name": "browser"}
     assert ev[4] == {"kind": "tool_result", "id": "m", "output": "ok", "error": False}
     assert ev[5]["kind"] == "file_change" and ev[6]["error"] is True
-    assert ev[7]["input"]["todos"][0]["content"] == "Open the browser"
+    # The whole list, done items included: the first one not done is the one under way.
+    assert ev[7]["kind"] == "tool" and ev[7]["name"] == "TodoWrite" and ev[7]["id"] == "l"
+    assert ev[7]["input"]["todos"] == [
+        {"content": "Install ffmpeg", "status": "completed", "activeForm": None},
+        {"content": "Open the browser", "status": "in_progress", "activeForm": None}]
 
 
 def test_shell_turns_stream_output_and_end_with_the_exit_code():
@@ -146,3 +152,75 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def _todo_list(kind, items, item_id="l"):
+    return json.dumps({"type": kind, "item": {"id": item_id, "type": "todo_list", "items": items}})
+
+
+def test_codex_sends_the_whole_plan_on_every_change():
+    p = providers.Codex("x")
+    plan = [{"text": "Install ffmpeg", "completed": False}, {"text": "Open the browser", "completed": False},
+            {"text": "Check the sound", "completed": False}]
+    started = list(p.parse(_todo_list("item.started", plan)))
+    assert started == [{"kind": "tool", "name": "TodoWrite", "id": "l", "input": {"todos": [
+        {"content": "Install ffmpeg", "status": "in_progress", "activeForm": None},
+        {"content": "Open the browser", "status": "pending", "activeForm": None},
+        {"content": "Check the sound", "status": "pending", "activeForm": None}]}}]
+    plan[0]["completed"] = plan[1]["completed"] = True
+    updated = list(p.parse(_todo_list("item.updated", plan)))
+    assert [t["status"] for t in updated[0]["input"]["todos"]] == ["completed", "completed", "in_progress"]
+    # Every item done: the list still goes out, so the last step is ticked.
+    plan[2]["completed"] = True
+    done = list(p.parse(_todo_list("item.updated", plan)))
+    assert [t["status"] for t in done[0]["input"]["todos"]] == ["completed"] * 3
+    # The list Codex closes the turn with is the final one.
+    closed = list(p.parse(_todo_list("item.completed", plan)))
+    assert [t["status"] for t in closed[0]["input"]["todos"]] == ["completed"] * 3
+
+
+@pytest.mark.parametrize("items", [[], None, "nope", [3, None]])
+def test_a_codex_plan_without_steps_says_nothing(items):
+    for kind in ("item.started", "item.updated", "item.completed"):
+        assert list(providers.Codex("x").parse(_todo_list(kind, items))) == []
+
+
+def _claude_line(**m):
+    return json.dumps(m)
+
+
+def test_claude_forwards_the_parent_of_a_subagents_tools_and_only_then():
+    p = providers.Claude("x")
+    call = {"type": "tool_use", "id": "t1", "name": "TaskCreate", "input": {"subject": "Read"}}
+    sub = list(p.parse(_claude_line(type="assistant", message={"content": [call]}, parent_tool_use_id="toolu_A")))
+    assert sub == [{"kind": "tool", "name": "TaskCreate", "input": {"subject": "Read"}, "id": "t1",
+                    "parent": "toolu_A"}]
+    result = _claude_line(type="user", parent_tool_use_id="toolu_A", message={"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "Task #1 created successfully: Read"}]})
+    [got] = p.parse(result)
+    assert got["kind"] == "tool_result" and got["parent"] == "toolu_A"
+    start = _claude_line(type="stream_event", parent_tool_use_id="toolu_A", event={
+        "type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "t1", "name": "Bash"}})
+    [got] = p.parse(start)
+    assert got["kind"] == "tool_start" and got["parent"] == "toolu_A"
+    # The turn's own tools carry no such key, null or absent.
+    for extra in ({"parent_tool_use_id": None}, {}):
+        main = list(p.parse(_claude_line(type="assistant", message={"content": [call]}, **extra)))
+        assert "parent" not in main[0]
+    # Words are not tool calls: nothing reads a subagent's text as plan.
+    text = list(p.parse(_claude_line(type="assistant", parent_tool_use_id="toolu_A",
+                                     message={"content": [{"type": "text", "text": "hi"}]})))
+    assert text == [{"kind": "text", "text": "hi"}]
+
+
+def test_the_plan_tools_are_switched_on_for_the_machines_own_turns(tmp_path):
+    # Claude Code offers TodoWrite/TaskCreate on some models only when asked, and the way to ask is
+    # the CLI's environment (agentd merges this over its own).
+    assert providers.Claude("x").env() == {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}
+    for other in (providers.Codex("x"), providers.Shell(), providers.Fake("x")):
+        assert other.env() == {}
+    # Codex registers update_plan only when its config says so: on a fresh and on a resumed turn alike.
+    codex = providers.Codex("x")
+    for turn in (providers.Turn("hi"), providers.Turn("again", session_id="t1")):
+        cmd = codex.command(turn, tmp_path)
+        assert cmd[cmd.index("tools.update_plan.enabled=true") - 1] == "-c"

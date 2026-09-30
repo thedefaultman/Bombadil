@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from bombadil import apps, launcher, snapshots
+from bombadil import apps, desk, launcher, snapshots
 from bombadil.brain import client as brain_client
 
 
@@ -34,6 +34,23 @@ def _apps(home):
     ("open wi-fi", "wifi", "", "open"),
     ("battery", "battery", "", "open"),
     ("shut down", "shutdown", "", "open"),
+    ("desk", "desk", "", "open"),
+    ("Desk.", "desk", "", "open"),
+    ("show machine", "widget", "machine", "open"),
+    ("Show the Machine", "widget", "machine", "open"),
+    ("open alive", "widget", "alive", "open"),
+    ("bring up watching", "widget", "watching", "open"),
+    ("show now", "widget", "now", "open"),
+    ("show the route", "widget", "now", "open"),
+    ("show needs you", "widget", "needs", "open"),
+    ("show while you were away", "widget", "away", "open"),
+    ("hide machine", "widget", "machine", "hide"),
+    ("hide now.", "widget", "now", "hide"),
+    ("hide needs you", "widget", "needs", "hide"),
+    ("put away alive", "widget", "alive", "hide"),
+    ("put watching away", "widget", "watching", "hide"),
+    ("put the machine away", "widget", "machine", "hide"),
+    ("close watching", "widget", "watching", "close"),
 ])
 def test_exact_words_open_locally(home, text, kind, target, verb):
     a = launcher.match(text, _apps(home))
@@ -48,6 +65,16 @@ def test_exact_words_open_locally(home, text, kind, target, verb):
     "¿restart?", "电脑 restart 以后很慢", "turn off", "restart?", "open the browser, please",
     # "!" always means a shell command, even before a launcher word.
     "!shutdown", "!restart", "!undo", "!files", " !history",
+    # The desk word is exact; a sentence with it in is for the agent.
+    "what is on my desk?", "show me the desk", "hide the desk", "clean my desk", "desk please",
+    # A question asks; it does not tell, so it is the agent's to answer, for the desk as for restart.
+    "desk?", "show machine?", "hide now?", "open alive ?",
+    # A widget's name needs one of the verbs that put a thing on the screen: bare it is a word,
+    # and with other verbs it is a sentence.
+    "now", "away", "machine", "alive", "watching", "needs you", "the machine", "route",
+    "start now", "run now", "exit now", "quit machine", "kill machine", "launch alive", "go to away",
+    "show me machine", "hide machine now", "put watching on the right", "put watching away please",
+    "put away", "make a widget", "show my batch on the desk", "hide the machine widget",
 ])
 def test_everything_else_goes_to_the_agent(home, text):
     assert launcher.match(text, _apps(home)) is None
@@ -65,6 +92,31 @@ def test_entries_for_completion(home):
     names = [x["name"] for x in e]
     assert "browser" in names and "undo" in names
     assert "shutdown" not in names and "restart" not in names   # never one Tab away
+
+
+def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
+    e = launcher.entries([])
+    kinds = [x["kind"] for x in e]
+    rank = {"app": 0, "panel": 1, "widget": 2, "command": 3}
+    assert kinds == sorted(kinds, key=rank.get)   # apps, then panels, widgets and commands
+    widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
+    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
+    assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
+                                "words": ["needs", "needs you"]}
+    assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]
+    assert {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]} in e
+
+
+def test_an_app_you_named_like_a_widget_still_opens_and_the_desk_word_is_never_shadowed(home):
+    apps.create("Now", "import QtQuick\nItem {}\n")
+    apps.create("Desk", "import QtQuick\nItem {}\n")
+    for text, verb in (("now", "open"), ("show now", "open"), ("hide now", "hide"), ("close now", "close")):
+        a = launcher.match(text)
+        assert (a.kind, a.target, a.verb) == ("app", "now", verb)
+    assert launcher.match("put now away") is None            # no such form for apps: the agent's
+    assert launcher.match("show machine").kind == "widget"   # the app does not take the others
+    assert launcher.match("desk").kind == "desk"
+    assert launcher.match("open desk").kind == "app"         # a verb and a name is the app's to answer
 
 
 class Snaps(snapshots.Snapshots):
@@ -522,3 +574,76 @@ def test_a_stalled_compositor_makes_the_request_raise_instead_of_hanging(home, m
         assert time.monotonic() - t0 < 2 and waits and all(0 < w <= 10 for w in waits)
     finally:
         server.close()
+
+
+def _lx(home, **k):
+    return launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0), desk=desk.Desk(), **k)
+
+
+@pytest.mark.parametrize("words, want", [
+    (["hide machine"], [(True, "Put Machine away.")]),
+    (["hide machine", "show machine"], [(True, "Put Machine away."), (True, "Put Machine on the desk.")]),
+    (["close the machine"], [(True, "Put Machine away.")]),
+    (["put watching away", "put watching away"],
+     [(True, "Put Watching away."), (True, "Watching is already put away.")]),
+    (["show alive"], [(True, "Put Alive on the desk.")]),
+    (["show now"], [(True, "Now is already on the desk.")]),
+    (["hide needs you"], [(False, "Needs you cannot be hidden.")]),
+    (["hide needs"], [(False, "Needs you cannot be hidden.")]),
+    (["desk", "desk", "desk"],
+     [(True, "Folded the desk."), (True, "Unfolded the desk."), (True, "Folded the desk.")]),
+])
+def test_the_desk_words_change_the_desk_and_say_what_they_did(home, words, want):
+    lx = _lx(home)
+    assert [lx.run(launcher.match(w, [])) for w in words] == want
+
+
+def test_the_words_change_what_the_shell_is_told_and_what_the_next_start_reads(home):
+    lx = _lx(home)
+    told = []
+    lx.desk_state.on_change = lambda: told.append(lx.desk_state.snapshot())
+    lx.run(launcher.match("hide machine", []))
+    lx.run(launcher.match("desk", []))
+    lx.run(launcher.match("hide needs you", []))     # refused: nothing changes, nobody is told
+    assert [(t["folded"], t["hidden"]) for t in told] == [(False, ["alive", "machine"]), (True, ["alive", "machine"])]
+    assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).desk_state.snapshot() == told[-1]
+
+
+def test_the_line_says_what_it_is_doing_and_what_went_wrong(home):
+    doing = launcher.Launcher.doing
+    failed = launcher.Launcher.failed
+    assert doing(launcher.match("hide machine", [])) == "Putting Machine away"
+    assert doing(launcher.match("close needs you", [])) == "Putting Needs you away"
+    assert doing(launcher.match("show alive", [])) == "Putting Alive on the desk"
+    assert doing(launcher.match("desk", [])) == "Changing the desk"
+    assert failed(launcher.match("hide machine", [])) == "Could not put Machine away"
+    assert failed(launcher.match("show alive", [])) == "Could not put Alive on the desk"
+    assert failed(launcher.match("desk", [])) == "Could not change the desk"
+
+
+def test_a_desk_that_breaks_is_one_plain_line(home):
+    lx = _lx(home)
+
+    def boom(*a, **k):
+        raise OSError("disk on fire")
+    lx.desk_state.apply = boom
+    assert lx.run(launcher.match("hide machine", [])) == (False, "Could not put Machine away: disk on fire")
+    assert lx.run(launcher.match("desk", [])) == (False, "Could not change the desk: disk on fire")
+
+
+def test_hide_alone_still_puts_the_drawers_away_not_a_widget(home):
+    h = FakeHypr()
+    lx = launcher.Launcher(hyprland=h, snaps=Snaps(0), desk=desk.Desk())
+    for word in ("hide", "hide it", "hide everything", "put it away"):
+        assert launcher.match(word, []).kind == "hide"
+    assert lx.run(launcher.match("hide", [])) == (True, "Put everything away.")
+    assert lx.desk_state.snapshot()["hidden"] == ["alive"]
+
+
+def test_a_launcher_made_alone_reads_the_desk_that_was_saved(home):
+    saved = desk.Desk()
+    saved.apply("hide", "machine")
+    assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).desk_state.snapshot()["hidden"] == \
+        ["alive", "machine"]
+
+
