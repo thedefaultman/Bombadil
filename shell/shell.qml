@@ -396,6 +396,8 @@ ShellRoot {
                 pillHeight: pillBox.height
                 columnHeight: column.height
                 windowWidth: win.width
+                // Past the desk's strips on this side of the pill, when there are any.
+                taken: stripsRight.shown ? stripsRight.width + 12 : 0
                 // A click keeps the card up, and the pill takes the keyboard so Esc can put it away.
                 onClicked: { if (loopState.kept) win.summonHere(); else if (win.summoned) root.release() }
             }
