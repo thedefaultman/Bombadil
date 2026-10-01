@@ -1925,11 +1925,12 @@ def test_a_tap_on_the_disk_row_asks_agentd_to_open_it_and_nothing_else(desk):
     assert desk.sent == hello + [{"type": "vitals", "op": "open", "row": "disk"}]
     assert plain(desk.win.property("opened")) == [["machine", "disk", "disk"]]
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
+    assert desk.prop("_phase") == "idle"
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeta"))
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeter"))
     assert [m for m in desk.sent[1:]] == [{"type": "vitals", "op": "open", "row": "disk"}] * 3
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []
 
 
 def test_only_machines_opens_are_a_message(desk):
