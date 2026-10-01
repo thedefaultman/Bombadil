@@ -3,9 +3,9 @@
 Bombadil starts as a USB stick you try, and ends as the system on a computer's disk, the way
 Debian or Windows is installed. This page says what the installed system looks like, why it is
 built that way, what you can rely on when you build on it, and how to test a change to it. The
-complete reasoning, with the alternatives that were weighed, is in
-[design/installed-os-brief.md](design/installed-os-brief.md). The disk layout in table form is in
-[ARCHITECTURE.md](ARCHITECTURE.md#the-installed-disk-layout-1).
+complete reasoning, with the alternatives that were weighed, is in the installed-system design brief
+(`docs/design/installed-os-brief.md`, brought in by the repository documentation sweep). The disk
+layout in table form is in [ARCHITECTURE.md](ARCHITECTURE.md#the-installed-disk-layout-1).
 
 ## Principles
 

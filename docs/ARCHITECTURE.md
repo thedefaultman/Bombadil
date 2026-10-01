@@ -58,7 +58,7 @@ file descriptor, never in a file, an argument or the log: `bombadil-install --pl
 (disk, mode, time zone and where it came from, keymap, computer name, what to carry, whether to
 encrypt, internal or USB) and is also the place `install/carry.list` is read: the home paths that
 may come along from the stick (the sign-in, the chosen AI, made apps, the browser profile).
-`bombadil-install DISK --yes` is the plan-less form the tests and the laptop VM use: no password,
+`bombadil-install DISK --yes` is the plan-less form the tests and the VM helper scripts use: no password,
 no encryption.
 
 **Refresh** (`bombadil-install --refresh DISK`) gives a disk a new system under the home folder
