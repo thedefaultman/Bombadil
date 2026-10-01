@@ -4,6 +4,7 @@ Runs inside the test container (tests/desktop/run.sh) as an ordinary user with p
 Typing goes through wtype, Super through `bombadil pill`; each check prints PASS or FAIL.
 """
 
+import http.client
 import json
 import os
 import re
@@ -66,6 +67,18 @@ def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
     want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
     for y in range(*rows):
         for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+def colour_pixels(name, colour, box, tol=14):
+    """How many pixels of a screenshot's box (x0, y0, x1, y1) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
             c = img.pixelColor(x, y)
             n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
     return n
@@ -167,6 +180,21 @@ def api_requests():
         return len((OUT / "api-requests.jsonl").read_text().splitlines())
     except OSError:
         return 0
+
+
+def api_log():
+    try:
+        return [json.loads(ln) for ln in (OUT / "api-requests.jsonl").read_text().splitlines()]
+    except (OSError, ValueError):
+        return []
+
+
+def api_control(limit):
+    """The scripted API's plan: {"reset": epoch seconds} refuses the haiku ask as a used-up plan does, None lets it through."""
+    c = http.client.HTTPConnection("127.0.0.1", 18555, timeout=5)
+    c.request("POST", "/__control", json.dumps({"limit": limit}), {"content-type": "application/json"})
+    c.getresponse().read()
+    c.close()
 
 
 def sleeps():
@@ -565,6 +593,223 @@ inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+
+# 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
+# claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
+# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
+# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
+# the same conversation: the first time the owner says so, the second time the clock does.
+STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
+LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, with the chip row below it (see glass_pixels)
+claude_ai = Path.home() / ".e2e-claude-ai"
+claude_ai.touch()
+rest_file = Path.home() / ".local" / "state" / "bombadil" / "rest.json"
+
+
+def ink(shot_name):
+    """What colours the stone is drawn in: grey while the AI rests, green at rest, amber for needs, red for offline."""
+    return {c: colour_pixels(shot_name, v, STONE) for c, v in (("grey", "#8b939c"), ("green", "#5fb36b"), ("amber", "#e0a93b"), ("red", "#d05555"))}
+
+
+summon()
+typ("tell me a joke")   # a first turn that works, so the haiku has a conversation to come back to
+n = mark()
+key("Return")
+first = wait(ev("result"), 40, n)
+check("the CLI works as a claude.ai login too", first is not None and first.get("ok"), first and first.get("text"))
+time.sleep(1.5)
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+end = wait(ev("turn_end", turn=haiku), 20, n)
+time.sleep(1.0)
+shot("27-resting")
+refusals = [r for r in api_log()[before:] if r["refused"]]
+check("the API refused the ask once and the CLI did not retry it", len(refusals) == 1 and len(api_log()) == before + 1, len(api_log()) - before)
+r = (resting or {}).get("rest") or {}
+check(
+    "the CLI's own limit notice puts the machine to rest, with the time the plan gave",
+    r.get("provider") == "claude" and r.get("why") == "limit" and r.get("kind") == "five_hour" and r.get("until") == reset,
+    resting,
+)
+check(
+    "the line says when and that the apps still work, and offers no button",
+    resting and resting["line"].startswith("Claude is at its limit until ") and resting["line"].endswith("Your apps and files still work.")
+    and resting["actions"] == [] and resting["tone"] == "step",
+    resting and (resting["line"], resting["actions"]),
+)
+check(
+    "the empty field says what waits and until when",
+    r.get("hint", "").startswith("Open or find anything. Asks wait for ") and r.get("when") and r["when"] in r["hint"],
+    r.get("hint"),
+)
+check(
+    "the turn ends to run again, with no error and no result",
+    end and end.get("requeued") is True and end.get("line") == resting["line"] and not any(
+        m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]
+    ),
+    end and end.get("line"),
+)
+check("the log of the turn says the limit stopped it", wait(ev("rest", turn=haiku, window="five_hour", until=reset), 1, n) is not None)
+with lock:
+    sts = [m for m in events[n:] if m.get("type") == "status" and m.get("setup") == "resting"]
+st = sts[-1] if sts else None
+check(
+    "the ask waits at the front as a chip that says when, and nothing is on it",
+    st and st["queue"] and st["queue"][0]["turn"] == haiku and st["queue"][0].get("wait") == r.get("wait") and not st["busy"],
+    st and st["queue"],
+)
+stone = ink("27-resting")
+check(
+    "the stone rests as a grey hollow: no green, no amber, no red",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and ink("00-resting")["grey"] < 10,
+    stone,
+)
+check("the line above the pill says it", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+check("the line fades by itself and the empty field carries the state", until(lambda: glass_pixels(*LINE) < 5, 30), glass_pixels(*LINE))
+shot("28-resting-field")
+summon()
+time.sleep(0.8)
+shot("29-resting-summoned")
+check("the line comes back when the pill is summoned", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+key("Escape")
+
+# words that never need the AI still work while it rests: an app by name, and a "!" command.
+before = len(api_log())
+m = mark()
+summon()
+typ("passwords")
+key("Return")
+o = wait(ev("local", phase="done"), 10, m)
+time.sleep(0.5)
+shot("30-resting-passwords")
+check("an app opens by name while the AI rests", o is not None and o.get("ok"), o and o.get("text"))
+summon()
+typ("!echo hi")
+m = mark()
+key("Return")
+bang = wait(ev("turn_end"), 20, m)
+time.sleep(0.4)
+shot("31-resting-bang")
+check(
+    "a ! command runs while the AI rests, with no model",
+    bang is not None and not bang.get("requeued") and wait(ev("turn_start", prompt="!echo hi"), 1, m) is not None
+    and len(api_log()) == before,
+    bang,
+)
+
+# the plan comes back: the API lets the ask through, the state file says the time has passed, and the owner says so.
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 20, m)
+check(
+    "the machine says it is back and what runs now",
+    back and back["line"] == "Claude is back. Running your waiting ask." and back["tone"] == "done" and "rest" not in back,
+    back and back["line"],
+)
+again = wait(ev("turn_start", turn=haiku), 20, m)
+done = wait(ev("turn_end", turn=haiku), 60, m)
+res = wait(ev("result", turn=haiku), 1, m)
+check("the same ask runs again under the same id", again is not None and again["prompt"] == "write a haiku about rain", again and again.get("prompt"))
+check(
+    "it ends well, with the answer, in the same conversation",
+    done and not done.get("requeued") and res and res.get("ok") and "kettle" in res.get("text", "")
+    and res.get("session_id") == first.get("session_id") and api_log()[-1]["prompts"] > 1 and not api_log()[-1]["refused"],
+    res and (res.get("session_id"), first.get("session_id"), api_log()[-1]),
+)
+time.sleep(2.5)
+shot("32-back")
+check("the stone is green again", stone_pixels("32-back") > 100, stone_pixels("32-back"))
+
+# and by itself: the plan says it is back in ten seconds, a second ask waits behind the first, and the machine
+# wakes on the clock, a minute after the time (agentd's REST_POLL looks, the wall clock decides).
+reset = int(time.time()) + 10
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+check("a second refusal rests the machine again, with the new time", resting and resting["rest"]["until"] == reset, resting and resting.get("rest"))
+summon()
+typ("tell me a joke")
+key("Return")
+joke = wait(lambda m: m.get("type") == "status" and len(m.get("queue", [])) == 2, 10, n)
+shot("33-two-waiting")
+check(
+    "a second ask waits behind the first, each with its time",
+    joke and [q["turn"] for q in joke["queue"]][0] == haiku and all(q.get("wait") for q in joke["queue"]),
+    joke and joke["queue"],
+)
+api_control(None)
+woke = wait(lambda m: m.get("type") == "setup" and m.get("state") == "ready", 120, n)
+woke_at = time.time()
+check(
+    "the machine wakes by itself, a minute after the time, and says what runs now",
+    woke and woke["line"] == "Claude is back. Running your 2 waiting asks." and woke["tone"] == "done" and woke_at >= reset + 59,
+    woke and (woke["line"], round(woke_at - reset, 1)),
+)
+with lock:
+    k = events.index(woke) if woke else n
+d1 = wait(ev("turn_end", turn=haiku), 60, k)
+d2 = wait(ev("turn_end", turn=lambda t: t is not None and t > haiku), 60, k)
+check("both asks run, the first one first", d1 is not None and d2 is not None and d1["_t"] < d2["_t"] and not d1.get("requeued"), (d1 and d1.get("line"), d2 and d2.get("line")))
+time.sleep(2.5)
+shot("34-woke")
+check("the stone is green again after the wake", stone_pixels("34-woke") > 100, stone_pixels("34-woke"))
+
+# paused by hand: the same rest with no time and one button; an ask waits as "paused", and the button lets it run.
+summon()
+typ("pause claude")
+n = mark()
+key("Return")
+paused = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 10, n)
+check(
+    "pause claude rests it by hand, with one button to resume",
+    paused and paused["rest"]["why"] == "hand" and paused["rest"]["until"] is None
+    and paused["line"] == "Claude is paused. Your apps and files still work."
+    and [(a["id"], a["label"]) for a in paused["actions"]] == [("resume", "Resume Claude")],
+    paused and (paused["line"], paused["actions"]),
+)
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+queued = wait(lambda m: m.get("type") == "status" and m.get("queue"), 10, n)
+time.sleep(1.0)
+shot("35-paused")
+check(
+    "an ask waits as paused, with nothing sent and the stone resting grey",
+    queued and queued["queue"][0].get("wait") == "paused" and len(api_log()) == before and ink("35-paused")["grey"] > 20
+    and not ink("35-paused")["green"],
+    queued and queued["queue"],
+)
+m = mark()
+send({"type": "setup_action", "id": "resume"})
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 10, m)
+res = wait(ev("result"), 60, m)
+check(
+    "Resume Claude brings it back and the waiting ask runs",
+    back and back["line"] == "Claude is back. Running your waiting ask." and res and res.get("ok") and "kettle" in res.get("text", ""),
+    back and back["line"],
+)
+claude_ai.unlink()
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
