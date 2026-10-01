@@ -27,16 +27,17 @@ import QtQuick
 import "%s"
 
 Window {
-    width: 24; height: 24; visible: true; color: "%s"
-    Stone { id: stone; objectName: "stone"; ground: "%s" }
+    width: 24 + 2 * %d; height: 24 + 2 * %d; visible: true; color: "%s"
+    Stone { id: stone; objectName: "stone"; x: %d; y: %d; ground: "%s"; settle: %d }
 }
 """
 
 
 class Mark:
-    def __init__(self, app, tmp_path, ground=CUT):
+    def __init__(self, app, tmp_path, ground=CUT, settle=0, pad=0):
+        # pad: ground left around the 24 px slot, to see what the stone draws outside it.
         qml = tmp_path / "stone.qml"
-        qml.write_text(HARNESS % (SHELL.as_uri(), GROUND, ground))
+        qml.write_text(HARNESS % (SHELL.as_uri(), pad, pad, GROUND, pad, pad, ground, settle))
         self.app = app
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
@@ -149,6 +150,39 @@ def test_working_is_orange_and_rolls_while_the_b_holds_still(mark):
     mark.snap("working")
 
 
+def test_the_first_frames_keep_the_resting_green_then_the_face_shows(app, tmp_path):
+    # The scene graph drops a colour change made in the first frames after the bar starts (the VM's
+    # stone stayed orange at rest). So the stone is painted resting green for the first 400 ms
+    # whatever the face is, then follows it: a starting face that settles to rest never shows a
+    # colour change, and one that is still starting turns orange afterwards.
+    m = Mark(app, tmp_path, settle=400)
+    try:
+        m.set(face="starting")
+        assert near(m.at(12, 8), THEME["good"])
+        m.set(face="rest")
+        m.pump(0.5)
+        assert near(m.at(12, 8), THEME["good"])
+        m.set(face="starting")
+        assert near(m.at(12, 8), THEME["accent"])
+    finally:
+        m.win.close()
+        m.engine.deleteLater()
+        m.pump()
+
+
+def test_a_face_that_waits_is_amber_once_the_stone_has_settled(app, tmp_path):
+    m = Mark(app, tmp_path, settle=400)
+    try:
+        m.set(face="needs")
+        assert near(m.at(12, 8), THEME["good"])
+        m.pump(0.5)
+        assert near(m.at(12, 8), THEME["warn"])
+    finally:
+        m.win.close()
+        m.engine.deleteLater()
+        m.pump()
+
+
 def test_starting_rolls_like_working(mark):
     mark.set(face="starting")
     assert near(mark.at(12, 8), THEME["accent"])
@@ -187,7 +221,8 @@ def test_needs_you_is_amber_with_a_glow_and_two_knocks(mark):
     mark.set(face="needs")
     assert near(mark.at(12, 8), THEME["warn"])
     knocks, glows = [], set()
-    for _ in range(40):                 # one beat is 1.6 s
+    end = time.monotonic() + 1.55       # one beat is 1.6 s: by the clock, so a slow machine still samples one
+    while time.monotonic() < end:
         mark.pump(0.04)
         knocks.append(mark.stone.property("knock"))
         glows.add(round(mark.stone.property("glowOpacity"), 1))
@@ -200,8 +235,28 @@ def test_needs_you_is_amber_with_a_glow_and_two_knocks(mark):
     mark.set(face="needs", reducedMotion=True)    # held still at 0.45
     outside = QtGui.QColor(mark.at(2, 13))
     assert outside.red() > QtGui.QColor(GROUND).red() + 10 and outside.red() > outside.blue()
-    assert near(mark.at(0, 13), GROUND, 2)                # and it fades out before the edge of the slot
+    assert not near(mark.at(0, 13), GROUND, 6)            # and it reaches the edge of the slot
     mark.snap("needs")
+
+
+def test_the_glow_reaches_past_the_slot_and_fades_out(app, tmp_path):
+    # At 24 px the old glow (radius 11) was a 1 px halo that did not read. It now spreads into the
+    # pill's padding, 5 px past the stone, and is gone by 16 px from the stone's centre.
+    m = Mark(app, tmp_path, pad=8)
+    try:
+        m.set(face="needs", reducedMotion=True)
+        img = m.image()
+        def lit(x, y):
+            c = img.pixelColor(x, y)
+            return c.red() > QtGui.QColor(GROUND).red() + 8 and c.red() > c.blue()
+        assert lit(8 - 3, 8 + 13)                        # 3 px left of the slot, level with the b
+        assert lit(8 + 12, 8 + 24 + 2)                   # 2 px under the slot
+        assert near(img.pixelColor(2, 8 + 13).name(), GROUND, 3)      # 6 px out: gone
+        assert near(img.pixelColor(8 + 12, 8 + 24 + 6).name(), GROUND, 3)
+    finally:
+        m.win.close()
+        m.engine.deleteLater()
+        m.pump()
 
 
 def test_done_hops_once_then_sits_green(mark):

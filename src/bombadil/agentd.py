@@ -16,7 +16,13 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "details", "turn": n}       show a turn's commands and output (drawer);
                                                         again while it shows closes it
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
-                   {"type": "summon"}                   ask the bar to take the keyboard (Super)
+                   {"type": "summon", "text"?: "..."}   ask the bar to take the keyboard (Super), with
+                                                        words to finish in the pill (the Brain's Ask)
+                   {"type": "open", "kind": "path"|"unit"|"package"|"url"|"turn", "value": "..."}
+                                                        open what a box in a picture names; answered
+                                                        by a "local" event with action "open"
+                   {"type": "card", "card": {...}}      a picture to draw (os-mcp's show_card and system_map);
+                                                        answered with {"type": "card_ack", "shown": bool}
                    {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"}
                                                         a chip under the setup line (see below)
                    {"type": "signin", "provider": "codex"?}  sign in (again), after switching provider
@@ -46,11 +52,11 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                     "card": false}                      what was up when the burst began
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
-                    "local"|"plan", "turn": n, ...}
+                    "local"|"card"|"plan", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "setup", "state": ..., "line": ..., "actions": [...]}  see below
-                   {"type": "summon", "id": n}           n counts up, so the bar can acknowledge it
+                  {"type": "summon", "id": n, "text"?: "..."}   n counts up, so the bar can acknowledge it
                    {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
@@ -64,6 +70,10 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
+A step's status may also carry "because": why it happens, in the agent's own words from just before
+it acted (at most 140 characters), and "after": {"label", "kind", "text"}, on a system or irreversible
+step that follows something read from outside ("after reading wireguard.com/quickstart"). The tool
+event of the step carries the same two fields for Details.
 A "step" status also says what the turn has changed so far: "touched": {"package": 1, "file": 2}
 (kinds package, service, file, app; only those there are) and "touched_text": "1 package and 2
 files so far" ("" when nothing).
@@ -74,7 +84,16 @@ comes last. When several are in progress the last one is the current step.
 turn_start carries "asked_by": "builder" (or another helper's name) when the turn was started for a coding
 session, else null.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
-"irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
+"irreversible", "stopped", "line": "Stopped while installing ffmpeg.", "read": [{"label", "kind",
+"outside"}]}; the same list goes into turns.jsonl.
+
+"card" events carry a picture for the bar: {"card": {"type": "diagram", "id", "shape", "title", "nodes",
+"links", "highlight", "say", "text", ...}}. One drawn from a request the user typed ("how am I connected")
+has turn null; one os-mcp sent while a turn runs carries that turn; a receipt (what the turn changed
+in the network, a service, the disks, the sound or the screens, as a before and after, "receipt": true)
+follows turn_end. While Claude still writes a show_card call, cards with "partial": true (the frame and
+the boxes finished so far) arrive under the id the finished card then keeps; {"id", "gone": true} takes
+one back. Partial cards are not logged.
 
 "setup" is whether the machine can talk to its AI: state "choose" (no provider picked yet: the
 pill offers Claude and Codex), "checking", "signed_out", "offline" (no way to reach the sign-in
@@ -95,6 +114,13 @@ turn) and tells the next turn's prompt.
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
+
+The log (turns.jsonl) is what the brain learns turns from: each row has the turn's number,
+its scope, when it began, and the files it wrote and read by its own tool calls. Numbers go
+on across restarts, also past a turn a crash cut off before its row (the last one begun is
+kept in the state folder's "turn"). The brain is also told when a turn starts and ends, so
+it can name the turn's writes while they happen. That is a courtesy: it is sent from a
+thread, never waited for, and a brain that is slow, down or broken costs the turn nothing.
 """
 
 import asyncio
@@ -109,13 +135,14 @@ import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import browser, config, launcher, narrate, paths, procs, providers, signin, snapshots, watch
+from . import browser, cards, config, launcher, narrate, paths, procs, providers, signin, snapshots, sysmap, watch
+from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
 from .loop.signals import Signals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
-LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
+LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
 _WHO = re.compile(r"[a-z][a-z0-9_-]{0,23}")   # a helper's name in "asked_by"
 LEDGER_V = 2
 ORIGINS = {"typed", "button", "app", "session", "routine", "loop", "retry", "cli"}
@@ -128,6 +155,16 @@ SEND_TIMEOUT = 5.0
 # After a turn's process exits, how long its output may take to drain. Longer means a job it
 # left in the background (`!server &`) still holds the pipe; the turn ends without it.
 OUTPUT_GRACE = 1.0
+# Paths kept per turn row for each of wrote and read; a turn that touched more is a build or
+# a bulk edit, and the brain's watcher sees those writes anyway.
+MAX_TURN_FILES = 200
+# However the brain's client misbehaves, the next note is not held up longer than this.
+POKE_TIMEOUT = 2.0
+# Claude Code's tools that write a file, and the input that names it.
+WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
+               "NotebookEdit": "notebook_path"}
+# What the next turn is told for the brain's words, in place of the brain's own line.
+BRAIN_NOTES = {"brain": "opened the Brain", "whyhere": "the brain answered in the line"}
 # The CLI says nothing while it retries an unreachable provider. With no tool running and no event
 # for this long, the line says so instead of staying on its last words; the watchdog looks every tick.
 NO_PROGRESS_SECS = 30.0
@@ -165,9 +202,11 @@ class _Facts:
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None, desk: Desk | None = None, jobs: Jobs | None = None,
-                 chosen: bool = True, auto_signin: bool = False, panel=None, loop_service: bool = False):
+                 stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
+                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
+                 loop_service: bool = False):
         self.provider = provider
+        self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
         # One desk: the launcher's words, the shell and the agent's tool all change this one.
@@ -176,7 +215,8 @@ class AgentD:
         self.stopper = stopper or procs.Stopper()
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
-        self.turns = 0
+        # Turn numbers go on across restarts, past a turn a crash cut off before its row.
+        self.turns = max(_last_turn(paths.turns_log()), _begun())
         self.proc: asyncio.subprocess.Process | None = None
         self.pending: list[tuple[int, str]] = []   # prompts waiting for the running turn
         self._wake = asyncio.Event()
@@ -195,6 +235,13 @@ class AgentD:
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
+        self._files: TurnFiles | None = None        # what the running turn wrote and read
+        self._poking: asyncio.Task | None = None    # the last note to the brain, still going
+        self._card_seq = 0
+        self._card_stream: cards.CardStream | None = None   # show_card calls being written (Claude)
+        self._stream_ids: list[str] = []            # their card ids, until the finished card takes one
+        self._closed_turn: int | None = None        # the turn whose closing line is on screen
+        self._befores: dict[str, asyncio.Task] = {}   # a service's facts from when a step first touched it
         # The provider: picked yet (config or BOMBADIL_PROVIDER), and signed in (setup, above).
         self.chosen = chosen
         self.auto_signin = auto_signin              # sign in at once when the session starts signed out
@@ -345,9 +392,15 @@ class AgentD:
             self._background(self.details(msg.get("turn")))
         elif t == "close_details":
             self._background(asyncio.to_thread(self.launcher.close_details))
+        elif t == "open":
+            self._background(self.open_thing(msg.get("kind"), msg.get("value")))
         elif t == "summon":
+            text = _pill_words(msg.get("text"))
             # The id is what the bar acknowledges once its input has the keyboard.
-            await self.broadcast({"type": "summon", "id": self.signals.summon(str(msg.get("screen") or ""))})
+            await self.broadcast({"type": "summon", "id": self.signals.summon(str(msg.get("screen") or "")),
+                                  **({"text": text} if text else {})})
+        elif t == "card":
+            await self._card_message(msg, writer)
         elif t == "desk":
             await self._desk_op(msg, writer)
         elif t == "desk-tool":
@@ -411,7 +464,8 @@ class AgentD:
 
     async def _match(self, text: str) -> launcher.Action | None:
         try:
-            return await asyncio.to_thread(launcher.match, text)
+            # "why" is a launcher word only while a turn runs: then it asks about the step in front of you.
+            return await asyncio.to_thread(launcher.match, text, None, self.current is not None)
         except Exception as e:  # noqa: BLE001 - when in doubt the agent gets the text
             print(f"agentd: launcher match: {type(e).__name__}: {e}", file=sys.stderr)
             return None
@@ -667,6 +721,14 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str, via: str = "typed"):
+        if action.kind == "why":
+            # The reason the agent gave before this step, from what was recorded: no model, no turn.
+            text = self.narrator.why_text() if self.narrator else "Nothing is running."
+            await self.event("local", turn=None, action="why", phase="done", ok=True, text=text)
+            return
+        if action.kind == "picture":
+            await self.picture(action, typed)
+            return
         if action.kind in ("signin", "provider"):
             if action.kind == "signin":
                 await self.signin_asked()
@@ -708,7 +770,10 @@ class AgentD:
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
                          text=text)
         if ok:
-            self.notes.append(f"{typed!r}: {text}")
+            # The brain's answers quote page titles, which whoever made the page wrote: the
+            # model hears that it was asked, not what it said.
+            said = BRAIN_NOTES.get(action.kind, text)
+            self.notes.append(f"{typed!r}: {said}")
             self.notes = self.notes[-10:]
         undid = await self._undid(action, ok)
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
@@ -740,6 +805,126 @@ class AgentD:
     def _log_stop(self, typed: str, via: str, of: str | None, text: str):
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "stop", "target": "",
                         "result": text, "ok": True, **_local_keys(launcher.Action("stop"), "stop", via, of)})
+
+    # -- pictures --
+
+    async def _show(self, card: dict, turn: int | None, card_id: str | None = None):
+        """Send a finished card to the bars. One drawn while it streamed keeps that card's id, so
+        the bar swaps the picture in place."""
+        self._card_seq += 1
+        await self.event("card", turn=turn, card={**card, "id": card_id or f"card-{self._card_seq}"})
+
+    async def _card_message(self, msg: dict, writer: asyncio.StreamWriter):
+        card, errors = cards.accept(msg.get("card"))
+        if card is None:
+            await self._send(writer, {"type": "card_ack", "shown": False, "errors": errors})
+            return
+        streamed = self._stream_ids.pop(0) if self._stream_ids and self.current is not None else None
+        await self._show(card, self.current, streamed)
+        # Shown when a client besides the sender is there to draw it.
+        await self._send(writer, {"type": "card_ack", "shown": len(self.clients) > 1})
+
+    async def picture(self, action: launcher.Action, typed: str):
+        """A picture word ("how am I connected") is answered here: captured from the machine, drawn
+        by the bar, no model and no turn."""
+        kind, _, unit = action.target.partition(":")
+        await self.event("local", turn=None, action="picture", target=action.target, phase="start",
+                         text=self.launcher.doing(action))
+        try:
+            card = (await asyncio.to_thread(sysmap.capture, kind, unit, provider=self.provider.name))["card"]
+            text, ok = f"Showing {action.title}.", True   # the picture carries its own sentence
+        except sysmap.Unavailable as e:
+            card, text, ok = None, str(e), False
+        if card is not None:
+            await self._show(card, None)
+        await self.event("local", turn=None, action="picture", target=action.target, phase="done", ok=ok, text=text)
+        if ok:
+            self.notes.append(f"{typed!r}: showed a picture. {card['text'][:400]}")
+            self.notes = self.notes[-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "picture",
+                        "target": action.target, "result": text, "ok": ok})
+
+    async def open_thing(self, kind, value):
+        """A click on a box in a picture. The bar sends what the card said; it is checked again here,
+        since the card may have come from any process that can reach the socket."""
+        target, error = cards.check_opens({"kind": kind, "value": value})
+        if target is None:
+            await self.event("local", turn=None, action="open", phase="done", ok=False, text=f"Cannot open that: {error}.")
+            return
+        if target["kind"] == "turn":
+            turn = int(target["value"])
+            if turn != self.current and turn not in self.turn_logs:
+                await self.event("local", turn=None, action="open", phase="done", ok=False,
+                                 text=f"The details of turn {turn} are not kept.")
+                return
+            await self.details(turn)
+            return
+        ok, text = await asyncio.to_thread(self._open, target)
+        await self.event("local", turn=None, action="open", target=target["value"], phase="done", ok=ok, text=text)
+
+    def _open(self, target: dict) -> tuple[bool, str]:
+        try:
+            return self.launcher.open_thing(target["kind"], target["value"])
+        except Exception as e:  # noqa: BLE001 - one plain line, whatever broke
+            return False, f"Could not open {target['value']}: {launcher._reason(e)}"
+
+    def _stream_card(self, ev: dict):
+        """Feed a provider event to the show_card follower; the card so far, when it grew."""
+        if self._card_stream is None:
+            return None
+        try:
+            card = self._card_stream.feed(ev)
+        except Exception as e:  # noqa: BLE001 - a picture that cannot be followed is drawn when it is whole
+            print(f"agentd: card stream: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+        if card is not None and card["id"] not in self._stream_ids:
+            self._stream_ids.append(card["id"])
+        return card
+
+    async def _clear_streams(self, only: str | None = None):
+        """Take back partial cards whose show_card call failed or never finished."""
+        for sid in [only] if only else list(self._stream_ids):
+            if sid in self._stream_ids:
+                self._stream_ids.remove(sid)
+                await self.broadcast({"type": "event", "kind": "card", "turn": self.current,
+                                      "card": {"id": sid, "gone": True}})
+
+    async def _receipt(self, turn: int, narrator: narrate.Narrator, before: "asyncio.Task | None",
+                       befores: dict[str, asyncio.Task]):
+        """After the closing line: what the turn changed in a part of the machine it touched, as a
+        before and after. Nothing when nothing changed, when the agent drew a picture itself, or
+        when another turn has started."""
+        if before is None or narrator.drew:
+            return
+        kinds = [k for k in dict.fromkeys(k for k, _ in narrator.parts) if k != "service"]
+        services = [u for k, u in narrator.parts if k == "service"][:2]
+        if not kinds and not services:
+            return
+        try:
+            was = await asyncio.wait_for(asyncio.shield(before), sysmap.BUDGET + 1.0)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - no before, no receipt
+            return
+        found = None
+        if kinds:
+            now = await asyncio.to_thread(sysmap.snapshot, tuple(kinds), self.provider.name)
+            for k in kinds:
+                if (was or {}).get(k) is not None and now.get(k) is not None:
+                    found = sysmap.receipt(k, was[k], now[k])
+                    if found:
+                        break
+        if found is None:
+            for unit in services:
+                task = befores.get(unit)
+                b = await task if task is not None else None
+                if not b or any("activating" in str(f.get("value")) or "reloading" in str(f.get("value"))
+                                for f in b if f["key"] == "state"):
+                    continue   # captured while it was already changing: not a before
+                a = await asyncio.to_thread(sysmap.snapshot_service, unit)
+                found = sysmap.receipt("service", b, a, unit) if a else None
+                if found:
+                    break
+        if found is not None and self.current is None and self._closed_turn == turn:
+            await self._show(found, turn)
 
     async def details(self, turn):
         path = self.turn_logs.get(turn) if turn is not None else watch.last_turn_file()
@@ -1146,6 +1331,7 @@ class AgentD:
                 stopped = self.stopping
                 self.current = None
                 self.narrator = None
+                self._files = None
                 self.plan_msg = None
                 self.proc = None
                 self.stopping = False
@@ -1169,6 +1355,8 @@ class AgentD:
         self.turn_prompt = None if asked_by else prompt
         started = time.time()
         self.narrator = narrator = narrate.Narrator()
+        if not shell:
+            narrator.note_prompt(prompt)   # a [Screen] block or a coding session's request came in with it
         log = paths.state_dir() / "turns" / f"{int(started * 1000)}-{self.current}.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
         self.turn_logs[self.current] = log
@@ -1188,12 +1376,22 @@ class AgentD:
                              stopped=False, line="")
             return
         self.turns += 1
+        n = self.turns
+        _mark_begun(n)   # before snapper and the brain hear of it
+        self._files = files = TurnFiles(paths.home())
+        # What this part of the machine looks like now, for the receipt; nobody waits for it.
+        before = None
+        self._card_stream, self._stream_ids = cards.CardStream(), []
+        self._closed_turn = None
+        self._befores = {}
+        if not shell and self.explain != "brief":
+            before = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot, sysmap.BEFORE_KINDS, self.provider.name))
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
             await self.event("status", text="Saving a restore point", risk=None, command=None, source="step")
             try:
-                snap = await asyncio.to_thread(self.snaps.create, f"turn:{self.turns}: {prompt[:60]}")
+                snap = await asyncio.to_thread(self.snaps.create, f"turn:{n}: {prompt[:60]}")
             except subprocess.CalledProcessError as e:
                 await self.event("error", text=f"no undo point for this turn: snapper failed ({(e.stderr or '').strip()[-200:]})")
             if snap:
@@ -1203,10 +1401,13 @@ class AgentD:
             # Stopped while the restore point was saved: the CLI never starts.
             line = self._stopped_line or "Stopped."
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary="", changed=False,
-                             irreversible=False, stopped=True, line=line)
-            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "")
+                             irreversible=False, stopped=True, line=line, read=narrator.read_list())
+            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "", narrator.read_list(), n=n,
+                      started=started, files=files)
+            self._poke(kind="turn_end", n=n)
             return
         turn = providers.Turn(prompt=prompt, session_id=self.session_id)
+        files.cwd = str(turn.cwd)
         self.workdir.mkdir(parents=True, exist_ok=True)
         if shell:
             cmd = ["sh", "-c", prompt[1:]]
@@ -1237,6 +1438,9 @@ class AgentD:
             # Its own process group: what it leaves running stays findable for Stop.
             start_new_session=True,
             limit=64 * 1024 * 1024)  # a stream-json line can carry a whole screenshot
+        # The brain names the turn's writes by its scope; until this note arrives they are
+        # "a turn now running", and the row at the end says which files were its own.
+        self._poke(kind="turn_start", n=n, unit=self._unit, prompt=prompt, t=started)
         if self.stopping:
             # Stop came while the CLI was being started.
             self._background(self._stop_proc(proc, self._unit))
@@ -1344,10 +1548,15 @@ class AgentD:
                 line = self._stopped_line or narrator.stopped_line()
             else:
                 line = summary
+            await self._clear_streams()
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary=summary,
                              changed=bool(narrator.done), irreversible=narrator.irreversible,
-                             stopped=stopped, line=line)
-            self._log(prompt, result, snap, cmd, stopped, summary)
+                             stopped=stopped, line=line, read=narrator.read_list())
+            self._log(prompt, result, snap, cmd, stopped, summary, narrator.read_list(), n=n,
+                      unit=self._unit, started=started, files=files)
+            self._poke(kind="turn_end", n=n)   # after the row: the brain reads it from the log
+            self._closed_turn = self.current
+            self._background(self._receipt(self.current, narrator, before, self._befores))
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
@@ -1379,6 +1588,22 @@ class AgentD:
                 line = {**line, "touched": self.narrator.touched_counts(),
                         "touched_text": self.narrator.touched_text()}
             await self.event("status", **line)
+        if self._files is not None:
+            try:
+                self._files.on_event(ev)
+            except Exception as e:  # noqa: BLE001 - odd input costs a file in the log, never the turn
+                print(f"agentd: files of {kind}: {type(e).__name__}: {e}", file=sys.stderr)
+        partial = self._stream_card(ev) if kind in ("tool_start", "tool_input") else None
+        if partial is not None and not self.stopping:
+            # Not logged: only the finished card is (see _show).
+            await self.broadcast({"type": "event", "kind": "card", "turn": self.current, "card": partial})
+        if kind == "tool" and self.narrator is not None and self.explain != "brief":
+            for k, unit in self.narrator.parts:
+                if k == "service" and unit not in self._befores and len(self._befores) < 3:
+                    # As the step is read, before it has run; a state already changing is dropped later.
+                    self._befores[unit] = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot_service, unit))
+        if kind == "tool_result" and ev.get("id"):
+            await self._clear_streams(f"stream-{ev['id']}")   # a show_card call that failed drew nothing
         plan = self.narrator.take_plan() if self.narrator else None
         if plan is not None and not self.stopping:
             self.plan_msg = {"type": "event", "kind": "plan", "turn": self.current, "steps": plan}
@@ -1409,20 +1634,33 @@ class AgentD:
             reported_error = True
         if kind == "tool_result" and len(ev.get("output") or "") > MAX_OUTPUT:
             ev = {**ev, "output": ev["output"][:MAX_OUTPUT] + "\n[... cut]"}
+        if kind in ("tool", "file_change") and self.narrator is not None:
+            # The step's reason and what it followed, for Details, next to the step they explain.
+            ev = {**ev, **self.narrator.last_notes}
         await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
         return pending_session, reported_error
 
-    def _log(self, prompt, result, snap, cmd, stopped=False, summary=""):
+    def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None, n=None, unit=None,
+             started=None, files=None):
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
-                        "details": str(self.turn_logs.get(self.current, "")), **self._turn_keys()})
+                        # What the turn read, yours or outside.
+                        "read": read or [],
+                        "details": str(self.turn_logs.get(self.current, "")), **self._turn_keys(),
+                        "n": n, "unit": unit, "started": started,
+                        "files": (files.row(settled=result["ok"] is True and not stopped) if files is not None
+                                  else {"wrote": [], "read": []})})
 
     def _log_line(self, entry: dict):
-        paths.turns_log().parent.mkdir(parents=True, exist_ok=True)
-        with paths.turns_log().open("a") as f:
-            f.write(json.dumps(entry) + "\n")
+        log = paths.turns_log()
+        log.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(entry) + "\n"
+        with log.open("a") as f:
+            if f.tell() and not _ends_a_line(log):
+                line = "\n" + line   # a row cut short by a crash stays one bad line, not two
+            f.write(line)
         self._loop_hook("row", entry)
 
     # -- what the ledger keeps beyond a turn's words (ledger v2, docs/LOOP.md) --
@@ -1470,7 +1708,7 @@ class AgentD:
                 **{k: f.meta.get(k) for k in ("model", "cost", "usage", "rate_limit")}}
         if f.drift:
             keys["drift"] = dict(f.drift)
-        return {**keys, "v": LEDGER_V, "n": f.n}
+        return {**keys, "v": LEDGER_V}
 
     def _start_loop(self):
         """The socket listens: start the loop's service (making it first when the daemon was asked to). A
@@ -1507,6 +1745,79 @@ class AgentD:
         except Exception as e:  # noqa: BLE001 - the loop is a guest here
             print(f"agentd: loop {name}: {type(e).__name__}: {e}", file=sys.stderr)
 
+    def _poke(self, **note) -> None:
+        """Tell the brain about a turn: in order, from a thread, never waited for."""
+        before = self._poking
+
+        async def send():
+            if before is not None and not before.done():
+                await asyncio.wait({before})
+            try:
+                await asyncio.wait_for(asyncio.to_thread(brain_client.notify, "note", **note), POKE_TIMEOUT)
+            except Exception:  # noqa: BLE001 - the brain is a bystander; nothing it does fails a turn
+                pass
+        try:
+            self._poking = self._background(send())
+        except Exception as e:  # noqa: BLE001
+            print(f"agentd: telling the brain: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+class TurnFiles:
+    """The files a turn wrote and read, from its own tool calls: Claude's Write, Edit,
+    MultiEdit, NotebookEdit and Read, and Codex's file changes. A call that failed wrote
+    nothing, so it is taken back when its result says so."""
+
+    def __init__(self, cwd):
+        self.cwd = str(cwd)
+        # path -> calls that may have touched it; dicts keep the order they came in.
+        self.wrote: dict[str, int] = {}
+        self.read: dict[str, int] = {}
+        self._calls: dict[str, list[tuple[dict, str]]] = {}
+
+    def on_event(self, ev: dict) -> None:
+        kind = ev.get("kind")
+        if kind == "tool":
+            args = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+            name = ev.get("name")
+            if name in WRITE_TOOLS:
+                self._add(self.wrote, args.get(WRITE_TOOLS[name]) or args.get("file_path"), ev.get("id"))
+            elif name == "Read":
+                self._add(self.read, args.get("file_path"), ev.get("id"))
+        elif kind == "file_change":
+            for change in ev.get("changes") if isinstance(ev.get("changes"), list) else []:
+                if isinstance(change, dict):
+                    self._add(self.wrote, change.get("path"), ev.get("id"))
+        elif kind == "tool_result" and isinstance(ev.get("id"), str):
+            calls = self._calls.pop(ev["id"], [])
+            if ev.get("error"):
+                self._take_back(calls)
+
+    def _add(self, bucket: dict, path, call_id) -> None:
+        if not isinstance(path, str) or not path.strip() or "\0" in path:
+            return
+        path = os.path.normpath(os.path.join(self.cwd, path))   # an absolute path stays as it is
+        if path not in bucket and len(bucket) >= MAX_TURN_FILES:
+            return
+        bucket[path] = bucket.get(path, 0) + 1
+        if isinstance(call_id, str) and call_id:
+            self._calls.setdefault(call_id, []).append((bucket, path))
+
+    def _take_back(self, calls: list) -> None:
+        for bucket, path in calls:
+            if path in bucket:
+                bucket[path] -= 1
+                if bucket[path] <= 0:
+                    del bucket[path]
+
+    def row(self, settled: bool = True) -> dict:
+        """What to log. A turn that was stopped or died has calls that never got a result,
+        such as an edit queued behind a long command: those are not known to have run."""
+        if not settled:
+            for calls in self._calls.values():
+                self._take_back(calls)
+            self._calls.clear()
+        return {"wrote": list(self.wrote), "read": list(self.read)}
+
 
 def _limit_text(text: str) -> str:
     """A failed result that names the account's limit says so plainly, then the provider's first
@@ -1528,9 +1839,86 @@ def _bombadil_browser() -> str:
 def _action(msg: dict) -> launcher.Action | None:
     """A launcher action named by a button (Undo, Stop) rather than typed."""
     kind = str(msg.get("action", ""))
-    if kind in launcher.CORE_COMMANDS or kind in launcher.UTILITY_COMMANDS:
+    if kind in launcher.CORE_COMMANDS or kind in launcher.BRAIN_COMMANDS or kind in launcher.UTILITY_COMMANDS:
         return launcher.Action(kind)
     return None
+
+
+def _pill_words(text) -> str:
+    """Words for the pill, as one line: a file name can hold a line break or a mark that
+    turns text around, and what the pill shows is what the agent gets."""
+    if not isinstance(text, str):
+        return ""
+    line = "".join(ch if ch.isprintable() else " " for ch in text)[:500]
+    return line if line.strip() else ""
+
+
+def _turn_number(value) -> int | None:
+    """A row's "n", as the brain reads it (brain/witnesses.py)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value if isinstance(value, int) and 0 < value < 10**9 else None
+
+
+def _last_turn(log: Path) -> int:
+    """The number of the last turn in turns.jsonl. Rows from before turns had numbers count
+    in order, as the brain counts them; launcher actions and other kinds of row are not turns."""
+    count = 0
+    try:
+        with log.open("rb") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except (ValueError, RecursionError):
+                    if line.lstrip().startswith(b"{"):
+                        # A row cut short by a crash: the brain may have heard of that turn
+                        # when it started, so its number is never used again.
+                        count += 1
+                    continue
+                if not paths.is_turn_row(row):
+                    continue
+                if row.get("n") is None:
+                    count += 1
+                else:
+                    count = max(count + 1, _turn_number(row["n"]) or 0)
+    except OSError:
+        return count
+    return count
+
+
+def _begun_file() -> Path:
+    return paths.state_dir() / "turn"
+
+
+def _begun() -> int:
+    """The number of the last turn begun. A turn cut off by a crash, or by the reboot it
+    ran, leaves no row, yet its restore point and the brain already carry its number."""
+    try:
+        return _turn_number(int(_begun_file().read_text().strip())) or 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _mark_begun(n: int) -> None:
+    path = _begun_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(".turn.tmp")
+        tmp.write_text(f"{n}\n")
+        os.replace(tmp, path)
+    except OSError as e:   # the turn runs anyway; only a crash in it could reuse its number
+        print(f"agentd: keeping the turn number: {e}", file=sys.stderr)
+
+
+def _ends_a_line(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) == b"\n"
+    except OSError:
+        return True
 
 
 def _origin(msg: dict, text: str) -> str:
@@ -1598,11 +1986,13 @@ def main(argv: list[str] | None = None) -> int:
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
     # Picked means the user chose (first boot asks in the pill) or the environment says so.
     chosen = cfg.configured or bool(os.environ.get("BOMBADIL_PROVIDER"))
-    daemon = AgentD(provider, snaps, chosen=chosen, auto_signin=True, loop_service=True)
+    daemon = AgentD(provider, snaps, explain=cfg.explain, chosen=chosen, auto_signin=True, loop_service=True)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
 
     async def run():
         serving = asyncio.ensure_future(daemon.serve())
+        # The unit file names behind "what does networkmanager need": a slow read, so before the first ask.
+        asyncio.get_running_loop().run_in_executor(None, sysmap.warm_unit_names)
 
         def on_term():
             # A login goes first. Then the bar's connection: Python 3.12+ waits for every client

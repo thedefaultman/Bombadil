@@ -1,9 +1,10 @@
 """os-mcp: the OS as tools.
 
 A small MCP server (JSON-RPC over stdio) that gives whichever agent CLI is running the
-same abilities: slide panels in and out, create and show native apps, screenshot,
-snapshot and roll back, notify, arrange the desk and run jobs in the background. Claude Code
-and Codex both load it from their MCP config, so switching provider changes nothing here.
+same abilities: slide panels in and out, create and show native apps, draw pictures,
+screenshot, snapshot and roll back, notify, arrange the desk and run jobs in the background.
+Claude Code and Codex both load it from their MCP config, so switching provider changes
+nothing here.
 
 Implemented by hand rather than with the `mcp` package to keep the base image small.
 """
@@ -177,6 +178,9 @@ class OsTools:
            {"limit": {"type": "integer", "minimum": 1, "maximum": ASKS_MOST}})
         def asks(a):
             return _asks(a.get("limit"))
+
+        from . import cardtools  # pictures: show_card, system_map
+        cardtools.register(self)
 
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
         app_tools.register(self)

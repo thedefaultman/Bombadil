@@ -30,7 +30,9 @@ hl.config({
     misc = {
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
-        background_color = 0x101214,
+        -- The ground, until the bar's wallpaper (shell/Wallpaper.qml) is up and wherever it does not
+        -- reach. 0xAARRGGBB: without the alpha byte the colour is clear and Hyprland draws black.
+        background_color = 0xff101214,
     },
     input = { kb_layout = "us", follow_mouse = 1 },
 })
@@ -39,6 +41,10 @@ hl.curve("ease", { type = "bezier", points = { {0.16, 1}, {0.3, 1} } })
 hl.animation({ leaf = "windows", enabled = true, speed = 4, bezier = "ease", style = "slide" })
 hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 5, bezier = "ease", style = "slidevert" })
 hl.animation({ leaf = "fade", enabled = true, speed = 4, bezier = "ease" })
+-- The bar is a layer, and Hyprland slides a layer to its new place whenever it is resized, which
+-- is every time a picture appears or grows: the pill dipped and swung back for half a second each
+-- time. Layers (the bar, the notifications) just take their new size.
+hl.animation({ leaf = "layers", enabled = false })
 
 -- Panels are special workspaces; os-mcp toggles them. They also have keys.
 hl.bind("SUPER + B", hl.dsp.workspace.toggle_special("browser"))

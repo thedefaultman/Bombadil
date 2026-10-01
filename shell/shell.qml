@@ -20,6 +20,7 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
     // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
@@ -28,12 +29,15 @@ ShellRoot {
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
-        onSummoned: root.summon()
+        onSummoned: text => root.summon(text)
         onHandOff: root.release()
     }
 
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
+
+    // The ground under everything: the wallpaper, on every screen.
+    Wallpaper { reducedMotion: root.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -144,9 +148,15 @@ ShellRoot {
 
     // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
     // focused screen takes the keyboard. A second tap gives it back.
-    function summon() {
+    function summon(text) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+        if (text) {
+            // Words to finish: always take the keyboard, never toggle it away.
+            root.draft = text
+            root.summonedOn = name
+            return
+        }
         root.summonedOn = root.summonedOn === name ? "" : name
         // The tap that gives the pill back asks for no keyboard: say so, or the summon looks unanswered.
         if (root.summonedOn === "") loopState.summonCancelled()
@@ -231,6 +241,7 @@ ShellRoot {
             exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
+                Region { item: cardHost }
                 Region { item: statusLine }
                 Region { item: noticedChip }
                 Region { item: noticedCard }
@@ -252,6 +263,17 @@ ShellRoot {
                     loopState.keyboardLost(modelData.name)
                 }
                 grab.active = summoned
+                takeDraft()
+            }
+            function takeDraft() {
+                if (!summoned || root.draft === "") return
+                input.text = root.draft
+                input.cursorPosition = input.text.length
+                root.draft = ""
+            }
+            Connections {
+                target: root
+                function onDraftChanged() { win.takeDraft() }
             }
 
             // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
@@ -293,6 +315,20 @@ ShellRoot {
                 id: column
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
                 spacing: 8
+
+                // A picture the machine drew from itself, or the agent drew: above the line, over the
+                // windows. It draws with the kit's Diagram, so it loads on its own: a picture
+                // that will not draw costs the pictures, never the bar.
+                Loader {
+                    id: cardHost
+                    visible: status === Loader.Ready && item !== null && item.opacity > 0
+                    Layout.fillWidth: true
+                    // As wide as the pill, so it stays between the desk's rails.
+                    Layout.maximumWidth: Math.max(360, win.pillMax)
+                    Layout.alignment: Qt.AlignHCenter
+                    Component.onCompleted: setSource("CardHost.qml", {
+                        pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
+                }
 
                 StatusLine {
                     id: statusLine
@@ -460,8 +496,8 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then puts the line and
-                                // the drawer away and gives the keyboard back.
+                                // Esc stops a running turn; otherwise it clears, then puts the line, the
+                                // picture and the drawer away and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     // The loop counts Esc that does not help; a kept card goes first.
                                     if (loopState.esc()) { if (text === "") root.release(); return }
