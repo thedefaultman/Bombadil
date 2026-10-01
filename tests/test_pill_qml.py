@@ -821,6 +821,29 @@ def test_a_window_the_launcher_opens_puts_the_picture_away_but_hiding_one_does_n
     assert not opened("undo", "open")
 
 
+def test_a_window_that_opens_puts_the_picture_away_unless_it_is_new_or_you_just_clicked_in_it(bar):
+    # Super+Enter with a picture up: the picture would sit over the terminal, at the 360 px a window
+    # narrows the pill to. (DeskState says "a window opened"; the desk tests cover that half.)
+    _card_event(bar, _diagram(nodes=[{"label": "NetworkManager", "opens": {"kind": "unit", "value": "NetworkManager.service"}}]))
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None                  # drawn a moment ago: its own ask's window
+    bar.pill.setProperty("cardAt", 0)
+    bar.pump(0.5)
+    bar.click("box-n1")                                           # a click in the picture opens a window
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None
+    bar.pill.setProperty("clickedAt", 0)
+    bar.call("windowOpened")                                      # a window nobody clicked for
+    assert bar.pill.property("card") is None
+    bar.call("windowOpened")                                      # and with no picture there is nothing to do
+    half = {"type": "diagram", "id": "stream-t1", "partial": True, "shape": "chain", "title": "A VPN", "nodes": [{"id": "n1", "label": "Laptop"}]}
+    _card_event(bar, half, turn=1)
+    bar.pill.setProperty("cardAt", 0)
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None                  # a picture still being drawn goes on
+    assert bar.warnings == []
+
+
 def test_hovering_the_picture_keeps_the_line_from_fading(bar):
     _card_event(bar, _diagram())
     it = bar.item("cardHost")

@@ -123,10 +123,24 @@ receipt for stopping a service still shows the state and nothing else.
   fade), so a picture left up costs no wake-ups. The card's top is still its own height above the
   line, so two different pictures sit at different heights; the same picture sits at the same place
   each time it is drawn.
-- **A full-screen window puts the picture away.** In a full-screen window the bar is a dot and a
-  clock in a 360 px capsule, and a card hanging over it landed in the middle of whatever the window
-  showed (the Brain's list, for one). `CardHost.suppressed` follows `win.capsule` in `shell.qml`: the
-  card fades out and gives its space back, and it comes back, not dismissed, when the window goes.
+- **A window over a picture puts it away; a full-screen one hides it.** The picture sits in the middle
+  of the bottom of the screen, where a window's own content is. The pill's width follows the stage
+  (`DeskState`): 900 px with no window, **360 px while any window shares the stage** (the layout the
+  Brain and a Super+Enter terminal give), and a 100 px capsule, the dot and the clock, only under a
+  window in Hyprland's full-screen state. A picture cut to 360 px over a terminal reads badly, so:
+  - a window that *opens* (one more on the stage than before, whoever opened it) puts the picture
+    away: `DeskState.windowOpened` calls `PillState.windowOpened`. Not a picture drawn in the last
+    2.5 s (the window is probably what the same ask opened) and not one you clicked a box in in the
+    last 5 s (the window is what the click opened, say a unit's status); a picture still being drawn
+    goes on. A window that closes or is dragged changes nothing. The launcher's own windows (the
+    Brain, an app, a panel) put it away at once, through the `local` event (`PillState`), which does
+    not wait for the stage to be read.
+  - a window in the full-screen state hides it (`CardHost.suppressed` follows `win.capsule` in
+    `shell.qml`): the card fades out, gives its space back, and returns, not dismissed, when the
+    window leaves full screen. A window that *opens* in full screen counts as opening, so it puts
+    the picture away; the hide and return are for a window that goes full screen (F11, a game
+    starting its mode) with the picture up. A tiled terminal is not full screen: test this with a
+    window in Hyprland's full-screen state.
 - **A card being drawn keeps the layout it will end with.** The boxes of a streamed chain arrive
   before its links, and the links carry the labels that decide how wide the gaps are, so a finished
   chain used to re-lay itself out from one row into two with a visible jump. `Diagram.qml` now
