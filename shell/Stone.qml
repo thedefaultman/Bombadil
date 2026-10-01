@@ -30,6 +30,15 @@ Item {
     readonly property bool drawn: face !== "stopped" && face !== "offline"
     readonly property color fill: rolling ? Kit.Theme.accent : face === "needs" ? Kit.Theme.warn : Kit.Theme.good
 
+    // What the stone is painted with. The scene graph drops a colour change made in the first
+    // frames after the bar starts: on the VM the face went starting, then rest 39 ms later, and the
+    // stone stayed the starting orange until its next change, a hundred seconds on. So for the first
+    // `settle` ms the stone is painted resting green whatever its face says, then follows `fill`
+    // (a face that is still starting or needing you is painted from then on).
+    property int settle: 400
+    property color paint: Kit.Theme.good
+    Timer { interval: stone.settle; running: true; onTriggered: stone.paint = Qt.binding(() => stone.fill) }
+
     // The stone: corner radius 2.7, side radius 15.3, top corner centred on (12, 5.7), centroid at
     // (12, 12.975). It rocks on its bottom arc (radius 15.3 about the top corner's centre) to lean
     // and to knock, and turns about its centroid to work.
@@ -53,7 +62,9 @@ Item {
     readonly property real rideX: arcR * rock * toRad - armR * Math.sin(rock * toRad)
     readonly property real rideY: armR * (Math.cos(rock * toRad) - 1)
 
-    // Needs you: the glow, a filled radial fade under the stone (never a ring).
+    // Needs you: the glow, a filled radial fade under the stone (never a ring). It reaches 16 px from
+    // the centroid, 5 px past the stone's edge and past the 24 px slot into the pill's padding: at 11 px
+    // it was a 1 px halo that did not read at 1x.
     Shape {
         anchors.fill: parent
         visible: stone.face === "needs"
@@ -61,13 +72,13 @@ Item {
         ShapePath {
             strokeColor: "transparent"
             fillGradient: RadialGradient {
-                centerX: 12; centerY: 12.975; centerRadius: 11
+                centerX: 12; centerY: 12.975; centerRadius: 16
                 focalX: 12; focalY: 12.975
                 GradientStop { position: 0; color: Kit.Theme.warn }
-                GradientStop { position: 0.45; color: Kit.Theme.alpha(Kit.Theme.warn, 0.85) }
+                GradientStop { position: 0.58; color: Kit.Theme.alpha(Kit.Theme.warn, 0.7) }
                 GradientStop { position: 1; color: Kit.Theme.alpha(Kit.Theme.warn, 0) }
             }
-            PathAngleArc { centerX: 12; centerY: 12.975; radiusX: 11; radiusY: 11; startAngle: 0; sweepAngle: 360 }
+            PathAngleArc { centerX: 12; centerY: 12.975; radiusX: 16; radiusY: 16; startAngle: 0; sweepAngle: 360 }
         }
     }
 
@@ -88,7 +99,7 @@ Item {
                 Rotation { origin.x: 12; origin.y: 12.975; angle: stone.turn }
             ]
             ShapePath {
-                fillColor: stone.fill
+                fillColor: stone.paint
                 strokeColor: "transparent"
                 PathSvg {
                     path: "M10.65 3.362A2.7 2.7 0 0 1 13.35 3.362A15.3 15.3 0 0 1 21 16.612A2.7 2.7 0 0 1 19.65 18.95"
