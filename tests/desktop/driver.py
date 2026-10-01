@@ -828,7 +828,60 @@ def kept_queue():
     return [(q["turn"], q.get("wait")) for q in sts[-1]["queue"]] if sts else []
 
 
+# The bar's state does not say what chips it shows (the desk's `state` has only the stone's face), so they are read off the
+# screenshots. The stack above the pill grows up from it: the line, then (while there is something found) a row of
+# chips 30 px high and 8 px apart, then the setup's chips, then the waiting asks. So a chip row is the line standing 38 px
+# higher than it does without one, and the chips are the rounded stretches of glass across the row under the line.
+CHIP_ROW = 30 + 8
+FOUND_ROW = 666       # a pixel row just inside the top of that row of chips: glass, no text yet
+LINE_ROW = 622        # and one just inside the top of the line
+
+
+def line_top(name, x=195, rows=(560, 735)):
+    """The first row (from the top) of a screenshot where the bar's glass is at x: the top of the line above the pill,
+    whose left end is at x=190 and over which nothing else is drawn that far left. None when there is no line."""
+    from PySide6.QtGui import QImage
+    img = QImage(str(OUT / f"{name}.png"))
+    for y in range(*rows):
+        c = img.pixelColor(x, y)
+        if 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38:
+            return y
+    return None
+
+
+def glass_runs(name, y, x0=190, x1=1090):
+    """The stretches (from, to) of one row of a screenshot that are the bar's glass; a gap of 5 px or more parts two."""
+    from PySide6.QtGui import QImage
+    img, runs = QImage(str(OUT / f"{name}.png")), []
+    for x in range(x0, x1):
+        c = img.pixelColor(x, y)
+        if 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38:
+            if runs and x - runs[-1][1] <= 5:
+                runs[-1][1] = x
+            else:
+                runs.append([x, x])
+    return [tuple(run) for run in runs]
+
+
+def chip_shapes(name, count):
+    """True when `count` chips stand under the line: that many rounded stretches of glass in the chip row, each far
+    narrower than the line, each with the label's light text on it."""
+    runs = glass_runs(name, FOUND_ROW)
+    texts = [colour_pixels(name, "#e6e8eb", (a, FOUND_ROW - 2, b, FOUND_ROW + 24)) for a, b in runs]
+    line = glass_runs(name, LINE_ROW)
+    return (len(runs) == count and all(b - a < 700 for a, b in runs) and all(t > 15 for t in texts)
+            and len(line) == 1 and line[0][1] - line[0][0] > 800), (runs, texts, line)
+
+
+def crop(name, box=(180, 560, 920, 240)):
+    """The pill's part of a screenshot (x, y, w, h) saved beside it as <name>-pill.png: no window is in it."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage
+    QImage(str(OUT / f"{name}.png")).copy(QRect(*box)).save(str(OUT / f"{name}-pill.png"))
+
+
 rest_when, rest_wait = r.get("when"), r.get("wait")
+no_chips_at = line_top("29-resting-summoned")   # the resting line over the waiting haiku: where the line stands with no chips
 
 # 1. a sentence that names an app: the app is found, and the ask is kept all the same.
 summon()
@@ -855,9 +908,16 @@ check(
 stone = ink("36-found-app")
 check(
     "the stone is still the resting grey while it looks",
-    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]),
-    stone,
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and desk_state().get("face") == "resting",
+    (stone, desk_state().get("face")),
 )
+ok, seen = chip_shapes("36-found-app", len(f1["matches"]) if f1 else 0)
+check(
+    "the bar shows one quiet chip under the line for each thing found, a row above where the line stands with none",
+    f1 and ok and line_top("36-found-app") == no_chips_at - CHIP_ROW,
+    (seen, line_top("36-found-app"), no_chips_at),
+)
+crop("36-found-app")
 
 # 2. a press on it: the app opens as if its word was typed, and the ask it came from is let go.
 m = mark()
@@ -870,6 +930,8 @@ shot("37-found-opened")
 check("a press opens the app: a local answer that went well, and the Passwords window is up", done and done.get("ok") and up, done and done.get("text"))
 check("and lets go of the kept ask, with nothing sent to the API",
       gone is not None and t_pw not in dict(kept_queue()) and api_requests() == asks0, kept_queue())
+check("and its chips are gone from the bar", line_top("37-found-opened") in (None, no_chips_at)
+      and not glass_runs("37-found-opened", LINE_ROW), (line_top("37-found-opened"), no_chips_at))
 
 # 3. a sentence that names nothing here: kept, and the line says there is nothing.
 t_fr, n = kept_ask("what is the capital of france")
@@ -882,6 +944,12 @@ check(
     and dict(kept_queue()).get(t_fr) == rest_wait and api_requests() == asks0,
     f3 and (f3["line"], f3["matches"]),
 )
+check(
+    "and the bar shows no chip under it: the line stands where it does with none",
+    line_top("38-found-nothing") == no_chips_at and not glass_runs("38-found-nothing", LINE_ROW),
+    (line_top("38-found-nothing"), no_chips_at),
+)
+crop("38-found-nothing")
 
 # 4. a past ask: "install ffmpeg" went well at the start of this run, and "ffmpeg" nearly names it.
 t_ff, n = kept_ask("ffmpeg")
@@ -895,6 +963,14 @@ check(
     and past.get("label", "").startswith("You asked: install ffmpeg (") and past.get("hint") == "Its steps",
     f4 and f4["matches"],
 )
+ok, seen = chip_shapes("39-found-ask", len(f4["matches"]) if f4 else 0)
+check("the bar shows its chip under the line", f4 and ok and line_top("39-found-ask") == no_chips_at - CHIP_ROW, seen)
+crop("39-found-ask")
+# the line fades after 12 s, like the resting line, and the chips with it
+gone_line = until(lambda: glass_pixels(195, 560, 175) < 5, 25)
+shot("39-found-ask-faded")
+check("the chips fade with the line", gone_line and not glass_runs("39-found-ask-faded", FOUND_ROW) and line_top("39-found-ask-faded") is None,
+      (glass_runs("39-found-ask-faded", FOUND_ROW), line_top("39-found-ask-faded")))
 
 # 5. a press on what was not offered does nothing: another id, a turn that is no longer waiting.
 m = mark()
@@ -917,6 +993,15 @@ shot("40-found-ask-opened")
 watch = [ln for ln in run("pgrep", "-af", "bombadil").stdout.splitlines() if "watch --file" in ln]
 check("a press on the past ask lets go of the kept ask and opens its steps in the Details drawer",
       gone is not None and t_ff not in dict(kept_queue()) and shown and bool(watch), (gone, shown, watch[:1]))
+rows = []
+for ln in (rest_file.parent / "turns.jsonl").read_text().splitlines():
+    try:
+        rows.append(json.loads(ln))
+    except ValueError:
+        pass
+steps = next((x.get("details") for x in rows if x.get("prompt") == "install ffmpeg" and x.get("ok") is True), None)
+check("the drawer shows the steps of that very turn: the log of the ask that installed ffmpeg",
+      steps and any(f"watch --file {steps}" in ln for ln in watch), (steps, watch[:1]))
 has_keys = until(lambda: focused_app() == "bombadil-details", 5)
 key("Escape")
 check("the drawer has the keyboard and one Esc puts it away", has_keys and until(lambda: not drawer_open(), 5), focused_app())
@@ -1106,6 +1191,13 @@ t_nf, n7 = kept_ask("what is the capital of france")
 f7b = found_for(t_nf, n7)
 time.sleep(0.8)
 shot("41-found-paused")
+crop("35-paused")
+crop("41-found-paused")
+check(
+    "paused, the bar shows a chip row under the line for what is found, and none for nothing",
+    line_top("41-found-paused") - line_top("35-paused") == CHIP_ROW,
+    (line_top("35-paused"), line_top("41-found-paused")),
+)
 check(
     "paused by hand, a sentence that names nothing says so too",
     f7b and f7b["line"] == "Kept until you resume Claude. Nothing on this computer matches." and f7b["matches"] == [],

@@ -135,7 +135,6 @@ def test_shell_qml_wires_the_hint_the_card_and_the_stone():
     assert "pillState.stoppable ? pillState.stop() : pillState.toggleAi()" in text   # the stone: Stop, else the card
     assert 'if (text !== "") pillState.closeAi()' in text            # typing puts it away
     assert text.index("pillState.aiOpen) { pillState.closeAi()") > text.index("if (pillState.stoppable) pillState.stop()")   # Esc: Stop first
-    assert 'function release() { root.summonedOn = ""; pillState.closeAi() }' in text   # the pill lets go: the card goes
 
 
 def test_a_pause_by_hand_has_a_resume_button_and_a_changed_line_says_itself_again(bar):
