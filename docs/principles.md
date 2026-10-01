@@ -160,7 +160,7 @@ commands around the model. Decided in the [UX brief](design/ux-brief.md#the-rule
 ### The answer is the thing
 
 **The answer is the thing itself.** A window, a card or a panel appears. Written replies stay at one
-or two lines while the agent works and at most four afterwards, because a paragraph about the work
+line while the agent works and at most four afterwards, because a paragraph about the work
 turns an operating system back into a chat window.
 
 In practice: when a reply would be long, it is a card, a picture or an app. Decided in the
