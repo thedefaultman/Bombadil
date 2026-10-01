@@ -229,9 +229,35 @@ def test_compare_puts_before_left_after_right_and_a_key_on_one_row(pic):
         {"label": "Tunnel", "side": "after", "state": "new"}]))
     before, after, tunnel = pic.rect("n1"), pic.rect("n2"), pic.rect("n3")
     assert before[0] < after[0] and before[1] == after[1] < tunnel[1]
-    assert after[0] == tunnel[0] and after[0] + after[2] == 900 - 28
+    assert after[0] == tunnel[0]
     assert pic.warnings == []
     pic.save("compare")
+
+
+def test_a_before_and_after_sits_together_in_the_middle_of_a_wide_card(pic):
+    pic.show(card(shape="compare", nodes=[
+        {"label": "systemd-timesyncd", "side": "before", "sub": "active (running)", "key": "state", "state": "gone"},
+        {"label": "systemd-timesyncd", "side": "after", "sub": "inactive (dead)", "key": "state", "state": "new"}]))
+    before, after = pic.rect("n1"), pic.rect("n2")
+    width = 900 - 28
+    assert before[2] == after[2] <= 230
+    assert after[0] - (before[0] + before[2]) == 76                 # room for the arrow and no more
+    assert before[0] == width - (after[0] + after[2]) > 0            # the pair is centred
+    # ... and the side names stay over their columns
+    names = {c.property("text"): c for c in pic.find_all() if c.property("text") in ("Before", "After")}
+    assert names["Before"].property("x") == before[0]
+    assert names["After"].property("x") + names["After"].property("width") == after[0] + after[2]
+
+
+def test_a_before_and_after_in_a_narrow_card_gives_the_columns_the_room(app, tmp_path):
+    (tmp_path / "n").mkdir()
+    narrow = Picture(app, tmp_path / "n", width=360)
+    narrow.show(card(shape="compare", nodes=[
+        {"label": "DNS", "side": "before", "key": "dns", "state": "gone"},
+        {"label": "DNS", "side": "after", "key": "dns", "state": "new"}]))
+    b, a = narrow.rect("n1"), narrow.rect("n2")
+    assert b[0] >= 0 and a[0] + a[2] <= 360 - 28 and a[0] - (b[0] + b[2]) >= 40
+    assert narrow.warnings == []
 
 
 # -- timeline --
@@ -280,6 +306,20 @@ def test_a_card_being_written_says_so_and_grows_a_box_at_a_time(pic):
     assert not drawing[0].property("visible")
     assert pic.box("n3") is not None and pic.warnings == []
     pic.save("drawing")
+
+
+def test_a_chain_still_being_drawn_has_the_rows_it_will_have_once_its_labels_arrive(pic):
+    nodes = [{"id": f"n{i}", "label": f"Step {i}", "sub": "a few words about it"} for i in range(1, 5)]
+    links = [{"from": f"n{i}", "to": f"n{i + 1}", "label": "encrypted tunnel"} for i in range(1, 4)]
+    pic.show({"shape": "chain", "title": "How a VPN works", "nodes": nodes, "links": [], "partial": True})
+    streaming = [pic.rect(f"n{i}")[1] for i in range(1, 5)]
+    assert len(set(streaming)) == 2                       # two rows already, not four boxes in one
+    pic.show({"shape": "chain", "title": "How a VPN works", "nodes": nodes, "links": links})
+    assert [pic.rect(f"n{i}")[1] for i in range(1, 5)] == streaming
+    assert pic.warnings == []
+    # a finished chain with no labels at all is still laid out tight
+    pic.show({"shape": "chain", "title": "x", "nodes": nodes, "links": [{"from": "n1", "to": "n2"}]})
+    assert len({pic.rect(f"n{i}")[1] for i in range(1, 5)}) == 1
 
 
 @pytest.mark.parametrize("spec", [None, {}, {"shape": "layers"}, {"shape": "compare", "nodes": [{"id": "a", "label": "a"}]},

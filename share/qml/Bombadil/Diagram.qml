@@ -26,6 +26,9 @@ Item {
     property bool showTitle: true        // the title above the picture and the `say` line under it
     property int minBoxWidth: 132
     property int maxBoxWidth: 208
+    // A before-and-after: the width of each column and the room between them for the arrow.
+    property int maxCompareWidth: 230
+    property int compareGap: 76
 
     signal opened(var target)
     signal picked(var node)
@@ -84,7 +87,11 @@ Item {
             return out
         }
         if (shape === "compare") {
-            const bw = Math.max(80, Math.min(280, Math.floor((W - 56) / 2)))
+            // The two columns sit together in the middle with the arrow between them, not out at the
+            // edges of a wide card with a gap nothing fills.
+            const bw = Math.max(80, Math.min(maxCompareWidth, Math.floor((W - 56) / 2)))
+            const mid = Math.max(40, Math.min(compareGap, W - 2 * bw))
+            const x0 = Math.max(0, Math.floor((W - (2 * bw + mid)) / 2))
             const rows = {}
             let count = 0
             for (let i = 0; i < n; i++) {
@@ -97,12 +104,14 @@ Item {
             for (let r = 0; r < count; r++) {
                 const row = rows[r] || {}
                 const y = top + r * (H + 12)
-                if (row.before) out.boxes[row.before.id] = { x: 0, y: y, w: bw }
-                if (row.after) out.boxes[row.after.id] = { x: W - bw, y: y, w: bw }
+                if (row.before) out.boxes[row.before.id] = { x: x0, y: y, w: bw }
+                if (row.after) out.boxes[row.after.id] = { x: x0 + bw + mid, y: y, w: bw }
                 out.rows.push({ y: y, both: !!(row.before && row.after) })
             }
             out.height = top + count * (H + 12) - 12
             out.bw = bw
+            out.beforeX = x0
+            out.afterRight = x0 + 2 * bw + mid
             return out
         }
         if (shape === "layers") {
@@ -132,6 +141,9 @@ Item {
         // chain: as many to a row as fit, rows of nearly equal length. The gap holds the longest link label.
         let longest = 0
         for (const ln of links) longest = Math.max(longest, String(ln.label || "").length)
+        // A picture still being drawn has its boxes before its links. Leave the room a label will
+        // want, so the finished picture does not lay itself out again in two rows.
+        if (partial && links.length === 0) longest = 14      // "normal traffic"
         const gap = longest > 0 ? Math.min(132, 34 + Math.round(longest * 6.2)) : 26
         let cols = Math.max(1, Math.min(n, Math.floor((W + gap) / (minBoxWidth + gap))))
         const rows = Math.ceil(n / cols)
@@ -324,13 +336,13 @@ Item {
                 visible: root.shape === "compare" && root.nodes.length > 0
                 anchors.fill: parent
                 Text {
-                    x: 0; y: 0
+                    x: root.geo.beforeX || 0; y: 0
                     text: "Before"
                     color: Theme.muted
                     font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; font.weight: Font.Medium
                 }
                 Text {
-                    x: canvas.width - width; y: 0
+                    x: (root.geo.afterRight || canvas.width) - width; y: 0
                     text: "After"
                     color: Theme.muted
                     font.family: Theme.fontFamily; font.pixelSize: Theme.captionSize; font.weight: Font.Medium

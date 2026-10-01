@@ -73,7 +73,8 @@ PICTURE_PHRASES = {
 }
 PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
                   "sound": "what's playing where", "screens": "your screens"}
-_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$")
+# (Matched on the text as typed: unit names have capitals, NetworkManager.service.)
+_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$", re.I | re.A)
 # Only while a turn runs: the reason for the step in front of you, answered from what the agent
 # said just before it, with no model. At any other time "why" is a question for the agent.
 WHY_WORDS = {"why"}
@@ -97,9 +98,9 @@ class Action:
     title: str = ""    # what the line calls it: "the browser", "Passwords"
 
 
-def normalize(text: str) -> str:
-    t = " ".join(str(text).lower().split())
-    return t.strip(" .!?,;:")
+def normalize(text: str, keep_case: bool = False) -> str:
+    t = " ".join(str(text).split())
+    return (t if keep_case else t.lower()).strip(" .!?,;:")
 
 
 def _key(s: str) -> str:
@@ -160,14 +161,16 @@ def known_apps() -> list:
     return out
 
 
-def _picture(t: str) -> Action | None:
-    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's."""
+def _picture(t: str, typed: str = "") -> Action | None:
+    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's.
+    `t` is the lowercased text, `typed` the same with the capitals it came with."""
     for kind, phrases in PICTURE_PHRASES.items():
         if t in phrases:
             return Action("picture", kind, "open", PICTURE_TITLES[kind])
-    m = _NEEDS_RE.match(t)
-    if m and sysmap.service_exists(m.group(1)):
-        name = sysmap.unit_name(m.group(1)).removesuffix(".service")
+    m = _NEEDS_RE.match(typed or t)
+    unit = sysmap.find_unit(m.group(1)) if m else None
+    if unit:
+        name = unit.removesuffix(".service")    # as the machine spells it: NetworkManager
         return Action("picture", f"service:{name}", "open", f"what {name} needs")
     return None
 
@@ -188,7 +191,7 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     if busy and plain and t in WHY_WORDS:
         return Action("why")
     apostrophe = t.replace("’", "'")   # "what’s playing where", typed on a phone
-    picture = _picture(apostrophe) if apostrophe.isascii() else None
+    picture = _picture(apostrophe, normalize(raw, keep_case=True)) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
     if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
