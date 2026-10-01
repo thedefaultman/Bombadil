@@ -11,7 +11,7 @@ checks at the end of the loop block of `bombadil-smoke`. Tests: `tests/test_loop
 
 | Command | What it does | Exit |
 |---|---|---|
-| `bombadil loop asks [-n N] [--json]` | `asks_text` (or `asks_report` as JSON): what he asks most, 20 by default | 0 |
+| `bombadil loop asks [-n N] [--json]` | `asks_text` (or `asks_report` as JSON): what they ask most, 20 by default | 0 |
 | `bombadil loop status` | counted, offers waiting or resting, what was found, the prober, the idle doctor, agentd (a real ping), the bar, build and versions | 0 |
 | `bombadil loop replay [FILE] [--json] [--logs DIR] [--app NAME]... [--pairs N]` | `LoopStore.replay` in memory: what counted and why not, the groups, what would have been offered, and the pair sheet for hand labelling (100 pairs) | 0; 1 for a FILE that is not there |
 | `bombadil loop report [FP]` | the held report for a finding, else the report built from its evidence; nothing is held, marked or sent | 0; 1 no such finding; 2 which one? |
@@ -27,7 +27,7 @@ Plain words, never a traceback: a broken file costs one line on stderr and the c
 there were nothing in it.
 
 `bombadil ask` is not a loop command, but the loop depends on it: it marks its prompt `"origin":"cli"`, so
-what a script, a cron job or another tool asks through it is never counted as something he types. (The pill
+what a script, a cron job or another tool asks through it is never counted as something they type. (The pill
 sends no origin, which agentd reads as typed; agentd does not guess one for a message that has none.)
 
 ## Looking never writes
@@ -100,6 +100,6 @@ allowed) and `loop-asks-tool` (`mcp_call asks '{}'`). They run as the user like 
 
 - `bombadil-probe.service` starting when agentd comes up, and `systemctl --user is-active` saying so
   (only `systemd-analyze verify` on the unit file was run, which found no fault in it).
-- `loop status` and `doctor --live` against a real agentd, bar and Hyprland; `doctor --live` inside the VM smoke.
+- `loop status` and `doctor --live` against a real agentd, bar and Hyprland; `doctor --live` inside the ISO's smoke test.
 - `Nice`, `CPUSchedulingPolicy=idle` and `IOSchedulingClass=idle` being accepted in a user manager.
-- `bombadil loop replay` on his own `turns.jsonl` (the precision check in `counting.md`).
+- `bombadil loop replay` on their own `turns.jsonl` (the precision check in `counting.md`).

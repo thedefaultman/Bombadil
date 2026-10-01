@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import Bombadil
 import "text.js" as T
 
-// What he asks most: his own words, how often, what it became, and where an offer waits its button
+// What they ask most: their own words, how often, what it became, and where an offer waits its button
 // (the row's own) and "Other ways".
 Section {
     id: root

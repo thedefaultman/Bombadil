@@ -5,8 +5,8 @@ import Bombadil
 import "text.js" as T
 
 // Noticed: what Bombadil has noticed about what you ask, what it made from that, and the bugs it found
-// in itself. It draws what agentd says (`backend.full`) and sends what he presses; nothing is decided
-// here, and nothing is posted without him pressing Submit on the page the Send card opens.
+// in itself. It draws what agentd says (`backend.full`) and sends what they press; nothing is decided
+// here, and nothing is posted without them pressing Submit on the page the Send card opens.
 AppWindow {
     id: win
     title: "Noticed"
@@ -22,7 +22,7 @@ AppWindow {
                                             + full.said_no.length + full.words.length === 0
 
     property string sendId: ""             // the found row whose Send card is open
-    property var declined: ({})            // rows whose card he put away: it does not open by itself again
+    property var declined: ({})            // rows whose card they put away: it does not open by itself again
     property var reportedSeen: ({})        // the rows that were waiting as reports in the last list
     property var answers: ({})             // what agentd said to a tap, by row: a preview or what went wrong
     property bool slow: false              // connected, and agentd has still not answered
@@ -56,8 +56,8 @@ AppWindow {
         sendId = ""
     }
 
-    // What he just asked the Send card for (the report, written by agentd) opens by itself, and so does
-    // one he left waiting when the window closed.
+    // What they just asked the Send card for (the report, written by agentd) opens by itself, and so does
+    // one they left waiting when the window closed.
     function showReport() {
         if (sendId !== "" && sendRow === null)
             sendId = ""

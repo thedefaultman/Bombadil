@@ -1,9 +1,9 @@
 """What a report carries, and what is counted: the cases the first tests did not plant.
 
 A kept log line loses links, addresses and keys; a path with a space in its name goes whole; an app's
-own log is never in a report; a provider's echo of his words goes however it is quoted; a button's own
-word does not garble a finding; a secret he typed is never counted; the browser panel gets the whole
-issue link; a closed issue is not "already reported"; and what he sends is the text he read.
+own log is never in a report; a provider's echo of their words goes however it is quoted; a button's own
+word does not garble a finding; a secret they typed is never counted; the browser panel gets the whole
+issue link; a closed issue is not "already reported"; and what they send is the text they read.
 """
 
 import http.server
@@ -169,7 +169,7 @@ def test_two_fatal_lines_are_two_findings_and_the_same_line_with_other_numbers_i
     assert one.observed == other.observed == "an app's log has a fatal line"
 
 
-# -- a provider's echo of his words, however it is quoted (finding 4) --
+# -- a provider's echo of their words, however it is quoted (finding 4) --
 
 @pytest.mark.parametrize("prompt, error, gone", [
     ("write to dr smith\nabout jane doe's prescription", "bad request: write to dr smith about jane doe's prescription",
@@ -270,7 +270,7 @@ def test_the_probes_own_title_and_expected_are_never_his_words(store):
                       "the bar is not connected to the shell", {}, None, "event", "The bar is not connected to the shell.")
     found = store.record(r, NOW, obs=obs)
     assert found.title == "The bar is not connected to the shell." and found.expected == r.expected
-    assert found.observed == "…"           # what it saw is still taken out: that is where his words would be
+    assert found.observed == "…"           # what it saw is still taken out: that is where their words would be
 
 
 def test_a_local_rows_own_word_is_not_a_secret_but_what_he_typed_to_it_is():
@@ -415,7 +415,7 @@ def test_a_flaky_probe_without_versions_still_gets_its_report(store):
     assert found is not None and report.build(found).build == ""
 
 
-# -- what he sends is what he read --
+# -- what they send is what they read --
 
 def held_finding(store):
     result = probes.Result(False, "bar-alive", "bar", "bar-alive", "the bar answers", "the bar did not answer",
@@ -431,7 +431,7 @@ def test_the_held_report_is_what_is_shown_and_sent_whatever_was_seen_since(store
     found, rep = held_finding(store)
     assert report.held(found.fp) == rep
     assert report.shown(found).render() == rep.render()
-    # the problem is seen again after he read the report, with another build
+    # the problem is seen again after they read the report, with another build
     store.record(probes.Result(False, "bar-alive", "bar", "bar-alive", "the bar answers", "the bar did not answer",
                                {}, None, "event", "The bar lost its connection to Bombadil.", noon(1)),
                  noon(1), versions={"build": "newer99"})

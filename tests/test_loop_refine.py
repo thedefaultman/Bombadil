@@ -380,7 +380,7 @@ def test_a_group_about_to_be_offered_is_split_and_named_once(home):
     (cmd, kw), = runner.calls
     assert cmd[0] == "claude" and "haiku" in cmd
     assert kw["input"].count("\n[") == 3 and '[1] "open my passwords app"' in kw["input"]
-    # Pinned: asked again (even when he is back, even with no call left) costs nothing.
+    # Pinned: asked again (even when they are back, even with no call left) costs nothing.
     assert refine.ask(MEMBERS, ("word", "app"), away=False, now=NOW + 5, runner=runner) == a
     assert refine.ask(list(reversed(MEMBERS)) + [("103-4", "my passwords")], away=True, now=NOW + 6,
                       runner=runner) == a                                        # one member more

@@ -313,9 +313,9 @@ def test_the_chip_goes_while_agentd_is_away(bar):
 def test_the_chip_does_not_turn_up_while_the_pill_has_the_keyboard(bar):
     bar.set(typing=True)
     bar.noticed(OFFER)
-    assert not bar.shown("noticedChip")    # he is typing: not now
+    assert not bar.shown("noticedChip")    # they are typing: not now
     bar.set(typing=False)
-    assert bar.shown("noticedChip")        # he is done: it comes
+    assert bar.shown("noticedChip")        # they are done: it comes
     bar.set(typing=True)
     assert bar.shown("noticedChip")        # one that is up stays up
 
@@ -551,12 +551,12 @@ def test_a_preview_or_a_failure_shows_under_its_row(bar):
                   preview="“my passwords” opens Passwords.\nSeen 4 times, last on Tuesday.")
     assert bar.shown("noticedResult") and "opens Passwords" in bar.text("noticedResultText")
     bar.snap("peek-preview")
-    bar.press("noticedPrimary")                     # the answer is forgotten when he asks again
+    bar.press("noticedPrimary")                     # the answer is forgotten when they ask again
     assert not bar.shown("noticedResult")
     bar.loop_send(type="noticed_result", op="accept", id="a1", ok=False, text="Could not make the word.")
     assert bar.text("noticedResultText") == "Could not make the word."
     bar.snap("peek-failed")
-    bar.press("noticedPrimary")                     # and a failure lets him try once more
+    bar.press("noticedPrimary")                     # and a failure lets them try once more
     assert bar.drain()[-1]["op"] == "accept"
 
 
@@ -689,7 +689,7 @@ def test_focus_ack_says_how_long_the_keyboard_took(bar):
 def test_a_summon_that_never_got_the_keyboard_sends_nothing(bar):
     bar.set(fixedNow=10000.0)
     bar.loop_send(type="summon", id=8)
-    bar.set(fixedNow=10000.0 + 60000)                 # he clicked the pill a minute later: not the summon's
+    bar.set(fixedNow=10000.0 + 60000)                 # they clicked the pill a minute later: not the summon's
     bar.call("inputFocused")
     assert bar.drain() == []
     bar.call("inputFocused")                          # and with no summon at all, nothing either

@@ -1,6 +1,6 @@
 """LoopService: what agentd runs beside its turns to turn the counts and the findings into "noticed".
 
-It keeps the `noticed` state the bar's chip reads, answers his taps (`noticed_do`), makes the words,
+It keeps the `noticed` state the bar's chip reads, answers their taps (`noticed_do`), makes the words,
 starts the turn that makes an app, and keeps the trail (`improve` rows in turns.jsonl). It is a guest
 in agentd: nothing it does is on a turn's path, and one broken step costs one line on stderr, never a
 turn, the pill or a client.
@@ -12,8 +12,8 @@ work. Slow things that are not the database (the network, opening a page, moving
 in other threads, so a tap is never stuck behind them.
 
 The trail is written only through agentd's own ledger writer (`_log_line`), so turns.jsonl keeps one
-writer and stays append only. Nothing is sent from here until he presses Send; the page that opens
-carries the report in its address, and nothing is posted until he presses Submit on it.
+writer and stays append only. Nothing is sent from here until they press Send; the page that opens
+carries the report in its address, and nothing is posted until they press Submit on it.
 """
 
 import asyncio
@@ -40,7 +40,7 @@ from .store import CHUNK, LoopStore
 
 DEBOUNCE = 2.0           # after a finished row: a burst of rows is one look at turns.jsonl
 INGEST_EVERY = 600.0     # and a look at least this often
-INGEST_PAUSE = 0.05      # between the chunks of a long backlog: the prober's writes get in, and so do his taps
+INGEST_PAUSE = 0.05      # between the chunks of a long backlog: the prober's writes get in, and so do their taps
 FINDINGS_EVERY = 20.0    # the prober is another process: read its findings this often while a client is here
 SWEEP_EVERY = 86400.0    # a word unused for 28 days is put away once a day
 TICK = 5.0
@@ -116,8 +116,8 @@ def _local_line(text: str, ok: bool = True, undo_msg: dict | None = None, target
 
 
 def _app_prompt(ask: dict) -> str:
-    """The ordinary request an "app" offer sends: his own words, how often he asked, and what to make.
-    It is his turn to read and undo like any other (origin "loop", so it is never counted as an ask)."""
+    """The ordinary request an "app" offer sends: their own words, how often they asked, and what to make.
+    It is their turn to read and undo like any other (origin "loop", so it is never counted as an ask)."""
     said = ", ".join(f"“{sentence_of(s, 120)}”" for s in ask["sentences"][:3])
     return (f"I keep asking for this: {said}. I have asked {_times(ask['n'], ask['days'])}. "
             "Please make me a small Bombadil app for it, using the app kit, so I can do it in one place "
@@ -218,7 +218,7 @@ class LoopService:
             pool.shutdown(wait=False)
 
     def _say(self, where: str, exc: Exception) -> None:
-        """One line on stderr per distinct trouble. Never his words: only what kind of thing broke."""
+        """One line on stderr per distinct trouble. Never their words: only what kind of thing broke."""
         detail = ""
         if isinstance(exc, sqlite3.Error):
             detail = f": {exc}"
@@ -323,7 +323,7 @@ class LoopService:
 
     def _w_collect(self, now: float, may_offer: Callable[[], bool]) -> _Snap:
         """The state, from loop.db. A new offer is fetched (and so recorded as shown) only when
-        `may_offer()` is true at this very moment; one already showing is read again whatever he does."""
+        `may_offer()` is true at this very moment; one already showing is read again whatever they do."""
         store, finds = self._store, self._findings
         snap = _Snap(hidden=self._flag("hidden") == "1")
         if snap.hidden:
@@ -369,7 +369,7 @@ class LoopService:
                 "others": [], "forms": []}
 
     def _w_refine(self, now: float) -> None:
-        """The one optional model call, for the group that is about to become an offer. Off unless his
+        """The one optional model call, for the group that is about to become an offer. Off unless their
         config turns it on; it only renames a group or holds one back, never adds to it."""
         if not refine.enabled():
             return
@@ -396,7 +396,7 @@ class LoopService:
         try:
             from . import runner
             return runner.presence.away(now)
-        except Exception:  # noqa: BLE001 - not knowing means he is here
+        except Exception:  # noqa: BLE001 - not knowing means they are here
             return False
 
     def _w_full(self, now: float) -> dict:
@@ -414,7 +414,7 @@ class LoopService:
             except KeyError:
                 form = ""
             said_no.append({"id": r["id"], "title": r["sentence"] or r["label"], "t": r["t"], "form": form})
-        for f, said_t in finds.said_no():    # a problem he said Not now or Never to
+        for f, said_t in finds.said_no():    # a problem they said Not now or Never to
             said_no.append({"id": f.fp, "title": f.title, "t": said_t, "form": ""})
         said_no.sort(key=lambda r: -r["t"])
         listed = [{"phrase": w.phrase, "away": w.away,
@@ -435,7 +435,7 @@ class LoopService:
                 "found": found, "said_no": said_no, "words": listed}
 
     def _w_ask_buttons(self, r: dict, now: float) -> dict:
-        """For a group that is waiting on him: what the button says, what it would do, the other ways."""
+        """For a group that is waiting on them: what the button says, what it would do, the other ways."""
         if r["state"] != "offered":
             return {}
         store = self._store
@@ -736,15 +736,15 @@ class LoopService:
 
     async def _open_window(self) -> bool:
         """Open the Noticed window. True only when it opened: False when that app is not on this machine
-        (quietly) or would not open. The app ships with Bombadil, so it is looked up as an app is run, his
-        own copy first and then the built-in one, and not in `known_apps()`, which lists only his."""
+        (quietly) or would not open. The app ships with Bombadil, so it is looked up as an app is run, their
+        own copy first and then the built-in one, and not in `known_apps()`, which lists only their."""
         lx = getattr(self.agentd, "launcher", None)
         if lx is None:
             return False
         try:
             try:
                 app = await asyncio.to_thread(apps_mod.load, launcher.NOTICED)
-            except OSError:    # (FileNotFoundError) neither a copy of his nor the one that ships is here
+            except OSError:    # (FileNotFoundError) neither a copy of their nor the one that ships is here
                 return False
             ok, _ = await asyncio.to_thread(lx.run, launcher.Action("app", app.name, "open", str(app.title)))
             return bool(ok)
@@ -752,7 +752,7 @@ class LoopService:
             self._say("window", e)
             return False
 
-    # -- his taps --
+    # -- their taps --
 
     async def _do(self, msg: dict, writer) -> None:
         op = msg.get("op") if isinstance(msg.get("op"), str) else ""
@@ -861,7 +861,7 @@ class LoopService:
             store.answer(ask["id"], offers.ACCEPT, form="A", now=now)
         except Exception:
             # The notes would not take it: no trail row, no Undo and the offer still showing. Take the word
-            # out again, so that the failure he is told about is true and a second tap can make it.
+            # out again, so that the failure they are told about is true and a second tap can make it.
             with contextlib.suppress(Exception):
                 words.remove(word.phrase)
             raise
@@ -911,11 +911,11 @@ class LoopService:
         return tuple(sorted((f.name, st.st_mtime_ns, st.st_size) for f, st in files))
 
     def _app_stamps(self) -> dict[str, tuple[str, tuple]]:
-        """His apps: name -> (title, stamp)."""
+        """Their apps: name -> (title, stamp)."""
         return {a.name: (str(a.title), self._stamp(Path(a.path))) for a in launcher.known_apps()}
 
     async def _make_app(self, ask: dict) -> Result:
-        """Form D is an ordinary turn, asked on his tap: a request in his own words, origin "loop"."""
+        """Form D is an ordinary turn, asked on their tap: a request in their own words, origin "loop"."""
         if getattr(self.agentd, "access", "ready") != "ready":
             return Result(False, "Bombadil needs you to sign in before it can make an app.")
         before = await asyncio.to_thread(self._app_stamps)
@@ -980,7 +980,7 @@ class LoopService:
             title = f"Made the app {after[name][0]} from “{pending['said']}”."
             self._improve("app", title, group=pending["group"], undo={"op": "trash_app", "name": name})
         for name in changed[:3 - len(new[:3])]:
-            # No Undo on this row: the folder is his app's. The turn's own Undo has the old files.
+            # No Undo on this row: the folder is their app's. The turn's own Undo has the old files.
             title = f"Changed the app {after[name][0]} from “{pending['said']}”."
             self._improve("app", title, group=pending["group"])
         await self._publish()
@@ -1045,7 +1045,7 @@ class LoopService:
             self._sending.discard(rid)
 
     async def _send_report(self, fp: str, rep: report.Report) -> Result:
-        """Open the project's new-issue page, filled in; he presses Submit. The search for an issue with
+        """Open the project's new-issue page, filled in; they press Submit. The search for an issue with
         this fingerprint and the page itself are slow and run off the worker, so nothing waits on them."""
         number = await asyncio.to_thread(report.already_reported, fp, fetch=self.fetcher)
         if number is not None:
@@ -1065,7 +1065,7 @@ class LoopService:
 
     async def _already_reported(self, fp: str, rep: report.Report, number: int) -> Result:
         """The project has this problem already, so nothing new is sent. Its issue page opens instead, and
-        a line saying how often it was seen goes on the clipboard, for him to paste there if he wants to
+        a line saying how often it was seen goes on the clipboard, for them to paste there if they want to
         add that it happened again (an issue page cannot be filled in with a comment). The finding is
         "sent", and the window says which issue it is."""
         await self._work(self._w_sent_already, fp, number, where="send")
@@ -1130,7 +1130,7 @@ class LoopService:
 
     def _w_not_now(self, group: str | None, now: float) -> None:
         if group:
-            self._store.answer(group, offers.NOT_NOW, now=now)   # undoing what he was offered: not now
+            self._store.answer(group, offers.NOT_NOW, now=now)   # undoing what they were offered: not now
 
     def _w_word_back(self, phrase: str, now: float) -> tuple[bool, str]:
         try:
@@ -1170,7 +1170,7 @@ class LoopService:
         return dest, title
 
     async def _op_bring_back(self, rid: str, form, writer) -> Result:
-        """A put-away word, a group he said no to, or an app that went to the trash."""
+        """A put-away word, a group they said no to, or an app that went to the trash."""
         row = self._row_of(rid)
         if row is not None:
             return await self._bring_back_app(row)
@@ -1203,7 +1203,7 @@ class LoopService:
         return False, "That is not on the list any more."
 
     async def _bring_back_made_word(self, row: dict) -> Result:
-        """A word he took out: make it again, if what it opened is still here and the phrase is free."""
+        """A word they took out: make it again, if what it opened is still here and the phrase is free."""
         rid = row["id"]
         undo = row.get("undo") if isinstance(row.get("undo"), dict) else {}
         opens = undo.get("opens") if isinstance(undo.get("opens"), dict) else {}
@@ -1217,7 +1217,7 @@ class LoopService:
         return Result(ok, text)
 
     async def _bring_back_swept_word(self, row: dict) -> Result:
-        """A word the sweep put away and he brought back with Undo: put it away again, so the change
+        """A word the sweep put away and they brought back with Undo: put it away again, so the change
         stands as it did. (The word is still there, so it is not made again.)"""
         rid = row["id"]
         undo = row.get("undo") if isinstance(row.get("undo"), dict) else {}

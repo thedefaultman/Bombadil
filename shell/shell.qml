@@ -164,7 +164,7 @@ ShellRoot {
 
     function release() { root.summonedOn = "" }
 
-    // He said "noticed": the card stays up on the focused screen, and its pill takes the keyboard
+    // They said "noticed": the card stays up on the focused screen, and its pill takes the keyboard
     // so Esc puts the card away.
     function noticedOpened() {
         const m = Hyprland.focusedMonitor

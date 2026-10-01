@@ -12,10 +12,10 @@ their words, the kind of thing asked, the things they name and what the turn act
 Text is compared as trigrams of what is left after a fixed pass: prefixes the pill adds, numbers
 and paths and addresses turned into slots, a filler list, a suffix stripper and a table of
 folded synonyms. Route is the overlap of the two turns' topic sets. The design hangs together
-on a written corpus (tests/fixtures/loop); whether it holds on his real asks is what
+on a written corpus (tests/fixtures/loop); whether it holds on their real asks is what
 `LoopStore.replay` is for.
 
-`counted()` says whether an ask counts and why not. A turn he stopped, that failed, or that he
+`counted()` says whether an ask counts and why not. A turn they stopped, that failed, or that they
 undid within 60 s, and its rephrase within 2 minutes, are friction: returned with their reason,
 never dropped silently, and attached to the group they would have joined.
 """
@@ -68,7 +68,7 @@ PRIVATE_TEXT = re.compile(
 
 
 def clean_text(text: str) -> str:
-    """His words without the prefixes the pill and the apps add ("[from app x]", "About <path>:")."""
+    """Their words without the prefixes the pill and the apps add ("[from app x]", "About <path>:")."""
     t = _PREFIX_APP.sub("", str(text))
     return _PREFIX_ABOUT.sub("", t).strip()
 
@@ -82,8 +82,8 @@ def is_signin(req: Request) -> bool:
 
 
 def friction_of(req: Request) -> str:
-    """Why a turn was not a clean answer to what he asked: stopped, failed, undone within a minute.
-    A sign-in turn is neither: the provider needed him, not the other way round."""
+    """Why a turn was not a clean answer to what they asked: stopped, failed, undone within a minute.
+    A sign-in turn is neither: the provider needed them, not the other way round."""
     if req.stopped or req.stopped_at is not None:
         return "stopped"
     if req.ok is not True:
@@ -96,7 +96,7 @@ def friction_of(req: Request) -> str:
 def counted(req: Request, prev: Request | None = None, route: Sequence[str] = (),
             nevers: Iterable["Profile"] = (), things: dict | None = None) -> tuple[bool, str]:
     """(does this ask count, why not). `prev` is the turn before it, `route` the topics this turn
-    touched, `nevers` the signatures of groups he said Never to. Reasons: `origin`, `empty`, `shell`,
+    touched, `nevers` the signatures of groups they said Never to. Reasons: `origin`, `empty`, `shell`,
     `sign-in`, `private`, `long`, the friction ones (`stopped`, `failed`, `undone`, `rephrase`),
     `never`; "" when it counts."""
     if req.origin != "typed":          # buttons, apps, sessions, routines, the loop, `bombadil ask`
@@ -241,7 +241,7 @@ _FILLERS = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in sorted(FILLER_PH
 
 
 def _raw_tokens(text: str) -> list[str]:
-    """Lowercase words and slots of his text, nothing dropped."""
+    """Lowercase words and slots of their text, nothing dropped."""
     t = launcher.normalize(clean_text(text))
     for rx, slot in _SLOTS:
         t = rx.sub(slot, t)
@@ -252,7 +252,7 @@ def _raw_tokens(text: str) -> list[str]:
 
 
 def _words(text: str) -> list[tuple[str, str]]:
-    """(the word as he said it, its folded root) for what is left after fillers and small words."""
+    """(the word as they said it, its folded root) for what is left after fillers and small words."""
     t = " ".join(_raw_tokens(text))
     t = _FILLERS.sub(" ", t)
     out = []
@@ -337,7 +337,7 @@ _S_VERBS = {"whats", "wheres", "crashes", "fails", "status"}
 
 def _is_verbish(w: str) -> bool:
     """Plural words are things, not verbs: "downloads" is a folder and "logs" are to read, while
-    "download" and "log" are what he asks for."""
+    "download" and "log" are what they ask for."""
     return not w.endswith("s") or w.endswith(("ss", "us", "is")) or w in _S_VERBS
 
 
@@ -438,7 +438,7 @@ class Profile:
     day: str
     text: str
     tokens: tuple[str, ...]        # folded roots, each once
-    surfaces: tuple[str, ...]      # the words as he said them, same order
+    surfaces: tuple[str, ...]      # the words as they said them, same order
     grams: frozenset[str]
     verb: str
     named: frozenset[str]
@@ -449,10 +449,10 @@ class Profile:
     near_miss: bool = False
     style: bool = False
     open_target: str = ""          # the one thing this ask opened, when that is all it did
-    word: str = ""                 # what he would say to a word for it
+    word: str = ""                 # what they would say to a word for it
 
 
-# How he wants answers to read: asked again and again, this is a preference, not a request. Said in
+# How they want answers to read: asked again and again, this is a preference, not a request. Said in
 # different words, so it is told by kind (and the kind stands in for the route it does not have).
 _STYLE_KINDS = (
     ("brevity", re.compile(
@@ -478,7 +478,7 @@ _TRAIL = re.compile(r"\s+(?:please|pls|now|for me|app|application|window|panel)$
 
 
 def word_phrase(text: str) -> str:
-    """What he would say to a word for this ask: "show me my passwords" -> "my passwords". Empty
+    """What they would say to a word for this ask: "show me my passwords" -> "my passwords". Empty
     when it is not short enough to be a word (more than four words)."""
     t = launcher.normalize(clean_text(text))
     for _ in range(3):
@@ -568,14 +568,14 @@ def joins(a: Profile, b: Profile) -> bool:
 @dataclass
 class Group:
     id: str                                   # "g" + the first member's id, so it survives new members
-    label: str = ""                           # at most four of his most common words
+    label: str = ""                           # at most four of their most common words
     members: list[str] = field(default_factory=list)   # request ids, oldest first
     first: float = 0.0
     last: float = 0.0
     days: list[str] = field(default_factory=list)      # distinct local dates, oldest first
     n: int = 0
     weight: float = 0.0                       # n, each ask halved every 14 days (set by `weigh`)
-    sentences: list[str] = field(default_factory=list)  # three of his own, newest first, distinct
+    sentences: list[str] = field(default_factory=list)  # three of their own, newest first, distinct
     verb: str = ""                            # the commonest of the ten classes
     named: list[str] = field(default_factory=list)
     routes: list[str] = field(default_factory=list)    # topics, commonest first
@@ -591,7 +591,7 @@ class Group:
     changed: int = 0
     style: int = 0
     opens: str = ""                           # the one app or panel every ask only opened
-    word: str = ""                            # what he would say to a word for it
+    word: str = ""                            # what they would say to a word for it
     text_dropped: bool = False
     # What the store keeps about what became of it:
     state: str = "counting"                   # counting, offered, not_now, said_no, made, got_it
@@ -780,9 +780,9 @@ class Grouper:
 # -- what a group can be told apart by, for "Never" --
 
 def signature(profiles: Iterable[Profile], keep: int = 5) -> list[list]:
-    """What to remember of a group he said Never to: up to five members' folded words, verb, named
+    """What to remember of a group they said Never to: up to five members' folded words, verb, named
     things and route topics. Enough to tell a later ask "you would have joined this", and no
-    sentence of his own."""
+    sentence of their own."""
     out = []
     for p in list(profiles)[:keep]:
         out.append([list(p.tokens), p.verb, sorted(p.named), sorted(p.route)])

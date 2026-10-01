@@ -43,7 +43,7 @@ replaces anything, and a file that did not read cleanly is copied to `words.toml
   is gone, matches nothing. "!..." never matches.
 - "noticed": `Action("noticed", verb, verb, "Noticed")` (`kind == "noticed"`, `verb` and `target`
   both `"open"` or `"hide"`) for `noticed`, `open|show|launch|... noticed` (open) and
-  `hide|put away noticed` (hide). "close noticed" is not a word (goes to the agent). An app he made
+  `hide|put away noticed` (hide). "close noticed" is not a word (goes to the agent). An app they made
   called Noticed wins every time, and then `entries()` lists no second "noticed". agentd must intercept
   `kind == "noticed"` before `Launcher.run`; `Launcher._noticed` answers `(False, "Noticed is not
   running.")` when it did not. "show noticed" after a hide is still verb `"open"`: the service decides.
@@ -70,7 +70,7 @@ instruction to put into a prompt.
 
 ## Traps
 
-- words.toml is a file he may edit; `add` and friends rewrite it whole, so comments and keys the
+- words.toml is a file they may edit; `add` and friends rewrite it whole, so comments and keys the
   loop does not know are not kept (a file that did not read cleanly is saved as `words.toml.bad` first).
 - Two processes adding in the same instant: the last writer wins and nothing is corrupted. The lock
   is per process.
@@ -90,7 +90,7 @@ provider adapters already read. Unchecked: each flag above exists in the install
 (`--tools ""`, `--strict-mcp-config`, `--no-session-persistence`, `--model haiku` as an alias,
 codex `--sandbox read-only`), that `claude -p --output-format json` prints one object with a
 `"result"` string, that `codex exec --json` ends with an `agent_message` item, that codex does not
-start the MCP servers from his own config (there is no flag here to stop it), that a headless call
+start the MCP servers from their own config (there is no flag here to stop it), that a headless call
 draws from the same plan window as a turn, and that either fast model answers the JSON shape. That is
 why `[refine] enabled` defaults to false. Also needing a real machine: the launcher with real apps
 under `~/Apps`, and a real Hyprland to see the line above the pill after a word opens an app.

@@ -55,7 +55,7 @@ def test_every_probe_says_in_plain_words_what_it_is():
     fields = {f.name for f in dataclasses.fields(Observation)}
     for p in PROBES.values():
         assert p.kind in probes.KINDS, p.id
-        assert p.title[0].isupper() and ":" not in p.title, p.id     # a sentence for him, not "Name: explainer"
+        assert p.title[0].isupper() and ":" not in p.title, p.id     # a sentence for them, not "Name: explainer"
         assert len(p.what) > 20 and p.component, p.id
         assert set(p.needs) <= fields, p.id
 
@@ -110,10 +110,10 @@ def test_the_drawer_reads_as_the_bug_said_it_did():
     assert r.observed == "the drawer is open and the active window is none"
     # Focus left on another window, or on the bar as a window, is the same bug.
     for klass, shown in (("bombadil-bar", "bombadil-bar"), ("foot", "other"), ("bombadil-app-notes", "bombadil-app")):
-        bad.activewindow = {"class": klass, "title": "whatever he was doing", "focusHistoryID": 0}
+        bad.activewindow = {"class": klass, "title": "whatever they were doing", "focusHistoryID": 0}
         r = one("drawer-focus", bad)
         assert r.ok is False and r.observed == f"the drawer is open and the active window is {shown}"
-    assert "whatever he was doing" not in json.dumps(dataclasses.asdict(r))
+    assert "whatever they were doing" not in json.dumps(dataclasses.asdict(r))
 
 
 def test_the_drawer_probe_has_nothing_to_judge_unless_the_drawer_is_open_and_old_enough():
@@ -157,7 +157,7 @@ def test_apps_stacked_needs_two_floating_apps_on_one_workspace_with_one_spot():
     assert stacked(app(), app(ws=2)).ok is True                                 # another workspace
     assert stacked(app(), app(floating=False)).ok is True                       # tiled windows share nothing
     assert stacked(app(), app(hidden=True)).ok is True
-    assert stacked(app(klass="foot"), app(klass="foot")).ok is True             # his windows are his
+    assert stacked(app(klass="foot"), app(klass="foot")).ok is True             # their windows are their
 
 
 def monitor(w=1920, h=1080, **kw):
@@ -200,7 +200,7 @@ def test_window_under_bar_needs_an_overlap_with_what_the_bar_shows():
     assert under(app(at=(-100, 210))).ok is True                                # beside it
     assert under(app(ws=2)).ok is True                                          # on a workspace nobody is looking at
     assert under(app(floating=False)).ok is True
-    assert under(app(klass="firefox")).ok is True                               # the pill over his windows is by design
+    assert under(app(klass="firefox")).ok is True                               # the pill over their windows is by design
     assert under({**app(), "workspace": {"id": -98, "name": "special:details"}}).ok is True
     shown = monitor(specialWorkspace={"id": -98, "name": "special:details"})
     special = {**app(), "workspace": {"id": -98, "name": "special:details"}}
@@ -594,7 +594,7 @@ def test_a_fatal_line_in_an_apps_log_counts_from_the_apps_latest_start():
     assert one("app-health", Observation(apps=[{"ok": True, "running": True, "log": ["unfatally fine"]}])).ok is True
 
 
-# -- his words, only beside a probe that fired --
+# -- their words, only beside a probe that fired --
 
 class Shown:
     def __init__(self, first, last, evidence=""):

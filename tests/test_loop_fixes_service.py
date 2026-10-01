@@ -1,6 +1,6 @@
-"""Fixes to the service's ops and to what it tells him.
+"""Fixes to the service's ops and to what it tells them.
 
-The window opens from the app that ships; a problem he said Not now to is counted and comes back; two
+The window opens from the app that ships; a problem they said Not now to is counted and comes back; two
 sends at once make one page; a word that cannot be noted is not left live; an app turn that made nothing
 puts its ask back; a put-away word can be put back; an offer is only made when it can be done; the
 already-reported answer says so and opens that issue. Shares the rig and the fixtures of

@@ -198,7 +198,7 @@ def kit() -> str:
 
 
 def machine() -> str:
-    """What kind of machine this is, only when something says: BOMBADIL_MACHINE (his own word for
+    """What kind of machine this is, only when something says: BOMBADIL_MACHINE (their own word for
     it, like "laptop VM"), else "VM" when systemd sees virtualisation, else the chassis type."""
     def ask() -> str:
         said = "".join(c for c in os.environ.get("BOMBADIL_MACHINE", "") if c.isalnum() or c in " -_")

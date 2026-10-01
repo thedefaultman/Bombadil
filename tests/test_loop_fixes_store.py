@@ -1,8 +1,8 @@
 """The store, the database and the cost of the loop: what a review of the counting half found.
 
 Words that are no group's kept past 90 days, a loop.db anyone on the machine could read, an idle poll that
-loaded every group he ever made, an ingest that held the write lock for the whole backlog, a Forget that
-kept the sentence he said no to, and a damaged loop.db with nothing said about what to do.
+loaded every group they ever made, an ingest that held the write lock for the whole backlog, a Forget that
+kept the sentence they said no to, and a damaged loop.db with nothing said about what to do.
 """
 
 import asyncio
@@ -128,7 +128,7 @@ def test_old_members_of_a_group_still_being_asked_keep_their_words(home, tmp_pat
     assert all(texts[f"w{i}"] for i in range(4))                # the group is alive: regroup needs its members
 
 
-# -- 42: Forget does not keep the sentence he said no to --
+# -- 42: Forget does not keep the sentence they said no to --
 
 def test_forgetting_what_he_asks_also_forgets_the_sentence_he_said_no_to(home, tmp_path):
     s, _, _, _ = passwords_never(tmp_path)
@@ -153,7 +153,7 @@ def test_the_sentence_he_said_no_to_goes_with_the_words_of_its_group_after_90_da
     assert sentence not in dump(s)
 
 
-# -- 8: an idle poll loads the groups that could be ripe, not every group he ever made --
+# -- 8: an idle poll loads the groups that could be ripe, not every group they ever made --
 
 def plant(s, gid, n, last, state="counting"):
     """A group of `n` asks, the last at `last`, put straight into the table (a long history in one line)."""

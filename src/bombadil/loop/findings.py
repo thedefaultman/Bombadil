@@ -1,5 +1,5 @@
 """Findings: what the probes find, kept once per problem, counted only when it counts, and written
-down with evidence that holds nothing of his.
+down with evidence that holds nothing of their.
 
 A finding is one problem as it always reads (its fingerprint), however often it is seen. The store
 (`FindingsStore`, tables in loop.db) decides WHEN A SIGHTING COUNTS:
@@ -10,14 +10,14 @@ A finding is one problem as it always reads (its fingerprint), however often it 
              becomes a finding about itself.
   event, crash, drift
              a fact that already happened: counts on its first sighting.
-  friction   what he had to work around: counts at 3 sightings on 2 days, or at one sighting with a
+  friction   what they had to work around: counts at 3 sightings on 2 days, or at one sighting with a
              probe firing within 5 minutes.
 
 The same state seen on every run for an hour is one sighting (runs less than half an hour apart are
 the same episode); a past fact carries its own time (Result.at) and is one sighting however often it
-is read. A finding he said Not now to (dismissed) is still counted but not raised, until it has happened twice
-as many times as when he said it or 30 days have passed; one he said never to is not raised again.
-Either comes back at once when he brings it back. Nothing here raises: a full disk or a locked database
+is read. A finding they said Not now to (dismissed) is still counted but not raised, until it has happened twice
+as many times as when they said it or 30 days have passed; one they said never to is not raised again.
+Either comes back at once when they bring it back. Nothing here raises: a full disk or a locked database
 costs one line on stderr and the call returns as if nothing had been seen.
 
 Findings about the loop's own checks (component "loop") are never fixable: the loop cannot edit its
@@ -46,7 +46,7 @@ from . import db
 from .probes import Observation, Result, attach_words, scrub_text, strip_line, window_kind, write_json_atomic
 
 STATES = ("open", "reported", "sent", "dismissed", "never")
-SHOWING = ("open", "reported")   # what still waits for him; `sent` is done, the others are his no
+SHOWING = ("open", "reported")   # what still waits for them; `sent` is done, the others are their no
 SAME_EPISODE = 1800.0    # seconds: a state seen again within this of the last time is the same sighting
 FRICTION_SIGHTINGS = 3
 FRICTION_DAYS = 2
@@ -106,7 +106,7 @@ CREATE TABLE finding_nos(
 class Finding:
     """One problem. `first` and `last` are epoch seconds of the first and latest sighting, `n` how many
     times it was seen (an episode or a past fact is one) and `days` on how many different days.
-    `state` is what he did with it. `evidence` is the folder with evidence.json, `probe` the check
+    `state` is what they did with it. `evidence` is the folder with evidence.json, `probe` the check
     that found it (`bombadil probe <probe>` runs it again)."""
 
     fp: str
@@ -188,7 +188,7 @@ def _pair(v) -> list | None:
 
 
 def _secrets(obs: Observation | None, turn) -> list[str]:
-    """Everything of his that must not reach a bundle: window titles, what he typed, what was answered."""
+    """Everything of their that must not reach a bundle: window titles, what they typed, what was answered."""
     found: set[str] = set()
     for c in [*(obs.clients if obs and isinstance(obs.clients, list) else []),
               obs.activewindow if obs else None]:
@@ -197,12 +197,12 @@ def _secrets(obs: Observation | None, turn) -> list[str]:
     rows = [*(obs.ledger if obs and isinstance(obs.ledger, list) else []), turn]
     for r in rows:
         if isinstance(r, dict):
-            # A button's own word on a local row ("undo", "stop") is the loop's, not his.
+            # A button's own word on a local row ("undo", "stop") is the loop's, not their.
             own = ({str(r[k]).strip().lower() for k in ("action", "verb") if r.get(k)}
                    if r.get("kind") == "local" else set())
             found |= {x for x in (r.get(k) for k in ("prompt", "result", "summary"))
                       if not (isinstance(x, str) and x.strip().lower() in own)}
-    # A title that is a class name, or too short to be his, would only eat the bundle's own words.
+    # A title that is a class name, or too short to be their, would only eat the bundle's own words.
     return sorted((s for s in found if isinstance(s, str) and len(s) >= 4 and not s.startswith("bombadil")),
                   key=len, reverse=True)
 
@@ -342,7 +342,7 @@ def _guard(default=None):
 
 
 def _day(t: float) -> str:
-    """The local day a sighting was on: "3 times on 2 days" is his days, not UTC's."""
+    """The local day a sighting was on: "3 times on 2 days" is their days, not UTC's."""
     try:
         return time.strftime("%Y-%m-%d", time.localtime(t))
     except (OverflowError, OSError, ValueError):
@@ -369,7 +369,7 @@ class FindingsStore:
         """Write down one probe's Result when it counts. Returns the finding when this sighting was
         new (a new finding, or one more time for a known one), else None: green, not checked, a first
         look at an invariant that still waits for its retry, a probe that is quarantined, a finding
-        he said no to (a Not now is counted but raised again only when it is over), the same event
+        they said no to (a Not now is counted but raised again only when it is over), the same event
         again, or a friction that has not happened often enough yet.
 
         `obs`, `log` (the last lines of the relevant log), `turn` (the ledger row), `tools` (that turn's
@@ -426,7 +426,7 @@ class FindingsStore:
                 return None     # this very event is already written down
             if not key and row is not None and t - row["last_t"] < SAME_EPISODE:
                 self.conn.execute("UPDATE findings SET last_t=MAX(last_t, ?) WHERE fp=?", (t, fp))
-                # still the same episode of the same state; one that outlasts his Not now is raised again
+                # still the same episode of the same state; one that outlasts their Not now is raised again
                 return self.get(fp) if snoozed and self._snooze_over(fp, row["n"], t) else None
             self.conn.execute("INSERT INTO sightings(fp, t, day, key, kind) VALUES(?, ?, ?, ?, ?)",
                               (fp, t, _day(t), key, r.kind))
@@ -441,7 +441,7 @@ class FindingsStore:
                 "observed=excluded.observed, first_t=excluded.first_t, "
                 "last_t=MAX(findings.last_t, excluded.last_t), n=excluded.n, days=excluded.days, "
                 "counted=MAX(findings.counted, excluded.counted)",
-                # The probe's own title and expected are its words, never his: only what it saw is taken out.
+                # The probe's own title and expected are its words, never their: only what it saw is taken out.
                 (fp, r.component, r.rule, r.id, r.kind, _redact(r.title or r.id, ()),
                  _redact(r.expected, ()), _redact(r.observed, secrets), first, last, n, days,
                  int(counted), str(evidence_dir(fp))))
@@ -452,12 +452,12 @@ class FindingsStore:
                     "WHERE kind='friction' AND cleared=0 AND ABS(t - ?) <= ?)", (t, PROBE_WITHIN))
             self._prune(now)
             if snoozed and not self._snooze_over(fp, n, t):
-                return None     # counted, not raised: he said Not now
+                return None     # counted, not raised: they said Not now
         self._write_bundle(fp, r, now, context)
         return self.get(fp) if counted else None
 
     def _snooze_over(self, fp: str, n: int, now: float) -> bool:
-        """Is his Not now over: it has happened twice as many times as when he said it, or 30 days have
+        """Is their Not now over: it has happened twice as many times as when they said it, or 30 days have
         passed. Then the finding is open again. A Not now with no note of when (one from before the notes
         were kept) starts its rest now."""
         said = self.conn.execute("SELECT n, t FROM finding_nos WHERE fp=?", (fp,)).fetchone()
@@ -532,7 +532,7 @@ class FindingsStore:
         """Let a quarantined probe run again (its flips are forgotten)."""
         self.conn.execute("DELETE FROM probe_flips WHERE probe=?", (probe_id,))
 
-    # -- reading and what he does --
+    # -- reading and what they do --
 
     def _finding(self, row) -> Finding:
         return Finding(row["fp"], row["component"], row["rule"], row["title"], row["expected"],
@@ -542,7 +542,7 @@ class FindingsStore:
 
     @_guard(list)
     def open_findings(self) -> list[Finding]:
-        """What waits for him (open or reported), newest first."""
+        """What waits for them (open or reported), newest first."""
         return self.all(SHOWING)
 
     @_guard(list)
@@ -567,10 +567,10 @@ class FindingsStore:
 
     @_guard()
     def mark(self, fp: str, state: str, now: float | None = None) -> Finding | None:
-        """What he did with it: reported (the report is held), sent, dismissed (Not now), never, or
+        """What they did with it: reported (the report is held), sent, dismissed (Not now), never, or
         open again (Bring back). Dismissed keeps counting but is not raised until it has happened twice
-        as many times or 30 days have passed; never is not raised again until he brings it back. `now`
-        is when he said no (the note kept with it)."""
+        as many times or 30 days have passed; never is not raised again until they bring it back. `now`
+        is when they said no (the note kept with it)."""
         if state not in STATES:
             raise ValueError(f"no such state: {state!r}")
         now = _num(now) if _num(now) is not None else time.time()
@@ -588,7 +588,7 @@ class FindingsStore:
 
     @_guard(list)
     def said_no(self) -> list[tuple[Finding, float]]:
-        """What he said no to (Not now or never) and when, newest first, for the "You said no to" list."""
+        """What they said no to (Not now or never) and when, newest first, for the "You said no to" list."""
         rows = self.conn.execute(
             "SELECT f.*, COALESCE(s.t, f.last_t) AS said_t FROM findings f LEFT JOIN finding_nos s "
             "ON s.fp = f.fp WHERE f.counted=1 AND f.state IN ('dismissed', 'never') "
@@ -597,8 +597,8 @@ class FindingsStore:
 
     @_guard(0)
     def clear_found(self) -> int:
-        """"Clear what it found": every finding he has not said no to, with its evidence and held
-        report, is dropped. A problem that is still there is found again at the next run; what he
+        """"Clear what it found": every finding they have not said no to, with its evidence and held
+        report, is dropped. A problem that is still there is found again at the next run; what they
         dismissed or said never to stays dismissed. Returns how many were cleared."""
         with db.transaction(self.conn):
             fps = [r["fp"] for r in self.conn.execute(
@@ -625,7 +625,7 @@ class FindingsStore:
 
     @_guard(list)
     def add_words(self, fp: str, prompts) -> list[str]:
-        """His words of trouble ("still", "won't", "stuck") that came within five minutes of this
+        """Their words of trouble ("still", "won't", "stuck") that came within five minutes of this
         finding's probe firing, written into its evidence as "words". Never the sentence."""
         finding = self.get(fp)
         return attach_words(finding, prompts, fired=self.sighting_times(fp)) if finding else []

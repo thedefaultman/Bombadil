@@ -679,7 +679,7 @@ check("three asks on three days put one offer in the chip", st.get("count") == 1
       and [r["kind"] for r in st.get("rows", [])] == ["offer"], st)
 asked = {"show me my passwords", "open my passwords", "can you open passwords please"}
 row = (st.get("rows") or [{}])[0]
-check("the offer is in his own words, says how often and what would happen",
+check("the offer is in their own words, says how often and what would happen",
       row.get("title") in asked and row.get("meta") == "3 times on 3 days"
       and "my passwords" in row.get("what", "") and row.get("primary") == "Make the word", row)
 loop_ipc("chip", "HEADLESS-1")
@@ -707,7 +707,7 @@ for _ in range(50):
     time.sleep(0.2)
 check("the chip goes once nothing waits", st3.get("count") == 0 and not st3.get("chip"), st3)
 improve = [json.loads(x) for x in bpaths.turns_log().read_text().splitlines() if '"improve"' in x]
-check("the change is in the ledger as his own tap, with an undo that takes the word away again",
+check("the change is in the ledger as their own tap, with an undo that takes the word away again",
       improve and improve[-1].get("title") == "Made “my passwords” open Passwords."
       and improve[-1].get("undo", {}).get("op") == "remove_word", improve[-1:])
 

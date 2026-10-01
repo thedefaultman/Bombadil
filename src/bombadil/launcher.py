@@ -277,7 +277,7 @@ def _widget_action(t: str, app_list: list) -> Action | None:
 
 
 def _word_action(t: str, app_list: list) -> Action | None:
-    """A word he made: the whole text, or the text after an opening verb, as an app's name can
+    """A word they made: the whole text, or the text after an opening verb, as an app's name can
     be. Tried last, so a word never shadows anything; one put away, or whose app is gone,
     matches nothing and the text goes to the agent."""
     for phrase in [t] + [t[len(v) + 1:] for v in OPEN_VERBS if t.startswith(v + " ")]:
@@ -295,7 +295,7 @@ def _word_action(t: str, app_list: list) -> Action | None:
 
 
 def means(text: str, app_list: list | None = None) -> str:
-    """What this text already does without a word of his: "an app", "a panel", "a command",
+    """What this text already does without a word of their: "an app", "a panel", "a command",
     "a utility word", or "" when it is free. words.add asks this before it makes a word."""
     a = match(text, app_list, use_words=False)
     if a is None:

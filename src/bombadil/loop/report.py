@@ -1,4 +1,4 @@
-"""The report: what a finding Bombadil cannot fix becomes when he decides to send it to the project.
+"""The report: what a finding Bombadil cannot fix becomes when they decide to send it to the project.
 
 A `Report` is made from typed fields: the finding's counts and sentences, the build and versions, a
 picture drawn from the windows' rectangles, and at most three log lines. Nothing else can get in,
@@ -12,12 +12,12 @@ lines, which are whatever the app printed, are never in a report.
   build(finding)            the Report, from the finding and its evidence.json
   preview(report)           the two lists the Send card shows, and the exact text
   hold(report)              writes reports/<fp>.md, the copy held on the machine (and what it was made of)
-  shown(finding)            the report he is looking at: the held one once he has, else a new one
+  shown(finding)            the report they are looking at: the held one once they have, else a new one
   already_reported(fp)      the number of the open issue that has this fingerprint, or None
   issue_url(report)         the new-issue link, prefilled; too long a body goes to the clipboard
-  open_issue_page(url)      shows it in the browser panel (or xdg-open); he presses Submit himself
+  open_issue_page(url)      shows it in the browser panel (or xdg-open); they press Submit themselves
 
-No token is stored and `gh` is not used. `already_reported` and `open_issue_page` are for after he
+No token is stored and `gh` is not used. `already_reported` and `open_issue_page` are for after they
 pressed Send, and they wait on the network and the browser: call them from a thread, never on a
 turn's path.
 """
@@ -63,7 +63,7 @@ _LABELS = {"bombadil-app": ("app", "a"), "bombadil-details": ("details", "d"),
            "bombadil-browser": ("browser", "b"), "bombadil-terminal": ("terminal", "t"),
            "bombadil-bar": ("bar", "b"), "panel": ("panel", "p")}
 _OTHER = ("other window", "other", "o")
-# What evidence may hold that is his: taken out of any free-text line, wherever it turns up.
+# What evidence may hold that is their: taken out of any free-text line, wherever it turns up.
 _PRIVATE_KEYS = frozenset({"title", "initialTitle", "prompt", "result", "summary", "details", "word",
                            "target", "text", "session", "cmdline", "address", "screenshot", "file", "path",
                            "line"})
@@ -129,7 +129,7 @@ class Report:
             out.append("Versions: " + ", ".join(f"{k} {v}" for k, v in self.versions))
         out.append("Tried: " + "; ".join(self.tried))
         if self.patch:
-            out += ["Suggested patch: attached here and never applied on his machine",
+            out += ["Suggested patch: attached here and never applied on their machine",
                     _fence(self.patch, "diff")]
         return "\n".join(out)
 
@@ -165,7 +165,7 @@ def _homes() -> list[str]:
 
 
 def _names() -> list[str]:
-    """What names him or his machine, and so stays out of a report."""
+    """What names them or their machine, and so stays out of a report."""
     found = {os.environ.get("USER", ""), os.environ.get("LOGNAME", ""), Path.home().name}
     try:
         found.add(socket.gethostname())
@@ -192,7 +192,7 @@ def _first_line(text) -> str:
 def _line(text, private: Iterable[str] = (), limit: int = 160) -> str:
     """One line of free text: its first line, what is private taken out, every path collapsed (under
     home to "~", the rest to "<path>" except the system's own), links, addresses, emails and keys
-    taken out, his name and his machine's taken out, and cut."""
+    taken out, their name and their machine's taken out, and cut."""
     s = _first_line(text)
     for secret in private:
         s = s.replace(secret, "…")
@@ -209,7 +209,7 @@ def _line(text, private: Iterable[str] = (), limit: int = 160) -> str:
 
 
 def _private_strings(value, depth: int = 0) -> list[str]:
-    """Every string under a private key anywhere in the evidence: what he typed or read."""
+    """Every string under a private key anywhere in the evidence: what they typed or read."""
     found: list[str] = []
     if depth > 6:
         return found
@@ -492,8 +492,8 @@ def preview(report: Report) -> Preview:
 
 
 def hold(report: Report) -> Path | None:
-    """Write the report where it waits for him: reports/<fingerprint>.md. None when the disk says no.
-    What it was made of goes beside the evidence (report.json), so `shown` gives back what he read."""
+    """Write the report where it waits for them: reports/<fingerprint>.md. None when the disk says no.
+    What it was made of goes beside the evidence (report.json), so `shown` gives back what they read."""
     path = paths.loop_dir() / "reports" / f"{evidence_dir(report.fp).name}.md"
     try:
         db.private_dir(path.parent.parent)
@@ -528,8 +528,8 @@ def held(fp: str) -> Report | None:
 
 
 def shown(finding) -> Report:
-    """The report for a finding as he sees it. Once he has looked at it (state "reported") that is the
-    report held then, so the text he sends is the text he read, whatever was seen since; before that,
+    """The report for a finding as they see it. Once they have looked at it (state "reported") that is the
+    report held then, so the text they send is the text they read, whatever was seen since; before that,
     one built from the evidence as it is."""
     if _get(finding, "state") == "reported":
         found = held(str(_get(finding, "fp", "")))
@@ -553,7 +553,7 @@ def already_reported(fp: str, repo: str = DEFAULT_REPO, fetch: Callable | None =
     None: not there, offline, or anything else. A closed one is not "already reported": the fingerprint
     carries no build, so a bug that came back after its fix is a new report. Never raises. `fetch(url,
     timeout)` gives the search answer as parsed JSON (the default asks GitHub, without a token). For
-    after he pressed Send only: nothing is asked before that."""
+    after they pressed Send only: nothing is asked before that."""
     tag = f"[fp {short_fp(fp)}]"
     if not re.fullmatch(r"[0-9a-f]{4,12}", short_fp(fp)) or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
         return None
@@ -604,7 +604,7 @@ def issue_url(report: Report, repo: str = DEFAULT_REPO,
               copy: Callable[[str], bool] | None = copy_text) -> Link:
     """https://github.com/<repo>/issues/new?title=&body=&labels=, quoted. When that is longer than
     MAX_URL the link is the empty new-issue page (`paste` is True) and the whole report goes through
-    `copy` (the clipboard) instead, for him to paste; pass copy=None to only build the link."""
+    `copy` (the clipboard) instead, for them to paste; pass copy=None to only build the link."""
     base = f"https://github.com/{repo}/issues/new"
     query = urllib.parse.urlencode({"title": report.title, "body": report.body(), "labels": LABELS},
                                    quote_via=urllib.parse.quote)
@@ -645,7 +645,7 @@ def _xdg_open(url: str) -> bool:
 def open_issue_page(url: str, hyprland=None, *, put: Callable[[str], bool] | None = None,
                     xdg: Callable[[str], bool] | None = None,
                     sleep: Callable[[float], None] = time.sleep) -> str:
-    """Show the browser panel and open `url` in it; he presses Submit himself. "panel" when the page
+    """Show the browser panel and open `url` in it; they press Submit themselves. "panel" when the page
     is open in the panel, "xdg-open" when it went to whatever opens links, "" when neither worked.
     The panel may have to start Chromium first, so this can take tens of seconds."""
     if not url.startswith("https://github.com/"):

@@ -1,4 +1,4 @@
-"""When a group of repeated asks is worth an offer, and how often he is allowed to be asked.
+"""When a group of repeated asks is worth an offer, and how often they are allowed to be asked.
 
 Pure functions over a group, the history of past offers and `now`; nothing here reads a clock or a
 file but the optional config, so every rule can be tested with an injected time. The store
@@ -159,7 +159,7 @@ def expired(shown_t: float, now: float, cfg: Config) -> bool:
 
 
 def stopped_forms(never_forms: Iterable[str], cfg: Config) -> set[str]:
-    """The letters of forms he said Never to at least three times: no longer offered."""
+    """The letters of forms they said Never to at least three times: no longer offered."""
     counts = Counter(forms.get(f).letter for f in never_forms if f)
     return {letter for letter, n in counts.items() if n >= cfg.never_forms}
 
@@ -197,7 +197,7 @@ class Offer:
     shown_t: float
 
     def to_row(self, titles: dict[str, str] | None = None) -> dict:
-        """The Noticed row for it, as docs/LOOP.md describes: his own words, the count and span, what
+        """The Noticed row for it, as docs/LOOP.md describes: their own words, the count and span, what
         would happen, one button of at most three words, and the quiet ways around it."""
         g, rec = self.group, self.rec
         days = len(g.days)

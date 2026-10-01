@@ -1,4 +1,4 @@
-"""LoopService: the `noticed` state, his taps, the words, the app turn and the trail.
+"""LoopService: the `noticed` state, their taps, the words, the app turn and the trail.
 
 Unit tests run the service against a small double of agentd (the same hooks, a recorded inbox per client,
 an injected clock). A few run a real AgentD with the fake provider over its socket. Everything lives in
@@ -130,7 +130,7 @@ def make_apps(*names):
 
 @pytest.fixture
 def machine(home, monkeypatch):
-    """Apps he has, a clean words file, and a trap under everything that would leave the machine: the
+    """Apps they have, a clean words file, and a trap under everything that would leave the machine: the
     issue search, the browser and the clipboard. A test that means to use one injects its own; any
     other call is recorded and fails the test when it ends (the code under test swallows errors, so
     raising here would not show)."""
@@ -265,7 +265,7 @@ async def test_three_asks_on_three_days_make_one_offer_row_when_a_bar_is_there_a
     row = the_offer(state)
     assert state["count"] == 1 and state["hidden"] is False and [r["kind"] for r in state["rows"]] == ["offer"]
     said = {a["text"] for a in passwords_asks() if a["group"] == "passwords"}
-    assert row["id"] == "gpw1" and row["title"] in said           # his own words, the newest of them
+    assert row["id"] == "gpw1" and row["title"] in said           # their own words, the newest of them
     assert row["meta"] == "3 times on 3 days"
     assert row["what"] == "Say “my passwords” and Passwords opens. No model, under a tenth of a second."
     assert row["primary"] == {"label": "Make the word", "op": "accept", "form": "word"}
@@ -469,7 +469,7 @@ async def test_never_is_remembered_across_a_restart_and_can_be_brought_back(rig_
     never = await rig.do("never", first["id"])
     assert never["ok"] and never["text"] == "Okay. That will not be offered again."
     rig.stop()
-    # A new service, the same loop.db: the group is still said no to, and listed so he can bring it back.
+    # A new service, the same loop.db: the group is still said no to, and listed so they can bring it back.
     again = await rig_of(clock=Clock(gc.epoch(6, "23:30"))).start()
     full = await again.full()
     assert [s["id"] for s in full["said_no"]] == [first["id"]] and full["said_no"][0]["form"] == "word"
@@ -496,7 +496,7 @@ async def test_not_now_hides_the_group_until_it_doubles_and_survives_a_restart(r
     assert unknown["ok"] is False and unknown["text"] == "That is not on the list any more."
 
 
-# -- accepting an app: an ordinary turn, asked on his tap --
+# -- accepting an app: an ordinary turn, asked on their tap --
 
 async def make_the_app(rig):
     """Accept the app offer, let the turn make an app, and give the service the turn's row.
@@ -522,7 +522,7 @@ async def test_accepting_an_app_asks_one_ordinary_turn_and_the_app_it_makes_goes
     assert got["ok"] and got["text"] == "Making a small app for it now. It will say what it made when it is done."
     [sent] = rig.agent.prompts
     assert sent["type"] == "prompt" and sent["origin"] == "loop"
-    for said in ("log a 5 km run", "log a 7 km run", "log a 10 km run"):      # his own words, as he typed them
+    for said in ("log a 5 km run", "log a 7 km run", "log a 10 km run"):      # their own words, as they typed them
         assert said in sent["text"]
     assert "3 times on 3 days" in sent["text"] and "app kit" in sent["text"]
     assert rig.store().group(row["id"]).state == "made" and rig.turns("improve") == []   # nothing yet changed
@@ -606,7 +606,7 @@ async def test_an_app_is_not_brought_back_over_one_with_its_name(rig_of):
     await rig.start()
     _, change = await make_the_app(rig)
     await rig.do("undo", change["id"])
-    apps.create("Run log", "import QtQuick\nRectangle {}\n")          # he made another meanwhile
+    apps.create("Run log", "import QtQuick\nRectangle {}\n")          # they made another meanwhile
     back = await rig.do("bring_back", change["id"])
     assert back["ok"] is False and back["text"] == (
         "There is an app with that name already, so the old one stays in the trash.")
@@ -664,7 +664,7 @@ async def test_a_found_row_in_the_window_list_carries_what_was_expected_and_what
 
 @pytest.mark.asyncio
 async def test_an_undo_never_moves_anything_the_trail_does_not_name_inside_the_trash_or_his_apps(rig_of):
-    # Rows the service did not write (the file is his, and anyone can add a line to it).
+    # Rows the service did not write (the file is their, and anyone can add a line to it).
     rows = [
         {"t": NOW - 30, "kind": "improve", "id": "ix-1", "what": "app", "title": "Made the app Evil.", "group": None,
          "undo": {"op": "trash_app", "name": "../../etc"}, "undone": False, "v": 2},
@@ -750,7 +750,7 @@ async def test_the_hide_and_show_taps_do_the_same_and_say_so(rig_of):
 async def test_the_word_opens_the_noticed_app_that_ships_and_says_so_only_when_a_window_opened(rig_of, monkeypatch):
     rig = rig_of()
     await rig.start()
-    # A stock install: nothing named noticed in his apps, the app that ships with Bombadil is the one.
+    # A stock install: nothing named noticed in their apps, the app that ships with Bombadil is the one.
     assert not (paths.apps_dir() / "noticed").exists() and (apps.builtin_dir() / "noticed" / "main.qml").exists()
     assert await rig.service.noticed_word("open") == (True, "Opened Noticed.")
     assert rig.agent.launcher.ran == [("app", "noticed", "open")]
@@ -766,7 +766,7 @@ async def test_the_word_opens_the_noticed_app_that_ships_and_says_so_only_when_a
     assert rig.agent.launcher.ran == ran
 
 
-# -- what it found: a report he reads, and sends himself --
+# -- what it found: a report they read, and sends themselves --
 
 def a_finding(kind="event", id="bar-socket", component="bar", observed="the bar lost its socket", at=None):
     return probes.Result(False, id, component, id, "the bar keeps its socket", observed, {}, None, kind,
@@ -804,7 +804,7 @@ async def test_a_finding_becomes_a_row_a_held_report_and_an_issue_page_he_submit
     assert row["title"] == "The bar lost its connection to Bombadil." and row["meta"] == "1 time on 1 day"
     assert row["primary"] == {"label": "Send to the project", "op": "report"}
     assert row["what"] == "Bombadil cannot fix this here. You can send it to the project."
-    assert asked == [] and opened == []                           # nothing is asked or sent until he says so
+    assert asked == [] and opened == []                           # nothing is asked or sent until they say so
     # See the report: it is held on this computer, and what is shown is what is held.
     seen = await rig.do("report", found.fp)
     assert seen["ok"] and seen["text"] == ("The report is ready. Opening the issue page sends it to GitHub as part "
@@ -939,7 +939,7 @@ async def test_clear_what_it_found_drops_findings_and_held_reports_but_not_a_no(
     assert not held.exists() and not findings.evidence_dir(gone.fp).exists()
     assert rig.bar.last("noticed")["rows"] == [] and finding_state(gone.fp) == []
     store = findings.FindingsStore(db.connect(paths.loop_db()))
-    assert [f.fp for f in store.all(("never",))] == [kept.fp]      # still his no
+    assert [f.fp for f in store.all(("never",))] == [kept.fp]      # still their no
     store.close()
 
 
@@ -958,7 +958,7 @@ async def test_forget_what_i_asked_empties_the_counts_and_keeps_the_words_made_f
     assert got["ok"] and got["text"] == "Forgot what you asked. The words made from it stay."
     assert rig.store().asks_report(20, NOW) == [] and len(words_file()) == 1
     assert (await rig.full())["asks"] == [] and rig.bar.last("noticed")["rows"] == []
-    assert len(forgot) == 1 and forgot[0] != threading.get_ident()      # his pinned model answers too, off the loop
+    assert len(forgot) == 1 and forgot[0] != threading.get_ident()      # their pinned model answers too, off the loop
 
 
 # -- privacy --
@@ -979,11 +979,11 @@ async def test_nothing_of_his_reaches_a_found_row_a_report_a_link_or_stderr_exce
     await rig.start()
     state = await rig.ask_state()
     offer = the_offer(state)
-    assert his_words in json.dumps(offer)                         # the one place it is meant to be: what he asked
+    assert his_words in json.dumps(offer)                         # the one place it is meant to be: what they asked
     await rig.do("report", found.fp)
     await rig.do("send", found.fp)
     await rig.full()
-    # A step that breaks with his words in its message: the line says what broke, not what he said.
+    # A step that breaks with their words in its message: the line says what broke, not what they said.
     real = LoopStore.resting
     monkeypatch.setattr(LoopStore, "resting", lambda self, now=None: (_ for _ in ()).throw(ValueError(his_words)))
     await rig.service._refresh()
@@ -1095,7 +1095,7 @@ async def test_a_word_nobody_said_for_28_days_is_put_away_once_a_day_and_his_und
     rig.clock.advance(3600)
     await rig.service.tick()
     assert len(rig.turns("improve")) == count                     # once a day, not on every tick
-    # The window lists it as a change he can take back.
+    # The window lists it as a change they can take back.
     full = await rig.full()
     assert full["changes"][0]["id"] == put_away["id"] and full["changes"][0]["can_undo"] is True
     assert full["words"] == [{"phrase": "my passwords", "opens": "Passwords", "away": True}]
@@ -1114,7 +1114,7 @@ async def test_the_daily_sweep_is_once_a_day_across_a_restart_and_a_word_he_used
     await rig.start()
     await rig.ask_state()
     await rig.do("accept", "gpw1")
-    # He said it on day 20: that is the clock for this word.
+    # They said it on day 20: that is the clock for this word.
     rig.agent._log_line({"t": NOW + 20 * DAY, "kind": "local", "via": "word", "word": "my passwords",
                          "action": "app", "verb": "open", "ok": True, "v": 2})
     await until(lambda: rig.store().words_last_used().get("my passwords") == NOW + 20 * DAY)
@@ -1280,7 +1280,7 @@ async def test_a_model_step_that_breaks_costs_one_line_and_the_offer_is_made_any
     refine_on()
 
     def ask(members, **kw):
-        raise RuntimeError(members[0][1])            # the text of his prompt must not reach stderr
+        raise RuntimeError(members[0][1])            # the text of their prompt must not reach stderr
     monkeypatch.setattr(refine, "ask", ask)
     rig = rig_of(passwords_asks())
     await rig.start()
@@ -1637,7 +1637,7 @@ async def test_agentd_tells_a_client_what_is_noticed_and_offers_only_to_a_bar_wh
     r, w = await connect(d)
     first, seen = await hear(r, is_("noticed"))
     assert [m["type"] for m in seen[:3]] == ["status", "entries", "setup"] and first["count"] == 0
-    # Caught up with turns.jsonl (else the first look could land in the moment between his hello and his turn).
+    # Caught up with turns.jsonl (else the first look could land in the moment between their hello and their turn).
     await until(lambda: d.loop._ingested > 0 and not [t for t in d.loop._tasks if "_ticker" not in repr(t)])
     assert (await noticed_now(r, w))["rows"] == []          # a client that has not said it is the bar
     await say(w, {"type": "hello", "client": "bar", "pid": 4242, "build": "test"})
@@ -1693,7 +1693,7 @@ async def test_accepting_a_word_over_the_socket_writes_the_trail_once_and_undo_r
     [trail] = [x for x in rows if x.get("kind") == "improve"]
     assert trail["undo"] == {"op": "remove_word", "phrase": "my passwords",
                               "opens": {"kind": "app", "name": "passwords"}} and receipt["undo_msg"]["id"] == trail["id"]
-    # His Undo on the line sends exactly what the line carries.
+    # Their Undo on the line sends exactly what the line carries.
     await say(w, receipt["undo_msg"])
     undone, _ = await hear(r, is_("noticed_result"))
     assert undone["ok"] and undone["text"] == "Took out the word “my passwords”." and words_file() == []
@@ -1749,7 +1749,7 @@ async def test_accepting_an_app_runs_one_turn_of_his_and_undo_puts_the_app_in_th
     assert turn["prompt"] == start["prompt"] and turn["ok"] is True
     [trail] = [x for x in rows if x.get("kind") == "improve"]
     assert trail["what"] == "app" and trail["undo"] == {"op": "trash_app", "name": "run-log"}
-    # The turn is his like any other, and it is not counted as one more ask.
+    # The turn is their like any other, and it is not counted as one more ask.
     await until(lambda: d.loop._debounce_handle is None)
     await asyncio.sleep(0.2)
     assert LoopStore(paths.loop_db()).conn.execute("SELECT COUNT(*) FROM requests WHERE counted=1").fetchone()[0] == 3

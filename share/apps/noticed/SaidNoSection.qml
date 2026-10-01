@@ -3,8 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Bombadil
 
-// What he said no to. Bombadil keeps these quiet: an idea he said Never to until he brings it back, a problem
-// he said Not now to for a month, or until it has happened twice as many times.
+// What they said no to. Bombadil keeps these quiet: an idea they said Never to until they bring it back, a problem
+// they said Not now to for a month, or until it has happened twice as many times.
 Section {
     id: root
 

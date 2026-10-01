@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Bombadil
 
-// The short words Bombadil made from what he asks: say one and the thing opens. One that went unused
+// The short words Bombadil made from what they ask: say one and the thing opens. One that went unused
 // for weeks was put away, and can be brought back.
 Section {
     id: root

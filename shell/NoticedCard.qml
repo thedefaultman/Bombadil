@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import Bombadil as Kit
 
 // What the loop has noticed, as a card that rises above the chip: 300 px wide, titled "Noticed"
-// with one line of why, at most three rows, then the quiet lines. A row is the offer: his own
+// with one line of why, at most three rows, then the quiet lines. A row is the offer: their own
 // words, how often, one line of what would happen, and one button. Pressing it IS the ask: there
 // is no yes/no question after it. "Other ways" shows the other forms as small choices; Not now
 // and Never are bare text. Plain Qt Quick: it draws what a LoopState holds and tells it what was
@@ -101,7 +101,7 @@ Item {
                     color: Kit.Theme.border
                 }
 
-                // His own words for an offer.
+                // Their own words for an offer.
                 Text {
                     objectName: "noticedRowTitle"
                     Layout.fillWidth: true

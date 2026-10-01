@@ -18,12 +18,12 @@ posted until you press Submit there.
 1. Counting and checking are not work. They read what the machine already writes, stay on the
    machine, call no model (except one optional call to split or name a group that is about to be
    offered: `refine.py`, off until checked on both providers) and are never on a turn's path.
-2. An idea is a strip he can ignore, never a popup: a chip beside the pill while something waits.
+2. An idea is a strip they can ignore, never a popup: a chip beside the pill while something waits.
    Nothing on the line, no keyboard, no sound, no mark on the dot, never during a turn.
 3. A tap is the ask. The loop never builds anything from a count on its own.
 4. Probes only read. What they cannot fix they write up.
-5. What he would notice waits for him. Nothing leaves the machine until he presses Send to the project,
-   and nothing is posted until he presses Submit on the page that opens (its address carries the report,
+5. What they would notice waits for them. Nothing leaves the machine until they press Send to the project,
+   and nothing is posted until they press Submit on the page that opens (its address carries the report,
    so GitHub sees the text when the page loads).
 6. No new words to learn: "noticed" is the widget's name, "hide noticed" and "show noticed" its verbs.
 
@@ -44,7 +44,7 @@ flowchart LR
   S["hyprctl, journal,<br/>coredumps, app status"]
   B["the bar<br/>chip and card"]
   N["Noticed window<br/>(a kit app)"]
-  G["issue page in the browser panel<br/>he presses Submit"]
+  G["issue page in the browser panel<br/>they press Submit"]
   D -- "appends a row after each turn" --> T
   T -- "read from a byte offset" --> L
   L <--> DB
@@ -55,7 +55,7 @@ flowchart LR
   L <-- "noticed_list, noticed_do" --> N
   L -- "make a word" --> W
   L -- "an ordinary turn, origin loop" --> AP
-  L -- "only when he presses Send" --> G
+  L -- "only when they press Send" --> G
 ```
 
 Two programs touch `loop.db`: the service inside agentd (counting, offers, the answers to taps) and the
@@ -66,21 +66,21 @@ lives in the service, so a different shell could draw the same thing.
 ## The UX model, in one page
 
 - **Quiet by default.** Nothing for the first days. Then one small chip beside the pill while something
-  waits: no dot, no colour, no motion, no sound, never during a turn, never while he is typing.
-- **Three levels of attention.** The chip (a count), the card that rises from it on hover (his own words,
+  waits: no dot, no colour, no motion, no sound, never during a turn, never while they are typing.
+- **Three levels of attention.** The chip (a count), the card that rises from it on hover (their own words,
   how often, one line of what would happen, one button), and the Noticed window (everything it counted,
   changed and found, each with its Undo). Each level is optional.
 - **A tap is the ask.** The button on a row does the thing; there is no second "are you sure". The
   safety is Undo, which the receipt line carries.
-- **His words, not a model's.** An offer quotes what he typed. Labels are plain full sentences; nothing
+- **Their words, not a model's.** An offer quotes what they typed. Labels are plain full sentences; nothing
   says "AI", "model" or "pattern" on day one.
 - **Saying no is cheap and respected.** "Not now" returns only when the count has doubled or after 30
   days (for an idea and for a problem it found alike; both are under "You said no to" in the window, with
   Bring back); "Never" stops that idea; two silent expiries or two Nevers in a row rest all offers for 30 days;
   "hide noticed" holds everything. At most one new offer a day and three a week.
-- **Reports are his to send.** A finding becomes a report he can read in full, with what goes and what
-  stays on the machine, and the issue page opens prefilled with that text: the report he read is the one
-  held, and the one sent. Nothing is submitted for him.
+- **Reports are theirs to send.** A finding becomes a report they can read in full, with what goes and what
+  stays on the machine, and the issue page opens prefilled with that text: the report they read is the one
+  held, and the one sent. Nothing is submitted for them.
 
 The per-surface details are in [`loop/bar.md`](loop/bar.md) (chip and card) and
 [`loop/window.md`](loop/window.md) (the window).
@@ -93,13 +93,13 @@ The per-surface details are in [`loop/bar.md`](loop/bar.md) (chip and card) and
   A form whose builder is missing is never offered, and says which piece it waits for.
 - **A new check**: write a function over the `Observation` in `loop/probes.py` and register it with
   `@probe(id, component, kind, title, what)`; return `red()`, `green()` or `unchecked()`. Keep it read only,
-  bounded and free of his words; add a fixture under `tests/fixtures/loop/probes/` that is red on the
+  bounded and free of their words; add a fixture under `tests/fixtures/loop/probes/` that is red on the
   bug and green on the fix (see [`loop/probes.md`](loop/probes.md)).
 - **A new surface** (another shell, a phone, a CLI): speak the messages under "agentd ↔ clients". The
   `bombadil loop …` commands are the smallest example.
 - **What to keep**: counting and checking never call a model and never sit on a turn's path; an idea is
-  a strip that can be ignored; a tap is the ask; probes only read; nothing leaves the machine unless he
-  presses a button; the ledger is append only and the derived counts can always be rebuilt from it.
+  a strip that can be ignored; a tap is the ask; probes only read; nothing leaves the machine unless they
+  press a button; the ledger is append only and the derived counts can always be rebuilt from it.
 
 | Read | For |
 |---|---|
@@ -131,7 +131,7 @@ src/bombadil/loop/
   runner.py     collects live data for the probes (hyprctl, coredumps, app status) and runs them
 share/apps/noticed/   the Noticed window (a kit app)
 shell/LoopState.qml, NoticedChip.qml, NoticedCard.qml   the chip and its peek card
-bin/bombadil-probe    the prober (a user unit): Hyprland's events, once a minute while he is away
+bin/bombadil-probe    the prober (a user unit): Hyprland's events, once a minute while they are away
 bin/bombadil loop …   asks, replay, status, report, forget, probe;   bombadil doctor --live
 ```
 
@@ -147,7 +147,7 @@ A model turn (no `kind`):
 | `t`, `prompt`, `result`, `ok`, `snapshot`, `provider`, `session`, `stopped`, `summary`, `details` | as before (`t` is when the row was written, the turn's end) |
 | `id` | the per-turn log's stem, `<ms>-<n>`: lasting and unique, unlike the turn counter |
 | `started`, `seconds` | epoch seconds the turn began, and its length |
-| `origin` | `typed` (the pill), `button`, `app`, `session`, `routine`, `loop`, `retry`, `cli` (`bombadil ask` sends it; it is never counted). A turn that is run again after a sign-in keeps the origin it was asked with (and who asked, for a coding session's), so a loop's or a routine's prompt is not counted as his words the second time |
+| `origin` | `typed` (the pill), `button`, `app`, `session`, `routine`, `loop`, `retry`, `cli` (`bombadil ask` sends it; it is never counted). A turn that is run again after a sign-in keeps the origin it was asked with (and who asked, for a coding session's), so a loop's or a routine's prompt is not counted as their words the second time |
 | `tools` | `{"n": steps, "names": [unique tool names in order of first use]}` |
 | `model`, `cost`, `usage` | the provider's model name, dollars, `{input, output, cache_read, cache_write}`; null when the provider does not say |
 | `rate_limit` | the provider's rate-limit event when it sent one, else null |
@@ -155,7 +155,7 @@ A model turn (no `kind`):
 | `drift` | only when non-empty: `{"<type>": n}`, how many stream lines were valid JSON of a `type` the adapter does not know (the tripwire for a vendor CLI changing) |
 | `v` | 2 |
 
-A launcher action (`kind: "local"`): `t`, `prompt` (what he typed, or the action's name for a
+A launcher action (`kind: "local"`): `t`, `prompt` (what they typed, or the action's name for a
 button), `action`, `target`, `result`, `ok`, plus `v: 2`, `verb` (open, close, hide, stop, undo…),
 `via` (`typed`, `button` or `word`), `word` (the phrase, when `via` is `word`), `of` (the id of the
 turn it acted on: stop, undo) and `of_snapshot` (the restore point it went back to, undo). A stop
@@ -173,17 +173,17 @@ skip `improve` rows (`watch.history_lines` shows them as a dim line).
 All under `paths.loop_dir()` (`~/.local/state/bombadil/loop`, overridable with `BOMBADIL_LOOP`),
 except `words.toml` (`paths.words_file()`, `~/.config/bombadil/words.toml`).
 
-- `loop.db`: derived counts and the few facts that cannot be made again (see db.py). It holds his own
+- `loop.db`: derived counts and the few facts that cannot be made again (see db.py). It holds their own
   words, so the loop directory is made 0700 and `loop.db`, its `-wal` and `-shm`, and `reports/` are kept
   to their owner (0600 for files, 0700 for the directories), including ones made by an older version.
   A damaged `loop.db` is never replaced on its own: the service says so once on stderr and counts nothing
   until it is deleted (with its `-wal` and `-shm`); the counts are then read from `turns.jsonl` again, and
-  what he said no to, what was offered and what was forgotten are lost.
+  what they said no to, what was offered and what was forgotten are lost.
 - `signals.jsonl`: what agentd heard from the bar, append only: `{"t", "kind": "hello"|"summon"|"focus_ack"|"focus_cancel"|"focus_timeout"|"friction"|"restart", …}`.
 - `bar.json`: the bar's last report, rewritten atomically at most every 2 s:
   `{"pid", "connected_at", "alive_at", "build", "screens": {"<name>": {"w", "h", "rects": [{"name", "x", "y", "w", "h"}]}}}`.
 - `agentd.json`: `{"pid", "started", "build", "socket"}`, written when agentd starts.
-- `findings/<fp>/`: evidence bundles (`evidence.json` and the files it names). `reports/<fp>.md`: the report held for sending, and `findings/<fp>/report.json`, the fields it was made of, which the `send` op uses so that what is sent is what he read.
+- `findings/<fp>/`: evidence bundles (`evidence.json` and the files it names). `reports/<fp>.md`: the report held for sending, and `findings/<fp>/report.json`, the fields it was made of, which the `send` op uses so that what is sent is what they read.
 - `config.toml` (optional): numbers that may be retuned, never the model's to change (`[offers] asks = 3, days = 2, window_days = 21`, …).
 
 ## agentd ↔ clients
@@ -213,7 +213,7 @@ Existing messages are unchanged. New (client → agentd):
   (hidden, resting). The window acts with the same `noticed_do` ops (`id` is the row's id in its own list) and
   asks again after each answer or when it hears a `noticed` message.
   `can_send` is true until it is sent (the window's button says `report` first, then `send` after the card).
-  An ask waiting on him also carries `primary`, `what` and `others` like a `noticed` row; `found[].why` holds
+  An ask waiting on them also carries `primary`, `what` and `others` like a `noticed` row; `found[].why` holds
   two plain sentences (what was expected, what was seen). `said_no[].form` is the form's id ("word", "app")
   and empty for a problem it found; `said_no` lists those too (id is the finding's fingerprint, and `bring_back`
   opens it again). A `sent` found row whose problem the project already had says so in `meta`.
@@ -226,9 +226,9 @@ New (agentd → clients):
 - `{"type":"noticed","count":2,"hidden":false,"resting":"","lately":"","rows":[ROW…]}` on connect and whenever it changes.
   `count` is what waits (the chip's number; 0 hides the chip); `rows` are at most three.
   ROW: `{"id","kind":"offer"|"found"|"change"|"report","title","meta","what","primary":{"label","op","form"?},
-  "others":[{"label","op","form"?}],"forms":[{"form","label","recommended"?}]}`. `title` is his own words for an
+  "others":[{"label","op","form"?}],"forms":[{"form","label","recommended"?}]}`. `title` is their own words for an
   offer; `primary.label` is at most three words.
-- `{"type":"noticed_open"}`: he said "noticed": the bar keeps the card up.
+- `{"type":"noticed_open"}`: they said "noticed": the bar keeps the card up.
 - A local event may carry `"undo_msg": {…}`: a message the line's Undo button sends instead of the
   machine's undo (the receipt of a made word puts the word away).
 
@@ -247,7 +247,7 @@ A look at `turns.jsonl` counts at most 150 rows to a database transaction, each 
 with the byte offset saved in the same transaction, so a long backlog (the first look at an old ledger)
 never holds the write lock for more than a moment, a tap or the prober's write gets in between, a crash
 resumes at the last chunk, and stopping agentd waits for one chunk, not for the backlog. A poll for an offer
-reads only the groups that could be ripe, so what it costs does not grow with every ask he ever made.
+reads only the groups that could be ripe, so what it costs does not grow with every ask they ever made.
 
 ## Launcher
 

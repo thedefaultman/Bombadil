@@ -5,12 +5,12 @@ itself. Contract: `docs/LOOP.md`. Files: `shell/LoopState.qml`, `NoticedChip.qml
 a small wiring in `shell/shell.qml`, `undo_msg` in `PillState.qml` and `StatusLine.qml`, two variants
 (`primary`, `quiet`) in `LineButton.qml`. Tests: `tests/test_loop_qml.py`, `tests/test_loop_fixes_bar_qml.py`.
 
-## What he sees
+## What they see
 
 Nothing until agentd says something waits. Then a small muted chip, "noticed 2", right of the pill and
 centred on it (no dot, no colour, no motion). Hover it (after 250 ms) and a 300 px card rises above it:
 "Noticed", one line of why ("1 idea · 1 change to look at"), at most three rows, then "Resting offers
-until 3 Nov" when resting and "Lately: 2 changes this week · See all". A row is the offer: his own words,
+until 3 Nov" when resting and "Lately: 2 changes this week · See all". A row is the offer: their own words,
 "4 times on 3 days", one line of what would happen, one button (pressing it is the ask; there is no
 second question), a quiet "Other ways" that opens the other forms as small choices, and quiet "Not now" /
 "Never" at the right of the meta line. Click the chip: the card stays up and agentd opens the Noticed
@@ -87,7 +87,7 @@ its own), and the line shows that instead of the receipt.
 ## Traps
 
 - Only Hyprland's summon path counts as "the pill has the keyboard" (`summonedOn`); on other compositors
-  the chip may appear while he types.
+  the chip may appear while they type.
 - A kept card lasts while the pill has the keyboard: a click elsewhere clears the focus grab and puts the
   card away. If opening the Noticed window takes Hyprland's focus and clears the grab, the card goes at
   once; that is checked only on a real Hyprland.

@@ -5,7 +5,7 @@ import Bombadil
 
 // What sending a bug to the project would do, shown before anything happens: what goes, what stays on
 // this machine, and the exact text. The page it opens is filled in, which sends the text to GitHub in
-// the page's address, and he presses Submit there himself; nothing is sent from here.
+// the page's address, and they press Submit there themselves; nothing is sent from here.
 ColumnLayout {
     id: root
 

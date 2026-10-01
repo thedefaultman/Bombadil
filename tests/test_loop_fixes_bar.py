@@ -18,7 +18,7 @@ from test_agentd_signin import (  # noqa: E402,F401  (the harness of a login tha
     GoneLogin, _send, _setup, _start, _until, signed_out)
 from test_loop_cli import machine as cli_machine  # noqa: E402,F401  (the stand-in machine the commands run on)
 from test_loop_runner import NOW, program  # noqa: E402
-from test_loop_service import machine, passwords_asks, rig_of  # noqa: E402,F401  (his machine, and a service on it)
+from test_loop_service import machine, passwords_asks, rig_of  # noqa: E402,F401  (their machine, and a service on it)
 from test_signin import FakePanel  # noqa: E402
 
 import test_loop_signals as sig_tests  # noqa: E402

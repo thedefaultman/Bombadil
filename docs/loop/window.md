@@ -1,32 +1,32 @@
 # The Noticed window
 
 A kit app that ships with Bombadil (`share/apps/noticed`, so nothing is copied into `~/Apps`). It opens from the bar
-chip (`noticed_do open`), or when he says "noticed"; when it cannot open, the answer says so. Contract: `docs/LOOP.md`. Files: `share/apps/noticed/` (`app.py`, `main.qml`,
+chip (`noticed_do open`), or when they say "noticed"; when it cannot open, the answer says so. Contract: `docs/LOOP.md`. Files: `share/apps/noticed/` (`app.py`, `main.qml`,
 `text.js`, one QML file per section, `SendCard.qml`, `Line.qml`, `Section.qml`, `Well.qml`,
 `FootLink.qml`). Tests: `tests/test_noticed_app.py`, `tests/test_loop_fixes_bar_qml.py`.
 
-## What he sees
+## What they see
 
 A header line in plain words ("3 ideas · 1 thing it found", "Nothing waiting", "Hidden"), then five
 sections. A section with nothing in it is hidden; when all five are empty the first says so once.
 
-- **What you ask most**: his own words, "4 times on 3 days", what it became. Where an offer waits, one
+- **What you ask most**: their own words, "4 times on 3 days", what it became. Where an offer waits, one
   button (the row's own, else "Make it") and "Other ways", which opens the other forms, "Show me", "Not
   now" and "Never".
 - **Changed itself**: newest first, each with its sentence, when, and Undo (an app changed in place has none:
-  the turn's own Undo has the old files). An undone one says so and offers "Put it back": a word he took out is
+  the turn's own Undo has the old files). An undone one says so and offers "Put it back": a word they took out is
   made again, a word the sweep put away is put away again.
 - **Found**: a plain sentence, the count, "Why?" (only when agentd sent the evidence) and "Send to the
   project". That opens the Send card inside the window: what goes, what stays here, the exact text, then
   "Open the issue page", "Not now", "Never for this". Opening the page puts the text in its address, so
-  GitHub gets it then; nothing is posted until he presses Submit on the page. A problem the project already
+  GitHub gets it then; nothing is posted until they press Submit on the page. A problem the project already
   had is not sent again: its issue opens instead, and the row says "already reported as #42" after its count.
-- **You said no to**: each with "Bring back": the ideas he said Never to, and the problems it found that he
+- **You said no to**: each with "Bring back": the ideas they said Never to, and the problems it found that they
   said Not now or Never to (a Not now returns by itself after 30 days or when the problem has happened twice
   as many times; Bring back opens it again at once).
-- **Words**: the words he made, what each opens, "Bring back" on a put-away one. There is no "Put away":
+- **Words**: the words they made, what each opens, "Bring back" on a put-away one. There is no "Put away":
   the contract has no op for it (see followups in the build notes).
-- A footer: muted "Forget what I ask" and "Clear what it found" (each asks once; what he said no to
+- A footer: muted "Forget what I ask" and "Clear what it found" (each asks once; what they said no to
   stays said), and "Hide noticed" / "Show noticed".
 
 No ids on screen. The `objectName`s the tests use carry them (`btn:undo:<id>`), because an id is what
@@ -79,13 +79,13 @@ said-no id or a word's phrase (a word has no id).
   row in the next `noticed_full`. The Send card shows "Writing it up..." until then, and after 4 s
   says "Nothing written up yet." instead. A held `reported` row with a preview opens the card by itself on the first list,
   and "Back" sends nothing. A row that has only just become a report (it was not one in the last list:
-  he pressed "See the report" for it in the bar) takes the card even from another that is open; a list
+  they pressed "See the report" for it in the bar) takes the card even from another that is open; a list
   that comes again changes nothing.
 - **Check mode.** With `BOMBADIL_CHECK` set the backend does not connect (`bombadil-app check` must not).
 
 ## Traps
 
-- **His words are text, never markup.** `Text` defaults to AutoText; every Text that shows a phrase, a
+- **Their words are text, never markup.** `Text` defaults to AutoText; every Text that shows a phrase, a
   title or a preview sets `Text.PlainText`. A test puts `<b>` and `<img>` in a phrase and checks
   `textFormat`.
 - **Do not bind `visible` to `visibleChildren`** of the same item: it is effective visibility, so the
@@ -113,8 +113,8 @@ network. Set `NOTICED_SHOTS=<dir>` to write a screenshot of each state there (no
 
 What this cannot check, and needs a real Hyprland or a real agentd for: the slide-in and where the
 window lands, focus when it opens from the chip, the wording of real result texts, and the Inter
-font (the test machine has none, so text is a little wider there than on his).
+font (the test machine has none, so text is a little wider there than on a real one).
 
 ## Known gaps
 
-- A report asked for in the bar while the window is closed, or for a row he already put away with "Back" in this window, opens no card by itself: the service does not say which row was asked for, so the window cannot tell it from the others that are held.
+- A report asked for in the bar while the window is closed, or for a row they already put away with "Back" in this window, opens no card by itself: the service does not say which row was asked for, so the window cannot tell it from the others that are held.

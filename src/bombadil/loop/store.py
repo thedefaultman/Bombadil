@@ -1,4 +1,4 @@
-"""loop.db's counting half: requests, the groups of them (`asks`), what was offered, what he said no to.
+"""loop.db's counting half: requests, the groups of them (`asks`), what was offered, what they said no to.
 
 `LoopStore.ingest()` reads turns.jsonl from a byte offset, turns each new model turn into a request
 (reading its per-turn log once for its route), decides whether it counts, and puts it in a group,
@@ -8,8 +8,8 @@ Group ids come from the first member's id and members never move, so a group tha
 the group it was offered as. Nothing here ever runs on a turn's path; agentd calls it from a thread.
 
 What cannot be made again is kept apart from what can: `requests` and `asks` are derived (and
-"forget what I ask" erases them), `offers`, `nevers` and `words_used` are his answers and stay,
-and the byte offset never goes back, so what he forgot is not read in again.
+"forget what I ask" erases them), `offers`, `nevers` and `words_used` are their answers and stay,
+and the byte offset never goes back, so what they forgot is not read in again.
 """
 
 import dataclasses
@@ -507,7 +507,7 @@ class LoopStore:
         return self._group_of(row, time.time() if now is None else now) if row else None
 
     def members(self, group_id: str) -> list[dict]:
-        """The asks of one group as stored: id, when, his words, what the turn touched. Oldest first."""
+        """The asks of one group as stored: id, when, their words, what the turn touched. Oldest first."""
         rows = self.conn.execute("SELECT id, t, day, text, route, seconds, steps, counted, reason FROM requests "
                                  "WHERE grp=? ORDER BY seq", (group_id,))
         return [{"id": r["id"], "t": r["t"], "day": r["day"], "text": r["text"], "route": json.loads(r["route"]),
@@ -558,9 +558,9 @@ class LoopStore:
 
     def forget_asks(self, now: float | None = None) -> dict:
         """"Forget what I ask": erases the requests and the groups made of them, the words in the offers
-        already made, and the sentences he said no to (the Said no list falls back to the label). What he
+        already made, and the sentences they said no to (the Said no list falls back to the label). What they
         said no to (as a signature), the words used, and how many offers were taken stay, and so does the
-        place in turns.jsonl, with a mark so that what he forgot is not read in again."""
+        place in turns.jsonl, with a mark so that what they forgot is not read in again."""
         now = time.time() if now is None else now
         with self._lock, db.transaction(self.conn):
             n = self.conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
@@ -577,7 +577,7 @@ class LoopStore:
 
     def _maintain(self, now: float) -> None:
         """Let time pass: offers nobody answered expire into Not now, a Not now that is over lets its
-        group count again, and a group gone quiet for 90 days loses its words (and the sentence he said
+        group count again, and a group gone quiet for 90 days loses its words (and the sentence they said
         no to it with), and so does what no group holds: an ask held back by a Never or kept as friction."""
         cfg = self.cfg
         for r in list(self.conn.execute("SELECT id, grp, shown_t FROM offers WHERE outcome=''")):
@@ -667,7 +667,7 @@ class LoopStore:
         """The counting groups `offers.next_offer` could pick, and only when it could pick one: none are
         loaded while offers rest or the allowance is spent (a few rows of offers say so), and a group
         with fewer asks than the bar, or none since it left the list, can never be ripe, so the query
-        leaves it out. What an idle poll costs does not grow with every ask he ever made."""
+        leaves it out. What an idle poll costs does not grow with every ask they ever made."""
         cfg = self.cfg
         if offers.resting_until(history, now, cfg) or not offers.cadence_ok(history, now, cfg)[0]:
             return []
@@ -679,7 +679,7 @@ class LoopStore:
         return self.conn.execute("SELECT COUNT(*) FROM offers WHERE outcome=''").fetchone()[0]
 
     def answer(self, group_id: str, op: str, form: str | None = None, now: float | None = None) -> dict:
-        """His answer to an offer: `accept` (with the `form` he chose, else the recommended one), `not_now`,
+        """Their answer to an offer: `accept` (with the `form` they chose, else the recommended one), `not_now`,
         `never`, `got_it`, or `expired` (what silence becomes). Returns {"ok", "state", "form", "text"}."""
         now = time.time() if now is None else now
         states = {offers.ACCEPT: "made", offers.GOT_IT: "got_it", offers.NOT_NOW: "not_now",
@@ -730,7 +730,7 @@ class LoopStore:
         return True
 
     def _never(self, g: Group, letter: str, now: float) -> None:
-        """Remember a group he said Never to: what it looked like, not a sentence of his, so it survives
+        """Remember a group they said Never to: what it looked like, not a sentence of their, so it survives
         forgetting and an undo, and later asks like it do not count."""
         things = habits.things_from_launcher(self._apps())
         rows = self.conn.execute("SELECT * FROM requests WHERE grp=? AND counted=1 ORDER BY seq LIMIT 5",
@@ -749,7 +749,7 @@ class LoopStore:
         return out
 
     def said_no(self) -> list[dict]:
-        """What he said Never to, newest first, for the "Said no" list: {"id", "label", "sentence", "form",
+        """What they said Never to, newest first, for the "Said no" list: {"id", "label", "sentence", "form",
         "t"}."""
         return [{"id": r["grp"], "label": r["label"], "sentence": r["sentence"], "form": r["form"], "t": r["t"]}
                 for r in self.conn.execute("SELECT * FROM nevers ORDER BY t DESC, id DESC")]
@@ -804,9 +804,9 @@ class LoopStore:
     # -- saying what was counted --
 
     def asks_report(self, limit: int = 20, now: float | None = None, singles: bool = False) -> list[dict]:
-        """What he asks most, for `bombadil loop asks` and the Noticed window: each group asked more than
+        """What they ask most, for `bombadil loop asks` and the Noticed window: each group asked more than
         once and still on the list (asked in the last 30 days), heaviest first, with its label, how many
-        times on how many days, the last time, three of his own sentences and what it became."""
+        times on how many days, the last time, three of their own sentences and what it became."""
         now = time.time() if now is None else now
         out = []
         for g in self.groups(now=now, listed_only=True):
@@ -847,9 +847,9 @@ class LoopStore:
                pairs: int = 100) -> dict:
         """Run the whole pipeline over a copy of a real turns.jsonl, in memory, day by day, and report what
         it made of it: how many rows counted and why the rest did not, the groups, the offers it would have
-        shown if he never answered, and pairs for hand-labelling (the brief wants 90% precision on "same
+        shown if they never answered, and pairs for hand-labelling (the brief wants 90% precision on "same
         request" before anyone trusts it). Touches nothing on disk. `corpus_dir` is where the per-turn
-        logs are if they were copied elsewhere; `app_names` names the apps he has, when this is not his
+        logs are if they were copied elsewhere; `app_names` names the apps they have, when this is not their
         machine."""
         if app_list is None and app_names:
             app_list = [apps_mod.App(_slug(n), Path("."), str(n)) for n in app_names]
@@ -889,7 +889,7 @@ class LoopStore:
                 "offers": shown, "resting": self.resting(end), "pairs": self._label_sheet(pairs)}
 
     def _label_sheet(self, limit: int) -> list[dict]:
-        """Pairs of his own asks for hand-labelling: neighbours inside groups the loop made (were they the
+        """Pairs of their own asks for hand-labelling: neighbours inside groups the loop made (were they the
         same request?) and the closest pairs it kept apart (should they have been?)."""
         app_list = self._apps()
         things = habits.things_from_launcher(app_list)

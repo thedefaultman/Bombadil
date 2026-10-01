@@ -1,24 +1,24 @@
-"""The one place a model may help the loop: a group of his requests is about to become an offer,
+"""The one place a model may help the loop: a group of their requests is about to become an offer,
 and one call to a fast model may split it, name it or choose its form. It never counts, and it
 can never add a member: the answer is a validated pick from the prompts it was shown.
 
 Everything around the call is fixed and local:
 - off by default (`[refine] enabled = true` in loop_dir()/config.toml turns it on, `model` names
   the model), until the answer shape has been checked on both providers in the VM;
-- at most one call a day, and only when the caller says he is away (`away=True`);
+- at most one call a day, and only when the caller says they are away (`away=True`);
 - the answer is pinned to the member ids, and the model is asked again only when two or more
   members change, so a group costs one call in its life, not one a day;
-- his prompts go in as quoted data, at most eight, each cut short; what comes back is parsed
+- their prompts go in as quoted data, at most eight, each cut short; what comes back is parsed
   strictly and anything off gives None, which means the group stays as it was counted;
 - any failure (no CLI, timeout, refusal, junk) is None and a line on stderr, never an exception.
 
-Blocking: a call can take up to the timeout. The loop service runs it from a thread while he is
+Blocking: a call can take up to the timeout. The loop service runs it from a thread while they are
 away; it is never on a turn's path.
 
 NOT CHECKED AGAINST A REAL CLI (none is installed where this was written, and each needs a login):
 the exact flags in `oneshot_command` (claude: --tools "", --strict-mcp-config with an empty
 --mcp-config, --no-session-persistence, --model haiku; codex: exec --sandbox read-only), the shape
-of the JSON each CLI prints, whether codex still starts the MCP servers of his own config, and
+of the JSON each CLI prints, whether codex still starts the MCP servers of their own config, and
 that either model answers the requested shape. Try both providers by hand on the VM before turning
 it on; a wrong flag only makes a call fail, it cannot do harm.
 """
@@ -72,7 +72,7 @@ def _say(text: str) -> None:
 # -- the prompt and the answer --
 
 def _prompt_of(member) -> str:
-    """His text from a member: the string itself, or the prompt of an (id, prompt) pair, which
+    """Their text from a member: the string itself, or the prompt of an (id, prompt) pair, which
     is what `ask` takes."""
     if isinstance(member, (tuple, list)) and len(member) == 2:
         return str(member[1])
@@ -80,7 +80,7 @@ def _prompt_of(member) -> str:
 
 
 def build_prompt(members: Sequence, allowed_forms: Sequence[str] = FORMS) -> str:
-    """The fixed instruction, then at most eight of his prompts (strings, or (id, prompt) pairs),
+    """The fixed instruction, then at most eight of their prompts (strings, or (id, prompt) pairs),
     each on one line as a JSON string so that nothing in it can end the list or pass for an
     instruction. Numbered from 0: `same` in the answer counts the same way."""
     lines = []
@@ -398,7 +398,7 @@ def ask(members: Sequence[tuple[str, str]], allowed_forms: Sequence[str] = FORMS
     an Answer whose `same_ids` are the members that really are one request (ids from `members`
     only), with a label and a form.
 
-    A pinned answer is returned even when he is not away and no call is left: it costs nothing."""
+    A pinned answer is returned even when they are not away and no call is left: it costs nothing."""
     if not enabled():
         return None
     members = [(str(i), str(p)) for i, p in members][:MAX_MEMBERS]

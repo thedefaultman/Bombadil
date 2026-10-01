@@ -368,7 +368,7 @@ def test_replay_with_the_turns_logs_somewhere_else_and_his_apps_named(machine):
 
 def test_replay_of_nothing(machine):
     got = machine.run("loop", "replay")
-    assert got.returncode == 0 and "Nothing to replay" in got.stdout        # his own ledger, not there yet
+    assert got.returncode == 0 and "Nothing to replay" in got.stdout        # their own ledger, not there yet
     got = machine.run("loop", "replay", str(machine.root / "missing.jsonl"))
     assert got.returncode == 1 and "Nothing to replay" in got.stderr and got.stdout == ""
 
@@ -392,7 +392,7 @@ def test_report_prints_the_one_thing_that_waits(machine):
     assert f"[fp {found.fp.rsplit(':', 1)[1]}]" in got.stdout
     assert "Expected: no crash" in got.stdout and "Observed: agentd crashed" in got.stdout
     assert "Not held and not sent" in got.stderr
-    assert ASKED not in got.stdout                                  # nothing of his words
+    assert ASKED not in got.stdout                                  # nothing of their words
     assert not (machine.loop / "reports").exists() and machine.db_bytes() == before
 
 

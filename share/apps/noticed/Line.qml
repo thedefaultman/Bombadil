@@ -3,9 +3,9 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Bombadil
 
-// One row of a list: what it is, in his words, a muted line under it, and what he can do with it at the
+// One row of a list: what it is, in their words, a muted line under it, and what they can do with it at the
 // right. Whatever is put inside goes under the text (an answer, the reasons, the other ways). A row
-// wraps rather than elides, since the words are the point. His words are plain text, never markup.
+// wraps rather than elides, since the words are the point. Their words are plain text, never markup.
 Item {
     id: root
 

@@ -1,4 +1,4 @@
-"""Findings: one per problem, counted when it counts, written down without anything of his."""
+"""Findings: one per problem, counted when it counts, written down without anything of their."""
 
 import dataclasses
 import json
@@ -235,7 +235,7 @@ def test_a_friction_nobody_repeated_is_forgotten_after_a_month(store):
     assert store.pending() == [] and not Path(waiting.evidence).exists()
 
 
-# -- what he said no to --
+# -- what they said no to --
 
 def test_a_finding_he_said_never_to_is_not_raised_again_until_he_brings_it_back(store):
     fp = store.record(result(), noon()).fp
@@ -261,7 +261,7 @@ def test_what_he_did_with_a_finding_survives_more_sightings(store):
     assert store.mark(fp, "reported").state == "reported"
     again = store.record(result(), noon() + DAY)
     assert again.state == "reported" and again.n == 2
-    assert [f.fp for f in store.open_findings()] == [fp]                        # reported still waits for him
+    assert [f.fp for f in store.open_findings()] == [fp]                        # reported still waits for them
     store.mark(fp, "sent")
     assert store.open_findings() == [] and [f.fp for f in store.all(["sent"])] == [fp]
     assert store.record(result(), noon() + 2 * DAY).n == 3                      # and is still counted

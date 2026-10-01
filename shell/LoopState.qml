@@ -11,7 +11,7 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // He said "noticed": the card is kept up, and shell.qml picks the screen and takes the keyboard.
+    // They said "noticed": the card is kept up, and shell.qml picks the screen and takes the keyboard.
     signal opened()
     // Just connected: every bar window reports where its parts are.
     signal announce()
@@ -34,7 +34,7 @@ QtObject {
     property string build: ""
 
     // The chip: there while something waits and agentd is there to answer, never during a turn, and
-    // it never turns up by itself while the pill has the keyboard (it comes when he is done
+    // it never turns up by itself while the pill has the keyboard (it comes when they are done
     // typing). One that is already up stays up.
     readonly property bool chipVisible: _shown
     property bool _shown: false
@@ -82,7 +82,7 @@ QtObject {
             _noticed(ev)
             break
         case "noticed_open":
-            // His own word: show the card even when the chip is hidden or nothing waits.
+            // Their own word: show the card even when the chip is hidden or nothing waits.
             peeked = false
             kept = true
             opened()

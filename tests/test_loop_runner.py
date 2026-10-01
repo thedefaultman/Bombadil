@@ -604,7 +604,7 @@ def test_a_coredumps_time_is_seconds_however_coredumpctl_wrote_it():
     assert runner._epoch("soon") is None and runner._epoch(0) is None and runner._epoch(float("nan")) is None
 
 
-# -- is he away --
+# -- are they away --
 
 def test_he_is_away_after_ten_minutes_without_a_prompt(machine):
     p = runner.Presence(locked=lambda: False)
@@ -1000,7 +1000,7 @@ def test_the_doctor_runs_when_he_is_away_then_once_a_day(store, monkeypatch):
     assert len(ran) == 2
     p.is_away = False
     r.tick(NOW + 3 * 86400)
-    assert len(ran) == 2                                          # and never while he is there
+    assert len(ran) == 2                                          # and never while they are there
 
 
 def test_a_restart_does_not_run_the_doctor_again_at_once(store, monkeypatch):

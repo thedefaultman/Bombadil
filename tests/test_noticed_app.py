@@ -60,7 +60,7 @@ PREVIEW = {"text": REPORT, "goes": GOES, "stays": STAYS}
 
 
 def sample():
-    """What a service with a week of his asks would say."""
+    """What a service with a week of their asks would say."""
     return {
         "hidden": False, "held": False, "resting": "",
         "asks": [
@@ -421,7 +421,7 @@ def test_a_full_list_is_cleaned_to_what_the_window_reads(noticed):
     assert full["hidden"] and full["held"] and full["resting"] == "3 Nov"
     ask = full["asks"][0]
     assert ask["offered"] and ask["primary"] == {"label": "Make it", "op": "accept", "form": ""}
-    assert ask["sentences"] == ["open my passwords", "x"]      # his other words, not the title again
+    assert ask["sentences"] == ["open my passwords", "x"]      # their other words, not the title again
     assert full["changes"][0]["can_undo"] is True              # not said either way: Undo is offered
     assert full["found"][0]["preview"]["text"] == "T" and full["found"][0]["why"] == []
     assert full["said_no"][0]["title"] == "log a run" and full["said_no"][0]["form"] == "an app"
@@ -447,7 +447,7 @@ def test_wrong_types_are_read_as_nothing_rather_than_failing(noticed):
         {"id": "g1", "title": {"a": 1}, "sentences": [1, None, "fine"], "n": "four", "days": -2, "last": "soon"}],
     })
     assert full["hidden"] is True and full["resting"] == ""
-    ask = full["asks"][0]          # the title came from his first sentence
+    ask = full["asks"][0]          # the title came from their first sentence
     assert ask["title"] == "1" or ask["title"] == "fine"
     assert (ask["n"], ask["days"], ask["last"]) == (0, 0, 0.0)
     assert noticed.clean_full({"asks": None, "found": 4})["asks"] == []

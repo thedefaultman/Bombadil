@@ -9,11 +9,11 @@ fact, calls no model, and a failure inside it costs a count, never a turn or the
 1. `ledger` reads new rows of `turns.jsonl` by byte offset (torn last line, rotation and old rows are
    tolerated) into `Request`s, and a turn's log into tool events.
 2. `route` turns a turn's tool events into topics (`app:passwords`, `net:wifi`, `git:push`, `files:home`,
-   `kind:image`, `opened`…): what the turn did, not what he called it.
+   `kind:image`, `opened`…): what the turn did, not what they called it.
 3. `habits` decides whether a request counts (`counted`) and whether two asks are the same request
    (`joins`), and keeps groups with decay.
 4. `forms` says what a group could become (forms A to I as data; day one builds A, the word, and D,
-   the app) and picks one. `offers` says when a group is ripe and how often he may be asked.
+   the app) and picks one. `offers` says when a group is ripe and how often they may be asked.
 5. `store` keeps it all in `loop.db` and is the only thing the service needs.
 
 ## API
@@ -38,7 +38,7 @@ reads only that many rows and `IngestResult.more` says to call again (the servic
 worker job). A turn's route is read from its log before the transaction opens. `ripe_offer` and
 `peek_offer` look at the offers table first (resting, the day's allowance) and then load only the counting
 groups with at least as many asks as the bar and an ask in the last 30 days, so a poll does not grow with
-every ask he ever made.
+every ask they ever made.
 
 Every time-dependent call takes `now`; nothing reads a clock otherwise, so each rule is tested with
 an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`).
@@ -47,7 +47,7 @@ an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`
 
 - Counted: typed asks that are not empty, shell, sign-in, private (route or words), over 300
   characters, stopped, failed, undone within 60 s, a rephrase within 120 s of a failed turn, or
-  something he said Never to. Each has a reason in `requests.reason`.
+  something they said Never to. Each has a reason in `requests.reason`.
 - Private words: words about secrets (ssh keys, tokens, a keyring, "credentials", a seed phrase), a secret
   said aloud ("my password is ...", "sudo password ...", "login as x pass y", "my pin is ...", an SSN, a
   CVV), and what a secret looks like (a key's prefix such as `sk-`, `ghp_`, `AKIA` or `xox`, a JWT, a long
@@ -67,7 +67,7 @@ an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`
 
 - Group ids are `"g" + first member id` and members never move, so two groups that later turn out to
   be one stay two. Friction (retry, stop, undo) attaches to a group without raising its count.
-- A Never is stored as a signature (stems and route), a label, and the one sentence of his that the
+- A Never is stored as a signature (stems and route), a label, and the one sentence of theirs that the
   "Said no" list shows. The signature survives `forget_asks` and keeps later look-alikes from counting;
   the sentence does not: `forget_asks` and the 90-day rule blank it, and the list shows the label.
   `bring_back` lifts the Never and regroups.
@@ -83,7 +83,7 @@ an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`
 The design was checked only on a synthetic corpus: 180 asks, 32 repeated requests among them and
 the rest one-offs or asks that should not count (`tests/fixtures/loop/golden_asks.jsonl`), 150
 hand-labelled pairs (`golden_pairs.jsonl`), and 49 more asks (`golden_holdout.jsonl`). One hand wrote the rules and the examples, so they share blind spots. No
-real `turns.jsonl` from his machine was available. Numbers on the synthetic corpus: hand-labelled
+real `turns.jsonl` from their machine was available. Numbers on the synthetic corpus: hand-labelled
 pairs precision 0.99, recall 0.99; every pair of the corpus precision 0.995, recall 0.83; groups as
 made, 0.995 and 0.88.
 
@@ -93,7 +93,7 @@ and verb rules, and it now scores 1.00 and 0.88. It is no longer unseen, so it s
 new data. Known misses: paraphrases whose tools differ, asks with no verb ("I need ffmpeg"), style
 paraphrases (joined only by kind), and `journalctl` routes that are too coarse.
 
-The brief wants 90% precision on "same request" on his own asks. To check that, on his machine:
+The brief wants 90% precision on "same request" on their own asks. To check that, on their machine:
 
 ```python
 import json, os
@@ -109,11 +109,11 @@ for p in r["pairs"]:                              # label each: is `a` the same 
 the row says; if the logs were copied, pass `corpus_dir=` (without logs the route is empty and only
 text joins). Pass `app_names=[...]` when this is not the machine the apps live on. The sheet has
 neighbours inside groups (was it really the same?) and the closest pairs kept apart (should it have
-been?); precision is the share of the `same: True` pairs he agrees with.
+been?); precision is the share of the `same: True` pairs they agree with.
 
 ## Needs a real machine
 
-- Precision and recall on his own asks (above), and whether the offers it would have made are ones he
+- Precision and recall on their own asks (above), and whether the offers it would have made are ones they
   would have wanted.
 - Everything Hyprland: nothing in this part touches it.
 - The builders behind forms A and D (`words.py`, the app kit, `per_app_git`) live elsewhere; here they

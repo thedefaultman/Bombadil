@@ -61,7 +61,7 @@ FORMS: tuple[Form, ...] = (
     Form("G", "preference", "A standing preference", "the same correction of style after answers or builds",
          "Remember “{sentence}” so answers follow it without being told.",
          needs="remember", waits_for="remember"),
-    Form("H", "kit_part", "A kit part", "the machine drew the same piece in 3 of his apps",
+    Form("H", "kit_part", "A kit part", "the machine drew the same piece in 3 of their apps",
          "Keep the piece you keep drawing by hand as a part every app can use.",
          needs="kit_overlay", waits_for="the kit overlay", offered=False),
     Form("I", "fix", "A fix in Bombadil", "the repeats are workarounds of a bug",
@@ -198,7 +198,7 @@ def recommend(g: Group, built: Iterable[str] | None = None, stopped: Iterable[st
               titles: dict[str, str] | None = None) -> Recommendation | None:
     """The one form to offer for a group, with up to two others, or None: nothing fits, what fits
     cannot be built here, or the asks were retries (that is a finding, not an offer). `stopped` are
-    the forms he said Never to three times."""
+    the forms they said Never to three times."""
     stop = _letters(stopped)
     letter = ideal(g)
     if letter == "I":
@@ -255,7 +255,7 @@ def describe(g: Group, letter: str, titles: dict[str, str] | None = None) -> str
 
 
 def preview(g: Group, letter: str, titles: dict[str, str] | None = None) -> str:
-    """"Show me": a typed preview filled from his own counts and a real sentence of his, no model."""
+    """"Show me": a typed preview filled from their own counts and a real sentence of their, no model."""
     f = get(letter)
     said = g.sentences[0] if g.sentences else g.label
     days = len(g.days)

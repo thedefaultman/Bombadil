@@ -2,7 +2,7 @@
 
 Newline-delimited JSON over agentd's Unix socket, the way the kit's Agent does it, with the loop's own
 messages (docs/LOOP.md): it asks for the lists (`noticed_list`), hands what arrives (`noticed_full`) to
-the QML already cleaned, and sends what he presses (`noticed_do`). Read from the event loop, so there is
+the QML already cleaned, and sends what they press (`noticed_do`). Read from the event loop, so there is
 no thread to stop when the app reloads, and nothing here can block the window.
 
 Everything that comes from agentd is untrusted text: one wrong message, row or field costs that row (or
@@ -34,7 +34,7 @@ NO_ANSWER = "Bombadil did not answer."
 _FORM_IDS = {"word": "a word", "card": "a card", "widget": "a widget", "app": "an app", "routine": "a routine",
              "watcher": "a watcher", "preference": "a preference"}
 FORMS = {**_FORM_IDS, **dict(zip("ABCDEFG", _FORM_IDS.values(), strict=True))}
-WAITING = ("open", "reported")   # a found row in these states still waits for him
+WAITING = ("open", "reported")   # a found row in these states still waits for them
 QUIET = ("other_ways", "not_now", "never")   # a row's `others` that are not other ways of making it
 
 
@@ -433,7 +433,7 @@ class Backend(QObject):
         self.answered.emit(op, id_, ok, text, preview)
         self._ask_soon()
 
-    # -- what he presses --
+    # -- what they press --
 
     @Slot(str, str)
     def act(self, op: str, id: str) -> None:

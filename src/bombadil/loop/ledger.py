@@ -3,10 +3,10 @@
 Nothing here counts or judges; it only turns lines into rows and rows into `Request`s, and it
 never raises on what it reads. A torn last line, a line that is not JSON, a row with keys
 missing, a file that was rotated or shrank: each costs that line, never the reader. Old rows
-(no `v`) are read with what they have: their `t` is when he asked, their id comes from the
+(no `v`) are read with what they have: their `t` is when they asked, their id comes from the
 per-turn log's name, their origin is typed.
 
-A `Request` is one model turn. `t` is when he asked (the turn's start), `ended` when the row was
+A `Request` is one model turn. `t` is when they asked (the turn's start), `ended` when the row was
 written. A stop or an undo is a later `kind: "local"` row; `resolve()` hands it to the turn it
 acted on, so the turn knows `undone_at` and `stopped_at`.
 """
@@ -23,7 +23,7 @@ from pathlib import Path, PurePosixPath
 # A line longer than this is not a ledger row or an event a reader needs (a screenshot's bytes).
 MAX_LINE = 2_000_000
 
-# What a provider says when it wants him to sign in first. Such a turn never counts as an ask.
+# What a provider says when it wants them to sign in first. Such a turn never counts as an ask.
 _SIGNIN_RE = re.compile(
     r"sign[ -]?in|signed out|log[ -]?in\b|logged in|/login|not authenticated|authentication|"
     r"invalid api key|unauthori[sz]ed|\b401\b|credentials", re.IGNORECASE)
@@ -32,7 +32,7 @@ _SIGNIN_RE = re.compile(
 @dataclass
 class Request:
     id: str
-    t: float                      # when he asked: the turn's start (old rows: the row's own t)
+    t: float                      # when they asked: the turn's start (old rows: the row's own t)
     day: str                      # the local date of t, YYYY-MM-DD
     text: str
     origin: str = "typed"
@@ -49,7 +49,7 @@ class Request:
     cost: float | None = None
     ended: float = 0.0            # when the row was written: the turn's end
     changed: bool = False         # the turn changed something (its summary says what)
-    signin: bool = False          # the provider asked him to sign in
+    signin: bool = False          # the provider asked them to sign in
     undone_at: float | None = None
     stopped_at: float | None = None
 

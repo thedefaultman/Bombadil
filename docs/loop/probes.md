@@ -2,8 +2,8 @@
 
 Bombadil's checks on itself, and the place what they find is kept. A probe is a pure function over what
 the machine already says; it finds a problem or it does not. The store decides when a sighting counts, and
-writes it down with evidence that holds nothing of his. Format and rules: `docs/LOOP.md` ("From signal to
-finding"). This page says what the code does, how each probe was red on what a real VM run found, and
+writes it down with evidence that holds nothing of theirs. Format and rules: `docs/LOOP.md` ("From signal to
+finding"). This page says what the code does, how each probe was red on the problems a real run in a virtual machine found, and
 where it can bite.
 
 Files: `src/bombadil/loop/probes.py`, `findings.py`. Fixtures: `tests/fixtures/loop/probes/`.
@@ -55,7 +55,7 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `bar-alive` | invariant | `bar.json`'s `alive_at` is under 15 s old; not for 30 s after `agentd_started`, and not while agentd itself does not answer (only agentd writes `bar.json`, so a stale `alive_at` then says nothing about the bar, and `agentd-ping` is the finding) | bar, now, agentd |
 | `bar-restarts` | event | fewer than 3 `restart` rows in 600 s (one result per burst) | events |
 | `coredump` | crash | no dump of agentd, the bar, Hyprland, an app, os-mcp or the browser panel in 7 days (each dump is one sighting at its own time; microseconds or seconds both read) | coredumps |
-| `turn-failed` | friction | a turn with `ok` false or null that was not stopped, not a `!command`, and not signed out, a limit or offline; the error's first line is shown with every echo of his asks taken out (see below) | ledger |
+| `turn-failed` | friction | a turn with `ok` false or null that was not stopped, not a `!command`, and not signed out, a limit or offline; the error's first line is shown with every echo of their asks taken out (see below) | ledger |
 | `os-tools` | event | no turn's `result`, or error event, says the OS tools did not start (the reason is kept) | ledger |
 | `tool-errors` | friction | no os-mcp tool fails in 40% or more of at least 5 calls in 3 days | tool_results |
 | `app-check` | friction | `create_app` does not fail its own check twice for the same missing piece | tool_results |
@@ -67,7 +67,7 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `esc-friction` | friction | no bar `friction` row `what: esc` of 3 presses or more in 10 s or less (the drawer or a card that was up when the burst began is named) | events |
 | `app-health` | invariant | no app's status is not ok with its process gone, and no FATAL line after the log's last `---` run marker; the sentence says only that a log has a fatal line (the line goes to the evidence and, stripped, to the fingerprint) | apps |
 
-### Red on the six the VM found, green on the fixed state
+### Red on six problems a real run found, green on the fixed state
 
 Each has a bad and a fixed fixture (`tests/fixtures/loop/probes/<name>-{bad,fixed}.json`, read into an
 `Observation`). Test: `tests/test_loop_probes.py`, "the six". On the bad state exactly the listed probes
@@ -75,11 +75,11 @@ are red and nothing else in `run_all`; on the fixed state nothing is red.
 
 | Found | Fixture | Probe | How it is red |
 |---|---|---|---|
-| Drawer opened without the keyboard (PR #6) | `drawer` | `drawer-focus` | `special:details` shown, `bombadil-details` mapped, `activewindow` is `{}`: "the drawer is open and the active window is none" |
-| A Super tap left the pill without it (PR #7) | `super-tap` | `summon-focus` | a `summon` with no `focus_ack`, then `focus_timeout {bar: true}` |
-| The finished line covered a new app (thread 13) | `line-over-app` | `window-under-bar` | a floating app's rectangle overlaps the bar's `line` rect on the active workspace |
-| Every new app opened at one spot (thread 13) | `apps-stacked` | `apps-stacked` | three floating `bombadil-app-*` at the same position and size |
-| QEMU's screen stuck at 640x480 (PR #7) | `monitor-640` | `monitor-narrow` and `window-oversize` | 640 wide, and a 540x660 app taller than the 480 it is on |
+| Drawer opened without the keyboard | `drawer` | `drawer-focus` | `special:details` shown, `bombadil-details` mapped, `activewindow` is `{}`: "the drawer is open and the active window is none" |
+| A Super tap left the pill without it | `super-tap` | `summon-focus` | a `summon` with no `focus_ack`, then `focus_timeout {bar: true}` |
+| The finished line covered a new app | `line-over-app` | `window-under-bar` | a floating app's rectangle overlaps the bar's `line` rect on the active workspace |
+| Every new app opened at one spot | `apps-stacked` | `apps-stacked` | three floating `bombadil-app-*` at the same position and size |
+| QEMU's screen stuck at 640x480 | `monitor-640` | `monitor-narrow` and `window-oversize` | 640 wide, and a 540x660 app taller than the 480 it is on |
 
 "The launcher smoke check passed for the wrong reason" is a hand-written report, not a probe.
 
@@ -97,7 +97,7 @@ store.get(fp) -> Finding | None               # counted only
 store.mark(fp, state, now=None) -> Finding | None   # open | reported | sent | dismissed | never
 store.said_no() -> [(Finding, when)]          # dismissed and never, newest first
 store.clear_found() -> int                    # "Clear what it found"
-store.add_words(fp, prompts) -> list[str]     # his words of trouble, beside a finding's probe firing
+store.add_words(fp, prompts) -> list[str]     # their words of trouble, beside a finding's probe firing
 Finding(fp, component, rule, title, expected, observed, first, last, n, days, state, fixable,
         evidence, probe, kind)                # .report_only, .to_dict()
 fingerprint(component, rule, line) -> str     # "<component>:<rule>:<sha1(strip_line(line))[:6]>"
@@ -136,7 +136,7 @@ for r in results:
   so an hour of the same red state is one.
 - **Never** findings are not counted or raised again (`mark(fp, "open")` brings them back). **Dismissed**
   (Not now) findings are still counted (`n` and `days` go on) but not raised, until the count is twice what it
-  was when he said Not now, or 30 days have passed (`SNOOZE_DAYS`): the next sighting after that, or a state
+  was when they said Not now, or 30 days have passed (`SNOOZE_DAYS`): the next sighting after that, or a state
   that is still red then, opens it again and returns it. The count and the time are kept in `finding_nos`
   (one row per dismissed or never finding; a Not now with no row, from before it existed, starts its rest at
   the next sighting). `clear_found()` drops the rest with their evidence and held report; a problem still there is found again next run, an event or
@@ -187,10 +187,10 @@ and only from prompts within 5 minutes of a probe firing.
   checked without both.
 - **Events count on the first sighting.** `summon-focus` and `bar-restarts` are facts, but a noisy bar could
   make them noisy; moving them to "counts at 2" is one line in `_counts`.
-- **The app name is left out of `app-health`'s evidence** on purpose: it is his words.
-- **A provider's error line.** A CLI may echo his ask in its error, as it was, in JSON (escapes undone), over
+- **The app name is left out of `app-health`'s evidence** on purpose: it is their words.
+- **A provider's error line.** A CLI may echo their ask in its error, as it was, in JSON (escapes undone), over
   several lines, in another case or cut short. `turn-failed` takes out of the whole error every run of four
-  of his words in a row (or of 24 characters), whole words only, and the whole of an ask shorter than four
+  of their words in a row (or of 24 characters), whole words only, and the whole of an ask shorter than four
   words; the first line is taken after that, so the error's own words stay and fingerprints stay apart.
 - **A path takes the rest of its name.** `scrub_text` and `strip_line` end a path at the next `": "`, a quote
   or bracket, or the end of the line, so a path with a space in its name goes whole; the words after an
@@ -212,4 +212,4 @@ and only from prompts within 5 minutes of a probe firing.
 
 ## Known gaps
 
-- A word he typed that is also a word of a probe's own sentence ("again", "stopped") is blanked from that sentence when it is a whole word, because a short secret is taken out as one.
+- A word they typed that is also a word of a probe's own sentence ("again", "stopped") is blanked from that sentence when it is a whole word, because a short secret is taken out as one.

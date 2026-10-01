@@ -11,7 +11,7 @@ the runner lives in its own process (bin/bombadil-probe) and only reads.
   Runner            run_once() looks, looks again 500 ms later at what is red, and records what counts;
                     run_event() and tick() decide when; serve() is the prober's loop
   EventStream       Hyprland's socket2 events, reconnecting with a backoff
-  Presence          is he away (no prompt for 10 minutes, or the screen locked)?
+  Presence          are they away (no prompt for 10 minutes, or the screen locked)?
   doctor_live()     the read-only part of bombadil-smoke, as the user: what `bombadil doctor --live` prints
 
 One thread at a time: the findings store is an SQLite connection, which belongs to the thread that
@@ -71,9 +71,9 @@ APP_DAYS = 3             # an app's status older than this is history
 LOG_LINES = 40
 OS_TOOLS = "mcp__bombadil-os__"
 
-PERIOD = 60.0            # seconds between runs while he is away
-PRESENCE_EVERY = 15.0    # and he is not asked about more often than this
-DOCTOR_EVERY = 86400.0   # the idle doctor, once a day while he is away
+PERIOD = 60.0            # seconds between runs while they are away
+PRESENCE_EVERY = 15.0    # and they are not asked about more often than this
+DOCTOR_EVERY = 86400.0   # the idle doctor, once a day while they are away
 AWAY_AFTER = 600.0       # no prompt for this long is away
 SETTLE = 1.0             # a window has this long to be placed before the layout checks look at it
 DRAWER_CHECK = DRAWER_GRACE + 0.1    # the drawer is judged when its two seconds of grace are over
@@ -486,7 +486,7 @@ class Collectors:
                     names[ev.get("id")] = ev.get("name")
                 elif ev["kind"] == "tool_result":
                     name = names.get(ev.get("id"))
-                    # his shell's failures are not ours
+                    # their shell's failures are not ours
                     if isinstance(name, str) and name.startswith(OS_TOOLS):
                         results.append({"turn": row["id"], "tool": name, "ok": not ev.get("error"), "t": t,
                                         "text": str(ev.get("output") or "")[:TOOL_TEXT]})
@@ -600,12 +600,12 @@ def _alive(pid) -> bool:
         return True      # no /proc to ask: the process is there
 
 
-# -- is he away --
+# -- are they away --
 
 class Presence:
     """Away is no prompt for ten minutes, or the screen locked (hyprlock running). The last prompt is
     read from what the machine already writes: the turn ledger and the newest turn log, the bar's last
-    summon, and failing those the moment agentd started. With nothing to go on he is not away."""
+    summon, and failing those the moment agentd started. With nothing to go on they are not away."""
 
     def __init__(self, idle: float = AWAY_AFTER, locked: Callable[[], bool] | None = None):
         self.idle = idle
@@ -1071,7 +1071,7 @@ class Runner:
         return []
 
     def _words(self, changed: list[Finding], obs: Observation, store: FindingsStore) -> None:
-        """His words of trouble ("still", "won't") from within five minutes of a finding: only those words."""
+        """Their words of trouble ("still", "won't") from within five minutes of a finding: only those words."""
         if not changed:
             return
         rows = obs.ledger if isinstance(obs.ledger, list) else self._collect("ledger")
@@ -1103,7 +1103,7 @@ class Runner:
             self._due.append((at, ids))
 
     def tick(self, now: float | None = None) -> list[Finding]:
-        """Whatever is due: checks that events scheduled, then, while he is away, the run every
+        """Whatever is due: checks that events scheduled, then, while they are away, the run every
         minute and the doctor every day."""
         now = self._now(now)
         due = [d for d in self._due if d[0] <= now]

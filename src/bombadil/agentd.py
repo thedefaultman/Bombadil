@@ -1282,7 +1282,7 @@ class AgentD:
             self._retried.add(turn_id)
             self.pending.insert(0, (turn_id, prompt))
             # It is the same ask: who asked stays with it, so a loop's or a session's turn is not
-            # counted as his own words on the second run.
+            # counted as their own words on the second run.
             if self._facts is not None and self._facts.n == turn_id:
                 self._origins[turn_id] = self._facts.origin
                 if self._facts.asked_by:

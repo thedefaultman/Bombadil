@@ -45,7 +45,7 @@ def test_a_summon_that_got_its_ack_has_nothing_left_to_cancel(bar):
 def test_shell_gives_the_keyboard_back_through_the_loop_state():
     """shell.qml's summon() toggles the pill; the tap that turns it off tells the loop state."""
     text = (SHELL / "shell.qml").read_text()
-    body = text[text.index("function summon()"):text.index("function release()")]
+    body = text[text.index("function summon("):text.index("function release()")]
     assert 'root.summonedOn === name ? "" : name' in body
     assert 'if (root.summonedOn === "") loopState.summonCancelled()' in body
 
@@ -200,7 +200,7 @@ def test_a_report_asked_for_while_another_card_is_open_takes_the_card(home):
         fake.start()
         assert wait_until(lambda: find("sendText") is not None), "the held report did not open by itself"
         OUT["first"] = [root.property("sendId"), prop("sendText", "text")[:30]]
-        # He pressed "See the report" for the other row in the bar: agentd marks it and the lists change.
+        # They pressed "See the report" for the other row in the bar: agentd marks it and the lists change.
         second = dict(PREVIEW, text="Title: Two apps opened on top of each other [fp 77b2e1]")
         fake.full["found"][1].update(state="reported", preview=second)
         backend.refresh()

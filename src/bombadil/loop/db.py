@@ -3,12 +3,12 @@ Noticed window. Each module owns its own tables and registers them with `schema(
 made once, and changing one means adding a new versioned step, never editing an old one.
 
 The file is derived: counts come from turns.jsonl and the per-turn logs, findings from probes.
-Only a few things in it cannot be made again (what he said no to, what was offered, what was
-sent, and the mark that keeps what he forgot from being read in again). A damaged file is not
-repaired or replaced on its own, because that would lose those; it is for him to delete, with its
+Only a few things in it cannot be made again (what they said no to, what was offered, what was
+sent, and the mark that keeps what they forgot from being read in again). A damaged file is not
+repaired or replaced on its own, because that would lose those; it is for them to delete, with its
 -wal and -shm, and the next try counts turns.jsonl again from the top.
 
-The file holds his own words, so the directory it is in is made 0700 and the files 0600.
+The file holds their own words, so the directory it is in is made 0700 and the files 0600.
 """
 
 import os

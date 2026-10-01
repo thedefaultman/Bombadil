@@ -10,7 +10,7 @@ systemctl, a package manager, a download, a path).
 A topic is a plain string: `memory`, `disk`, `packages`, or `kind:detail` (`browser:wttr.in`,
 `app:passwords`, `files:downloads`, `git:status`). Anything that touched a private thing
 (keys, secrets, tokens, a password app's data) is reported as the one topic `private` and
-nothing else from that step, so what he hid never reaches a count.
+nothing else from that step, so what they hid never reaches a count.
 
 Pure functions over the events; no I/O. One odd event costs that event, never the route.
 """
@@ -24,7 +24,7 @@ from pathlib import PurePosixPath
 from .. import narrate, paths
 
 PRIVATE = "private"
-OPENED = "opened"   # the turn put an app or a panel in front of him (as opposed to reading or changing its files)
+OPENED = "opened"   # the turn put an app or a panel in front of them (as opposed to reading or changing its files)
 
 # Program -> topic, one row per topic so a new program is one word in one place.
 PROGRAMS: dict[str, tuple[str, ...]] = {

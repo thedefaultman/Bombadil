@@ -312,7 +312,7 @@ def test_the_row_is_what_the_widget_shows():
     rec = forms.recommend(g, titles={"app:passwords": "Passwords"})
     row = offers.Offer(7, g, rec, NOW).to_row()
     assert row["id"] == "g1" and row["offer"] == 7 and row["kind"] == "offer"
-    assert row["title"] == "show me my passwords"                          # his own words
+    assert row["title"] == "show me my passwords"                          # their own words
     assert row["meta"] == "3 times on 3 days"
     assert row["what"] == "Say “my passwords” and Passwords opens. No model, under a tenth of a second."
     assert row["primary"] == {"label": "Make the word", "op": "accept", "form": "word"}

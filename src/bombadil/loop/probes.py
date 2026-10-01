@@ -4,7 +4,7 @@ A probe looks at an `Observation` (hyprctl's JSON, what the bar reports, agentd'
 ledger's last rows, the coredumps ...) and says what it finds as `Result`s. It only reads: nothing
 here opens a socket, runs a program or touches a file (the one exception, `attach_words`, writes
 into a finding's own evidence and says so). Collecting the data, running the probes on Hyprland's
-events and once a minute while he is away, and keeping what they find (`findings.py`) are others' jobs.
+events and once a minute while they are away, and keeping what they find (`findings.py`) are others' jobs.
 
   Observation    everything a probe may look at; every field optional
   Result         one probe's answer: ok is True, False, or None (not checked)
@@ -19,7 +19,7 @@ list of the wrong things) is "not checked" too.
 
 Kinds say when a finding counts (see findings.py): an `invariant` is a state of the machine that is
 checked again 500 ms later; `event`, `crash` and `drift` are facts that already happened and count
-at once; `friction` is what he had to work around and counts when it repeats.
+at once; `friction` is what they had to work around and counts when it repeats.
 """
 
 import functools
@@ -114,7 +114,7 @@ class Probe:
     id: str
     component: str
     kind: str
-    title: str      # the finding's sentence, for him
+    title: str      # the finding's sentence, for them
     what: str       # what it checks, in plain words
     needs: tuple    # Observation fields it cannot do without
     run: Callable   # run(obs) -> Result | list[Result] | None; use run_probe(), which never raises
@@ -279,12 +279,12 @@ def _shown(c: dict) -> bool:
 
 def _ours(c: dict) -> bool:
     """A window Bombadil is answerable for: its own apps and panels (the drawer, the browser, the
-    terminal, the files panel all open in a special workspace). His other windows are his."""
+    terminal, the files panel all open in a special workspace). Their other windows are their."""
     return _class(c).startswith("bombadil-") or _str(_ws(c).get("name")).startswith("special:")
 
 
 def window_kind(c: dict) -> str:
-    """A class safe to write down: an app's name is his words, another program's class is his business."""
+    """A class safe to write down: an app's name is their words, another program's class is their business."""
     klass = _class(c)
     if _is_app(c):
         return "bombadil-app"
@@ -327,7 +327,7 @@ def _now(obs: Observation) -> float | None:
     return _num(obs.now)
 
 
-# What goes in a fingerprint or a report must not carry where he keeps things or machine noise.
+# What goes in a fingerprint or a report must not carry where they keep things or machine noise.
 # A file name can hold a space, so a path goes on past one: to the next ": " (an error's own words), a
 # quote or a bracket, or the end of the line. That over-takes a word or two after a path, never less.
 PATH_REST = r"""(?:(?<!:)[ \t](?:(?!:[ \t])[^\n'"`<>()\[\]{}])*)?"""
@@ -342,7 +342,7 @@ _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 
 def scrub_text(text) -> str:
-    """Where he keeps things removed: a path (absolute, or under ~) becomes <path>."""
+    """Where they keep things removed: a path (absolute, or under ~) becomes <path>."""
     return _PATH.sub("<path>", _FILE_URL.sub("", str(text)))
 
 
@@ -358,8 +358,8 @@ def strip_line(text) -> str:
     return " ".join(s.lower().split())
 
 
-# What he typed, echoed back in someone else's words: a run of this many of his words in a row (in any
-# case and spacing, over a line break or cut short) is his, and so is a shorter run this long.
+# What they typed, echoed back in someone else's words: a run of this many of their words in a row (in any
+# case and spacing, over a line break or cut short) is their, and so is a shorter run this long.
 ECHO_WORDS = 4
 ECHO_CHARS = 24
 _WORD = re.compile(r"\w+(?:['’]\w+)*")
@@ -382,8 +382,8 @@ def _lowered(word: str) -> str:
 
 @functools.lru_cache(maxsize=4)
 def _echoes(said: tuple) -> dict:
-    """What would be an echo of each of these (what he said), by the number of words in a row: the whole
-    of a short ask, any four words of a long one, and a shorter run that is long enough to be his."""
+    """What would be an echo of each of these (what they said), by the number of words in a row: the whole
+    of a short ask, any four words of a long one, and a shorter run that is long enough to be their."""
     runs: dict[int, set] = {}
     for text in said:
         lines = [text, *(x for x in text.splitlines() if len(x.strip()) >= 8)] if "\n" in text.strip() else [text]
@@ -400,7 +400,7 @@ def _echoes(said: tuple) -> dict:
 
 
 def blank_echoes(text, said: Iterable[str]) -> str:
-    """`text` with every echo of what he said (`said`, his prompts) turned into "…": whole words only,
+    """`text` with every echo of what they said (`said`, their prompts) turned into "…": whole words only,
     whatever the case or spacing, and only the echoed run, so the rest of the line still says what went
     wrong."""
     text = str(text)
@@ -443,7 +443,7 @@ def write_json_atomic(path: Path, obj) -> None:
 # -- the compositor --
 
 @probe("drawer-focus", "hypr", "invariant", "The details drawer takes no keyboard",
-       "after his own Details, bombadil-details is the active window within 2 seconds",
+       "after their own Details, bombadil-details is the active window within 2 seconds",
        needs=("clients", "monitors", "activewindow"))
 def _drawer_focus(obs):
     clients, monitors = _dicts(obs.clients), _dicts(obs.monitors)
@@ -814,7 +814,7 @@ def not_ours(text, row: dict | None = None) -> str | None:
 
 
 def _model_rows(ledger) -> list[dict] | None:
-    """The turns that went to a model, oldest first. A `!command` is his shell, not a turn of ours."""
+    """The turns that went to a model, oldest first. A `!command` is their shell, not a turn of ours."""
     rows = _rows(ledger)
     if rows is None:
         return None
@@ -830,14 +830,14 @@ def _errors_by_turn(obs: Observation) -> dict[object, list[str]]:
 
 
 def _prompts(obs: Observation) -> list[str]:
-    """What went to a provider: his asks. The loop's own rows (an undo, a stop) never did."""
+    """What went to a provider: their asks. The loop's own rows (an undo, a stop) never did."""
     return [p for r in _dicts(obs.ledger) or [] if r.get("kind") != "local"
             for p in (_str(r.get("prompt")),) if len(p) >= 4]
 
 
 def _redacted(text: str, prompts: list[str], limit: int = 120) -> str:
-    """A provider's error line, without his words (a CLI that echoes the prompt: as it was, in JSON,
-    over several lines or cut short) or paths. His words come out of all of the error first, then its
+    """A provider's error line, without their words (a CLI that echoes the prompt: as it was, in JSON,
+    over several lines or cut short) or paths. Their words come out of all of the error first, then its
     first line is taken."""
     return scrub_text(_one_line(blank_echoes(_unescaped(text), prompts), 400))[:limit]
 
@@ -1131,21 +1131,21 @@ def _app_health(obs):
         start = max((i for i, x in enumerate(log) if x.startswith("---")), default=-1)
         for line in log[start + 1:]:
             if _FATAL.search(line):
-                # The line is the app's own output, which can hold his words: the sentence does not, and
+                # The line is the app's own output, which can hold their words: the sentence does not, and
                 # what tells one fatal line from another goes to the fingerprint only (fp_line).
                 return red("an app's log has no FATAL line", "an app's log has a fatal line",
                            line=scrub_text(_one_line(line, 160)), fp_line=strip_line(line)[:100])
     return green(apps=len(apps))
 
 
-# -- his words, only beside a probe that fired --
+# -- their words, only beside a probe that fired --
 
 _TROUBLE = re.compile(r"\b(?:still|won['’]t|wont|stuck|broken|frozen|again|not working|doesn['’]t work|"
                       r"nothing happens)\b", re.IGNORECASE)
 
 
 def attach_words(finding, prompts, fired: Iterable[float] | None = None) -> list[str]:
-    """The words of trouble ("still", "won't", "stuck" ...) in his prompts that came within five
+    """The words of trouble ("still", "won't", "stuck" ...) in their prompts that came within five
     minutes of a probe firing for `finding`, and none otherwise: such a word alone never makes a
     finding. `prompts` is ledger rows (`t`, `prompt`) or (t, text) pairs; `fired` is the times the
     probe fired (default: the finding's first and last). Only the words are kept, never the sentence.

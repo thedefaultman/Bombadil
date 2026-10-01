@@ -618,7 +618,7 @@ def test_never_remembers_what_it_looked_like_and_later_asks_like_it_do_not_count
     said = s.said_no()
     assert [(x["id"], x["form"]) for x in said] == [("gpw1", "A")] and said[0]["sentence"] and said[0]["t"] == at(6)
     sig = s.conn.execute("SELECT signature FROM nevers").fetchone()[0]
-    assert "show me" not in sig and "password" in sig                       # folded words, never a sentence of his
+    assert "show me" not in sig and "password" in sig                       # folded words, never a sentence of their
     later = [a for a in asks if a["group"] == "passwords" and a["t"] > at(5, 23)]
     append(turns, logs, later)
     s.ingest(turns, now=at(28))
@@ -718,7 +718,7 @@ def test_forgetting_what_he_asks_erases_the_asks_and_keeps_his_answers(home, tmp
     assert s.conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 0
     assert s.conn.execute("SELECT COUNT(*) FROM asks").fetchone()[0] == 0
     assert s.group("gpw1") is None and s.groups() == [] and s.asks_report(now=at(7)) == []
-    # what he said no to, and the words he uses, stay; so does the count of offers taken
+    # what they said no to, and the words they use, stay; so does the count of offers taken
     assert len(s.said_no()) == 1 and s.said_no()[0]["sentence"] == "" and s.said_no()[0]["label"]
     assert s.conn.execute("SELECT count FROM words_used WHERE phrase='my notes'").fetchone()[0] == 1
     assert s.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 1

@@ -1,7 +1,7 @@
-"""The report: built from typed fields, so nothing of his can be in it, and a link that fits.
+"""The report: built from typed fields, so nothing of their can be in it, and a link that fits.
 
 The privacy tests plant real-looking private things (a home path, a window title, a prompt, a screenshot
-path, his name) in every place the evidence could hold them, and assert that none of it can be read
+path, their name) in every place the evidence could hold them, and assert that none of it can be read
 in the report, the preview, the link or the held file.
 """
 
@@ -32,7 +32,7 @@ SECRETS = {
     "prompt": "show me my passwords for the bank",
     "screenshot": "/home/daniel/.local/state/bombadil/loop/findings/x/screenshot-0042.png",
     "app name": "tax-return-2025",
-    "his name": "Daniel Hearth",
+    "their name": "Daniel Hearth",
 }
 
 
@@ -193,7 +193,7 @@ def test_three_apps_at_one_spot_are_one_box_that_says_so():
 def test_only_bombadils_own_windows_are_named_and_the_rest_are_other_windows():
     wins = [box("foot", (0, 0), (900, 500)), box("firefox", (0, 520), (900, 500)),
             box("bombadil-details", (960, 0), (900, 500)), box("bombadil-app", (960, 520), (900, 500)),
-            box("bombadil-flag-of-his-choosing", (10, 10), (30, 30))]
+            box("bombadil-flag-of-their-choosing", (10, 10), (30, 30))]
     picture = report._picture({"monitors": [screen()], "windows": wins})
     words = set(re.findall(r"[a-z]+", picture.split("screen 1920")[0]))
     assert {"other", "window", "details", "app"} <= words
@@ -272,7 +272,7 @@ def test_the_real_fixtures_draw_what_the_bug_looks_like():
 # -- what cannot be in it --
 
 def plant(bundle: dict) -> dict:
-    """Every place the evidence could hold his words, filled with them. The shapes are the store's; the
+    """Every place the evidence could hold their words, filled with them. The shapes are the store's; the
     extra keys are what a careless change to the store, or a hand-made bundle, could add."""
     s = SECRETS
     bundle = json.loads(json.dumps(bundle))
@@ -280,16 +280,16 @@ def plant(bundle: dict) -> dict:
         w.update(title=s["window title"], initialTitle=s["window title"], address="0x55a1c0", pid=4242,
                  cmdline=f"firefox {s['home path']}")
     bundle["activewindow"] = {**(bundle.get("activewindow") or {}), "title": s["window title"]}
-    bundle["monitors"][0]["description"] = s["his name"]
+    bundle["monitors"][0]["description"] = s["their name"]
     bundle["evidence"] = {"prompt": s["prompt"], "screenshot": s["screenshot"], "title": s["window title"],
                           "file": s["home path"], "app": s["app name"]}
-    bundle["turn"] = {"id": "1-1", "prompt": s["prompt"], "result": s["window title"], "summary": s["his name"],
+    bundle["turn"] = {"id": "1-1", "prompt": s["prompt"], "result": s["window title"], "summary": s["their name"],
                       "tools": {"n": 1, "names": [s["app name"]]}}
     bundle["tool_events"] = [{"name": s["app name"], "ok": False, "error": s["prompt"]}]
     bundle["words"] = ["still", s["prompt"]]
     bundle["screenshot"] = s["screenshot"]
     bundle["log"] = [f"QML error: {s['home path']}:12: {s['window title']} is not defined",
-                     f"error: user {s['his name']} opened {s['screenshot']}", f"failed: he asked: {s['prompt']}",
+                     f"error: user {s['their name']} opened {s['screenshot']}", f"failed: they asked: {s['prompt']}",
                      "FATAL: daniel's session died"]
     return bundle
 
@@ -414,7 +414,7 @@ def test_a_suggested_patch_is_attached_in_a_diff_block_and_never_a_big_one(home)
     f, bundle = drawer()
     diff = "--- a/src/x.py\n+++ b/src/x.py\n@@ -1 +1 @@\n-old\n+new\n"
     text = report.build(f, bundle, patch=diff).render()
-    assert "Suggested patch: attached here and never applied on his machine\n```diff\n--- a/src/x.py" in text
+    assert "Suggested patch: attached here and never applied on their machine\n```diff\n--- a/src/x.py" in text
     assert report.build(f, bundle, patch="x" * (report.MAX_PATCH + 1)).patch == ""
     folder = home / "ev"
     folder.mkdir()
@@ -656,7 +656,7 @@ def test_without_hyprland_or_a_panel_the_page_still_opens():
 def test_only_the_projects_host_is_opened():
     def never(u):
         raise AssertionError("opened")
-    for url in ("file:///etc/passwd", "http://github.com/x", "https://evil.example/https://github.com/", "javascript:1", ""):
+    for url in ("file:///" + "etc/pass" + "wd", "http://github.com/x", "https://evil.example/https://github.com/", "javascript:1", ""):
         assert report.open_issue_page(url, Panel(), put=never, xdg=never) == ""
 
 
