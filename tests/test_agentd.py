@@ -838,7 +838,7 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "unfold"}, True, "Unfolded the desk."),
         ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True,
          "Moved Watching to the right rail."),
-        ({"op": "show", "widget": "Machine"}, True, "Put Machine on the desk."),
+        ({"op": "show", "widget": "Machine"}, True, "Here is the machine. It is back on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
                                                     "Watching, Alive, Needs you, Away and Machine.")),
@@ -2327,6 +2327,21 @@ async def test_the_brains_answers_are_not_passed_to_the_model_as_the_users_words
 
 
 @pytest.mark.asyncio
+async def test_a_launcher_event_says_whether_it_opened_or_put_away(home, monkeypatch):
+    """The pill puts a picture away when a window opens over it, not when one is hidden."""
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    monkeypatch.setattr(d.launcher, "run", lambda action: (True, "Done."))
+    server, r, w = await _start(d)
+    for typed, action, verb in (("brain", "brain", "open"), ("hide the browser", "panel", "hide")):
+        await _ask(w, typed)
+        msgs = await _events_until(r, lambda m: m.get("phase") == "done")
+        assert [(m["action"], m["verb"], m["phase"]) for m in msgs if m.get("kind") == "local"] == [
+            (action, verb, "start"), (action, verb, "done")]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_job_that_ends_while_nobody_is_connected_is_still_noted(home, monkeypatch):
     monkeypatch.setattr(agentd, "JOBS_POLL", 0.05)
     sd = Systemd()
@@ -2692,5 +2707,222 @@ async def test_a_search_that_nothing_answers_does_not_switch_the_watchdog_off(ho
     await _ask(w, "look it up")
     msgs = await _read_until(r, "turn_end")
     assert "Codex is not answering; check the connection" in _step_texts(msgs)
+    w.close()
+    server.cancel()
+
+
+# -- the Machine card --
+
+MACHINE_UP = {"type": "machine", "present": True, "asked": False, "why": "Memory is nearly full",
+              "strip": {"text": "memory 91%", "dot": "amber"},
+              "rows": [{"key": "memory", "kind": "stack", "title": "Memory", "meter": 0.91, "tone": "amber"},
+                       {"key": "disk", "kind": "meter", "title": "Disk", "meter": 0.5, "tone": "ok", "opens": "disk"}]}
+MACHINE_GONE = {"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""},
+                "rows": []}
+
+
+class FakeVitals:
+    """What agentd needs of vitals.Vitals: tick() answers the message when it is not the last one it
+    answered, message() the current one, next_delay() how long to sleep, ask() and reset()."""
+
+    def __init__(self, *script, delay=0.02, current=None):
+        self.script, self.delay = list(script), delay
+        self.current = current or MACHINE_GONE
+        self.ticks = self.asks = self.resets = 0
+
+    def tick(self):
+        self.ticks += 1
+        if not self.script:
+            return None
+        msg = self.script.pop(0)
+        if isinstance(msg, Exception):
+            raise msg
+        self.current = msg
+        return msg
+
+    def message(self):
+        return self.current
+
+    def next_delay(self):
+        return self.delay
+
+    def ask(self, seconds=None):
+        self.asks += 1
+        self.script.insert(0, dict(MACHINE_UP, asked=True))
+
+    def reset(self):
+        self.resets += 1
+        self.current = MACHINE_GONE
+
+
+async def _machine_msg(r, timeout=5):
+    return (await _events_until(r, lambda m: m.get("type") == "machine", timeout))[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_machine_card_is_sent_when_the_machine_says_so_and_again_when_it_changes(home):
+    fake = FakeVitals(MACHINE_UP, delay=0.1)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP
+    other_r, other_w = await _another(d)
+    fake.script.append(MACHINE_GONE)
+    assert await _machine_msg(r) == MACHINE_GONE
+    assert await _machine_msg(other_r) == MACHINE_GONE      # everyone is told
+    assert await _silent(r)                                 # and a calm machine says nothing
+    w.close()
+    other_w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_bar_is_not_told_there_is_no_card_when_it_had_none(home):
+    fake = FakeVitals(MACHINE_GONE, MACHINE_UP, MACHINE_GONE, MACHINE_GONE, delay=0.05)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP      # the first "no card" was not said
+    assert await _machine_msg(r) == MACHINE_GONE    # the card leaving is
+    assert await _silent(r)                         # and so is not said twice
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_desks_reply_carries_the_machine_card_only_while_it_is_up(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=FakeVitals())
+    server, r, w = await _start(d)
+    await _say(w, {"type": "desk", "op": "get"})
+    got = [json.loads(await asyncio.wait_for(r.readline(), 5)) for _ in range(2)]
+    assert [m["type"] for m in got] == ["desk", "jobs"] and await _silent(r)   # nothing to say: nothing sent
+    d.vitals.current = MACHINE_UP
+    await _say(w, {"type": "desk", "op": "get"})
+    got = [json.loads(await asyncio.wait_for(r.readline(), 5)) for _ in range(3)]
+    assert [m["type"] for m in got] == ["desk", "jobs", "machine"] and got[2] == MACHINE_UP
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_shell_can_ask_for_the_card_again_and_only_the_asker_is_told(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=FakeVitals())
+    server, r, w = await _start(d)
+    other_r, other_w = await _another(d)
+    await _say(w, {"type": "vitals", "op": "get"})
+    assert await _machine_msg(r) == MACHINE_GONE
+    assert await _silent(other_r)
+    w.close()
+    other_w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row, drawn", [("disk", [("disks", "the machine card")]), ("memory", []), ("", []),
+                                         (None, []), (7, []), ("cpu", [])])
+async def test_a_click_on_the_disk_row_draws_the_disks_and_nothing_reaches_the_model(home, row, drawn):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=FakeVitals())
+    seen = []
+
+    async def picture(action, typed):
+        seen.append((action.target, typed))
+    d.picture = picture
+    server, r, w = await _start(d)
+    await _say(w, {"type": "vitals", "op": "open", "row": row})
+    await asyncio.sleep(0.2)
+    assert seen == drawn and d.turns == 0 and d.current is None
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_sampled_once_the_last_bar_has_gone_and_the_card_is_forgotten(home):
+    fake = FakeVitals(MACHINE_UP)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP
+    for _ in range(100):
+        if fake.ticks >= 3:
+            break
+        await asyncio.sleep(0.02)
+    assert fake.ticks >= 3 and d._vitals_task is not None and not d._vitals_task.done()   # it keeps looking
+    w.close()
+    for _ in range(100):
+        if d._vitals_task.done():
+            break
+        await asyncio.sleep(0.02)
+    assert d._vitals_task.done() and fake.resets == 1
+    ticks = fake.ticks
+    await asyncio.sleep(0.2)
+    assert fake.ticks == ticks
+    # The next bar starts it again, from nothing: the card it had is not repeated from memory.
+    fake.script = [MACHINE_UP]
+    r2, w2 = await _client(d.socket_path)
+    for _ in range(3):
+        await r2.readline()
+    assert await _machine_msg(r2) == MACHINE_UP
+    w2.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_putting_machine_away_stops_the_looking_and_takes_the_card_with_it(home):
+    fake = FakeVitals(MACHINE_UP)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP
+    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})
+    assert await _machine_msg(r) == MACHINE_GONE
+    for _ in range(100):
+        if d._vitals_task.done():
+            break
+        await asyncio.sleep(0.02)
+    assert d._vitals_task.done()
+    ticks = fake.ticks
+    await asyncio.sleep(0.2)
+    assert fake.ticks == ticks and fake.resets == 1
+    # The shell showing it again is a question: the card comes up asked, with no line crossed.
+    await _say(w, {"type": "desk", "op": "show", "widget": "machine"})
+    assert (await _machine_msg(r)) == dict(MACHINE_UP, asked=True) and fake.asks == 1
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_how_is_the_machine_raises_the_card_at_once_whatever_the_wait(home):
+    fake = FakeVitals(delay=60.0)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    await asyncio.sleep(0.1)    # asleep for a minute now
+    await _ask(w, "how's the machine?")
+    msgs = await _events_until(r, lambda m: m.get("type") == "machine", 3)
+    assert msgs[-1] == dict(MACHINE_UP, asked=True) and fake.asks == 1
+    done = [m for m in msgs if m.get("type") == "event" and m.get("phase") == "done"]
+    assert not done or done[0]["text"] == "Here is the machine."
+    assert d.turns == 0 and d.current is None      # the model was never asked
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_look_that_fails_does_not_end_the_looking(home, capsys):
+    fake = FakeVitals(RuntimeError("no /proc"), MACHINE_UP)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP
+    assert "looking at the machine: RuntimeError: no /proc" in capsys.readouterr().err
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_with_vitals_switched_off_there_is_no_card_and_no_looking(home):
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())    # the tests set BOMBADIL_VITALS=0
+    assert d.vitals is None
+    server, r, w = await _start(d)
+    await _say(w, {"type": "vitals", "op": "get"})
+    await _say(w, {"type": "vitals", "op": "open", "row": "disk"})
+    await _say(w, {"type": "desk", "op": "get"})
+    got = [json.loads(await asyncio.wait_for(r.readline(), 5)) for _ in range(2)]
+    assert [m["type"] for m in got] == ["desk", "jobs"] and await _silent(r)
+    assert d._vitals_task is None
     w.close()
     server.cancel()

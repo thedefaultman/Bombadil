@@ -6,6 +6,8 @@ import Bombadil as Kit
 // turn ended. One line while it works; at most four when it is done. A step that touches the
 // system gets an amber edge with the exact command under it, one no restore point can undo a
 // red one; neither pauses anything. Clicking a finished line shows every command and its output.
+// The line that says the AI rests (out of plan or paused) is a plain step line: it fades like a
+// finished one, and never turns red.
 Rectangle {
     id: bar
     required property var pill       // a PillState
@@ -41,14 +43,19 @@ Rectangle {
     }
 
     Timer {
-        // The seconds counter, and fading a finished line nobody is looking at.
-        interval: 250; repeat: true; running: bar.shown
+        // The seconds counter, and fading a finished line nobody is looking at. A finished line
+        // kept by its picture has nothing for it to do, so it sleeps until the picture goes (and
+        // then fades the line, whose time is long past, on its next tick).
+        objectName: "lineTimer"
+        interval: 250; repeat: true
+        running: bar.shown && !(bar.pill.pictureStays && bar.pill.mode !== "working" && bar.pill.flash === "")
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
             // The line shows on every screen; hovering it on any of them keeps it.
-            const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
-            if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
+            const done = bar.pill.mode === "closing" || bar.pill.mode === "local" || bar.pill.mode === "resting"
+            if (done && !bar.pill.sticky && !bar.pill.pictureStays && bar.pill.hovers === 0
+                    && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
         }
     }

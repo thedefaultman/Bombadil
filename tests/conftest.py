@@ -9,6 +9,12 @@ _QML = str(Path(__file__).resolve().parents[1] / "share" / "qml")
 os.environ["QML2_IMPORT_PATH"] = _QML + os.pathsep + os.environ.get("QML2_IMPORT_PATH", "")
 
 
+@pytest.fixture(autouse=True)
+def no_vitals(monkeypatch):
+    """agentd samples the real machine for the Machine card; a test that wants it passes `vitals=`."""
+    monkeypatch.setenv("BOMBADIL_VITALS", "0")
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """Point every Bombadil path at a temp dir so tests never touch the real system."""

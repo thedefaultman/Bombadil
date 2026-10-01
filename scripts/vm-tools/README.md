@@ -18,7 +18,9 @@ live in `$BOMBADIL_TREE/out/vm` (`/root/Bombadil/out/vm`); set `VMDIR` to point 
 | `probe PROMPT SECS [STOP_AT]` | send a prompt to agentd's socket and print every event with its time (status lines, cards, tools, results) |
 | `update-in-place [--reboot] REF` | move the installed VM to the Bombadil in a git ref without reinstalling, so the login on its disk stays |
 | `scratch-up`, `with-scratch TOOL` | a headless scratch copy of the disk, and any tool above pointed at it |
-| `scratch_api.py` | a scripted Anthropic API for the real `claude` CLI: hangs, slow tools, long thinking, `show_card` calls; no model, no quota, no login |
+| `stonecrop OUT.png N SECS [X Y W H] [SCALE]` | N frames of the stone in the pill from the VM's own screen (QMP screendumps), scaled up in a row: its faces and motion at real size |
+| `lifttrace OUT SECS INTERVAL` | the stone's and the card's top edge about ten times a second, to see whether the pill moves when a card changes size |
+| `scratch_api.py` | a scripted Anthropic API for the real `claude` CLI: hangs, slow tools, long thinking, `show_card` calls, a service restart, a volume change; no model, no quota, no login |
 
 Launcher commands (`scripts/wsl-vm.sh`, `bombadil-vm.cmd`): no argument boots the disk, `stop` shuts it
 down cleanly (ACPI power button), `refresh` stops it, takes a host-side `qemu-img` restore point of the

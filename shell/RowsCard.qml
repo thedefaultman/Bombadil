@@ -3,13 +3,16 @@ import QtQuick
 import QtQuick.Layouts
 import "DeskTheme.js" as T
 
-// A card of rows: Watching (what is counting) and Needs you (what is waiting for you). A row is a
-// meter (a label, what it says, a percent and a track filled in the colour of who is using it, and
-// a small x when it may be removed), a dot row (a title, one line under it, a button or a small x)
-// or a plain one without the dot.
-// A button never starts work by itself: it reports the press and the shell decides.
-// model is DeskState's watchModel or needsModel:
-// {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, pulse, button, remove}]}.
+// A card of rows: Watching (what is counting), Needs you (what is waiting for you) and Machine
+// (what the machine is using). A row is a meter (a label, what it says, a percent and a track filled
+// in the colour of who is using it, and a small x when it may be removed), a stack (a meter whose
+// track is cut into the pieces of who uses it, in order, so it has no single fill), a dot row (a
+// title, one line under it, a button or a small x) or a plain one without the dot.
+// A button never starts work by itself: it reports the press and the shell decides. A row that says
+// what it opens reports a tap anywhere on it the same way; a button or the x on it still wins.
+// model is DeskState's watchModel, needsModel or machineModel:
+// {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, parts: [{tone, fraction}],
+// pulse, button, remove, opens}]}.
 DeskCard {
     id: card
     objectName: "rowsCard"
@@ -17,6 +20,7 @@ DeskCard {
     property var model: ({})
     signal rowAction(string key, string action)
     signal rowRemove(string key)
+    signal rowOpen(string key, string opens)
 
     readonly property var m: model || ({})
     readonly property var rowList: m.rows || []
@@ -28,6 +32,7 @@ DeskCard {
              : tone === "sessions" ? T.sessions
              : tone === "you" ? T.you
              : tone === "ok" ? T.ok
+             : tone === "amber" ? T.amber
              : tone === "red" ? T.red
              : T.muted
     }
@@ -64,12 +69,16 @@ DeskCard {
 
                 readonly property var spec: card.rowList[index] || ({})
                 readonly property string key: spec.key || ""
-                readonly property string kind: spec.kind === "meter" || spec.kind === "plain" ? spec.kind : "dot"
+                readonly property string kind: spec.kind === "meter" || spec.kind === "stack" || spec.kind === "plain"
+                                               ? spec.kind : "dot"
+                // A stack is laid out as a meter; only what fills its track differs.
+                readonly property bool meterLike: kind === "meter" || kind === "stack"
                 readonly property string tone: spec.tone || ""
                 readonly property color toneColor: card.toneColor(tone)
                 readonly property string sub: spec.sub || ""
                 readonly property string button: spec.button || ""
                 readonly property bool removable: spec.remove === true
+                readonly property string opens: spec.opens || ""
                 readonly property bool hasMeter: spec.meter !== undefined && spec.meter !== null
                 readonly property real fraction: hasMeter ? Math.max(0, Math.min(1, spec.meter)) : 0
                 // Only a live dot in the machine's or a session's colour breathes.
@@ -78,18 +87,50 @@ DeskCard {
                 readonly property real textRight: buttons.visible ? buttons.x - 8 : card.width - 14
                 // A meter row with a small x gives it this much of its right edge; the percent and the
                 // words beside it move left by it. A meter row without one does not move.
-                readonly property real meterRoom: kind === "meter" && removable ? 22 : 0
+                readonly property real meterRoom: meterLike && removable ? 22 : 0
+                // The pieces of a stack as {tone, x, w} on the track, left to right from its edge. Each
+                // stops where the track does, so they never overflow it, and one under a pixel is not
+                // drawn (the next still starts where it would have).
+                readonly property var pieces: {
+                    const list = kind === "stack" && spec.parts ? spec.parts : []
+                    const out = []
+                    let x = 0
+                    for (let i = 0; i < list.length; i++) {
+                        const p = list[i]
+                        const w = Math.min(Number(p ? p.fraction : NaN) * track.width, track.width - x)
+                        if (!(w > 0)) continue
+                        if (w >= 1) out.push({ tone: p.tone, x: x, w: w })
+                        x += w
+                    }
+                    return out
+                }
 
                 width: card.width
-                height: kind === "meter" ? 34 : T.rowHeight
+                height: meterLike ? 34 : T.rowHeight
+
+                // A row that opens something takes a tap anywhere on it. A button or the x is a child of
+                // the row, so it is asked first, and its exclusive grab leaves the row's tap out.
+                HoverHandler { enabled: row.opens !== ""; cursorShape: Qt.PointingHandCursor }
+                TapHandler {
+                    // What was under the finger at the press, as for the buttons.
+                    property string armedKey: ""
+                    property string armedOpens: ""
+                    enabled: row.opens !== ""
+                    gesturePolicy: TapHandler.ReleaseWithinBounds
+                    onPressedChanged: if (pressed) {
+                        armedKey = row.key
+                        armedOpens = row.opens
+                    }
+                    onTapped: if (armedOpens !== "") card.rowOpen(armedKey, armedOpens)
+                }
 
                 // The title: a meter row's label, or the first line of a dot or plain row.
                 Text {
                     objectName: "rowsRowTitle"
                     font.family: T.fontFamily
                     x: row.kind === "dot" ? 32 : 14
-                    y: Math.round((row.kind === "meter" ? 22 : 26) - baselineOffset)
-                    width: Math.max(0, (row.kind === "meter" ? meta.x - 8 : row.textRight) - x)
+                    y: Math.round((row.meterLike ? 22 : 26) - baselineOffset)
+                    width: Math.max(0, (row.meterLike ? meta.x - 8 : row.textRight) - x)
                     text: row.spec.title || ""
                     color: T.fg
                     font.pixelSize: 13
@@ -101,7 +142,7 @@ DeskCard {
                     id: meta
                     objectName: "rowsMeta"
                     font.family: T.fontFamily
-                    visible: row.kind === "meter"
+                    visible: row.meterLike
                     x: 250 - row.meterRoom - Math.min(implicitWidth, 150)
                     y: Math.round(22 - baselineOffset)
                     width: Math.min(implicitWidth, 150)
@@ -115,17 +156,18 @@ DeskCard {
                 Text {
                     objectName: "rowsPercent"
                     font.family: T.fontFamily
-                    visible: row.kind === "meter" && row.hasMeter
+                    visible: row.meterLike && row.hasMeter
                     x: 286 - row.meterRoom - implicitWidth
                     y: Math.round(22 - baselineOffset)
                     text: Math.round(row.fraction * 100) + "%"
-                    color: T.muted
+                    // A line crossed says so here: a stack has no single fill to say it.
+                    color: row.tone === "amber" || row.tone === "red" ? row.toneColor : T.muted
                     font.pixelSize: 12
                 }
                 Rectangle {
                     id: track
                     objectName: "rowsMeter"
-                    visible: row.kind === "meter"
+                    visible: row.meterLike
                     x: 14; y: 28
                     width: 272; height: 6; radius: 3
                     color: T.raised
@@ -133,11 +175,33 @@ DeskCard {
                     readonly property color fillColor: row.toneColor
                     Rectangle {
                         id: fill
-                        width: row.fraction * parent.width
+                        width: row.kind === "meter" ? row.fraction * parent.width : 0
                         height: parent.height
                         radius: 3
                         color: row.toneColor
                         visible: width > 0
+                    }
+
+                    // A stack's pieces. By place, like the rows, so one that grows is not built again.
+                    Repeater {
+                        model: row.pieces.length
+
+                        Rectangle {
+                            id: part
+                            required property int index
+                            objectName: "rowsPart"
+                            readonly property var piece: row.pieces[index] || ({ tone: "", x: 0, w: 0 })
+                            readonly property bool last: index === row.pieces.length - 1
+                            x: piece.x
+                            width: piece.w
+                            height: track.height        // (not parent: a piece being taken away has none)
+                            color: card.toneColor(piece.tone)
+                            // Only the ends of the whole stack are round, as the track's are.
+                            topLeftRadius: piece.x === 0 ? 3 : 0
+                            bottomLeftRadius: piece.x === 0 ? 3 : 0
+                            topRightRadius: last ? 3 : 0
+                            bottomRightRadius: last ? 3 : 0
+                        }
                     }
                 }
 
@@ -159,7 +223,7 @@ DeskCard {
                 Text {
                     objectName: "rowsRowSub"
                     font.family: T.fontFamily
-                    visible: row.kind !== "meter" && row.sub !== ""
+                    visible: !row.meterLike && row.sub !== ""
                     x: row.kind === "dot" ? 32 : 14
                     y: Math.round(42 - baselineOffset)
                     width: Math.max(0, row.textRight - x)
@@ -175,15 +239,15 @@ DeskCard {
                 // row has no button, only the x, up by the label's line because the track is under it.
                 Row {
                     id: buttons
-                    visible: row.kind === "meter" ? row.removable : (row.button !== "" || row.removable)
+                    visible: row.meterLike ? row.removable : (row.button !== "" || row.removable)
                     x: 286 - width
-                    y: row.kind === "meter" ? 6 : 12
+                    y: row.meterLike ? 6 : 12
                     spacing: 6
 
                     Rectangle {
                         id: pressButton
                         objectName: "rowsButton"
-                        visible: row.kind !== "meter" && row.button !== ""
+                        visible: !row.meterLike && row.button !== ""
                         readonly property string text: row.button
                         readonly property bool primary: row.button === "Do it"
                         // What was under the finger at the press: the rows may shift before the release.

@@ -39,6 +39,13 @@ def test_the_pill_opens_from_super_and_from_alt_space():
     assert {"SUPER + SUPER_L", "SUPER + SUPER_R", "ALT + space"} <= set(binds)
 
 
+def test_hyprland_does_not_slide_the_bar_when_a_picture_resizes_it():
+    # The bar is a layer that is resized whenever a picture appears or grows. With Hyprland's default
+    # "layers" animation the pill dipped and swung back for half a second each time.
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    assert re.search(r'^\s*hl\.animation\(\{ leaf = "layers", enabled = false \}\)', lua, re.M)
+
+
 def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers
