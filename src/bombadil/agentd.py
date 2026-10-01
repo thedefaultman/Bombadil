@@ -579,9 +579,13 @@ class AgentD:
                 await self._vitals_send(self.vitals.message())
 
     async def _vitals_send(self, msg: dict):
-        if msg != self._vitals_last:
+        """Tell the bars the card when it is not what they were last told. A bar that has been told
+        nothing has no card, so "no card" as the first thing to say is not worth a message."""
+        if msg == self._vitals_last or (self._vitals_last is None and not msg.get("present")):
             self._vitals_last = msg
-            await self.broadcast(msg)
+            return
+        self._vitals_last = msg
+        await self.broadcast(msg)
 
     async def _vitals_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the card again, or clicks a row that opens something (the disk)."""

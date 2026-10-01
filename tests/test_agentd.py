@@ -2346,6 +2346,18 @@ async def test_the_machine_card_is_sent_when_the_machine_says_so_and_again_when_
 
 
 @pytest.mark.asyncio
+async def test_a_bar_is_not_told_there_is_no_card_when_it_had_none(home):
+    fake = FakeVitals(MACHINE_GONE, MACHINE_UP, MACHINE_GONE, MACHINE_GONE, delay=0.05)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=fake)
+    server, r, w = await _start(d)
+    assert await _machine_msg(r) == MACHINE_UP      # the first "no card" was not said
+    assert await _machine_msg(r) == MACHINE_GONE    # the card leaving is
+    assert await _silent(r)                         # and so is not said twice
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_the_desks_reply_carries_the_machine_card_only_while_it_is_up(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), vitals=FakeVitals())
     server, r, w = await _start(d)

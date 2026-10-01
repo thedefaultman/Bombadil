@@ -156,7 +156,7 @@ the network counters. `agentd` runs it in a worker thread, so the loop never wai
 numbers are rounded for that, so a calm machine sends nothing.
 
 **Asking.** `show machine`, or "how's the machine", raises the card even when nothing is wrong, says
-"Here is the machine.", and keeps it up for about a minute (`asked: true`; the card draws the same). The
+"Here is the machine.", and keeps it up for 30 seconds (`asked: true`; the card draws the same). The
 agent's `desk` tool does the same when the person asked for the desk in that turn.
 
 **Rows that open something.** A row with an `opens` value is a button: the Disk row asks `agentd`
