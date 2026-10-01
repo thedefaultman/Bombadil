@@ -1,0 +1,23 @@
+[Unit]
+Description=Bombadil brain: see every save under /home, with who made it
+Documentation=file:///usr/share/bombadil/src/bombadil/brain/watch.py
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bombadil-brain-watch
+# The top-level btrfs subvolume is mounted in the service's own mount namespace, so nobody
+# else ever sees it. On a root that is not btrfs (the live ISO) the service stays up and
+# answers "not watching", so it never restart-loops.
+PrivateMounts=yes
+RuntimeDirectory=bombadil-brain
+RuntimeDirectoryMode=0755
+StateDirectory=bombadil-brain
+StateDirectoryMode=0700
+# One pidfd per event in a read, and a read can hold a thousand events.
+LimitNOFILE=65536
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

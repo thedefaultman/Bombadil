@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
 - `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
 - `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
