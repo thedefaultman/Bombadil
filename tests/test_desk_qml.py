@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHELL = ROOT / "shell"
 CARDS = SHELL
 CARD_FILES = ["DeskCard.qml", "NowCard.qml", "RowsCard.qml", "DeskStrip.qml"]
-DESK_FILES = ["DeskState.qml", "DeskRail.qml", "DeskStrips.qml", "PillState.qml", "DeskTheme.js"]
+DESK_FILES = ["DeskState.qml", "DeskRail.qml", "DeskStrips.qml", "DeskDrag.qml", "PillState.qml", "DeskTheme.js"]
 
 HARNESS = """
 import QtQuick
@@ -110,6 +110,8 @@ def plain(v):
 
 
 class Desk:
+    harness = HARNESS      # what a test of the desk's windows replaces (test_desk_drag_qml.py)
+
     def __init__(self, app, tmp_path, width=1920, height=1080, calm=True):
         self.app = app
         home = tmp_path / "shell"
@@ -120,8 +122,8 @@ class Desk:
             shutil.copy(CARDS / name, home / name)
         qml = tmp_path / "harness.qml"
         # A calm desk's clock ticks once an hour, so a test sets `now` and nothing moves it under the test.
-        qml.write_text(HARNESS % {"dir": home.as_uri(), "width": width, "height": height,
-                                  "tick": 3600000 if calm else 1000})
+        qml.write_text(self.harness % {"dir": home.as_uri(), "width": width, "height": height,
+                                       "tick": 3600000 if calm else 1000})
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
         self.engine.warnings.connect(lambda ws: self.warnings.extend(w.toString() for w in ws))
