@@ -26,7 +26,7 @@ DragHandler {
 
     // The threshold is crossed: the drag starts where the pointer is now.
     onActiveChanged: {
-        if (!active) return
+        if (!active || mine) return     // a second button can drop the handler out and back in: it is the same drag
         const at = _screen(centroid.scenePosition)
         held = desk.dragStart(widget, from, at.x, at.y) ? widget : ""
     }

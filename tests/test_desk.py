@@ -122,6 +122,17 @@ def test_an_unchanged_move_still_gives_the_card_back_and_says_it_changed(home):
     assert len(changes) == 2
 
 
+@pytest.mark.parametrize("widget", ["machine", "watching"])
+def test_showing_a_hand_folded_widget_is_a_change_that_is_saved_and_told(home, widget):
+    d = fresh(home)
+    d.apply("fold", widget)
+    changes = []
+    d.on_change = lambda: changes.append(1)
+    d.apply("show", widget)
+    assert d.snapshot()["stripped"] == [] and changes == [1]
+    assert desk.Desk().load().snapshot()["stripped"] == []
+
+
 def test_hiding_keeps_the_place_so_showing_puts_it_back(home):
     d = fresh(home)
     before = d.snapshot()["order"]
@@ -387,6 +398,8 @@ def test_the_title_the_line_uses():
     "pin my batch. also bring the machine card back", "move now to the right rail",
     "Show my batch on the desk", "the widget is in the way", "hide the machine card",
     "show while you were away", "please hide machine", "put up my desk",
+    "unfold the machine card", "unfold watching", "unfold needs you", "unfold the machine please",
+    "fold the machine into a strip", "fold watching to a strip",
 ])
 def test_the_words_that_ask_for_the_desk(prompt):
     assert desk.asked_for_desk(prompt)
@@ -402,6 +415,7 @@ def test_the_words_that_ask_for_the_desk(prompt):
     "keep away from the machine", "put away the groceries", "bring me the machine specs",
     "I am at the help desk all day", "a standing desk for the office", "write to the front desk",
     "tidy my desk job list", "make a password manager",
+    "unfold the map of the machine's drives", "unfold the paper and read it", "fold the laundry into the machine",
 ])
 def test_the_words_that_do_not(prompt):
     assert not desk.asked_for_desk(prompt)

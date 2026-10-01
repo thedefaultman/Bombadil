@@ -887,6 +887,18 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
 
 
 @pytest.mark.asyncio
+async def test_the_words_for_folding_one_card_let_the_desk_tool_through(home):
+    from bombadil import procs
+    d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))
+    d.desk.apply("fold", "machine")
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "unfold the machine card")
+    await _say(tool_w, {"type": "desk-tool", "id": "u", "turn": 1, "op": "unfold", "widget": "machine"})
+    got = await _desk_result(tool_r)
+    assert (got["ok"], got["text"]) == (True, "Unfolded Machine.") and d.desk.snapshot()["stripped"] == []
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
 async def test_the_desk_tool_refuses_a_turn_that_is_not_the_running_one(home):
     from bombadil import procs
     d = agentd.AgentD(Scripted(DESK_TURN), agentd._NoSnapshots(), stopper=procs.Stopper(grace=1.0))

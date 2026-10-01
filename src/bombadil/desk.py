@@ -62,10 +62,10 @@ _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!wr
 # words or a word that goes on about where it should be: "hide machine", "put watching on the
 # right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
 _DESK_ASK = re.compile(
-    r"\b(?:show|hide|put|keep|pin|move|bring|fold)\s+(?:(?:up|back|the|my)\s+)*"
+    r"\b(?:show|hide|put|keep|pin|move|bring|fold|unfold)\s+(?:(?:up|back|the|my)\s+)*"
     r"(?:now|watching|needs you|machine|alive|while you were away)\b(?!')"
     r"(?=\s*$|\s*,"
-    r"|\s+(?:on|to|in|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
+    r"|\s+(?:on|to|in|into|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 
 
 def asked_for_desk(prompt: str) -> bool:

@@ -13,6 +13,7 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskState.qml` | The one object that decides what the desk shows: which widgets are present, each one's face (`full`, `strip`, `hidden`), where its slot is, and what the cards read. Plain Qt Quick with no Quickshell types, so tests drive it offscreen the way they drive `PillState`. |
 | `shell/DeskRails.qml`, `shell/DeskRail.qml` | The two rails: one Quickshell `PanelWindow` per side on the Bottom layer (above the wallpaper, under every window), reserving nothing, with an input mask that covers only the cards. |
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
+| `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
 | `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Machine; a row is a dot, a meter, a stacked meter or plain text). |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
@@ -214,8 +215,8 @@ Where it lands depends on where the pointer is when the button goes up:
   across the column marks the gap it would take, between the cards on show. The card goes there:
   `{"type":"desk","op":"move","widget":...,"rail":...,"rank":...}`, with `rank` 0 nearest the pill and
   counted in the rail's whole order without the widget (the ones that are away included, as
-  `Desk._move` counts). A card dropped where it already is sends nothing. A chip dropped on a rail is
-  always a move: it was never in a slot.
+  `Desk._move` counts). A card dropped where it already is sends nothing. A chip is not in its place (it
+  is a chip for the room, a window or a hand fold), so dropping it on a rail is always a move.
 - **In the row**, the bottom 64 px: a card folds to its chip, `{"type":"desk","op":"fold","widget":...}`.
   While the pointer is there the chip shows as an outlined ghost past the ones its side already has. A chip
   dropped in the row does nothing.
@@ -223,7 +224,8 @@ Where it lands depends on where the pointer is when the button goes up:
 
 agentd answers with the new `desk` message, and that is what changes the screen: the shell never moves a
 card first. What was dropped stays dimmed where it stands until the message comes, or for 500 ms if none
-does. That wait is the only timer; nothing runs while a card is held and nothing is animated. A widget
+does. That wait is the only timer a drag starts besides each rail's usual 230 ms wait before it takes its
+window down; nothing runs while a card is held and nothing is animated. A widget
 agentd lists in `stripped` is a chip whatever the room, takes no slot in its rail (the cards above it
 slide down), and can be Needs you, which `hidden` cannot take.
 
@@ -247,12 +249,18 @@ stays dimmed where it stands), and the input masks are as they were.
 
 `tests/test_desk_qml.py` has the rules (where a drop lands, what waits, what ends a drag), and
 `tests/test_desk_drag_qml.py` drives the rails and the bar as three windows with real pointer events, each
-position given in the coordinates of the window the press began in, the way a grab delivers them.
+position given in the coordinates of the window the press began in, the way a grab delivers them. The
+headless run (`tests/desktop/driver.py`, "dragging") does it with a real pointer on a real compositor: see
+Testing.
 
-**Known limits.** What only a real compositor shows, and was not run:
+**Known limits.** What only Hyprland shows, and was not run. The headless session (sway, with a virtual
+pointer) has dragged a card from a rail to the other rail, to the row and back, with the real agentd and
+the real shell, so the first limit below is about Hyprland alone:
 
 - *The grab across surfaces.* That motion and the release keep reaching the window the press began in, far
-  outside it: from a rail to the bar and back, with the stage empty and with windows on it.
+  outside it: from a rail to the bar and back, with the stage empty and with windows on it. Hyprland has
+  been seen to send a release and a leave when a pointer goes off a layer-shell surface on an empty
+  workspace; a drop would then land where the pointer last was.
 - *The input mask while held.* A rail takes input only where its cards are; whether the grab goes on past
   the mask is the compositor's.
 - *The window origins.* They are assumed from the shell's own layout. At 125% scale, with the chips of
@@ -262,12 +270,13 @@ position given in the coordinates of the window the press began in, the way a gr
   something" is a matter of seeing it.
 - *Enter and leave after a release.* The window under the pointer when the button goes up, and the hover on
   the card or chip it is over, should come back at once.
-- *A rail window that appears mid-grab.* The empty rail's window is mapped as the drag starts. Offscreen,
-  Qt gives a new window the focus and that ends the other window's grab, so the test windows ask for none,
-  as a layer-shell window with no keyboard focus does not; whether Hyprland leaves the grab alone is the
-  thing to watch.
-- *The echo.* A real agentd's `desk` message with `stripped` after a `move` or a `fold`, and the dimming
-  going away at it. The shell side is tested against a literal message of that shape.
+- *A rail window that appears or goes mid-grab.* The empty rail's window is mapped as the drag starts.
+  Offscreen, Qt gives a new window the focus and that ends the other window's grab, so the test windows ask
+  for none, as a layer-shell window with no keyboard focus does; whether Hyprland leaves the grab alone is
+  the thing to watch.
+- *The echo.* A real agentd's `desk` message after a `move` or a `fold` is read by the real shell in the
+  offscreen contract tests and in the sway run; what Hyprland adds is how the dimming looks as it goes
+  away.
 - *Touch.* Nothing here was tried with a finger.
 
 ## Adding a widget
@@ -289,9 +298,14 @@ position given in the coordinates of the window the press began in, the way a gr
 - `pytest tests/test_desk.py tests/test_desk_qml.py tests/test_desk_cards_qml.py`: the desk's state file
   and its words, and the whole desk drawn offscreen (set `BOMBADIL_SCREENS=<dir>` to save pictures).
   They need PySide6 and, in a bare container, the system libraries Qt loads (libEGL, libxkbcommon).
+- `pytest tests/test_desk_drag_qml.py`: dragging, in the three windows (the left rail, the right one and
+  the bar) at their real places, each driven by pointer events given in its own coordinates.
 - `tests/desktop/run.sh`: the real bar, agentd and the Claude CLI in a headless sway session. The
   desk's checks inject agentd's messages through `quickshell ipc call desk inject` and read what the desk
   shows back from `quickshell ipc call desk state` (the face, the slots, the rows, the stone's face).
-  Windows are stood in by `quickshell ipc call desk cover`.
+  Windows are stood in by `quickshell ipc call desk cover`. The session has no pointer of its own, so the
+  dragging section starts `tests/desktop/pointer.py`: a virtual pointer (wlroots' protocol, spoken by hand so
+  the image needs nothing more than Python) that takes `move X Y`, `press` and `release` on stdin and
+  answers `ok` once the compositor has them.
 - Not covered anywhere but a real Hyprland session: the rails drawing under floating and special-workspace
   windows, `dim_special` dimming them, and a window being dragged past a card.

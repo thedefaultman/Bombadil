@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 
 import pytest
-from test_desk_qml import FOUR, TWO, Desk, below, centre, desk_msg, plain, rank, rows, sent_ops
+from test_desk_qml import FOUR, SHELL, TWO, Desk, below, centre, desk_msg, plain, rank, rows, sent_ops
 from test_desk_qml import a_full_desk as full_desk
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -257,6 +257,29 @@ def screen(app, tmp_path):
     assert s.left.geometry().getRect() == (16, 40, 300, 976)
     assert s.right.geometry().getRect() == (1604, 40, 300, 976)
     assert s.bar.geometry().getRect() == (0, 1080 - BAR_HEIGHT, 1920, BAR_HEIGHT)
+    yield s
+    s.win.close()
+    s.engine.deleteLater()
+    s.pump()
+
+
+# A second bar, on a screen the desk does not live on: shell.qml says `active: win.onDesk` of its strips.
+ELSEWHERE = """    DeskStrips { objectName: "stripsElsewhere"; desk: deskState; side: "left"; active: false
+                 origin: Qt.point(0, deskState.screenHeight - bar.height)
+                 pillEdge: pillBox.x; pillCentreY: pillBox.y + pillBox.height / 2 }
+"""
+TWO_BARS = HARNESS.replace('    DeskStrips { objectName: "stripsRight"', ELSEWHERE + '    DeskStrips { objectName: "stripsRight"')
+assert TWO_BARS != HARNESS
+
+
+class Elsewhere(Screen):
+    harness = TWO_BARS
+
+
+@pytest.fixture
+def elsewhere(app, tmp_path):
+    s = Elsewhere(app, tmp_path)
+    s.send(type="status", busy=False, provider="claude", queue=[])
     yield s
     s.win.close()
     s.engine.deleteLater()
@@ -512,6 +535,41 @@ def test_the_strip_in_hand_is_dimmed_too(screen):
     assert not dim.isVisible()
 
 
+def test_a_strip_dropped_on_a_rail_stays_dimmed_until_agentd_answers_or_the_wait_is_over(screen):
+    a_full_desk(screen)
+    screen.send(**desk_msg(stripped=["watching"]))
+    screen.pump(0.3)
+    screen.set("settleMs", 600)
+    chip = screen.item("deskStrip-watching")
+    dim = screen.dim_of(chip)
+    x, y = screen.screen_at(chip)
+    screen.drag(screen.bar, (x, y), (x + 5, y - 30), (100, 600))
+    assert [op["op"] for op in sent_ops(screen)] == ["move"]
+    assert screen.prop("settling") == "watching" and screen.prop("dragging") is False
+    assert dim.isVisible()                                               # the drop is out and nothing has come back
+    screen.pump(0.8)
+    assert screen.prop("settling") == "" and not dim.isVisible()         # no answer came: it is a strip again
+
+
+def test_a_bar_the_desk_does_not_live_on_draws_no_ghost_of_the_card_in_hand(elsewhere):
+    a_full_desk(elsewhere)
+    elsewhere.press(elsewhere.left, *elsewhere.title("now"))
+    elsewhere.move(elsewhere.left, 600, 900)
+    elsewhere.move(elsewhere.left, 960, 1050)
+    ghosts = {g.parentItem().objectName(): g for g in elsewhere.items("deskStripGhost", visible_only=False)}
+    assert sorted(ghosts) == ["stripsElsewhere", "stripsLeft", "stripsRight"]
+    assert [name for name, g in ghosts.items() if g.isVisible()] == ["stripsLeft"]
+    elsewhere.release(elsewhere.left, 960, 500)
+
+
+def test_each_bars_strips_are_told_where_their_window_stands_and_whether_the_desk_is_there():
+    # shell.qml is not loaded here: its windows are layer-shell ones. These are the lines the drag depends on.
+    text = (SHELL / "shell.qml").read_text()
+    assert text.count("origin: Qt.point(0, deskState.screenHeight - win.height)") == 2
+    assert text.count('side: "left"; active: win.onDesk') == 1
+    assert text.count('side: "right"; active: win.onDesk') == 1
+
+
 def test_the_mark_is_drawn_in_the_rail_the_card_would_land_in_at_the_boundary_it_would_take(screen):
     s = a_full_desk(screen)
     screen.press(screen.left, *screen.title("watching"))
@@ -759,6 +817,24 @@ def test_a_second_button_pressed_mid_drag_changes_nothing(screen):
     assert sent_ops(screen) == [{"type": "desk", "op": "move", "widget": "watching", "rail": "right", "rank": 1}]
     screen.release(screen.left, *goal, button=QtCore.Qt.RightButton)
     assert len(sent_ops(screen)) == 1
+
+
+def test_a_handler_taken_up_again_with_its_card_in_hand_goes_on_with_the_same_drag(screen):
+    # A second button takes the handler out of its drag and, on some compositors, back in. Offscreen it
+    # only goes out, so this has the handler hear the change again with the card still in its hand.
+    s = a_full_desk(screen)
+    goal = (1700, centre(s["away"]) + 10)
+    screen.press(screen.left, *screen.title("watching"))
+    screen.move(screen.left, *goal)
+    grip = screen.item("deskGrip-watching")         # kept: its handler goes with its wrapper
+    (handler,) = [o for o in grip.findChildren(QtCore.QObject) if o.property("held") is not None]
+    assert handler.property("active") is True and handler.property("held") == "watching"
+    QtCore.QMetaObject.invokeMethod(handler, "activeChanged", QtCore.Qt.DirectConnection)
+    screen.pump()
+    assert handler.property("held") == "watching" and screen.prop("dragging") is True
+    screen.release(screen.left, *goal)
+    assert sent_ops(screen) == [{"type": "desk", "op": "move", "widget": "watching", "rail": "right", "rank": 1}]
+    assert screen.prop("dragging") is False
 
 
 # -- cost --

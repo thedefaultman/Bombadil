@@ -1083,11 +1083,20 @@ s = mid["state"]
 check("held over the right rail, the card in hand is Watching and the drop would put it first on the right",
       s.get("drag") and s["drag"]["id"] == "watching" and s["dropTarget"] and s["dropTarget"]["kind"] == "rank"
       and s["dropTarget"]["side"] == "right" and s["dropTarget"]["rank"] == 0, (s.get("drag"), s.get("dropTarget")))
+check("the shell puts the pointer where it is on the screen, from the left rail's window to the right's",
+      s.get("drag") and abs(s["drag"]["x"] - over[0]) <= 2 and abs(s["drag"]["y"] - over[1]) <= 2, (s.get("drag"), over))
 mark_y = (s.get("dropTarget") or {}).get("markY", 0)
+
+
+def ink(name):
+    """The card's text and meter, as pixels."""
+    return region_pixels(name, (w["x"], w["y"], 300, w["h"]), "#e6e8eb")
+
+
+marks = region_pixels("41-drag-over-right-rail", (nd["x"], round(mark_y) - 3, 300, 6), "#e6e8eb")
 check("the right rail's window draws the mark under the pointer and the card in hand is dimmed where it stood",
-      region_pixels("41-drag-over-right-rail", (nd["x"], round(mark_y) - 3, 300, 6), "#e6e8eb") > 600
-      and region_pixels("41-drag-over-right-rail", (w["x"], w["y"], 300, w["h"]), "#e6e8eb") < 4000,
-      (mark_y, region_pixels("41-drag-over-right-rail", (nd["x"], round(mark_y) - 3, 300, 6), "#e6e8eb")))
+      marks > 600 and ink("40-drag-ready") > 100 and ink("41-drag-over-right-rail") < ink("40-drag-ready") // 4,
+      (mark_y, marks, ink("40-drag-ready"), ink("41-drag-over-right-rail")))
 st = None
 for _ in range(40):
     st = desk_state()
@@ -1142,6 +1151,8 @@ drag(line(chip, (150, 500)), over_the_left_rail)
 s = mid["state"]
 check("a chip in hand shows where it would land", s.get("drag") and s["drag"]["from"] == "strip"
       and s["drag"]["id"] == "machine" and s["dropTarget"] and s["dropTarget"]["side"] == "left", (s.get("drag"), s.get("dropTarget")))
+check("and the shell puts the pointer where it is on the screen, from the bar's window",
+      s.get("drag") and abs(s["drag"]["x"] - 150) <= 2 and abs(s["drag"]["y"] - 500) <= 2, s.get("drag"))
 st = None
 for _ in range(40):
     st = desk_state()
@@ -1165,8 +1176,8 @@ check("a card let go in the middle of the screen stays where it was",
       and wait(lambda m: m.get("type") == "desk", 0.5, n) is None, (st["order"], st.get("drag")))
 
 # put the desk back as it was, for what follows
-send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
 send({"type": "desk", "op": "move", "widget": "machine", "rail": "right"})
+send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
 inject({"type": "jobs", "jobs": []})
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
 inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})

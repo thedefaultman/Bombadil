@@ -900,10 +900,14 @@ QtObject {
             rank = there.indexOf(last) + 1
             markY = slots[last].y - T.cardGap / 2
         }
-        // A card put back where it was has nothing to do. A strip is never in its place: it is a strip
-        // for the room, a window or the word "desk", and a drop gives it its slot.
-        const after = there.slice(0, rank).concat([d.id], there.slice(rank))
-        if (d.from === "rail" && JSON.stringify(after) === JSON.stringify(order[side])) return null
+        // A card put back among the cards on show, in the order they are in, has nothing to do: the ones
+        // that are away are places nobody can see. A strip is never in its place: it is a strip for the
+        // room, a window or the word "desk", and a drop gives it its slot.
+        if (d.from === "rail") {
+            const shown = ids => ids.filter(id => faces[id] === "full")
+            const after = there.slice(0, rank).concat([d.id], there.slice(rank))
+            if (JSON.stringify(shown(after)) === JSON.stringify(shown(order[side]))) return null
+        }
         return { kind: "rank", side: side, rank: rank, markY: markY }
     }
 
@@ -921,12 +925,18 @@ QtObject {
     }
 
     // The button went up at (x, y): what is in hand goes there, if there is a place for it. agentd
-    // answers with the new desk; the shell never changes its own state first.
+    // answers with the new desk; the shell never changes its own state first. What came in while it was
+    // held is applied first, so the place is counted in the order agentd keeps now, and a card that
+    // stopped being what it was taken as ends the drag there.
     function dragEnd(x, y) {
         if (!dragging) return
         dragMove(x, y)
+        const held = _held
+        _held = []
+        for (const ev of held) _applyDesk(ev)
+        if (!dragging) return
         const d = drag, target = dropTarget
-        _drop()
+        drag = null
         if (target === null) return
         if (target.kind === "fold") foldWidget(d.id)
         else move(d.id, target.side, target.rank)

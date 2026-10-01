@@ -2598,12 +2598,88 @@ def test_a_rank_counts_the_widgets_that_are_away_because_agentd_does(desk):
     assert target(desk) == rank("left", 2, below(s["alive"]))
     desk.call("dragMove", 100, centre(s["alive"]) - 5)
     assert target(desk) == rank("left", 3, s["alive"]["y"] - 6)
-    # alive itself: watching is no place to drop at, so the nearest it comes to staying is the place before it.
+    # alive itself: watching is a place nobody can see, so alive above now is where it is, and below it is a move.
     desk.call("dragCancel")
-    take(desk, "alive", 100, centre(s["now"]) - 5)
-    assert target(desk)["rank"] == 1
+    assert take(desk, "alive", 100, centre(s["now"]) - 5) is None
     desk.call("dragMove", 100, centre(s["now"]) + 5)
     assert target(desk)["rank"] == 0
+
+
+def test_a_card_put_back_among_the_cards_on_show_sends_nothing_whoever_is_not_there(desk):
+    """Widgets that are away are places nobody sees: a drop on the card's own place is no move."""
+    a_full_desk(desk)
+    # Only watching is there on its rail (now and alive have nothing to say): the whole column is its own place.
+    desk.set("aliveModel", rows(0))
+    desk.turn(1, steps=[])
+    desk.pump(0.3)
+    assert [w for w in ("now", "watching", "alive") if desk.faces[w] == "full"] == ["watching"]
+    for y in (100, centre(desk.slots["watching"]), 1000):
+        assert take(desk, "watching", 100, y) is None
+        desk.call("dragCancel")
+    desk.call("dragStart", "watching", "rail", 100, 700)
+    desk.call("dragEnd", 100, 700)
+    assert sent_ops(desk) == []
+    # And the same for a card alone on the other rail, with the widgets that are away in its order.
+    desk.set("needsModel", rows(0))
+    desk.set("awayModel", rows(0))
+    assert [w for w in ("needs", "away", "machine") if desk.faces[w] == "full"] == ["machine"]
+    for y in (100, centre(desk.slots["machine"]), 1000):
+        assert take(desk, "machine", 1700, y) is None
+        desk.call("dragCancel")
+
+
+def test_a_card_dropped_on_its_own_place_beside_a_hand_folded_or_covered_card_sends_nothing(desk):
+    s = a_full_desk(desk)
+    desk.send(**desk_msg(stripped=["watching"]))
+    s = desk.slots
+    assert take(desk, "alive", 100, centre(s["alive"])) is None          # watching, between, is a chip
+    desk.call("dragEnd", 100, centre(s["alive"]))
+    assert sent_ops(desk) == []
+    desk.send(**desk_msg(stripped=[]))
+    desk.cover((0, 0, 400, 1080))                                         # a window over the whole left rail
+    desk.pump(0.4)
+    assert desk.faces["alive"] == "strip"                                  # nothing to drag there at all
+    assert desk.call("dragStart", "alive", "rail", 100, 500) is False
+
+
+def test_the_place_is_counted_in_the_order_agentd_keeps_when_a_message_waited(desk):
+    s = a_full_desk(desk)
+    y = centre(s["watching"]) + 2                  # just under the middle of watching: the place in front of it
+    assert take(desk, "needs", 100, y) == rank("left", 1, below(s["watching"]))
+    # While it is in hand, agentd says the left rail is now alive, watching, now (the agent's tool, another bar).
+    desk.send(**desk_msg(order={"left": ["alive", "watching", "now"], "right": ["needs", "away", "machine"]}))
+    assert desk.prop("order")["left"] == ["now", "watching", "alive"]       # it waits for the drop
+    desk.call("dragEnd", 100, y)
+    assert desk.prop("order")["left"] == ["alive", "watching", "now"]
+    # The same pointer is over a different layout now: it is above the middle of what is the second card there,
+    # so the place is behind it, and that is the rank agentd is told (it was in front of it in the old order).
+    assert y < centre(desk.slots["watching"]) < centre(desk.slots["alive"])
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "needs", "rail": "left", "rank": 2}]
+
+
+def test_a_second_drag_does_not_replay_what_the_first_one_held(desk):
+    a_full_desk(desk)
+    take(desk, "needs", 100, 900)
+    desk.send(**desk_msg(stripped=["watching"]))                             # held
+    desk.call("dragCancel")
+    assert desk.prop("stripped") == ["watching"]                             # applied when the drag ended
+    desk.send(**desk_msg(stripped=["alive"]))                                # newer, applied at once
+    assert desk.prop("stripped") == ["alive"]
+    take(desk, "now", 100, 900)                                              # nothing held in this one
+    desk.call("dragCancel")
+    assert desk.prop("stripped") == ["alive"]
+
+
+def test_a_drop_does_not_replay_what_an_earlier_drop_held(desk):
+    s = a_full_desk(desk)
+    take(desk, "now", 100, centre(s["watching"]) - 1)
+    desk.send(**desk_msg(stripped=["alive"]))
+    desk.call("dragEnd", 100, centre(s["watching"]) - 1)
+    assert desk.prop("stripped") == ["alive"]
+    desk.send(**desk_msg(stripped=[]))
+    take(desk, "needs", 1700, 900)
+    desk.call("dragEnd", 1700, 900)
+    assert desk.prop("stripped") == []
 
 
 def test_a_widget_folded_by_hand_is_not_a_place_to_drop_between_either(desk):
