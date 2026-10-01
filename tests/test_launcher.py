@@ -447,13 +447,25 @@ def test_anything_longer_or_different_goes_to_the_agent(home, text):
 
 def test_what_does_a_service_need_asks_the_machine_whether_it_exists(home, monkeypatch):
     seen = []
-    monkeypatch.setattr(launcher.sysmap, "service_exists", lambda name: seen.append(name) or name == "bluetooth")
+    units = {"bluetooth": "bluetooth.service", "networkmanager": "NetworkManager.service"}
+    monkeypatch.setattr(launcher.sysmap, "find_unit", lambda name: seen.append(name) or units.get(name.lower()))
     a = launcher.match("What does bluetooth need?", [])
     assert (a.kind, a.target, a.title) == ("picture", "service:bluetooth", "what bluetooth needs")
     assert launcher.match("what does the bluetooth service depend on", [])
     assert launcher.match("what does the moon need", []) is None     # no such service: a question for the agent
     assert launcher.match("what does bluetooth; rm need", []) is None  # not even looked up
     assert seen == ["bluetooth", "bluetooth", "moon"]
+
+
+@pytest.mark.parametrize("text", ["what does networkmanager need", "What does NetworkManager need?",
+                                  "WHAT DOES NETWORKMANAGER NEED", "what does the NetworkManager service depend on"])
+def test_a_service_with_capitals_is_asked_about_as_typed_and_drawn_as_the_machine_spells_it(home, monkeypatch, text):
+    seen = []
+    monkeypatch.setattr(launcher.sysmap, "find_unit",
+                        lambda name: seen.append(name) or ("NetworkManager.service" if name.lower() == "networkmanager" else None))
+    a = launcher.match(text, [])
+    assert (a.kind, a.target, a.title) == ("picture", "service:NetworkManager", "what NetworkManager needs")
+    assert seen[0].lower() == "networkmanager" and seen[0] in text      # asked with the capitals it came with
 
 
 def test_a_picture_word_never_hides_an_app_you_made(home):

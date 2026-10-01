@@ -5,6 +5,8 @@ The project's documents, next to its code.
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
 - `INSTALLED-OS.md`: Bombadil as an installed system: the principles, the disk and how it is opened (with diagrams), fresh install, refresh and undo, the install plan, and how to test a change to it.
+- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
+- `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
@@ -16,6 +18,7 @@ The project's documents, next to its code.
   - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
   - `installed-os-brief.md`: Bombadil as an installed operating system: the disk layout, encryption, refresh, packages and updates. Piece 1 (the disk) is built; the rest are planned.
+  - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
   fonts without a connection. They are copies of what the pages showed on 2026-09-30.

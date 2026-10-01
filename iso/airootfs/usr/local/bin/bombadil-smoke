@@ -127,7 +127,9 @@ picture() {
     "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
     | as_user timeout 60 bombadil-os-mcp | tail -1) || return 1
   echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms: ${out:0:400}" >&2
-  grep -q 'shown above the bar' <<<"$out"
+  grep -q 'shown above the bar' <<<"$out" || return 1
+  # The boot is more than its last line (the C-locale tree once read as the root alone).
+  [[ "$1" != boot ]] || (( $(grep -oE '\\n[0-9.]+ (s|ms|min): ' <<<"$out" | wc -l) >= 3 ))
 }
 check os-mcp-lists-pictures bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q system_map'
 for kind in network boot disks sound screens; do check "picture-$kind" picture "$kind"; done
