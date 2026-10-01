@@ -243,10 +243,12 @@ signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=man
 slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
 browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
 page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
-# What the browser looked like when a check on its page failed: its processes, every target the
-# debugging port lists (with its type), the profile's singleton files and agentd's last words.
+# What the browser looked like when a check on its page failed: its main processes with their whole
+# command lines, the windows, every target the debugging port lists (with its type), the profile's
+# singleton files and agentd's last words.
 browser_diag() {
-  say "DIAG browser processes: $(pgrep -af -- '--class=bombadil-browser' | cut -c1-200 | tr '\n' '|')"
+  say "DIAG browser, whole command lines (pid ppid started args): $(ps -u user -o pid=,ppid=,lstart=,args= | grep -F -- '--class=bombadil-browser' | grep -v -e '--type=' -e grep | tr '\n' '|')"
+  say "DIAG windows: $(hypr_json clients | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["title"][:40]) for c in json.load(sys.stdin)])' 2>&1)"
   say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
 for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
     print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
