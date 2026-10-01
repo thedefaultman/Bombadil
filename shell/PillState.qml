@@ -115,10 +115,26 @@ QtObject {
     // Esc or the card's ×.
     function dismissCard() { card = null }
 
+    // A window opened on the stage, however: Super+Enter, an app, a panel, the Brain. A picture left
+    // over the middle of the screen would sit on top of it (and at the pill's width, which a window
+    // narrows to 360, it can no longer be read), so it goes. Not one only just drawn - the window is
+    // probably what the same ask opened - and not one you just clicked in, whose window is what the
+    // click opened. A picture still being drawn goes on.
+    property double clickedAt: 0     // when you last clicked a box in the picture
+    readonly property int windowGrace: 2500
+    readonly property int clickGrace: 5000
+    function windowOpened() {
+        if (!card || card.partial) return
+        const t = _now()
+        if (t - cardAt < windowGrace || t - clickedAt < clickGrace) return
+        card = null
+    }
+
     // A click on a box that names a thing: a file, a service, a package, a page or a turn.
     function openThing(target) {
         if (!target || typeof target !== "object" || !target.kind) return
         if (_offline()) return
+        clickedAt = _now()
         if (target.kind === "turn") {
             handOff()
             outgoing({ type: "details", turn: Number(target.value) })

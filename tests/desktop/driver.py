@@ -480,8 +480,6 @@ time.sleep(0.8)
 shot("23-picture-word")
 
 
-# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
-# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
     return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "desk", *args)
 
@@ -493,6 +491,45 @@ def desk_state():
         return {}
 
 
+# 22b. what a window does to a picture. The pill is 360 wide while a window shares the stage and a
+# 100 px capsule under a full-screen one; a picture over the middle of either cannot be read next to
+# the window. A window that opens puts it away; a window going full-screen hides it, and it returns.
+time.sleep(2.0)                 # a window right after a picture is the same ask's: it is let be
+middle = glass_pixels(500, 480, 200)
+check("the picture word's picture is up in the middle of the bar", middle > 40, middle)
+tiled = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600}]})
+full = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600, "fullscreen": True}]})
+desk_ipc("cover", tiled)
+time.sleep(1.0)
+shot("23-picture-window-opened")
+gone = glass_pixels(500, 480, 200)
+check("a window that opens puts the picture away", desk_state().get("mode") == "shared" and gone < middle // 3, f"{middle} -> {gone}")
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.2)
+shot("23-picture-beside-window")
+shared = glass_pixels(500, 480, 200)
+check("a picture asked for beside a window still shows", shared > 20, shared)
+desk_ipc("cover", full)
+time.sleep(1.0)
+st = desk_state()
+shot("23-picture-fullscreen")
+check("a window that goes full-screen makes the pill the capsule", st.get("mode") == "immersive" and st.get("pillWidth") == 100, (st.get("mode"), st.get("pillWidth")))
+hidden = glass_pixels(500, 480, 200)
+check("and hides the picture over it", hidden < shared // 3, f"{shared} -> {hidden}")
+desk_ipc("cover", tiled)
+time.sleep(1.2)
+back = glass_pixels(500, 480, 200)
+check("the picture comes back when the window leaves full screen", back > shared // 2, f"{hidden} -> {back}")
+desk_ipc("cover", '{"windows": []}')
+time.sleep(0.8)
+
+
+# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
+# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 summon()
 typ("show me the route")
 n = mark()
