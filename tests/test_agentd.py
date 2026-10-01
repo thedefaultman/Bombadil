@@ -2327,6 +2327,21 @@ async def test_the_brains_answers_are_not_passed_to_the_model_as_the_users_words
 
 
 @pytest.mark.asyncio
+async def test_a_launcher_event_says_whether_it_opened_or_put_away(home, monkeypatch):
+    """The pill puts a picture away when a window opens over it, not when one is hidden."""
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    monkeypatch.setattr(d.launcher, "run", lambda action: (True, "Done."))
+    server, r, w = await _start(d)
+    for typed, action, verb in (("brain", "brain", "open"), ("hide the browser", "panel", "hide")):
+        await _ask(w, typed)
+        msgs = await _events_until(r, lambda m: m.get("phase") == "done")
+        assert [(m["action"], m["verb"], m["phase"]) for m in msgs if m.get("kind") == "local"] == [
+            (action, verb, "start"), (action, verb, "done")]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_job_that_ends_while_nobody_is_connected_is_still_noted(home, monkeypatch):
     monkeypatch.setattr(agentd, "JOBS_POLL", 0.05)
     sd = Systemd()
