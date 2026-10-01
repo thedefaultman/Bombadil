@@ -69,6 +69,7 @@ ShellRoot {
         id: deskState
         pill: pillState
         onOutgoing: msg => root.write(msg)
+        onWindowOpened: pillState.windowOpened()
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
@@ -265,6 +266,7 @@ ShellRoot {
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: appChips }
+                Region { item: aiCard.visible ? aiCard : null }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
                 Region { item: stripsRight }
@@ -366,6 +368,8 @@ ShellRoot {
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
+                    // A full-screen window on this screen puts the picture away (it is still there after).
+                    Binding { target: cardHost.item; property: "suppressed"; value: win.capsule; when: cardHost.item !== null }
                 }
 
                 StatusLine {
@@ -473,6 +477,14 @@ ShellRoot {
                     }
                 }
 
+                // The AI card: one row per AI with a switch, opened by a click on the stone while no turn runs.
+                AiCard {
+                    id: aiCard
+                    pill: pillState
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
                 // Prompt bar
                 Rectangle {
                     id: pillBox
@@ -492,7 +504,8 @@ ShellRoot {
                         spacing: 8
 
                         // The stone: Bombadil's mark, in the dot's place. Its face says what the machine is
-                        // doing (Stone.qml); while a turn runs, hover turns it into Stop.
+                        // doing (Stone.qml); while a turn runs, hover turns it into Stop and a click stops
+                        // it; otherwise a click opens the AI card (and another closes it).
                         Rectangle {
                             id: dotBox
                             readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
@@ -518,8 +531,8 @@ ShellRoot {
                                 Rectangle { width: 9; height: 9; radius: 2; color: Kit.Theme.accent; anchors.verticalCenter: parent.verticalCenter }
                                 Text { font.family: Kit.Theme.fontFamily; text: "Stop"; color: Kit.Theme.accentInk; font.pixelSize: Kit.Theme.smallSize }
                             }
-                            HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                            TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
+                            HoverHandler { id: dotHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: pillState.stoppable ? pillState.stop() : pillState.toggleAi() }
                         }
 
                         Item {
@@ -532,7 +545,8 @@ ShellRoot {
                                 font.family: Kit.Theme.fontFamily
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
-                                placeholderText: pillState.face === "starting" ? "Starting" : (root.connected ? "Ask anything" : "Waiting for agentd…")
+                                // While the AI rests the empty field says so: what still works, and when asks run.
+                                placeholderText: pillState.face === "starting" ? "Starting" : (root.connected ? (pillState.restHint || "Ask anything") : "Waiting for agentd…")
                                 color: Kit.Theme.fg
                                 placeholderTextColor: Kit.Theme.muted
                                 font.pixelSize: Kit.Theme.promptSize
@@ -551,16 +565,19 @@ ShellRoot {
                                 onTextChanged: {
                                     if (win.summoned) idle.restart()
                                     if (text !== "") pillState.dismissWelcome()
+                                    if (text !== "") pillState.closeAi()
                                 }
                                 // Tab takes the suggested name: "pass" + Tab = "passwords".
                                 Keys.onTabPressed: {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then puts the line, the
-                                // picture and the drawer away and gives the keyboard back.
+                                // Esc stops a running turn; otherwise it puts the AI card away (and gives the
+                                // keyboard back), clears, then puts the line, the picture and the drawer away
+                                // and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
+                                    else if (pillState.aiOpen) { pillState.closeAi(); root.release() }
                                     else if (text !== "") text = ""
                                     else { pillState.dismiss(); pillState.dismissWelcome(); pillState.closeDetails(); root.release() }
                                 }

@@ -23,20 +23,27 @@ QtObject {
     property bool busy: false
     property string provider: ""
     property var entries: []         // launcher words: [{name, title, kind, words}]
-    property var queue: []           // prompts waiting their turn: [{turn, prompt}]
+    property var queue: []           // prompts waiting their turn: [{turn, prompt, wait}]; wait is when it runs, while the AI rests
 
     // Whether the machine can talk to its AI yet (agentd's "setup"): which AI (first boot),
-    // signed in, the sign-in under way in the browser. Its line shows when no turn runs, with
-    // chips under it; prompts typed meanwhile wait in the queue.
-    property string setupState: ""   // choose, checking, signed_out, offline, signing_in, ready
+    // signed in, the sign-in under way in the browser, out of plan or paused by hand ("resting").
+    // Its line shows when no turn runs, with chips under it; prompts typed meanwhile wait in the queue.
+    property string setupState: ""   // choose, checking, signed_out, offline, signing_in, resting, ready
     property string setupLine: ""
     property string setupTone: "step" // step, ask, error, done
     property var setupActions: []    // chips: [{id, label, style: big | primary | quiet}]
     readonly property bool ready: setupState === "" || setupState === "ready" || setupState === "checking"
+    // The AI is out of plan or spending, or paused by hand: asks wait, everything else works.
+    readonly property bool resting: setupState === "resting"
+    // While resting: agentd's {provider, why, kind, until, when, hint, note, wait}, else null.
+    property var rest: null
+    // What the empty field says while resting ("Open or find anything. Asks wait for 15:00."), else "".
+    readonly property string restHint: resting && rest && rest.hint ? String(rest.hint) : ""
 
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
     // open/undo/stop answered without the model, "welcome" for agentd's greeting, "setup" for choosing
-    // the AI and signing in, "idle" when there is nothing to say.
+    // the AI and signing in, "resting" for the AI out of plan or paused (it fades like a closing line),
+    // "idle" when there is nothing to say.
     property string mode: "idle"
     property string line: ""
     property string source: "step"   // step (plain words), agent (its own words), error
@@ -60,10 +67,19 @@ QtObject {
     // The picture above the line (a diagram card from show_card, system_map or a receipt), or null.
     // One at a time: a newer one replaces it; Esc and its × put it away; the next turn clears it.
     property var card: null
+    // A picture you asked for keeps the line that came with it. The picture sits above the line, so
+    // when the line faded the picture dropped by the line's height, and a click aimed at its × (or at
+    // a box) missed. A receipt is not asked for: it fades with its line. Esc or × puts both away.
+    readonly property bool pictureStays: !!card && !card.receipt && !card.partial
     property double cardAt: 0
+    // The AI card, which a click on the stone opens when no turn runs: one row per AI with its
+    // switch. aiRows is agentd's "ai" message: [{name, title, state, text, on, enabled, current}].
+    property var aiRows: []
+    property bool aiOpen: false
     // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
     // while a sign-in is under way (they call it off).
     readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
+    onStoppableChanged: if (stoppable) aiOpen = false   // the stone is Stop now
 
     // The welcome line (mode "welcome"): a greeting from agentd. It waits for the first key or
     // pointer movement, fades fadeAfter ms later, and is never on screen longer than welcomeMax.
@@ -83,6 +99,7 @@ QtObject {
     //   offline   agentd was there and is gone, or never came
     //   needs     the machine waits on you: a session asks (needsYou, the desk sets it), or setup does
     //   working   a turn runs, "On it" is showing, or a sign-in is under way
+    //   resting   the AI is out of plan or paused by hand: nothing for you to do, so never needs
     //   stopped   the closing line says it was stopped
     //   done      a turn just finished (the stone hops once, then sits as at rest)
     //   rest      otherwise
@@ -94,6 +111,8 @@ QtObject {
         if (needsYou || (mode === "setup" && (setupState === "choose" || setupState === "signed_out" || setupState === "offline")))
             return "needs"
         if (busy || optimistic || mode === "working" || setupState === "signing_in") return "working"
+        // A turn the limit stopped is resting already, before agentd's setup says so.
+        if (resting || (mode === "closing" && _cutOff)) return "resting"
         if (mode === "closing") return stopped ? "stopped" : (source === "error" ? "rest" : "done")
         return "rest"
     }
@@ -103,6 +122,9 @@ QtObject {
     property bool _resultOk: true
     property string _error: ""
     property bool _helloSent: false
+    property bool _cutOff: false     // the closing line is of a turn the limit stopped halfway
+    property bool _restOwed: false   // the resting line is due as soon as the line is free (a turn, or a line with Undo, holds it)
+    property string _backLine: ""    // "Claude is back. Running your 3 waiting asks.", while it is on screen
 
     function _now() { return Date.now() }
 
@@ -130,10 +152,26 @@ QtObject {
     // Esc or the card's ×.
     function dismissCard() { card = null }
 
+    // A window opened on the stage, however: Super+Enter, an app, a panel, the Brain. A picture left
+    // over the middle of the screen would sit on top of it (and at the pill's width, which a window
+    // narrows to 360, it can no longer be read), so it goes. Not one only just drawn - the window is
+    // probably what the same ask opened - and not one you just clicked in, whose window is what the
+    // click opened. A picture still being drawn goes on.
+    property double clickedAt: 0     // when you last clicked a box in the picture
+    readonly property int windowGrace: 2500
+    readonly property int clickGrace: 5000
+    function windowOpened() {
+        if (!card || card.partial) return
+        const t = _now()
+        if (t - cardAt < windowGrace || t - clickedAt < clickGrace) return
+        card = null
+    }
+
     // A click on a box that names a thing: a file, a service, a package, a page or a turn.
     function openThing(target) {
         if (!target || typeof target !== "object" || !target.kind) return
         if (_offline()) return
+        clickedAt = _now()
         if (target.kind === "turn") {
             handOff()
             outgoing({ type: "details", turn: Number(target.value) })
@@ -161,7 +199,13 @@ QtObject {
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
-        if (ev.type === "summon") { summoned(typeof ev.text === "string" ? ev.text : ""); return }
+        if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
+        if (ev.type === "summon") {
+            summoned(typeof ev.text === "string" ? ev.text : "")
+            // The pill comes up: say why the AI does not answer, unless a line is being read.
+            if (resting && setupLine) { if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true }
+            return
+        }
         if (ev.type === "welcome") { _welcome(ev); return }
         if (ev.type === "persona_ask") { _ask(ev); return }
         if (ev.type === "persona") { personaAsk = null; return }
@@ -179,9 +223,10 @@ QtObject {
         switch (ev.kind) {
         case "queued":
             if (!queue.some(q => q.turn === ev.turn))
-                _setQueue(queue.concat([{ turn: ev.turn, prompt: ev.prompt || "" }]))
+                _setQueue(queue.concat([{ turn: ev.turn, prompt: ev.prompt || "", wait: _waitFor(ev.prompt) }]))
             break
         case "unqueued":
+            // Also an app's newer ask taking its older one's place ("replaced"): the chip goes, with no line.
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             break
         case "card":
@@ -189,6 +234,8 @@ QtObject {
             break
         case "turn_start":
             card = null
+            // "Claude is back. Running your 3 waiting asks." goes on being said over the turn it starts.
+            if (_backLine !== "" && mode === "local" && line === _backLine) { flash = line; flashAt = lineAt; flashFor = fadeAfter }
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             if (!optimistic || mode !== "working") startedAt = _now()
             optimistic = false
@@ -227,10 +274,16 @@ QtObject {
             changed = !!ev.changed
             irreversible = !!ev.irreversible
             risk = ""; command = ""; because = ""; after = ""
+            _cutOff = !stopped && !!ev.requeued
+            if (_backLine !== "" && flash === _backLine) flash = ""   // the turn's own line is next
             if (stopped) {
                 line = ev.line || "Stopped."; source = "step"
                 // A queued prompt starts at once; still say what was stopped for a moment.
                 flash = line; flashAt = _now(); flashFor = 3500
+            }
+            else if (_cutOff) {
+                // The limit stopped it halfway: no error, no "Done." It waits as a chip and carries on at the reset.
+                line = ev.line || setupLine; source = "step"
             }
             else if (_error && !_resultOk || (_error && !_result)) { line = _firstLines(_error, 2); source = "error" }
             else if (_result) { line = _result.trim(); source = "agent" }
@@ -244,6 +297,10 @@ QtObject {
             // A picture that could not be drawn puts the last one away: the error under a picture of
             // something else reads as if it were about that picture.
             if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
+            // A window the launcher just opened (the Brain, an app, a panel) takes the stage: a picture
+            // left over the middle of the screen would sit on top of it.
+            if (ev.phase === "done" && ev.ok === true && ev.verb === "open"
+                    && (ev.action === "brain" || ev.action === "app" || ev.action === "panel")) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
                 flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
@@ -325,13 +382,33 @@ QtObject {
         risk = ""; command = ""; sticky = false; flash = ""
     }
 
+    // The AI rests: its line, for 12 s. The empty field says it after that.
+    function _showRest() {
+        mode = "resting"; line = setupLine; source = "step"
+        risk = ""; command = ""; sticky = false; flash = ""
+        lineAt = _now(); fadeAfter = 12000
+        _restOwed = false
+    }
+
     function _setup(ev) {
         const was = setupState, wasLine = setupLine
         setupState = ev.state || ""
         setupLine = ev.line || ""
         setupTone = ev.tone || "step"
         setupActions = ev.actions || []
+        rest = resting && ev.rest && typeof ev.rest === "object" ? ev.rest : null
+        // The line is due the moment the state flips (or says something new), however busy the line is.
+        const flipped = resting && setupLine !== "" && (was !== "resting" || setupLine !== wasLine)
+        if (flipped) _restOwed = true
         if (mode === "working" && !optimistic) return   // a turn has the line; the setup waits for it
+        if (resting) {
+            if (mode === "working") optimistic = false   // the ask "On it" was for waits instead
+            if (!setupLine) return
+            // A turn the limit stopped keeps its closing line (with Undo); so does one that changed something.
+            if (mode === "working" || mode === "resting" || (flipped && !(mode === "closing" && (_cutOff || sticky)))) _showRest()
+            return
+        }
+        _restOwed = false
         if (!ready && setupLine) {
             optimistic = false
             _showSetup()
@@ -341,7 +418,8 @@ QtObject {
             optimistic = false
             mode = "local"; line = setupLine; source = "step"; risk = ""; command = ""
             sticky = false; lineAt = _now(); fadeAfter = 8000
-        } else if (mode === "setup") {
+            if (was === "resting") _backLine = line
+        } else if (mode === "setup" || mode === "resting") {
             mode = "idle"; line = ""
         }
     }
@@ -349,8 +427,9 @@ QtObject {
     function setupAction(id) {
         if (_offline()) return
         // The sign-in page and the Wi-Fi list open a window that must take the keyboard (a summoned
-        // pill holds it, and the password would go into the pill); Cancel opens nothing.
-        if (id !== "cancel") handOff()
+        // pill holds it, and the password would go into the pill); Cancel opens nothing, nor do
+        // Resume and Try again.
+        if (id !== "cancel" && id !== "resume" && id !== "retry") handOff()
         outgoing({ type: "setup_action", id: id })
     }
 
@@ -365,6 +444,12 @@ QtObject {
         // A prompt while the card is up simply runs; the card folds with the defaults agentd saved.
         if (personaAsk !== null) personaSkip()
         outgoing({ type: "prompt", text: t })
+        if (resting && !t.startsWith("!")) {
+            // The AI rests: the ask waits as a chip and the line says so (a launcher word does not wait:
+            // its own answer is the line). Never "On it".
+            if (exact(t) === "" && setupLine) { if (mode === "working") _restOwed = true; else _showRest() }
+            return true
+        }
         if (!ready && !t.startsWith("!")) {
             // No AI to answer yet: the prompt waits in the queue, the setup line stays (or
             // comes back over a finished line that would hide it).
@@ -396,6 +481,7 @@ QtObject {
         // asks again when we are back, if the question is still open.
         dismissWelcome()
         personaAsk = null
+        aiOpen = false   // its switches reach nobody now
         if (card && card.partial) card = null   // a half-drawn picture will not be finished
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
@@ -422,6 +508,37 @@ QtObject {
         _setQueue(queue.filter(q => q.turn !== t))
     }
 
+    // When a prompt that has to wait will run ("15:00", "paused"), the label of its chip; "" when it does not wait.
+    function _waitFor(prompt) {
+        return resting && rest && rest.wait && !String(prompt || "").startsWith("!") ? String(rest.wait) : ""
+    }
+
+    // What a waiting chip says of its prompt. An app's ask carries its name ("[from app notes] summarise
+    // this"): "Notes: summarise this".
+    function queueText(prompt) {
+        const m = /^\[from app ([^\]\s]+)\]\s*/.exec(String(prompt || ""))
+        if (!m) return String(prompt || "")
+        const name = m[1].replace(/[-_]+/g, " ")
+        return name.charAt(0).toUpperCase() + name.slice(1) + ": " + String(prompt).slice(m[0].length)
+    }
+
+    // A click on the stone when no turn runs: the AI card, with fresh rows. Again, it goes.
+    function toggleAi() {
+        if (aiOpen) { aiOpen = false; return }
+        if (stoppable || _offline()) return   // (while a turn runs the stone is Stop)
+        aiOpen = true
+        outgoing({ type: "ai", op: "get" })
+    }
+
+    function closeAi() { aiOpen = false }
+
+    // A switch on the card: on lets the AI answer (resume), off rests it by hand (pause). The row follows
+    // when agentd sends the rows again.
+    function setAi(name, on) {
+        if (_offline()) return
+        outgoing({ type: "ai", op: on ? "resume" : "pause", provider: name })
+    }
+
     function undo() {
         if (_offline()) return
         outgoing({ type: "local", action: "undo" }); sticky = false
@@ -437,11 +554,15 @@ QtObject {
     // Esc in the pill with nothing to stop or clear: put the drawer away too.
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
-    // The finished line goes; before sign-in the setup line comes back rather than an empty pill.
+    // The finished line goes; before sign-in the setup line comes back rather than an empty pill. A
+    // resting line that is due (a turn the limit stopped had the line) comes now, once.
     function _putLineAway() {
-        if (mode === "closing" || mode === "local") {
+        if (mode === "closing" || mode === "local" || mode === "resting") {
             sticky = false
-            if (!ready && setupLine) _showSetup()
+            const owed = _restOwed && resting && setupLine !== "" && line !== setupLine
+            _restOwed = false
+            if (!ready && !resting && setupLine) _showSetup()
+            else if (owed) _showRest()
             else { mode = "idle"; line = "" }
         }
         flash = ""

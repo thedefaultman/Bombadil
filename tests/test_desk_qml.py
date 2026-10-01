@@ -40,9 +40,18 @@ Window {
     property var sent: []          // what the desk sends agentd
     property var pillSent: []
     property var actions: []
+    property var opened: []
+    property int machineChanges: 0
     // What shell.qml does with a line from agentd: parse it, and hand it to the pill and the desk.
     function feed(line) {
         const ev = JSON.parse(line)
+        pillState.handle(ev)
+        deskState.handle(ev)
+    }
+    // JSON has no NaN or infinity, and a message that reached the shell cannot have them. A test that
+    // wants one (a number a handler built, not one that was parsed) spells it "NaN!" or "Infinity!".
+    function feedNumbers(line) {
+        const ev = JSON.parse(line, (k, v) => v === "NaN!" ? NaN : v === "Infinity!" ? Infinity : v)
         pillState.handle(ev)
         deskState.handle(ev)
     }
@@ -63,7 +72,10 @@ Window {
         tickMs: %(tick)d
         screenWidth: w.width; screenHeight: w.height
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onWindowOpened: pillState.windowOpened()      // as shell.qml wires it
         onRowAction: (widget, key, action) => w.actions = w.actions.concat([[widget, key, action]])
+        onRowOpen: (widget, key, opens) => w.opened = w.opened.concat([[widget, key, opens]])
+        onMachineModelChanged: w.machineChanges += 1
     }
     // What shell.qml puts in its windows: a rail each side, the pill, and the strips beside it.
     DeskRail { objectName: "railLeft"; parent: w.contentItem; desk: deskState; side: "left"
@@ -139,6 +151,11 @@ class Desk:
         QtCore.QMetaObject.invokeMethod(self.win, "feed", QtCore.Q_ARG("QVariant", json.dumps(ev)))
         self.pump()
 
+    def send_numbers(self, **ev):
+        """A message that carries numbers JSON cannot (see feedNumbers in the harness)."""
+        QtCore.QMetaObject.invokeMethod(self.win, "feedNumbers", QtCore.Q_ARG("QVariant", json.dumps(ev)))
+        self.pump()
+
     def call(self, name, *args, target=None):
         ret = QtCore.QMetaObject.invokeMethod(
             target or self.desk, name, QtCore.Qt.DirectConnection, QtCore.Q_RETURN_ARG("QVariant"),
@@ -174,6 +191,10 @@ class Desk:
     def clock(self, seconds):
         """The desk's clock at `seconds` after T0. Set after the table that starts it, which reads the real one."""
         self.set("now", (T0 + seconds) * 1000)
+
+    def vitals(self, *table, **kw):
+        """agentd's machine message, as the shell receives it: the memory line crossed, unless told otherwise."""
+        self.send(**machine_msg(*table, **kw))
 
     def dev(self, sessions, attention, **kw):
         """The dev message PR #4 defines: the sessions and the keys that want you, in Tab's order."""
@@ -225,6 +246,16 @@ class Desk:
     @property
     def needs(self):
         return self.prop("needsModel")
+
+    @property
+    def machine(self):
+        return self.prop("machineModel")
+
+    def parts(self, row):
+        """The pieces of a stack row as drawn, left to right, as (x, width, colour) on its track."""
+        track = self.inside(row, "rowsMeter")
+        found = [c for c in track.childItems() if c.objectName() == "rowsPart"]
+        return [(p.x(), p.width(), p.property("color").name()) for p in sorted(found, key=lambda p: p.x())]
 
     def card_row(self, key):
         """The rows card's row for a key, wherever the desk drew it."""
@@ -348,7 +379,38 @@ def session(key, role="reviewer", project="bombadil", title="Bombadil", state="a
     return s
 
 
-TWO = [("Install ffmpeg", "Installing ffmpeg", "in_progress"), ("Open the browser", None, "pending")]
+def part(tone, fraction):
+    return {"tone": tone, "fraction": fraction}
+
+
+# The rows of agentd's machine message when memory has crossed its line (the contract in the Machine
+# widget's design): who uses the memory, the disk, the processor, the network.
+MEMORY = {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
+          "tone": "amber", "parts": [part("machine", 0.12), part("sessions", 0.40), part("you", 0.39)], "opens": ""}
+DISK = {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "214 of 230 GB", "meter": 0.93,
+        "tone": "amber", "opens": "disk"}
+CPU = {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "37% busy · 62°", "meter": 0.37,
+       "tone": "you", "opens": ""}
+NET = {"key": "net", "kind": "plain", "title": "Network", "sub": "↓ 1.2 MB/s   ↑ 40 kB/s", "tone": "you", "opens": ""}
+WHY = "Memory is nearly full · coding sessions use most of it"
+
+
+def machine_msg(*table, **kw):
+    msg = {"type": "machine", "present": True, "asked": False, "why": WHY,
+           "strip": {"text": "memory 91%", "dot": "amber"}, "rows": list(table) or [MEMORY, DISK, CPU, NET]}
+    msg.update(kw)
+    return msg
+
+
+def shown(row):
+    """A machine row as the desk keeps it: every field the rows card reads, the ones it was not sent as nothing."""
+    out = {"key": "", "kind": "plain", "title": "", "sub": "", "meter": None, "meterText": "", "tone": "you",
+           "pulse": False, "button": "", "remove": False, "opens": ""}
+    out.update(row)
+    return out
+
+
+TWO =[("Install ffmpeg", "Installing ffmpeg", "in_progress"), ("Open the browser", None, "pending")]
 FOUR = [("Save a restore point", None, "completed"), ("Install docker", "Installing docker", "in_progress"),
         ("Add you to the docker group", None, "pending"), ("Start the service", None, "pending")]
 
@@ -598,11 +660,11 @@ def test_a_laptop_folds_what_does_not_fit_by_the_height_rule(laptop):
 def test_the_right_rail_holds_what_its_height_allows(laptop):
     laptop.set("needsModel", rows(3))                                      # 200
     laptop.set("awayModel", rows(3))                                       # 200
-    laptop.set("machineModel", rows(1))                                    # 210
+    laptop.vitals()                                                        # 214: a stack, two meters and a plain row
     f = laptop.faces
-    assert (f["needs"], f["away"], f["machine"]) == ("full", "full", "strip")   # 200 + 12 + 200 + 12 + 210 = 634 > 600
+    assert (f["needs"], f["away"], f["machine"]) == ("full", "full", "strip")   # 200 + 12 + 200 + 12 + 214 = 638 > 600
     laptop.set("needsModel", rows(2))                                      # 156
-    assert laptop.faces["machine"] == "full"                               # 156 + 12 + 200 + 12 + 210 = 590
+    assert laptop.faces["machine"] == "full"                               # 156 + 12 + 200 + 12 + 214 = 594
 
 
 def test_slots_are_the_size_of_the_cards_the_rail_draws(desk):
@@ -792,6 +854,29 @@ def test_a_window_on_the_stage_shares_the_desk_and_a_fullscreen_one_takes_it(des
     desk.pump(0.6)                                          # the card comes back 400 ms after the window went
     assert desk.faces["now"] == "full"
     assert desk.shown("deskCard-now")
+
+
+PICTURE = {"type": "diagram", "shape": "chain", "id": "card-1", "title": "What starts when you boot",
+           "nodes": [{"id": "a", "label": "Firmware"}, {"id": "b", "label": "Kernel"}],
+           "links": [{"from": "a", "to": "b"}]}
+
+
+def test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not(desk):
+    desk.send(kind="card", turn=None, card=PICTURE)
+    assert desk.pill.property("card") is not None
+    desk.cover((700, 200, 500, 400))                       # the window the same ask opened: the picture stays
+    assert desk.pill.property("card") is not None
+    desk.pill.setProperty("cardAt", 0)                     # it has been up a while
+    desk.cover((710, 210, 500, 400))                       # dragged: the same one window
+    assert desk.pill.property("card") is not None
+    desk.cover((710, 210, 500, 400), (0, 0, 300, 300))     # a second window comes: Super+Enter
+    assert desk.pill.property("card") is None
+    desk.send(kind="card", turn=None, card={**PICTURE, "id": "card-2"})
+    desk.pill.setProperty("cardAt", 0)
+    desk.cover((710, 210, 500, 400))                       # one goes: nothing new on the stage
+    assert desk.pill.property("card") is not None
+    desk.cover()
+    assert desk.pill.property("card") is not None and desk.warnings == []
 
 
 def test_the_pill_takes_the_stage_less_the_strips(laptop):
@@ -1702,6 +1787,454 @@ def test_a_laptop_folds_the_jobs_card_by_the_height_rule_and_its_strip_reads_the
     assert laptop.faces["now"] == "full" and laptop.faces["watching"] == "strip"     # 172 + 12 + 454 > 600
     assert laptop.prop("leftStrips")[0]["text"] == "Ubuntu 43%"
     laptop.snap("laptop-watching")
+
+
+# -- Machine: agentd's vitals --
+
+def test_a_machine_message_puts_the_card_on_the_right_rail_with_its_rows(desk):
+    assert desk.machine is None and not desk.prop("present")["machine"] and desk.faces["machine"] == "hidden"
+    desk.vitals()
+    assert desk.machine == {
+        "title": "Machine", "why": WHY, "rows": [shown(r) for r in (MEMORY, DISK, CPU, NET)],
+        "strip": {"text": "memory 91%", "dot": THEME["warn"], "ring": False, "outlined": False}}
+    assert desk.prop("present")["machine"] and desk.faces["machine"] == "full"
+    # The right rail's, the passenger's: bottom up it is the first, nearest the pill.
+    assert desk.slots["machine"] == {"side": "right", "x": 1920 - 316, "y": 1000 - 214, "w": 300, "h": 214}
+    desk.pump(0.4)
+    card = desk.item("deskCard-machine")
+    assert desk.at(card) == (1920 - 316, 1000 - 214) and desk.shown("deskCard-machine")
+    assert desk.inside(card, "rowsTitle").property("text") == "Machine"
+    assert desk.inside(card, "rowsWhy").property("text") == WHY
+    by_place = sorted(desk.items("rowsRow"), key=lambda r: desk.at(r)[1])
+    assert [r.property("key") for r in by_place] == ["memory", "disk", "cpu", "net"]
+    assert [r.property("kind") for r in by_place] == ["stack", "meter", "meter", "plain"]
+    assert [desk.inside(r, "rowsRowTitle").property("text") for r in by_place] == ["Memory", "Disk", "Processor", "Network"]
+    assert [desk.inside(r, "rowsMeta").property("text") for r in by_place[:3]] == [
+        "14.5 of 16 GB", "214 of 230 GB", "37% busy · 62°"]
+    assert [desk.inside(r, "rowsPercent").property("text") for r in by_place[:3]] == ["91%", "93%", "37%"]
+    assert desk.inside(by_place[3], "rowsRowSub").property("text") == "↓ 1.2 MB/s   ↑ 40 kB/s"
+    assert desk.inside(by_place[3], "rowsMeter") is None and desk.inside(by_place[3], "rowsDot") is None
+    # Nothing here ticks: the card draws what agentd last said until it says something else.
+    assert not desk.prop("ticking") and not desk.prop("clockRunning")
+    desk.snap("machine")
+
+
+def test_a_calm_message_takes_the_card_away_and_the_next_crossing_brings_it_back(desk):
+    desk.vitals()
+    desk.pump(0.4)
+    assert desk.shown("deskCard-machine")
+    desk.send(type="machine", present=False, asked=False, why="", strip={"text": "", "dot": ""}, rows=[])
+    assert desk.machine is None and not desk.prop("present")["machine"]
+    assert desk.faces["machine"] == "hidden" and "machine" not in desk.slots
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-machine") and desk.prop("rightStrips") == []
+    assert plain(desk.item("railRight").property("hitRects")) == []
+    desk.vitals()
+    assert desk.prop("present")["machine"] and desk.faces["machine"] == "full"
+    # Not present wins over the rows it still lists, and present with nothing to draw is no card.
+    desk.vitals(present=False)
+    assert desk.machine is None
+    desk.vitals()
+    desk.vitals(rows=[])
+    assert desk.machine is None and not desk.prop("present")["machine"]
+    desk.vitals()
+    desk.send(type="machine")                                  # a message that says nothing says no card
+    assert desk.machine is None
+
+
+def test_the_card_folds_away_with_what_it_last_said_and_comes_back_with_what_it_says_then(desk):
+    desk.vitals()
+    desk.pump(0.4)
+    desk.set("foldMs", 400)
+    desk.send(type="machine", present=False, rows=[])
+    desk.pump(0.1)
+    card = desk.item("deskCard-machine")
+    assert 0 < card.property("opacity") < 1 and card.isVisible()          # on its way out
+    assert desk.inside(card, "rowsTitle").property("text") == "Machine"
+    assert sorted(r.property("key") for r in desk.items("rowsRow")) == ["cpu", "disk", "memory", "net"]
+    desk.pump(0.6)
+    assert not card.isVisible()
+    desk.vitals(MEMORY, DISK)
+    desk.pump(0.6)
+    assert card.isVisible() and sorted(r.property("key") for r in desk.items("rowsRow")) == ["disk", "memory"]
+
+
+def test_asked_for_is_drawn_the_same_as_crossed(desk):
+    desk.vitals(asked=True)
+    asked = desk.machine
+    desk.vitals(asked=False)
+    assert desk.machine == asked and desk.prop("present")["machine"]
+
+
+def test_the_memory_stack_is_cut_by_who_and_a_line_crossed_says_so_in_amber(desk):
+    desk.vitals()
+    desk.pump(0.4)
+    memory, disk, cpu = (desk.card_row(k) for k in ("memory", "disk", "cpu"))
+    track = desk.inside(memory, "rowsMeter")
+    cut = desk.parts(memory)
+    # Orange the machine's turn, blue the coding sessions, white you, from the track's left edge.
+    assert [c for _, _, c in cut] == [THEME["accent"], THEME["info"], THEME["fg"]]
+    assert [w for _, w, _ in cut] == pytest.approx([0.12 * 272, 0.40 * 272, 0.39 * 272], abs=0.01)
+    assert [x for x, _, _ in cut] == pytest.approx([0, 0.12 * 272, 0.52 * 272], abs=0.01)
+    assert all(x + w <= track.width() for x, w, _ in cut) and track.width() == 272
+    assert desk.inside(memory, "rowsMeter").property("fillWidth") == 0
+    # The disk is a plain meter in the tone it says; the processor is white, as it said.
+    assert desk.inside(disk, "rowsMeter").property("fillColor").name() == THEME["warn"]
+    assert desk.inside(disk, "rowsMeter").property("fillWidth") == pytest.approx(0.93 * 272, abs=0.01)
+    assert desk.inside(cpu, "rowsMeter").property("fillColor").name() == THEME["fg"]
+    # Amber is a line crossed: its percent says so; the one under its line is quiet.
+    assert [desk.inside(r, "rowsPercent").property("color").name() for r in (memory, disk, cpu)] == [
+        THEME["warn"], THEME["warn"], THEME["muted"]]
+    desk.vitals(dict(DISK, meter=0.98, tone="red"), CPU)
+    assert desk.inside(desk.card_row("disk"), "rowsMeter").property("fillColor").name() == THEME["bad"]
+    assert desk.inside(desk.card_row("disk"), "rowsPercent").property("color").name() == THEME["bad"]
+    desk.snap("machine-stack")
+
+
+def test_parts_that_add_up_to_more_than_the_track_never_overflow_it(desk):
+    over = dict(MEMORY, parts=[part("machine", 0.7), part("sessions", 0.6), part("you", 0.5)])
+    desk.vitals(over, DISK)
+    cleaned = desk.machine["rows"][0]["parts"]
+    assert [p["tone"] for p in cleaned] == ["machine", "sessions"]       # the third has no room at all
+    assert [p["fraction"] for p in cleaned] == pytest.approx([0.7, 0.3], abs=1e-9)
+    assert sum(p["fraction"] for p in cleaned) <= 1 + 1e-9
+    desk.pump(0.4)
+    cut = desk.parts(desk.card_row("memory"))
+    assert [c for _, _, c in cut] == [THEME["accent"], THEME["info"]]
+    assert cut[-1][0] + cut[-1][1] == pytest.approx(272, abs=0.01)
+    # A piece under a pixel is not drawn; the next starts where it would have.
+    desk.vitals(dict(MEMORY, parts=[part("machine", 0.5), part("sessions", 0.003), part("you", 0.2)]), DISK)
+    cut = desk.parts(desk.card_row("memory"))
+    assert [c for _, _, c in cut] == [THEME["accent"], THEME["fg"]]
+    assert cut[1][0] == pytest.approx(0.503 * 272, abs=0.01)
+
+
+def test_a_tap_on_the_disk_row_asks_agentd_to_open_it_and_nothing_else(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    assert hello == [{"type": "desk", "op": "get"}]
+    desk.vitals()
+    desk.pump(0.4)
+    desk.click(desk.card_row("disk"))
+    assert desk.sent == hello + [{"type": "vitals", "op": "open", "row": "disk"}]
+    assert plain(desk.win.property("opened")) == [["machine", "disk", "disk"]]
+    # A row that opens nothing is just a row: memory, the processor and the network send nothing.
+    for key in ("memory", "cpu", "net"):
+        desk.click(desk.card_row(key))
+        desk.click(desk.inside(desk.card_row(key), "rowsRowTitle"))
+    assert desk.sent == hello + [{"type": "vitals", "op": "open", "row": "disk"}]
+    assert plain(desk.win.property("opened")) == [["machine", "disk", "disk"]]
+    # It never reaches the model: the pill heard nothing, and no turn began.
+    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    desk.click(desk.inside(desk.card_row("disk"), "rowsMeta"))
+    desk.click(desk.inside(desk.card_row("disk"), "rowsMeter"))
+    assert [m for m in desk.sent[1:]] == [{"type": "vitals", "op": "open", "row": "disk"}] * 3
+    assert plain(desk.win.property("pillSent")) == []
+
+
+def test_only_machines_opens_are_a_message(desk):
+    def opens(widget, key, what):
+        QtCore.QMetaObject.invokeMethod(desk.desk, "rowOpen", QtCore.Qt.DirectConnection,
+                                        QtCore.Q_ARG("QString", widget), QtCore.Q_ARG("QString", key),
+                                        QtCore.Q_ARG("QString", what))
+        desk.pump()
+    for widget, key, what in (("watching", "disk", "disk"), ("needs", "disk", "disk"), ("away", "x", "y"),
+                              ("alive", "x", "y"), ("machine", "disk", ""), ("", "disk", "disk")):
+        opens(widget, key, what)
+    assert desk.sent == []                                  # not the machine's, or nothing to open
+    opens("machine", "disk", "disk")
+    assert desk.sent == [{"type": "vitals", "op": "open", "row": "disk"}]
+    opens("machine", "x", "elsewhere")                      # what a row says it opens is agentd's to judge
+    assert desk.sent[1] == {"type": "vitals", "op": "open", "row": "elsewhere"} and len(desk.sent) == 2
+
+
+def test_the_other_cards_rows_open_nothing(desk):
+    desk.vitals()
+    desk.jobs(ISO, UPDATE)
+    desk.clock(10)
+    desk.dev([session("k1"), session("k2")], ["k1", "k2"])
+    desk.pump(0.4)
+    for key in ("a1b2", "f7a8", "k1", "k2"):
+        desk.click(desk.card_row(key))
+        desk.click(desk.inside(desk.card_row(key), "rowsRowTitle"))
+    desk.click(desk.inside(desk.card_row("f7a8"), "rowsButton"))          # Why? on Watching
+    assert desk.sent == [{"type": "jobs", "op": "why", "id": "f7a8"}]
+    assert plain(desk.win.property("opened")) == []
+
+
+def test_the_strip_says_the_line_crossed_when_the_card_has_no_room(laptop):
+    laptop.set("needsModel", rows(3))
+    laptop.set("awayModel", rows(3))
+    laptop.vitals()
+    assert laptop.faces["machine"] == "strip" and "machine" in laptop.slots
+    laptop.pump(0.3)
+    (strip,) = laptop.prop("rightStrips")
+    assert (strip["id"], strip["text"], strip["dot"], strip["ring"], strip["outlined"]) == (
+        "machine", "memory 91%", THEME["warn"], False, False)
+    chip = laptop.item("deskStrip-machine")
+    assert chip.property("text") == "memory 91%" and chip.property("dot") == THEME["warn"]
+    assert not chip.property("ring") and not laptop.shown("deskCard-machine")
+    laptop.snap("laptop-machine-strip")
+    # The words change in place: the chip is the same one, and its neighbours do not blink.
+    laptop.vitals(strip={"text": "memory 93%", "dot": "red"})
+    laptop.pump(0.05)
+    assert laptop.item("deskStrip-machine") is chip and chip.property("opacity") == 1
+    assert chip.property("text") == "memory 93%" and chip.property("dot") == THEME["bad"]
+    laptop.vitals(strip={"text": "hot · 82°", "dot": ""})
+    assert chip.property("text") == "hot · 82°" and chip.property("dot") == ""
+    laptop.vitals(strip={"text": "disk 94%", "dot": "mauve"})                 # a colour it does not know is none
+    assert chip.property("dot") == "" and laptop.machine["strip"]["dot"] == ""
+    laptop.vitals(strip={"text": "memory 91%", "dot": "amber"})
+    assert chip.property("dot") == THEME["warn"]
+    # With room again the card is the face and the chip goes.
+    laptop.set("needsModel", rows(2))
+    laptop.pump(0.3)
+    assert laptop.faces["machine"] == "full" and laptop.prop("rightStrips") == []
+
+
+def test_the_strip_when_the_desk_folds_or_the_screen_is_narrow(desk):
+    desk.vitals()
+    desk.send(**desk_msg(folded=True))
+    assert [s["text"] for s in desk.prop("rightStrips")] == ["memory 91%"]
+    desk.pump(0.3)
+    assert desk.item("deskStrip-machine").property("dot") == THEME["warn"]
+    desk.snap("machine-strip")
+    desk.send(**desk_msg(folded=False))
+    assert desk.faces["machine"] == "full"
+    desk.resize(1000, 720)
+    assert desk.prop("narrow") and desk.faces["machine"] == "strip"
+    assert [s["text"] for s in desk.prop("rightStrips")] == ["memory 91%"]
+
+
+def test_what_vitals_says_is_what_the_desk_draws(desk):
+    """Both ends of the machine message joined: the real Vitals on one side, the real shell on the other."""
+    from test_vitals import GB, rig, rise, run
+    v, fake, clock = rig()
+    msg = rise(v, fake, clock, memory=0.91, disk=0.93, heat=82, held=8 * GB, machine_=2 * GB, net=(1_200_000, 40_000))
+    assert msg["present"] and msg["strip"] == {"text": "memory 91%", "dot": "amber"}
+    desk.send(**json.loads(json.dumps(msg)))
+    desk.pump(0.3)
+    assert desk.faces["machine"] == "full" and desk.slots["machine"]["side"] == "right"
+    model = desk.machine
+    assert model["why"] == msg["why"] and model["strip"]["text"] == msg["strip"]["text"]
+    assert [r["key"] for r in model["rows"]] == [r["key"] for r in msg["rows"]] == ["memory", "disk", "cpu", "net"]
+    assert [r["kind"] for r in model["rows"]] == ["stack", "meter", "meter", "plain"]
+    memory = model["rows"][0]
+    assert [p["tone"] for p in memory["parts"]] == [p["tone"] for p in msg["rows"][0]["parts"]]
+    assert memory["tone"] == "amber" and memory["meterText"] == msg["rows"][0]["meterText"]
+    assert model["rows"][1]["opens"] == "disk" and model["rows"][3]["sub"] == msg["rows"][3]["sub"]
+    assert desk.machine["rows"][1]["meter"] == msg["rows"][1]["meter"]
+    # And when the machine is calm again, the card goes.
+    gone = [m for m in run(v, fake, clock, 12, memory=0.30, disk=0.40, heat=50) if m][-1]
+    assert not gone["present"]
+    desk.send(**json.loads(json.dumps(gone)))
+    assert desk.machine is None and desk.faces["machine"] == "hidden"
+
+
+def test_a_message_with_no_strip_leaves_the_chip_to_say_machine(desk):
+    desk.send(**machine_msg(strip=None))
+    assert "strip" not in desk.machine
+    desk.send(**machine_msg(strip={"text": 5, "dot": "amber"}))
+    assert "strip" not in desk.machine
+    desk.send(**machine_msg(strip={"dot": "amber"}))
+    assert "strip" not in desk.machine
+    desk.send(**desk_msg(folded=True))
+    assert [(s["text"], s["dot"]) for s in desk.prop("rightStrips")] == [("machine", "")]
+    desk.send(**machine_msg(strip={"text": "disk 94%"}))
+    assert desk.machine["strip"] == {"text": "disk 94%", "dot": "", "ring": False, "outlined": False}
+    assert [(s["text"], s["dot"]) for s in desk.prop("rightStrips")] == [("disk 94%", "")]
+
+
+def test_hide_machine_puts_the_card_away_even_while_the_message_says_present(desk):
+    desk.vitals()
+    desk.pump(0.3)
+    assert desk.faces["machine"] == "full"
+    desk.send(**desk_msg(hidden=["machine"]))
+    assert desk.faces["machine"] == "hidden" and "machine" not in desk.slots
+    assert not desk.prop("present")["machine"] and desk.prop("rightStrips") == []
+    assert desk.machine is not None                           # still reading: it only has no face
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-machine") and not desk.shown("deskStrip-machine")
+    desk.vitals(why="Memory is nearly full")                  # a message every second changes nothing of that
+    assert desk.faces["machine"] == "hidden" and desk.machine["why"] == "Memory is nearly full"
+    desk.send(**desk_msg(hidden=[]))
+    assert desk.faces["machine"] == "full" and desk.slots["machine"]["h"] == 214
+    desk.pump(0.4)
+    assert desk.shown("deskCard-machine")
+
+
+def test_a_window_over_the_machine_card_folds_it_to_its_strip(laptop):
+    laptop.vitals()
+    slot = laptop.slots["machine"]
+    laptop.cover((slot["x"] + 20, slot["y"] + 20, 100, 100))
+    assert laptop.faces["machine"] == "strip"
+    assert [s["text"] for s in laptop.prop("rightStrips")] == ["memory 91%"]
+
+
+def test_the_socket_going_takes_the_machine_card_away_and_a_reconnect_brings_it_back(desk):
+    desk.set("connected", True)
+    desk.vitals()
+    desk.pump(0.4)
+    assert desk.prop("present")["machine"] and desk.shown("deskCard-machine")
+    desk.call("lost")
+    assert desk.machine is None and not desk.prop("present")["machine"]
+    assert desk.faces["machine"] == "hidden" and "machine" not in desk.slots and desk.prop("rightStrips") == []
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-machine")
+    desk.call("lost")                                         # twice is the same
+    assert desk.machine is None
+    desk.set("connected", True)                               # agentd sends the desk and the card again
+    desk.vitals()
+    assert desk.prop("present")["machine"]
+    desk.call("lost")
+    desk.set("machineModel", rows(1))                         # a model set by hand goes too: nothing can answer it
+    desk.call("lost")
+    assert desk.machine is None
+
+
+def test_a_machine_message_that_is_odd_is_cleaned(desk):
+    odd = [None, 5, "text", [], {"kind": "meter", "title": "no key"}, {"key": "", "kind": "meter"},
+           {"key": 7, "kind": "meter"}, {"key": "dot", "kind": "dot", "title": "a kind the card does not have"},
+           {"key": "gauge", "kind": "gauge"}, {"key": "none", "kind": None}, {"key": "bare"},
+           {"key": "a", "kind": "meter", "title": 5, "meterText": ["x"], "meter": 1.7, "tone": "purple", "opens": 5},
+           {"key": "b", "kind": "meter", "title": "b", "meter": -3, "tone": 4, "pulse": True, "button": "Do it",
+            "remove": True},
+           {"key": "c", "kind": "meter", "meter": "lots"}, {"key": "d", "kind": "meter"},
+           {"key": "a", "kind": "meter", "title": "the same key twice"},
+           {"key": "e", "kind": "stack", "meter": 0.5, "parts": "most of it"},
+           {"key": "f", "kind": "stack", "meter": 0.5,
+            "parts": [None, 5, {"tone": "you"}, {"tone": "machine", "fraction": "lots"}, {"tone": "sessions", "fraction": -1},
+                      {"tone": "nope", "fraction": 0.6}, {"tone": "machine", "fraction": 0.6},
+                      {"tone": 3, "fraction": 2}]},
+           {"key": "constructor", "kind": "plain", "title": "g", "sub": 3},
+           {"key": "h", "kind": "plain", "title": "past the sixth"}]
+    desk.send(**machine_msg(*odd, why=5, strip="chip"))
+    m = desk.machine
+    assert m["title"] == "Machine" and m["why"] == "" and "strip" not in m
+    assert [r["key"] for r in m["rows"]] == ["a", "b", "c", "d", "e", "f"]               # six at most
+    a, b, c, d, e, f = m["rows"]
+    assert a == shown({"key": "a", "kind": "meter", "meter": 1.0})                       # held to 0..1, words only as words
+    assert b == shown({"key": "b", "kind": "meter", "title": "b", "meter": 0.0})        # nobody's button, no x, no pulse
+    assert c["meter"] is None and d["meter"] is None
+    assert e["kind"] == "stack" and e["parts"] == [] and e["meter"] == 0.5
+    # No fraction, no number, nothing in it: not a piece. The rest are held to the track: 0.6, then 0.4.
+    assert [(p["tone"], p["fraction"]) for p in f["parts"]] == [
+        ("you", pytest.approx(0.6)), ("machine", pytest.approx(0.4))]
+    assert all("parts" not in r for r in (a, b, c, d))
+    assert desk.prop("present")["machine"] and desk.slots["machine"]["h"] == 50 + 6 * 34 + 18
+    desk.send(**machine_msg({"key": "constructor", "kind": "plain", "title": "g", "sub": 3}, {"key": "toString", "kind": "plain"}))
+    assert [r["key"] for r in desk.machine["rows"]] == ["constructor", "toString"]     # keys are only keys
+    assert desk.machine["rows"][0]["sub"] == ""
+    desk.pump(0.3)
+    assert desk.warnings == []
+
+
+def test_present_means_true_and_nothing_else(desk):
+    for present in ("yes", 1, "true", None, [], {}):
+        desk.vitals(present=present)
+        assert desk.machine is None, present
+    desk.vitals(present=True)
+    assert desk.machine is not None
+    for rows_ in ("all of them", 5, None, {"memory": MEMORY}, [None, 5]):
+        desk.vitals(rows=rows_)
+        assert desk.machine is None, rows_
+    desk.vitals()
+    desk.send(type="machine", present=True)
+    assert desk.machine is None                               # no rows to draw is no card
+
+
+def test_a_number_that_is_not_a_number_is_no_reading(desk):
+    desk.send_numbers(**machine_msg(
+        {"key": "a", "kind": "meter", "meter": "NaN!", "title": "nan"},
+        {"key": "b", "kind": "meter", "meter": "Infinity!", "title": "infinity"},
+        {"key": "c", "kind": "stack", "meter": 0.5, "parts": [part("machine", "NaN!"), part("you", "Infinity!"),
+                                                                 part("sessions", 0.25)]}))
+    a, b, c = desk.machine["rows"]
+    assert a["meter"] is None                                 # no reading is no percent, not an empty meter
+    assert b["meter"] is None
+    assert [(p["tone"], p["fraction"]) for p in c["parts"]] == [("sessions", 0.25)]
+    desk.pump(0.4)
+    assert desk.inside(desk.card_row("a"), "rowsPercent") is None and desk.warnings == []
+    assert desk.inside(desk.card_row("a"), "rowsMeter").property("fillWidth") == 0
+
+
+def test_the_machines_slot_is_the_height_of_the_card_the_rail_draws(desk):
+    plain_rows = [{"key": f"p{i}", "kind": "plain", "title": f"row {i}", "sub": "x"} for i in range(3)]
+    for table, height in (((MEMORY, DISK, CPU, NET), 50 + 3 * 34 + 44 + 18),
+                          ((MEMORY,), 50 + 34 + 18), ((NET,), 50 + 44 + 18), ((MEMORY, DISK, CPU), 50 + 3 * 34 + 18),
+                          (tuple(plain_rows), 50 + 3 * 44 + 18),
+                          ((MEMORY, DISK, CPU, *plain_rows), 50 + 3 * 34 + 3 * 44 + 18)):
+        desk.vitals(*table)
+        desk.pump(0.3)
+        assert desk.slots["machine"]["h"] == height, table
+        (card,) = desk.items("rowsCard")
+        assert card.property("implicitHeight") == height == card.height(), table
+    desk.vitals(MEMORY, DISK)
+    assert desk.call("heightOf", "machine") == 50 + 2 * 34 + 18
+
+
+def test_the_card_keeps_its_rows_by_place_so_a_message_a_second_builds_nothing_again(desk):
+    desk.vitals()
+    desk.pump(0.4)
+    memory = desk.card_row("memory")
+    memory.setProperty("marker", 1)
+    track = desk.inside(memory, "rowsMeter")
+    first = [c for c in track.childItems() if c.objectName() == "rowsPart"]
+    for i, p in enumerate(sorted(first, key=lambda p: p.x())):
+        p.setProperty("marker", i)
+    card = desk.item("deskCard-machine")
+
+    def table(second):
+        return (dict(MEMORY, meter=0.91 + 0.01 * second, meterText=f"{14.5 + 0.1 * second:.1f} of 16 GB",
+                     parts=[part("machine", 0.12 + 0.01 * second), part("sessions", 0.40), part("you", 0.39)]),
+                dict(DISK, meter=0.93 + 0.001 * second), CPU, NET)
+
+    for second in range(1, 5):
+        desk.vitals(*table(second))
+    assert desk.card_row("memory") is memory and memory.property("marker") == 1
+    same = sorted([c for c in track.childItems() if c.objectName() == "rowsPart"], key=lambda p: p.x())
+    assert [p.property("marker") for p in same] == [0, 1, 2]
+    assert [w for _, w, _ in desk.parts(memory)] == pytest.approx([0.16 * 272, 0.40 * 272, 0.39 * 272], abs=0.01)
+    assert desk.inside(memory, "rowsPercent").property("text") == "95%"
+    assert desk.inside(memory, "rowsMeta").property("text") == "14.9 of 16 GB"
+    assert desk.item("deskCard-machine") is card and desk.items("rowsCard")[0].property("washLevel") == 0
+    # The same message again is no change at all; a different one is one.
+    before = desk.win.property("machineChanges")
+    desk.vitals(*table(4))
+    assert desk.win.property("machineChanges") == before
+    desk.vitals(*table(5))
+    assert desk.win.property("machineChanges") == before + 1
+
+
+def test_the_snapshot_says_what_the_machine_card_holds(desk):
+    assert desk.call("snapshot")["machine"] is None
+    desk.vitals()
+    snap = desk.call("snapshot")
+    assert snap["machine"]["title"] == "Machine" and [r["key"] for r in snap["machine"]["rows"]] == [
+        "memory", "disk", "cpu", "net"]
+    assert snap["present"]["machine"] and snap["faces"]["machine"] == "full"
+
+
+def test_the_machine_loads_without_qml_warnings(desk):
+    desk.set("connected", True)
+    desk.vitals()
+    desk.pump(0.4)
+    desk.click(desk.card_row("disk"))
+    desk.click(desk.card_row("memory"))
+    desk.vitals(dict(MEMORY, meter=0.7, tone="you"), dict(DISK, meter=0.5, tone="you"), CPU, NET,
+                strip={"text": "", "dot": ""}, why="")
+    desk.vitals(MEMORY)
+    desk.cover((1200, 400, 700, 600))
+    desk.send(**desk_msg(folded=True))
+    desk.cover((0, 0, 1920, 1080, True))
+    desk.cover()
+    desk.send(**desk_msg(folded=False, hidden=["machine"]))
+    desk.send(**desk_msg(hidden=[]))
+    desk.vitals(present=False, rows=[])
+    desk.vitals()
+    desk.call("lost")
+    desk.pump(0.5)
+    assert desk.warnings == []
 
 
 # -- what the shell review found --

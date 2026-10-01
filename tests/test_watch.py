@@ -1,6 +1,24 @@
 import json
+import time
+from datetime import UTC, datetime
+
+import pytest
 
 from bombadil import paths, watch
+
+
+@pytest.fixture
+def utc(monkeypatch):
+    """Clock times read in UTC (the container's own zone data is not to be trusted)."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def _at(*args) -> float:
+    return datetime(*args, tzinfo=UTC).timestamp()
 
 
 def test_details_show_each_step_its_command_and_output():
@@ -142,3 +160,76 @@ def test_details_list_the_pictures_shown_in_words():
     assert "draft" not in "\n".join(lines)
     assert lines[1:4] == ["  picture", "  ┆ How you're connected: Laptop → Router", "  ┆ All answers."]
     assert lines[-3:] == ["  picture (what changed)", "  ┆ Before: nothing", "  ┆ After: VPN tunnel (wg0) [new]"]
+
+
+# -- the AI rests (rest.py): a turn the limit stopped --
+
+CUT_OFF = "Claude hit its limit partway, after changing 2 files. It carries on at 15:00."
+
+
+@pytest.mark.parametrize("fields, said", [
+    ({"why": "limit", "window": "five_hour", "until": _at(2026, 10, 1, 15)}, "  stopped at its limit until 15:00"),
+    ({"why": "limit", "window": "seven_day", "until": _at(2026, 10, 5, 9)},
+     "  stopped at its weekly limit until Monday 09:00"),
+    ({"why": "spend", "window": "overage", "until": _at(2026, 10, 2, 8)},
+     "  stopped at its spending limit until Friday 08:00"),
+    ({"why": "spend", "window": None, "until": None}, "  stopped at its spending limit"),
+    ({"why": "limit", "window": None, "until": None}, "  stopped at its limit"),
+])
+def test_details_say_where_the_limit_stopped_a_turn_in_their_own_words(utc, fields, said):
+    t = _at(2026, 10, 1, 12, 30)
+    events = [
+        {"kind": "turn_start", "prompt": "tidy my notes", "t": t},
+        {"kind": "rest", "provider": "claude", "t": t + 5, "text": "You've hit your session limit · resets 3pm", **fields},
+        {"kind": "turn_end", "seconds": 7, "summary": "Wrote 2 files.", "changed": True, "requeued": True,
+         "line": CUT_OFF},
+    ]
+    lines = list(watch.Renderer().lines(events))
+    assert lines[1] == said
+    assert "session limit" not in "\n".join(lines) and "You've hit" not in "\n".join(lines)   # the provider's words
+    assert lines[2] == f"  {CUT_OFF}   7 s"           # the cut-off line closes it like any other turn's
+
+
+def test_the_rest_line_is_dim_and_survives_odd_fields():
+    r = watch.Renderer(color=True)
+    assert list(r.one({"kind": "rest", "provider": "claude", "why": "limit", "until": None})) == [
+        f"{watch.DIM}  stopped at its limit{watch.RESET}"]
+    assert list(r.one({"kind": "rest"})) == [f"{watch.DIM}  stopped at its limit{watch.RESET}"]
+    assert list(r.one({"kind": "rest", "until": "soon", "t": "then", "window": "seven_day"})) == [
+        f"{watch.DIM}  stopped at its weekly limit{watch.RESET}"]
+
+
+def test_a_requeued_turn_end_prints_its_line_like_any_other():
+    lines = list(watch.Renderer().lines([
+        {"kind": "turn_end", "seconds": 2, "summary": "", "requeued": True, "changed": False,
+         "line": "Claude is at its limit until 15:00. Your apps and files still work."}]))
+    assert lines == ["  Claude is at its limit until 15:00. Your apps and files still work.   2 s"]
+
+
+def test_history_ends_a_requeued_turn_with_its_cut_off_line(home):
+    log = paths.turns_log()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    rows = [{"t": 1790000000, "prompt": "tidy my notes", "summary": CUT_OFF, "requeued": True, "snapshot": 5,
+             "result": "", "ok": False},
+            {"t": 1790000600, "prompt": "tidy my notes", "summary": "Tidied your notes.", "snapshot": 6}]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    out = watch.history_lines()
+    assert any("tidy my notes" in x and CUT_OFF in x and "restore point 5" in x for x in out)
+    assert any("tidy my notes" in x and "Tidied your notes." in x and "restore point 6" in x for x in out)
+
+
+def test_following_a_turn_the_limit_stops_ends_with_its_cut_off_line(home):
+    import io
+    srv, _ = _agentd(home, [
+        {"type": "event", "kind": "tool", "turn": 3, "name": "Bash", "input": {"command": "ls"}},
+        {"type": "event", "kind": "rest", "turn": 3, "provider": "claude", "why": "limit", "window": "five_hour",
+         "until": time.time() + 3 * 3600, "text": "You've hit your session limit"},
+        {"type": "event", "kind": "turn_end", "turn": 3, "seconds": 4, "summary": "", "requeued": True,
+         "line": CUT_OFF},
+        {"type": "event", "kind": "queued", "turn": 3, "prompt": "set up docker"},   # back at the front: not shown
+    ])
+    out = io.StringIO()
+    assert watch.follow(_turn_file(home), out) is False
+    text = out.getvalue()
+    assert "  stopped at its limit until " in text and CUT_OFF in text and "You've hit" not in text
+    srv.close()

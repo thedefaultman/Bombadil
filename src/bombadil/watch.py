@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import greet, narrate, paths
+from . import greet, narrate, paths, rest
 
 AMBER, RED, DIM, BOLD, RESET = "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 CLAUDE_REJECTED = "The user doesn't want to proceed with this tool use"
@@ -98,6 +98,12 @@ class Renderer:
                 yield c(DIM, "  picture" + (" (what changed)" if card.get("receipt") else ""))
                 for line in str(card["text"]).splitlines():
                     yield c(DIM, "  ┆ ") + line
+        elif kind == "rest":
+            # The account said no. Built from the fields, like every line about resting (rest.words):
+            # the provider's own words stay in the log.
+            found = rest.Rest(str(ev.get("provider") or ""), str(ev.get("why") or "limit"), ev.get("window"),
+                              _number(ev.get("until")))
+            yield c(DIM, "  stopped " + rest.words(found, found.provider, _number(ev.get("t")))["row"])
         elif kind == "turn_end":
             end = ev.get("line") or ev.get("summary") or "Done."
             yield c(BOLD, f"  {end}") + c(DIM, f"   {ev.get('seconds', 0)} s")
@@ -135,6 +141,10 @@ class Renderer:
         after = (ev or {}).get("after")
         if isinstance(after, dict) and after.get("text"):
             yield c(AMBER, f"  {after['text']}")
+
+
+def _number(value) -> float | None:
+    return value if isinstance(value, int | float) else None
 
 
 def _what_ran(ev: dict) -> str:
