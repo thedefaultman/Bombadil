@@ -571,7 +571,10 @@ Diagram {
   emits `opened(target)`; the bar's host opens it, and in an app you decide what it does.
 
 Properties: `spec`, `showTitle` (true: the title above and the `say` line under), `minBoxWidth` (132),
-`maxBoxWidth` (208). Signals: `opened(target)` for a box with `opens`, `picked(node)` for any click.
+`maxBoxWidth` (208), `maxCompareWidth` (230) and `compareGap` (76) for a `compare` (the two columns
+sit together in the middle, the arrow in the gap). A chain lays itself out for its link labels, so
+give a chain's labels with its nodes or leave them out: a `partial` chain that has no links yet
+leaves room for labels of about 14 characters, so it does not jump when they arrive. Signals: `opened(target)` for a box with `opens`, `picked(node)` for any click.
 A spec with `partial: true` shows "drawing…" (a card still being written). Bad data draws nothing and
 warns about nothing.
 

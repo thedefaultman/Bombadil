@@ -2,7 +2,8 @@ import QtQuick
 import QtQuick.Layouts
 import Bombadil as Kit
 
-// Prompts typed while a turn runs wait here as grey "next" chips; the x drops one.
+// Prompts typed while a turn runs wait here as grey "next" chips; the x drops one. While the AI
+// rests, a chip says when it will run ("15:00", "Thu 09:00", "paused") instead of "next".
 RowLayout {
     id: chips
     required property var pill
@@ -29,14 +30,14 @@ RowLayout {
                 spacing: 8
                 Text {
                     font.family: Kit.Theme.fontFamily
-                    text: "next"
+                    text: chip.modelData.wait || "next"
                     color: Kit.Theme.faint
                     font.pixelSize: Kit.Theme.captionSize
                 }
                 Text {
                     font.family: Kit.Theme.fontFamily
                     Layout.maximumWidth: 260
-                    text: chip.modelData.prompt
+                    text: chips.pill.queueText(chip.modelData.prompt)
                     color: Kit.Theme.muted
                     font.pixelSize: Kit.Theme.smallSize
                     textFormat: Text.PlainText

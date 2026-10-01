@@ -9,6 +9,8 @@ import Bombadil as Kit
 // When no turn or setup line has it, the newest notice (new mail, a draft that is ready) does, with
 // its chips on the right (under the words when the line is narrow, a window shares the stage). A warning
 // notice does not wait for a finished line or the setup line to go: only a turn that runs comes before it.
+// The line that says the AI rests (out of plan or paused) is a plain step line: it fades like a
+// finished one, and never turns red.
 Rectangle {
     id: bar
     required property var pill       // a PillState
@@ -50,19 +52,41 @@ Rectangle {
 
     Timer {
         // The seconds counter, and fading a finished line nobody is looking at. A notice by itself has
-        // nothing to count; one over a finished line leaves that line to fade under it.
-        interval: 250; repeat: true; running: bar.shown && (bar.notice === null || bar.pill.mode !== "idle")
+        // nothing to count; one over a finished line leaves that line to fade under it. A finished line
+        // kept by its picture has nothing for it to do, so it sleeps until the picture goes (and
+        // then fades the line, whose time is long past, on its next tick).
+        objectName: "lineTimer"
+        interval: 250; repeat: true
+        running: bar.shown && (bar.notice === null || bar.pill.mode !== "idle")
+                 && !(bar.pill.pictureStays && bar.pill.mode !== "working" && bar.pill.flash === "")
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
             // The line shows on every screen; hovering it on any of them keeps it. A line that stays until
             // the next prompt (a turn that changed something, with Undo) gives way when a notice waits:
             // that is the one place the news and the warnings can be seen, and typing "undo" still works.
-            const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
-            if (done && (!bar.pill.sticky || bar.pill.notices.length > 0) && bar.pill.hovers === 0
+            const done = bar.pill.mode === "closing" || bar.pill.mode === "local" || bar.pill.mode === "resting"
+            if (done && (!bar.pill.sticky || bar.pill.notices.length > 0) && !bar.pill.pictureStays && bar.pill.hovers === 0
                     && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
         }
+    }
+
+    // The agent's own words, while it works, show their newest end. Text.ElideLeft alone cuts the
+    // first word in half ("…d of yours."), so the line is cut here instead: at a word, with a
+    // "…" before it, as many words as fit.
+    FontMetrics { id: lineMetrics; font: lineText.font }
+    function newest(full, room) {
+        const text = String(full).replace(/\s+/g, " ").trim()
+        if (room <= 0 || lineMetrics.advanceWidth(text) <= room) return text
+        const words = text.slice(-400).split(" ")
+        let out = ""
+        for (let i = words.length - 1; i > 0; i--) {     // words[0] may be cut by the slice
+            const next = words[i] + (out ? " " + out : "")
+            if (lineMetrics.advanceWidth("…" + next) > room) break
+            out = next
+        }
+        return out ? "…" + out : text      // one long word fills the line: let the elide cut it
     }
 
     HoverHandler {
@@ -90,7 +114,10 @@ Rectangle {
                 objectName: "line"
                 font.family: Kit.Theme.fontFamily
                 Layout.fillWidth: true
-                text: bar.pill.flash !== "" ? bar.pill.flash : bar.notice ? bar.notice.line : bar.pill.line
+                text: bar.pill.flash !== "" ? bar.pill.flash
+                    : bar.notice ? bar.notice.line
+                    : bar.pill.mode === "working" && bar.pill.source === "agent" ? bar.newest(bar.pill.line, lineText.width)
+                    : bar.pill.line
                 color: bar.errored && bar.pill.flash === "" ? Kit.Theme.badInk : Kit.Theme.fg
                 font.pixelSize: Kit.Theme.lineSize
                 textFormat: Text.PlainText

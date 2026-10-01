@@ -1,17 +1,19 @@
 """The pill is also the launcher: a small exact list of words that never wait for the model.
 
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
-or one of a few commands ("undo", "stop", "history", "wifi", "desk") is handled here, by
-agentd, in a fraction of a second and offline. So are the desk's widgets, but only with a
-verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the agent.
-Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
+or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
+is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
+only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
+agent. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
 every inbox at once, and the service behind it is asked, never waited for.
 Everything else goes to the agent. The list is deliberately exact (after lowercasing and
-trimming, with an optional "open"/"close" in front): a parser that guesses would give the
-machine two brains that sometimes disagree.
+trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
+two brains that sometimes disagree.
 
-`match()` decides; `Launcher` does the work by calling Hyprland, the apps and snapper
-directly. Every action returns one plain sentence for the line above the pill.
+`match()` decides; `Launcher` does the work by calling Hyprland, the apps, snapper and the
+brain directly. Every action returns one plain sentence for the line above the pill. The
+brain's words are about what is in front of you (brain/this.py) and are answered from its
+index, never by a model; when the brain is not there, they say so rather than wait for it.
 """
 
 import json
@@ -24,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from . import apps, browser, hypr, paths, snapshots, sysmap
+from .brain import client as brain_client
+from .brain import this
 from .desk import WIDGETS, Desk
 from .mail import client as mail_client
 
@@ -48,12 +52,24 @@ CORE_COMMANDS = {
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
 }
+# Checked after the core commands and before app names: the brain's words, about what is
+# in front of you. "brain" opens the Brain on it; the questions answer in the line.
+BRAIN_COMMANDS = {
+    "brain": ["brain", "the brain", "open the brain", "show the brain", "open brain", "show brain"],
+    "whyhere": ["why is this here", "where did this come from", "where is this from", "who made this",
+                "what made this"],
+}
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
                 "log me in"]
 PROVIDER_WORDS = {"claude": ["claude", "claude code", "anthropic"], "codex": ["codex", "openai codex", "chatgpt"]}
 PROVIDER_VERBS = ("use", "switch to", "change to", "sign in to", "log in to", "sign into", "log into",
                   "sign in with", "log in with")
+# Resting the AI by hand and ending it ("pause claude", "resume the ai"; agentd does these itself).
+# "the AI" is whichever one runs the machine. "use claude" ends a pause too (it is in PROVIDER_VERBS).
+REST_VERBS = ("pause", "resume")
+REST_TARGETS = {**PROVIDER_WORDS, "ai": ["the ai", "ai"]}
+REST_TITLES = {"claude": "Claude", "codex": "Codex", "ai": "the AI"}
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
@@ -88,7 +104,15 @@ PICTURE_PHRASES = {
 }
 PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
                   "sound": "what's playing where", "screens": "your screens"}
-_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$")
+# A question a widget answers with itself, the same as "show machine" (same rules as the pictures:
+# the whole sentence, exactly). The machine card then stays up for 30 seconds (vitals.ASK_FOR).
+WIDGET_QUESTIONS = {
+    "machine": ["how's the machine", "how is the machine", "how's the machine doing", "how is the machine doing",
+                "how's my machine", "how is my machine", "how's my computer", "how is my computer",
+                "how's my computer doing", "how is my computer doing", "hows the machine", "hows my computer"],
+}
+# (Matched on the text as typed: unit names have capitals, NetworkManager.service.)
+_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$", re.I | re.A)
 # Only while a turn runs: the reason for the step in front of you, answered from what the agent
 # said just before it, with no model. At any other time "why" is a question for the agent.
 WHY_WORDS = {"why"}
@@ -98,10 +122,12 @@ HIDE_VERBS = ("hide", "put away")
 # A widget takes only the verbs that mean a thing on the screen: "start now" and "run now" are
 # sentences for the agent, not the desk.
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
-# Not offered as completions: Tab should never land on these by accident.
-NO_COMPLETE = {"restart", "shutdown", "lock", "stop"}
+# Not offered as completions: Tab should never land on these by accident, and a question
+# is typed rather than completed.
+NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "why", "whyhere"}
 
 DETAILS_CLASS = "bombadil-details"
+BRAIN_APP = "brain"
 
 
 @dataclass
@@ -112,9 +138,9 @@ class Action:
     title: str = ""    # what the line calls it: "the browser", "Passwords"
 
 
-def normalize(text: str) -> str:
-    t = " ".join(str(text).lower().split())
-    return t.strip(" .!?,;:")
+def normalize(text: str, keep_case: bool = False) -> str:
+    t = " ".join(str(text).split())
+    return (t if keep_case else t.lower()).strip(" .!?,;:")
 
 
 def _key(s: str) -> str:
@@ -175,14 +201,16 @@ def known_apps() -> list:
     return out
 
 
-def _picture(t: str) -> Action | None:
-    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's."""
+def _picture(t: str, typed: str = "") -> Action | None:
+    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's.
+    `t` is the lowercased text, `typed` the same with the capitals it came with."""
     for kind, phrases in PICTURE_PHRASES.items():
         if t in phrases:
             return Action("picture", kind, "open", PICTURE_TITLES[kind])
-    m = _NEEDS_RE.match(t)
-    if m and sysmap.service_exists(m.group(1)):
-        name = sysmap.unit_name(m.group(1)).removesuffix(".service")
+    m = _NEEDS_RE.match(typed or t)
+    unit = sysmap.find_unit(m.group(1)) if m else None
+    if unit:
+        name = unit.removesuffix(".service")    # as the machine spells it: NetworkManager
         return Action("picture", f"service:{name}", "open", f"what {name} needs")
     return None
 
@@ -203,9 +231,12 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     if busy and plain and t in WHY_WORDS:
         return Action("why")
     apostrophe = t.replace("’", "'")   # "what’s playing where", typed on a phone
-    picture = _picture(apostrophe) if apostrophe.isascii() else None
+    picture = _picture(apostrophe, normalize(raw, keep_case=True)) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
+    for widget, questions in WIDGET_QUESTIONS.items():
+        if apostrophe in questions and _find_app(t, app_list) is None:
+            return Action("widget", widget, "open", WIDGET_TITLES[widget])
     if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
         return Action("signin")
     if plain:
@@ -214,11 +245,20 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
             name = _lookup(word, PROVIDER_WORDS) if word else None
             if name:
                 return Action("provider", name, title=name.capitalize())
+    if plain:
+        for verb in REST_VERBS:
+            word = _strip_verb(t, (verb,))
+            target = _lookup(word, REST_TARGETS) if word else None
+            if target:
+                return Action("rest", target, verb, REST_TITLES[target])
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    brain = _lookup(t, BRAIN_COMMANDS) if plain else None
+    if brain:
+        return Action(brain)
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
@@ -285,7 +325,7 @@ def entries(app_list: list | None = None) -> list[dict]:
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
             for w, words in WIDGET_WORDS.items()]
-    for table in (CORE_COMMANDS, UTILITY_COMMANDS):
+    for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
@@ -334,6 +374,7 @@ class Launcher:
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "provider": f"Switching to {action.title or action.target}",
+                "brain": "Opening the Brain", "whyhere": "Looking it up",
                 "desk": "Changing the desk", "send": "Sending is yours"}.get(action.kind, "On it")
 
     @staticmethod
@@ -350,6 +391,7 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                "brain": "Could not open the Brain", "whyhere": "Could not look it up",
                 "desk": "Could not change the desk"}.get(action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
@@ -469,6 +511,45 @@ class Launcher:
                 hidden.append(name)
         return True, "Put everything away." if hidden else "Nothing to put away."
 
+    # -- the brain --
+
+    def _brain(self, a: Action) -> tuple[bool, str]:
+        ref = this.resolve(self.hypr)
+        try:
+            # Asked first, so the window finds the thing waiting when it opens (or, already
+            # open, is pushed to it).
+            shown = brain_client.request("show", ref=ref or str(paths.home()))
+        except brain_client.BrainUnavailable as e:
+            return False, _down(e)
+        except brain_client.BrainError as e:
+            return False, _said(e) or f"{self.failed(a)}."
+        self.open_brain()
+        title = _shown_title(shown) if ref else ""
+        return True, f"Opened the Brain on {title}." if title else "Opened the Brain."
+
+    def open_brain(self) -> None:
+        """The Brain window: the app kit's drawer when there is one, else its own window,
+        brought forward when it is already open."""
+        placement = _placement()
+        if placement is not None:
+            placement.show(BRAIN_APP)
+        elif _app_running(BRAIN_APP):
+            self._focus_class(f"bombadil-app-{BRAIN_APP}")
+        else:
+            apps.run(BRAIN_APP)
+
+    def _whyhere(self, a: Action) -> tuple[bool, str]:
+        ref = this.resolve(self.hypr)
+        if not ref:
+            return False, "Nothing is in front to ask about."
+        try:
+            answer = brain_client.request("why", ref=ref)
+        except brain_client.BrainUnavailable as e:
+            return False, _down(e)
+        except brain_client.BrainError as e:
+            return False, _said(e) or f"{self.failed(a)}."
+        return True, _said(answer) or "The brain does not know this yet."
+
     # -- undo --
 
     # A rollback swaps the root at the next boot. Until then the running system still has
@@ -509,6 +590,23 @@ class Launcher:
             self._undo_marker().unlink()
         except OSError:
             pass
+
+    def undo_marker(self) -> dict | None:
+        """The marker of the last undo as it is now, for skip_restore_point."""
+        return self._marker()
+
+    def skip_restore_point(self, snapshot: int | None, before: dict | None) -> None:
+        """A turn took a restore point and changed nothing (the account's limit stopped it at once).
+        Undo must go past that empty point rather than say "Undone" and change nothing: put back
+        the marker the turn cleared (`before`), or, with none, mark the point itself as already
+        undone, which is how the next undo knows to start below it. An undo still waiting for its
+        restart already covers this point: it has nothing to add, so it is not "newer" (see _undo)."""
+        if before is not None:
+            if self._pending(before) and snapshot is not None:
+                before = {**before, "covered": max(int(before.get("covered") or 0), int(snapshot))}
+            self._write_marker(before)
+        elif snapshot is not None:
+            self._write_marker({"snapshot": int(snapshot), "what": "", "boot": None, "t": time.time()})
 
     def _undo(self, _a: Action) -> tuple[bool, str]:
         if not self.snaps.available:
@@ -707,6 +805,29 @@ class Launcher:
     def _shutdown(self, _a: Action) -> tuple[bool, str]:
         self._run(["systemctl", "poweroff"], capture_output=True, check=True, timeout=10)
         return True, "Shutting down."
+
+
+def _down(e: Exception) -> str:
+    """Why the brain did not answer: it is not there, or it is busy (the first index)."""
+    if isinstance(e.__cause__, TimeoutError) or getattr(e, "detail", "") == "timed out":
+        return "The brain did not answer in time."
+    return "The brain is not running yet."
+
+
+def _said(answer) -> str:
+    """The brain's sentence, from an answer or an error, as one line."""
+    if isinstance(answer, dict):
+        answer = answer.get("text") or answer.get("line") or answer.get("why") or ""
+    return " ".join(str(answer or "").split())
+
+
+def _shown_title(shown) -> str:
+    """The name of what the Brain opened on, from the brain's answer to "show"."""
+    if not isinstance(shown, dict):
+        return ""
+    thing = shown.get("thing") if isinstance(shown.get("thing"), dict) else {}
+    title = " ".join(str(shown.get("title") or thing.get("title") or "").split())
+    return title if len(title) <= 60 else title[:59].rstrip() + "…"
 
 
 def _is_text(path: Path) -> bool:
