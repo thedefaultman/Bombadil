@@ -6,7 +6,7 @@ hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", sca
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
-    hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
+    hl.exec_cmd("bombadil-shell")
     hl.exec_cmd("mako")
     -- One foot server for the coding sessions' windows, so a session's window rises at once.
     hl.exec_cmd("foot --server")
@@ -32,7 +32,9 @@ hl.config({
     misc = {
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
-        background_color = 0x101214,
+        -- The ground, until the bar's wallpaper (shell/Wallpaper.qml) is up and wherever it does not
+        -- reach. 0xAARRGGBB: without the alpha byte the colour is clear and Hyprland draws black.
+        background_color = 0xff101214,
     },
     input = { kb_layout = "us", follow_mouse = 1 },
 })
@@ -58,7 +60,7 @@ hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
-hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml"))
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; bombadil-shell"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({

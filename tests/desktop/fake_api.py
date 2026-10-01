@@ -3,7 +3,7 @@
 Each prompt the driver types has a script: "install ffmpeg" runs sudo pacman, "make me a password
 manager" streams a create_app call slowly (so the line counts up), "set up docker" runs a root
 sleep for Stop to end, "show me the route" states a two-step plan and ticks it off (Now on the desk),
-"tell me a joke" only talks.
+"explain the vpn" draws a picture (show_card) slowly, "tell me a joke" only talks.
 """
 
 import json
@@ -339,6 +339,30 @@ class H(BaseHTTPRequestHandler):
                             }
                         ]
                     },
+                )
+                stop = "tool_use"
+        elif "vpn" in first:
+            if after_tool:
+                text("That is the picture: your laptop reaches the internet through the tunnel.")
+            else:
+                text("I'll draw how the tunnel works.")
+                tool(
+                    f"toolu_vp{N[0]}",
+                    "mcp__bombadil-os__show_card",
+                    {
+                        "shape": "chain",
+                        "title": "How a VPN works",
+                        "nodes": [
+                            {"id": "laptop", "label": "Laptop", "sub": "this machine"},
+                            {"id": "tunnel", "label": "Tunnel", "sub": "encrypted", "state": "new"},
+                            {"id": "server", "label": "VPN server"},
+                            {"id": "net", "label": "Internet"},
+                        ],
+                        "highlight": ["tunnel"],
+                        "say": "Everything leaves your laptop through the tunnel first.",
+                    },
+                    step=12,
+                    pause=0.12,
                 )
                 stop = "tool_use"
         elif "joke" in first:

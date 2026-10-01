@@ -13,7 +13,7 @@ ndiag=0
 diag() {
   ndiag=$((ndiag+1)); (( ndiag > 4 )) && return 0
   say "DIAG $1 windows: $(as_user hyprctl -j clients 2>&1 | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["pid"]) for c in json.load(sys.stdin)])' 2>&1 | tail -c 600)"
-  say "DIAG $1 programs: $(pgrep -a 'foot|agentd|quickshell|chromium|zellij' | cut -c1-90 | tr '\n' ';' | tail -c 700)"
+  say "DIAG $1 programs: $(for n in Hyprland quickshell foot footclient zellij; do printf '%s=%s ' "$n" "$(pgrep -x "$n" | tr '\n' ,)"; done) agentd=$(pgrep -f agentd | head -3 | tr '\n' ,) chromium=$(pgrep -xc chromium)"
 }
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
 # bombadil.smoke          live checks, then power off
@@ -120,6 +120,26 @@ for ex in memory password-manager; do
 done
 check screenshot grab
 
+# Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
+# was there to draw it) and comes back as words. How long it took goes in the log: a capture over
+# 500 ms on real hardware is a finding, not a failure.
+picture() {
+  local t0 out args="{\"kind\":\"$1\"}"
+  [[ -n "${2:-}" ]] && args="{\"kind\":\"$1\",\"target\":\"$2\"}"
+  t0=$(date +%s%N)
+  out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
+    | as_user timeout 60 bombadil-os-mcp | tail -1) || return 1
+  echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms: ${out:0:400}" >&2
+  grep -q 'shown above the bar' <<<"$out" || return 1
+  # The boot is more than its last line (the C-locale tree once read as the root alone).
+  [[ "$1" != boot ]] || (( $(grep -oE '\\n[0-9.]+ (s|ms|min): ' <<<"$out" | wc -l) >= 3 ))
+}
+check os-mcp-lists-pictures bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q system_map'
+for kind in network boot disks sound screens; do check "picture-$kind" picture "$kind"; done
+check picture-service picture service systemd-logind
+shot picture
+
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
 before=$(launcher_done browser "Opened the browser")
@@ -168,6 +188,15 @@ keys meta_l
 keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
+
+# A click on a box in a picture that names a service opens it in the same drawer, in the viewer
+# (bombadil view, which needs no pager on the image), and one Esc puts it away.
+check open-unit agentd_send '{"type": "open", "kind": "unit", "value": "systemd-logind.service"}'
+check open-unit-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+check open-unit-has-keyboard wait_for 30 active_is bombadil-details
+shot open-unit
+keys esc
+check open-unit-esc-closes wait_for 30 drawer_gone
 
 # Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
 # slice with a floating viewer, lives on when that window closes, comes back by name and ends.

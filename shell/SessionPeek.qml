@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 
 // Hovering a session's dot: its name, what it is doing and its last few plain lines, built
 // from its hooks by agentd, never by a model. It opens nothing.
@@ -12,10 +13,10 @@ Rectangle {
     visible: s !== null
     implicitWidth: Math.min(420, Math.max(220, body.implicitWidth + 28))
     implicitHeight: body.implicitHeight + 20
-    radius: 12
-    color: "#f01a1d21"
+    radius: Kit.Theme.radius
+    color: Kit.Theme.glassPill
     border.width: 1
-    border.color: "#2a2f36"
+    border.color: Kit.Theme.border
 
     ColumnLayout {
         id: body
@@ -27,16 +28,18 @@ Rectangle {
             Text {
                 objectName: "peekTitle"
                 text: peek.s ? peek.s.title : ""
-                color: "#e6e8eb"
-                font.pixelSize: 13
+                color: Kit.Theme.fg
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.smallSize
                 font.weight: Font.Medium
                 textFormat: Text.PlainText
             }
             Text {
                 objectName: "peekState"
                 text: peek.dev.stateWords(peek.s)
-                color: "#8b939c"
-                font.pixelSize: 12
+                color: Kit.Theme.muted
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.captionSize
                 textFormat: Text.PlainText
             }
         }
@@ -46,8 +49,9 @@ Rectangle {
             Layout.maximumWidth: 392
             visible: text !== ""
             text: peek.dev.peekLines(peek.s)
-            color: "#a9b0b8"
-            font.pixelSize: 12
+            color: Kit.Theme.muted
+            font.family: Kit.Theme.fontFamily
+            font.pixelSize: Kit.Theme.captionSize
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             maximumLineCount: 5

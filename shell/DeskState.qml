@@ -116,6 +116,10 @@ QtObject {
     readonly property bool watchingPresent: _rows(watchModel) > 0 && !isHidden("watching")
     // A single waiting session is the line in the pill, not a card.
     readonly property bool needsPresent: _rows(needsModel) >= 2
+    // Something waits for the person, one session or more. The pill's stone knocks for it, whether the
+    // card is up, folded to its strip, or the pill is the capsule under a full-screen window: this is
+    // the one mark of the desk that no right of way and no "desk" word puts away.
+    readonly property bool needsYou: _rows(needsModel) >= 1
     readonly property bool awayPresent: _rows(awayModel) > 0 && !isHidden("away")
     readonly property bool machinePresent: _rows(machineModel) > 0 && !isHidden("machine")
     readonly property bool alivePresent: _rows(aliveModel) > 0 && !isHidden("alive")
@@ -262,6 +266,15 @@ QtObject {
             running: desk.ticking
             triggeredOnStart: true
             onTriggered: desk.now = Date.now()
+        },
+        Binding {
+            // The stone knocks while a coding session waits for the person (see needsYou). The desk is
+            // the only writer: it clears with the last row, and with the socket (lost()).
+            target: desk.pill
+            property: "needsYou"
+            value: desk.needsYou
+            when: desk.pill !== null
+            restoreMode: Binding.RestoreNone
         },
         Connections {
             target: desk.pill
@@ -751,7 +764,7 @@ QtObject {
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
             now: { visible: nowVisible, phase: _phase, model: nowModel },
-            watching: watchModel, needs: needsModel
+            watching: watchModel, needs: needsModel, needsYou: needsYou, face: pill ? pill.face : ""
         }
     }
 }

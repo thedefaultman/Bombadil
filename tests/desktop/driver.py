@@ -60,6 +60,36 @@ def shot(name):
         print("grim failed:", r.stderr, flush=True)
 
 
+def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
+    """How many pixels in the pill's rows are the stone's green (the pill draws no other green)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    for y in range(*rows):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+def pixel(name, x, y):
+    """(r, g, b) of one pixel of a screenshot."""
+    from PySide6.QtGui import QImage
+    c = QImage(str(OUT / f"{name}.png")).pixelColor(x, y)
+    return c.red(), c.green(), c.blue()
+
+
+def mean_pixel(name, x, y, half=3):
+    """(r, g, b) averaged over the (2*half)-pixel square around x, y: a dithered picture's true colour."""
+    from PySide6.QtGui import QImage
+    img, tot, n = QImage(str(OUT / f"{name}.png")), [0, 0, 0], 0
+    for yy in range(y - half, y + half):
+        for xx in range(x - half, x + half):
+            c = img.pixelColor(xx, yy)
+            tot = [tot[0] + c.red(), tot[1] + c.green(), tot[2] + c.blue()]
+            n += 1
+    return tuple(round(v / n, 1) for v in tot)
+
+
 # -- start everything --
 start("fake-api", [sys.executable, str(E2E / "fake_api.py"), "18555", str(OUT / "api-requests.jsonl")])
 (xdg / "sway.conf").write_text(
@@ -80,7 +110,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", ["quickshell", "-p", str(REPO / "shell" / "shell.qml")])
+qs_proc = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -166,6 +196,19 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
+check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
+
+# 0. the ground: Bombadil's wallpaper is under the desk, not the compositor's own colour (sway's
+# #33404d above). The corners are the ground falling to its darkest, the middle is lit, the stone
+# lies in the middle, and nothing in it is orange or anywhere near as light as the glass.
+corners = [mean_pixel("00-resting", x, y) for x, y in ((6, 6), (1273, 6), (6, 700), (1273, 700))]
+check("the corners of the desk are the wallpaper's ground, not sway's colour",
+      all(11 <= r <= 17 and 13 <= g <= 19 and 15 <= b <= 21 for r, g, b in corners), corners)
+lit, side = mean_pixel("00-resting", 640, 180), mean_pixel("00-resting", 250, 180)
+check("the wallpaper is lit softly in the middle", lit[2] - side[2] >= 3 and lit[2] <= 34, f"{lit} vs {side}")
+body = mean_pixel("00-resting", 640, 260)
+check("the stone lies faintly in the middle, lighter than its ground", body[2] - lit[2] >= 5 and body[2] <= 46, f"{body} vs {lit}")
+check("nothing in the wallpaper is orange", all(r - b <= 3 for r, g, b in corners + [lit, body]), [lit, body])
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
@@ -186,6 +229,7 @@ check(
 inst = wait(ev("status", text=lambda t: (t or "").startswith("Installing ffmpeg")), 40, n)
 time.sleep(0.4)
 shot("03-installing-ffmpeg")
+check("the stone is not green while a turn runs", stone_pixels("03-installing-ffmpeg") < 20, stone_pixels("03-installing-ffmpeg"))
 check(
     "step reads Installing ffmpeg, marked system, with the exact command",
     inst and inst.get("risk") == "system" and "pacman -S" in (inst.get("command") or ""),
@@ -365,6 +409,71 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 7b. a click on a box in a picture that names a file opens it in the same drawer, in the viewer
+# (`bombadil view`: the image has no pager), and one Esc puts it away.
+m = mark()
+send({"type": "open", "kind": "path", "value": "/etc/os-release"})
+done = wait(ev("local", action="open", phase="done"), 15, m)
+check("a clicked file is opened and the line says so", done is not None and done.get("ok") is True, done and done.get("text"))
+check("the viewer opens in the drawer", until(drawer_open, 5) and "bombadil view --file /etc/os-release" in run("pgrep", "-af", "bombadil").stdout,
+      run("pgrep", "-af", "bombadil view").stdout[:200])
+time.sleep(1)
+shot("21-open-file")
+check("the viewer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("one Esc puts the viewer away", until(lambda: not drawer_open()))
+
+# 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
+# the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
+def glass_pixels(x, y, h):
+    """How many pixels of a one-pixel-wide strip are the bar's glass (#e61a1d21 over a dark screen)."""
+    r = subprocess.run(["grim", "-g", f"{x},{y} 1x{h}", "-t", "ppm", "-"], env=env, capture_output=True)
+    data = r.stdout
+    try:
+        head, rest = data.split(b"\n255\n", 1)
+    except ValueError:
+        return -1
+    return sum(1 for i in range(0, len(rest) - 2, 3)
+               if 21 <= rest[i] <= 30 and 24 <= rest[i + 1] <= 34 and 28 <= rest[i + 2] <= 38)
+
+
+m = mark()
+summon()
+typ("explain the vpn")
+key("Return")
+half = wait(ev("card", card=lambda c: bool(c and c.get("partial"))), 60, m)
+check("a picture streams into the bar while the model writes it", half is not None, half and half["card"].get("id"))
+full = wait(ev("card", card=lambda c: bool(c and not c.get("partial") and not c.get("gone"))), 60, m)
+check("the finished picture takes the streamed one's id",
+      full is not None and half is not None and full["card"]["id"] == half["card"]["id"], full and full["card"].get("id"))
+end = wait(ev("turn_end"), 60, m)
+check("the turn that drew it ends plainly", end is not None and not end.get("stopped"), end and end.get("summary"))
+time.sleep(1.0)
+shot("22-picture")
+with_card = glass_pixels(200, 300, 420)
+check("Quickshell draws the picture above the line", with_card > 80, with_card)
+qs_log = (OUT / "quickshell.log").read_text() if (OUT / "quickshell.log").exists() else ""
+bad = [ln for ln in qs_log.splitlines() if re.search(r"CardHost|Diagram|Theme\.qml|ReferenceError|TypeError", ln)]
+check("the bar loads the kit's Diagram without QML errors", not bad, bad[:3])
+summon()
+key("Escape")
+time.sleep(0.8)
+shot("22-picture-away")
+without = glass_pixels(200, 300, 420)
+check("Esc puts the picture away", without < with_card // 2, f"{with_card} -> {without}")
+
+before = api_requests()
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+pic = wait(ev("local", action="picture", phase="done"), 20, m)
+check("a picture word is answered with no model and no turn", pic is not None and api_requests() == before
+      and wait(ev("turn_start"), 1, m) is None, pic and pic.get("text"))
+time.sleep(0.8)
+shot("23-picture-word")
+
+
 # 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
 # `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
@@ -449,11 +558,28 @@ inject({"type": "jobs", "jobs": [
     {"id": "0a0b0c", "title": "Build the image", "kind": "watch", "state": "failed", "started": now_s - 60,
      "deadline": None, "ended": now_s - 5, "pct": None, "last": "pacman: could not resolve host",
      "unit": "bombadil-job-0a0b0c"}]})
+REVIEWER = {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
+            "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
+            "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
+            "lines": []}
+# One session waiting is the line in the pill and no card, and the stone knocks all the same.
+inject({"type": "dev", "sessions": [REVIEWER], "attention": ["rev"], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26a-desk-one-waiting")
+check("one waiting session: no card, and the stone is amber",
+      not st["present"]["needs"] and st["needsYou"] and st["face"] == "needs"
+      and stone_pixels("26a-desk-one-waiting", colour="#e0a93b") > 60,
+      f"present {st['present']['needs']}, face {st.get('face')}")
+inject({"type": "dev", "sessions": [dict(REVIEWER, state="working")], "attention": [], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26b-desk-answered")
+check("answered: the session stays listed and the stone goes still",
+      not st["needsYou"] and st["face"] != "needs" and stone_pixels("26b-desk-answered", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
 inject({"type": "dev", "sessions": [
-    {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
-     "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
-     "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
-     "lines": []},
+    REVIEWER,
     {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
      "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
      "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
@@ -468,11 +594,90 @@ check("the failed row says why in one line, with Why?", w["rows"][2]["button"] =
 check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
 check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
       and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+# The stone knocks while anything waits: amber, not the green of rest or the orange of work.
+amber = stone_pixels("26-desk-watching-needs", colour="#e0a93b")
+check("the stone is amber while two sessions wait for you", st.get("needsYou") and st.get("face") == "needs" and amber > 60,
+      f"face {st.get('face')}, amber pixels {amber}")
+# a picture with both rails up stays between them, as wide as the narrowed pill (328..951 at 1280 wide)
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.0)
+shot("26-desk-picture-between-rails")
+inside = glass_pixels(400, 480, 200)
+beside = glass_pixels(322, 480, 200)
+check("a picture with both rails up sits between them", inside > 60 and beside < 10, f"inside {inside}, beside {beside}")
+summon()
+key("Escape")
+time.sleep(0.8)
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
 inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+shot("27-desk-clear")
+check("and the stone is still: nothing waits, nothing is amber",
+      not st.get("needsYou") and st.get("face") != "needs" and stone_pixels("27-desk-clear", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
+
+# Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
+# none of the checks above would notice one.
+qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
+              if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
+check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
+
+# 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image (the first one wants the bar
+# started again, after that a change is noticed), a picture that will not load falls back to the
+# standard one, and taking the file away brings it back.
+def paint(path, colour):
+    from PySide6.QtGui import QColor, QImage
+    img = QImage(2560, 1440, QImage.Format_RGB32)
+    img.fill(QColor(colour))
+    assert img.save(str(path))
+
+
+def desk_colour(name, x=150, y=400):
+    # The Passwords window opened above is still up in the middle; the left side is bare ground.
+    time.sleep(1.5)   # the picture settles in over 300 ms, and a changed file is read a moment after
+    shot(name)
+    return mean_pixel(name, x, y)
+
+
+def near(got, want, tol=8):
+    return all(abs(g - w) <= tol for g, w in zip(got, want))
+
+
+standard = mean_pixel("00-resting", 150, 400)
+home = Path.home()
+choice = home / ".config" / "bombadil" / "wallpaper"
+choice.parent.mkdir(parents=True, exist_ok=True)
+paint(home / "first.png", "#336699")
+paint(home / "second.png", "#993366")
+choice.write_text("~/first.png\n")
+qs_proc.terminate()
+qs_proc.wait(10)
+start("quickshell-wallpaper", [str(REPO / "bin" / "bombadil-shell")])
+time.sleep(3)
+got = desk_colour("30-own-wallpaper")
+check("a picture named in ~/.config/bombadil/wallpaper replaces the standard one", near(got, (51, 102, 153)), got)
+choice.write_text("file://" + str(home / "second.png") + "\n")
+got = desk_colour("30-own-wallpaper-changed")
+check("changing the file changes the picture without a restart", near(got, (153, 51, 102)), got)
+choice.write_text("/nowhere/at/all.png\n")
+got = desk_colour("30-own-wallpaper-missing")
+check("a picture that will not load falls back to the standard one", near(got, standard, 4), (got, standard))
+choice.write_text("~/first.png\n")
+desk_colour("30-own-wallpaper-again")
+choice.unlink()
+got = desk_colour("30-own-wallpaper-gone")
+check("taking the file away brings the standard picture back", near(got, standard, 4), (got, standard))
+own_log = re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text())
+check("the wallpaper's choices raised no QML error but the one for the picture that is not there",
+      not [ln for ln in own_log.splitlines()
+           if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
+           and "Cannot open" not in ln], own_log[-400:])
 
 # 10. Coding sessions: the real Claude Code in zellij, a window that is only a viewer, the dots.
 home = Path.home()

@@ -7,6 +7,7 @@
   bombadil pill                        give the pill the keyboard (Hyprland runs this on a Super tap)
   bombadil watch [--file F] [--follow] every step, command and output of the last (or a) turn
   bombadil history                     recent turns and launcher actions
+  bombadil view --file F | -- CMD...   show a file or a command's output in the drawer; Esc closes it
   bombadil undo                        roll back the last turn (reboot to apply)
   bombadil provider claude|codex       switch provider, signing in to it if needed
   bombadil signin [claude|codex]       sign in (again): the page opens in the browser panel
@@ -22,7 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, dev, paths, snapshots, watch  # noqa: E402
+from bombadil import config, dev, pager, paths, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 
@@ -164,6 +165,8 @@ def main() -> int:
             print(line)
         watch.wait_for_key()
         return 0
+    elif cmd == "view":
+        return pager.view(args)
     elif cmd == "undo":
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")

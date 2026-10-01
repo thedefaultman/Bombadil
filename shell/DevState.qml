@@ -1,4 +1,5 @@
 import QtQuick
+import Bombadil as Kit
 
 // The coding sessions, as agentd's "dev" messages describe them (dev.py): a chip per project
 // with a dot per session, and the one line the pill shows while a session waits for you.
@@ -72,12 +73,12 @@ QtObject {
 
     function color(s) {
         switch (look(s)) {
-        case "working": return "#d97757"
-        case "turn": return "#ffd9b8"
-        case "failed": return "#d0504a"
-        case "asleep": return "#4a525c"
+        case "working": return Kit.Theme.accent
+        case "turn": return Kit.Theme.accentInk
+        case "failed": return Kit.Theme.bad
+        case "asleep": return Kit.Theme.borderActive
         }
-        return "#8b939c"
+        return Kit.Theme.muted
     }
 
     // The words under a hovered dot: what it is, what it is doing, and its last few lines.

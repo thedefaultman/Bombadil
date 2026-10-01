@@ -1,0 +1,880 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+</head>
+<body>
+<title>The Poor Man Switch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one reading column, the drawn screens as wide dark frames, and the OS bits live in HTML on dark stages. Same tokens as the earlier Bombadil pages. */
+:root {
+  color-scheme: light;
+  --bg: #f1f2f3; --surface: #ffffff; --line: #d7dbe0; --fg: #15181b; --soft: #3a4047; --muted: #5f6873;
+  --accent: #b4532f; --accent-soft: #f6e4dc; --ok: #2f7d3d; --amber: #9a6a0c; --red: #b23a3a; --ui-bg: #e6e8eb; --blue: #2f6aa8;
+  --os-bg: #101214; --os-panel: #1a1d21; --os-raised: #22262b; --os-edge: #2a2f36; --os-fg: #e6e8eb; --os-soft: #c3c8ce; --os-muted: #8b939c; --os-faint: #5c636b;
+  --os-accent: #d97757; --os-ok: #5fb36b; --os-amber: #e0a93b; --os-red: #d05555; --os-blue: #5b9bd5; --os-on-accent: #ffffff;
+  --sans: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --os: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+    --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+  --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16.5px; line-height: 1.6; padding-inline: 18px; padding-block: 0 72px; }
+.wrap { max-width: 1000px; margin: 0 auto; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--ui-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+strong, b { font-weight: 650; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.hero { display: grid; gap: 22px; padding-block: 48px 30px; }
+.hero h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; letter-spacing: -.025em; }
+.hero .lede { font-size: 19px; color: var(--soft); max-width: 68ch; }
+.hero .note { font-size: 15px; color: var(--muted); max-width: 72ch; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14.5px; color: var(--muted); }
+.hero-meta b { color: var(--fg); font-variant-numeric: tabular-nums; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 8px; padding-block: 4px 8px; }
+nav.toc a { font-size: 14px; color: var(--soft); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+section { padding-block: 44px 8px; scroll-margin-top: 12px; }
+section > h2 { font-size: 28px; font-weight: 750; letter-spacing: -.015em; margin-bottom: 8px; }
+section > .intro { color: var(--soft); max-width: 70ch; margin-bottom: 22px; }
+h3.sub { font-size: 19px; font-weight: 700; margin: 30px 0 10px; }
+
+/* Three choices */
+.decide { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 16px; padding: 20px 22px; display: grid; gap: 16px; }
+.decide h2 { font-size: 22px; font-weight: 750; }
+.decide > p { color: var(--soft); font-size: 15.5px; max-width: 72ch; }
+.qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 12px; }
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.qcard h3 { font-size: 16.5px; font-weight: 700; }
+.qcard h3 span { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; margin-right: 6px; }
+.qcard ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.qcard li { font-size: 14.5px; color: var(--soft); display: grid; grid-template-columns: 22px 1fr; gap: 0 4px; }
+.qcard li i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 1px; }
+.qcard li.rec { color: var(--fg); }
+.qcard li.rec i { color: var(--accent); font-weight: 600; }
+.qcard .rtag { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 0 7px; margin-left: 6px; vertical-align: 1px; }
+.qcard .why { font-size: 13.5px; color: var(--muted); }
+
+/* Drawn screens */
+.mock-svg { display: block; width: 100%; height: auto; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+figure .frame { border-radius: 14px; overflow: hidden; border: 1px solid var(--os-edge); background: var(--os-bg); box-shadow: 0 14px 40px rgba(0,0,0,.18); }
+figcaption { font-size: 14.5px; color: var(--muted); max-width: 80ch; }
+figcaption b { color: var(--fg); }
+.pfigs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 18px; align-items: start; }
+
+/* The machine's own bits, drawn live */
+.os { font-family: var(--os); color: var(--os-fg); }
+.stage { background:
+    radial-gradient(70% 90% at 18% 0%, #1e2a34 0%, transparent 70%),
+    radial-gradient(55% 80% at 92% 100%, #34241d 0%, transparent 70%), var(--os-bg);
+  border: 1px solid var(--os-edge); border-radius: 16px; padding: 22px 16px 16px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: end; gap: 10px; min-width: 0; }
+.stage .cap { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--os-faint); justify-self: start; }
+.os-line { background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 11px; padding: 9px 15px; font-size: 14.5px; line-height: 1.45; color: var(--os-fg); max-width: 100%; position: relative; }
+.os-line small { display: block; font-size: 12.5px; color: var(--os-muted); }
+.os-line.ok, .os-line.work, .os-line.warn { padding-left: 20px; }
+.os-line.ok::before, .os-line.work::before, .os-line.warn::before { content: ""; position: absolute; left: 8px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--os-ok); }
+.os-line.work::before { background: var(--os-accent); }
+.os-line.warn::before { background: var(--os-amber); }
+.os-btn { display: inline-block; font-size: 12.5px; font-weight: 600; line-height: 1.6; color: var(--os-fg); background: var(--os-raised); border: 1px solid var(--os-edge); border-radius: 7px; padding: 0 9px; margin-left: 6px; white-space: nowrap; }
+.os-btn.p { background: var(--os-accent); border-color: var(--os-accent); color: var(--os-on-accent); }
+.os-card { width: 100%; max-width: 420px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 12px 14px; display: grid; gap: 7px; }
+.os-card .lab { font-size: 12.5px; color: var(--os-muted); }
+.os-card .field { font-size: 15px; font-weight: 500; color: var(--os-fg); background: var(--os-bg); border: 1.5px solid var(--os-accent); border-radius: 9px; padding: 7px 12px; }
+.os-card .hint { font-size: 11.5px; color: var(--os-faint); }
+.os-pill { width: 100%; max-width: 460px; height: 42px; border-radius: 21px; background: var(--os-panel); border: 1.5px solid var(--os-edge); display: flex; align-items: center; gap: 12px; padding: 0 16px; font-size: 14.5px; color: var(--os-muted); }
+.os-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--os-ok); flex: none; }
+.os-pill .ph { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-pill .clock { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ap { width: 100%; max-width: 520px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 10px 14px 4px; }
+.ap .h { font-size: 13.5px; font-weight: 650; color: var(--os-fg); padding-bottom: 6px; }
+.ap .r { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--os-edge); font-size: 13.5px; color: var(--os-fg); }
+.ap .r > span:first-child { flex: 1; min-width: 0; }
+.ap .r i { font-style: normal; color: var(--os-muted); font-size: 12.5px; display: block; }
+.yours { font-family: var(--os); font-size: .84em; font-weight: 600; color: var(--os-on-accent); background: var(--os-accent); border-radius: 6px; padding: .05em .45em; white-space: nowrap; }
+
+/* The hand-over */
+.outcomes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; margin-top: 18px; }
+.outcome { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; display: grid; gap: 4px; align-content: start; }
+.outcome b { font-size: 15px; }
+.outcome span { font-size: 14.5px; color: var(--soft); }
+
+/* Rules */
+.rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px; counter-reset: rule; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; counter-increment: rule; }
+.rules li strong { display: block; font-size: 16px; margin-bottom: 4px; line-height: 1.35; }
+.rules li strong::before { content: counter(rule) ". "; color: var(--accent); font-family: var(--mono); font-size: 14px; font-weight: 500; }
+.rules li span { color: var(--soft); font-size: 14.5px; }
+.carry { font-size: 15px; color: var(--muted); margin-top: 14px; max-width: 76ch; }
+
+/* Tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14.5px; line-height: 1.45; }
+table.t th { text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 11px 14px 9px; }
+table.t td { padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top; color: var(--soft); }
+table.t td:first-child { color: var(--fg); font-weight: 550; }
+table.t td.you { color: var(--fg); font-weight: 600; white-space: nowrap; }
+table.t td .gap { color: var(--red); font-weight: 600; }
+.tnote { font-size: 14.5px; color: var(--muted); margin-top: 12px; max-width: 80ch; }
+
+/* Pieces */
+.pieces { display: grid; gap: 22px; }
+.piece { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; min-width: 0; display: grid; gap: 12px; }
+.piece-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.piece-num { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+.piece-head h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; flex: 1 1 240px; }
+.effort { font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }
+.piece p { font-size: 15.5px; color: var(--soft); max-width: 80ch; }
+.piece p b { color: var(--fg); }
+.piece ul { margin: 0; padding-left: 1.15em; display: grid; gap: 6px; font-size: 15px; color: var(--soft); max-width: 82ch; }
+.piece ul b { color: var(--fg); }
+.k { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.later { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 80ch; }
+.later li { color: var(--soft); font-size: 15.5px; }
+.later li b { color: var(--fg); }
+.later li::marker { font-family: var(--mono); color: var(--accent); }
+
+/* Days */
+.tabs { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 3px; gap: 2px; margin-bottom: 18px; }
+.tabs button { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--soft); background: transparent; border: 0; border-radius: 999px; padding: 5px 16px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+.who { font-size: 15.5px; color: var(--soft); max-width: 76ch; margin-bottom: 16px; }
+.hours { list-style: none; margin: 0 0 0 6px; padding: 0; border-left: 2px solid var(--line); }
+.hours li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 2px 12px; padding: 9px 0 9px 16px; position: relative; }
+.hours li::before { content: ""; position: absolute; left: -7px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--line); }
+.hours li.out::before { border-color: var(--accent); }
+.hours .t { font-family: var(--mono); font-size: 13px; color: var(--accent); padding-top: 3px; font-variant-numeric: tabular-nums; }
+.hours p { font-size: 15.5px; color: var(--soft); }
+.hours .needs { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.hours li.fig { grid-template-columns: minmax(0, 1fr); padding-block: 10px 16px; }
+.hours li.fig::before { display: none; }
+
+/* Boxes, defaults, lists */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 15px; color: var(--soft); min-width: 0; display: grid; gap: 6px; align-content: start; }
+.box h3 { font-size: 16.5px; font-weight: 700; color: var(--fg); }
+.box ul { margin: 0; padding-left: 1.15em; display: grid; gap: 7px; }
+.box li b { color: var(--fg); }
+.box.cut li b { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.decisions { display: grid; gap: 8px; }
+details.dec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.dec summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+details.dec summary::-webkit-details-marker { display: none; }
+details.dec summary .q { font-weight: 650; }
+details.dec summary .chev { grid-column: 2; grid-row: 1; align-self: center; color: var(--muted); transition: transform .15s; }
+details.dec[open] summary .chev { transform: rotate(90deg); }
+details.dec .more { padding: 0 16px 14px; font-size: 15px; color: var(--soft); display: grid; gap: 8px; max-width: 76ch; }
+details.dec .more .alt { color: var(--muted); }
+details.dec .more b.l { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; color: var(--accent); margin-right: 4px; }
+ol.risks { margin: 0; padding-left: 1.4em; display: grid; gap: 10px; max-width: 80ch; }
+ol.risks li { color: var(--soft); font-size: 15.5px; }
+ol.risks li b { color: var(--fg); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); display: grid; gap: 4px; }
+
+@media (prefers-reduced-motion: reduce) { details.dec summary .chev { transition: none; } }
+@media (max-width: 760px) {
+  body { font-size: 16px; padding-inline: 16px; }
+  .hero { padding-block: 32px 24px; }
+  .piece { padding: 16px; }
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; }
+  table.stack tr { border-top: 1px solid var(--line); padding: 10px 14px; display: grid; gap: 5px; }
+  table.stack tr:first-child { border-top: 0; }
+  table.stack td { border: 0; padding: 0; white-space: normal; }
+  table.stack td::before { content: attr(data-label); display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  .hours li { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Second version: the three places, the source ladder, and live message and task cards */
+.places { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.place { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.place.main { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+.place .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--accent); }
+.place h3 { font-size: 18px; font-weight: 700; }
+.place p { font-size: 15px; color: var(--soft); }
+.place ul { margin: 0; padding-left: 1.1em; display: grid; gap: 4px; font-size: 14.5px; color: var(--soft); }
+.ladder { list-style: none; counter-reset: l; padding: 0; margin: 0; display: grid; gap: 8px; max-width: 78ch; }
+.ladder li { counter-increment: l; display: grid; grid-template-columns: 26px minmax(0, 1fr); font-size: 15.5px; color: var(--soft); }
+.ladder li::before { content: counter(l); font-family: var(--mono); color: var(--accent); font-size: 13px; padding-top: 3px; }
+.ladder li b { color: var(--fg); }
+.mc { width: 100%; max-width: 460px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 12px 14px; display: grid; gap: 8px; text-align: left; }
+.mc .top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13.5px; font-weight: 650; color: var(--os-fg); }
+.mc .top span { font-weight: 400; color: var(--os-muted); font-size: 12px; }
+.mc .msg { font-size: 14px; color: var(--os-fg); line-height: 1.45; }
+.mc .msg b { font-weight: 650; margin-right: 6px; }
+.mc .msg i { font-style: normal; color: var(--os-muted); font-size: 12px; }
+.mc .src { font-size: 11.5px; color: var(--os-faint); }
+.mc .box { background: var(--os-bg); border: 1.5px solid var(--os-accent); border-radius: 9px; padding: 7px 10px; font-size: 14px; color: var(--os-fg); }
+.mc .row { display: flex; justify-content: flex-end; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mc .row .os-btn { margin-left: 0; }
+.mc dl { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 13.5px; }
+.mc dt { color: var(--os-muted); }
+.mc dd { margin: 0; color: var(--os-fg); }
+.stagegrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; justify-items: center; align-items: start; width: 100%; }
+
+.qcard .rtag.m { color: var(--muted); border-color: color-mix(in srgb, var(--muted) 45%, transparent); }
+.qcard .why b { color: var(--fg); }
+
+/* This page: the stone in the pill, waiting chips, found chips, the AI card, the case switcher and the stone states. */
+.defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+.st { width: 22px; height: 22px; flex: none; display: block; }
+.os-pill .ph.typed { color: var(--os-fg); }
+.qchips { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: 100%; }
+.qchip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; font-size: 12.5px; line-height: 1.5; color: var(--os-muted); background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 999px; padding: 2px 11px; }
+.qchip i { font-style: normal; font-size: 11.5px; color: var(--os-faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.qchip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qchip .x { color: var(--os-faint); }
+.fchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.fchip { display: inline-flex; align-items: baseline; gap: 7px; font-size: 13px; color: var(--os-fg); background: var(--os-raised); border: 1px solid var(--os-edge); border-radius: 8px; padding: 2px 9px; max-width: 100%; }
+.fchip i { font-style: normal; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--os-muted); white-space: nowrap; }
+.fchip span { min-width: 0; overflow-wrap: anywhere; }
+.aic { width: 100%; max-width: 360px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 10px 14px 6px; display: grid; }
+.aic .h { font-size: 12.5px; color: var(--os-muted); padding-bottom: 4px; }
+.aic .r { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--os-edge); }
+.aic .r > div { flex: 1; min-width: 0; font-size: 14px; color: var(--os-fg); }
+.aic .r small { display: block; font-size: 12px; color: var(--os-muted); }
+.aic .hint { font-size: 11.5px; color: var(--os-faint); padding: 6px 0 2px; border-top: 1px solid var(--os-edge); }
+.sw { width: 34px; height: 20px; border-radius: 10px; background: var(--os-edge); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--os-muted); }
+.sw.on { background: color-mix(in srgb, var(--os-ok) 55%, var(--os-panel)); }
+.sw.on::after { left: 17px; background: var(--os-fg); }
+.mini-app { width: 100%; max-width: 360px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 12px; overflow: hidden; }
+.mini-app .bar { font-size: 12.5px; font-weight: 600; color: var(--os-soft); padding: 7px 12px; border-bottom: 1px solid var(--os-edge); }
+.mini-app .body { padding: 10px 12px 12px; display: grid; gap: 10px; }
+.mini-app .txt { font-size: 13px; line-height: 1.5; color: var(--os-soft); }
+.mini-app .txt b { color: var(--os-fg); font-weight: 600; }
+.mini-app .acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+.kbtn { display: inline-grid; justify-items: center; gap: 1px; font-size: 12.5px; font-weight: 600; color: var(--os-fg); background: var(--os-raised); border: 1px solid var(--os-edge); border-radius: 8px; padding: 3px 12px 4px; }
+.kbtn small { font-size: 10.5px; font-weight: 500; color: var(--os-muted); }
+
+/* The case switcher */
+.cases { display: grid; gap: 12px; }
+.cases .tabs { margin-bottom: 0; }
+.cases .stage { min-height: 200px; }
+.cases .os-pill, #see .os-pill { max-width: 540px; }
+.why-line { font-size: 14.5px; color: var(--muted); max-width: 80ch; }
+.why-line b { color: var(--fg); }
+
+/* The stone states */
+.stones { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 10px; }
+.stone-tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; align-content: start; min-width: 0; }
+.stone-tile.prop { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.stone-tile .art { background: var(--os-bg); display: flex; align-items: center; justify-content: center; gap: 18px; padding: 18px 10px; }
+.stone-tile .art .big { width: 56px; height: 56px; }
+.stone-tile .art .st { width: 22px; height: 22px; }
+.stone-tile .lbl { padding: 10px 12px 12px; display: grid; gap: 2px; align-content: start; }
+.stone-tile .lbl b { font-size: 14.5px; }
+.stone-tile .lbl span { font-size: 13.5px; color: var(--soft); line-height: 1.45; }
+.stone-tile .lbl em { font-style: normal; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+
+/* Questions you can tap */
+.qcard .opt { display: grid; grid-template-columns: 22px 1fr; gap: 0 4px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; font-size: 14.5px; color: var(--muted); }
+.qcard .opt i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 1px; }
+.qcard .opt.picked { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--fg); }
+.qcard .opt.picked i { color: var(--accent); font-weight: 600; }
+.decided { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; display: grid; gap: 6px; font-size: 14.5px; color: var(--soft); }
+.decided ul { margin: 0; padding-left: 1.15em; display: grid; gap: 4px; }
+.decided b { color: var(--fg); }
+.qcard li { display: block; }
+.answer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 15px; color: var(--soft); }
+.answer output { font-family: var(--mono); font-size: 16px; font-weight: 500; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px 10px; user-select: all; }
+.answer button { font: inherit; font-size: 14px; font-weight: 600; color: var(--surface); background: var(--accent); border: 0; border-radius: 8px; padding: 5px 14px; cursor: pointer; }
+.answer .said { font-size: 13.5px; color: var(--muted); }
+.rests .box h3 { display: flex; align-items: center; gap: 8px; }
+.tag-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+</style>
+
+<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <path id="st-full" d="M10.65 3.362A2.7 2.7 0 0 1 13.35 3.362A15.3 15.3 0 0 1 21 16.612A2.7 2.7 0 0 1 19.65 18.95A15.3 15.3 0 0 1 4.35 18.95A2.7 2.7 0 0 1 3 16.612A15.3 15.3 0 0 1 10.65 3.362Z"/>
+    <path id="st-line" d="M10.763 4.082A2.475 2.475 0 0 1 13.238 4.082A14.025 14.025 0 0 1 20.25 16.228A2.475 2.475 0 0 1 19.013 18.371A14.025 14.025 0 0 1 4.988 18.371A2.475 2.475 0 0 1 3.75 16.228A14.025 14.025 0 0 1 10.762 4.082Z"/>
+    <path id="st-b" d="M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86"/>
+    <mask id="st-cut" maskUnits="userSpaceOnUse" x="-4" y="-4" width="32" height="32">
+      <rect x="-4" y="-4" width="32" height="32" fill="#fff"/>
+      <use href="#st-b" fill="none" stroke="#000" stroke-width="1.6"/>
+    </mask>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Bombadil · design pass · 1 October 2026</span>
+  <h1>The poor man switch</h1>
+  <p class="lede">When Claude or Codex runs out, nothing you made stops. Bombadil says so once, with the time the AI comes back, holds every ask instead of failing it, still answers a sentence with things it finds on the computer, and gives you a switch to rest the AI yourself.</p>
+  <p class="note">This answers the owner’s ask of 30 September: a toggle that keeps the OS, the apps it made and their processes usable when the plan runs out. It sits on the earlier briefs, whose decisions stay in force. It was made from four research sweeps (what in the code needs the model, how both command-line tools report running out, whether a local model could stand in, what the briefs already decided), three independent drafts and two critiques. Code read on main at 26843d3.</p>
+  <div class="hero-meta">
+    <span>Build first: <b>Resting</b> and <b>the finder</b></span>
+    <span>Questions: <b>3, answered 1a 2a 3a</b></span>
+    <span>Local AI: <b>not now</b></span>
+    <span>Brief: <b>poor-man-switch-brief.md</b></span>
+  </div>
+</header>
+
+<div class="decide" id="questions">
+  <h2>Three questions, answered: 1a 2a 3a</h2>
+  <p>Answered on 1 October 2026: the recommended option each time. The options stay as they were asked, so the reasoning is still readable; the picked one is marked.</p>
+  <div class="decided"><b>What the answers change in the build</b><ul><li><b>1a:</b> the AI card and the words “pause Claude” and “resume Claude” are part of piece 1. No switch on the bar.</li><li><b>2a:</b> no local AI. The finder never calls a model, and nothing about a small model is built, installed or packaged.</li><li><b>3a:</b> recipes are in, as part of piece 7: only tasks whose every step undo can take back are kept, and each run saves a restore point.</li></ul></div>
+  <div class="qs">
+    <div class="qcard">
+      <h3><span>1</span>Bombadil flips the switch by itself when Claude runs out. Where should it be for the times the user flips it themselves?</h3>
+      <ol>
+        <li><div class="opt picked" aria-current="true"><i>a</i><span>Click the stone when nothing is running: a small card shows each AI, ready or resting until when, with a switch. “pause Claude” and “resume Claude” work too.<span class="rtag">Recommended</span></span></div></li>
+        <li><div class="opt"><i>b</i><span>The same, plus a switch always visible on the bar.</span></div></li>
+        <li><div class="opt"><i>c</i><span>Only the words “pause Claude” and “resume Claude”, no switch anywhere.</span></div></li>
+      </ol>
+      <p class="why"><b>Why a:</b> nothing new sits on screen at rest, and the switch is where the machine already shows its state.</p>
+    </div>
+    <div class="qcard">
+      <h3><span>2</span>Should Bombadil keep a small AI on the computer itself, for when Claude is out?</h3>
+      <ol>
+        <li><div class="opt picked" aria-current="true"><i>a</i><span>Not now. Everything you made keeps working, and the pill finds your apps, files and past asks with no AI.<span class="rtag">Recommended</span></span></div></li>
+        <li><div class="opt"><i>b</i><span>Yes, as a download you turn on, on computers with 16 GB of memory or more. It only suggests which app, word or file you meant, and never acts.</span></div></li>
+        <li><div class="opt"><i>c</i><span>Yes, a bigger one that can do small jobs by itself, on computers that can run it.</span></div></li>
+      </ol>
+      <p class="why"><b>Why a:</b> on a 5 GB test VM it would take a fifth to a half of the memory, answer in seconds, and still pick the wrong thing about one time in ten.</p>
+    </div>
+    <div class="qcard">
+      <h3><span>3</span>Should Claude leave the user named shortcuts that run commands, so they still work when it is out?</h3>
+      <ol>
+        <li><div class="opt picked" aria-current="true"><i>a</i><span>Yes. When Claude fixes something you will likely ask again, like “fix the sound”, it keeps the exact commands under that name; each run saves a restore point, and only shortcuts undo can fully take back are kept.<span class="rtag">Recommended</span></span></div></li>
+        <li><div class="opt"><i>b</i><span>Only a “Run again” button on finished jobs in the Watching card.</span></div></li>
+        <li><div class="opt"><i>c</i><span>No. Learned words keep only opening and showing things.</span></div></li>
+      </ol>
+      <p class="why"><b>Why a:</b> what the machine learned while it had a plan becomes things you can still do without one, and the undo rule keeps it safe. Today learned words can only open or show.</p>
+    </div>
+  </div>
+</div>
+
+<nav class="toc" aria-label="Sections">
+  <a href="#short">The short answer</a>
+  <a href="#see">See it</a>
+  <a href="#day">A day with it</a>
+  <a href="#stone">The stone</a>
+  <a href="#rules">Rules</a>
+  <a href="#first">Build first</a>
+  <a href="#after">After these</a>
+  <a href="#switch">The switch</a>
+  <a href="#lines">The lines</a>
+  <a href="#works">What keeps working</a>
+  <a href="#happens">What happens to</a>
+  <a href="#defaults">Defaults</a>
+  <a href="#owners">Who owns what</a>
+  <a href="#cut">Cut</a>
+  <a href="#checked">Checked</a>
+</nav>
+
+<section id="short">
+  <h2>The short answer</h2>
+  <p class="intro"><b>Most of the OS already works without the model. What makes it feel useless is that it does not know it is out.</b> Make running out a state: say it once with the time Claude comes back, hold every ask instead of failing it, find things on the computer when you type a sentence, and give you a switch to flip it yourself.</p>
+  <div class="outcomes">
+    <div class="outcome"><b>Already true, with no model</b><span>Apps and their processes, background jobs, the browser and its sign-ins, files, the terminal, launcher words, “!” commands, undo, history, Details, Stop, pictures of the machine, and the desk’s Watching card.</span></div>
+    <div class="outcome"><b>Broken today</b><span>A limit changes nothing. The stone stays green, the field says “Ask anything”, Enter shows “On it”, a red line fades after 12 seconds, and every waiting ask is sent into the wall, each one taking a restore point and clearing the undo marker.</span></div>
+    <div class="outcome"><b>Build first</b><span>(1) Resting: one state that holds asks as chips labelled with the time, comes back by itself, and has a switch. (2) The finder: while resting, a sentence also gets up to three things found on the computer.</span></div>
+    <div class="outcome"><b>Not now, and never by itself</b><span>A small AI on the computer (question 2, answered a). Moving to Codex and spending money stay one press away and never happen on their own.</span></div>
+  </div>
+</section>
+
+<section id="see">
+  <h2>See it</h2>
+  <p class="intro">Pick a case. The line, its one button, the waiting chips and the empty field change with it; everything else on the machine stays as it was. The hollow stone is a stand-in until the identity work draws it.</p>
+  <div class="cases">
+    <div class="tabs" role="tablist" aria-label="Cases">
+      <button type="button" role="tab" aria-selected="true" data-case="five">5-hour limit</button>
+      <button type="button" role="tab" aria-selected="false" data-case="week">Weekly limit</button>
+      <button type="button" role="tab" aria-selected="false" data-case="spend">Spending limit</button>
+      <button type="button" role="tab" aria-selected="false" data-case="hand">By hand</button>
+      <button type="button" role="tab" aria-selected="false" data-case="opus">Opus only</button>
+      <button type="button" role="tab" aria-selected="false" data-case="credits">On credits</button>
+    </div>
+    <div class="stage os" role="tabpanel" aria-live="polite" aria-label="The pill in the chosen case">
+      <span class="cap">The pill and the line above it, as the shell would draw them</span>
+      <div class="os-line" id="c-line"><span id="c-text">Claude is at its limit until 15:00. Your apps and files still work.</span><span class="os-btn" id="c-btn">Use Codex until 15:00</span></div>
+      <div class="qchips" id="c-chips">
+        <span class="qchip"><i class="c-lab">15:00</i><span>make the tracker blue</span><b class="x">×</b></span>
+        <span class="qchip"><i class="c-lab">15:00</i><span>from Notes: summarise this</span><b class="x">×</b></span>
+      </div>
+      <div class="os-pill">
+        <svg class="st" id="c-st-rest" viewBox="0 0 24 24" role="img" aria-label="Stone at rest" hidden><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg>
+        <svg class="st" id="c-st-resting" viewBox="0 0 24 24" role="img" aria-label="Stone resting"><use href="#st-line" fill="none" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg>
+        <span class="ph" id="c-ph">Open or find anything. Asks wait for 15:00.</span>
+        <span class="clock">12:30</span>
+      </div>
+    </div>
+    <p class="why-line" id="c-why"><b>Behind it:</b> an ask was refused with a 429 and the error <code>rate_limit</code>, and Claude’s own <code>rate_limit_event</code> said <code>rejected</code>, <code>five_hour</code>, resetting at 15:00. The button shows only if Codex is signed in.</p>
+  </div>
+
+  <h3 class="sub">Around it</h3>
+  <div class="pfigs">
+    <figure>
+      <div class="stage os" aria-label="A sentence typed while the AI rests">
+        <span class="cap">A sentence while resting</span>
+        <div class="os-line">Kept for 15:00. Found on this computer:
+          <div class="fchips">
+            <span class="fchip"><i>PDF</i><span>march-invoice.pdf</span></span>
+            <span class="fchip"><i>App</i><span>Tracker</span></span>
+            <span class="fchip"><i>You asked</i><span>file the March invoice (3 Sep)</span></span>
+          </div>
+        </div>
+        <div class="qchips"><span class="qchip"><i>15:00</i><span>the march invoice</span><b class="x">×</b></span></div>
+        <div class="os-pill">
+          <svg class="st" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg>
+          <span class="ph">Open or find anything. Asks wait for 15:00.</span><span class="clock">13:20</span>
+        </div>
+      </div>
+      <figcaption><b>Piece 2.</b> Pressing a found chip opens it and drops the kept ask it came from. Nothing opens by itself and nothing runs. With no match: “Kept for 15:00. Nothing on this computer matches.”</figcaption>
+    </figure>
+    <figure>
+      <div class="stage os" aria-label="An app whose button asks the agent">
+        <span class="cap">An app that asks the agent</span>
+        <div class="mini-app">
+          <div class="bar">Notes</div>
+          <div class="body">
+            <p class="txt"><b>Standup, 1 Oct.</b> Tracker colours, the March invoice, the VM idle CPU, who takes the mail view…</p>
+            <div class="acts"><span class="kbtn">Summarise<small>At 15:00</small></span><span class="kbtn">Copy</span></div>
+          </div>
+        </div>
+        <div class="qchips"><span class="qchip"><i>15:00</i><span>from Notes: summarise this</span><b class="x">×</b></span></div>
+      </div>
+      <figcaption><b>The button stays pressable.</b> A press waits as a chip, at most one per app, and the answer reaches the app after the reset. An app never learns about a limit through an error string.</figcaption>
+    </figure>
+    <figure>
+      <div class="stage os" aria-label="The card that opens when you click the stone at rest">
+        <span class="cap">Click the stone when nothing runs</span>
+        <div class="aic">
+          <span class="h">The AI on this computer</span>
+          <div class="r"><div>Claude · ready<small>5-hour limit at 84%, resets 15:00</small></div><span class="sw on" role="img" aria-label="Switch on"></span></div>
+          <div class="r"><div>Codex · not signed in<small>Type “sign in to Codex” to add it</small></div><span class="sw" role="img" aria-label="Switch off"></span></div>
+          <span class="hint">Flip Claude off to pause it · Esc closes</span>
+        </div>
+        <div class="os-pill">
+          <svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg>
+          <span class="ph">Ask anything</span><span class="clock">20:00</span>
+        </div>
+      </div>
+      <figcaption><b>The toggle (question 1a).</b> Off is the same as typing “pause Claude”; on is “resume Claude”. The percentage shows only once Claude’s own tool has sent one. While a turn runs, the stone is still Stop.</figcaption>
+    </figure>
+    <figure>
+      <div class="stage os" aria-label="The line when the AI comes back">
+        <span class="cap">At the reset</span>
+        <div class="os-line">Claude is back. Running your 3 waiting asks.</div>
+        <div class="qchips">
+          <span class="qchip"><i>next</i><span>make the tracker blue</span><b class="x">×</b></span>
+          <span class="qchip"><i>next</i><span>from Notes: summarise this</span><b class="x">×</b></span>
+        </div>
+        <div class="os-pill">
+          <svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#d97757"/></g></svg>
+          <span class="ph">Ask anything</span><span class="clock">15:01</span>
+        </div>
+      </div>
+      <figcaption><b>One minute after the reset, on the wall clock.</b> No test call: the cut-off ask runs first, in the same conversation, told what it had already changed; the rest follow in the order you typed them.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="day">
+  <h2>A day with it</h2>
+  <p class="intro">You are watching Bombadil build a habit tracker on a Tuesday. The left column is the time; under each moment is what is behind it.</p>
+  <ol class="hours">
+    <li><span class="t">10:40</span><div><p>A line shows once after a turn: “Claude 5-hour limit at 84%, resets 15:00.”</p><span class="needs">rate_limit_event with allowed_warning · piece 3</span></div></li>
+    <li class="fig"><div class="stage os" aria-label="The warning line">
+      <div class="os-line">Claude 5-hour limit at 84%, resets 15:00.</div>
+      <div class="os-pill"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><span class="ph">Ask anything</span><span class="clock">10:40</span></div>
+    </div></li>
+    <li class="out"><span class="t">11:52</span><div><p>Halfway through the tracker the stone stops rolling and goes hollow and grey. The closing line says how far it got, with Undo and Details as after any turn that changed something.</p><span class="needs">a refused turn: 429, rate_limit, an event saying rejected with resetsAt</span></div></li>
+    <li class="fig"><div class="stage os" aria-label="The line for a turn cut off partway">
+      <div class="os-line">Claude hit its limit partway, after changing 2 files. It carries on at 15:00.<span class="os-btn">Undo</span><span class="os-btn">Details</span></div>
+      <div class="qchips"><span class="qchip"><i>15:00</i><span>build me a habit tracker</span><b class="x">×</b></span></div>
+      <div class="os-pill"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg><span class="ph">Open or find anything. Asks wait for 15:00.</span><span class="clock">11:52</span></div>
+    </div></li>
+    <li class="out"><span class="t">11:53</span><div><p>“Claude is at its limit until 15:00. Your apps and files still work.” The field reads “Open or find anything. Asks wait for 15:00.”</p><span class="needs">the resting line, in the plain tone, not red</span></div></li>
+    <li><span class="t">12:05</span><div><p>“passwords” opens Passwords. The browser is still signed in to your mail. The ISO download on the Watching card is at 61%. “!df -h” runs.</p><span class="needs">launcher words, the browser’s own profile, the jobs table</span></div></li>
+    <li><span class="t">12:30</span><div><p>“make the tracker blue” becomes a grey chip labelled 15:00. “On it” never shows.</p><span class="needs">the queue gate that already exists</span></div></li>
+    <li><span class="t">13:10</span><div><p>In Notes, Summarise shows “At 15:00”; a press adds “from Notes: summarise this”.</p><span class="needs">the kit’s Agent ready and note</span></div></li>
+    <li><span class="t">13:20</span><div><p>“the march invoice”: “Kept for 15:00. Found on this computer:” and three chips. You press the PDF and it opens.</p><span class="needs">the finder · piece 2</span></div></li>
+    <li class="out"><span class="t">15:01</span><div><p>The stone fills green. “Claude is back. Running your 3 waiting asks.” The tracker carries on first, in the same conversation.</p><span class="needs">the wall clock passes the reset; the first waiting ask is the check</span></div></li>
+    <li><span class="t">Sun 20:00</span><div><p>Most of the week is used and two coding sessions should keep running. You click the stone and flip Claude off: “Claude is paused. Your apps and files still work.”</p><span class="needs">the AI card’s switch, the same state</span></div></li>
+  </ol>
+</section>
+
+<section id="stone">
+  <h2>The stone while the AI rests</h2>
+  <p class="intro">What it should mean: the machine is here and your things work; its AI is resting until a time or until you wake it. This is a proposal for the identity work, which draws it. Each tile shows the stone large and at its real size in the pill.</p>
+  <div class="stones">
+    <div class="stone-tile">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg></div>
+      <div class="lbl"><b>Rest</b><span>Filled, still. The AI can answer.</span></div>
+    </div>
+    <div class="stone-tile">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#d97757"/></g></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#d97757"/></g></svg></div>
+      <div class="lbl"><b>Working</b><span>Filled, rolling. The machine is acting.</span></div>
+    </div>
+    <div class="stone-tile prop">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg></div>
+      <div class="lbl"><em>Proposal</em><b>Resting</b><span>Hollow and whole, muted grey, the b a visible line. No motion.</span></div>
+    </div>
+    <div class="stone-tile prop">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="rgba(139,147,156,.2)" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="rgba(139,147,156,.2)" stroke="#8b939c" stroke-width="1.5"/><use href="#st-b" fill="none" stroke="#8b939c" stroke-width="1.6"/></svg></div>
+      <div class="lbl"><em>If needed</em><b>Resting, faint fill</b><span>If a whole outline and offline’s broken one blur at 24 px.</span></div>
+    </div>
+    <div class="stone-tile">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#d05555" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="4.125 4.102 4.95 4.102" stroke-dashoffset="0.767"/><use href="#st-b" fill="none" stroke="#d05555" stroke-width="1.6"/></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><use href="#st-line" fill="none" stroke="#d05555" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="4.125 4.102 4.95 4.102" stroke-dashoffset="0.767"/><use href="#st-b" fill="none" stroke="#d05555" stroke-width="1.6"/></svg></div>
+      <div class="lbl"><b>Offline</b><span>Broken red outline. The agent itself is gone.</span></div>
+    </div>
+    <div class="stone-tile">
+      <div class="art"><svg class="big" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.4" fill="#8b939c"/></svg><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.4" fill="#8b939c"/></svg></div>
+      <div class="lbl"><b>Stopped</b><span>A grey square. You stopped a turn.</span></div>
+    </div>
+  </div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="box"><h3>Colour, by elimination</h3><p>Not red, because nothing failed. Not amber, because it is not your turn. Not orange, because nothing is acting. Not green, because the AI cannot answer. Grey already means “not acting” for Stopped’s square. The pill’s border stays neutral, not offline’s red.</p></div>
+    <div class="box"><h3>Without colour, and in code</h3><p>Hollow and whole, against rest (filled), offline (broken outline) and stopped (square). No motion, so the closed list of movements stays closed; coming back simply fills green again. One look for a hand pause and a limit. A new <code>face</code> value, <code>resting</code>, in PillState.qml and a drawing in Stone.qml; it must never fall into the <code>needs</code> branch. In Stone.qml today the b is a cut, which would vanish on a hollow stone, so here it is drawn as a line.</p></div>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>The rules</h2>
+  <ol class="rules">
+    <li><strong>Nothing you made stops when the AI does.</strong><span>Apps and their processes, background jobs, the browser, files, launcher words and “!” commands never check whether the AI is there. Recovery never goes through the part that broke.</span></li>
+    <li><strong>Running out is a state, said once, with the time it comes back.</strong><span>One line names the AI and gives the time the provider sent, never a guess, and reads the same in every voice. One button per case.</span></li>
+    <li><strong>An ask made while the AI rests waits; it never fails.</strong><span>It waits as the grey chip the queue already uses, labelled with the time it will run, and × removes it. The same holds for an app’s ask.</span></li>
+    <li><strong>One refusal is enough, and nothing spends while it rests.</strong><span>After the first refused ask nothing more is sent until the reset, your press or your word. No test calls, no retry loops, and a refused turn never costs you the conversation or a real undo point.</span></li>
+    <li><strong>A sentence still gets an answer from the machine.</strong><span>While the AI rests, the pill shows what it found on the computer, and you press. It never guesses and acts.</span></li>
+    <li><strong>Money and the other account wait for your press.</strong><span>Raising a limit, buying credits and moving to Codex are each one press; the machine never does them alone.</span></li>
+    <li><strong>Resting is nobody’s failure and nobody’s turn.</strong><span>Not red, not the amber knock, never on the desk, never a finding, never a failed routine run.</span></li>
+    <li><strong>The switch you flip and the switch that flips itself are the same state.</strong><span>A hand pause looks exactly like a limit, so there is one thing to learn, and every line here can be tried on the VM without spending a real limit.</span></li>
+  </ol>
+</section>
+
+<section id="first">
+  <h2>Build these first</h2>
+  <p class="intro">These two make the machine stop pretending and keep it useful while it waits. Both reuse what already runs for the signed-out and offline setup states. They need a build thread of their own; they touch only main’s agentd, providers, launcher, the kit’s agent.py and the shell.</p>
+  <div class="pieces">
+    <article class="piece">
+      <div class="piece-head"><span class="piece-num">1</span><h3>Resting: the machine knows it is out, holds your asks, and has a switch</h3><span class="effort">Effort M</span></div>
+      <div>
+        <span class="k">What you see</span>
+        <ul>
+          <li>The first refused ask turns the stone hollow and grey. The cut-off turn’s closing line says how far it got, with today’s Undo and Details if it changed something; then the resting line for its case takes over, in the plain tone, not red.</li>
+          <li><b>One button under the line:</b> “Use Codex until 15:00” on a timed limit if Codex is signed in; “Raise the limit” on a spending limit, which becomes “Try again” once pressed; “Resume Claude” after a hand pause.</li>
+          <li>Every waiting chip’s label changes from “next” to the time. Anything typed that is not a launcher word or a “!” command becomes such a chip.</li>
+          <li><b>Apps:</b> an ask from an app waits as a chip; one that was cut off goes back into the queue with no error text. A kit button that asks the agent shows “At 15:00” and stays pressable.</li>
+          <li><b>At the reset</b> plus one minute, on the wall clock, the stone fills green and the cut-off ask runs first in the same conversation, with a note of what it had already changed.</li>
+          <li><b>The toggle:</b> clicking the stone while nothing runs opens the AI card, one row per AI with a switch.</li>
+        </ul>
+      </div>
+      <div>
+        <span class="k">Why first</span>
+        <p>This is where the uselessness is. Today a limit only rewrites the error text (<code>_limit_text</code>), so the next ask and every waiting ask fail again, each taking a restore point and clearing the undo marker; with 30 restore points kept, one bad afternoon pushes real undo points out. The line lies 12 seconds after the limit. Apps get “Error: This account has hit a usage or spending limit…” pasted into their reply. And the owner asked for a toggle.</p>
+      </div>
+      <div>
+        <span class="k">What changes</span>
+        <ul>
+          <li><b>providers.py:</b> Claude’s <code>rate_limit_event</code> becomes a <code>meta</code> event in the shape the self-improvement branch already uses; an assistant <code>rate_limit</code> or <code>billing_error</code> yields a <code>limit</code> event; the result carries <code>api_error_status</code>; a 429 or 529 <code>api_retry</code> says “Claude is busy, trying again” instead of “check the connection”. Codex folds its curly apostrophe and reads “try again at 3:45 PM”.</li>
+          <li><b>agentd.py:</b> a new access state <code>resting</code>. Because it is not ready, the existing gate already holds model asks and lets “!” and launcher words through. A failed turn counts as a limit only on a real refusal (429 with quota wording, or a rejected event without paid credits), never on the throttle, a 529, an entitlement check or the context window. The reset time comes from the window, then the credits, then the text.</li>
+          <li><b>The refused turn</b> goes back to the front of the queue under its own id, keeps the conversation, and puts back the undo marker if it changed nothing. <code>_wait_reset</code> checks the wall clock every minute and never starts a sign-in. <code>check_access</code> and the “sign in” word leave a resting state alone, so a Codex login is never revoked by accident.</li>
+          <li><b>rest.py</b> keeps <code>~/.local/state/bombadil/rest.json</code>, so a weekly limit and a hand pause survive a reboot, and it is the one contract the Brain, the Noticed loop and the coding-session dots read. At most one waiting ask per app.</li>
+          <li><b>launcher.py:</b> “pause Claude”, “pause Codex”, “pause the AI”, and “resume …” for each; “use claude” also resumes.</li>
+          <li><b>The kit’s agent.py</b> gains <code>ready</code> and <code>note</code>; a re-queued turn fires no reply until the real one. <b>The shell</b> gains the <code>resting</code> face, the time on the chips and in the placeholder, and a new AiCard.qml.</li>
+        </ul>
+      </div>
+      <div>
+        <span class="k">How it is tested</span>
+        <ul>
+          <li>The fake provider prints a refused turn (rejected event, <code>rate_limit</code>, a 429 result): resting with the time; the ask back first; a second ask queues; “!echo hi” runs; “files” answers; the conversation kept; with the time moved into the past, the asks run in order.</li>
+          <li>Negative cases that must never rest: credits still paying, an entitlement check, the throttle notice, “high load”, the context window, a budget cap, a 529, Codex’s retried “rate limit exceeded:”, a “!” command that prints “rate limit”.</li>
+          <li>Hand words across a restart; the kit’s agent test; offscreen QML for the line, button, placeholder, labels and the card’s switch; a 429 script for the headless desktop and the test VM; a real limit saved as a fixture when one next happens.</li>
+        </ul>
+      </div>
+    </article>
+    <article class="piece">
+      <div class="piece-head"><span class="piece-num">2</span><h3>The pill still answers: things found on the computer</h3><span class="effort">Effort S, M with the Brain</span></div>
+      <p><b>What you see.</b> While the AI rests, a sentence that is not a launcher word is kept as a chip, and the line also shows up to three chips of things that match it: an app (by its title and the description the agent wrote), a launcher word or one of your own words you nearly typed, and a past ask of yours with its date, which opens that turn’s Details. Once the Brain merges, files and pages join them.</p>
+      <p><b>Why first.</b> A launcher that answers only exact words makes every other sentence a dead end, which is exactly the “useless” the owner fears. Finding is free, works offline, and keeps the rule that the machine shows and you press.</p>
+      <div>
+        <span class="k">What changes</span>
+        <ul>
+          <li><b>A pure module, finder.py,</b> that never calls a model or the network: word overlap and prefixes over apps, launcher entries, your words, and successful past asks from turns.jsonl. Later the Brain’s search and each app’s “does” rows.</li>
+          <li><b>agentd</b> runs it in a thread when an ask waits and broadcasts a <code>found</code> message; a press sends the existing <code>local</code> or <code>details</code> message. <b>The shell</b> gets FoundChips.qml, shaped like SetupChips.qml.</li>
+        </ul>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="after">
+  <h2>After these, in order</h2>
+  <ol class="later" start="3">
+    <li><b>A warning before the wall.</b> When Claude first warns in a window, the closing line says “Claude 5-hour limit at 84%, resets 15:00.” with the CLI’s own numbers, and offers Codex if signed in. A silent flag tells the machine’s own background use of the AI (Brain descriptions, the Noticed loop, mail marks, routines) to wait, so what you type still gets through; on paid credits, one line says so and the same flag keeps background use off them. A warning when Claude warns, not fixed 80% and 95% lines. Effort S.</li>
+    <li><b>The other AI, and the other model, until the reset.</b> “Use Codex until 15:00” borrows Codex in a fresh conversation, switches back at the reset and hands Claude what Codex did. When only the Opus or Sonnet weekly limit is hit, the machine moves to the other family by itself and says so once. Effort S to M.</li>
+    <li><b>Offline and outages take the same shape,</b> once the network’s return no longer starts a sign-in. Offline keeps its own words and look. Effort S to M.</li>
+    <li><b>Apps teach the pill.</b> The agent writes a few “does” rows in each app.toml (“Add a login”, other ways to say it, an entry point), so “add a password for the bank” offers “Passwords: Add a login” with no model at all. Only Bombadil can do this, because the builder of every app also writes its instructions for the pill. Effort M.</li>
+    <li><b>Things you made keep going with no turn.</b> “Run again” on finished jobs; accepting a Noticed word writes it locally; and, since question 3 was answered a, recipes whose every step undo can reach: “Ran your recipe ‘fix the sound’ (kept 12 Sep).” Effort M.</li>
+    <li><b>A number for the card without a turn,</b> once <code>claude -p "/usage"</code> is checked to need no model call. Effort S.</li>
+    <li><b>A small local helper. Not built: question 2 was answered a.</b> Kept as the record of what was weighed, to reopen if that changes: llama-server with a 1 to 2 billion parameter model held to a list, which says “Did you mean Files?” and never acts. Effort L.</li>
+  </ol>
+</section>
+
+<section id="switch">
+  <h2>The switch</h2>
+  <div class="grid2">
+    <div class="box"><h3>Its name</h3><p>“The poor man switch” is the name in the briefs. It never appears on screen: the screen says what is true (“Claude is at its limit until 15:00”, “Claude is paused”), and someone stopped by a team budget is not poor. In the code the state is <code>resting</code>, with a reason: <code>limit</code>, <code>spend</code> or <code>hand</code>. The word “tokens” appears nowhere.</p></div>
+    <div class="box"><h3>Where it lives</h3><p>In agentd as the access state <code>resting</code>, mirrored in rest.json for other processes. On screen: the stone, the line, its one button, the placeholder, the time on the chips, and the switch on the AI card. Nothing on the desk or the bar.</p></div>
+    <div class="box"><h3>It flips on by itself</h3><p>Only when a real ask is refused for a limit. Claude’s limit event alone never flips it: it is re-sent every 30 seconds, may be cached from before the turn, and can say “rejected” while paid credits carry on. The event says which limit and until when; the refusal decides.</p></div>
+    <div class="box"><h3>It flips on by hand</h3><p>With the AI card’s switch, or “pause Claude”, “pause Codex”, “pause the AI”. It lasts until you flip it back, across restarts, and the line says so at every start. It stops the pill’s asks, apps’ asks and the machine’s own background use; coding sessions you opened keep running.</p></div>
+    <div class="box"><h3>It flips back</h3>
+      <ul>
+        <li><b>With a time:</b> one minute after it, with no test call; the first waiting ask is the check.</li>
+        <li><b>With no time</b> (rare): Raise the limit, then Try again, or “resume Claude”.</li>
+        <li><b>After a hand pause:</b> the switch, “resume Claude”, “use claude” or the button.</li>
+        <li><b>Always:</b> signing in to a different account clears a limit rest; “use codex” moves to a provider that is not resting.</li>
+      </ul>
+    </div>
+    <div class="box"><h3>Per provider, per model family</h3><p>The 5-hour and weekly limits cover every model of an account; the Opus and Sonnet weekly limits cover only that family. So the rest is kept per provider, and a family-only limit moves to the other family instead of resting. If both providers are out, one line gives the earlier time.</p></div>
+  </div>
+  <h3 class="sub">What counts as running out</h3>
+  <div class="grid2 rests">
+    <div class="box"><h3><span class="tag-dot" style="background:var(--muted)"></span>Rests</h3>
+      <ul>
+        <li>A refused ask: <code>api_error_status</code> 429, or an assistant <code>rate_limit</code> or <code>billing_error</code>, with quota wording or a <code>rejected</code> event and no paid credits in use.</li>
+        <li>Codex: “hit your usage limit”, “out of credits”, “spend cap”, “quota exceeded”.</li>
+        <li>Your switch, or “pause Claude”.</li>
+      </ul>
+    </div>
+    <div class="box"><h3><span class="tag-dot" style="background:var(--ok)"></span>Never rests</h3>
+      <ul>
+        <li>A 529, a retry, the “high load” notice, or the throttle that says “not your usage limit”.</li>
+        <li>A <code>rejected</code> window while paid credits carry on, and entitlement checks such as <code>model_requires_usage_credits</code>.</li>
+        <li>The context window’s <code>blocking_limit</code>, a budget cap, Codex’s retried “rate limit exceeded:”.</li>
+        <li>A “!” command that happens to print “rate limit”.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="lines">
+  <h2>The lines</h2>
+  <p class="intro">Proposals for the voice work: the same in every voice, under 100 characters, no em-dash. The first sentence is the first brief’s where one exists; the second claims only what is true, since the browser needs the network and an app’s ask button waits.</p>
+  <div class="tbl">
+    <table class="t stack">
+      <thead><tr><th>Moment</th><th>Line above the pill</th><th>One button</th><th>Empty field</th></tr></thead>
+      <tbody>
+        <tr><td data-label="Moment">Claude warns</td><td data-label="Line">Claude 5-hour limit at 84%, resets 15:00.</td><td data-label="Button">Use Codex until 15:00, if Codex is signed in</td><td data-label="Field">unchanged</td></tr>
+        <tr><td data-label="Moment">Cut off partway</td><td data-label="Line">Claude hit its limit partway, after changing 2 files. It carries on at 15:00.</td><td data-label="Button">Undo · Details, only if it changed something</td><td data-label="Field">as below</td></tr>
+        <tr><td data-label="Moment">5-hour limit</td><td data-label="Line">Claude is at its limit until 15:00. Your apps and files still work.</td><td data-label="Button">Use Codex until 15:00, if signed in</td><td data-label="Field">Open or find anything. Asks wait for 15:00.</td></tr>
+        <tr><td data-label="Moment">Weekly limit</td><td data-label="Line">Claude is at its weekly limit until Thursday 09:00. Your apps and files still work.</td><td data-label="Button">Use Codex until Thursday 09:00, if signed in</td><td data-label="Field">Open or find anything. Asks wait for Thursday 09:00.</td></tr>
+        <tr><td data-label="Moment">Spending limit</td><td data-label="Line">Claude is at its spending limit until 15:00. Your apps and files still work.</td><td data-label="Button">Raise the limit</td><td data-label="Field">as the 5-hour limit</td></tr>
+        <tr><td data-label="Moment">Spending limit, no time</td><td data-label="Line">Claude is at its spending limit. Your apps and files still work.</td><td data-label="Button">Raise the limit, then Try again</td><td data-label="Field">Open or find anything. Asks wait for Claude.</td></tr>
+        <tr><td data-label="Moment">Codex</td><td data-label="Line">The same lines with “Codex”, the time from its text</td><td data-label="Button">Use Claude until 15:45, if signed in</td><td data-label="Field">the same</td></tr>
+        <tr><td data-label="Moment">Opus-only limit</td><td data-label="Line">Opus is at its limit until Thursday 09:00, so Sonnet answers until then.</td><td data-label="Button">none</td><td data-label="Field">unchanged, no rest</td></tr>
+        <tr><td data-label="Moment">On usage credits</td><td data-label="Line">Claude is using your usage credits until 15:00.</td><td data-label="Button">none</td><td data-label="Field">unchanged, no rest</td></tr>
+        <tr><td data-label="Moment">By hand</td><td data-label="Line">Claude is paused. Your apps and files still work.</td><td data-label="Button">Resume Claude</td><td data-label="Field">Open or find anything. Asks wait until you resume Claude.</td></tr>
+        <tr><td data-label="Moment">A sentence while resting</td><td data-label="Line">Kept for 15:00. Found on this computer: (or “Nothing on this computer matches.”)</td><td data-label="Button">the found chips</td><td data-label="Field">as the case it rests for</td></tr>
+        <tr><td data-label="Moment">Back</td><td data-label="Line">Claude is back. Running your 3 waiting asks.</td><td data-label="Button">none</td><td data-label="Field">Ask anything</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tnote">Times read “15:00” for today, a weekday within six days, and a date (“1 Nov”) beyond that; never “tomorrow”. Waiting chips read the same time, or “paused” after a hand pause. Whose limit it is comes from the provider’s message when it says so (“your org’s”); otherwise the line stays neutral. The line shows when the state flips, when you summon the pill, and when an ask has to wait; otherwise the empty field carries the state. It outranks the greeting.</p>
+</section>
+
+<section id="works">
+  <h2>What keeps working</h2>
+  <div class="tbl">
+    <table class="t stack">
+      <thead><tr><th>Feature</th><th>While the AI rests</th><th>Owner</th></tr></thead>
+      <tbody>
+        <tr><td data-label="Feature">Launcher words, picture words, “!” commands</td><td data-label="While resting">Work at once; matched before anything is queued</td><td data-label="Owner">this design adds pause and resume</td></tr>
+        <tr><td data-label="Feature">Undo, history, Details, Stop</td><td data-label="While resting">Work; undo still covers system files at the next restart, home and apps stay</td><td data-label="Owner"></td></tr>
+        <tr><td data-label="Feature">Apps you made and their processes</td><td data-label="While resting">Work; each is its own process</td><td data-label="Owner">App kit</td></tr>
+        <tr><td data-label="Feature">App buttons that ask the agent</td><td data-label="While resting">Show “At 15:00”; a press waits as a chip; the answer arrives after the reset</td><td data-label="Owner">App kit (AskButton)</td></tr>
+        <tr><td data-label="Feature">Browser panel and its sign-ins</td><td data-label="While resting">Work in Bombadil’s own profile; pages need the network</td><td data-label="Owner"></td></tr>
+        <tr><td data-label="Feature">Terminal, Files</td><td data-label="While resting">Work</td><td data-label="Owner"></td></tr>
+        <tr><td data-label="Feature">Background jobs</td><td data-label="While resting">Keep running; Stop, dismiss and Why? work; “Run again” comes in piece 7</td><td data-label="Owner">Desk</td></tr>
+        <tr><td data-label="Feature">Desk: Watching, Needs you</td><td data-label="While resting">Work</td><td data-label="Owner">Desk; coding sessions</td></tr>
+        <tr><td data-label="Feature">Desk: Now</td><td data-label="While resting">Empty, since no turn runs</td><td data-label="Owner">Desk</td></tr>
+        <tr><td data-label="Feature">Desk: Away, Machine, Alive</td><td data-label="While resting">Designed from local sources, not built yet</td><td data-label="Owner">Desk</td></tr>
+        <tr><td data-label="Feature">Pictures of the machine</td><td data-label="While resting">Work, no model</td><td data-label="Owner">Why lines and pictures</td></tr>
+        <tr><td data-label="Feature">The agent’s why lines and cards</td><td data-label="While resting">None, they are its words</td><td data-label="Owner">Why lines and pictures</td></tr>
+        <tr><td data-label="Feature">Brain search, Focus</td><td data-label="While resting">Work (local search); new one-line descriptions wait</td><td data-label="Owner">Brain</td></tr>
+        <tr><td data-label="Feature">Your words, Noticed counting</td><td data-label="While resting">Work; accepting an offer waits until piece 7</td><td data-label="Owner">Noticed and self-checks</td></tr>
+        <tr><td data-label="Feature">Coding sessions</td><td data-label="While resting">Claude and Codex dots read “Paused until 15:00”; shell sessions work</td><td data-label="Owner">Coding sessions</td></tr>
+        <tr><td data-label="Feature">Mail view, message cards</td><td data-label="While resting">Reading, archiving, your own reply and Send work; “Needs a reply” and drafts wait</td><td data-label="Owner">Mail view</td></tr>
+        <tr><td data-label="Feature">Greetings</td><td data-label="While resting">Local templates; the limit line outranks them</td><td data-label="Owner">Setup voice</td></tr>
+        <tr><td data-label="Feature">Updates</td><td data-label="While resting">“update” runs; the steps that need the agent wait and say why</td><td data-label="Owner">Installed OS</td></tr>
+        <tr><td data-label="Feature">Install, Repair’s “Go back”, bad-start rollback</td><td data-label="While resting">Work, no model on these paths; Repair’s “Fix it” waits</td><td data-label="Owner">Installed OS</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="happens">
+  <h2>What happens to</h2>
+  <div class="grid2">
+    <div class="box"><h3>A turn cut off partway</h3><p>What it did stays, and jobs it started keep running. If it changed something, its closing line keeps Undo and Details. At the reset it carries on in the same conversation with a note: “[The last try stopped at a usage limit after: wrote tracker/main.qml, tracker/app.toml. Check what is done before redoing it.]”</p></div>
+    <div class="box"><h3>Asks already waiting, and new ones</h3><p>They stay as chips with the time and are not sent; at the reset they run in the order typed, and × removes any before then. Launcher words and “!” commands typed while resting run at once; anything else becomes a chip with its found chips.</p></div>
+    <div class="box"><h3>Apps whose buttons ask the agent</h3><p>The ask waits as a chip with the app’s name, at most one per app, and the answer reaches the app after the reset. An app never learns about a limit through an error string.</p></div>
+    <div class="box"><h3>The machine’s own use of the AI</h3><p>Brain descriptions, the Noticed loop, routines that ask the AI, mail’s “Needs a reply” marks and self-fixes each read rest.json and wait. None counts the rest as a failure, and none becomes a chip, because none is your ask.</p></div>
+    <div class="box"><h3>Coding sessions</h3><p>They are the vendors’ own programs on the same account, so a limit reaches them on their own: their dots read “Paused until 15:00”, and a limit never makes a session your turn. A hand pause leaves them alone.</p></div>
+    <div class="box"><h3>Routines, the browser, the terminal</h3><p>A routine that asks the AI and falls due while resting runs once after the reset, and a rest never counts toward disabling it. The browser is unchanged. <code>bombadil ask</code> prints the resting line once and keeps the ask held; Ctrl+C drops it.</p></div>
+  </div>
+</section>
+
+<section id="defaults">
+  <h2>Decisions I picked a default for</h2>
+  <div class="decisions">
+    <details class="dec"><summary><span class="q">Does the switch flip by itself?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes, on the first refused ask, with the narrow conditions under piece 1. The refusal decides; the event only says which limit and until when. A switch you had to notice and flip would leave today’s failing queue in place.</p><p class="alt">Other options: by hand only; on the event alone, which can be stale, repeated, or “rejected” while credits pay.</p></div></details>
+    <details class="dec"><summary><span class="q">Can it be set by hand?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes, into the same state, with the card’s switch and two words (question 1). Real reasons: keeping the rest of a week for coding sessions, which drain the same plan; a spending limit you can see coming; a demo; trying every line here on the VM for free.</p></div></details>
+    <details class="dec"><summary><span class="q">What does “still use the OS” mean?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Apps and their processes, the browser with its sign-ins, files, the desk widgets that read the machine, and the pill, with three corrections. Most of it is already true; what is missing is that the machine knows it is out. The pill is more than a plain launcher: it still takes any ask and answers a sentence with things it finds. And only Watching and Needs you have a data source today.</p><p class="alt">Other options: a plain launcher only; a separate “poor man” screen.</p></div></details>
+    <details class="dec"><summary><span class="q">Hold asks, or refuse them?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Hold them as chips labelled with the time, typed and from apps alike. The pill already holds asks in every state that is not ready; refusing would make you type them again.</p></div></details>
+    <details class="dec"><summary><span class="q">What runs at the reset?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>The cut-off ask first, in the same conversation, then every waiting ask in the order typed, with no age rule. The chip showed the time the whole while and × removes any of them; a hidden rule would need explaining.</p><p class="alt">Other options: asks older than 5 hours wait for a tap; nothing runs without a tap.</p></div></details>
+    <details class="dec"><summary><span class="q">One button or several?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>One per case, as the first brief decided. “Resume Claude” on a timed limit would only be refused again, and “Raise the limit” appears only on spending limits, so time limits never nudge you toward spending.</p></div></details>
+    <details class="dec"><summary><span class="q">Use Codex until 15:00</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>One button, only when Codex is signed in, never by itself. This is the first brief’s decision from 27 September, so it is not asked again. Moving drops the conversation and spends a second account.</p></div></details>
+    <details class="dec"><summary><span class="q">Opus to Sonnet by itself</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes, when only one family’s weekly limit is hit, said once. Free, keeps the conversation, and “use opus” undoes it. It waits for the model setting in the VM fixes.</p></div></details>
+    <details class="dec"><summary><span class="q">Who may spend paid usage credits?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>What you ask for may; the machine’s own background use waits for the reset. Claude Code keeps going on credits by itself once you have turned them on; Bombadil adds only restraint on its own background calls and one line saying credits are in use.</p><p class="alt">Other options: everything; nothing past the plan’s limit without a press.</p></div></details>
+    <details class="dec"><summary><span class="q">Does it check whether the limit is over?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>No test calls. With a time, the first waiting ask after it is the check, and if nothing waits nothing is sent; with no time, Raise the limit or Try again.</p></div></details>
+    <details class="dec"><summary><span class="q">The refused turn’s restore point</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Kept, but the undo marker goes back so the next “undo” skips it if the turn changed nothing. Only one turn is refused per window now, so that is enough, and it needs no new sudo operation.</p></div></details>
+    <details class="dec"><summary><span class="q">Is resting ever your turn?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>No. No amber knock and no desk card, even for a spending limit: Raise the limit is a button on the line. Today’s setup states that wait on you do show needs-you; resting is different because there is nothing you must do.</p></div></details>
+    <details class="dec"><summary><span class="q">No ring on the stone</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>The warning line and the card’s number instead of the passenger brief’s fuel ring. The identity rules say “never a ring”, and an amber ring would read as needs-you. The identity work confirms.</p></div></details>
+    <details class="dec"><summary><span class="q">A hand pause survives a restart, and leaves coding sessions alone</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Yes to both, and the line says “Claude is paused.” at every start, so a forgotten pause is never a mystery.</p></div></details>
+    <details class="dec"><summary><span class="q">Offline and outages</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Later, in the same shape (piece 5), keeping offline’s own line. Not in piece 1, because today the network’s return starts a sign-in, which must change first.</p></div></details>
+  </div>
+</section>
+
+<section id="owners">
+  <h2>Who owns what</h2>
+  <div class="tbl">
+    <table class="t stack">
+      <thead><tr><th>Thread</th><th>What it owns here</th></tr></thead>
+      <tbody>
+        <tr><td data-label="Thread">Logo and design system</td><td data-label="Owns">Draws the resting stone (a new face and its drawing in Stone.qml); settles the fuel ring against “never a ring”</td></tr>
+        <tr><td data-label="Thread">Setup voice and welcome lines</td><td data-label="Owns">Words every line, button and placeholder; confirms the greeting is dropped under them</td></tr>
+        <tr><td data-label="Thread">Desk rails and first widgets</td><td data-label="Owns">Confirms resting is not needs-you and stays off the desk; Watching’s “Run again”; later, Away lists what ran at the reset</td></tr>
+        <tr><td data-label="Thread">App kit</td><td data-label="Owns">AskButton and the skill’s rule for it, and the “does” rows with their entry point; piece 1 changes agent.py itself</td></tr>
+        <tr><td data-label="Thread">Why lines and pictures</td><td data-label="Owns">The holding card the AI card grows into; routines that wait out a limit without counting failures</td></tr>
+        <tr><td data-label="Thread">Named coding sessions and turn dots</td><td data-label="Owns">“Paused until 15:00” from rest.json instead of red; its 80% line is piece 3’s line</td></tr>
+        <tr><td data-label="Thread">Noticed chip and self-checks</td><td data-label="Owns">A rest is never a finding; menders read rest.json; the local word write; recipes (question 3 a)</td></tr>
+        <tr><td data-label="Thread">Brain index and Focus view</td><td data-label="Owns">Descriptions wait while resting and never save a limit sentence; its search joins the finder</td></tr>
+        <tr><td data-label="Thread">Mail view and message cards</td><td data-label="Owns">“Needs a reply” and drafts wait; reading, your own replies and Send keep working</td></tr>
+        <tr><td data-label="Thread">Installed OS build</td><td data-label="Owns">The rescue screen shows the resting line; the conversation saved across reboots; no local model package (question 2 a)</td></tr>
+        <tr><td data-label="Thread">VM findings fixes</td><td data-label="Owns">The conversation kept across agentd restarts, “use sonnet” for piece 4, the 30 restore points resting now protects</td></tr>
+        <tr><td data-label="Thread">VM testing</td><td data-label="Owns">The 429 script, the “pause Claude” walk-through, and capturing a real limit as a test fixture</td></tr>
+        <tr><td data-label="Thread">A new build thread</td><td data-label="Owns">Pieces 1 and 2</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="cut">
+  <h2>Cut, and why</h2>
+  <div class="grid2">
+    <div class="box cut"><ul>
+      <li><b>A small AI on every computer.</b> Gigabytes and memory every day for a feature most days never use; on the 5 GB VM nothing above about 2 billion parameters fits beside the desktop.</li>
+      <li><b>Claude Code or Codex pointed at a local model.</b> Claude Code’s own prompt is 14 to 33 thousand tokens, minutes per turn on a CPU, and a small model would drive a root shell in full-auto.</li>
+      <li><b>A parser that guesses and acts.</b> Two brains that sometimes disagree. The finder shows; you press.</li>
+      <li><b>Replaying a past turn’s commands blindly.</b> They depended on what the turn found halfway; recipes the AI chose to keep replace it.</li>
+      <li><b>Embeddings for matching meaning, for now.</b> The “does” rows cover most paraphrases for nothing.</li>
+    </ul></div>
+    <div class="box cut"><ul>
+      <li><b>A fuel ring, a token counter, a limit card on the desk.</b> “Never a ring”, and the desk has no counter at rest.</li>
+      <li><b>Fixed 80% and 95% lines.</b> The public number is set only when Claude warns.</li>
+      <li><b>Test calls to see whether the limit is over.</b> The reset time is known, and a test call is still a call.</li>
+      <li><b><code>--fallback-model</code>.</b> It skips 429 errors by design, so it never fires on a limit.</li>
+      <li><b>Buying credits from the pill.</b> Money cannot be undone; Raise the limit opens the provider’s page.</li>
+      <li><b>A mode name on screen.</b> One more thing to learn; the plain sentence names the AI.</li>
+      <li><b>Greyed-out ask buttons in apps.</b> They refuse an ask; the AskButton keeps it.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="checked">
+  <h2>Checked, and still to check</h2>
+  <div class="grid2">
+    <div class="box"><h3>Checked today</h3>
+      <ul>
+        <li><b>Main at 26843d3:</b> agentd’s limit words, gate, sign-in guards, wait for the network, restore point and undo marker at turn start, and failure handling; providers’ event mapping (nothing handles <code>rate_limit_event</code>); PillState’s face and turn end; the stone’s tap; the chips’ “next”; the kit’s agent.py.</li>
+        <li><b>Claude Code 2.1.286:</b> the limit event’s fields and timing, the error kinds, the refused turn’s shape, the window names, and that <code>--fallback-model</code> skips 429.</li>
+        <li><b>Codex source:</b> exec carries no usage numbers; the limit message’s apostrophe and time format; “rate limit exceeded:” is a retried throttle.</li>
+        <li><b>Local models:</b> package sizes, the VM’s memory, small models’ tool-picking from a public CPU benchmark.</li>
+        <li><b>Not run:</b> no model turn, no real limit captured, no Codex binary, no local model.</li>
+      </ul>
+    </div>
+    <div class="box"><h3>To check before building</h3>
+      <ol class="risks">
+        <li>A real Claude limit in stream-json: event order, retries, the result’s turn count, whether the refused exchange enters the conversation.</li>
+        <li>Whether a refused request is billed.</li>
+        <li>What the event shows while paid credits carry on, and where spending limits put their time.</li>
+        <li>Codex’s real output at a limit on the version Bombadil installs.</li>
+        <li>Whether <code>claude -p "/usage"</code> works with no model call.</li>
+        <li>The Brain’s description command’s exit code at a limit.</li>
+        <li>Whether coding sessions’ stop hook carries the limit text.</li>
+        <li>What the CLI prints for the fake API’s 429 under an API-key login.</li>
+        <li>That every line fits 100 characters with a long name.</li>
+        <li>That a whole grey outline and offline’s broken red one read apart at 24 px without colour.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>Bombadil · The poor man switch · design pass of 1 October 2026</span>
+  <span>The full brief, with code references, is poor-man-switch-brief.md in the folder above this one. Code read on main at 26843d3.</span>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var CASES = {
+    five: { line: "Claude is at its limit until 15:00. Your apps and files still work.", btn: "Use Codex until 15:00", lab: "15:00", ph: "Open or find anything. Asks wait for 15:00.", rest: true,
+      why: "<b>Behind it:</b> an ask was refused with a 429 and the error <code>rate_limit</code>, and Claude’s own <code>rate_limit_event</code> said <code>rejected</code>, <code>five_hour</code>, resetting at 15:00. The button shows only if Codex is signed in." },
+    week: { line: "Claude is at its weekly limit until Thursday 09:00. Your apps and files still work.", btn: "Use Codex until Thursday 09:00", lab: "Thu 09:00", ph: "Open or find anything. Asks wait for Thursday 09:00.", rest: true,
+      why: "<b>Behind it:</b> the <code>seven_day</code> window. A time within six days reads as a weekday, beyond that as a date, never “tomorrow”. A weekly limit and its waiting asks survive a reboot through rest.json." },
+    spend: { line: "Claude is at its spending limit until 15:00. Your apps and files still work.", btn: "Raise the limit", lab: "15:00", ph: "Open or find anything. Asks wait for 15:00.", rest: true,
+      why: "<b>Behind it:</b> the account’s or the organisation’s spending limit. Raise the limit opens the usage page in the browser panel and buys nothing, then becomes Try again. With no time in the message, the line names none and the field says “Asks wait for Claude.”" },
+    hand: { line: "Claude is paused. Your apps and files still work.", btn: "Resume Claude", lab: "paused", ph: "Open or find anything. Asks wait until you resume Claude.", rest: true,
+      why: "<b>Behind it:</b> the AI card’s switch, or “pause Claude”. It looks exactly like a limit, lasts until you flip it back, across restarts, and leaves coding sessions you opened alone." },
+    opus: { line: "Opus is at its limit until Thursday 09:00, so Sonnet answers until then.", btn: "", lab: "next", ph: "Ask anything", rest: false,
+      why: "<b>Behind it:</b> only the <code>seven_day_opus</code> window is used up. The machine moves to Sonnet by itself, keeps the conversation, and “use opus” takes it back. Nothing rests (piece 4)." },
+    credits: { line: "Claude is using your usage credits until 15:00.", btn: "", lab: "next", ph: "Ask anything", rest: false,
+      why: "<b>Behind it:</b> the window is used up but paid usage credits carry on (<code>isUsingOverage</code>). Nothing rests; your asks go through, and the machine’s own background use of the AI waits for the reset (piece 3)." }
+  };
+  var tabs = document.querySelectorAll('[data-case]');
+  var cText = document.getElementById("c-text"), cBtn = document.getElementById("c-btn"), cPh = document.getElementById("c-ph"), cWhy = document.getElementById("c-why");
+  var stRest = document.getElementById("c-st-rest"), stResting = document.getElementById("c-st-resting");
+  var chips = document.getElementById("c-chips");
+  function show(key) {
+    var c = CASES[key]; if (!c) return;
+    tabs.forEach(function (t) { t.setAttribute("aria-selected", t.getAttribute("data-case") === key ? "true" : "false"); });
+    cText.textContent = c.line;
+    cBtn.textContent = c.btn; cBtn.hidden = !c.btn;
+    cPh.textContent = c.ph;
+    chips.hidden = !c.rest;
+    document.querySelectorAll("#c-chips .c-lab").forEach(function (l) { l.textContent = c.lab; });
+    stRest.hidden = c.rest; stResting.hidden = !c.rest;
+    cWhy.innerHTML = c.why;
+  }
+  tabs.forEach(function (t) { t.addEventListener("click", function () { show(t.getAttribute("data-case")); }); });
+})();
+</script>
+
+</body>
+</html>

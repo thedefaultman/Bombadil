@@ -14,7 +14,12 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "details", "turn": n}       show a turn's commands and output (drawer);
                                                         again while it shows closes it
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
+                   {"type": "open", "kind": "path"|"unit"|"package"|"url"|"turn", "value": "..."}
+                                                        open what a box in a picture names; answered
+                                                        by a "local" event with action "open"
                    {"type": "summon"}                   ask the bar to take the keyboard (Super)
+                   {"type": "card", "card": {...}}      a picture to draw (os-mcp's show_card and system_map);
+                                                        answered with {"type": "card_ack", "shown": bool}
                    {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"}
                                                         a chip under the setup line (see below)
                    {"type": "signin", "provider": "codex"?}  sign in (again), after switching provider
@@ -38,7 +43,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "dev-signal", ...}          a coding tool's hook (bombadil-signal)
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
-                    "local"|"plan", "turn": n, ...}
+                    "local"|"card"|"plan", "turn": n, ...}
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "setup", "state": ..., "line": ..., "actions": [...]}  see below
@@ -57,6 +62,10 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
+A step's status may also carry "because": why it happens, in the agent's own words from just before
+it acted (at most 140 characters), and "after": {"label", "kind", "text"}, on a system or irreversible
+step that follows something read from outside ("after reading wireguard.com/quickstart"). The tool
+event of the step carries the same two fields for Details.
 A "step" status also says what the turn has changed so far: "touched": {"package": 1, "file": 2}
 (kinds package, service, file, app; only those there are) and "touched_text": "1 package and 2
 files so far" ("" when nothing).
@@ -67,7 +76,16 @@ comes last. When several are in progress the last one is the current step.
 turn_start carries "asked_by": "builder" (or another helper's name) when the turn was started for a coding
 session, else null.
 turn_end carries how the turn ended: {"seconds", "summary": "Installed ffmpeg.", "changed",
-"irreversible", "stopped", "line": "Stopped while installing ffmpeg."}.
+"irreversible", "stopped", "line": "Stopped while installing ffmpeg.", "read": [{"label", "kind",
+"outside"}]}; the same list goes into turns.jsonl.
+
+"card" events carry a picture for the bar: {"card": {"type": "diagram", "id", "shape", "title", "nodes",
+"links", "highlight", "say", "text", ...}}. One drawn from a request the user typed ("how am I connected")
+has turn null; one os-mcp sent while a turn runs carries that turn; a receipt (what the turn changed
+in the network, a service, the disks, the sound or the screens, as a before and after, "receipt": true)
+follows turn_end. While Claude still writes a show_card call, cards with "partial": true (the frame and
+the boxes finished so far) arrive under the id the finished card then keeps; {"id", "gone": true} takes
+one back. Partial cards are not logged.
 
 "setup" is whether the machine can talk to its AI: state "choose" (no provider picked yet: the
 pill offers Claude and Codex), "checking", "signed_out", "offline" (no way to reach the sign-in
@@ -101,12 +119,12 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import browser, config, dev, hypr, launcher, narrate, paths, procs, providers, signin, snapshots, watch
+from . import browser, cards, config, dev, hypr, launcher, narrate, paths, procs, providers, signin, snapshots, sysmap, watch
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
-LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking"}
+LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
 _WHO = re.compile(r"[a-z][a-z0-9_-]{0,23}")   # a helper's name in "asked_by"
 MAX_OUTPUT = 16_000   # characters of one command's output kept in events and the turn's log
 # A client that stops reading (a hung bar) is dropped rather than allowed to hold up the
@@ -139,9 +157,11 @@ JOBS_POLL = 2.0
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
-                 stopper: procs.Stopper | None = None, desk: Desk | None = None, jobs: Jobs | None = None,
-                 chosen: bool = True, auto_signin: bool = False, panel=None, sessions: dev.Dev | None = None):
+                 stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
+                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
+                 sessions: dev.Dev | None = None):
         self.provider = provider
+        self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
         # One desk: the launcher's words, the shell and the agent's tool all change this one.
@@ -175,6 +195,11 @@ class AgentD:
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
+        self._card_seq = 0
+        self._card_stream: cards.CardStream | None = None   # show_card calls being written (Claude)
+        self._stream_ids: list[str] = []            # their card ids, until the finished card takes one
+        self._closed_turn: int | None = None        # the turn whose closing line is on screen
+        self._befores: dict[str, asyncio.Task] = {}   # a service's facts from when a step first touched it
         # The provider: picked yet (config or BOMBADIL_PROVIDER), and signed in (setup, above).
         self.chosen = chosen
         self.auto_signin = auto_signin              # sign in at once when the session starts signed out
@@ -308,12 +333,16 @@ class AgentD:
             self._background(self.details(msg.get("turn")))
         elif t == "close_details":
             self._background(asyncio.to_thread(self.launcher.close_details))
+        elif t == "open":
+            self._background(self.open_thing(msg.get("kind"), msg.get("value")))
         elif t == "summon":
             await self.broadcast({"type": "summon"})
         elif t == "dev-signal":
             self._signals.put_nowait(msg)
         elif t == "dev":
             self._background(self.dev_action(str(msg.get("action", "")), str(msg.get("key", ""))))
+        elif t == "card":
+            await self._card_message(msg, writer)
         elif t == "desk":
             await self._desk_op(msg, writer)
         elif t == "desk-tool":
@@ -359,7 +388,8 @@ class AgentD:
 
     async def _match(self, text: str) -> launcher.Action | None:
         try:
-            return await asyncio.to_thread(launcher.match, text, None, self.dev)
+            # "why" is a launcher word only while a turn runs: then it asks about the step in front of you.
+            return await asyncio.to_thread(launcher.match, text, None, self.dev, self.current is not None)
         except Exception as e:  # noqa: BLE001 - when in doubt the agent gets the text
             print(f"agentd: launcher match: {type(e).__name__}: {e}", file=sys.stderr)
             return None
@@ -702,6 +732,14 @@ class AgentD:
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
+        if action.kind == "why":
+            # The reason the agent gave before this step, from what was recorded: no model, no turn.
+            text = self.narrator.why_text() if self.narrator else "Nothing is running."
+            await self.event("local", turn=None, action="why", phase="done", ok=True, text=text)
+            return
+        if action.kind == "picture":
+            await self.picture(action, typed)
+            return
         if action.kind in ("signin", "provider"):
             if action.kind == "signin":
                 await self.signin_asked()
@@ -744,6 +782,126 @@ class AgentD:
             self.notes = self.notes[-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
                         "target": action.target, "result": text, "ok": ok})
+
+    # -- pictures --
+
+    async def _show(self, card: dict, turn: int | None, card_id: str | None = None):
+        """Send a finished card to the bars. One drawn while it streamed keeps that card's id, so
+        the bar swaps the picture in place."""
+        self._card_seq += 1
+        await self.event("card", turn=turn, card={**card, "id": card_id or f"card-{self._card_seq}"})
+
+    async def _card_message(self, msg: dict, writer: asyncio.StreamWriter):
+        card, errors = cards.accept(msg.get("card"))
+        if card is None:
+            await self._send(writer, {"type": "card_ack", "shown": False, "errors": errors})
+            return
+        streamed = self._stream_ids.pop(0) if self._stream_ids and self.current is not None else None
+        await self._show(card, self.current, streamed)
+        # Shown when a client besides the sender is there to draw it.
+        await self._send(writer, {"type": "card_ack", "shown": len(self.clients) > 1})
+
+    async def picture(self, action: launcher.Action, typed: str):
+        """A picture word ("how am I connected") is answered here: captured from the machine, drawn
+        by the bar, no model and no turn."""
+        kind, _, unit = action.target.partition(":")
+        await self.event("local", turn=None, action="picture", target=action.target, phase="start",
+                         text=self.launcher.doing(action))
+        try:
+            card = (await asyncio.to_thread(sysmap.capture, kind, unit, provider=self.provider.name))["card"]
+            text, ok = f"Showing {action.title}.", True   # the picture carries its own sentence
+        except sysmap.Unavailable as e:
+            card, text, ok = None, str(e), False
+        if card is not None:
+            await self._show(card, None)
+        await self.event("local", turn=None, action="picture", target=action.target, phase="done", ok=ok, text=text)
+        if ok:
+            self.notes.append(f"{typed!r}: showed a picture. {card['text'][:400]}")
+            self.notes = self.notes[-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "picture",
+                        "target": action.target, "result": text, "ok": ok})
+
+    async def open_thing(self, kind, value):
+        """A click on a box in a picture. The bar sends what the card said; it is checked again here,
+        since the card may have come from any process that can reach the socket."""
+        target, error = cards.check_opens({"kind": kind, "value": value})
+        if target is None:
+            await self.event("local", turn=None, action="open", phase="done", ok=False, text=f"Cannot open that: {error}.")
+            return
+        if target["kind"] == "turn":
+            turn = int(target["value"])
+            if turn != self.current and turn not in self.turn_logs:
+                await self.event("local", turn=None, action="open", phase="done", ok=False,
+                                 text=f"The details of turn {turn} are not kept.")
+                return
+            await self.details(turn)
+            return
+        ok, text = await asyncio.to_thread(self._open, target)
+        await self.event("local", turn=None, action="open", target=target["value"], phase="done", ok=ok, text=text)
+
+    def _open(self, target: dict) -> tuple[bool, str]:
+        try:
+            return self.launcher.open_thing(target["kind"], target["value"])
+        except Exception as e:  # noqa: BLE001 - one plain line, whatever broke
+            return False, f"Could not open {target['value']}: {launcher._reason(e)}"
+
+    def _stream_card(self, ev: dict):
+        """Feed a provider event to the show_card follower; the card so far, when it grew."""
+        if self._card_stream is None:
+            return None
+        try:
+            card = self._card_stream.feed(ev)
+        except Exception as e:  # noqa: BLE001 - a picture that cannot be followed is drawn when it is whole
+            print(f"agentd: card stream: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+        if card is not None and card["id"] not in self._stream_ids:
+            self._stream_ids.append(card["id"])
+        return card
+
+    async def _clear_streams(self, only: str | None = None):
+        """Take back partial cards whose show_card call failed or never finished."""
+        for sid in [only] if only else list(self._stream_ids):
+            if sid in self._stream_ids:
+                self._stream_ids.remove(sid)
+                await self.broadcast({"type": "event", "kind": "card", "turn": self.current,
+                                      "card": {"id": sid, "gone": True}})
+
+    async def _receipt(self, turn: int, narrator: narrate.Narrator, before: "asyncio.Task | None",
+                       befores: dict[str, asyncio.Task]):
+        """After the closing line: what the turn changed in a part of the machine it touched, as a
+        before and after. Nothing when nothing changed, when the agent drew a picture itself, or
+        when another turn has started."""
+        if before is None or narrator.drew:
+            return
+        kinds = [k for k in dict.fromkeys(k for k, _ in narrator.parts) if k != "service"]
+        services = [u for k, u in narrator.parts if k == "service"][:2]
+        if not kinds and not services:
+            return
+        try:
+            was = await asyncio.wait_for(asyncio.shield(before), sysmap.BUDGET + 1.0)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - no before, no receipt
+            return
+        found = None
+        if kinds:
+            now = await asyncio.to_thread(sysmap.snapshot, tuple(kinds), self.provider.name)
+            for k in kinds:
+                if (was or {}).get(k) is not None and now.get(k) is not None:
+                    found = sysmap.receipt(k, was[k], now[k])
+                    if found:
+                        break
+        if found is None:
+            for unit in services:
+                task = befores.get(unit)
+                b = await task if task is not None else None
+                if not b or any("activating" in str(f.get("value")) or "reloading" in str(f.get("value"))
+                                for f in b if f["key"] == "state"):
+                    continue   # captured while it was already changing: not a before
+                a = await asyncio.to_thread(sysmap.snapshot_service, unit)
+                found = sysmap.receipt("service", b, a, unit) if a else None
+                if found:
+                    break
+        if found is not None and self.current is None and self._closed_turn == turn:
+            await self._show(found, turn)
 
     async def details(self, turn):
         path = self.turn_logs.get(turn) if turn is not None else watch.last_turn_file()
@@ -1167,6 +1325,8 @@ class AgentD:
         self.turn_prompt = None if asked_by else prompt
         started = time.time()
         self.narrator = narrator = narrate.Narrator()
+        if not shell:
+            narrator.note_prompt(prompt)   # a [Screen] block or a coding session's request came in with it
         log = paths.state_dir() / "turns" / f"{int(started * 1000)}-{self.current}.jsonl"
         log.parent.mkdir(parents=True, exist_ok=True)
         self.turn_logs[self.current] = log
@@ -1184,6 +1344,13 @@ class AgentD:
                              stopped=False, line="")
             return
         self.turns += 1
+        # What this part of the machine looks like now, for the receipt; nobody waits for it.
+        before = None
+        self._card_stream, self._stream_ids = cards.CardStream(), []
+        self._closed_turn = None
+        self._befores = {}
+        if not shell and self.explain != "brief":
+            before = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot, sysmap.BEFORE_KINDS, self.provider.name))
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
@@ -1198,8 +1365,8 @@ class AgentD:
             # Stopped while the restore point was saved: the CLI never starts.
             line = self._stopped_line or "Stopped."
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary="", changed=False,
-                             irreversible=False, stopped=True, line=line)
-            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "")
+                             irreversible=False, stopped=True, line=line, read=narrator.read_list())
+            self._log(prompt, {"text": "", "ok": None}, snap, [], True, "", narrator.read_list())
             return
         turn = providers.Turn(prompt=prompt, session_id=self.session_id)
         self.workdir.mkdir(parents=True, exist_ok=True)
@@ -1342,10 +1509,13 @@ class AgentD:
                 line = self._stopped_line or narrator.stopped_line()
             else:
                 line = summary
+            await self._clear_streams()
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary=summary,
                              changed=bool(narrator.done), irreversible=narrator.irreversible,
-                             stopped=stopped, line=line)
-            self._log(prompt, result, snap, cmd, stopped, summary)
+                             stopped=stopped, line=line, read=narrator.read_list())
+            self._log(prompt, result, snap, cmd, stopped, summary, narrator.read_list())
+            self._closed_turn = self.current
+            self._background(self._receipt(self.current, narrator, before, self._befores))
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
@@ -1372,6 +1542,17 @@ class AgentD:
                 line = {**line, "touched": self.narrator.touched_counts(),
                         "touched_text": self.narrator.touched_text()}
             await self.event("status", **line)
+        partial = self._stream_card(ev) if kind in ("tool_start", "tool_input") else None
+        if partial is not None and not self.stopping:
+            # Not logged: only the finished card is (see _show).
+            await self.broadcast({"type": "event", "kind": "card", "turn": self.current, "card": partial})
+        if kind == "tool" and self.narrator is not None and self.explain != "brief":
+            for k, unit in self.narrator.parts:
+                if k == "service" and unit not in self._befores and len(self._befores) < 3:
+                    # As the step is read, before it has run; a state already changing is dropped later.
+                    self._befores[unit] = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot_service, unit))
+        if kind == "tool_result" and ev.get("id"):
+            await self._clear_streams(f"stream-{ev['id']}")   # a show_card call that failed drew nothing
         plan = self.narrator.take_plan() if self.narrator else None
         if plan is not None and not self.stopping:
             self.plan_msg = {"type": "event", "kind": "plan", "turn": self.current, "steps": plan}
@@ -1402,14 +1583,19 @@ class AgentD:
             reported_error = True
         if kind == "tool_result" and len(ev.get("output") or "") > MAX_OUTPUT:
             ev = {**ev, "output": ev["output"][:MAX_OUTPUT] + "\n[... cut]"}
+        if kind in ("tool", "file_change") and self.narrator is not None:
+            # The step's reason and what it followed, for Details, next to the step they explain.
+            ev = {**ev, **self.narrator.last_notes}
         await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
         return pending_session, reported_error
 
-    def _log(self, prompt, result, snap, cmd, stopped=False, summary=""):
+    def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None):
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
+                        # What the turn read, yours or outside: the brain's "came from" links use it.
+                        "read": read or [],
                         "details": str(self.turn_logs.get(self.current, ""))})
 
     def _log_line(self, entry: dict):
@@ -1495,7 +1681,7 @@ def main(argv: list[str] | None = None) -> int:
     snaps = snapshots.Snapshots() if cfg.snapshots else _NoSnapshots()
     # Picked means the user chose (first boot asks in the pill) or the environment says so.
     chosen = cfg.configured or bool(os.environ.get("BOMBADIL_PROVIDER"))
-    daemon = AgentD(provider, snaps, chosen=chosen, auto_signin=True)
+    daemon = AgentD(provider, snaps, explain=cfg.explain, chosen=chosen, auto_signin=True)
     print(f"agentd: {provider.name} on {daemon.socket_path}", file=sys.stderr)
 
     async def run():

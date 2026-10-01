@@ -44,9 +44,14 @@ def system_prompt() -> str:
         "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
         "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
         "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
-        "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
-        "screen and your final reply as at most four lines above the bar: one or two plain sentences saying "
-        "what you did, no markdown, no lists."
+        "user a restart is needed: until then modprobe cannot load modules. "
+        "The user sees your work on screen and your final reply as at most four lines above the "
+        "bar: one or two plain sentences saying what you did, no markdown, no lists. "
+        "When a request takes three or more steps, write the plan first with your task tool, in short plain "
+        "words the user will read (no file names, commands or tool names), and keep it updated. "
+        "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action. "
+        "When an answer has parts, order or change, show it as a picture (system_map for this machine, "
+        "show_card otherwise), then say one line."
     )
 
 
@@ -258,7 +263,10 @@ class Claude(Provider):
             # live line only (the complete message follows as "assistant").
             e = m.get("event") or {}
             et = e.get("type")
-            if et == "content_block_start":
+            if et == "message_start":
+                # A new model message: the sentence before its steps is their reason.
+                yield {"kind": "message_start"}
+            elif et == "content_block_start":
                 block = e.get("content_block") or {}
                 if block.get("type") == "tool_use":
                     yield {"kind": "tool_start", "index": e.get("index", 0), "name": block.get("name", ""),
@@ -443,17 +451,20 @@ class Codex(Provider):
             code = item.get("exit_code")
             yield {"kind": "tool_result", "id": item.get("id"), "output": item.get("aggregated_output") or "",
                    "error": code not in (0, None), "exit_code": code}
+            yield {"kind": "message_start"}   # what it says next explains the next step, not this one
         elif t == "item.completed" and item.get("type") == "mcp_tool_call":
             res, err = item.get("result"), item.get("error")
             out = err.get("message", "") if isinstance(err, dict) else (err or "")
             if not out and isinstance(res, dict):
                 out = _result_text(res.get("content"))
             yield {"kind": "tool_result", "id": item.get("id"), "output": out, "error": bool(err)}
+            yield {"kind": "message_start"}
         elif t == "item.started" and item.get("type") == "file_change":
             yield {"kind": "file_change", "id": item.get("id"), "changes": item.get("changes") or []}
         elif t == "item.completed" and item.get("type") == "file_change":
             yield {"kind": "tool_result", "id": item.get("id"), "output": "",
                    "error": item.get("status") == "failed"}
+            yield {"kind": "message_start"}
         elif t == "item.completed" and item.get("type") == "web_search":
             # No id: it arrives once, already finished, and nothing ever answers it (an id would
             # mark a tool as running for the rest of the turn).

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 
 // Beside the pill: one chip per project with a dot for each coding session. A dot moves while
 // its session works, is lit when it is your turn, red when it failed and dim when it sleeps.
@@ -17,17 +18,18 @@ RowLayout {
         objectName: "foldChip"
         visible: chips.dev.folded
         implicitWidth: foldText.implicitWidth + 24
-        implicitHeight: 28
-        radius: 14
-        color: "#d91a1d21"
+        implicitHeight: Kit.Theme.chipHeight
+        radius: Kit.Theme.radiusLine
+        color: Kit.Theme.glassChip
         border.width: 1
-        border.color: chips.dev.waiting > 0 ? "#6b5446" : "#2a2f36"
+        border.color: chips.dev.waiting > 0 ? Kit.Theme.borderStrong : Kit.Theme.border
         Text {
             id: foldText
             anchors.centerIn: parent
             text: chips.dev.foldText
-            color: "#a9b0b8"
-            font.pixelSize: 12
+            color: Kit.Theme.muted
+            font.family: Kit.Theme.fontFamily
+            font.pixelSize: Kit.Theme.captionSize
         }
         HoverHandler { cursorShape: Qt.PointingHandCursor }
         TapHandler { onTapped: chips.dev.expanded = true }
@@ -40,12 +42,12 @@ RowLayout {
             required property var modelData
             objectName: "projectChip"
             implicitWidth: row.implicitWidth + 20
-            implicitHeight: 28
-            radius: 14
-            color: "#d91a1d21"
+            implicitHeight: Kit.Theme.chipHeight
+            radius: Kit.Theme.radiusLine
+            color: Kit.Theme.glassChip
             border.width: 1
-            border.color: chip.modelData.waiting > 0 ? "#6b5446" : "#2a2f36"
-            Behavior on border.color { ColorAnimation { duration: 300 } }
+            border.color: chip.modelData.waiting > 0 ? Kit.Theme.borderStrong : Kit.Theme.border
+            Behavior on border.color { ColorAnimation { duration: Kit.Theme.slow } }
 
             RowLayout {
                 id: row
@@ -53,8 +55,9 @@ RowLayout {
                 spacing: 7
                 Text {
                     text: chip.modelData.title
-                    color: "#a9b0b8"
-                    font.pixelSize: 12
+                    color: Kit.Theme.muted
+                    font.family: Kit.Theme.fontFamily
+                    font.pixelSize: Kit.Theme.captionSize
                     textFormat: Text.PlainText
                     Layout.maximumWidth: 120
                     elide: Text.ElideRight
@@ -77,7 +80,7 @@ RowLayout {
                                 width: 16; height: 16; radius: 8
                                 color: "transparent"
                                 border.width: 2
-                                border.color: "#55ffd9b8"
+                                border.color: Qt.rgba(Kit.Theme.accentInk.r, Kit.Theme.accentInk.g, Kit.Theme.accentInk.b, 0.33)
                                 visible: dot.look === "turn"
                             }
                             Rectangle {
@@ -89,10 +92,10 @@ RowLayout {
                                 border.width: dot.modelData.yours ? 2 : 0
                                 border.color: chips.dev.color(dot.modelData)
                                 opacity: dot.look === "asleep" ? 0.7 : 1
-                                Behavior on color { ColorAnimation { duration: 250 } }
+                                Behavior on color { ColorAnimation { duration: Kit.Theme.normal } }
                                 SequentialAnimation on opacity {
                                     running: dot.look === "working"; loops: Animation.Infinite
-                                    NumberAnimation { to: 0.3; duration: 600; easing.type: Easing.InOutSine }
+                                    NumberAnimation { to: Kit.Theme.pulseLow; duration: 600; easing.type: Easing.InOutSine }
                                     NumberAnimation { to: 1; duration: 600; easing.type: Easing.InOutSine }
                                     onRunningChanged: if (!running) disc.opacity = dot.look === "asleep" ? 0.7 : 1
                                 }

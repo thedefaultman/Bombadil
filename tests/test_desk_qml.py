@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from qml_theme import THEME
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -898,7 +899,8 @@ def test_moving_a_widget_moves_its_card_and_its_strip(laptop):
     right_strips = laptop.item("stripsRight")
     x_watching = laptop.at(laptop.item("deskStrip-watching"))[0]
     x_needs = laptop.at(laptop.item("deskStrip-needs"))[0]
-    assert right_strips.property("x") <= x_watching < x_needs
+    # (at() rounds to a whole pixel; the strips' x need not be one)
+    assert round(right_strips.property("x")) <= x_watching < x_needs
 
 
 def test_a_desk_message_that_is_partial_or_wrong_costs_nothing(desk):
@@ -967,10 +969,10 @@ def test_the_strip_texts(desk):
     desk.set("watchModel", rows(2))
     desk.send(**desk_msg(folded=True))
     assert desk.prop("leftStrips")[-1]["text"] == "step 2 of 4"
-    assert desk.prop("leftStrips")[-1]["dot"] == "#d97757" and desk.prop("leftStrips")[-1]["ring"]
+    assert desk.prop("leftStrips")[-1]["dot"] == THEME["accent"] and desk.prop("leftStrips")[-1]["ring"]
     assert desk.prop("rightStrips")[0]["text"] == "2 need you" and desk.prop("rightStrips")[0]["outlined"]
     desk.end(1)
-    assert desk.prop("leftStrips")[-1]["text"] == "done" and desk.prop("leftStrips")[-1]["dot"] == "#5fb36b"
+    assert desk.prop("leftStrips")[-1]["text"] == "done" and desk.prop("leftStrips")[-1]["dot"] == THEME["good"]
     desk.pill_call("dismiss")
     desk.turn(2)                                            # no plan: Now is here for the system step only
     desk.send(kind="status", turn=2, text="Installing", source="step", risk="system", command="sudo x")
@@ -1217,11 +1219,11 @@ def test_the_watching_strip_is_the_first_meter_and_its_percent_else_the_count(de
     desk.jobs(BUILD, ISO, job("a2", "Copying the photos", pct=7.0))
     desk.clock(10)
     strip = desk.watch["strip"]
-    assert strip["text"] == "Ubuntu 43%" and strip["dot"] == "#d97757" and strip["ring"]
+    assert strip["text"] == "Ubuntu 43%" and strip["dot"] == THEME["accent"] and strip["ring"]
     desk.jobs(BUILD, TIMER, UPDATE, copy)
     desk.clock(5)
     strip = desk.watch["strip"]
-    assert strip["text"] == "2 counting" and strip["dot"] == "#d97757" and strip["ring"]
+    assert strip["text"] == "2 counting" and strip["dot"] == THEME["accent"] and strip["ring"]
     desk.jobs(job("a1b2", "Ubuntu 26.04 ISO", pct=43.4))
     desk.clock(5)
     assert desk.watch["strip"]["text"] == "Ubuntu 43%"                # rounded, as the card's percent is
@@ -1231,10 +1233,10 @@ def test_the_watching_strip_is_the_first_meter_and_its_percent_else_the_count(de
     # With nothing counting, the strip says what is left.
     desk.jobs(UPDATE)
     desk.clock(5)
-    assert desk.watch["strip"] == {"text": "finished", "dot": "#e05252", "ring": False}
+    assert desk.watch["strip"] == {"text": "finished", "dot": THEME["bad"], "ring": False}
     desk.jobs(copy)
     desk.clock(5)
-    assert desk.watch["strip"] == {"text": "finished", "dot": "#5fb36b", "ring": False}
+    assert desk.watch["strip"] == {"text": "finished", "dot": THEME["good"], "ring": False}
 
 
 def test_the_strip_beside_the_pill_reads_the_jobs_when_the_card_folds(desk):
@@ -1463,6 +1465,81 @@ def test_two_sessions_waiting_show_the_card_and_one_does_not(desk):
     assert not desk.prop("present")["needs"] and desk.faces["needs"] == "hidden"
     desk.dev([], [])
     assert desk.needs["rows"] == [] and desk.needs["why"] == ""
+
+
+def face(desk):
+    """What the pill's stone shows (shell/Stone.qml), from the real PillState beside the desk."""
+    return plain(desk.pill.property("face"))
+
+
+def test_the_stone_knocks_for_one_session_waiting_and_for_two(desk):
+    assert face(desk) == "rest" and desk.pill.property("needsYou") is False
+    desk.dev([session("k1")], ["k1"])
+    assert desk.prop("needsYou") and desk.pill.property("needsYou") is True and face(desk) == "needs"
+    assert not desk.prop("present")["needs"]                          # one session is the line, not the card
+    both = [session("k1"), session("k2", role="builder", title="Tracker")]
+    desk.dev(both, ["k1", "k2"])
+    assert face(desk) == "needs" and desk.prop("present")["needs"]
+    desk.dev(both, ["k2"])                                            # one is handled, one still waits
+    assert face(desk) == "needs"
+    desk.dev(both, [])                                                # nothing waits: the stone is still
+    assert not desk.prop("needsYou") and face(desk) == "rest"
+    assert desk.pill.property("needsYou") is False
+
+
+def test_the_stone_knocks_only_for_a_row_the_desk_could_draw(desk):
+    desk.dev([session("k1")], ["gone"])                               # a key for a session the table lacks
+    assert desk.needs["rows"] == [] and face(desk) == "rest"
+    desk.dev([session("k1")], ["gone", "k1", "k1"])                   # a key twice is one row
+    assert len(desk.needs["rows"]) == 1 and face(desk) == "needs"
+
+
+def test_the_mark_outlives_everything_that_puts_a_card_away(laptop):
+    laptop.dev([session("k1"), session("k2")], ["k1", "k2"])
+    assert laptop.faces["needs"] == "full" and face(laptop) == "needs"
+    laptop.call("fold")                                               # "desk" folds every card to its strip...
+    laptop.send(**desk_msg(folded=True))
+    assert laptop.faces["needs"] == "strip" and face(laptop) == "needs"
+    laptop.send(**desk_msg(folded=False))
+    laptop.cover((0, 0, 1280, 656))                                   # ...a window covers the rail...
+    laptop.pump(0.3)
+    assert laptop.faces["needs"] == "strip" and face(laptop) == "needs"
+    laptop.cover((0, 0, 1280, 720, True))                             # ...a full-screen window hides the desk
+    assert laptop.prop("capsule") and laptop.faces["needs"] == "hidden" and face(laptop) == "needs"
+    laptop.cover()
+    laptop.send(**desk_msg(hidden=["needs"]))                         # (Needs you cannot be put away at all)
+    assert laptop.faces["needs"] != "hidden" and face(laptop) == "needs"
+
+
+def test_the_stone_knocks_over_a_running_turn_and_the_turn_goes_on_after(desk):
+    desk.turn(1, "install ffmpeg", steps=TWO)
+    assert face(desk) == "working"
+    desk.dev([session("k1")], ["k1"])
+    assert face(desk) == "needs"                                      # the person comes first
+    desk.dev([session("k1")], [])
+    assert face(desk) == "working"
+    desk.end(1)
+    assert face(desk) in ("done", "rest")
+
+
+def test_a_dropped_socket_clears_the_mark_the_desk_set(desk):
+    desk.dev([session("k1")], ["k1"])
+    assert face(desk) == "needs"
+    desk.call("lost")
+    assert not desk.prop("needsYou") and desk.pill.property("needsYou") is False
+    desk.dev([session("k1")], ["k1"])                                 # agentd sends the table again on reconnect
+    assert desk.pill.property("needsYou") is True
+
+
+def test_the_desk_clearing_its_mark_leaves_setups_own_ask_alone(desk):
+    desk.send(type="setup", state="signed_out", line="Claude signed you out.", tone="step",
+              actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    assert face(desk) == "needs"
+    desk.dev([session("k1")], ["k1"])
+    desk.dev([session("k1")], [])
+    assert face(desk) == "needs"                                      # signed out still asks
+    desk.send(type="setup", state="ready", line="", tone="done", actions=[])
+    assert face(desk) == "rest"
 
 
 def test_the_rows_are_the_attention_keys_in_their_order(desk):
