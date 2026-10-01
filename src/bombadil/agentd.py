@@ -48,9 +48,10 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "setup", "state": ..., "line": ..., "actions": [...]}  see below
-from . import (browser, cards, config, launcher, narrate, paths, procs, providers, rest, signin, snapshots, sysmap,
-               watch)
-from .brain import client as brain_client
+                   {"type": "ai", "rows": [{"name", "title", "state": "ready"|"limit"|"paused"|"signed_out"|
+                    "missing", "text": "ready", "on": bool, "enabled": bool, "current": bool}]}
+                                                        the AI card, to whoever asked and on every change
+                   {"type": "summon", "text"?: "..."}
                    {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
@@ -147,7 +148,6 @@ import urllib.parse
 from pathlib import Path
 
 from . import browser, cards, config, launcher, narrate, paths, procs, providers, rest, signin, snapshots, sysmap, watch
-from . import browser, cards, config, launcher, narrate, paths, procs, providers, signin, snapshots, sysmap, watch
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
