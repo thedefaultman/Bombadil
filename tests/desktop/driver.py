@@ -613,7 +613,8 @@ def paint(path, colour):
     assert img.save(str(path))
 
 
-def desk_colour(name, x=640, y=200):
+def desk_colour(name, x=150, y=400):
+    # The Passwords window opened above is still up in the middle; the left side is bare ground.
     time.sleep(1.5)   # the picture settles in over 300 ms, and a changed file is read a moment after
     shot(name)
     return mean_pixel(name, x, y)
@@ -623,6 +624,7 @@ def near(got, want, tol=8):
     return all(abs(g - w) <= tol for g, w in zip(got, want))
 
 
+standard = mean_pixel("00-resting", 150, 400)
 home = Path.home()
 choice = home / ".config" / "bombadil" / "wallpaper"
 choice.parent.mkdir(parents=True, exist_ok=True)
@@ -640,12 +642,12 @@ got = desk_colour("30-own-wallpaper-changed")
 check("changing the file changes the picture without a restart", near(got, (153, 51, 102)), got)
 choice.write_text("/nowhere/at/all.png\n")
 got = desk_colour("30-own-wallpaper-missing")
-check("a picture that will not load falls back to the standard one", near(got, (21, 24, 27), 4), got)
+check("a picture that will not load falls back to the standard one", near(got, standard, 4), (got, standard))
 choice.write_text("~/first.png\n")
 desk_colour("30-own-wallpaper-again")
 choice.unlink()
 got = desk_colour("30-own-wallpaper-gone")
-check("taking the file away brings the standard picture back", near(got, (21, 24, 27), 4), got)
+check("taking the file away brings the standard picture back", near(got, standard, 4), (got, standard))
 own_log = re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text())
 check("the wallpaper's choices raised no QML error but the one for the picture that is not there",
       not [ln for ln in own_log.splitlines()
