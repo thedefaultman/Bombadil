@@ -202,6 +202,74 @@ the last changes nothing.
 - *The first frame after nobody was looking can be a second old.* After Machine is put away and asked for
   again, the processor reads 0% and the network shows dashes until the next sample, a second later.
 
+## Dragging cards
+
+A card is taken by its title and the line under it (the first 50 px; the rows below keep their buttons
+and their small x), a chip by the chip (not the `+N` one). Hold the left button and move about ten
+pixels. A tap, or a shorter slide, is still a tap: a click on Now's title still opens the details.
+
+Where it lands depends on where the pointer is when the button goes up:
+
+- **On a rail**: the left column, or the right, from its edge to a little past the card's width. A line
+  across the column marks the gap it would take, between the cards on show. The card goes there:
+  `{"type":"desk","op":"move","widget":...,"rail":...,"rank":...}`, with `rank` 0 nearest the pill and
+  counted in the rail's whole order without the widget (the ones that are away included, as
+  `Desk._move` counts). A card dropped where it already is sends nothing. A chip dropped on a rail is
+  always a move: it was never in a slot.
+- **In the row**, the bottom 64 px: a card folds to its chip, `{"type":"desk","op":"fold","widget":...}`.
+  While the pointer is there the chip shows as an outlined ghost past the ones its side already has. A chip
+  dropped in the row does nothing.
+- **Anywhere else**, or under a window: nothing. The drag ends and nothing is sent.
+
+agentd answers with the new `desk` message, and that is what changes the screen: the shell never moves a
+card first. What was dropped stays dimmed where it stands until the message comes, or for 500 ms if none
+does. That wait is the only timer; nothing runs while a card is held and nothing is animated. A widget
+agentd lists in `stripped` is a chip whatever the room, takes no slot in its rail (the cards above it
+slide down), and can be Needs you, which `hidden` cannot take.
+
+While something is in hand:
+
+- *Desk messages wait.* A changed order would rebuild the rail's cards under the hand that holds one,
+  so they are kept and applied in order when the drag ends. A drop applies them first, then sends its own.
+- *Both rail windows are up,* an empty rail's too: it draws the mark, and the window the drag began in
+  must not go. They go a moment after it ends, as a card's window does.
+- *The drag is `DeskState`'s.* A handle (`DeskDrag.qml`) says only where the pointer is, in screen
+  coordinates; `DeskState.dropTarget` says what lies there from the desk's own geometry, so the mark follows
+  a rail that shifts under the pointer. A layer-shell window cannot ask where it sits, and a grab goes on
+  delivering positions beyond its window's edge, so each handle is told its window's top-left: `railX` and
+  `railTop` for a rail, the screen's height less the bar's for the strips.
+- *It ends by itself* when agentd is lost, when what is in hand stops being what it was (a window folded the
+  card, it has nothing to say), and when the grab is taken from the handle for any reason but the button
+  going up. Nothing is sent then.
+
+Left out: no key cancels a drag, the pointer keeps its shape, a card does not follow the pointer (it
+stays dimmed where it stands), and the input masks are as they were.
+
+`tests/test_desk_qml.py` has the rules (where a drop lands, what waits, what ends a drag), and
+`tests/test_desk_drag_qml.py` drives the rails and the bar as three windows with real pointer events, each
+position given in the coordinates of the window the press began in, the way a grab delivers them.
+
+**Known limits.** What only a real compositor shows, and was not run:
+
+- *The grab across surfaces.* That motion and the release keep reaching the window the press began in, far
+  outside it: from a rail to the bar and back, with the stage empty and with windows on it.
+- *The input mask while held.* A rail takes input only where its cards are; whether the grab goes on past
+  the mask is the compositor's.
+- *The window origins.* They are assumed from the shell's own layout. At 125% scale, with the chips of
+  apps above the pill (the bar is taller then), and on a second monitor, a drop could land a few pixels
+  off or on the wrong side of a boundary.
+- *The pointer's shape.* It is the default over the stage and the rails; whether that reads as "holding
+  something" is a matter of seeing it.
+- *Enter and leave after a release.* The window under the pointer when the button goes up, and the hover on
+  the card or chip it is over, should come back at once.
+- *A rail window that appears mid-grab.* The empty rail's window is mapped as the drag starts. Offscreen,
+  Qt gives a new window the focus and that ends the other window's grab, so the test windows ask for none,
+  as a layer-shell window with no keyboard focus does not; whether Hyprland leaves the grab alone is the
+  thing to watch.
+- *The echo.* A real agentd's `desk` message with `stripped` after a `move` or a `fold`, and the dimming
+  going away at it. The shell side is tested against a literal message of that shape.
+- *Touch.* Nothing here was tried with a finger.
+
 ## Adding a widget
 
 1. Add it to `WIDGETS` in `src/bombadil/desk.py` (id, title, launcher words, default rail) and to

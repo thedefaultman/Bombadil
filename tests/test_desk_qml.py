@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHELL = ROOT / "shell"
 CARDS = SHELL
 CARD_FILES = ["DeskCard.qml", "NowCard.qml", "RowsCard.qml", "DeskStrip.qml"]
-DESK_FILES = ["DeskState.qml", "DeskRail.qml", "DeskStrips.qml", "PillState.qml", "DeskTheme.js"]
+DESK_FILES = ["DeskState.qml", "DeskRail.qml", "DeskStrips.qml", "DeskDrag.qml", "PillState.qml", "DeskTheme.js"]
 
 HARNESS = """
 import QtQuick
@@ -110,6 +110,8 @@ def plain(v):
 
 
 class Desk:
+    harness = HARNESS      # what a test of the desk's windows replaces (test_desk_drag_qml.py)
+
     def __init__(self, app, tmp_path, width=1920, height=1080, calm=True):
         self.app = app
         home = tmp_path / "shell"
@@ -120,8 +122,8 @@ class Desk:
             shutil.copy(CARDS / name, home / name)
         qml = tmp_path / "harness.qml"
         # A calm desk's clock ticks once an hour, so a test sets `now` and nothing moves it under the test.
-        qml.write_text(HARNESS % {"dir": home.as_uri(), "width": width, "height": height,
-                                  "tick": 3600000 if calm else 1000})
+        qml.write_text(self.harness % {"dir": home.as_uri(), "width": width, "height": height,
+                                       "tick": 3600000 if calm else 1000})
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
         self.engine.warnings.connect(lambda ws: self.warnings.extend(w.toString() for w in ws))
@@ -2376,3 +2378,482 @@ def test_the_jobs_and_sessions_load_without_qml_warnings(desk):
     desk.call("lost")
     desk.pump(0.5)
     assert desk.warnings == []
+
+
+# -- dragging: what DeskState decides (the pointer events are in test_desk_drag_qml.py) --
+
+def sent_ops(d):
+    """What the desk asked agentd to do, without the ask for its state."""
+    return [m for m in d.sent if m["op"] != "get"]
+
+
+def a_full_desk(d):
+    """Cards on both rails of the 1920x1080 screen, and the desk connected. From the pill up, with each card's
+    slot top: left now (828), watching (660), alive (480); right needs (844), away (676), machine (450)."""
+    d.set("connected", True)
+    d.turn(1, steps=FOUR)
+    d.set("watchModel", rows(2))
+    d.set("aliveModel", rows(2))
+    d.set("needsModel", rows(2))
+    d.set("awayModel", rows(2))
+    d.vitals()
+    assert set(d.faces.values()) == {"full"}
+    return d.slots
+
+
+def centre(slot):
+    return slot["y"] + slot["h"] / 2
+
+
+def below(slot):
+    """The boundary under a card: the middle of the gap to the next one."""
+    return slot["y"] + slot["h"] + 6
+
+
+def target(d):
+    return d.prop("dropTarget")
+
+
+def take(d, widget, x, y, from_="rail"):
+    """The person takes a widget at (x, y); what a drop there would do."""
+    assert d.call("dragStart", widget, from_, x, y) is True
+    return target(d)
+
+
+def rank(side, n, mark_y):
+    return {"kind": "rank", "side": side, "rank": n, "markY": mark_y}
+
+
+def test_a_stripped_widget_is_a_strip_with_no_slot_and_the_cards_above_it_slide_down(desk):
+    s = a_full_desk(desk)
+    desk.send(**desk_msg(stripped=["watching"]))
+    assert desk.prop("stripped") == ["watching"] and desk.call("isStripped", "watching") is True
+    assert desk.faces["watching"] == "strip" and "watching" not in desk.slots
+    assert desk.prop("present")["watching"] is True
+    assert desk.slots["now"] == s["now"]                                             # the card under it stays
+    assert desk.slots["alive"]["y"] == s["alive"]["y"] + s["watching"]["h"] + 12     # the one above slides down
+    assert desk.faces["alive"] == "full"
+    # Its chip stands in the rail's order, with its own words.
+    assert [c["text"] for c in desk.prop("leftStrips")] == ["2 counting"]
+    desk.pump(0.3)
+    assert desk.shown("deskStrip-watching") and not desk.shown("deskCard-watching")
+    desk.send(**desk_msg(stripped=[]))
+    assert desk.faces["watching"] == "full" and desk.slots == s
+
+
+def test_a_card_folded_by_hand_gives_its_room_to_the_one_that_did_not_fit(laptop):
+    laptop.turn(1, steps=[(f"step {i}", None, "in_progress" if i == 0 else "pending") for i in range(8)])
+    laptop.send(kind="status", turn=1, text="Installing", source="step", risk="system", command="sudo pacman -S x")
+    laptop.set("watchModel", rows(3, first={"kind": "meter"}))
+    laptop.set("aliveModel", rows(2))
+    assert (laptop.faces["watching"], laptop.faces["alive"]) == ("full", "strip")
+    laptop.send(**desk_msg(stripped=["watching"]))
+    assert (laptop.faces["watching"], laptop.faces["alive"]) == ("strip", "full")
+
+
+def test_stripped_is_filtered_to_known_widgets_and_left_alone_when_a_message_leaves_it_out(desk):
+    desk.send(**desk_msg(stripped=["now", "now", "nonsense", 3, None, "needs"]))
+    assert desk.prop("stripped") == ["now", "needs"]             # unknown ones are dropped; needs may be stripped
+    desk.send(**desk_msg())                                      # says nothing about it
+    assert desk.prop("stripped") == ["now", "needs"]
+    desk.send(type="desk", stripped="everything")                # a shape it does not know
+    assert desk.prop("stripped") == ["now", "needs"]
+    desk.send(type="desk", stripped=["away"])
+    assert desk.prop("stripped") == ["away"]
+
+
+def test_needs_you_can_be_folded_by_hand_and_the_stone_still_knocks(desk):
+    desk.set("needsModel", rows(2))
+    desk.send(**desk_msg(stripped=["needs"]))
+    assert desk.faces["needs"] == "strip" and "needs" not in desk.slots
+    assert desk.prop("needsYou") is True and desk.pill.property("needsYou") is True
+    assert [c["text"] for c in desk.prop("rightStrips")] == ["2 need you"]
+
+
+def test_a_stripped_widget_with_nothing_to_say_is_not_there_and_comes_back_a_strip(desk):
+    desk.send(**desk_msg(stripped=["watching"]))
+    assert desk.faces["watching"] == "hidden"
+    desk.set("watchModel", rows(2))
+    assert desk.faces["watching"] == "strip"
+
+
+def test_a_strip_by_hand_stays_one_when_the_desk_unfolds_and_when_a_window_leaves(laptop):
+    laptop.turn(1, steps=TWO)
+    laptop.send(**desk_msg(stripped=["now"], folded=True))
+    laptop.send(**desk_msg(folded=False))
+    laptop.cover((100, 300, 400, 300))
+    laptop.cover()
+    laptop.set("unfoldDelayMs", 60)
+    laptop.pump(0.3)
+    assert laptop.faces["now"] == "strip"
+
+
+def test_a_drag_starts_only_where_it_can_be_carried_out(desk):
+    a_full_desk(desk)
+    assert desk.call("dragStart", "now", "rail", 100, 900) is True
+    assert desk.prop("dragging") is True
+    assert desk.prop("drag") == {"id": "now", "from": "rail", "side": "left", "x": 100, "y": 900}
+    assert desk.call("dragStart", "needs", "rail", 1700, 900) is False       # one at a time
+    assert desk.prop("drag")["id"] == "now"
+    desk.call("dragCancel")
+    assert desk.prop("drag") is None and desk.prop("dragging") is False
+    assert desk.call("dragStart", "needs", "strip", 1700, 900) is False      # a card is no strip
+    assert desk.call("dragStart", "needs", "chip", 1700, 900) is False       # nor anything else
+    assert desk.call("dragStart", "nonsense", "rail", 0, 0) is False
+    desk.set("watchModel", rows(0))
+    assert desk.call("dragStart", "watching", "rail", 100, 700) is False     # nothing to say: not there
+    assert desk.prop("drag") is None
+
+
+def test_a_strip_is_taken_only_as_a_strip(desk):
+    a_full_desk(desk)
+    desk.send(**desk_msg(stripped=["alive"]))
+    assert desk.call("dragStart", "alive", "rail", 100, 500) is False
+    assert desk.call("dragStart", "alive", "strip", 700, 1040) is True
+    assert desk.prop("drag")["from"] == "strip"
+
+
+def test_nothing_starts_a_drag_while_agentd_is_away_or_a_window_has_the_screen(desk):
+    desk.turn(1, steps=TWO)
+    assert desk.call("dragStart", "now", "rail", 100, 900) is False          # not connected
+    desk.set("connected", True)
+    desk.cover((0, 0, 1920, 1080, True))
+    assert desk.prop("mode") == "immersive"
+    assert desk.call("dragStart", "now", "rail", 100, 900) is False
+    desk.cover()
+    desk.set("unfoldDelayMs", 60)
+    desk.pump(0.3)
+    assert desk.call("dragStart", "now", "rail", 100, 900) is True
+
+
+def test_a_move_an_end_or_a_cancel_with_nothing_in_hand_does_nothing(desk):
+    a_full_desk(desk)
+    desk.call("dragMove", 100, 100)
+    desk.call("dragEnd", 100, 100)
+    desk.call("dragCancel")
+    assert desk.prop("drag") is None and sent_ops(desk) == [] and desk.prop("settling") == ""
+
+
+def test_a_card_dragged_up_and_down_its_own_rail_takes_the_boundary_nearest_the_pointer(desk):
+    s = a_full_desk(desk)
+    take(desk, "watching", 100, centre(s["watching"]))
+    # Left alone, or between the middles of its neighbours: where it is, so there is nothing to do.
+    assert target(desk) is None
+    desk.call("dragMove", 100, centre(s["now"]) - 1)
+    assert target(desk) is None
+    desk.call("dragMove", 100, centre(s["alive"]) + 1)
+    assert target(desk) is None
+    # Past the middle of the card by the pill: in front of it.
+    desk.call("dragMove", 100, centre(s["now"]) + 1)
+    assert target(desk) == rank("left", 0, below(s["now"]))
+    # Above the middle of the card above it: after it, the last place.
+    desk.call("dragMove", 100, centre(s["alive"]) - 1)
+    assert target(desk) == rank("left", 2, s["alive"]["y"] - 6)
+    desk.call("dragMove", 100, 45)                                           # the top of the rail
+    assert target(desk)["rank"] == 2
+
+
+def test_the_cards_own_slot_is_not_a_place_to_drop_between(desk):
+    s = a_full_desk(desk)
+    assert take(desk, "now", 100, 900) is None                               # now is the first already
+    desk.call("dragMove", 100, centre(s["watching"]) - 1)                    # between watching and alive
+    assert target(desk) == rank("left", 1, below(s["alive"]))
+    desk.call("dragEnd", 100, centre(s["watching"]) - 1)
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "left", "rank": 1}]
+
+
+def test_a_card_dragged_to_the_other_rail_gets_the_rank_the_pointer_is_at(desk):
+    s = a_full_desk(desk)
+    assert take(desk, "now", 1700, centre(s["needs"]) + 10) == rank("right", 0, below(s["needs"]))
+    desk.call("dragMove", 1700, centre(s["away"]) + 10)
+    assert target(desk) == rank("right", 1, below(s["away"]))
+    desk.call("dragMove", 1700, centre(s["machine"]) + 10)
+    assert target(desk)["rank"] == 2
+    desk.call("dragMove", 1700, centre(s["machine"]) - 10)                   # above all of them: the last place
+    assert target(desk) == rank("right", 3, s["machine"]["y"] - 6)
+    desk.call("dragEnd", 1700, centre(s["machine"]) - 10)
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "right", "rank": 3}]
+
+
+def test_a_rail_with_no_card_takes_a_drop_at_the_pill_end(desk):
+    a_full_desk(desk)
+    desk.set("needsModel", rows(0))
+    desk.set("awayModel", rows(0))
+    desk.set("machineModel", rows(0))
+    assert set(desk.slots) == {"now", "watching", "alive"}
+    assert take(desk, "now", 1700, 300) == rank("right", 0, desk.prop("railBottomY"))
+    desk.call("dragEnd", 1700, 300)
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "right", "rank": 0}]
+
+
+def test_a_rank_counts_the_widgets_that_are_away_because_agentd_does(desk):
+    a_full_desk(desk)
+    desk.set("watchModel", rows(0))                      # watching has nothing to say: no slot, but still second
+    s = desk.slots
+    assert "watching" not in s and s["alive"]["y"] == s["now"]["y"] - 12 - 168
+    # A card from the other rail, dropped between now and alive: after alive it is the fourth, and before
+    # alive it is the third, because watching (the second) counts.
+    assert take(desk, "needs", 100, centre(s["now"]) + 5) == rank("left", 0, below(s["now"]))
+    desk.call("dragMove", 100, centre(s["now"]) - 5)
+    assert target(desk) == rank("left", 2, below(s["alive"]))
+    desk.call("dragMove", 100, centre(s["alive"]) - 5)
+    assert target(desk) == rank("left", 3, s["alive"]["y"] - 6)
+    # alive itself: watching is no place to drop at, so the nearest it comes to staying is the place before it.
+    desk.call("dragCancel")
+    take(desk, "alive", 100, centre(s["now"]) - 5)
+    assert target(desk)["rank"] == 1
+    desk.call("dragMove", 100, centre(s["now"]) + 5)
+    assert target(desk)["rank"] == 0
+
+
+def test_a_widget_folded_by_hand_is_not_a_place_to_drop_between_either(desk):
+    a_full_desk(desk)
+    desk.send(**desk_msg(stripped=["watching"]))
+    s = desk.slots
+    assert take(desk, "needs", 100, centre(s["alive"]) + 5) == rank("left", 2, below(s["alive"]))
+    desk.call("dragMove", 100, centre(s["alive"]) - 5)
+    assert target(desk) == rank("left", 3, s["alive"]["y"] - 6)
+    desk.call("dragMove", 100, centre(s["now"]) + 5)
+    assert target(desk)["rank"] == 0
+
+
+def test_the_row_takes_a_card_to_fold_and_gives_a_strip_nothing(desk):
+    a_full_desk(desk)
+    h = desk.prop("screenHeight")
+    assert take(desk, "now", 960, h - 64) == {"kind": "fold"}                # the bar's zone is the row
+    desk.call("dragMove", 960, h - 65)
+    assert target(desk) is None                                              # just above it, mid-screen: the stage
+    desk.call("dragMove", 5, h - 1)
+    assert target(desk) == {"kind": "fold"}                                  # whichever side
+    desk.call("dragCancel")
+    desk.send(**desk_msg(stripped=["now"]))
+    assert take(desk, "now", 960, h - 30, "strip") is None                   # a strip is not folded again
+    desk.call("dragMove", 100, 300)
+    assert target(desk)["kind"] == "rank"
+
+
+def test_only_the_rails_columns_are_places_and_the_middle_is_the_stage(desk):
+    a_full_desk(desk)
+    assert take(desk, "needs", 16 + 300 + 40, 700)["side"] == "left"         # the column and 40 px more
+    desk.call("dragMove", 16 + 300 + 41, 700)
+    assert target(desk) is None
+    desk.call("dragMove", 1920 - 16 - 300 - 41, 700)
+    assert target(desk) is None
+    desk.call("dragMove", 1920 - 16 - 300 - 40, 700)
+    assert target(desk)["side"] == "right"
+    desk.call("dragMove", -30, 700)                                          # past the screen's edge is still the column
+    assert target(desk)["side"] == "left"
+    desk.call("dragMove", 1950, 700)
+    assert target(desk)["side"] == "right"
+
+
+def test_a_window_under_the_pointer_is_no_place(desk):
+    a_full_desk(desk)
+    desk.cover((1400, 60, 520, 300))                                         # above every card on the right
+    assert take(desk, "now", 1700, 200) is None
+    desk.call("dragMove", 1700, 359)
+    assert target(desk) is None
+    desk.call("dragMove", 1700, 360)                                         # the window's edge is not in it
+    assert target(desk)["kind"] == "rank"
+    desk.cover((0, 1016, 1920, 64))                                          # a window over the row
+    desk.call("dragMove", 960, 1050)
+    assert target(desk) is None
+
+
+def test_a_rail_that_shifts_under_a_drag_moves_the_mark(desk):
+    s = a_full_desk(desk)
+    assert take(desk, "needs", 100, centre(s["alive"]) + 5) == rank("left", 2, below(s["alive"]))
+    desk.set("watchModel", rows(4))                                          # watching grows: alive moves up
+    moved = desk.slots["alive"]
+    assert moved["y"] < s["alive"]["y"]
+    assert target(desk) == rank("left", 2, below(moved))
+
+
+def test_a_drop_with_no_target_sends_nothing_and_dims_nothing(desk):
+    a_full_desk(desk)
+    take(desk, "now", 960, 500)                                              # the stage
+    desk.call("dragEnd", 960, 500)
+    assert sent_ops(desk) == [] and desk.prop("drag") is None and desk.prop("settling") == ""
+    take(desk, "now", 100, 900)                                              # where it is
+    desk.call("dragEnd", 100, 900)
+    assert sent_ops(desk) == [] and desk.prop("settling") == "" and desk.warnings == []
+
+
+def test_a_card_dropped_in_the_row_folds_and_a_strip_dropped_on_a_rail_is_moved(desk):
+    a_full_desk(desk)
+    take(desk, "machine", 960, 1050)
+    desk.call("dragEnd", 960, 1050)
+    assert sent_ops(desk) == [{"type": "desk", "op": "fold", "widget": "machine"}]
+    desk.send(**desk_msg(stripped=["machine"]))                              # agentd's answer
+    take(desk, "machine", 1700, 1050, "strip")
+    desk.call("dragEnd", 100, 300)                                           # up and over to the left rail
+    assert sent_ops(desk)[-1] == {"type": "desk", "op": "move", "widget": "machine", "rail": "left", "rank": 3}
+    # Dropped on its own rail it still asks: agentd says whether it was already there.
+    take(desk, "machine", 1700, 1050, "strip")
+    desk.call("dragEnd", 1700, 300)
+    assert sent_ops(desk)[-1] == {"type": "desk", "op": "move", "widget": "machine", "rail": "right", "rank": 2}
+
+
+def test_a_strip_that_is_one_for_the_room_is_never_in_its_place(desk):
+    a_full_desk(desk)
+    desk.send(**desk_msg(folded=True))                                       # the word "desk": every card is a strip
+    assert set(desk.faces.values()) == {"strip"}
+    assert take(desk, "now", 100, 800, "strip") == rank("left", 0, desk.prop("railBottomY"))
+    desk.call("dragEnd", 100, 800)
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "left", "rank": 0}]
+
+
+def test_the_chip_a_card_would_fold_into_is_the_ghost_for_the_row(desk):
+    a_full_desk(desk)
+    assert desk.prop("foldChip") is None
+    take(desk, "watching", 960, 300)
+    assert desk.prop("foldChip") is None
+    desk.call("dragMove", 960, 1050)
+    chip = desk.prop("foldChip")
+    assert chip["id"] == "watching" and chip["text"] == "2 counting"
+    desk.call("dragMove", 960, 500)
+    assert desk.prop("foldChip") is None
+    desk.call("dragMove", 1700, 700)                                         # over a rail it is a card's place, no chip
+    assert desk.prop("dropTarget")["kind"] == "rank" and desk.prop("foldChip") is None
+
+
+def test_desk_messages_wait_for_the_drop_and_apply_in_the_order_they_came(desk):
+    s = a_full_desk(desk)
+    take(desk, "needs", 100, 900)
+    desk.send(**desk_msg(stripped=["watching"]))
+    desk.send(**desk_msg(stripped=["alive"],
+                         order={"left": ["alive", "now", "watching"], "right": ["needs", "away", "machine"]}))
+    assert desk.prop("stripped") == [] and desk.prop("order")["left"] == ["now", "watching", "alive"]
+    assert desk.slots == s                                                   # the rail stays as the person sees it
+    # What is not the desk's own state goes on as usual.
+    desk.set("watchModel", rows(3))
+    assert desk.slots["watching"]["h"] == 50 + 3 * 44 + 18
+    desk.call("dragCancel")
+    assert desk.prop("stripped") == ["alive"] and desk.prop("order")["left"] == ["alive", "now", "watching"]
+    assert sent_ops(desk) == []
+
+
+def test_a_drop_applies_what_waited_and_then_sends_its_own_message(desk):
+    a_full_desk(desk)
+    take(desk, "now", 960, 1050)
+    desk.send(**desk_msg(folded=True))
+    assert desk.prop("folded") is False
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("folded") is True and desk.prop("dragging") is False
+    assert sent_ops(desk) == [{"type": "desk", "op": "fold", "widget": "now"}]
+
+
+def test_a_drop_dims_the_origin_until_agentd_answers_or_the_wait_runs_out(desk):
+    a_full_desk(desk)
+    desk.set("settleMs", 150)
+    take(desk, "now", 960, 1050)
+    assert desk.prop("settling") == ""                                       # in hand is not settling
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("settling") == "now"
+    desk.send(**desk_msg(stripped=["now"]))                                  # the answer
+    assert desk.prop("settling") == ""
+    desk.pump(0.3)
+    assert desk.prop("settling") == ""
+    take(desk, "needs", 960, 1050)
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("settling") == "needs"
+    desk.send(**desk_msg())                                                  # an answer that changes nothing counts
+    assert desk.prop("settling") == ""
+    take(desk, "alive", 960, 1050)
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("settling") == "alive"
+    desk.pump(0.4)
+    assert desk.prop("settling") == ""                                       # no answer came
+
+
+def test_nothing_is_dimmed_after_a_drag_that_was_cancelled(desk):
+    a_full_desk(desk)
+    take(desk, "now", 960, 1050)
+    desk.call("dragCancel")
+    assert desk.prop("settling") == "" and sent_ops(desk) == []
+
+
+def test_losing_agentd_mid_drag_ends_it_and_a_drop_after_it_sends_nothing(desk):
+    a_full_desk(desk)
+    take(desk, "needs", 960, 1050)
+    desk.send(**desk_msg(stripped=["watching"]))
+    desk.call("lost")
+    assert desk.prop("dragging") is False and desk.prop("stripped") == ["watching"]      # what waited applied
+    desk.call("dragEnd", 960, 1050)
+    assert sent_ops(desk) == [] and desk.prop("settling") == ""
+    desk.set("connected", True)
+    take(desk, "needs", 960, 1050)
+    desk.set("connected", False)                                             # the property alone does the same
+    assert desk.prop("dragging") is False
+
+
+def test_a_card_that_stops_being_a_card_ends_its_drag(laptop):
+    laptop.turn(1, steps=FOUR)
+    laptop.set("watchModel", rows(2))
+    laptop.set("connected", True)
+    y = laptop.slots["watching"]["y"]
+    take(laptop, "watching", 100, 400)                                       # a window over it folds it to its strip
+    laptop.cover((16, y, 300, 50))
+    assert laptop.prop("dragging") is False and sent_ops(laptop) == []
+    laptop.cover()
+    laptop.set("unfoldDelayMs", 60)
+    laptop.pump(0.3)
+    assert laptop.faces["watching"] == "full"
+    take(laptop, "watching", 100, 400)                                       # it has nothing left to say
+    laptop.set("watchModel", rows(0))
+    assert laptop.prop("dragging") is False
+    laptop.set("watchModel", rows(2))
+    take(laptop, "watching", 100, 400)                                       # a full-screen window takes the desk
+    laptop.cover((0, 0, 1280, 720, True))
+    assert laptop.prop("dragging") is False and sent_ops(laptop) == []
+
+
+def test_a_strip_that_becomes_a_card_ends_its_drag(laptop):
+    laptop.turn(1, steps=TWO)
+    laptop.set("connected", True)
+    laptop.set("unfoldDelayMs", 60)
+    laptop.cover((0, 100, 1280, 500))
+    laptop.pump(0.1)
+    assert laptop.faces["now"] == "strip"
+    take(laptop, "now", 600, 690, "strip")
+    laptop.cover()
+    laptop.pump(0.3)
+    assert laptop.faces["now"] == "full" and laptop.prop("dragging") is False
+
+
+def test_what_waited_is_applied_when_a_drag_ends_by_itself(laptop):
+    laptop.turn(1, steps=FOUR)
+    laptop.set("connected", True)
+    take(laptop, "now", 100, 600)
+    laptop.send(**desk_msg(hidden=["now"]))
+    assert laptop.prop("hidden") == []
+    laptop.cover((0, 0, 1280, 720, True))
+    assert laptop.prop("dragging") is False and laptop.prop("hidden") == ["now"]
+
+
+def test_the_snapshot_carries_what_is_in_hand(desk):
+    s = a_full_desk(desk)
+    snap = desk.call("snapshot")
+    assert snap["stripped"] == [] and snap["drag"] is None and snap["dropTarget"] is None and snap["settling"] == ""
+    desk.send(**desk_msg(stripped=["alive"]))
+    take(desk, "now", 100, centre(s["watching"]) - 1)
+    snap = desk.call("snapshot")
+    assert snap["stripped"] == ["alive"] and snap["drag"]["id"] == "now"
+    assert snap["dropTarget"]["kind"] == "rank" and snap["dropTarget"]["rank"] == 1
+
+
+def test_a_desk_message_as_the_python_half_sends_it_is_what_the_desk_reads(desk):
+    # The shape Desk.snapshot() has once it carries the widgets folded by hand. When it does, build this
+    # message from the real Desk instead of by hand.
+    msg = {"type": "desk", "folded": False, "hidden": ["machine"], "stripped": ["watching", "needs"],
+           "rails": {"now": "left", "watching": "left", "alive": "left", "needs": "right", "away": "right",
+                     "machine": "right"},
+           "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}, "screen": ""}
+    desk.turn(1, steps=TWO)
+    desk.set("watchModel", rows(2))
+    desk.set("needsModel", rows(2))
+    desk.send(**msg)
+    assert desk.prop("stripped") == ["watching", "needs"] and desk.prop("hidden") == ["machine"]
+    assert (desk.faces["now"], desk.faces["watching"], desk.faces["needs"]) == ("full", "strip", "strip")
+    assert [c["text"] for c in desk.prop("leftStrips")] == ["2 counting"]
+    assert [c["text"] for c in desk.prop("rightStrips")] == ["2 need you"]
