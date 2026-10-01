@@ -135,7 +135,9 @@ ShellRoot {
         root.summonedOn = root.summonedOn === name ? "" : name
     }
 
-    function release() { root.summonedOn = "" }
+    // The pill lets go of the keyboard (Enter, Esc, idle, a click elsewhere): the AI card is a popover
+    // of the pill, so it goes with it.
+    function release() { root.summonedOn = ""; pillState.closeAi() }
 
     // Running apps, for the chips above the prompt. Each app window lives in its own special
     // workspace "special:app-<name>" (bombadil-app's placement.py puts it there).

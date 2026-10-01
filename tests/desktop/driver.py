@@ -768,6 +768,7 @@ key("Escape")
 
 # words that never need the AI still work while it rests: an app by name, and a "!" command.
 before = len(api_log())
+words_from = mark()   # the finder below looks at what these two do not send: no "found" for either
 m = mark()
 summon()
 typ("passwords")
@@ -789,6 +790,150 @@ check(
     and len(api_log()) == before,
     bang,
 )
+
+# no "found" for what the finder is not for: a launcher word ("passwords" runs at once, and would be found if it were
+# looked for) and a "!" command (neither waits for the AI).
+check(
+    "no found for a launcher word or a ! command",
+    wait(lambda x: x.get("type") == "found", 1.0, words_from) is None,
+    [x for x in events[words_from:] if x.get("type") == "found"],
+)
+
+
+# the finder: while the AI rests, a sentence that has to wait is kept as a chip, and agentd also looks, on this computer
+# only (no model), for the apps, launcher words and past asks it nearly names. It only offers: one "found" message
+# with the line and up to three matches. A press (found_open, which the bar sends on a click) opens one.
+def passwords_up():
+    return "bombadil-app-passwords" in run("swaymsg", "-t", "get_tree").stdout
+
+
+def kept_ask(prompt):
+    """Type an ask while the AI rests: (its turn, the mark before it) once agentd has kept it as a chip."""
+    summon()
+    typ(prompt)
+    n = mark()
+    key("Return")
+    q = wait(ev("queued", prompt=prompt), 5, n)
+    return (q or {}).get("turn"), n
+
+
+def found_for(turn, since, timeout=10):
+    return wait(lambda x: x.get("type") == "found" and x.get("turn") == turn, timeout, since)
+
+
+def kept_queue():
+    """The waiting asks as the latest status says them, [(turn, the chip's label)]."""
+    with lock:
+        sts = [x for x in events if x.get("type") == "status"]
+    return [(q["turn"], q.get("wait")) for q in sts[-1]["queue"]] if sts else []
+
+
+rest_when, rest_wait = r.get("when"), r.get("wait")
+
+# 1. a sentence that names an app: the app is found, and the ask is kept all the same.
+summon()
+typ("quit passwords")   # the Passwords window is up from above: put it away, so that a press has to bring it back
+key("Return")
+check("the Passwords window is put away first", until(lambda: not passwords_up(), 10), passwords_up())
+asks0 = api_requests()
+t_pw, n = kept_ask("my password app")
+f1 = found_for(t_pw, n)
+time.sleep(0.8)
+shot("36-found-app")
+m0 = (f1 or {}).get("matches") or [{}]
+check(
+    "my password app: found, with the line that says when the ask runs and the Passwords app first",
+    f1 and f1["prompt"] == "my password app" and f1["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and (m0[0].get("id"), m0[0].get("kind"), m0[0].get("label"), m0[0].get("hint")) == ("1", "app", "Passwords", "App"),
+    f1 and (f1["line"], f1["matches"]),
+)
+check(
+    "the finder sent nothing to the API, and the ask waits as a chip that says when",
+    api_requests() == asks0 and dict(kept_queue()).get(t_pw) == rest_wait and rest_wait,
+    (api_requests() - asks0, kept_queue()),
+)
+stone = ink("36-found-app")
+check(
+    "the stone is still the resting grey while it looks",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]),
+    stone,
+)
+
+# 2. a press on it: the app opens as if its word was typed, and the ask it came from is let go.
+m = mark()
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+done = wait(ev("local", phase="done"), 15, m)
+gone = wait(ev("unqueued", turn=t_pw), 5, m)
+up = until(passwords_up, 10)
+time.sleep(1.0)
+shot("37-found-opened")
+check("a press opens the app: a local answer that went well, and the Passwords window is up", done and done.get("ok") and up, done and done.get("text"))
+check("and lets go of the kept ask, with nothing sent to the API",
+      gone is not None and t_pw not in dict(kept_queue()) and api_requests() == asks0, kept_queue())
+
+# 3. a sentence that names nothing here: kept, and the line says there is nothing.
+t_fr, n = kept_ask("what is the capital of france")
+f3 = found_for(t_fr, n)
+time.sleep(0.8)
+shot("38-found-nothing")
+check(
+    "a sentence that names nothing is kept, and the line says nothing matches",
+    f3 and f3["matches"] == [] and f3["line"] == f"Kept for {rest_when}. Nothing on this computer matches."
+    and dict(kept_queue()).get(t_fr) == rest_wait and api_requests() == asks0,
+    f3 and (f3["line"], f3["matches"]),
+)
+
+# 4. a past ask: "install ffmpeg" went well at the start of this run, and "ffmpeg" nearly names it.
+t_ff, n = kept_ask("ffmpeg")
+f4 = found_for(t_ff, n)
+time.sleep(0.8)
+shot("39-found-ask")
+past = next((x for x in (f4 or {}).get("matches", []) if x["kind"] == "ask"), {})
+check(
+    "ffmpeg finds the past ask, by its words and how long ago, with its steps behind it",
+    f4 and f4["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and past.get("label", "").startswith("You asked: install ffmpeg (") and past.get("hint") == "Its steps",
+    f4 and f4["matches"],
+)
+
+# 5. a press on what was not offered does nothing: another id, a turn that is no longer waiting.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": "9"})
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+check(
+    "a press on an id that was not offered, or on a ask that left, opens nothing and drops nothing",
+    wait(lambda x: x.get("type") == "event" and x.get("kind") in ("local", "unqueued"), 1.2, m) is None
+    and t_ff in dict(kept_queue()) and not drawer_open(),
+    [x for x in events[m:] if x.get("type") == "event"],
+)
+
+# 4b. the press on the past ask opens the steps of that turn in the Details drawer, and lets the kept ask go.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": past.get("id", "1")})
+gone = wait(ev("unqueued", turn=t_ff), 5, m)
+shown = until(drawer_open, 10)
+time.sleep(1.5)
+shot("40-found-ask-opened")
+watch = [ln for ln in run("pgrep", "-af", "bombadil").stdout.splitlines() if "watch --file" in ln]
+check("a press on the past ask lets go of the kept ask and opens its steps in the Details drawer",
+      gone is not None and t_ff not in dict(kept_queue()) and shown and bool(watch), (gone, shown, watch[:1]))
+has_keys = until(lambda: focused_app() == "bombadil-details", 5)
+key("Escape")
+check("the drawer has the keyboard and one Esc puts it away", has_keys and until(lambda: not drawer_open(), 5), focused_app())
+if drawer_open():
+    send({"type": "close_details"})
+check("nothing of this went to the API", api_requests() == asks0, api_requests() - asks0)
+
+# an app's own ask is not looked for either, and the one kept above that names nothing goes, so that the count at the
+# return is the haiku alone.
+m = mark()
+send({"type": "prompt", "text": "[from app passwords] list my logins"})
+app_ask = wait(ev("queued", prompt=lambda p: (p or "").startswith("[from app passwords]")), 5, m)
+check("an app's ask that waits is not looked for", app_ask is not None and wait(lambda x: x.get("type") == "found", 1.0, m) is None)
+for t in (app_ask and app_ask.get("turn"), t_fr):
+    send({"type": "unqueue", "turn": t})
+time.sleep(0.5)
+check("the asks of the finder's tests are let go: the haiku alone waits", [q[0] for q in kept_queue()] == [haiku], kept_queue())
 
 # the plan comes back: the API lets the ask through, the state file says the time has passed, and the owner says so.
 api_control(None)
@@ -943,6 +1088,31 @@ check(
     and not ink("35-paused")["green"],
     queued and queued["queue"],
 )
+# the finder while paused by hand: the ask is kept "until you resume", and agentd looks all the same. The first ask is
+# the haiku above, which went well earlier (a past ask now); the second names nothing and goes again.
+f7 = wait(lambda x: x.get("type") == "found" and x.get("prompt") == "write a haiku about rain", 5, n)
+check(
+    "paused by hand the line says the ask is kept until you resume, and what is found",
+    f7 and f7["line"] == "Kept until you resume Claude. " + (
+        "Found on this computer:" if f7["matches"] else "Nothing on this computer matches."),
+    f7 and (f7["line"], f7["matches"]),
+)
+check(
+    "and the haiku that ran earlier is found as a past ask",
+    f7 and any(x["kind"] == "ask" and x["label"].startswith("You asked: write a haiku about rain (") for x in f7["matches"]),
+    f7 and f7["matches"],
+)
+t_nf, n7 = kept_ask("what is the capital of france")
+f7b = found_for(t_nf, n7)
+time.sleep(0.8)
+shot("41-found-paused")
+check(
+    "paused by hand, a sentence that names nothing says so too",
+    f7b and f7b["line"] == "Kept until you resume Claude. Nothing on this computer matches." and f7b["matches"] == [],
+    f7b and (f7b["line"], f7b["matches"]),
+)
+send({"type": "unqueue", "turn": t_nf})
+time.sleep(0.5)
 m = mark()
 send({"type": "setup_action", "id": "resume"})
 back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 10, m)

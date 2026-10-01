@@ -285,6 +285,11 @@ QtObject {
                 // Undo says what it covered, and a picture brings its own words: give people time to read them.
                 fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000
                           : ev.action === "picture" && ev.phase === "done" ? 8000 : 5000
+                // The answer to "pause claude" is the resting line itself. It stays the resting line, with its
+                // button, whichever of the two (this answer, agentd's setup) comes first.
+                if (resting && ev.phase === "done" && setupLine !== "" && line === setupLine) {
+                    mode = "resting"; fadeAfter = 12000
+                }
             }
             break
         }
