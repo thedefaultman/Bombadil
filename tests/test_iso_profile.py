@@ -83,9 +83,11 @@ def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
     assert "verify_image" in script and "diff -rq" in script
 
 
-def test_every_script_the_image_adds_to_the_path_is_executable():
-    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable.
+def test_every_script_the_image_adds_to_the_path_or_to_grub_is_executable():
+    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable
+    # (and grub-mkconfig skips a file in /etc/grub.d that is not executable).
     profiledef = (ISO / "profiledef.sh").read_text()
-    listed = set(re.findall(r'\["(/usr/local/bin/[^"]+)"\]="0:0:755"', profiledef))
-    shipped = {f"/usr/local/bin/{p.name}" for p in (ISO / "airootfs/usr/local/bin").iterdir() if p.is_file()}
-    assert shipped <= listed, sorted(shipped - listed)
+    listed = set(re.findall(r'\["(/[^"]+)"\]="0:0:755"', profiledef))
+    for folder in ("usr/local/bin", "etc/grub.d"):
+        shipped = {f"/{folder}/{p.name}" for p in (ISO / "airootfs" / folder).iterdir() if p.is_file()}
+        assert shipped <= listed, sorted(shipped - listed)

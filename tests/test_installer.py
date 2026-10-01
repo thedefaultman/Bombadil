@@ -258,21 +258,45 @@ def test_grub_gets_the_mark_and_a_font_for_its_password_screen(tmp_path):
     r = sh(f'{chroot}target="{target}"; grub_theme', env={"BOMBADIL_SHARE": str(ROOT / "share")})
     assert r.returncode == 0 and "Note:" not in r.stdout
     theme = target / "efi/grub/themes/bombadil"
-    assert sorted(p.name for p in theme.iterdir()) == ["background.png", "inter-16.pf2", "theme.txt"]
+    assert sorted(p.name for p in theme.iterdir()) == ["background.png", "inter-16.pf2"]
     dropin = target / "etc/default/grub.d/bombadil.cfg"
 
     def terminal_after(before: str) -> str:
-        return subprocess.run(["sh", "-c", f'{before}; . {dropin}; echo "$GRUB_TERMINAL_OUTPUT|$GRUB_THEME"'],
+        return subprocess.run(["sh", "-c", f'{before}; . {dropin}; echo "$GRUB_TERMINAL_OUTPUT"'],
                               capture_output=True, text=True, check=True).stdout.strip()
-    assert terminal_after("GRUB_TERMINAL_OUTPUT=console") == "gfxterm|/efi/grub/themes/bombadil/theme.txt"
-    # A test install that asked for the serial line keeps it, and gets no theme.
-    assert terminal_after('GRUB_TERMINAL_OUTPUT="console serial"') == "console serial|"
+    assert terminal_after("GRUB_TERMINAL_OUTPUT=console") == "gfxterm"
+    # A test install that asked for the serial line keeps it.
+    assert terminal_after('GRUB_TERMINAL_OUTPUT="console serial"') == "console serial"
+    # No theme: GRUB applies one only once its menu shows, which is after the password, and this one has no
+    # menu components, so the menu held open with Esc would be empty.
+    assert "GRUB_THEME" not in dropin.read_text()
 
 
-def test_the_theme_names_a_font_the_installer_makes():
-    # theme.txt asks for "Inter Regular 16"; grub-mkfont -s 16 on Inter Regular is what provides it.
-    assert 'terminal-font: "Inter Regular 16"' in (ROOT / "share/grub/bombadil/theme.txt").read_text()
-    assert "grub-mkfont -s 16" in INSTALL.read_text() and "inter-16.pf2" in INSTALL.read_text()
+def test_the_password_screen_is_set_before_the_header_asks_for_the_password():
+    script = ROOT / "iso/airootfs/etc/grub.d/000_bombadil_screen"
+    assert sorted(["00_header", script.name])[0] == script.name   # grub-mkconfig runs them in name order
+
+    def block(terminal: str | None) -> str:
+        env = {"PATH": "/usr/bin:/bin", **({} if terminal is None else {"GRUB_TERMINAL_OUTPUT": terminal})}
+        return subprocess.run(["sh", str(script)], capture_output=True, text=True, check=True, env=env).stdout
+
+    shown = block("gfxterm")
+    assert "loadfont ($root)/grub/themes/bombadil/inter-16.pf2" in shown
+    assert "background_image ($root)/grub/themes/bombadil/background.png" in shown
+    # The font is loaded first and the whole block is conditional on it, so a missing font changes nothing.
+    assert shown.index("loadfont") < shown.index("terminal_output gfxterm") < shown.index("background_image")
+    assert "if loadfont" in shown and shown.rstrip().endswith("fi")
+    # The serial line of a test install, and an install with no font (the drop-in is not written), stay text.
+    for terminal in ("console serial", "console", None):
+        assert block(terminal) == "", terminal
+
+
+def test_the_font_the_installer_makes_is_the_one_the_screen_loads():
+    install = INSTALL.read_text()
+    screen = (ROOT / "iso/airootfs/etc/grub.d/000_bombadil_screen").read_text()
+    assert "grub-mkfont -s 16" in install and "/efi/grub/themes/bombadil/inter-16.pf2" in install
+    assert "grub/themes/bombadil/inter-16.pf2" in screen
+    assert (ROOT / "share/grub/bombadil/background.png").is_file()
 
 
 def test_when_the_font_cannot_be_made_grub_keeps_its_plain_screen(tmp_path):

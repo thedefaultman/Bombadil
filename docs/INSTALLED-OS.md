@@ -84,13 +84,21 @@ in `/var/lib/bombadil/recovery-key`, mode 600, only until it has been shown). Th
 ### What GRUB shows
 
 GRUB's screen is the one thing a person sees before Bombadil is up, so it is made like the rest of
-the desk (`docs/design/identity-brief.md`, "Where the mark goes"). The installer puts the theme from
-`share/grub/bombadil/` on the ESP, because `grub.cfg` is read there before the disk is unlocked: the
-ground, the mark, and GRUB's own password line in Inter. It makes the font (`inter-16.pf2`) with
-`grub-mkfont` from the Inter the system has; if that fails, it says so and GRUB keeps its plain
-screen rather than a theme that names a font it does not have. The settings are a drop-in,
-`/etc/default/grub.d/bombadil.cfg`, that switches to the theme only when nothing else chose the
-terminal (the serial line of a test install stays as it is).
+the desk (`docs/design/identity-brief.md`, "Where the mark goes"): the ground, the mark, and GRUB's
+own password line in Inter. The installer puts `background.png` from `share/grub/bombadil/` on the
+ESP, because `grub.cfg` is read there before the disk is unlocked, and makes the font
+(`inter-16.pf2`) with `grub-mkfont` from the Inter the system has. If that fails it says so and GRUB
+keeps its plain screen. Then it writes `/etc/default/grub.d/bombadil.cfg`, which switches GRUB to the
+graphical terminal unless something else chose the terminal (the serial line of a test install stays
+as it is).
+
+`/etc/grub.d/000_bombadil_screen` (in the image) is what puts the font and the picture on the screen.
+It is a `grub.d` script rather than a GRUB theme for two reasons. GRUB reads the password at the top of
+the generated `grub.cfg` (`00_header`'s `cryptomount`), long before it applies a theme, and only when
+the menu shows, which on Bombadil is never unless Esc is held; and a theme without menu components
+would make that Esc menu empty. The script sorts before `00_header` and does nothing unless the
+terminal is the graphical one. GRUB draws its prompt at the top left of the screen; the mark is in the
+middle of the picture.
 
 `grub.cfg` is written by `bombadil-grub-config`, never by `grub-mkconfig` directly. GRUB's `10_linux`
 echoes "Loading Linux ..." and "Loading initial ramdisk ..." before every kernel and has no switch

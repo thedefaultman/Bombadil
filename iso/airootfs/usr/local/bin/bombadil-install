@@ -497,25 +497,25 @@ set_grub_var() {
   fi
 }
 
-# GRUB's screen while it asks for the disk password: the mark on the ground, from share/grub/bombadil. It
-# lives on the EFI partition, which is read before the disk is unlocked. The font is made from Inter here; if
-# it cannot be, GRUB keeps its plain screen rather than a theme that names a font it does not have.
+# GRUB's screen while it asks for the disk password: the mark on the ground, in Inter. Both files live on the
+# EFI partition, which GRUB reads before the disk is unlocked; /etc/grub.d/000_bombadil_screen (in the image)
+# is what puts them on the screen ahead of the password prompt. The font is made here from the system's Inter;
+# if it cannot be, GRUB keeps its plain screen.
 grub_theme() {
   local src="$SHARE_DIR/grub/bombadil" dest="$target/efi/grub/themes/bombadil" font
-  [[ -f "$src/theme.txt" && -f "$src/background.png" ]] || return 0
+  [[ -f "$src/background.png" ]] || return 0
   install -d "$dest"
-  cp "$src/theme.txt" "$src/background.png" "$dest/"
+  cp "$src/background.png" "$dest/"
   font=$(chroot_run fc-match -f '%{file}' 'Inter:style=Regular' 2>/dev/null) || font=""
   if [[ -n "$font" ]] && chroot_run grub-mkfont -s 16 -o /efi/grub/themes/bombadil/inter-16.pf2 "$font" >/dev/null 2>&1 \
      && [[ -s "$dest/inter-16.pf2" ]]; then
     install -d "$target/etc/default/grub.d"
     # Not when GRUB_TERMINAL_OUTPUT was set to something else (a serial console for the VM tests).
     cat >"$target/etc/default/grub.d/bombadil.cfg" <<'CFG'
-# GRUB's screen (the installer wrote this; share/grub/bombadil is the theme).
+# GRUB's screen (the installer wrote this; see /etc/grub.d/000_bombadil_screen).
 if [ "${GRUB_TERMINAL_OUTPUT:-console}" = console ]; then
   GRUB_TERMINAL_OUTPUT=gfxterm
   GRUB_GFXMODE=auto
-  GRUB_THEME=/efi/grub/themes/bombadil/theme.txt
 fi
 CFG
   else
