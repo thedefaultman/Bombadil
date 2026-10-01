@@ -859,6 +859,11 @@ def shell_step(command: str, description: str | None = None) -> Step:
 
 # -- tools --
 
+_MAP_WORDS = {"network": "Drawing how you're connected", "boot": "Drawing what starts when you boot",
+              "service": "Drawing what {target} needs", "disks": "Drawing your disks",
+              "sound": "Drawing what's playing where", "screens": "Drawing your screens"}
+
+
 def _os_tool(tool: str, a: dict) -> Step | None:
     """bombadil-os tools (os-mcp), for both providers."""
     name = str(a.get("name") or "")
@@ -922,7 +927,11 @@ def _os_tool(tool: str, a: dict) -> Step | None:
             return Step(f"Stopped {jobs.title_of(a.get('id')) or 'a background job'}")
         return Step("Checking the background jobs")
     if tool == "show_card":
-        return Step("Showing a card")
+        title = " ".join(str(a.get("title") or "").split())
+        return Step(f"Drawing {_quote(title, 40)}" if title else "Drawing a picture")
+    if tool == "system_map":
+        return Step(_MAP_WORDS.get(str(a.get("kind") or ""), "Drawing a picture of the machine")
+                    .format(target=_unit(str(a.get("target") or "")) or "a service"))
     if tool == "open_url":
         host = _host(str(a.get("url", "")))
         return Step(f"Opening {host}" if host else "Opening the browser")
@@ -1038,6 +1047,13 @@ def partial_step(name: str, partial: str) -> Step | None:
         again = _app_exists(title) if m else False
         return Step(f"{'Changing' if again else 'Building'} {title}" + (f", {n} lines" if n > 1 else ""),
                     f"{'Changed' if again else 'Made'} {title}")
+    if name.endswith("__show_card"):
+        m = _TITLE_RE.search(partial)
+        try:
+            title = json.loads(f'"{m.group(1)}"') if m else ""
+        except json.JSONDecodeError:
+            title = ""
+        return Step(f"Drawing {_quote(title, 40)}" if title else "Drawing a picture")
     if name == "Write":
         m = _PATH_RE.search(partial)
         n = partial.count("\\n")
@@ -1050,6 +1066,338 @@ def partial_step(name: str, partial: str) -> Step | None:
             p = json.loads(f'"{m.group(1)}"')
             return Step(f"Editing {_name(p)}", f"Edited {_name(p)}")
     return None
+
+
+# -- what a turn touched, for receipts --
+
+# Which drawable part of the machine a step changes: the network, one service, the sound, the
+# screens, the disks. The turn's receipt (before and after) is shown only for what it touched,
+# so a Wi-Fi drop mid-turn is never blamed on the agent.
+_NET_UNIT = re.compile(r"^(networkmanager|systemd-networkd|systemd-resolved|wpa_supplicant|iwd|dhcpcd|openvpn|"
+                       r"wg-quick|tailscaled|connman|netctl)", re.I)
+_AUDIO_UNIT = re.compile(r"^(pipewire|wireplumber|pulseaudio)", re.I)
+_UNIT_CHANGES = {"start", "stop", "restart", "reload", "try-restart", "reload-or-restart", "enable", "disable",
+                 "mask", "unmask", "reset-failed"}
+_NET_WORDS = {"connect", "disconnect", "up", "down", "modify", "mod", "add", "delete", "import", "reload", "on",
+              "off", "reapply", "set", "hotspot", "clone"}
+_IP_OBJECTS = {"link", "addr", "address", "route", "rule", "neigh", "netns", "tunnel", "l2tp"}
+_IP_CHANGES = {"add", "del", "delete", "set", "flush", "change", "replace", "append"}
+_NET_PROGS = {"wg-quick", "openvpn", "dhcpcd", "iwctl", "netctl", "nmtui", "nm-connection-editor", "wpa_cli"}
+_DISK_PROGS = {"mount", "umount", "mkswap", "swapon", "swapoff", "wipefs", "cryptsetup", "losetup", "resize2fs",
+               "mkfs", "fdisk", "gdisk", "sgdisk", "sfdisk", "parted"}
+_UNIT_PATH_RE = re.compile(r"/systemd/(?:system|user)/([\w@.:-]+?)(?:\.service)?$")
+_PATH_KINDS = ((re.compile(r"^/etc/(resolv\.conf|NetworkManager/|wireguard/|systemd/network/|netctl/|iwd/|"
+                           r"dhcpcd\.conf|wpa_supplicant)"), "network"),
+               (re.compile(r"^/etc/(fstab|crypttab)$"), "disks"),
+               (re.compile(r"(^|/)(pipewire|wireplumber|pulse)/"), "sound"))
+
+
+def _touch_path(p: str, text: str = "") -> list[tuple[str, str]]:
+    p = _expand_home(str(p))
+    out: list[tuple[str, str]] = []
+    for pattern, kind in _PATH_KINDS:
+        if pattern.search(p):
+            out.append((kind, ""))
+    m = _UNIT_PATH_RE.search(p)
+    if m and not m.group(1).endswith("@"):
+        out.append(("service", m.group(1)))
+    if "/hypr/" in p and "monitor" in text:
+        out.append(("screens", ""))
+    return out
+
+
+def _touch_unit(unit: str) -> list[tuple[str, str]]:
+    name = _unit(unit)
+    out = [("service", name)]
+    if _NET_UNIT.match(name):
+        out.append(("network", ""))
+    if _AUDIO_UNIT.match(name):
+        out.append(("sound", ""))
+    return out
+
+
+def _touch_segment(argv: list[str]) -> list[tuple[str, str]]:
+    words, redirects = _strip_redirects(argv)
+    words, _sudo = _strip_wrappers(words)
+    out: list[tuple[str, str]] = []
+    for r in redirects:
+        out += _touch_path(r)
+    if not words:
+        return out
+    prog = PurePosixPath(words[0]).name
+    script = _shell_script(words)
+    if script is not None:
+        return out + parts_command(script)
+    args = _args(words)
+    a0 = args[0] if args else ""
+    for path in _changed_paths(prog, words):
+        out += _touch_path(path)
+    if prog == "systemctl" and a0 in _UNIT_CHANGES:
+        for u in args[1:]:
+            out += _touch_unit(u)
+    elif prog == "nmcli" and any(a in _NET_WORDS for a in args):
+        out.append(("network", ""))
+    elif prog == "ip" and any(a in _IP_OBJECTS for a in args) and any(a in _IP_CHANGES for a in args):
+        out.append(("network", ""))
+    elif prog == "wg" and a0 in ("set", "setconf", "addconf", "syncconf"):
+        out.append(("network", ""))
+    elif prog == "resolvectl" and a0 in ("dns", "domain", "llmnr", "mdns", "dnssec", "revert", "default-route"):
+        out.append(("network", ""))
+    elif prog == "tailscale" and a0 in ("up", "down", "set", "login", "logout"):
+        out.append(("network", ""))
+    elif prog == "rfkill" and a0 in ("block", "unblock"):
+        out.append(("network", ""))
+    elif prog in _NET_PROGS and prog != "wpa_cli":
+        out.append(("network", ""))
+    elif prog == "wpctl" and a0.startswith("set-"):
+        out.append(("sound", ""))
+    elif prog == "pactl" and (a0.startswith("set-") or a0 in ("load-module", "unload-module", "move-sink-input",
+                                                                 "move-source-output", "suspend-sink")):
+        out.append(("sound", ""))
+    elif prog in ("amixer", "alsactl") and a0 in ("set", "sset", "cset", "store", "restore"):
+        out.append(("sound", ""))
+    elif prog == "pamixer" and any(a.startswith("-") for a in words[1:]) and not {"--get-volume", "--get-mute"} & set(words):
+        out.append(("sound", ""))
+    elif prog == "hyprctl" and a0 in ("keyword", "eval", "dispatch") and any("monitor" in a for a in args[1:]):
+        out.append(("screens", ""))
+    elif prog in ("wlr-randr", "kanshictl", "kanshi", "way-displays"):
+        out.append(("screens", ""))
+    elif prog == "udisksctl" and a0 in ("mount", "unmount", "power-off", "loop-setup", "unlock", "lock"):
+        out.append(("disks", ""))
+    elif prog in _DISK_PROGS or prog.startswith("mkfs.") or prog.startswith("mkfs"):
+        if prog in ("fdisk", "gdisk", "sgdisk", "sfdisk", "parted", "cryptsetup") and not _irreversible(
+                prog, words, " ".join(words)) and not {"open", "close", "luksOpen", "luksClose", "luksFormat"} & set(args):
+            pass   # only reading (fdisk -l, parted print)
+        elif prog in ("mount", "umount") and not args:
+            pass   # a bare `mount` lists the mounts
+        else:
+            out.append(("disks", ""))
+    elif prog == "btrfs" and a0 in ("subvolume", "filesystem", "device", "balance", "scrub") and any(
+            a in args for a in ("create", "delete", "snapshot", "resize", "add", "remove", "start")):
+        out.append(("disks", ""))
+    elif prog == "dd" and (_dd_of(words) or "").startswith("/dev/"):
+        out.append(("disks", ""))
+    return out
+
+
+def parts_command(command: str) -> list[tuple[str, str]]:
+    """The parts of the machine a shell command changes, as (kind, target), in order."""
+    out: list[tuple[str, str]] = []
+    for argv in _segments(_unwrap(command)):
+        for t in _touch_segment(argv):
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def parts_touched(name: str, a: dict | None) -> list[tuple[str, str]]:
+    """What a tool call changes: kind is network, service (target: the unit), sound, screens or disks."""
+    a = a if isinstance(a, dict) else {}
+    name = str(name or "")
+    if name == "Bash":
+        return parts_command(str(a.get("command", "")))
+    if name in ("Write", "Edit", "MultiEdit"):
+        edits = a.get("edits") if isinstance(a.get("edits"), list) else []
+        text = " ".join(str(x) for x in [a.get("content"), a.get("new_string"), *(e.get("new_string") for e in edits
+                                                                                  if isinstance(e, dict))] if x)
+        return _touch_path(str(a.get("file_path") or ""), text)
+    return []
+
+
+def parts_changes(changes: list) -> list[tuple[str, str]]:
+    """Codex's file_change item."""
+    out: list[tuple[str, str]] = []
+    for c in changes if isinstance(changes, list) else []:
+        if isinstance(c, dict):
+            for t in _touch_path(str(c.get("path") or "")):
+                if t not in out:
+                    out.append(t)
+    return out
+
+
+# -- why, and after reading what --
+
+# The reason for a step is the sentence the agent wrote just before acting, kept instead of
+# thrown away. Nothing here asks a model: it is the agent's own words from that moment, cleaned.
+MAX_BECAUSE = 140
+_FILLER_RE = re.compile(
+    r"^(?:(?:ok|okay|great|good|perfect|alright|all right|excellent|nice|cool|sure|right|so|now|first|next|"
+    r"then|also|finally|got it|understood|done|yes|well)\b[,.!:;\s]*)+", re.I)
+_LEAD_RE = re.compile(
+    r"^(?:let me|let's|let us|i'll|i will|i'm going to|i am going to|i'm gonna|i need to|i should|i want to|"
+    r"i'd like to|i can|going to)\s+", re.I)
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|\n+")
+_MARKDOWN = re.compile(r"[`*]{1,3}|^\s*(?:[-*>]|#{1,6})\s+", re.M)
+
+
+def reason_from(text: str) -> str:
+    """The reason in what the agent said before a step: its last sentence, without the
+    filler in front ("Now", "Great", "Let me"), at most MAX_BECAUSE characters. "" if none."""
+    t = str(text or "").replace("’", "'")
+    t = re.sub(r"```.*?(?:```|$)", " ", t, flags=re.S)
+    t = _MARKDOWN.sub("", t)
+    sentences = [s.strip() for s in _SENTENCE_END.split(t) if s.strip()]
+    if not sentences:
+        return ""
+    s = sentences[-1].rstrip(":;,").strip()
+    s = _FILLER_RE.sub("", s).strip()
+    lead = _LEAD_RE.match(s)
+    if lead:
+        rest = s[lead.end():].strip()
+        first, _, more = rest.partition(" ")
+        s = (gerund(first).capitalize() + (" " + more if more else "")) if first.lower() in _VERBS else _cap(rest)
+    else:
+        s = _cap(s)
+    s = s.rstrip("!").strip()
+    if len(s) < 4 or not re.search(r"[A-Za-z]", s):
+        return ""
+    if len(s) > MAX_BECAUSE:
+        cut = s[:MAX_BECAUSE - 1].rsplit(" ", 1)[0] or s[:MAX_BECAUSE - 1]
+        s = cut.rstrip(" ,;:.") + "…"
+    return s
+
+
+@dataclass
+class Read:
+    """Something the turn read, and whether it came from outside the machine's own files."""
+    label: str            # "wireguard.com/quickstart", "notes.txt", "coding session api on Latchkey"
+    kind: str             # web, file, search, screen, session, app
+    outside: bool         # a web page, a downloaded file, the page on screen, a request from a session or app
+    origin: str = ""      # for a downloaded file, the host it came from
+
+    def as_dict(self) -> dict:
+        d = {"label": self.label, "kind": self.kind, "outside": self.outside}
+        if self.origin:
+            d["origin"] = self.origin
+        return d
+
+    def after(self) -> dict:
+        """What the status carries on a system step that follows this read."""
+        text = {
+            "web": f"after reading {self.label}",
+            "file": f"after reading {self.label}" + (f" from {self.origin}" if self.origin else ""),
+            "search": f"after searching the web for {self.label}",
+            "screen": "after reading the page on screen" if self.label == "the screen"
+                      else f"after reading {self.label} on screen",
+            "session": f"after a request from {self.label}",
+            "app": f"after a request from {self.label}",
+        }.get(self.kind, f"after reading {self.label}")
+        return {"label": self.label, "kind": self.kind, "text": text}
+
+
+MAX_READS = 50
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+_READ_PROGS = {"cat", "less", "more", "head", "tail", "bat", "batcat", "zcat", "xxd", "hexdump"}
+
+
+def _web_label(url: str) -> str:
+    """'https://user:pw@wireguard.com/quickstart?x=1' -> 'wireguard.com/quickstart'. Never a credential."""
+    host = _host(url)
+    if not host:
+        return ""
+    path = re.sub(r"^\w+://[^/]*", "", str(url)).split("?")[0].split("#")[0]
+    path = "" if path in ("", "/") else path.rstrip("/")
+    label = host + path
+    return label if len(label) <= 60 else label[:59] + "…"
+
+
+def _is_local(label: str) -> bool:
+    host = label.split("/")[0]
+    return host.rsplit(":", 1)[0].strip("[]") in {h.strip("[]") for h in _LOCAL_HOSTS} or host in _LOCAL_HOSTS
+
+
+def web_read(url: str) -> Read | None:
+    label = _web_label(url)
+    if not label:
+        return None
+    return Read(label, "web", not _is_local(label))
+
+
+def _origin(path: str) -> str:
+    """The host a file was downloaded from: Chromium and curl write it into the file's origin
+    attribute. "" for files made here, or on a filesystem without attributes."""
+    p = _expand_home(path)
+    if not p.startswith("/"):
+        p = os.path.join(str(paths.home()), p)
+    try:
+        raw = os.getxattr(p, "user.xdg.origin.url")
+    except (OSError, AttributeError, ValueError):
+        return ""
+    return _host(raw.decode(errors="replace"))
+
+
+def file_read(path: str) -> Read:
+    origin = _origin(path)
+    return Read(_name(path) or str(path)[:60], "file", bool(origin), origin)
+
+
+def command_reads(command: str) -> list[Read]:
+    """What a shell command reads: files it prints, the addresses it downloads from."""
+    out: list[Read] = []
+    for argv in _segments(_unwrap(command)):
+        words, _ = _strip_redirects(argv)
+        words, _sudo = _strip_wrappers(words)
+        if not words:
+            continue
+        prog = PurePosixPath(words[0]).name
+        script = _shell_script(words)
+        if script is not None:
+            out += command_reads(script)
+        elif prog in _READ_PROGS:
+            files = [a for a in _args(words) if not re.fullmatch(r"[+-]?\d+", a)]
+            out += [file_read(f) for f in files[:3]]
+        elif prog in ("curl", "wget", "aria2c", "xh", "http", "https"):
+            r = web_read(_url_arg(words))
+            if r:
+                out.append(r)
+        elif prog == "git" and _git_sub(words)[0] == "clone":
+            rest = [a for a in _git_sub(words)[1] if not a.startswith("-")]
+            r = web_read(rest[0]) if rest and "://" in rest[0] else None
+            if r:
+                out.append(r)
+    return out
+
+
+def tool_reads(name: str, a: dict | None) -> list[Read]:
+    """What a tool call reads (Read, WebFetch, WebSearch, cat and curl in a command)."""
+    a = a if isinstance(a, dict) else {}
+    name = str(name or "")
+    if name in ("Read", "NotebookRead"):
+        p = a.get("file_path") or a.get("notebook_path")
+        return [file_read(str(p))] if p else []
+    if name == "WebFetch":
+        r = web_read(str(a.get("url", "")))
+        return [r] if r else []
+    if name == "WebSearch":
+        return [Read(_quote(a["query"], 50), "search", True)] if a.get("query") else []
+    if name == "Bash":
+        return command_reads(str(a.get("command", "")))
+    return []
+
+
+_ASKED_RE = re.compile(r"^\[asked by ([^\]]*?),\s*untrusted\]", re.M)
+_URL_RE = re.compile(r"https?://[^\s\]\"'<>)]+")
+
+
+def prompt_reads(prompt: str) -> list[Read]:
+    """What came in with the prompt: the [Screen] block of the "this" chip (its page and
+    selection are outside words) and requests marked "[asked by coding session …, untrusted]"."""
+    out: list[Read] = []
+    text = str(prompt or "")
+    m = re.search(r"^\[Screen\]", text, re.M)
+    if m:
+        block = text[m.end():].split("\n\n", 1)[0]
+        url = _URL_RE.search(block)
+        label = _web_label(url.group(0)) if url else ""
+        outside = bool(label or re.search(r"selection", block, re.I))
+        out.append(Read(label or "the screen", "screen", outside))
+    for m in _ASKED_RE.finditer(text):
+        who = " ".join(m.group(1).split())
+        if who.lower().startswith("app "):
+            out.append(Read(who[4:] or "an app", "app", True))
+        else:
+            out.append(Read(who, "session", True))
+    return out
 
 
 # -- the plan --
@@ -1114,6 +1462,13 @@ class Narrator:
         self._listing: set[str] = set()       # TaskList calls whose result is the whole table
         self._sent: list[dict] = []           # the plan take_plan gave last
         self._shown: tuple[dict, dict[str, int]] | None = None   # the line last returned, and the counts then
+        self._said_msg = ""      # the agent's last text block in the current model message
+        self._block = ""         # the text block being streamed
+        self.because = ""        # why the current step happens: the sentence written just before it
+        self.reads: list[Read] = []   # what the turn read, in order (yours and outside)
+        self.last_notes: dict = {}    # because and after of the step the last tool event started
+        self.parts: list[tuple[str, str]] = []   # parts of the machine the turn changed, in order
+        self.drew = False        # the agent drew a picture itself (show_card, system_map)
 
     # Each method returns the new line (a dict for a "status" event) or None when it did not change.
 
@@ -1131,11 +1486,57 @@ class Narrator:
         elif step.risk == SYSTEM:
             self.system = True
         self.step = step
-        return {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
+        line = {"text": step.text, "risk": step.risk, "command": step.command, "source": "step"}
+        line.update(self.step_notes(step))
+        return line
+
+    # -- why, and after reading what --
+
+    def step_notes(self, step: Step | None = None) -> dict:
+        """The reason for the current step and, on a system or irreversible one after an outside
+        read, that read. Only the keys that have something to say."""
+        step = step or self.step
+        out: dict = {}
+        if self.because:
+            out["because"] = self.because
+        latest = next((r for r in reversed(self.reads) if r.outside), None)
+        if step is not None and step.risk and latest is not None:
+            out["after"] = latest.after()
+        return out
+
+    def _reason(self, fallback: str | None = None) -> None:
+        """Keep the sentence before a step as its reason: what the agent said in this message,
+        else the command's own description."""
+        self.because = reason_from(self._said_msg)
+        if not self.because and fallback:
+            self.because = reason_from(from_description(fallback) or fallback)
+
+    def _read(self, read: Read) -> None:
+        self.reads = [r for r in self.reads if (r.kind, r.label) != (read.kind, read.label)] + [read]
+        del self.reads[:-MAX_READS]
+
+    def note_prompt(self, prompt: str) -> None:
+        for r in prompt_reads(prompt):
+            self._read(r)
+
+    def read_list(self) -> list[dict]:
+        return [r.as_dict() for r in self.reads]
+
+    def why_text(self) -> str:
+        """The answer to "why" while a turn runs, from what the machine recorded: no model."""
+        if self.step is None:
+            return "Nothing has started yet."
+        if not self.because:
+            return f"It did not say why for this step: {_lower_first(self.step.text.split(',')[0])}."
+        after = self.step_notes().get("after")
+        return self.because + (f" ({after['text']})" if after else "")
 
     def on_event(self, ev: dict) -> dict | None:
+        self.last_notes = {}
         self._track_plan(ev)
         line = self._line(ev)
+        if line is not None and ev.get("kind") in ("tool", "file_change"):
+            self.last_notes = {k: line[k] for k in ("because", "after") if k in line}
         # The complete message repeats what its stream already showed; say each line once, unless
         # what it has touched so far moved on with it.
         if line is None or (line, self.touched_counts()) == self._shown:
@@ -1278,8 +1679,20 @@ class Narrator:
 
     def _line(self, ev: dict) -> dict | None:
         kind = ev.get("kind")
+        if kind == "message_start":
+            # A new model message: what it said before its steps is its own reason, not the last one's.
+            self._said_msg = self._block = self.because = ""
+            return None
         if kind == "tool":
             a = ev.get("input") if isinstance(ev.get("input"), dict) else {}
+            for r in tool_reads(ev.get("name", ""), a):
+                self._read(r)
+            for t in parts_touched(ev.get("name", ""), a):
+                if t not in self.parts:
+                    self.parts.append(t)
+            if str(ev.get("name", "")).endswith(("__show_card", "__system_map")):
+                self.drew = True
+            self._reason(a.get("description") if ev.get("name") == "Bash" else None)
             if ev.get("name") == "TaskUpdate" and a.get("status") == "in_progress" and not a.get("activeForm"):
                 row = None if ev.get("parent") else self._task(_task_id(a))
                 if row is not None:
@@ -1291,8 +1704,13 @@ class Narrator:
             self.said = ""
             return self._set(step)
         if kind == "file_change":
+            for t in parts_changes(ev.get("changes") or []):
+                if t not in self.parts:
+                    self.parts.append(t)
+            self._reason()
             return self._set(file_change_step(ev.get("changes") or []))
         if kind == "tool_start":
+            self._reason()
             self._partial[ev.get("index", 0)] = {"name": ev.get("name", ""), "json": ""}
             step = partial_step(ev.get("name", ""), "") or tool_step(ev.get("name", ""), {})
             if step is not None and step.changes:
@@ -1310,6 +1728,8 @@ class Narrator:
                 return None
             return self._set(Step(step.text))
         if kind == "text_delta":
+            self._block += str(ev.get("text") or "")
+            self._said_msg = self._block
             self.said += str(ev.get("text") or "")
             line = self.said.strip().splitlines()[-1].strip() if self.said.strip() else ""
             if not line:
@@ -1317,6 +1737,8 @@ class Narrator:
             return {"text": line[-200:], "risk": None, "command": None, "source": "agent"}
         if kind == "text":
             self.said = ""
+            self._block = ""
+            self._said_msg = str(ev.get("text") or "")
             text = str(ev.get("text") or "").strip()
             if not text:
                 return None

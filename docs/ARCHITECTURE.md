@@ -17,7 +17,7 @@
 1. The bar (or `bombadil ask`) writes `{"type":"prompt","text":…}` to the socket.
 2. `agentd` takes a snapper snapshot named `turn:<n>: <prompt>`.
 3. It runs the provider CLI once, in full-access mode, resuming the previous session id,
-   with `bombadil-os-mcp` in its MCP config and `providers.SYSTEM_PROMPT` appended.
+   with `bombadil-os-mcp` in its MCP config and `providers.system_prompt()` appended.
 4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
 5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
 
@@ -74,6 +74,28 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 `src/bombadil/appkit/native`), and the `bombadil-apps` skill in `share/skills` tells the
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
+
+## Why lines and pictures
+
+Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
+step (`because`) and what the turn read from outside (`after`); the status line shows both on
+hover. A bare "why" during a turn is answered from that record.
+
+`show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
+over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
+service, disks, sound or screens from the real machine in parallel, under half a second; the boot
+record and the check that the provider answers get longer, since both are slow by nature). `agentd`
+broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
+agent gets the same picture back in words. A card still being written streams in a box at a time;
+a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
+box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
+package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
+closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
+was there. A picture that cannot be drawn takes the last one away. (How each picture reads the
+machine, and what a real VM taught us, is in [pictures.md](pictures.md).)
+The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
+the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
+import from outside its own folder any other way.)
 
 ## Next
 

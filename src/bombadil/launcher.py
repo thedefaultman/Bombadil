@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, hypr, paths, snapshots
+from . import apps, browser, hypr, paths, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
 from .desk import WIDGETS, Desk
@@ -52,8 +52,8 @@ CORE_COMMANDS = {
 # in front of you. "brain" opens the Brain on it; the questions answer in the line.
 BRAIN_COMMANDS = {
     "brain": ["brain", "the brain", "open the brain", "show the brain", "open brain", "show brain"],
-    "why": ["why is this here", "where did this come from", "where is this from", "who made this",
-            "what made this"],
+    "whyhere": ["why is this here", "where did this come from", "where is this from", "who made this",
+                "what made this"],
 }
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
@@ -68,6 +68,27 @@ UTILITY_COMMANDS = {
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
+# Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
+# ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
+# longer or different goes to the agent, which has system_map for the same pictures.
+PICTURE_PHRASES = {
+    "network": ["how am i connected", "am i connected", "am i online", "how is my internet connected",
+                "network map", "connection map"],
+    "boot": ["what starts when i boot", "what starts at boot", "what starts on boot", "what runs at boot",
+             "what runs when i boot", "boot map"],
+    "disks": ["where did my disk go", "where did my space go", "where did my disk space go", "my disks",
+              "disk map", "what disks do i have"],
+    "sound": ["what's playing where", "whats playing where", "what is playing where", "sound map",
+              "where is my sound going"],
+    "screens": ["my screens", "my monitors", "screen map", "what screens do i have"],
+}
+PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
+                  "sound": "what's playing where", "screens": "your screens"}
+# (Matched on the text as typed: unit names have capitals, NetworkManager.service.)
+_NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$", re.I | re.A)
+# Only while a turn runs: the reason for the step in front of you, answered from what the agent
+# said just before it, with no model. At any other time "why" is a question for the agent.
+WHY_WORDS = {"why"}
 OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "switch to")
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
@@ -76,7 +97,7 @@ HIDE_VERBS = ("hide", "put away")
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
-NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "why"}
+NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "why", "whyhere"}
 
 DETAILS_CLASS = "bombadil-details"
 BRAIN_APP = "brain"
@@ -90,9 +111,9 @@ class Action:
     title: str = ""    # what the line calls it: "the browser", "Passwords"
 
 
-def normalize(text: str) -> str:
-    t = " ".join(str(text).lower().split())
-    return t.strip(" .!?,;:")
+def normalize(text: str, keep_case: bool = False) -> str:
+    t = " ".join(str(text).split())
+    return (t if keep_case else t.lower()).strip(" .!?,;:")
 
 
 def _key(s: str) -> str:
@@ -153,8 +174,23 @@ def known_apps() -> list:
     return out
 
 
-def match(text: str, app_list: list | None = None) -> Action | None:
-    """The local action for exactly this text, or None to send it to the agent."""
+def _picture(t: str, typed: str = "") -> Action | None:
+    """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's.
+    `t` is the lowercased text, `typed` the same with the capitals it came with."""
+    for kind, phrases in PICTURE_PHRASES.items():
+        if t in phrases:
+            return Action("picture", kind, "open", PICTURE_TITLES[kind])
+    m = _NEEDS_RE.match(typed or t)
+    unit = sysmap.find_unit(m.group(1)) if m else None
+    if unit:
+        name = unit.removesuffix(".service")    # as the machine spells it: NetworkManager
+        return Action("picture", f"service:{name}", "open", f"what {name} needs")
+    return None
+
+
+def match(text: str, app_list: list | None = None, busy: bool = False) -> Action | None:
+    """The local action for exactly this text, or None to send it to the agent. `busy`: a turn
+    is running, so a bare "why" asks about its current step."""
     raw = str(text).strip()
     if not raw or raw.startswith("!"):
         return None   # "!cmd" is a shell command, whatever follows the "!"
@@ -165,6 +201,12 @@ def match(text: str, app_list: list | None = None) -> Action | None:
     # A sentence in another script or with signs in it is for the agent, even when one
     # launcher word is in it; only an app's own title (Café, Recipes 🍲) opens here.
     plain = t.isascii()
+    if busy and plain and t in WHY_WORDS:
+        return Action("why")
+    apostrophe = t.replace("’", "'")   # "what’s playing where", typed on a phone
+    picture = _picture(apostrophe, normalize(raw, keep_case=True)) if apostrophe.isascii() else None
+    if picture is not None and _find_app(t, app_list) is None:
+        return picture
     if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
         return Action("signin")
     if plain:
@@ -265,6 +307,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "picture":
+            return f"Drawing {action.title}"
         if action.kind == "widget":
             return f"Putting {action.title} " + ("on the desk" if action.verb == "open" else "away")
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
@@ -272,7 +316,7 @@ class Launcher:
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "provider": f"Switching to {action.title or action.target}",
-                "brain": "Opening the Brain", "why": "Looking it up",
+                "brain": "Opening the Brain", "whyhere": "Looking it up",
                 "desk": "Changing the desk"}.get(action.kind, "On it")
 
     @staticmethod
@@ -280,6 +324,8 @@ class Launcher:
         if action.kind in ("panel", "app"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
+        if action.kind == "picture":
+            return f"Could not draw {action.title}"
         if action.kind == "widget":
             return (f"Could not put {action.title or action.target} "
                     + ("on the desk" if action.verb == "open" else "away"))
@@ -287,7 +333,7 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
-                "brain": "Could not open the Brain", "why": "Could not look it up",
+                "brain": "Could not open the Brain", "whyhere": "Could not look it up",
                 "desk": "Could not change the desk"}.get(action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
@@ -389,7 +435,7 @@ class Launcher:
         else:
             apps.run(BRAIN_APP)
 
-    def _why(self, a: Action) -> tuple[bool, str]:
+    def _whyhere(self, a: Action) -> tuple[bool, str]:
         ref = this.resolve(self.hypr)
         if not ref:
             return False, "Nothing is in front to ask about."
@@ -480,7 +526,8 @@ class Launcher:
 
     def details(self, argv: list[str], toggle: bool = False) -> str:
         """Run a terminal program in the details drawer (a foot window in special:details).
-        With toggle, the same drawer already open closes instead: a second click on Details."""
+        With toggle, the same drawer already open closes instead: a second click on Details.
+        "failed" when the program ended before its window showed, so nothing is on screen."""
         foot = shutil.which("foot")
         if foot is None:
             raise RuntimeError("foot is not installed")
@@ -492,15 +539,17 @@ class Launcher:
         proc = self._spawn([foot, f"--app-id={DETAILS_CLASS}", "--title=Details", *argv], stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self._drawer = shows
-        if self.hypr.available:
-            self._focus_drawer(proc)
+        if self.hypr.available and not self._focus_drawer(proc):
+            self._drawer = None
+            return "failed"
         return "shown"
 
-    def _focus_drawer(self, proc, wait: float = 5.0) -> None:
+    def _focus_drawer(self, proc, wait: float = 5.0) -> bool:
         """Slide the drawer in with the keyboard, so Esc (any key) closes it. Its window rule is
         silent, so the window never takes the keyboard by itself, and showing the workspace before
         the window maps opens it empty and leaves the keyboard where it was (the bar). So wait
-        for the window, then focus it: that shows the drawer and moves keys and pointer into it."""
+        for the window, then focus it: that shows the drawer and moves keys and pointer into it.
+        False when the drawer's program ended before its window showed (nothing was ever on screen)."""
         pid = getattr(proc, "pid", None)
 
         def gone() -> bool:   # closed meanwhile (Esc, a second click), or foot failed
@@ -510,7 +559,7 @@ class Launcher:
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             if gone():
-                return
+                return False
             try:
                 mapped = any(c.get("class") == DETAILS_CLASS and (pid is None or c.get("pid") == pid)
                              for c in self.hypr.clients())
@@ -519,11 +568,13 @@ class Launcher:
             if mapped:
                 sel = f"pid:{pid}" if pid is not None else f"class:^({DETAILS_CLASS})$"
                 self.hypr.dispatch(f'hl.dsp.focus({{ window = "{sel}" }})')
-                return
+                return True
             time.sleep(0.05)
-        if not gone():
-            # Still starting: show the drawer anyway; a click in it gives it the keyboard.
-            self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+        if gone():
+            return False
+        # Still starting: show the drawer anyway; a click in it gives it the keyboard.
+        self.hypr.dispatch('hl.dsp.focus({ workspace = "special:details" })')
+        return True
 
     def _drawer_open(self) -> bool:
         r = self._run(["pgrep", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
@@ -536,6 +587,46 @@ class Launcher:
         # "--" first: the pattern itself starts with dashes.
         r = self._run(["pkill", "-f", "--", f"--app-id={DETAILS_CLASS}"], capture_output=True, check=False)
         return getattr(r, "returncode", 1) == 0
+
+    # -- what a box in a picture names --
+
+    def open_thing(self, kind: str, value: str) -> tuple[bool, str]:
+        """Open what a picture's box names: a service or a package in the drawer, a folder or a text
+        file in the drawer, any other file with its app, a page in the browser panel. `value` has been
+        checked by cards.check_opens; nothing here runs a shell on it (it is an argument). The drawer
+        shows it with `bombadil view` (Esc closes), and only "Showing" once its window was there."""
+        bomb = _bombadil()
+        if kind == "unit":
+            return self._view(value, [bomb, "view", "--", "systemctl", "status", "--no-pager", "-l", "--", value])
+        if kind == "package":
+            return self._view(value, [bomb, "view", "--", "sh", "-c",
+                                      'pacman -Qi -- "$1" 2>/dev/null || pacman -Si -- "$1" 2>&1', "sh", value])
+        if kind == "url":
+            try:
+                browser.open_url(value, self.hypr)
+            except RuntimeError as e:
+                return False, f"Could not open the page: {e}."
+            return True, "Opened the page in the browser."
+        if kind == "path":
+            path = Path(value).expanduser()
+            name = path.name or str(path)
+            if not path.exists():
+                return False, f"{name} is not there."
+            if path.is_dir():
+                return self._view(name, [bomb, "view", "--", "ls", "-la", "-p", "--", str(path)])
+            if _is_text(path):
+                return self._view(name, [bomb, "view", "--file", str(path)])
+            if shutil.which("xdg-open") is None:
+                return False, f"Nothing here opens {name}."
+            self._spawn(["xdg-open", str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
+            return True, f"Opened {name}."
+        return False, f"Nothing here opens a {kind}."
+
+    def _view(self, what: str, argv: list[str]) -> tuple[bool, str]:
+        if self.details(argv) == "failed":
+            return False, f"Could not open {what}."
+        return True, f"Showing {what}."
 
     def _history(self, _a: Action) -> tuple[bool, str]:
         self.details([_bombadil(), "history"])
@@ -617,6 +708,22 @@ def _shown_title(shown) -> str:
     thing = shown.get("thing") if isinstance(shown.get("thing"), dict) else {}
     title = " ".join(str(shown.get("title") or thing.get("title") or "").split())
     return title if len(title) <= 60 else title[:59].rstrip() + "…"
+
+
+def _is_text(path: Path) -> bool:
+    """Plain text, going by its first few KB: no NUL byte, and it decodes."""
+    try:
+        with path.open("rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return False
+    if b"\0" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return e.start >= len(head) - 3   # a character cut by the 4 KB edge is still text
+    return True
 
 
 def _boot_id() -> str:

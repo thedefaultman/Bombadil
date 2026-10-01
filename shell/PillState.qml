@@ -36,6 +36,8 @@ QtObject {
     property string source: "step"   // step (plain words), agent (its own words), error
     property string risk: ""         // "", "system" (amber) or "irreversible" (red)
     property string command: ""      // the exact command under a marked step
+    property string because: ""      // why this step happens, in the agent's own words from just before it
+    property string after: ""        // "after reading wireguard.com/quickstart", on a marked step after an outside read
     property double startedAt: 0     // for the seconds counter
     property var turn: null
     property bool optimistic: false  // "On it" shown before agentd confirmed a turn
@@ -47,10 +49,37 @@ QtObject {
     property int fadeAfter: 12000    // how long a closing or local line stays (ms)
     property string flash: ""        // a local answer shown over a running turn for a moment
     property double flashAt: 0
+    property int flashFor: 3500      // how long it stays (ms); the reason for "why" stays longer
     property int hovers: 0           // lines being hovered, on any screen: none fades meanwhile
+    // The picture above the line (a diagram card from show_card, system_map or a receipt), or null.
+    // One at a time: a newer one replaces it; Esc and its × put it away; the next turn clears it.
+    property var card: null
+    property double cardAt: 0
     // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
     // while a sign-in is under way (they call it off).
     readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
+
+    // The mark's face (Stone.qml): what the machine is doing, in a word. The pill adds "listening" for
+    // the screen that holds the keyboard.
+    //   starting  since boot, until agentd first answers (not yet offline)
+    //   offline   agentd was there and is gone, or never came
+    //   needs     the machine waits on you: a session asks (needsYou, the desk sets it), or setup does
+    //   working   a turn runs, "On it" is showing, or a sign-in is under way
+    //   stopped   the closing line says it was stopped
+    //   done      a turn just finished (the stone hops once, then sits as at rest)
+    //   rest      otherwise
+    property bool booting: true      // the shell turns this off a while after it starts
+    property bool seen: false        // agentd has answered since the bar started
+    property bool needsYou: false
+    readonly property string face: {
+        if (!connected) return !seen && booting ? "starting" : "offline"
+        if (needsYou || (mode === "setup" && (setupState === "choose" || setupState === "signed_out" || setupState === "offline")))
+            return "needs"
+        if (busy || optimistic || mode === "working" || setupState === "signing_in") return "working"
+        if (mode === "closing") return stopped ? "stopped" : (source === "error" ? "rest" : "done")
+        return "rest"
+    }
+    onConnectedChanged: if (connected) seen = true
 
     property string _result: ""
     property bool _resultOk: true
@@ -65,6 +94,35 @@ QtObject {
 
     function _setQueue(q) { queue = q }
 
+    // A picture from agentd: a whole card, a half-drawn one ("partial") or {id, gone} taking one back.
+    function _takeCard(c) {
+        if (!c || typeof c !== "object") return
+        if (c.gone) {
+            if (card && card.id === c.id) card = null
+            return
+        }
+        if (c.type !== "diagram") return
+        card = c
+        cardAt = _now()
+        // A receipt comes just after the closing line: read the two together, so both start their time now.
+        if (c.receipt && mode === "closing") { lineAt = cardAt; fadeAfter = Math.max(fadeAfter, 15000) }
+    }
+
+    // Esc or the card's ×.
+    function dismissCard() { card = null }
+
+    // A click on a box that names a thing: a file, a service, a package, a page or a turn.
+    function openThing(target) {
+        if (!target || typeof target !== "object" || !target.kind) return
+        if (_offline()) return
+        if (target.kind === "turn") {
+            handOff()
+            outgoing({ type: "details", turn: Number(target.value) })
+        } else {
+            outgoing({ type: "open", kind: target.kind, value: String(target.value) })
+        }
+    }
+
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
         if (ev.type === "status") {
@@ -75,7 +133,7 @@ QtObject {
             if (ev.busy && mode !== "working" && ev.turn !== undefined && ev.turn !== null) {
                 // The bar (re)connected in the middle of a turn.
                 mode = "working"; turn = ev.turn; line = "Working"; source = "step"
-                risk = ""; command = ""; startedAt = _now()
+                risk = ""; command = ""; because = ""; after = ""; startedAt = _now()
             }
             return
         }
@@ -101,12 +159,16 @@ QtObject {
         case "unqueued":
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             break
+        case "card":
+            _takeCard(ev.card)
+            break
         case "turn_start":
+            card = null
             _setQueue(queue.filter(q => q.turn !== ev.turn))
             if (!optimistic || mode !== "working") startedAt = _now()
             optimistic = false
             mode = "working"; turn = ev.turn; busy = true
-            line = "On it"; source = "step"; risk = ""; command = ""
+            line = "On it"; source = "step"; risk = ""; command = ""; because = ""; after = ""
             changed = false; irreversible = false; stopped = false; sticky = false
             _result = ""; _resultOk = true; _error = ""
             break
@@ -116,10 +178,12 @@ QtObject {
             source = ev.source || "step"
             risk = ev.risk || ""
             command = ev.command || ""
+            because = ev.because || ""
+            after = (ev.after && ev.after.text) || ""
             break
         case "error":
             if (ev.turn === null || ev.turn === undefined) {
-                if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now() }
+                if (mode === "working" && !optimistic) { flash = _firstLines(ev.text, 1); flashAt = _now(); flashFor = 3500 }
                 else { optimistic = false; mode = "local"; line = _firstLines(ev.text, 2); source = "error"; sticky = false; lineAt = _now() }
             } else if (ev.turn === turn) {
                 _error = ev.text || ""
@@ -137,11 +201,11 @@ QtObject {
             stopped = !!ev.stopped
             changed = !!ev.changed
             irreversible = !!ev.irreversible
-            risk = ""; command = ""
+            risk = ""; command = ""; because = ""; after = ""
             if (stopped) {
                 line = ev.line || "Stopped."; source = "step"
                 // A queued prompt starts at once; still say what was stopped for a moment.
-                flash = line; flashAt = _now()
+                flash = line; flashAt = _now(); flashFor = 3500
             }
             else if (_error && !_resultOk || (_error && !_result)) { line = _firstLines(_error, 2); source = "error" }
             else if (_result) { line = _result.trim(); source = "agent" }
@@ -152,14 +216,19 @@ QtObject {
             mode = "closing"; lineAt = _now(); fadeAfter = 12000
             break
         case "local":
+            // A picture that could not be drawn puts the last one away: the error under a picture of
+            // something else reads as if it were about that picture.
+            if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
             if (mode === "working" && !optimistic) {
-                flash = ev.text || ""; flashAt = _now()
+                // "why" answered from the reason the agent gave: long enough to read it.
+                flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
             } else {
                 optimistic = false
                 mode = "local"; line = ev.text || ""; source = ev.ok === false ? "error" : "step"
                 risk = ""; command = ""; sticky = false; lineAt = _now()
-                // Undo says what it covered; give people time to read it.
-                fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000 : 5000
+                // Undo says what it covered, and a picture brings its own words: give people time to read them.
+                fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000
+                          : ev.action === "picture" && ev.phase === "done" ? 8000 : 5000
             }
             break
         }
@@ -234,6 +303,7 @@ QtObject {
         connected = false
         busy = false
         optimistic = false
+        if (card && card.partial) card = null   // a half-drawn picture will not be finished
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
@@ -243,7 +313,7 @@ QtObject {
     // Nothing reaches agentd while the socket is down: say so, and keep what is on screen.
     function _offline() {
         if (connected) return false
-        flash = "Not connected to the agent yet."; flashAt = _now()
+        flash = "Not connected to the agent yet."; flashAt = _now(); flashFor = 3500
         return true
     }
 
@@ -274,14 +344,27 @@ QtObject {
     // Esc in the pill with nothing to stop or clear: put the drawer away too.
     function closeDetails() { if (connected) outgoing({ type: "close_details" }) }
 
-    function dismiss() {
+    // The finished line goes; before sign-in the setup line comes back rather than an empty pill.
+    function _putLineAway() {
         if (mode === "closing" || mode === "local") {
             sticky = false
-            // Not signed in yet: the setup line comes back rather than an empty pill.
             if (!ready && setupLine) _showSetup()
             else { mode = "idle"; line = "" }
         }
         flash = ""
+    }
+
+    // Esc: put the line and the picture away.
+    function dismiss() {
+        _putLineAway()
+        card = null
+    }
+
+    // A finished line nobody is looking at fades, and takes a receipt picture with it; a picture the
+    // user asked for stays until Esc or the next turn.
+    function fade() {
+        _putLineAway()
+        if (card && card.receipt) card = null
     }
 
     // -- the launcher: completing and recognising names --

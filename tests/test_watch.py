@@ -106,3 +106,39 @@ def test_a_key_closes_the_drawer_while_it_still_follows(home):
     assert "set up docker" in out.getvalue()
     os.close(r), os.close(w)
     srv.close()
+
+
+def test_details_give_each_step_its_reason_and_what_it_followed():
+    events = [
+        {"kind": "turn_start", "prompt": "set up the tunnel", "t": 0},
+        {"kind": "tool", "name": "WebFetch", "input": {"url": "https://wireguard.com/quickstart"},
+         "because": "Checking the vendor's steps first."},
+        {"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S wireguard-tools"},
+         "because": "The tunnel needs its tools.", "after": {"label": "wireguard.com/quickstart", "kind": "web",
+                                                              "text": "after reading wireguard.com/quickstart"}},
+        {"kind": "turn_end", "seconds": 4, "summary": "Installed wireguard-tools.",
+         "read": [{"label": "notes.txt", "kind": "file", "outside": False},
+                  {"label": "wireguard.com/quickstart", "kind": "web", "outside": True},
+                  {"label": "lease.pdf", "kind": "file", "outside": True, "origin": "rent-portal.example"}]},
+    ]
+    lines = list(watch.Renderer().lines(events))
+    i = lines.index("▸ Installing wireguard-tools  [system]")
+    assert lines[i + 1] == "  $ sudo pacman -S wireguard-tools"
+    assert lines[i + 2:i + 4] == ["  why: The tunnel needs its tools.", "  after reading wireguard.com/quickstart"]
+    assert "  why: Checking the vendor's steps first." in lines
+    assert lines[-3:] == ["  read", "    yours    notes.txt",
+                          "    outside  wireguard.com/quickstart, lease.pdf (from rent-portal.example)"]
+
+
+def test_details_list_the_pictures_shown_in_words():
+    events = [
+        {"kind": "turn_start", "prompt": "start the vpn", "t": 0},
+        {"kind": "card", "card": {"id": "card-1", "title": "How you're connected", "partial": True, "text": "draft"}},
+        {"kind": "card", "card": {"id": "card-1", "title": "t", "text": "How you're connected: Laptop → Router\nAll answers."}},
+        {"kind": "turn_end", "seconds": 4, "summary": "Started the VPN."},
+        {"kind": "card", "card": {"id": "card-2", "receipt": True, "text": "Before: nothing\nAfter: VPN tunnel (wg0) [new]"}},
+    ]
+    lines = list(watch.Renderer().lines(events))
+    assert "draft" not in "\n".join(lines)
+    assert lines[1:4] == ["  picture", "  ┆ How you're connected: Laptop → Router", "  ┆ All answers."]
+    assert lines[-3:] == ["  picture (what changed)", "  ┆ Before: nothing", "  ┆ After: VPN tunnel (wg0) [new]"]
