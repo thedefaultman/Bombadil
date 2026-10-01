@@ -92,3 +92,22 @@ def mail_profile() -> Path:
 
 def press_log() -> Path:
     return _env_path("BOMBADIL_PRESS_LOG", state_dir() / "presses.jsonl")
+
+
+def connect_socket() -> Path:
+    return _env_path("BOMBADIL_CONNECT_SOCKET", Path("/run/bombadil-connect/connect.sock"))
+
+
+def connect_state() -> Path:
+    """The connection service's own directory (its database, with the tokens). Not the person's: only the
+    service's user can read it."""
+    return _env_path("BOMBADIL_CONNECT_STATE", Path("/var/lib/bombadil-connect"))
+
+
+def browserd_socket() -> Path:
+    return _env_path("BOMBADIL_BROWSERD_SOCKET", runtime_dir() / "browserd.sock")
+
+
+def proposals_file() -> Path:
+    """What waits for a press: the open proposals (docs/CONNECT.md)."""
+    return _env_path("BOMBADIL_PROPOSALS", state_dir() / "proposals.json")

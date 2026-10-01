@@ -135,7 +135,7 @@ Bombadil does not ship one Slack app for everyone: a Marketplace-less app shared
 one history request a minute and 15 messages. The person makes a small private app in their own workspace, from a
 manifest Bombadil prepares, and it keeps normal limits and can receive new messages at once.
 
-- **Manifest** (`slack.manifest()`): user scopes only (`channels:history`, `groups:history`, `im:history`,
+- **Manifest** (`connect/manifest.py`): user scopes only (`channels:history`, `groups:history`, `im:history`,
   `mpim:history`, `channels:read`, `groups:read`, `im:read`, `mpim:read`, `users:read`, `chat:write`), Socket
   Mode on, user events `message.channels`, `message.groups`, `message.im`, `message.mpim`, no bot user, no
   interactivity, no token rotation. The app-level token needs `connections:write`.
@@ -343,6 +343,7 @@ tells the agent what it may and may not do, and is linked into `/etc/skel/.claud
 | `connect/store.py` | `Store(path)`: connections, secrets, seen times, performed ids; a `Secrets` per connection |
 | `connect/service.py` | `Service`, the ring, the ops, the `perform` checks, `main()` |
 | `connect/client.py` | the blocking client (`Connection`, `request`, `notify`, `ConnectUnavailable`, `ConnectError`) |
+| `connect/manifest.py` | the Slack app's manifest and the address that makes Slack show it ready to create |
 | `connect/slack.py`, `slack_setup.py` | the Slack driver and its setup recipe |
 | `connect/mcpconn.py`, `recipes.py` | the MCP driver and the recipe loader |
 | `browserd/` | the service, the CDP session, the overlay script, the client |
