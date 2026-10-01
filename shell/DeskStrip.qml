@@ -57,6 +57,7 @@ Rectangle {
     Text {
         id: label
         objectName: "deskStripText"
+        font.family: T.fontFamily
         x: strip.dot !== "" ? 26 : 12
         anchors.verticalCenter: parent.verticalCenter
         width: Math.min(implicitWidth, strip.maxTextWidth)

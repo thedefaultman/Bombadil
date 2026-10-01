@@ -1,0 +1,12 @@
+# Bombadil's GRUB screen: the ground and the mark, nothing else. GRUB's own password line
+# ("Enter passphrase for hd0,gpt2 ...") is drawn in the terminal box under the mark, in Inter.
+# The menu stays hidden (GRUB_TIMEOUT_STYLE=hidden), so there are no menu components here.
+desktop-color: "#101214"
+desktop-image: "background.png"
+title-text: ""
+terminal-font: "Inter Regular 16"
+terminal-left: "30%"
+terminal-top: "62%"
+terminal-width: "40%"
+terminal-height: "20%"
+terminal-border: "0"

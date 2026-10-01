@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from qml_theme import THEME
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -967,10 +968,10 @@ def test_the_strip_texts(desk):
     desk.set("watchModel", rows(2))
     desk.send(**desk_msg(folded=True))
     assert desk.prop("leftStrips")[-1]["text"] == "step 2 of 4"
-    assert desk.prop("leftStrips")[-1]["dot"] == "#d97757" and desk.prop("leftStrips")[-1]["ring"]
+    assert desk.prop("leftStrips")[-1]["dot"] == THEME["accent"] and desk.prop("leftStrips")[-1]["ring"]
     assert desk.prop("rightStrips")[0]["text"] == "2 need you" and desk.prop("rightStrips")[0]["outlined"]
     desk.end(1)
-    assert desk.prop("leftStrips")[-1]["text"] == "done" and desk.prop("leftStrips")[-1]["dot"] == "#5fb36b"
+    assert desk.prop("leftStrips")[-1]["text"] == "done" and desk.prop("leftStrips")[-1]["dot"] == THEME["good"]
     desk.pill_call("dismiss")
     desk.turn(2)                                            # no plan: Now is here for the system step only
     desk.send(kind="status", turn=2, text="Installing", source="step", risk="system", command="sudo x")
@@ -1217,11 +1218,11 @@ def test_the_watching_strip_is_the_first_meter_and_its_percent_else_the_count(de
     desk.jobs(BUILD, ISO, job("a2", "Copying the photos", pct=7.0))
     desk.clock(10)
     strip = desk.watch["strip"]
-    assert strip["text"] == "Ubuntu 43%" and strip["dot"] == "#d97757" and strip["ring"]
+    assert strip["text"] == "Ubuntu 43%" and strip["dot"] == THEME["accent"] and strip["ring"]
     desk.jobs(BUILD, TIMER, UPDATE, copy)
     desk.clock(5)
     strip = desk.watch["strip"]
-    assert strip["text"] == "2 counting" and strip["dot"] == "#d97757" and strip["ring"]
+    assert strip["text"] == "2 counting" and strip["dot"] == THEME["accent"] and strip["ring"]
     desk.jobs(job("a1b2", "Ubuntu 26.04 ISO", pct=43.4))
     desk.clock(5)
     assert desk.watch["strip"]["text"] == "Ubuntu 43%"                # rounded, as the card's percent is
@@ -1231,10 +1232,10 @@ def test_the_watching_strip_is_the_first_meter_and_its_percent_else_the_count(de
     # With nothing counting, the strip says what is left.
     desk.jobs(UPDATE)
     desk.clock(5)
-    assert desk.watch["strip"] == {"text": "finished", "dot": "#e05252", "ring": False}
+    assert desk.watch["strip"] == {"text": "finished", "dot": THEME["bad"], "ring": False}
     desk.jobs(copy)
     desk.clock(5)
-    assert desk.watch["strip"] == {"text": "finished", "dot": "#5fb36b", "ring": False}
+    assert desk.watch["strip"] == {"text": "finished", "dot": THEME["good"], "ring": False}
 
 
 def test_the_strip_beside_the_pill_reads_the_jobs_when_the_card_folds(desk):

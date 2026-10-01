@@ -1,0 +1,3 @@
+title = "Password Manager"
+description = "Encrypted logins behind a master password: search, copy, generate and check strength."
+icon = "key"

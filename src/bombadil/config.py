@@ -8,6 +8,7 @@ from . import paths
 
 SYSTEM_CONFIG = Path("/etc/bombadil/config.toml")
 PROVIDERS = ("claude", "codex")
+EXPLAIN = ("brief", "normal", "teach")
 
 
 @dataclass
@@ -15,6 +16,7 @@ class Config:
     provider: str = "claude"
     model: str | None = None
     snapshots: bool = True
+    explain: str = "normal"     # brief | normal | teach: how much it shows without being asked
 
     @property
     def configured(self) -> bool:
@@ -34,7 +36,10 @@ def load() -> Config:
         provider=merged.get("provider", "claude"),
         model=merged.get("model"),
         snapshots=bool(merged.get("snapshots", True)),
+        explain=merged.get("explain", "normal"),
     )
+    if cfg.explain not in EXPLAIN:
+        cfg.explain = "normal"
     if cfg.provider not in PROVIDERS:
         raise ValueError(f"unknown provider {cfg.provider!r}, expected one of {PROVIDERS}")
     return cfg
@@ -46,5 +51,11 @@ def save_user(provider: str, model: str | None = None) -> Path:
     lines = [f'provider = "{provider}"']
     if model:
         lines.append(f'model = "{model}"')
+    try:   # a setting people made in words stays when the provider changes
+        kept = tomllib.loads(path.read_text()).get("explain") if path.exists() else None
+    except (OSError, tomllib.TOMLDecodeError):
+        kept = None
+    if kept in EXPLAIN:
+        lines.append(f'explain = "{kept}"')
     path.write_text("\n".join(lines) + "\n")
     return path

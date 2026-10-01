@@ -25,6 +25,7 @@ qt6-wayland
 qt6-declarative
 qt6-5compat
 pyside6
+python-cryptography
 python
 python-pip
 grim
