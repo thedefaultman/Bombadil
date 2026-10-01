@@ -745,6 +745,52 @@ def test_a_receipt_fades_with_the_closing_line_but_a_picture_you_asked_for_stays
     assert bar.pill.property("card") is not None and bar.pill.property("mode") == "idle"
 
 
+def test_a_picture_you_asked_for_keeps_its_line_so_the_picture_does_not_drop_when_the_line_goes(bar):
+    # The picture sits above the line: when the line faded, the picture (and its ×) dropped by the line's height.
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="done", ok=True, text="Showing what starts when you boot.")
+    _card_event(bar, _diagram())
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("mode") == "local" and bar.shown("line")           # long past its time, still there
+    top = bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y()
+    bar.pump(0.5)
+    assert bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y() == top
+    bar.click("cardClose")                                                      # the picture goes; so does its sentence
+    bar.pump(1.0)
+    assert bar.pill.property("card") is None and bar.pill.property("mode") == "idle"
+    # A line with no picture fades as it always did, and a receipt fades with its line.
+    bar.send(kind="local", turn=None, action="app", target="passwords", phase="done", ok=True, text="Opened Passwords.")
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("mode") == "idle"
+
+
+def test_a_receipt_still_goes_with_its_line_by_the_clock(bar):
+    bar.send(kind="turn_start", turn=2, prompt="restart the vpn")
+    bar.send(kind="turn_end", turn=2, seconds=3, changed=False, summary="Restarted the VPN.")
+    _card_event(bar, {**_diagram(title="Network, before and after"), "receipt": True}, turn=2)
+    bar.pump(0.5)
+    assert bar.pill.property("card") is not None and bar.pill.property("mode") == "closing"
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("card") is None and bar.pill.property("mode") == "idle"
+
+
+def test_a_full_screen_window_puts_the_picture_away_and_it_comes_back(bar):
+    _card_event(bar, _diagram())
+    bar.pump(0.4)
+    host = bar.item("cardHost")
+    assert bar.shown("cardHost") and host.property("implicitHeight") > 100
+    host.setProperty("suppressed", True)
+    bar.pump(0.5)
+    assert not bar.shown("cardHost") and host.property("implicitHeight") == 0
+    assert bar.pill.property("card") is not None                      # put away, not dismissed
+    host.setProperty("suppressed", False)
+    bar.pump(0.5)
+    assert bar.shown("cardHost") and host.property("implicitHeight") > 100
+    assert bar.warnings == []
+
+
 def test_a_picture_that_fails_puts_the_old_one_away_but_a_failed_click_does_not(bar):
     _card_event(bar, _diagram())
     bar.send(kind="local", turn=None, action="picture", target="boot", phase="start", text="Drawing your boot")
