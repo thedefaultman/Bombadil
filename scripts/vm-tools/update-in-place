@@ -69,7 +69,8 @@ ok = ok and run("sudo install -m755 /tmp/new/iso/airootfs/usr/local/bin/bombadil
 if ok and sys.argv[2] == "1":
     # the rest of the files the ISO profile owns, with their modes; the tar has only those this REF has
     ok = run("cd /tmp/new/iso/airootfs && sudo cp -a --parents $(find etc usr -type f -o -type l 2>/dev/null | grep -v /bombadil-smoke$) / && echo system-files") == 0
-    ok = ok and run("for b in /usr/share/bombadil/bin/*; do n=$(basename $b); [ -e /usr/local/bin/$n ] || sudo ln -sfn $b /usr/local/bin/$n; done; ls /usr/local/bin | wc -l") == 0
+# a new launcher in bin/ (bombadil-shell) must be on PATH on a --no-system update too
+ok = ok and run("for b in /usr/share/bombadil/bin/*; do n=$(basename $b); [ -e /usr/local/bin/$n ] || sudo ln -sfn $b /usr/local/bin/$n; done; ls /usr/local/bin | wc -l") == 0
 ok = ok and run("cd /usr/share/bombadil && for d in bin src shell share; do diff -rq -x __pycache__ /tmp/new/$d $d; done && echo tree-matches") == 0
 print("UPDATE-OK" if ok else "UPDATE-FAILED (the old tree is in /usr/share/bombadil.bak)")
 PY
