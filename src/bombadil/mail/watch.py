@@ -148,6 +148,7 @@ class Says:
         self.request = request
         self._mails: OrderedDict[str, None] = OrderedDict()     # mail ids already said
         self._receipts: OrderedDict[str, None] = OrderedDict()  # drafts whose receipt was said
+        self._ready: OrderedDict[str, int] = OrderedDict()      # draft id -> its "is ready" notice
 
     async def push(self, msg: dict) -> None:
         kind = msg.get("push")
@@ -203,8 +204,13 @@ class Says:
             await self.show(**_where(draft))
             return True
 
-        return self.notices.post("mail", line, "ask", [{"id": "open", "label": "Open", "style": "primary"}],
-                                 0, handler)
+        nid = self.notices.post("mail", line, "ask", [{"id": "open", "label": "Open", "style": "primary"}],
+                                0, handler)
+        if isinstance(draft.get("id"), str):
+            self._ready[draft["id"]] = nid
+            while len(self._ready) > REMEMBER:
+                self._ready.popitem(last=False)
+        return nid
 
     # -- sends --
 
@@ -231,6 +237,9 @@ class Says:
             self.notices.post("mail", result.line, "error", (), 0)
 
     def _receipt(self, receipt: dict, more: str, tone: str) -> None:
+        ready = self._ready.pop(receipt.get("draft"), None)   # it is sent: "is ready" is no longer so
+        if ready is not None:
+            self.notices.dismiss(ready)
         web = receipt.get("web") if isinstance(receipt.get("web"), dict) else {}
         url = str(web.get("url") or "")
         actions = ([{"id": "open", "label": f"Open in {one_line(web.get('name') or 'the browser', 24)}",

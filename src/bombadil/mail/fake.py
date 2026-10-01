@@ -67,6 +67,7 @@ class FakeEngine:
         self._uploads: dict[str, bytearray] = {}
         self._n = 0
         self._send_mode = "ok"
+        self.send_delay = 0.0               # seconds a send takes before it answers, for tests of two presses
         self._send_error: EngineError | None = None
         self._delivers = False
         self._tasks: list[asyncio.Task] = []
@@ -411,6 +412,8 @@ class FakeEngine:
             record = {"account": acct["engine_id"], "identity": a.get("identity"), "kind": a["kind"],
                       "reply_to": a.get("reply_to"), "to": a["to"], "cc": a["cc"], "bcc": a["bcc"],
                       "subject": a["subject"], "body": a["body"], "attachments": attachments, "message_id": mid}
+        if self.send_delay:
+            await asyncio.sleep(self.send_delay)
         mode = self._send_mode
         if mode == "error":
             raise self._send_error

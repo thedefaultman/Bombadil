@@ -32,8 +32,8 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "job-tool", "id": s, "turn": n, "op": "start"|"list"|"stop", "title": ...,
                     "command": ..., "kind": "job"|"watch", "seconds": n, "job": id}
                                                         the os-mcp `job` tool; answered with job-result
-                   {"type": "mail-tool", "id": s, "turn": n, "op": "search"|"read"|"draft"|"mark"|"show"|
-                    "status", ...}                      the os-mcp mail tools; answered with mail-result
+                   {"type": "mail-tool", "id": s, "turn": n, "op": "search"|"read"|"draft"|"mark"|"show",
+                    ...}                                the os-mcp mail tools; answered with mail-result
                    {"type": "press", "kind": "mail", "id": draft, "fingerprint": fp, "again"?: true}
                                                         the person's press on a Send button; answered
                                                         with press_result (outbox.py). "again" is for a
@@ -362,10 +362,9 @@ class AgentD:
         elif t == "press":
             self._background(self._press(msg, writer))
         elif t == "notice_action":
-            self._background(self._notice_action(msg.get("id"), msg.get("action")))
+            self._background(self._notice_action(msg.get("id"), msg.get("action"), writer))
         elif t == "notice_dismiss":
-            if _is_int(msg.get("id")):
-                self.notices.dismiss(msg["id"])
+            self._background(self._notice_dismiss(msg.get("id"), writer))
         elif t == "status":
             await self._send(writer, self._status())
         elif t == "setup_action":
@@ -673,9 +672,20 @@ class AgentD:
             await asyncio.sleep(min(left, NOTICE_POLL))
             self.notices.expire()
 
-    async def _notice_action(self, notice_id, action):
+    async def _persons(self, writer: asyncio.StreamWriter) -> bool:
+        """Is this client somebody other than the agent? A chip makes a draft as the person's and a dismissal
+        hides what agentd said, so neither is for a process inside a turn (as a press is not); a client
+        that cannot be named is not taken for the person."""
+        pid = _peer_pid(writer)
+        return pid is not None and not await asyncio.to_thread(self.outbox.from_agent, pid)
+
+    async def _notice_dismiss(self, notice_id, writer: asyncio.StreamWriter):
+        if _is_int(notice_id) and await self._persons(writer):
+            self.notices.dismiss(notice_id)
+
+    async def _notice_action(self, notice_id, action, writer: asyncio.StreamWriter):
         """A chip on a notice. What it does is its notice's own; when that fails the notice says so."""
-        if not _is_int(notice_id) or not isinstance(action, str):
+        if not _is_int(notice_id) or not isinstance(action, str) or not await self._persons(writer):
             return
         try:
             await self.notices.action(notice_id, action)
@@ -698,7 +708,7 @@ class AgentD:
         def alive() -> bool:
             return self.current == turn and not self.stopping
         try:
-            ok, text = await self.mail.call(turn, str(msg.get("op", "")), msg, typed, alive)
+            ok, text = await self.mail.call(turn, str(msg.get("op", "")), msg, typed, alive, self.session_id)
         except Exception as e:  # noqa: BLE001 - a tool call is always answered
             print(f"agentd: mail-tool: {type(e).__name__}: {e}", file=sys.stderr)
             return result(False, f"Mail failed: {launcher._reason(e)}")
@@ -1202,7 +1212,7 @@ class AgentD:
             finally:
                 stopped = self.stopping
                 self.current = None
-                self.mail.end(turn_id)   # what the turn read is not carried into the next
+                self.mail.end(turn_id, self.session_id)   # what it read stays with the conversation it resumes into
                 self.narrator = None
                 self.plan_msg = None
                 self.proc = None

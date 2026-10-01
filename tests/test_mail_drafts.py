@@ -174,7 +174,7 @@ def test_a_file_that_looks_like_a_secret_is_said():
 
 
 def test_a_message_over_the_providers_limit_is_said_with_the_limit():
-    big = attachment("big.zip", size=30_000_000)
+    big = attachment("big.zip", size=25_000_000)
     [w] = warn(draft(attachments=[big]), trusted={"priya@acme.example"})
     assert w["kind"] == "big" and "25 MB" in w["text"] and "Gmail" in w["text"]
     assert warn(draft(attachments=[big]), trusted={"priya@acme.example"}, provider=accounts.PROVIDERS["microsoft"]) == []
@@ -329,8 +329,20 @@ def test_a_private_key_with_an_innocent_name_is_found_by_its_content_and_nothing
     assert not folder.exists() or list(folder.iterdir()) == []
     got = drafts.copy_attachment("d1", src2, None, "person")
     assert got["sensitive"] is True
-    # A key that is not at the start of the file is found only within the first 8 KiB: stated limit of the sniff.
-    assert drafts.copy_attachment("d2", src, None, "agent")["sensitive"] is True
+    with pytest.raises(Refusal):   # and a key after some words is found too
+        drafts.copy_attachment("d2", src, None, "agent")
+
+
+def test_a_key_far_into_a_big_file_or_across_two_reads_is_found_too(files, monkeypatch):
+    monkeypatch.setattr(drafts, "CHUNK", 1000)
+    far = put(files, "far.txt", b"x" * 5000 + PEM)
+    straddle = put(files, "straddle.txt", b"x" * (1000 - 8) + PEM)
+    pgp = put(files, "pgp.txt", b"-----BEGIN PGP PRIVATE KEY BLOCK-----\n")
+    for src in (far, straddle, pgp):
+        with pytest.raises(Refusal):
+            drafts.copy_attachment("d1", src, None, "agent")
+        assert drafts.copy_attachment("d1", src, None, "person")["sensitive"] is True
+    assert drafts.copy_attachment("d1", put(files, "fine.txt", b"x" * 5000), None, "agent")["sensitive"] is False
 
 
 def test_a_file_over_the_limit_is_refused_before_anything_is_copied(files, monkeypatch):

@@ -126,17 +126,45 @@ class Lab:
         return path
 
     def tb_pids(self):
-        """PIDs of all Thunderbird processes of this lab (main + content/gpu/socket/utility children)."""
-        out = subprocess.run(["pgrep", "-f", "thunderbird-bin|thunderbird -no-remote"], capture_output=True, text=True).stdout
-        pids = []
-        for p in out.split():
+        """PIDs of this lab's Thunderbird process tree (launcher, main, content/gpu/socket/utility children),
+        excluding the native-messaging host and its helpers."""
+        try:
+            root = int(open(os.path.join(self.dir, "tb.pid")).read())
+        except (OSError, ValueError):
+            return []
+        kids = {}
+        for d in os.listdir("/proc"):
+            if not d.isdigit():
+                continue
             try:
-                cmd = open("/proc/%s/cmdline" % p).read()
+                st = open("/proc/%s/stat" % d).read()
+                ppid = int(st.rsplit(")", 1)[1].split()[1])
+            except (OSError, IndexError, ValueError):
+                continue
+            kids.setdefault(ppid, []).append(int(d))
+        out, todo = [], [root]
+        while todo:
+            p = todo.pop()
+            try:
+                cmd = open("/proc/%d/cmdline" % p).read()
             except OSError:
                 continue
-            if self.dir in cmd or ("thunderbird" in cmd and "-contentproc" in cmd):
-                pids.append(int(p))
-        return pids
+            if "bombadil_mail_host" in cmd:
+                continue
+            out.append(p)
+            todo += kids.get(p, [])
+        return out
+
+    def pss_mb(self):
+        total = 0
+        for p in self.tb_pids():
+            try:
+                for l in open("/proc/%d/smaps_rollup" % p):
+                    if l.startswith("Pss:"):
+                        total += int(l.split()[1])
+            except OSError:
+                pass
+        return total / 1024.0
 
     def rss_mb(self):
         total = 0

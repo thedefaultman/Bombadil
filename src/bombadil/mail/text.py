@@ -357,7 +357,7 @@ _ABSOLUTE = ("/etc/shadow", "/etc/gshadow", "/etc/ssh", "/etc/sudoers", "/etc/su
 _NAMES = ("id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "*.pem", "*.key", "*.p12", "*.pfx", "*.ppk",
           "*.kdbx", "*.kdb", "*.jks", "*.keystore", "key3.db", "key4.db", "cert9.db", "logins.json",
           "cookies.sqlite", "login data", ".netrc", "_netrc", ".env", ".env.*", ".pgpass", ".git-credentials",
-          ".npmrc", ".pypirc", ".htpasswd", "credentials*")
+          ".npmrc", ".pypirc", ".htpasswd", "credentials*", "*password*", "*passwd*", "*passphrase*")
 
 
 def _under(path: Path, root: Path) -> bool:

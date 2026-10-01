@@ -132,8 +132,11 @@ class Outbox:
     async def _press(self, kind, id, fingerprint, peer_pid, again: bool = False) -> PressResult:
         if not isinstance(peer_pid, int) or isinstance(peer_pid, bool) or peer_pid <= 0:
             return PressResult(False, "I could not tell who pressed. " + NOT_SENT, code="no_peer")
-        if await asyncio.to_thread(self._from_agent, peer_pid):
+        if await asyncio.to_thread(self.from_agent, peer_pid):
+            # A window the agent itself opened lives in that turn's scope for as long as it runs, so this is
+            # also what the person sees from one: the way out is a window opened from the pill.
             return PressResult(False, "That press came from inside an agent's turn, and sending is yours. "
+                                      "If this is your own window, close it and open it again from the pill. "
                                       + NOT_SENT, code="agent")
         performer = self.performers.get(kind) if isinstance(kind, str) else None
         if performer is None:
@@ -161,7 +164,9 @@ class Outbox:
         finally:
             self._busy.discard(key)
 
-    def _from_agent(self, pid: int) -> bool:
+    def from_agent(self, pid: int) -> bool:
+        """Is this process inside an agent's turn? What only the person does (a press, a chip on a notice)
+        is refused to it. Blocking: it reads /proc."""
         if procs.cgroup_of(pid) is not None:
             return True
         return bool(self.in_turn and self.in_turn(pid))

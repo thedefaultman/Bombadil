@@ -28,7 +28,9 @@
 #       features      <app>/features/<id>.xpi (system add-on dir)       none  no add-on
 #   LAB_ADDON_PREFS=0|1         force extensions.autoDisableScopes=0 etc. on/off (default: on for profile-*)
 #   LAB_SIGNATURES_REQUIRED=1   set xpinstall.signatures.required=true (proves the pref is honoured)
-#   LAB_EXTRA_PREFS=file.js     extra user_pref lines         LAB_KIND=lab|gmail|outlook|icloud  account template
+#   LAB_EXTRA_PREFS=file.js     extra user_pref lines         LAB_KIND=lab|gmail|outlook|icloud|none  account template
+#   LAB_NO_QUIET=1              omit the "quiet" prefs (shows what pops up on first run)   LAB_ABLATE=pref1,pref2  omit just these
+#   LAB_NO_DISPLAY=1            no Xvfb and DISPLAY unset (use with LAB_HEADLESS=1)
 #   LAB_HEADLESS=1              pass --headless               LAB_MARIONETTE=1  pass --marionette (port 2828)
 #   LAB_IMAP_PORT=1143 LAB_SMTP_PORT=1025   ports of the local mail server (lets two labs run side by side with different
 #                               BOMBADIL_LAB_DIR)
@@ -94,7 +96,8 @@ launch_tb() {
   . "$LAB/launch.sh"
   DISPLAY="$(cat "$LAB/display")"
   date +%s.%N > "$LAB/start.time"
-  env HOME="$LAB/home" DISPLAY="$DISPLAY" BOMBADIL_LAB_DIR="$LAB" MOZ_CRASHREPORTER_DISABLE=1 \
+  local dispenv=(-u DISPLAY); [ -n "$DISPLAY" ] && dispenv=(DISPLAY="$DISPLAY")
+  env HOME="$LAB/home" "${dispenv[@]}" BOMBADIL_LAB_DIR="$LAB" MOZ_CRASHREPORTER_DISABLE=1 \
       MOZ_CRASHREPORTER_NO_REPORT=1 NO_AT_BRIDGE=1 \
       setsid "$TB_BIN" "${TB_ARGS[@]}" >>"$LAB/tb.log" 2>&1 &
   echo $! > "$LAB/tb.pid"; echo $! > "$LAB/tb.pgid"
@@ -133,14 +136,16 @@ do_start() {
   XPI="${LAB_XPI:-$(python3 "$HERE/build_xpi.py")}"
 
   # ---- display ------------------------------------------------------------------------------
-  if [ "${LAB_XVFB:-auto}" = 1 ] || { [ "${LAB_XVFB:-auto}" = auto ] && [ -z "${DISPLAY:-}" ]; }; then
+  if [ "${LAB_NO_DISPLAY:-0}" = 1 ]; then
+    unset DISPLAY
+  elif [ "${LAB_XVFB:-auto}" = 1 ] || { [ "${LAB_XVFB:-auto}" = auto ] && [ -z "${DISPLAY:-}" ]; }; then
     : > "$LAB/xvfb.display"
     Xvfb -screen 0 "${LAB_SIZE:-1280x800x24}" -nolisten tcp -displayfd 3 3>"$LAB/xvfb.display" >"$LAB/xvfb.log" 2>&1 &
     echo $! > "$LAB/xvfb.pid"
     wait_file "$LAB/xvfb.display" 10 || { log "Xvfb did not start"; cat "$LAB/xvfb.log" >&2; exit 1; }
     export DISPLAY=":$(tr -d '\n' < "$LAB/xvfb.display")"
   fi
-  echo "$DISPLAY" > "$LAB/display"
+  echo "${DISPLAY:-}" > "$LAB/display"
   if [ "${LAB_WM:-none}" = openbox ]; then
     openbox >"$LAB/wm.log" 2>&1 &
     echo $! > "$LAB/wm.pid"; sleep 0.5
@@ -193,7 +198,8 @@ EOS
 import make_profile
 make_profile.write_profile("$LAB/profile", kind="${LAB_KIND:-lab}", load="$pl_load", xpi="$XPI",
                            imap_port=${LAB_IMAP_PORT:-1143}, smtp_port=${LAB_SMTP_PORT:-1025},
-                           nss_dir="$APP", extra_user_js="$extra", addon_prefs=bool(int("$addon_prefs")))
+                           nss_dir="$APP", extra_user_js="$extra", addon_prefs=bool(int("$addon_prefs")),
+                           quiet=not bool(int("${LAB_NO_QUIET:-0}")), ablate=tuple(x for x in "${LAB_ABLATE:-}".split(",") if x))
 PYEOF
   )
   if [ "${LAB_AUTOCONFIG:-0}" = 1 ]; then  # see FINDINGS Q1(d): AutoConfig locking/setting prefs
@@ -211,7 +217,7 @@ PYEOF
 
   cat > "$LAB/env.sh" <<EOS
 export BOMBADIL_LAB_DIR="$LAB"
-export DISPLAY="$DISPLAY"
+export DISPLAY="${DISPLAY:-}"
 export TB_APP_DIR="$APP"
 export LAB_PROFILE="$LAB/profile"
 export LAB_HOST_SOCK="$LAB/host.sock"

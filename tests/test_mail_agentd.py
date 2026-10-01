@@ -162,7 +162,7 @@ async def test_a_draft_carries_the_turns_own_words_and_whether_it_read_mail(home
 
 
 @pytest.mark.asyncio
-async def test_what_a_turn_read_is_not_carried_into_the_next(home, mail):
+async def test_what_a_turn_read_is_not_carried_into_a_new_conversation(home, mail):
     mail.answer("search", [msg()])
     mail.answer("draft", DRAFT)
     d, _, _ = make(Scripted(DESK_TURN))
@@ -172,10 +172,35 @@ async def test_what_a_turn_read_is_not_carried_into_the_next(home, mail):
     await _say(w, {"type": "stop"})
     await _read_until(r, "turn_end")
     assert not d.mail.seen_mail(1)
-    await _ask(w, "now write to priya")
+    await _ask(w, "now write to priya")            # no session: the conversation did not continue
     await _events_until(r, lambda m: m.get("kind") == "text")
     await tool(tool_r, tool_w, 2, "draft", to=["priya@example.test"], body="Hi")
     assert mail.asked("draft")[0]["tainted"] is False and mail.asked("draft")[0]["typed"] == "now write to priya"
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
+async def test_what_a_turn_read_is_still_in_the_conversation_it_resumes_and_not_in_a_new_one(home, mail):
+    mail.answer("search", [msg()])
+    mail.answer("draft", DRAFT)
+    d, _, _ = make(Scripted(DESK_TURN))
+    d.session_id = "conversation-1"
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "look for priya's mail")
+    await tool(tool_r, tool_w, 1, "search")
+    await _say(w, {"type": "stop"})
+    await _read_until(r, "turn_end")
+    assert d.session_id == "conversation-1"
+    await _ask(w, "now write to priya")            # the model still has what was read in front of it
+    await _events_until(r, lambda m: m.get("kind") == "text")
+    await tool(tool_r, tool_w, 2, "draft", to=["priya@example.test"], body="Hi")
+    assert mail.asked("draft")[-1]["tainted"] is True
+    await _say(w, {"type": "stop"})
+    await _read_until(r, "turn_end")
+    d.session_id = None                              # a new conversation has read nothing
+    await _ask(w, "write to leo")
+    await _events_until(r, lambda m: m.get("kind") == "text")
+    await tool(tool_r, tool_w, 3, "draft", to=["leo@example.test"], body="Hi")
+    assert mail.asked("draft")[-1]["tainted"] is False
     await _stop(r, w, server, tool_w)
 
 
@@ -394,6 +419,22 @@ async def _drain(r, seconds=0.2):
 
 
 @pytest.mark.asyncio
+async def test_a_draft_that_is_sent_is_no_longer_said_to_be_ready(home, mail, person):
+    mail.answer("draft", DRAFT)
+    mail.answer("send", {"receipt": RECEIPT, "already": False})
+    d, _, _ = make(Scripted(DESK_TURN))
+    server, r, w, tool_r, tool_w, _ = await _in_a_turn(d, "reply to priya the 14th")
+    heard = await tool_events(tool_r, tool_w, 1, "draft", reply_to="a1/k1", body="The 14th.")
+    ready = next(m for m in heard if m.get("type") == "notice")
+    other = d.notices.post("mail", "Leo: Lunch?", "ask")                      # somebody else's line stays
+    await _say(w, {"type": "press", "kind": "mail", "id": "d1", "fingerprint": "f" * 64})
+    await _events_until(r, lambda m: m.get("type") == "press_result")
+    assert [n["id"] for n in d.notices.live() if "is ready" in n["line"]] == []
+    assert sorted(n["line"][:7] for n in d.notices.live()) == ["Leo: Lu", "Sent to"] and ready["id"] != other
+    await _stop(r, w, server, tool_w)
+
+
+@pytest.mark.asyncio
 async def test_the_agent_knows_what_happened_to_its_draft_on_its_next_turn(home, mail, person):
     mail.answer("send", {"receipt": RECEIPT})
     d, _, _ = make()
@@ -457,6 +498,50 @@ async def test_a_process_the_turn_started_cannot_press_even_with_no_systemd_scop
     mail.answer("send", {"receipt": RECEIPT})
     got = (await _events_until(r, lambda m: m.get("type") == "press_result"))[-1]
     assert got["ok"] is True
+    w.close()
+    server.cancel()
+
+
+def _turn_that_says(*messages):
+    """A scripted turn whose process connects to agentd's socket, as any process of the agent's can, and
+    says these messages on it (one connection each), then ends."""
+    return (
+        "import json, os, socket, sys, time\n"
+        "sys.stdin.read()\n"
+        f"for message in {list(messages)!r}:\n"
+        "    s = socket.socket(socket.AF_UNIX)\n"
+        "    s.connect(os.environ['BOMBADIL_SOCKET'])\n"
+        "    s.sendall((json.dumps(message) + '\\n').encode())\n"
+        "    time.sleep(0.4)\n"
+        "    s.close()\n"
+        "print(json.dumps({'type': 'result', 'result': 'done'}), flush=True)\n")
+
+
+@pytest.mark.asyncio
+async def test_a_chip_or_a_dismissal_from_inside_a_turn_does_nothing(home, mail, monkeypatch):
+    """Reply makes a draft as the person's and a dismissal hides what agentd said (that a send was not the
+    person's, that one cannot be confirmed): the agent's processes have neither."""
+    monkeypatch.setattr(procs, "cgroup_of", lambda pid: None)      # no scope: the process tree is what marks it
+    mail.answer("draft", DRAFT)
+    d, lx, _ = make()
+    d.says.new_mail(new_mail("k1"))
+    [n] = d.notices.live()
+    warning = d.notices.post("mail", "That was not your press on Send.", "error")
+    d.provider = Scripted(_turn_that_says({"type": "notice_action", "id": n["id"], "action": "reply"},
+                                          {"type": "notice_action", "id": n["id"], "action": "open"},
+                                          {"type": "notice_dismiss", "id": warning},
+                                          {"type": "notice_dismiss", "id": n["id"]}))
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    await _read_until(r, "turn_end")
+    assert sorted(x["id"] for x in d.notices.live()) == sorted([n["id"], warning])
+    assert mail.asked("draft") == [] and lx.opened == []
+    # The same messages from a client that is not in a turn (the shell) are what they always were.
+    await _say(w, {"type": "notice_dismiss", "id": warning})
+    assert (await _events_until(r, lambda m: m.get("type") == "notice_end"))[-1]["id"] == warning
+    await _say(w, {"type": "notice_action", "id": n["id"], "action": "reply"})
+    await _events_until(r, lambda m: m.get("type") == "notice_end" and m["id"] == n["id"])
+    assert len(mail.asked("draft")) == 1
     w.close()
     server.cancel()
 
@@ -861,6 +946,26 @@ async def test_a_service_that_sends_garbage_or_too_much_is_dropped_not_obeyed(ho
     server.cancel()
 
 
+@pytest.mark.asyncio
+async def test_a_push_too_long_to_be_one_is_dropped_with_its_connection_and_the_next_is_heard(home, mail, monkeypatch):
+    monkeypatch.setattr(watch, "LINE_LIMIT", 2000)
+    d, _, _ = make()
+    server, r, w = await _start(d)
+    await _subscribed(mail)
+    before = mail.connections
+    mail.push({"push": "new_mail", "known": True, "message": msg("k1", subject="x" * 5000)})
+    for _ in range(100):
+        if mail.connections > before:
+            break
+        await asyncio.sleep(0.05)
+    assert mail.connections > before                  # it hung up on that one and came back
+    await _subscribed(mail)
+    mail.push(new_mail("k2"))
+    assert (await notice(r))["line"] == "Priya Shah: Launch date" and len(d.notices.live()) == 1
+    w.close()
+    server.cancel()
+
+
 # -- the command line: bombadil mail ... --
 
 CLI = Path(__file__).resolve().parents[1] / "bin" / "bombadil"
@@ -1109,5 +1214,25 @@ async def test_a_real_service_says_who_is_known_and_only_they_get_the_pill_and_r
         assert draft["created_by"] == "person" and draft["reply_to"] == first["message"]["id"]
         assert lx.opened == [{"id": first["message"]["id"], "reply": draft["id"]}]
         assert not [x for x in d.notices.live() if "is ready" in x["line"]]
+        w.close()
+        server.cancel()
+
+
+@needs_service
+@pytest.mark.asyncio
+async def test_a_real_service_with_a_draft_waiting_answers_send_it_here_and_sends_nothing(home, monkeypatch):
+    from bombadil.mail import client
+    async with real_service(home, monkeypatch):
+        d, _, _ = make()
+        server, r, w = await _start(d)
+        await _ask(w, "send it")                              # no draft: the model's, as any words are
+        assert [m for m in await _read_until(r, "turn_end") if m.get("type") == "local"] == []
+        made = client.request("draft", to=["leo@example.test"], subject="Lunch", body="Noon?")
+        await _ask(w, "send it")
+        heard = await _events_until(r, lambda m: m.get("phase") == "done")
+        assert {"type": "local", "action": "send"} in heard
+        assert heard[-1]["text"] == "Sending is yours. It's under the pointer." and heard[-1]["ok"] is True
+        assert client.request("draft_get", id=made["id"])["state"] == "open"
+        assert press_rows() == []                             # nobody pressed anything
         w.close()
         server.cancel()

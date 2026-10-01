@@ -186,6 +186,33 @@ def t_idle(lab, minutes=10):
     lab.stop()
 
 
+# --------------------------------------------------------------------------------------------- kill
+def t_kill(lab):
+    lab.start()
+    b = lab.bridge()
+    pids = re.findall(r"pid=(\d+) start", "\n".join(host_log(lab)))
+    host = int(pids[-1])
+    t = time.time()
+    os.kill(host, 9)
+    time.sleep(1)
+    b.wait_connected(30)
+    for _ in range(40):
+        try:
+            b.ping()
+            break
+        except Exception:  # noqa
+            time.sleep(0.5)
+    pids2 = re.findall(r"pid=(\d+) start", "\n".join(host_log(lab)))
+    say("kill", "SIGKILL the host", "add-on reconnected %.1fs later with a new host process (pids %s -> %s); add-on reconnect log: %s" % (
+        time.time() - t, host, pids2[-1], tb_log(lab, "native port disconnected", 1)))
+    # Thunderbird killing the host: close the port from the add-on and see that the host is reaped
+    b.eval("port_to_close = true; return 1") if False else None
+    lab.stop()
+    time.sleep(1)
+    log = host_log(lab)
+    say("kill", "Thunderbird shutdown", [l.split(" ", 2)[2][:90] for l in log[-3:]])
+
+
 # --------------------------------------------------------------------------------------------- sizes
 def pad_frame(b, total):
     """An echo request whose JSON frame is exactly `total` bytes."""
@@ -276,7 +303,7 @@ def main():
     ap.add_argument("--json")
     a = ap.parse_args()
     lab = Lab()
-    todo = ["dirs", "perm", "lifetime", "sizes", "chunks", "idle"] if a.what == "all" else [a.what]
+    todo = ["dirs", "perm", "lifetime", "kill", "sizes", "chunks", "idle"] if a.what == "all" else (["kill", "sizes", "chunks", "idle"] if a.what == "rest" else [a.what])
     for w in todo:
         print("=== %s" % w, flush=True)
         if w == "dirs":
@@ -287,6 +314,8 @@ def main():
             t_lifetime(lab, a.idle_seconds)
         elif w == "idle":
             t_idle(lab, a.idle_minutes)
+        elif w == "kill":
+            t_kill(lab)
         elif w == "sizes":
             t_sizes(lab)
         elif w == "chunks":

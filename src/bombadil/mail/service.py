@@ -36,6 +36,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import shutil
 import signal
 import socket
@@ -96,7 +97,8 @@ MAX_BODY = 500_000          # characters of a draft's body ...
 MAX_BODY_BYTES = 600_000    # ... and bytes, so that a send fits in one frame to Thunderbird
 MAX_SUBJECT = 998
 WHY_MAX = 140
-NEW_MAIL_MAX = 20          # messages of one new_mail event that are looked at
+NEW_MAIL_MAX = 20          # messages of one new_mail event that are told to the window ...
+NEW_MAIL_SCAN = 500        # ... out of this many looked at
 NEW_MAIL_AGE_S = 86400.0   # mail older than this is not "new", whatever the engine says
 EVENTS_MAX = 200
 PRESS_LOG_ROTATE = 1 << 20
@@ -108,8 +110,17 @@ OPS = ("ping", "status", "accounts", "add_account", "remove_account", "views", "
        "draft_discard", "draft_shown", "send", "known", "subscribe", "show", "requested", "recent",
        "engine_window")
 USABLE = ("ok", "syncing")
+# What a process inside an agent's turn may not ask for even on the socket, where agentd's tools would never: the
+# person's mail is not moved, saved to disk or put away, and their window is not taken from them, by a mail that
+# talked an agent into it. (Sending, looking at a draft and accounts say so in their own ops.)
+PERSONS_ONLY = {"set_flags": "Marking mail read or flagged", "archive": "Archiving mail", "trash": "Deleting mail",
+                "save_attachment": "Saving an attachment", "draft_discard": "Putting a draft away",
+                "engine_window": "Showing Thunderbird", "requested": "Taking what the window was asked to show"}
 ENGINE_STATES = {"ok": "ok", "syncing": "syncing", "signin": "signin", "error": "error", "blocked": "blocked",
                  "idle": "ok"}
+
+
+_DRAFT_ID = re.compile(r"d[0-9]{1,12}")
 
 
 class AlreadyRunning(Exception):
@@ -141,6 +152,15 @@ def _float(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if math.isfinite(f) else None
+
+
+def _draft_id(req: dict) -> str:
+    """A draft id is what the store made ("d12"), and nothing else is looked up: an id a client makes up may hold
+    anything, and the notes file would have to be asked about it."""
+    did = req.get("id")
+    if not isinstance(did, str) or not _DRAFT_ID.fullmatch(did):
+        raise _bad("Say which draft.")
+    return did
 
 
 def _flag(req: dict, name: str) -> bool | None:
@@ -323,6 +343,8 @@ class Service:
             server = await self._listen()
             for task in (self._pusher(), self._event_loop(), self._supervise()):
                 self._spawn(task)
+            if self.engine.connected:   # a link that was there before the service listened (the fake, a test)
+                self._spawn(self._engine_up())
             await self._stopping.wait()
         finally:
             await self._close(server)
@@ -424,8 +446,15 @@ class Service:
                 raise
             log(f"{self.db_path} is damaged ({e}); setting it aside and starting over")
             self.store.start_over(e)
+            self.loop.call_soon_threadsafe(self._recovered)
             raise Refusal(INTERNAL, "Mail's own notes were damaged and had to be started again. "
                                     "Try that once more.") from e
+
+    def _recovered(self) -> None:
+        """On the loop, after the notes were made again: the accounts come back from Thunderbird's own list."""
+        self._eacc = None
+        if self._stopping is not None and not self._stopping.is_set():
+            self._spawn(self._refresh(fresh=True, push=True))
 
     async def _process(self, fn, *args):
         """A call on the engine's process, which may block (it starts and stops a program)."""
@@ -765,6 +794,8 @@ class Service:
         if not isinstance(op, str) or op not in OPS:
             return {**head, "ok": False, "error": f"Mail cannot “{str(op)[:40]}”.", "code": BAD_REQUEST}
         try:
+            if op in PERSONS_ONLY:
+                self._yours(conn, PERSONS_ONLY[op])
             result = await getattr(self, f"_op_{op}")(req, conn)
         except Refusal as e:
             return {**head, "ok": False, "error": str(e), "code": e.code}
@@ -1136,6 +1167,12 @@ class Service:
             return "agent"
         return "person"
 
+    def _typed(self, req: dict, conn: Conn | None) -> str:
+        """What the person typed this turn, as agentd reports it with a draft. A process inside an agent's turn
+        is not agentd, and its word for what the person typed would launder any address: it is not taken."""
+        typed = _string(req, "typed", 20_000) or ""
+        return "" if self._scoped(conn) else typed
+
     async def _known(self, emails: list[str]) -> set[str]:
         """Which of these the engine knows (address books and Sent). What cannot be asked is not known."""
         if not emails or not self.engine.connected:
@@ -1169,7 +1206,7 @@ class Service:
         to, cc, bcc = (_addresses(req, n) for n in ("to", "cc", "bcc"))
         subject = _string(req, "subject", MAX_SUBJECT, line=True)
         body = _body(req) or ""
-        typed = _string(req, "typed", 20_000) or ""
+        typed = self._typed(req, conn)
         files = _paths(req, "attachments")
         kind, reply = req.get("kind"), req.get("reply_to")
         origin: dict = {}
@@ -1242,9 +1279,7 @@ class Service:
         raise Refusal(NO_ACCOUNT, "There is no mail account ready to write from.")
 
     async def _draft(self, req: dict, states: tuple[str, ...] = ("open", "unknown")) -> dict:
-        did = req.get("id")
-        if not isinstance(did, str) or len(did) > 16:
-            raise _bad("Say which draft.")
+        did = _draft_id(req)
         d = await self.job(lambda: self.store.draft(did))
         if d is None:
             raise Refusal(NOT_FOUND, "There is no such draft.")
@@ -1267,23 +1302,21 @@ class Service:
                 del self._dlocks[did]
 
     async def _op_draft_get(self, req, conn):
-        did = req.get("id")
-        d = await self.job(lambda: self.store.draft(did) if isinstance(did, str) else None)
+        did = _draft_id(req)
+        d = await self.job(lambda: self.store.draft(did))
         if d is None:
             raise Refusal(NOT_FOUND, "There is no such draft.")
         return await self.job(self._draft_out, d)
 
     async def _op_draft_edit(self, req, conn):
         """Change a draft. Whatever changes, what the view showed is no longer what there is."""
-        did = req.get("id")
-        if not isinstance(did, str) or len(did) > 16:
-            raise _bad("Say which draft.")
+        did = _draft_id(req)
         by = self._created_by(req, conn)
         async with self._locked(did):
             d = await self._draft(req)
             to, cc, bcc = (_addresses(req, n) for n in ("to", "cc", "bcc"))
             subject, body = _string(req, "subject", MAX_SUBJECT, line=True), _body(req)
-            typed = _string(req, "typed", 20_000) or ""
+            typed = self._typed(req, conn)
             before = {x["email"] for x in (*d["to"], *d["cc"], *d["bcc"])}
             said = set(d["typed"]) | set(text.addresses_in(typed))
             for name, value in (("to", to), ("cc", cc), ("bcc", bcc)):
@@ -1297,13 +1330,20 @@ class Service:
             if body is not None:
                 d["body"] = body
             d["tainted"] = d["tainted"] or self._scoped(conn) or req.get("tainted") is True
-            await self._edit_attachments(d, req, by)
-            a = await self.job(lambda: self.store.account(d["account"]))
-            provider = accts.PROVIDERS.get(a["provider"] if a else "imap", accts.IMAP)
-            trusted, known = await self._trust(d)
-            self._refresh_draft(d, provider, trusted, known)
-            if not await self.job(lambda: self._save_edit(d)):
-                raise Refusal(REFUSED, "That draft went while it was being changed.")
+            gone, added = await self._edit_attachments(d, req, by)
+            try:
+                a = await self.job(lambda: self.store.account(d["account"]))
+                provider = accts.PROVIDERS.get(a["provider"] if a else "imap", accts.IMAP)
+                trusted, known = await self._trust(d)
+                self._refresh_draft(d, provider, trusted, known)
+                if not await self.job(lambda: self._save_edit(d)):
+                    raise Refusal(REFUSED, "That draft went while it was being changed.")
+            except BaseException:
+                for name in added:   # the edit did not happen: the copies it made go, the ones it meant to drop stay
+                    await self._file(drafts.remove_copy, did, name)
+                raise
+            for name in gone:
+                await self._file(drafts.remove_copy, did, name)
         self._changed("drafts")
         return await self.job(self._draft_out, d)
 
@@ -1316,25 +1356,31 @@ class Service:
             self.store.put_draft({**d, "state": now["state"]})
             return True
 
-    async def _edit_attachments(self, d: dict, req: dict, by: str) -> None:
+    async def _edit_attachments(self, d: dict, req: dict, by: str) -> tuple[list[str], list[str]]:
+        """Change the draft's list of attachments as asked. Returns the names of the copies to delete once the
+        edit is saved, and of the copies this made, which are to go if it is not: what is saved is what stays."""
         remove = req.get("remove_attachments")
-        if remove is not None:
-            if not isinstance(remove, list) or not all(isinstance(n, str) for n in remove):
-                raise _bad("“remove_attachments” is a list of names.")
-            for name in remove:
-                if any(x["name"] == name for x in d["attachments"]):
-                    await self._file(drafts.remove_copy, d["id"], name)
-            d["attachments"] = [x for x in d["attachments"] if x["name"] not in remove]
+        if remove is not None and (not isinstance(remove, list) or not all(isinstance(n, str) for n in remove)):
+            raise _bad("“remove_attachments” is a list of names.")
+        remove = remove or []
         files = _paths(req, "add_attachments")
-        if len(d["attachments"]) + len(files) > drafts.ATTACHMENTS_MAX:
+        kept = [x for x in d["attachments"] if x["name"] not in remove]
+        if len(kept) + len(files) > drafts.ATTACHMENTS_MAX:
             raise _bad(f"A draft has at most {drafts.ATTACHMENTS_MAX} attachments.")
-        for path, label in files:
-            d["attachments"].append(await self._file(drafts.copy_attachment, d["id"], path, label, by))
+        added: list[dict] = []
+        try:
+            for path, label in files:
+                added.append(await self._file(drafts.copy_attachment, d["id"], path, label, by))
+        except BaseException:
+            for a in added:
+                await self._file(drafts.remove_copy, d["id"], a["name"])
+            raise
+        gone = [x["name"] for x in d["attachments"] if x["name"] in remove]
+        d["attachments"] = kept + added
+        return gone, [a["name"] for a in added]
 
     async def _op_draft_discard(self, req, conn):
-        did = req.get("id")
-        if not isinstance(did, str) or len(did) > 16:
-            raise _bad("Say which draft.")
+        did = _draft_id(req)
         async with self._locked(did):
             d = await self._draft(req, ("open", "unknown", "discarded"))
             if d["state"] != "discarded":
@@ -1350,9 +1396,7 @@ class Service:
         """The window drew this draft, as it is now: the fingerprint it drew is what a press may carry."""
         self._yours(conn, "Looking at a draft")
         fp = _string(req, "fingerprint", 128)
-        did = req.get("id")
-        if not isinstance(did, str) or len(did) > 16:
-            raise _bad("Say which draft.")
+        did = _draft_id(req)
         async with self._locked(did):
             d = await self._draft(req)
             if fp != d["fingerprint"]:
@@ -1367,9 +1411,7 @@ class Service:
     async def _op_send(self, req, conn):
         """The press. A second press while the first is still going gets the first's answer: sent once."""
         self._yours_press(conn, req)
-        did = req.get("id")
-        if not isinstance(did, str) or len(did) > 16:
-            raise _bad("Say which draft.")
+        did = _draft_id(req)
         fp = req.get("fingerprint")
         running = self._flights.get(did)
         if running is not None:
@@ -1668,8 +1710,13 @@ class Service:
             by_engine = await self._by_engine()
         if eid not in by_engine:
             return
-        fresh = [m for m in messages[:NEW_MAIL_MAX] if isinstance(m, dict) and m.get("folder", "inbox") == "inbox"
-                 and (_float(m.get("ts")) or 0) > self.clock() - NEW_MAIL_AGE_S]
+        fresh = []
+        for m in messages[:NEW_MAIL_SCAN]:   # the first few that are new, not the first few that there are
+            if isinstance(m, dict) and m.get("folder", "inbox") == "inbox" \
+                    and (_float(m.get("ts")) or 0) > self.clock() - NEW_MAIL_AGE_S:
+                fresh.append(m)
+                if len(fresh) == NEW_MAIL_MAX:
+                    break
         msgs = await self._msgs([{**m, "account": eid} for m in fresh], by_engine)
         known = await self._known(list(dict.fromkeys(m["from"]["email"] for m in msgs if m["from"]["email"])))
         for msg in msgs:
@@ -1830,14 +1877,15 @@ def _reply_to(headers: dict) -> list[Addr]:
 
 def _derive(kind: str, own: str, message: dict, reply_to: list[Addr]) -> tuple[list[Addr], list[Addr], dict]:
     """Who a reply goes to, from the mail it answers: its Reply-To (else its sender), and for a reply to all the
-    others it went to. And what the mail says about itself, which the draft's warnings need."""
+    others it went to. And what the mail says about itself, which the draft's warnings need.
+
+    `thread` is whom this kind of answer goes to of itself, and nobody else the mail names: a mail is written by
+    whoever sent it, and an address it lists in its own To or Cc is no more the person's than one in its body."""
     sender = protocol.addr_or_raw(message["from"])
     tos = [protocol.addr_or_raw(x) for x in message["to"]]
     ccs = [protocol.addr_or_raw(x) for x in message["cc"]]
-    thread = [sender.email, *(a.email for a in (*tos, *ccs, *reply_to))]
-    origin = {"from": sender.email, "reply_to": [a.email for a in reply_to],
-              "thread": list(dict.fromkeys(thread))}
-    if kind == "forward":
+    origin = {"from": sender.email, "reply_to": [a.email for a in reply_to], "thread": []}
+    if kind == "forward":   # a forward is how a mail is passed on: nobody is expected, whoever the mail names
         return [], [], origin
     main = tos if sender.email == own else (reply_to or [sender])   # answering one's own mail is writing to its recipients
     to = [a for a in main if a.email != own]
@@ -1845,6 +1893,7 @@ def _derive(kind: str, own: str, message: dict, reply_to: list[Addr]) -> tuple[l
     if kind == "reply_all":
         to = protocol.dedupe(to + [a for a in tos if a.email != own])
         cc = [a for a in ccs if a.email != own and a.email not in {t.email for t in to}]
+    origin["thread"] = list(dict.fromkeys([sender.email, *(a.email for a in (*to, *cc))]))
     return to, cc, origin
 
 

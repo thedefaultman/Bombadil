@@ -136,16 +136,19 @@ compares `turn`), and only the asking client is answered. `id` names the request
 travels on this line as `mail` (the tool's `id` argument); ops are `search`, `read`, `mark`, `draft`,
 `show`, and there is no other: nothing sends, lists drafts, or discards.
 
-- `mail_search {text?, from?, account?, unread?, since?, limit?}`: senders, subjects, times and ids.
+- `mail_search {text?, from?, account?, unread?, since?, limit?}`: senders, subjects, times and ids, as
+  rows between the same marks as a read (the ids are copied from the mail, so they are its words too).
 - `mail_read {id}`: the text between marks that carry a random word per read ("Other people's words
-  begin (a1b2c3d4)"), cut at 20 000 characters inside them and said; control and bidi characters are
+  begin (a1b2c3d4e5f6)"), cut at 20 000 characters inside them and said; control and bidi characters are
   stripped. The turn is marked as having read mail, and so is a `mail_search` that found some (the
-  senders and subjects are other people's words too). Reading leaves the mail unread.
+  senders and subjects are other people's words too); the mark stays with the conversation the turn
+  resumes into, since the model still has the text, and ends with a new conversation. Reading leaves the mail unread.
 - `mail_mark {id, needs_reply, why}`: fills Needs a reply; `why` is one line under 140 characters.
 - `mail_draft {reply_to? | to, subject, body, cc?, attachments?, account?}`: a draft in the view, which
   opens on it, and a notice above the pill ("Reply to Priya is ready. Sending is yours."). agentd adds
   `created_by: "agent"`, `typed` (the words the person typed for this turn, none for a coding session's
-  turn) and `tainted` (the turn has read mail) for the service's address check. The first draft a
+  turn) and `tainted` (the turn, or the conversation it resumes, has read mail) for the service's address
+  check. The first draft a
   person gets also says, once on this machine (`told.json`), that the agent never presses Send.
   Attachments come from paths; credentials-shaped paths are refused. Recipients the person's words and
   the thread do not contain, and that are not in the address book or Sent, are flagged on the draft
@@ -162,6 +165,8 @@ Messages on agentd's own socket (docs in `agentd.py`'s header):
   (the oldest goes); `ttl` 0 waits, else it ends by itself. `{"type": "notice_end", "id"}` says it is gone.
 - Client to agentd: `{"type": "notice_action", "id", "action"}` (a chip; the notice ends unless the action
   failed or changed it, and a failure is said on the notice itself) and `{"type": "notice_dismiss", "id"}`.
+  Both are refused, like a press, to a process inside an agent's turn or one agentd cannot name: Reply
+  makes a draft as the person's, and a dismissal would hide what agentd said.
 - `{"type": "press_result", "kind", "id", "ok", "line", "code", "receipt"}`, to the pressing client only.
   `code` is `""` when it went, else `agent`, `no_peer`, `busy`, `bad_request`, `unknown_kind`, `error`,
   `unknown_outcome` (said in words: "I can't tell whether that went. Look in Sent before you press Send
@@ -169,13 +174,14 @@ Messages on agentd's own socket (docs in `agentd.py`'s header):
   retries.
 
 What agentd says, from `mail/watch.py`: new mail from a sender the service says is `known` is one line
-("Priya Shah: Launch date", five minutes) with Reply (a reply draft made `created_by: "person"` and shown)
-and Open; anyone else waits in the view. A draft from the agent is "Reply to Priya is ready. Sending is
-yours." with Open, and stays. A send is one receipt ("Sent to Priya from maya@acme.com · 09:08", with
-"Open in Gmail" when the provider has a link), said once whichever of the press's answer and the
-service's `sent` push arrives first. A `show` push brings the Mail window in, unless agentd just did.
-Mail is optional: with no service agentd retries every 5 s and says nothing, and a service silent for
-45 s is pinged and, if it does not answer in 10 s, reconnected to.
+("Priya Shah: Launch date", five minutes) with Reply (a reply draft made `created_by: "person"` and
+shown) and Open; anyone else waits in the view. A draft from the agent is "Reply to Priya is ready.
+Sending is yours." with Open, and stays until that draft is sent (or the person puts it away). A send is
+one receipt ("Sent to Priya from maya@acme.com · 09:08", with "Open in Gmail" when the provider has a
+link), said once whichever of the press's answer and the service's `sent` push arrives first. A `show`
+push brings the Mail window in, unless agentd just did. Mail is optional: with no service agentd retries
+every 5 s and says nothing, and a service silent for 45 s is pinged and, if it does not answer in 10 s,
+reconnected to.
 
 The launcher answers "mail", "email", "inbox" (with open/show/close/hide) itself; `Launcher.open_mail(**show)`
 asks the service to `show` (waiting at most a second) and slides the window in, and `bombadil mail

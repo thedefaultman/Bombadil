@@ -53,6 +53,16 @@ class MailError(Exception):
         self.code = code
 
 
+def _encode(msg: dict) -> bytes:
+    """One request line. Text goes as it is, not as \\u escapes: the service takes a request of a megabyte at most
+    and a long draft in a language that is not English would be six times as long as it is. A lone surrogate cannot
+    be written as text, so that one request is written escaped and the service says what is wrong with it."""
+    try:
+        return (json.dumps(msg, allow_nan=False, ensure_ascii=False) + "\n").encode()
+    except UnicodeEncodeError:
+        return (json.dumps(msg, allow_nan=False) + "\n").encode()
+
+
 class Connection:
     """One connection to mail.sock. Calls on it are one at a time (from any thread); after a failure it is
     closed and every later call says `MailUnavailable`."""
@@ -87,13 +97,13 @@ class Connection:
             # "id" is the call's own when the op has one (a mail, a draft): the service echoes it back
             rid = args.get("id", self._next_id)
             try:
-                line = json.dumps({**args, "id": rid, "op": op}, allow_nan=False) + "\n"
+                line = _encode({**args, "id": rid, "op": op})
             except (TypeError, ValueError):
                 raise MailError("That request cannot be sent.", "bad_request") from None
             deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
             try:
                 sock.settimeout(max(0.001, deadline - time.monotonic()))
-                sock.sendall(line.encode())
+                sock.sendall(line)
                 while True:
                     msg = self._read(sock, deadline)
                     if "push" in msg:

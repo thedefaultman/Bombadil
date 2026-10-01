@@ -31,7 +31,8 @@ ATTACHMENT_MAX = 25 << 20        # bytes of one attached file
 ATTACHMENTS_MAX = 20             # files on one draft
 BASE64 = 1.37                    # what an attachment grows to once it is encoded for mail
 CHUNK = 1 << 20
-PRIVATE_KEY = b"PRIVATE KEY-----"
+# Words that end the header line of a PEM or PGP private key: in a file of any name they make it a secret.
+PRIVATE_KEY = (b"PRIVATE KEY-----", b"PRIVATE KEY BLOCK-----")
 
 _DRAFT_ID = re.compile(r"d[0-9]{1,12}")
 _RE = re.compile(r"\s*(?:re|aw|sv|antw|odp)\s*(?:[\[(]\d+[\])])?\s*:\s*", re.IGNORECASE)
@@ -169,11 +170,13 @@ def copy_attachment(draft_id: str, source, name: str | None, created_by: str) ->
         directory = folder(draft_id)
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         dest, out = _create(directory, name or target.name)
-        digest, size = hashlib.sha256(), 0
+        digest, size, tail = hashlib.sha256(), 0, b""
         try:
             with os.fdopen(out, "wb") as f:
                 while chunk := os.read(src, CHUNK):
-                    if not size and PRIVATE_KEY in chunk[:8192]:
+                    window = tail + chunk   # a marker may straddle two reads
+                    tail = window[-32:]
+                    if any(marker in window for marker in PRIVATE_KEY):
                         if created_by != "person":
                             raise Refusal(protocol.REFUSED, f"“{shown}” holds a private key, so it is not attached.")
                         sensitive = True   # a key in a file with an innocent name: the person is told
@@ -226,8 +229,9 @@ def read_verified(draft_id: str, attachments: list[dict]) -> list[bytes]:
 
 def remove_copy(draft_id: str, name: str) -> None:
     try:
-        (folder(draft_id) / name).unlink(missing_ok=True)
-    except OSError:
+        if Path(name).name == name and name not in ("", ".", ".."):   # a name, never a path out of the folder
+            (folder(draft_id) / name).unlink(missing_ok=True)
+    except (OSError, ValueError):
         pass
 
 

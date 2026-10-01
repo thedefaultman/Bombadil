@@ -161,7 +161,7 @@ async def test_the_registry_is_open_to_other_kinds(home):
 
 @pytest.mark.asyncio
 async def test_the_log_holds_printable_fields_and_no_words(box):
-    await box.press("note\nforged", "Dear Priya,\nthe password is hunter2\x1b[2J " + "x" * 300, "f\x00" * 100, 10)
+    await box.press("note\nforged", "Dear Priya,\nthe word is on the sticky note\x1b[2J " + "x" * 300, "f\x00" * 100, 10)
     [row] = rows()
     assert row["kind"] == "noteforged" and " " not in row["id"] and len(row["id"]) <= 128
     assert "\x1b" not in row["id"] and len(row["fingerprint"]) <= 128 and row["code"] == "unknown_kind"

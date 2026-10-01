@@ -242,7 +242,10 @@ class EngineLink:
         fut = asyncio.get_running_loop().create_future()
         conn.pending[rid] = fut
         try:
-            frame = (json.dumps({**args, "id": rid, "op": op}, ensure_ascii=False) + "\n").encode()
+            try:
+                frame = (json.dumps({**args, "id": rid, "op": op}, ensure_ascii=False) + "\n").encode()
+            except (UnicodeEncodeError, TypeError, ValueError):
+                raise EngineError(protocol.BAD_REQUEST, "That cannot be given to Thunderbird.") from None
             if len(frame) > FRAME_MAX:
                 raise EngineError(protocol.TOO_BIG, "That is too much to give Thunderbird at once.")
             try:
@@ -358,6 +361,7 @@ class EngineLink:
                     continue
         except BaseException:
             self._discard(inc, EngineGone("The fetch was given up."))
+            self._incoming.pop(xfer, None)   # nobody is left to remove it
             raise
         self._incoming.pop(xfer, None)
         if inc.error is not None:
