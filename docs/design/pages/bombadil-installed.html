@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bombadil, installed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one reading column; drawn screens of the dark OS sit inside it as framed figures. Same system as the earlier Bombadil pages. */
+:root {
+  color-scheme: light;
+  --bg: #f2f3f4; --surface: #ffffff; --line: #d8dce1; --fg: #15181b; --soft: #3a4047; --muted: #5f6873;
+  --accent: #b4532f; --accent-soft: #f6e4dc; --ok: #2f7d3d; --amber: #8a5f0a; --red: #b23a3a; --ui-bg: #e7e9ec; --blue: #2f6aa8;
+  --shadow: rgba(16, 18, 20, .16);
+  --os-bg: #101214; --os-panel: #1a1d21; --os-raised: #22262b; --os-edge: #2a2f36; --os-fg: #e6e8eb; --os-soft: #c3c8ce; --os-muted: #8b939c; --os-faint: #5c636b;
+  --os-accent: #d97757; --os-ok: #5fb36b; --os-amber: #e0a93b; --os-red: #d05555; --os-blue: #5b9bd5; --os-on-red: #ffffff;
+  --os-wall-a: #1e2a34; --os-wall-b: #34241d;
+  --sans: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --os: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+    --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+    --shadow: rgba(0, 0, 0, .45);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+  --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+  --shadow: rgba(0, 0, 0, .45);
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16.5px; line-height: 1.6; padding-inline: 20px; padding-block: 0 72px; }
+.wrap { max-width: 980px; margin: 0 auto; }
+h1, h2, h3, h4 { text-wrap: balance; line-height: 1.2; margin: 0; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--ui-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+strong, b { font-weight: 650; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+/* Hero */
+.hero { display: grid; gap: 22px; padding-block: 48px 30px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.hero h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; letter-spacing: -.025em; }
+.hero .lede { font-size: 19px; color: var(--soft); max-width: 66ch; }
+.hero .note { font-size: 15px; color: var(--muted); max-width: 72ch; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14.5px; color: var(--muted); }
+.hero-meta b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.question { margin: 0; border-left: 3px solid var(--accent); padding: 4px 0 4px 16px; display: grid; gap: 6px; max-width: 72ch; }
+.question p { font-size: 17px; color: var(--fg); font-style: italic; }
+.question cite { font-style: normal; font-family: var(--mono); font-size: 12px; letter-spacing: .04em; color: var(--muted); }
+.ask { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 14px; padding: 14px 18px; font-size: 15.5px; color: var(--soft); display: grid; gap: 6px; }
+.ask b { color: var(--fg); }
+.ask .src { font-family: var(--mono); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 8px; padding-block: 4px 8px; }
+nav.toc a { font-size: 14px; color: var(--soft); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Sections */
+section { padding-block: 44px 8px; }
+section > h2 { font-size: 28px; font-weight: 750; letter-spacing: -.015em; margin-bottom: 8px; }
+section > .intro { color: var(--soft); max-width: 70ch; margin-bottom: 22px; }
+h3.sub { font-size: 19px; font-weight: 700; margin: 34px 0 12px; }
+.lbl { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
+/* The short answer */
+.answer { font-size: clamp(24px, 4.3vw, 35px); font-weight: 750; letter-spacing: -.02em; line-height: 1.22; max-width: 32ch; margin: 6px 0 16px; }
+.answer em { font-style: normal; color: var(--accent); }
+.sc { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; margin-top: 22px; }
+.sc > div { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; min-width: 0; }
+.sc h3 { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
+ul.stay { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 15px; color: var(--soft); }
+ul.stay li { position: relative; padding-left: 20px; }
+ul.stay li::before { content: ""; position: absolute; left: 2px; top: .6em; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+ol.chg { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; counter-reset: chg; }
+ol.chg li { counter-increment: chg; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 0 6px; font-size: 15px; color: var(--soft); }
+ol.chg li::before { content: counter(chg); font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--accent); padding-top: 1px; }
+ol.chg li b { color: var(--fg); }
+.bug { margin-top: 18px; border-radius: 14px; padding: 18px 20px; background: color-mix(in srgb, var(--red) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--red) 40%, var(--line)); display: grid; gap: 14px; }
+.bug h3 { font-size: 19px; font-weight: 700; }
+.bug .lbl { color: var(--red); display: block; margin-bottom: 4px; }
+.bug p { font-size: 15px; color: var(--soft); max-width: 78ch; }
+.bug p b { color: var(--fg); }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 8px; counter-reset: st; }
+ol.steps li { counter-increment: st; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.45; color: var(--soft); min-width: 0; }
+ol.steps li::before { content: counter(st); display: block; font-family: var(--mono); font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+ol.steps li.bad { border-color: color-mix(in srgb, var(--red) 60%, var(--line)); color: var(--fg); }
+ol.steps li.bad::before { color: var(--red); }
+.fix { background: var(--surface); border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line)); border-radius: 10px; padding: 12px 14px; font-size: 15px; color: var(--soft); }
+.fix .lbl { color: var(--ok); display: block; margin-bottom: 2px; }
+.fix b { color: var(--fg); }
+
+/* Tables */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.tbl { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 640px; }
+table.tbl th, table.tbl td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--soft); }
+table.tbl th { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; background: var(--bg); }
+table.tbl tr:last-child td { border-bottom: 0; }
+table.tbl td:first-child { width: 30%; }
+table.tbl td b { color: var(--fg); display: block; }
+table.tbl td small { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+table.tbl tr.quiet td { color: var(--muted); }
+
+/* Rules */
+.rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; counter-reset: rule; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; counter-increment: rule; min-width: 0; }
+.rules li strong { display: block; font-size: 16.5px; margin-bottom: 4px; line-height: 1.35; }
+.rules li strong::before { content: counter(rule) ". "; color: var(--accent); font-family: var(--mono); font-size: 14px; font-weight: 500; }
+.rules li span { color: var(--soft); font-size: 15px; }
+
+/* Pieces */
+.pieces { display: grid; gap: 26px; }
+.piece { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; min-width: 0; display: grid; gap: 18px; }
+.piece.first { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.piece-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.piece-num { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+.piece-head h3 { font-size: 22px; font-weight: 700; letter-spacing: -.01em; flex: 1 1 260px; min-width: 0; }
+.tag { font-size: 12.5px; border-radius: 999px; padding: 1px 10px; white-space: nowrap; }
+.tag.effort { color: var(--muted); border: 1px solid var(--line); }
+.tag.effort::before { content: "Effort "; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.tag.build { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.piece-text { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px 26px; }
+.piece-text > div { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.piece p { font-size: 15.5px; color: var(--soft); }
+.piece p b { color: var(--fg); }
+.piece p.lbl { font-size: 11px; color: var(--muted); }
+.changes { display: grid; gap: 10px; min-width: 0; }
+.piece ul.bul { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 15px; color: var(--soft); max-width: 82ch; }
+.piece ul.bul b { color: var(--fg); }
+.piece-foot { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); gap: 14px 26px; border-top: 1px solid var(--line); padding-top: 16px; }
+.piece-foot > div { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.piece-foot ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14.5px; color: var(--soft); }
+.piece-foot .eff { font-size: 15px; color: var(--soft); }
+.piece-foot .eff b { color: var(--fg); font-size: 20px; display: block; line-height: 1.2; }
+
+/* Folded lists */
+details.fold { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.piece details.fold { background: var(--bg); }
+details.fold > summary { list-style: none; cursor: pointer; padding: 12px 16px; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-weight: 650; font-size: 15.5px; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary small { font-weight: 400; color: var(--muted); font-size: 14px; }
+details.fold > summary .chev { color: var(--muted); transition: transform .15s; flex: none; }
+details.fold[open] > summary .chev { transform: rotate(90deg); }
+.fold-body { padding: 0 16px 16px; display: grid; gap: 12px; }
+.fold-body h4 { font-size: 15.5px; font-weight: 700; margin-top: 4px; }
+.fold-body p { font-size: 15px; color: var(--soft); max-width: 80ch; }
+
+/* Figures */
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+figcaption { font-size: 14.5px; color: var(--muted); max-width: 80ch; }
+figcaption b { color: var(--fg); }
+.shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; }
+.shots figure { grid-template-rows: 1fr auto; }
+
+/* Disk layout diagram (page tokens, both themes) */
+.disk { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.disk-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; }
+.disk-top b { font-size: 16px; }
+.parts { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 9fr); gap: 8px; }
+.part { border-radius: 11px; padding: 12px; min-width: 0; display: grid; gap: 8px; align-content: start; }
+.part-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.part-h .pn { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.part-h b { font-size: 15.5px; }
+.part p { font-size: 13.5px; line-height: 1.45; color: var(--soft); }
+.never { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--line) 70%, transparent) 7px 8px), var(--bg); border: 1px solid var(--line); }
+.rolls { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.part.luks { background: color-mix(in srgb, var(--blue) 7%, var(--surface)); border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--line)); }
+.keyslots { display: flex; flex-wrap: wrap; gap: 6px; }
+.keyslots span { font-size: 12.5px; line-height: 1.35; color: var(--soft); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; }
+.btrfs { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; min-width: 0; }
+.subs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.sv { border-radius: 9px; padding: 10px 11px; min-width: 0; display: grid; gap: 4px; align-content: start; }
+.sv .nm { font-family: var(--mono); font-size: 14.5px; font-weight: 500; color: var(--fg); }
+.sv .mt { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.sv p { font-size: 13px; line-height: 1.45; color: var(--soft); }
+.sv.wide { grid-column: 1 / -1; }
+.badge { justify-self: start; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; border-radius: 999px; padding: 1px 8px; }
+.badge.b-roll { color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: var(--surface); }
+.badge.b-never { color: var(--muted); border: 1px solid var(--line); background: var(--surface); }
+.nested { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.nested span { font-family: var(--mono); font-size: 12px; color: var(--soft); background: var(--surface); border: 1.5px dashed color-mix(in srgb, var(--muted) 60%, transparent); border-radius: 7px; padding: 2px 7px; overflow-wrap: anywhere; }
+.nested span.file { border-style: dotted; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.legend i { display: inline-block; width: 18px; height: 12px; border-radius: 3px; flex: none; }
+.legend i.l-dash { background: var(--surface); border: 1.5px dashed color-mix(in srgb, var(--muted) 60%, transparent); }
+
+/* Config split figure */
+.split { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; min-width: 0; }
+.file { border: 1px solid var(--line); border-radius: 11px; overflow: hidden; background: var(--bg); min-width: 0; }
+.file.mine { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.file.ours { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.file-h { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; padding: 9px 12px; background: var(--ui-bg); }
+.file-h code { background: transparent; padding: 0; font-size: 13px; color: var(--fg); font-weight: 500; }
+.file-h span { font-size: 13px; color: var(--muted); }
+.file.mine .file-h span { color: var(--ok); }
+.file.ours .file-h span { color: var(--accent); }
+.file pre { margin: 0; padding: 12px; font-family: var(--mono); font-size: 13px; line-height: 1.55; color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.file pre .c { color: var(--muted); }
+.file pre .s { color: var(--blue); }
+.own-lines { margin: 0 12px 12px; border: 1.5px dashed color-mix(in srgb, var(--ok) 55%, transparent); border-radius: 8px; padding: 9px 12px; font-size: 14px; color: var(--soft); }
+.file .body { padding: 12px; display: grid; gap: 4px; font-size: 14px; color: var(--soft); }
+.loads { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 4px 8px 22px; font-size: 13.5px; color: var(--muted); position: relative; }
+.loads::before { content: ""; position: absolute; left: 10px; top: 0; bottom: 0; width: 2px; background: var(--line); }
+.loads b { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; color: var(--accent); }
+
+/* Drawn OS screens: always dark, like the machine */
+.stage { font-family: var(--os); color: var(--os-fg); background:
+    radial-gradient(70% 90% at 18% 0%, var(--os-wall-a) 0%, transparent 70%),
+    radial-gradient(55% 80% at 92% 100%, var(--os-wall-b) 0%, transparent 70%), var(--os-bg);
+  border: 1px solid var(--os-edge); border-radius: 14px; padding: 22px 16px 16px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 10px; min-width: 0; box-shadow: 0 14px 40px var(--shadow); }
+.stage.bare { background: var(--os-bg); min-height: 250px; align-content: center; gap: 22px; padding: 28px 16px; }
+.stage.fill { align-content: end; }
+.os-line { background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 11px; padding: 9px 15px; font-size: 14.5px; line-height: 1.4; color: var(--os-fg); max-width: 100%; position: relative; }
+.os-line.ok { padding-left: 20px; }
+.os-line.ok::before { content: ""; position: absolute; left: 8px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--os-ok); }
+.os-line.close { width: 100%; max-width: 520px; border-radius: 14px; padding: 12px 15px; display: grid; gap: 10px; }
+.os-row { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 480px; min-width: 0; }
+.os-pill { flex: 1; min-width: 0; height: 42px; border-radius: 21px; background: var(--os-panel); border: 1.5px solid var(--os-edge); display: flex; align-items: center; gap: 12px; padding: 0 16px; font-size: 14.5px; color: var(--os-muted); }
+.os-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--os-faint); flex: none; }
+.os-pill .ph { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-pill .clock { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.os-chip { flex: none; height: 30px; border-radius: 15px; background: var(--os-panel); border: 1px solid color-mix(in srgb, var(--os-accent) 60%, transparent); display: inline-flex; align-items: center; padding: 0 12px; font-size: 12.5px; color: var(--os-fg); }
+.os-none { font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em; line-height: 1.45; color: var(--os-faint); border: 1px dashed var(--os-edge); border-radius: 10px; padding: 7px 12px; text-align: center; }
+.os-btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.os-btns.start { justify-content: flex-start; }
+.osb { display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 500; line-height: 1.3; border-radius: 999px; padding: 5px 13px; background: var(--os-raised); color: var(--os-fg); border: 1px solid var(--os-edge); text-align: center; }
+.osb.go { background: var(--os-accent); color: var(--os-bg); border-color: transparent; font-weight: 600; }
+.osb.warn { background: transparent; color: var(--os-red); border-color: color-mix(in srgb, var(--os-red) 55%, transparent); }
+.osb.red { width: 100%; border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; background: var(--os-red); color: var(--os-on-red); border-color: transparent; }
+.oscard { width: 100%; max-width: 520px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 15px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.oscard h4 { font-size: 16px; font-weight: 600; color: var(--os-fg); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.oscard .t { font-size: 13.5px; line-height: 1.45; color: var(--os-soft); }
+.oscard .hint { font-size: 12px; line-height: 1.45; color: var(--os-muted); }
+.oscard .k { font-size: 11.5px; color: var(--os-muted); }
+.ex { font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 500; color: var(--os-amber); border: 1px solid color-mix(in srgb, var(--os-amber) 55%, transparent); border-radius: 999px; padding: 0 8px; }
+/* the install card */
+.idisk { border: 1.5px solid var(--os-accent); border-radius: 11px; padding: 10px 12px; background: var(--os-bg); display: grid; gap: 8px; }
+.dbar { height: 24px; border-radius: 6px; overflow: hidden; display: flex; background: var(--os-raised); }
+.dbar .win { flex: 1; display: flex; align-items: center; padding: 0 9px; font-size: 11.5px; color: var(--os-fg); background: color-mix(in srgb, var(--os-blue) 42%, var(--os-raised)); white-space: nowrap; overflow: hidden; }
+.idisk .dn { font-size: 13.5px; color: var(--os-fg); }
+.idisk .dn b { font-weight: 600; }
+.oready { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--os-ok); }
+.oready i { width: 16px; height: 16px; border-radius: 50%; background: var(--os-ok); flex: none; position: relative; }
+.oready i::after { content: ""; position: absolute; left: 5px; top: 3px; width: 4px; height: 7px; border: solid var(--os-bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.opw { display: grid; gap: 5px; }
+.opw .box { background: var(--os-bg); border: 1.5px solid var(--os-accent); border-radius: 9px; padding: 8px 12px; font-size: 15px; letter-spacing: .12em; color: var(--os-fg); }
+.ochoices { display: grid; gap: 7px; border-top: 1px solid var(--os-edge); padding-top: 10px; }
+.ochoice { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; font-size: 13.5px; }
+.ochoice .k { min-width: 7.4em; font-size: 12.5px; }
+.ochoice .v { flex: 1 1 8em; min-width: 0; color: var(--os-fg); }
+.ochoice .chg { color: var(--os-blue); font-size: 12.5px; }
+.along { display: flex; flex-wrap: wrap; gap: 6px; }
+.ochip { display: inline-flex; align-items: center; gap: 6px; background: var(--os-raised); border: 1px solid var(--os-edge); border-radius: 999px; padding: 2px 5px 2px 10px; font-size: 12.5px; color: var(--os-fg); }
+.ochip i { font-style: normal; font-size: 12px; color: var(--os-muted); width: 16px; height: 16px; border-radius: 50%; display: inline-grid; place-items: center; background: var(--os-panel); }
+/* power-on */
+.placeholder { width: 100%; max-width: 360px; min-height: 96px; display: grid; place-items: center; text-align: center; border: 1.5px dashed var(--os-faint); border-radius: 12px; padding: 12px; font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em; line-height: 1.5; color: var(--os-muted); }
+.prompt { font-family: var(--os); font-size: 15px; color: var(--os-fg); display: flex; align-items: center; gap: 8px; }
+.prompt .dots { letter-spacing: .14em; color: var(--os-soft); }
+.caret { display: inline-block; width: 8px; height: 17px; background: var(--os-fg); animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+/* recovery key */
+.rk { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 12px; align-items: center; }
+.rk .key { font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--os-fg); background: var(--os-bg); border: 1px solid var(--os-edge); border-radius: 9px; padding: 8px 10px; overflow-wrap: anywhere; }
+.qr { width: 84px; height: 84px; border: 1.5px dashed var(--os-faint); border-radius: 8px; display: grid; place-items: center; font-family: var(--mono); font-size: 10.5px; color: var(--os-muted); text-align: center; }
+/* repair timeline */
+ol.tl { list-style: none; margin: 0; padding: 0; display: grid; }
+ol.tl li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 0 10px; padding-bottom: 10px; position: relative; font-size: 13.5px; color: var(--os-soft); }
+ol.tl li::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--os-faint); margin: 4px 0 0 3px; background: var(--os-panel); position: relative; z-index: 1; }
+ol.tl li::after { content: ""; position: absolute; left: 8px; top: 12px; bottom: -2px; width: 1.5px; background: var(--os-edge); }
+ol.tl li:last-child::after { display: none; }
+ol.tl li.gap { color: var(--os-faint); }
+ol.tl li.bad { color: var(--os-fg); font-weight: 600; }
+ol.tl li.bad::before { background: var(--os-red); border-color: var(--os-red); }
+ol.tl li.fail { color: var(--os-red); }
+ol.tl li.fail::before { border-color: var(--os-red); }
+.redrow { border: 1px solid color-mix(in srgb, var(--os-red) 55%, transparent); background: color-mix(in srgb, var(--os-red) 12%, var(--os-panel)); border-radius: 8px; padding: 2px 8px; }
+
+/* Install figure with notes */
+.installfig { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 18px 26px; align-items: start; }
+.installfig > * { min-width: 0; }
+dl.notes { margin: 0; display: grid; font-size: 14.5px; color: var(--soft); }
+dl.notes dt { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-top: 12px; }
+dl.notes dt:first-child { margin-top: 0; }
+dl.notes dd { margin: 2px 0 0; }
+
+/* A life, by moment */
+ol.moments { list-style: none; margin: 0; padding: 0; display: grid; border-left: 2px solid var(--line); }
+ol.moments > li { position: relative; padding: 0 0 34px 24px; display: grid; gap: 12px; min-width: 0; }
+ol.moments > li:last-child { padding-bottom: 4px; }
+ol.moments > li::before { content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+ol.moments h3 { font-size: 19px; font-weight: 700; }
+ol.moments p { color: var(--soft); font-size: 15.5px; max-width: 74ch; }
+ol.moments p b { color: var(--fg); }
+ol.path { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; counter-reset: path; }
+ol.path li { counter-increment: path; display: inline-flex; align-items: baseline; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 5px 12px 5px 7px; font-size: 14px; line-height: 1.4; color: var(--soft); max-width: 100%; }
+ol.path li::before { content: counter(path); font-family: var(--mono); font-size: 11.5px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 0 7px; flex: none; }
+
+/* After these, in order */
+.order-wrap { display: grid; gap: 14px; }
+.order-group { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 14px; padding: 12px 18px 4px; background: var(--surface); }
+.order-group .glabel { font-family: var(--mono); font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--accent); }
+.order-rest { border: 1px solid var(--line); border-radius: 14px; padding: 4px 18px; background: var(--surface); }
+ol.order { list-style: none; margin: 0; padding: 0; display: grid; }
+ol.order li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 0 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+ol.order li:last-child { border-bottom: 0; }
+ol.order .n { font-family: var(--mono); font-size: 15px; font-weight: 500; color: var(--accent); padding-top: 1px; }
+ol.order .oh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 3px; }
+ol.order h3 { font-size: 16.5px; font-weight: 700; }
+ol.order p { font-size: 15px; color: var(--soft); max-width: 80ch; }
+
+/* Questions */
+.decide { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 16px; padding: 20px 22px; display: grid; gap: 16px; }
+.decide h2 { font-size: 26px; font-weight: 750; letter-spacing: -.015em; }
+.decide > p { color: var(--soft); font-size: 15.5px; max-width: 72ch; }
+.qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.qcard h3 { font-size: 17px; font-weight: 700; line-height: 1.3; }
+.qcard h3 span { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; margin-right: 6px; }
+.qcard > p { font-size: 14.5px; color: var(--muted); }
+.qcard ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.qcard li { font-size: 14.5px; color: var(--soft); display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 0 4px; }
+.qcard li i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 1px; }
+.qcard li.rec { color: var(--fg); background: var(--accent-soft); border-radius: 8px; padding: 8px 8px 8px 6px; margin-inline: -6px; }
+.qcard li.rec i { color: var(--accent); font-weight: 600; }
+.qcard li .why { display: block; margin-top: 4px; font-size: 13.5px; color: var(--soft); }
+.rtag { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 0 7px; margin-left: 6px; vertical-align: 1px; white-space: nowrap; }
+.decide > p.answer-like { font-size: 17px; color: var(--fg); }
+.answer-like b { font-family: var(--mono); font-weight: 500; font-size: 18px; color: var(--accent); letter-spacing: .02em; }
+
+/* Defaults */
+.expand { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.expand button { font: inherit; font-size: 13.5px; background: var(--surface); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.expand button:hover { border-color: var(--accent); color: var(--accent); }
+.decisions { display: grid; gap: 8px; }
+details.dec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.dec summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; }
+details.dec summary::-webkit-details-marker { display: none; }
+details.dec summary .q { font-weight: 650; }
+details.dec summary .chev { color: var(--muted); transition: transform .15s; }
+details.dec[open] summary .chev { transform: rotate(90deg); }
+details.dec .more { padding: 0 16px 14px; font-size: 15px; color: var(--soft); display: grid; gap: 8px; max-width: 78ch; }
+details.dec .more .def b:first-child { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; color: var(--accent); }
+details.dec .more .alt { color: var(--muted); }
+details.dec .more .alt b { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; }
+
+/* Plain lists */
+ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 10px; max-width: 80ch; }
+ul.plain li { color: var(--soft); font-size: 15.5px; }
+ul.plain li b { color: var(--fg); }
+ol.plainn { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 80ch; }
+ol.plainn li { color: var(--soft); font-size: 15px; }
+.cut li b { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: grid; gap: 4px; }
+
+@media (max-width: 900px) {
+  .subs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 820px) {
+  .installfig { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .subs { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  body { font-size: 16px; padding-inline: 16px; }
+  .hero { padding-block: 32px 26px; }
+  .sc, .piece-text, .piece-foot, .shots { grid-template-columns: 1fr; }
+  .parts { grid-template-columns: 1fr; }
+  .piece { padding: 16px; }
+  .decide { padding: 16px; }
+  ol.moments > li { padding-left: 18px; }
+  section > h2 { font-size: 25px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .caret { animation: none; }
+  details.dec summary .chev, details.fold > summary .chev { transition: none; }
+}
+</style>
+</head><body>
+
+
+<div class="wrap">
+<header class="hero">
+  <p class="eyebrow">Bombadil · seventh design pass · 30 Sep 2026</p>
+  <h1>Bombadil, installed</h1>
+  <p class="lede">You download one file, write it to a USB stick and start from it; the stick opens on the pill, you join Wi-Fi, sign in and pick a voice, and a chip says “Install on this computer”. The card draws your disk as a bar, asks for one thing, a password, and its one red button names the disk. A few minutes later the laptop starts Bombadil by itself, one plain line asks for your password, and the desktop opens signed in with “Welcome home, Alex. Undo works from here.”</p>
+  <blockquote class="question">
+    <p>Besides running from a flash drive, will Bombadil also be installed as an operating system, the way a person installs Debian or Windows, how would that look, and does it change what is being done?</p>
+    <cite>The question this pass answers, 30 Sep 2026</cite>
+  </blockquote>
+  <div class="hero-meta"><span><b>1</b> bug to fix now</span><span><b>8</b> rules</span><span><b>2</b> pieces to build first</span><span><b>13</b> pieces in order</span><span><b>3</b> questions for you</span><span><b>19</b> defaults</span></div>
+  <p class="note">This sits on the six briefs before it (<a href="how-bombadil-feels.html">How Bombadil should feel</a>, <a href="building-on-bombadil.html">Building on Bombadil</a>, <a href="bombadils-brain.html">Bombadil's Brain</a>, <a href="the-bombadil-desk.html">The Bombadil Desk</a>, <a href="riding-with-bombadil.html">Riding with Bombadil</a>, and <a href="bombadils-voice.html">Bombadil's voice</a>, delivered and waiting for the owner) and the accepted <a href="bombadil-tends-itself.html">Bombadil tends itself</a>; their decisions stand. It was made from four research sweeps, three independent drafts and two critiques, merged with every blocking finding applied. Code references are to main at d9dde3b unless a branch is named; on 30 Sep 2026 main had moved to 2ee3838 without touching iso/, scripts/ or snapshots.py. “Unverified” marks anything nobody checked. “Today” means 30 Sep 2026, and line numbers are to the code as it stood then. <b>Status:</b> designed. The new disk layout, the encryption, the installer's refresh mode, the Bombadil package and the install card are not on main (checked 2026-10-01 against main at 26843d3); <a href="../installed-os-brief.md">the full brief</a> lists the code each piece changes.</p>
+  <div class="ask"><b>Answered: 1a 2c 3a</b><span>The owner picked all three recommended options on 30 Sep 2026 (<a href="#questions">Questions only you can answer</a>): new installs lock the disk with one password and a recovery key, a flash drive is a try, install and repair stick plus a full install on a USB drive you carry, and whole disks install first with Windows after. Every other fork has a default below that stands unless the owner picks another option.</span><span class="src">Full brief: <a href="../installed-os-brief.md">installed-os-brief.md</a></span></div>
+</header>
+
+<nav class="toc" aria-label="Sections"><a href="#change">Does it change things?</a><a href="#rules">The rules</a><a href="#build">Build first</a><a href="#life">A life</a><a href="#order">In order</a><a href="#questions">Your questions</a><a href="#defaults">Defaults</a><a href="#owned">Owned elsewhere</a><a href="#cut">Cut</a><a href="#extends">Extends</a><a href="#checked">Checked</a><a href="#tocheck">To check</a><a href="#open">Open</a></nav>
+
+<section id="change">
+  <h2>Does this change what we are doing?</h2>
+  <p class="answer"><em>Mostly no.</em> The product stays; the order changes, and some plumbing that is cheap now becomes a migration later.</p>
+  <p class="intro">Every brief so far already assumes an installed machine: undo and restore points, updates as a turn, promises that survive a restart, the Brain's history. None of that works on the stick, which already says “Undo starts once Bombadil is installed” (launcher.py:321-322). What the question changes is what must be true before anyone other than the owner installs, because an installed machine never sees a new stick. Every later fix has to arrive by update, and a few things cannot.</p>
+
+  <div class="sc">
+    <div>
+      <h3>What stays as it is</h3>
+      <ul class="stay">
+        <li>The pill, the agent in full-access mode, passwordless sudo for the agent, and undo as the safety.</li>
+        <li>Sign-in on the stick, carried into the install, and one install card with one red button that names the disk.</li>
+        <li>GRUB, with the kernel inside restore points and the ESP at /efi.</li>
+        <li>The tty2 rescue page, updates as a turn on your word, Bombadil from its own signed repository, and user-level CLI installs.</li>
+        <li>The desk, the Brain, sessions, the voice.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What changes</h3>
+      <ol class="chg">
+        <li><span><b>Four things are decided once, at install, and must be right before the first stranger installs:</b> the disk layout (ESP at /efi, logs and the package cache outside the root that undo swaps, home folders kept out of home restore points), encryption and the one password, where GRUB lives and how the firmware finds it, and which files pacman owns. Today's install gets all four wrong: the ESP is at /boot so the kernel is outside every restore point, GRUB sits only on the fallback path, there is no password or encryption, and nothing Bombadil ships belongs to a package.</span></li>
+        <li><span><b>A way for Bombadil's own files to reach a machine that is already installed.</b> Nothing does this today. skel's hyprland.lua is copied once, so the Virtual-1 monitor fix never reached the VM that mirrors a real install, which is updated by hand. The passenger brief already chose the route, packages from Bombadil's own signed repository; it moves from “later” to “second”.</span></li>
+        <li><span><b>The install card moves up.</b> Today installing means typing a device name in a terminal. That is fine for the owner and the tests, not for anyone else, so no public download ships before the card.</span></li>
+        <li><span><b>The stick gets more jobs.</b> Besides trying and installing, it repairs a machine that will not start, reinstalls while keeping your files, and erases the disk for the next owner.</span></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="bug">
+    <div><span class="lbl">One bug to fix now</span><h3>Installing from a real USB stick can leave the disk unable to start</h3></div>
+    <ol class="steps">
+      <li>You start from a USB stick on a laptop with enough free memory.</li>
+      <li>archiso copies the image into RAM and unmounts the stick (hook v73, :221, :344-351, :377-380).</li>
+      <li>The installer wipes the disk and copies the system onto it.</li>
+      <li class="bad"><code>bombadil-install:36</code> copies the kernel from the missing <code>/run/archiso/bootmnt</code>.</li>
+      <li class="bad"><code>set -e</code> stops the script. The disk was wiped and copied, and has no boot loader.</li>
+    </ol>
+    <div class="fix"><span class="lbl">The fix, one line</span>Take the kernel from <code>/usr/lib/modules/&lt;kver&gt;/vmlinuz</code>. It is <b>the first commit of piece 1</b>, and the VM findings fixes can take it sooner.</div>
+    <p>The VM tests attach the ISO as a CD drive (test-vm.sh:73), which the hook exempts. This was read in the hook, not reproduced.</p>
+  </div>
+
+  <h3 class="sub">What each in-flight piece of work needs, as of 30 Sep 2026</h3>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th scope="col">Piece of work</th><th scope="col">Needs</th></tr></thead>
+      <tbody>
+        <tr><td><b>Native provider login</b></td><td>Merge as is. Piece 1 points its copy loop (the native login's bombadil-install:66-73) at a carry list. On rebase after piece 2, <code>BROWSER</code> points at /usr/bin and leaves pam's /etc/environment.</td></tr>
+        <tr><td><b>Setup voice and welcome lines</b></td><td>Use the time zone decision below and read <code>/var/lib/bombadil/install.json</code>; show “Set my time zone” only while <code>timezone_source</code> is <code>unset</code>. The recovery key comes after “Welcome home”.</td></tr>
+        <tr><td><b>VM findings fixes</b></td><td>Merge them before piece 1, since both edit bombadil-install. Take the one-line kernel fix above in the next batch. Revisit the prompt line that installs with <code>-Syu</code> (their providers.py:23): on an installed machine, installing one program must not upgrade the whole system.</td></tr>
+        <tr><td><b>Named coding sessions</b></td><td>Move the three settings in skel <code>.codex/config.toml</code> to <code>/etc/codex/config.toml</code>, the system layer below the user's file, because Codex writes project trust into the user's file and a skel copy can never be updated. Piece 1 builds ~/Projects as a subvolume.</td></tr>
+        <tr><td><b>Brain index and Focus view</b></td><td>On rebase after piece 2, <code>ExecStart</code> moves from /usr/local/bin to /usr/bin and the units go into the package.</td></tr>
+        <tr><td><b>Bombadil VM on Windows</b></td><td>Add <code>refresh</code> (host <code>qemu-img snapshot</code> first) and <code>update</code>, make <code>reinstall</code> ask before it wipes (wsl-vm.sh:68-69), and build with the test boot entries.</td></tr>
+        <tr class="quiet"><td><b>Why lines and machine pictures</b></td><td>Nothing. Piece 3 builds on its CardHost.qml and <code>sysmap.capture_disks</code>.</td></tr>
+        <tr class="quiet"><td><b>App kit</b></td><td>Nothing; piece 2 adds its skill links to older homes.</td></tr>
+        <tr class="quiet"><td><b>Desk rails and first widgets</b><small>merged</small></td><td>Nothing; desk.toml stays out of home restore points, as assumed.</td></tr>
+        <tr class="quiet"><td><b>Noticed chip and self-checks</b></td><td>Nothing; piece 2 gives it the VERSION stamp.</td></tr>
+        <tr class="quiet"><td><b>Bombadil logo and design system</b></td><td>Nothing now; every mark here is a named placeholder.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>The rules</h2>
+  <p class="intro">Eight rules every piece follows.</p>
+  <ol class="rules">
+    <li><strong>The installed machine is the product; the stick is the door.</strong><span>The stick is for trying, installing, repairing, reinstalling and erasing. Everything that lasts lives on the installed machine.</span></li>
+    <li><strong>Nothing is erased that you did not name.</strong><span>The red button names the disk and what is on it. The stick you started from and any disk in use are never offered, and USB disks are marked. The agent may fill in the card and explain it, but no model call sits between the button and the disk.</span></li>
+    <li><strong>Two questions: which disk, and one password.</strong><span>Everything else is filled in from the stick, the network and the machine, one line each with “change”.</span></li>
+    <li><strong>Decide at install only what an update cannot change later.</strong><span>The layout, encryption, where GRUB lives and the account name <code>user</code> are fixed at install. Everything else arrives by update, or by a numbered layout step inside an update turn.</span></li>
+    <li><strong>Every file Bombadil puts in / has an owner.</strong><span>A pacman package owns it, or, for a file another package owns, a numbered step changes it. Bombadil's defaults live in /usr and change with each update; your own settings live in short files that load those defaults, and no update overwrites them.</span></li>
+    <li><strong>Your home is never rewritten.</strong><span>Install, update, refresh and a root undo only add missing files; the one exception moves an old hyprland.lua aside once and keeps it. A file in your home must still work on the oldest root undo can reach.</span></li>
+    <li><strong>Every way back keeps your files and works without the part that broke.</strong><span>Undo, the bad-start rollback, Repair and “Reinstall, keep my files” need no network, model or desktop; the agent explains when it can.</span></li>
+    <li><strong>A VM that mirrors a real install is the first user.</strong><span>Each piece ships a smoke mode that walks that machine's exact path (install from an older ISO, then refresh or update, then undo across a reboot) before anything reaches a real disk.</span></li>
+  </ol>
+</section>
+
+<section id="build">
+  <h2>Build these first</h2>
+  <p class="intro">These are the two things no later update can fix: the disk, and the path every later fix travels.</p>
+  <div class="pieces">
+
+  <article class="piece first" id="piece-1">
+    <div class="piece-head"><span class="piece-num">1</span><h3>The disk that lasts: layout v1, and a refresh that keeps your home</h3><span class="tag build">Build first</span><span class="tag effort">L</span></div>
+
+    <figure>
+      <div class="disk" role="group" aria-label="Disk layout v1">
+        <div class="disk-top"><b>The disk, GPT</b><span class="lbl">not to scale</span></div>
+        <div class="parts">
+          <div class="part never">
+            <div class="part-h"><span class="pn">p1</span><b>ESP at /efi</b></div>
+            <p>1 GiB, vfat. GRUB, its modules, grub.cfg and grubenv.</p>
+            <span class="badge b-never">never rolls back</span>
+          </div>
+          <div class="part luks">
+            <div class="part-h"><span class="pn">p2</span><b>LUKS2</b><span class="lbl">with a password</span></div>
+            <div class="keyslots"><span>your password, the slot GRUB opens</span><span>a key file in the initramfs, so you type it once</span><span>a recovery key</span></div>
+            <div class="btrfs">
+              <div class="part-h"><b>btrfs</b><span class="lbl">top-level subvolumes</span></div>
+              <div class="subs">
+                <div class="sv rolls"><span class="nm">@</span><span class="mt">/ and /boot</span><p>The system, with the kernel, initramfs and microcode under stable names.</p><span class="badge b-roll">undo swaps it</span></div>
+                <div class="sv never"><span class="nm">@snapshots</span><span class="mt">/.snapshots</span><p>The restore points.</p><span class="badge b-never">never rolls back</span></div>
+                <div class="sv never"><span class="nm">@log</span><span class="mt">/var/log</span><p>The logs of a bad start survive an undo.</p><span class="badge b-never">never rolls back</span></div>
+                <div class="sv never"><span class="nm">@pkg</span><span class="mt">/var/cache/pacman/pkg</span><p>The package cache.</p><span class="badge b-never">never rolls back</span></div>
+                <div class="sv rolls wide"><span class="nm">@home</span><span class="mt">/home</span><p>Your home, with home restore points. Nested subvolumes inside it hold what those restore points skip; a snapshot does not descend into them.</p>
+                  <div class="nested"><span>user/.cache</span><span>user/.local/state/bombadil</span><span>user/.claude</span><span>user/.codex</span><span>user/.local/share/claude</span><span>user/.config/chromium</span><span>user/Projects</span><span class="file">~/.claude.json, a file, skipped by name</span></div>
+                  <span class="badge b-roll">home undo</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="legend"><span><i class="rolls"></i>Undo rolls it back</span><span><i class="never"></i>Never rolls back</span><span><i class="l-dash"></i>Inside @home, skipped by home restore points</span></div>
+      </div>
+      <figcaption><b>Layout v1, drawn from the brief.</b> @log and @pkg sit beside @ because rollback renames @. GRUB's core, modules, grub.cfg and grubenv live on the ESP and never roll back; kernels live in @/boot, so grub.cfg works after any undo. <code>bombadil-install DISK --yes</code>, kept for the tests, means no password and no encryption.</figcaption>
+    </figure>
+
+    <div class="piece-text">
+      <div><p class="lbl">What you see</p><p>Before the card (piece 3), nothing looks different on the stick. On a VM that mirrors a real install, <code>bombadil-vm refresh</code> puts a fresh system under the same home: still signed in, same Apps, history, Wi-Fi and time zone, and the old system kept aside for 14 days. An undo after a kernel update boots the old kernel with its own modules, and the logs of the bad start are still there. Installing from a USB stick works on a laptop with plenty of memory. With a password set, power-on shows one plain line asking for it, and the desktop follows with no second prompt.</p></div>
+      <div><p class="lbl">Why first</p><p>The layout is the one thing no update can change, and encryption cannot be added under an existing btrfs without re-encrypting in place. The kernel sits outside every restore point today (bombadil-install:34-36), which the first brief called “urgent now”. The copy-to-RAM bug sits on the same lines. And a VM that mirrors a real install has no way forward except a wipe (wsl-vm.sh:68-69), which every later layout change would need too.</p></div>
+    </div>
+
+    <div class="changes">
+      <p class="lbl">What changes</p>
+      <ul class="bul">
+        <li><b><code>iso/airootfs/usr/local/bin/bombadil-install</code></b> stays one bash script, split into named functions: <code>probe</code>, <code>partition</code>, <code>subvolumes</code>, <code>copy</code>, <code>carry</code>, <code>configure</code>, <code>boot</code>, <code>record</code>.</li>
+        <li><b>First commit:</b> the kernel comes from <code>/usr/lib/modules/&lt;kver&gt;/vmlinuz</code> of the copied root.</li>
+        <li><b>Command line:</b> <code>bombadil-install --plan FILE [--password-fd N]</code>. The plan is JSON the card will write (disk, time zone and its source, keymap, hostname, carry list, fresh or refresh). The password comes from a file descriptor, never argv or the plan. <code>bombadil-install DISK --yes</code> stays for bombadil-smoke and wsl-vm.sh and means no password and no encryption.</li>
+        <li><b>Guards:</b> refuse without <code>/sys/firmware/efi</code> (the stick is UEFI only), when the target holds the stick (found from <code>archisosearchuuid</code> on /proc/cmdline with <code>blkid</code> and <code>lsblk -no PKNAME</code>, since copy-to-RAM unmounts it), or when any partition on it is mounted. Partition paths come from <code>lsblk -nro PATH</code>, replacing the suffix rule.</li>
+        <li><b>Partitions and keys:</b> GPT, p1 a 1 GiB ESP. With a password, p2 is LUKS2 with btrfs inside and three keyslots. The password slot GRUB opens uses argon2id at 256 MiB or lower, tuned to about 2 to 3 seconds on the slowest test laptop (not measured), because at cryptsetup's 1 GiB default GRUB rejects the correct password on firmware that fragments memory below 4 GiB (CachyOS issue #470). A random key file in <code>/etc/cryptsetup-keys.d/root.key</code>, added to the initramfs with a cheap pbkdf2 slot, means the password is typed once. A recovery key from <code>systemd-cryptenroll --recovery-key</code> is kept in <code>/var/lib/bombadil/recovery-key</code> (mode 600, inside the encrypted disk) only until the first-start card shows it.</li>
+        <li><b>Subvolumes:</b> as drawn above. <code>snapper -c home create-config /home</code> with <code>TIMELINE_CREATE=no</code>, for the decided live home undo.</li>
+        <li><b>Copy:</b> from <code>/run/archiso/airootfs</code>, the read-only image under the overlay, instead of <code>cp -ax /.</code>; if that mount is missing, <code>cp -ax</code> with the journal, <code>/etc/pacman.d/gnupg</code>, <code>/root</code>, the package cache and <code>/var/lib/NetworkManager</code> also removed. In the chroot: <code>pacman-key --init</code> and <code>--populate</code> (the image's keyring is empty); create <code>user</code> (UID 1000); <code>chpasswd</code> from the descriptor; zone, keymap and hostname from the plan; enable greetd, NetworkManager, systemd-timesyncd and fstrim.timer. Then snapshot 1, “Bombadil &lt;version&gt;, as installed”.</li>
+        <li><b>Programs installed on the stick:</b> every package whose version on the stick differs from the image's, installed offline in the chroot from the stick's cache as snapshot 2, “Brought from the USB stick: Spotify”, so old libraries never meet new programs. No network, provider or agent needed (untested).</li>
+        <li><b>Carry:</b> a new <code>/usr/share/bombadil/install/carry.list</code>, one home path per line, read by the native login's copy loop: its four paths, then <code>Apps</code>, <code>.local/state/bombadil</code> (turns.jsonl, session.json, desk.toml) and <code>.config/chromium</code>. Other pieces of work add lines instead of editing the installer. The Wi-Fi connections you joined are copied into <code>/etc/NetworkManager/system-connections</code>. Other hand changes to the stick's system files stay behind, and the card says so.</li>
+        <li><b>Boot:</b> the ESP at /efi. <code>grub-install --target=x86_64-efi --efi-directory=/efi --boot-directory=/efi --bootloader-id=Bombadil</code> makes a named firmware entry; a second run with <code>--removable</code> writes <code>EFI/BOOT/BOOTX64.EFI</code> on a whole disk or USB drive, never on a Windows ESP; <code>grub-mkconfig -o /efi/grub/grub.cfg</code>. <code>GRUB_ENABLE_CRYPTODISK=y</code>, <code>GRUB_DISTRIBUTOR="Bombadil"</code> (text; art belongs to the logo and design-system work), the VM findings fixes' hidden-menu lines kept.</li>
+        <li><b>Initramfs and fstab:</b> <code>mkinitcpio.conf.d/bombadil.conf</code> with <code>systemd</code>, <code>microcode</code>, <code>sd-vconsole</code>, <code>sd-encrypt</code> and <code>FILES</code>, plus <code>/etc/crypttab.initramfs</code>; the preset gains a <code>fallback</code> image with <code>-S autodetect</code>; <code>amd-ucode</code> and <code>intel-ucode</code> join packages.x86_64. fstab is written from UUIDs instead of genfstab: /, /home, /.snapshots, /var/log, /var/cache/pacman/pkg, and /efi with <code>umask=0077</code>.</li>
+        <li><b>Record:</b> <code>/var/lib/bombadil/install.json</code> with date, image version and commit, <code>layout: 1</code>, <code>encrypted</code>, target kind, <code>timezone_source</code>, the packages brought, and <code>recovery_key_pending</code>.</li>
+      </ul>
+      <details class="fold">
+        <summary><span>Refresh, rollback, the stick, tests and the VM that mirrors a real install <small>5 more</small></span><span class="chev" aria-hidden="true">›</span></summary>
+        <div class="fold-body">
+          <ul class="bul">
+            <li><b><code>--refresh</code></b> (whole-disk layout only in v1): open LUKS if encrypted; rename <code>@</code> and <code>@snapshots</code> to <code>@.before-refresh-&lt;date&gt;</code> and <code>@snapshots.before-refresh-&lt;date&gt;</code>, so an old <code>turn:</code> snapshot can never be swapped in; before touching the ESP, copy the old ESP's kernel and initramfs into the old root's /boot and point its fstab's /boot line at /efi, so “go back to before the refresh” can start; empty the ESP instead of reformatting it, so its UUID stays; copy into a new <code>@</code> while <code>@home</code> is not mounted; turn the listed home folders into nested subvolumes (move aside, create, reflink back); keep NetworkManager connections, hostname, localtime, locale, vconsole, machine-id, ssh host keys, linger and <code>user</code>'s password hash from the old root; write the old root's extra packages to <code>/var/lib/bombadil/refresh-&lt;date&gt;.txt</code> for the agent to offer back; copy skel with <code>cp -an</code> as <code>user</code>; copy carry paths only where the kept home lacks them, so a sign-in on the stick never overwrites the kept <code>.claude.json</code> or persona.toml; clear <code>undo.json</code>, which names old snapshot numbers.</li>
+            <li><b>bombadil-rollback</b> refuses a snapshot with no <code>boot/vmlinuz-linux</code>, in one line the launcher's undo shows, and gains <code>--device DEV</code> for the stick.</li>
+            <li><b>The stick:</b> timesyncd enabled (today only NetworkManager, bombadil-live and pacman-init are). Boot entries 02 and 03 only when <code>BOMBADIL_TEST_ENTRIES=1</code>, which test-vm.sh and wsl-vm.sh set; entry 03 erases /dev/vda without asking, and /dev/vda is also the disk of the VM that mirrors a real install.</li>
+            <li><b>Tests (<code>scripts/test-vm.sh</code>):</b> <code>MODE=install</code> attaches the ISO as a USB disk with 8 GB instead of <code>-cdrom</code>, so copy-to-RAM is exercised, and checks the stick is refused as a target; <code>MODE=install-encrypted</code> types the password into GRUB with <code>qmp.py send-keys</code>; <code>MODE=refresh OLD_ISO=…</code> installs from the previous ISO, refreshes, then undoes across a reboot; a writable OVMF variables copy so the named entry is checked. The undo mode also checks /efi is vfat, /boot is on btrfs, the fallback initramfs, <code>@log</code>, <code>efibootmgr</code>, <code>modinfo -k "$(uname -r)" btrfs</code> after the undo reboot, <code>cryptsetup status root</code>, and a kept-home file surviving a refresh.</li>
+            <li><b>A VM that mirrors a real install:</b> with it off, <code>qemu-img snapshot -c before-installed-os out/bombadil.qcow2</code> in the checkout on the VM host, then <code>bombadil-vm refresh</code>. The host snapshot is required: it is the only way back to the old ESP.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <div class="piece-foot">
+      <div><p class="lbl">Before building</p>
+        <ul>
+          <li>Merge the VM findings fixes, the native login and the named coding sessions first; all three edit bombadil-install.</li>
+          <li><code>findmnt -R /run/archiso</code> on a boot from a USB-attached ISO with 8 GB (the image mount is inferred from the hook).</li>
+          <li>On a VM that mirrors a real install, read-only: <code>findmnt -R / /boot</code>, <code>cat /etc/fstab</code>, <code>btrfs subvolume list /</code>, <code>ls /etc/systemd/system/*.wants</code> (whether first-boot presets enabled networkd and resolved beside NetworkManager, unverified), <code>pacman -Qo /usr/share/bombadil /usr/bin/claude</code>.</li>
+          <li>GRUB 2.16 on an older ThinkPad and a business Dell or HP: argon2id at 256 MiB and lower, unlock time, the recovery-key slot, and whether grub-mkconfig puts <code>cryptomount</code> inside each entry.</li>
+          <li><code>/usr/lib/modules/*/vmlinuz</code> in a built image; the offline replay from the stick's cache.</li>
+          <li>The owner's answer to question 1 (encryption).</li>
+        </ul>
+      </div>
+      <div><p class="lbl">Effort</p><p class="eff"><b>L</b>The encrypted and refresh VM tests take most of it.</p></div>
+    </div>
+  </article>
+
+  <article class="piece first" id="piece-2">
+    <div class="piece-head"><span class="piece-num">2</span><h3>Bombadil as packages, with homes that follow its releases</h3><span class="tag build">Build first</span><span class="tag effort">M to L</span></div>
+
+    <figure>
+      <div class="split" role="group" aria-label="The config split">
+        <div class="file mine">
+          <div class="file-h"><code>~/.config/hypr/hyprland.lua</code><span>yours, a few lines</span></div>
+<pre><span class="c">-- Bombadil's part comes from the system and follows its updates. Your own lines go below.</span>
+local ok = pcall(require, <span class="s">"/usr/share/bombadil/share/hypr/bombadil"</span>)
+local old = os.getenv(<span class="s">"HOME"</span>) .. <span class="s">"/.config/hypr/hyprland.lua.before-split"</span>
+if not ok and io.open(old) then dofile(old) end</pre>
+          <div class="own-lines">Your own lines. No update overwrites them.</div>
+        </div>
+        <div class="loads"><b>loads</b><span>If it is missing, after a root undo to before the split, the fallback loads hyprland.lua.before-split.</span></div>
+        <div class="file ours">
+          <div class="file-h"><code>/usr/share/bombadil/share/hypr/bombadil.lua</code><span>Bombadil's part</span></div>
+          <div class="body"><span>Updated with each release, owned by the bombadil package.</span><span>Today's 72-line skel file, plus the lines the named coding sessions, the native login and the VM findings fixes add.</span></div>
+        </div>
+      </div>
+      <figcaption><b>The config split.</b> Hyprland 0.56 loads a module starting with <code>/</code> as a file and reloads it on change; a missing one is a plain Lua error that <code>pcall</code> catches. The fallback keeps a migrated home working after a root undo to before the split (rule 6).</figcaption>
+    </figure>
+
+    <div class="piece-text">
+      <div><p class="lbl">What you see</p><p>“update” (a turn running <code>sudo pacman -Syu</code> until passenger piece 6 exists) brings Bombadil's new version in the same restore point as everything else; the receipt names it and undo takes it back. “what version is this?” answers “Bombadil 2026.10.06 (d9dde3b), installed 2 Oct”. A fix to a key, a window rule or an autostart line reaches a machine installed last month, because your hyprland.lua is now a few lines that load Bombadil's part, followed by your own. On the VM, <code>bombadil-vm update</code> then “update” takes two minutes and no ISO build.</p></div>
+      <div><p class="lbl">Why first</p><p>Every install made before this holds files no package owns (/usr/share/bombadil, the /usr/local/bin links, the npm trees; build-iso.sh:12-23), and on each the first package would need <code>--overwrite</code>, the riskiest update Bombadil could ship. Three branches edit skel's hyprland.lua (the native login, the named coding sessions and the VM findings fixes) and none of those edits reach an installed home. The Brain's units need a way onto existing machines. And every later brief's “What changes” depends on which files Bombadil owns.</p></div>
+    </div>
+
+    <div class="changes">
+      <p class="lbl">What changes</p>
+      <ul class="bul">
+        <li><b><code>packaging/bombadil/PKGBUILD</code> and <code>bombadil.install</code> (new).</b> <code>/usr/share/bombadil/{bin,src,shell,share,packages.x86_64,VERSION}</code> at the same path, so <code>paths.share_dir()</code> and hyprland.lua:9 do not change; VERSION holds date and commit. Commands in /usr/bin, because Arch packages never install to /usr/local: agentd, bombadil, bombadil-app, bombadil-os-mcp, and the four scripts from <code>iso/airootfs/usr/local/bin</code>. Units in <code>/usr/lib/systemd/{system,user}</code>, enabled by the scriptlet in <code>post_install</code> and <code>post_upgrade</code> from a list in the package, as pipewire.install does; that is how the Brain's units, and later agentd and Quickshell as services, reach existing installs. A tmpfiles.d line for linger replaces the installer's <code>touch</code>. <code>/etc/sudoers.d/bombadil</code> (440) and <code>/etc/bombadil/config.toml</code> in <code>backup=</code>; the Claude Code, Codex and Chromium managed settings as plain package files.</li>
+        <li><b>Files other packages own</b> (<code>/etc/greetd/config.toml</code>, <code>/etc/environment</code>, <code>/etc/default/grub</code>, <code>/etc/pacman.conf</code>, the mirror list) change only by numbered steps in <code>/usr/share/bombadil/migrate/NNN-*.sh</code> that check the file, not a version number, or by a drop-in where one exists (a <code>greetd.service.d</code> drop-in running greetd with <code>-c /usr/share/bombadil/greetd/config.toml</code>).</li>
+        <li><b>The config split,</b> as drawn above: today's 72-line skel file, plus the lines the named coding sessions, the native login and the VM findings fixes add, moves to <code>/usr/share/bombadil/share/hypr/bombadil.lua</code>, and skel's hyprland.lua becomes the stub.</li>
+        <li><b><code>src/bombadil/homefix.py</code> (new),</b> run by agentd at start before it opens its socket: numbered steps, safe to run twice, recorded in <code>~/.local/state/bombadil/home.json</code>. Step 1 moves an old hyprland.lua to <code>hyprland.lua.before-split</code> and writes the stub followed by the old lines that appear in no shipped skel version (kept in <code>share/hypr/old/</code>), including wsl-vm.sh's tagged monitor line, then <code>hyprctl reload</code>. Step 2 adds missing skel entries such as app-kit's skill links and the native login's <code>chromium-flags.conf</code>. No step touches <code>.claude</code>, <code>.claude.json</code>, <code>.codex</code> or <code>.config/bombadil</code>.</li>
+        <li><b><code>scripts/build-iso.sh</code>.</b> Lines 11-18 become <code>makepkg</code> into <code>$work/repo</code> plus <code>repo-add</code>, as a throwaway build user (makepkg refuses root, and build-in-container.sh builds as root). A build-time pacman.conf lists <code>[bombadil]</code> over <code>file://</code> above <code>[core]</code>, and <code>bombadil</code> joins packages.x86_64. Moved files leave airootfs, because mkarchiso copies airootfs before pacstrap and pacman refuses existing files; profiledef.sh:18-21 and :23 go. The npm CLIs stay as the one unowned exception until piece 7.</li>
+        <li><b>Repositories, stage one.</b> <code>/etc/pacman.d/bombadil.conf</code>, owned by the package and included from <code>[bombadil]</code>, lists <code>Server = http://10.0.2.2:8123</code> (the VM host, in the VM only) and <code>file:///var/lib/bombadil/repo</code> (a copy on the image), with <code>SigLevel = Optional TrustAll</code>. Nothing public reads it. Piece 6 replaces the file by an ordinary update with the signed public server and <code>SigLevel = Required</code> (unverified: that <code>SigLevel</code> in an included file applies to its section).</li>
+        <li><b>Existing installs move by one refresh (piece 1), never by <code>pacman --overwrite</code>.</b></li>
+      </ul>
+      <details class="fold">
+        <summary><span>The VM, “Install this build” and tests <small>3 more</small></span><span class="chev" aria-hidden="true">›</span></summary>
+        <div class="fold-body">
+          <ul class="bul">
+            <li><b><code>scripts/wsl-vm.sh</code>:</b> <code>update</code> runs <code>makepkg</code> in the tree and <code>repo-add</code> into <code>out/repo</code>, serves it on 127.0.0.1:8123 while the VM runs, and boots the disk (10.0.2.2 reaching the host under WSL is untested).</li>
+            <li><b>“Install this build”</b> becomes <code>makepkg</code> plus <code>pacman -U</code> as a machine turn, so pacman keeps owning every file.</li>
+            <li><b>Tests.</b> <code>tests/test_homefix.py</code> runs each step twice on a fake home and checks the sign-in files are unchanged byte for byte. <code>MODE=update</code> installs, serves a package one <code>pkgrel</code> newer, takes a <code>turn:</code> snapshot, runs <code>pacman -Syu</code>, checks <code>pacman -Qo</code> names bombadil, the version, the stub and an empty <code>hyprctl configerrors</code>, then undoes across a reboot and checks the older version and the bar. The VM findings fixes' tests that read the installer and skel by path move with the files.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
+
+    <div class="piece-foot">
+      <div><p class="lbl">Before building</p>
+        <ul>
+          <li>Build once and read mkarchiso's output for “exists in filesystem”.</li>
+          <li>In the VM, check the <code>pcall</code> fallback, that user lines override the defaults for <code>hl.monitor</code> and <code>hl.bind</code>, and whether <code>BROWSER</code> reaches Chromium and the CLIs from <code>/usr/lib/environment.d/</code>.</li>
+          <li>Run <code>pacman -Qo /usr/share/bombadil /etc/greetd/config.toml /etc/environment</code> on a VM that mirrors a real install.</li>
+          <li>Merge the native login, the named coding sessions and the Brain index first (each adds to build-iso.sh:16).</li>
+        </ul>
+      </div>
+      <div><p class="lbl">Effort</p><p class="eff"><b>M to L</b>homefix and the update test take most of it.</p></div>
+    </div>
+  </article>
+  </div>
+</section>
+
+<section id="life">
+  <h2>A life with an installed Bombadil</h2>
+  <p class="intro">By moment, as it looks once the pieces on this page are built. The drawn screens are mock-ups in the shell's look, not screenshots; every mark and the power-on look belong to the logo and design-system work.</p>
+  <ol class="moments">
+
+    <li>
+      <h3>Getting it</h3>
+      <p>One download, its checksum, “Intel or AMD PCs only”, and the ordered list from Windows; no editions or mirrors. balenaEtcher writes and checks the stick.</p>
+      <ol class="path" aria-label="The path from Windows">
+        <li>Check that your BitLocker recovery key is saved at aka.ms/myrecoverykey</li>
+        <li>Write the file to a USB stick with balenaEtcher, or Rufus in DD mode</li>
+        <li>Suspend BitLocker once</li>
+        <li>Restart into the UEFI Firmware Settings</li>
+        <li>Turn Secure Boot off</li>
+        <li>Start from the stick</li>
+      </ol>
+      <p>One line on the download page says Secure Boot off stops some Windows games (Valorant, Battlefield 6, Call of Duty Black Ops 7) until piece 12.</p>
+    </li>
+
+    <li>
+      <h3>Trying it, and the first start on the stick</h3>
+      <p>In order: the stick's menu (“Bombadil”, then “Safe graphics”), the pill, Wi-Fi through the native login's chip (the time zone is set silently here), the provider question and sign-in, the voice brief's card (a name field and three voice rows), then the chip “Install on this computer” with “Undo starts once Bombadil is installed”. “Will my Wi-Fi work if I install?” is answered from the “This computer” rows with no model.</p>
+    </li>
+
+    <li>
+      <h3>Installing</h3>
+      <p>The card (piece 3, or piece 9 next to Windows). “Should I keep Windows?” is answered from the probe and fills the card in; you press the button.</p>
+      <div class="installfig">
+        <figure>
+          <div class="stage">
+            <div class="oscard" role="group" aria-label="Install card">
+              <h4>Install on this computer</h4>
+              <div class="idisk">
+                <div class="dbar"><span class="win">Windows 11</span></div>
+                <div class="dn"><b>Acme SSD, 1 TB.</b> Windows 11 is on it.</div>
+              </div>
+              <div class="os-none">not offered: the USB stick you started from</div>
+              <div class="oready"><i></i>Ready: charger in, Wi-Fi works</div>
+              <div class="opw"><span class="k">Password</span><div class="box">••••••••••</div><span class="hint">You type it when the computer starts, and to unlock the screen. The start prompt reads a US keyboard.</span></div>
+              <div class="ochoices">
+                <div class="ochoice"><span class="k">Time zone</span><span class="v">Europe/Lisbon, from your network</span><span class="chg">change</span></div>
+                <div class="ochoice"><span class="k">Keyboard</span><span class="v">English (US)</span><span class="chg">change</span></div>
+                <div class="ochoice"><span class="k">Computer name</span><span class="v">alexs-thinkpad</span><span class="chg">change</span></div>
+              </div>
+              <div class="opw"><span class="k">Coming along</span>
+                <div class="along"><span class="ochip">your sign-in <i>×</i></span><span class="ochip">2 apps <i>×</i></span><span class="ochip">Wi-Fi Home <i>×</i></span><span class="ochip">Spotify <i>×</i></span></div>
+                <span class="hint">Other changes to the stick's system stay behind.</span>
+              </div>
+              <div class="osb red">Erase Acme SSD (has Windows 11) and install</div>
+            </div>
+            <div class="os-line">Undo starts once Bombadil is installed.</div>
+            <div class="os-row"><div class="os-pill"><span class="dot"></span><span class="ph">Ask anything</span><span class="clock">10:12</span></div></div>
+          </div>
+          <figcaption><b>The install card, on the stick.</b> Two questions: which disk, and one password. Everything else is one line with “change”. Drawn with the recommended answer to question 1.</figcaption>
+        </figure>
+        <dl class="notes">
+          <dt>Which disks</dt><dd>Disks as bars with one sentence each. The stick you started from and any disk in use are never offered; USB drives are marked and can be targets.</dd>
+          <dt>Readiness</dt><dd>Rows with one button each (“Plug in the charger”), folded into one green line when nothing needs doing.</dd>
+          <dt>The password</dt><dd>One field that names the keys which move on a non-US keyboard, since GRUB reads a US layout.</dd>
+          <dt>Coming along</dt><dd>What comes from the stick, each with an ×. Other hand changes to the stick's system files stay behind, and the card says so.</dd>
+          <dt>The button</dt><dd>Red, naming the disk and what is on it. The agent may fill in the card and explain it; it cannot press it.</dd>
+          <dt>Found a Bombadil</dt><dd>The card offers “Reinstall, keep my files”. An install that stops partway says so in plain text.</dd>
+        </dl>
+      </div>
+      <p>The line counts through the copy and ends with “Installed. Take out the USB stick, then Restart.”</p>
+    </li>
+
+    <li>
+      <h3>First installed start</h3>
+      <p>In order: the firmware starts “Bombadil”; GRUB shows one Bombadil line and the password prompt; the desktop opens signed in with no second prompt; the voice line “Welcome home, Alex. Undo works from here.”; the recovery key, once. Details holds the receipt: “Installed on Acme SSD, encrypted. Brought Spotify, Wi-Fi Home and 2 apps.” Nothing else asks anything. If you installed before signing in, sign-in and the voice card come now instead.</p>
+      <div class="shots">
+        <figure>
+          <div class="stage bare">
+            <div class="placeholder">Mark and power-on look:<br>Bombadil logo and design system work</div>
+            <div class="prompt"><span>Password:</span><span class="dots">••••••••</span><span class="caret" aria-hidden="true"></span></div>
+          </div>
+          <figcaption><b>Power-on.</b> One plain line asks for the password, typed once. The mark, font, background and the line above the prompt are placeholders for the logo and design-system work; only <code>GRUB_DISTRIBUTOR="Bombadil"</code> is set here.</figcaption>
+        </figure>
+        <figure>
+          <div class="stage fill">
+            <div class="oscard" role="group" aria-label="Recovery key card, example">
+              <h4>Your recovery key <span class="ex">example</span></h4>
+              <p class="t">If the password is forgotten, or not accepted when the computer starts, this key opens the disk. It is shown only this once.</p>
+              <div class="rk">
+                <div class="key">rhkvtnbc-lufdgjie-ktbnvcrh-eidjfglu-nvrchtbk-gjlefiud-bkchnvrt-fudiegjl</div>
+                <div class="qr">QR code</div>
+              </div>
+              <p class="hint">Write it down or take a photo with your phone. Say “new recovery key” to make a fresh one later.</p>
+              <div class="os-btns"><span class="osb go">I saved it</span></div>
+            </div>
+            <div class="os-line ok">Welcome home, Alex. Undo works from here.</div>
+            <div class="os-row"><div class="os-pill"><span class="dot"></span><span class="ph">Ask anything</span><span class="clock">10:31</span></div></div>
+          </div>
+          <figcaption><b>The first installed start.</b> The recovery key comes after the welcome line, as text and a QR code, then the file is deleted. The key shown is an example, not a real one.</figcaption>
+        </figure>
+      </div>
+    </li>
+
+    <li>
+      <h3>A week</h3>
+      <p>Closing the lid locks the screen. Restore points clear themselves at 100 pairs, and “what's eating my disk?” says how far undo reaches.</p>
+    </li>
+
+    <li>
+      <h3>An update</h3>
+      <p>As the passenger brief designed, with Bombadil's own lines in the receipt. A new kernel ends with “Restart to finish”, and undo takes it back too.</p>
+      <figure>
+        <div class="stage">
+          <div class="os-line close">
+            <span>Updated 214 things, including Bombadil 2026.10.06. Restart to finish: new kernel.</span>
+            <span class="os-btns"><span class="osb">Undo</span><span class="osb">Details</span></span>
+          </div>
+          <div class="os-row"><div class="os-pill"><span class="dot"></span><span class="ph">Ask anything</span><span class="clock">21:04</span></div></div>
+        </div>
+        <figcaption><b>The closing line of an update.</b> Bombadil's own release rides in the same restore point as Arch's packages, so a kernel you regret goes back with undo like anything else.</figcaption>
+      </figure>
+    </li>
+
+    <li>
+      <h3>Something breaks</h3>
+      <p>A change that cuts off the screen, the shell or the network puts itself back. A dead desktop drops to the tty2 page. A start that fails twice goes back by itself and says which turn it undid: GRUB picks “Start from before turn 41 (install nvidia-open)”. A disk that will not start at all gets the stick's Repair: you type your password, the change that broke things shows in red, and “Go back to before that” or “Reinstall, keep my files” leave your home, sign-in and apps where they were.</p>
+      <div class="shots">
+        <figure>
+          <div class="stage fill">
+            <div class="oscard" role="group" aria-label="The stick finds a Bombadil">
+              <h4>This computer has Bombadil, installed 12 Aug.</h4>
+              <div class="os-btns start"><span class="osb go">Repair</span><span class="osb">Reinstall, keep my files</span><span class="osb warn">Erase</span></div>
+            </div>
+            <div class="os-row"><div class="os-pill"><span class="dot"></span><span class="ph">Ask anything</span><span class="clock">08:47</span></div></div>
+          </div>
+          <figcaption><b>On the stick.</b> When the probe finds a Bombadil, the card leads with it.</figcaption>
+        </figure>
+        <figure>
+          <div class="stage fill">
+            <div class="oscard" role="group" aria-label="Repair timeline">
+              <h4>Repair</h4>
+              <p class="hint">Acme SSD, opened with your password, read-only.</p>
+              <ol class="tl">
+                <li><span>Installed 12 Aug</span></li>
+                <li class="gap"><span>turns and restore points</span></li>
+                <li class="bad"><span class="redrow">turn 41, install nvidia-open</span></li>
+                <li class="fail"><span>The start after it failed, read from the log</span></li>
+              </ol>
+              <div class="os-btns start"><span class="osb go">Go back to before that</span><span class="osb">Fix it</span></div>
+            </div>
+            <div class="os-row"><div class="os-pill"><span class="dot"></span><span class="ph">Ask anything</span><span class="clock">08:49</span></div></div>
+          </div>
+          <figcaption><b>Repair.</b> It reads the failed start's journal from <code>@log</code>, turns.jsonl and the restore points, with no network or model needed to go back.</figcaption>
+        </figure>
+      </div>
+    </li>
+
+    <li>
+      <h3>Reinstalling, keeping your files</h3>
+      <p>On the stick; one line afterwards names the programs it offers back, and the old system stays aside for 14 days.</p>
+    </li>
+
+    <li>
+      <h3>A new laptop</h3>
+      <p>Plug in the copy drive while the new laptop runs the stick (“Found a copy of your Bombadil from yesterday. Bring it?”); one card and one turn later it has your home, apps, memory and conversation, with its own drivers and name. The old one is erased from the stick in a second.</p>
+    </li>
+  </ol>
+</section>
+
+<section id="order">
+  <h2>After these, in order</h2>
+  <p class="intro">The order is real. Pieces 3 to 6 must all land before any public download; until then only the owner installs, through the terminal and a VM.</p>
+  <div class="order-wrap">
+    <div class="order-group">
+      <p class="glabel">Before any public download</p>
+      <ol class="order">
+        <li><span class="n">3</span><div><div class="oh"><h3>The install card</h3><span class="tag effort">M to L</span></div><p>Built on the machine pictures' CardHost and <code>sysmap.capture_disks</code> and the app kit's PasswordField, with a local probe and no model. The word “install” opens it before sign-in and offline; the red button sends the plan and agentd runs the installer as a shell turn. A new <code>system.py</code> <code>where()</code> keeps Undo off on the stick, the session id is saved across restarts and the install, and the first installed start shows the recovery key once.</p></div></li>
+        <li><span class="n">4</span><div><div class="oh"><h3>Months, not minutes</h3><span class="tag effort">M</span></div><p>The decided restore point pairs, empty pairs dropped and 100 kept; old roots pruned after 14 days, keeping the newest; paccache, fstrim, zram, a monthly scrub and smartd. agentd and Quickshell become user services; the screen locks on lid close and idle, and greetd asks for the password after a crash or logout.</p></div></li>
+        <li><span class="n">5</span><div><div class="oh"><h3>Hardware on the stick</h3><span class="tag effort">S to M</span></div><p>Bluetooth, brightness keys, power profiles, Broadcom Wi-Fi, printing, disk health and NTFS on the stick, fwupd used only when asked, and a “Safe graphics” entry. The NVIDIA packages ride along as files and are installed only for a Turing or newer card, named on the card (“an NVIDIA RTX card, so NVIDIA's open driver”).</p></div></li>
+        <li><span class="n">6</span><div><div class="oh"><h3>The signed repository and the download page</h3><span class="tag effort">M</span></div><p>A <code>bombadil-keyring</code> package, and a GitHub Actions workflow that builds and signs each merge, builds the ISO, runs the VM test modes and only then publishes. The download page shows one ISO with checksum and signature, “Intel or AMD PCs only”, and the ordered path from Windows.</p></div></li>
+      </ol>
+    </div>
+    <div class="order-rest">
+      <ol class="order">
+        <li><span class="n">7</span><div><div class="oh"><h3>Updates as a turn</h3><span class="tag effort">M</span></div><p>Passenger piece 6, which no piece of work owns: keyrings first, then <code>-Su</code> in the same restore point, then the numbered layout steps, then what needs a restart. Installing a program never upgrades the system, and the CLIs become user-level installs.</p></div></li>
+        <li><span class="n">8</span><div><div class="oh"><h3>A start that fails puts itself back</h3><span class="tag effort">M to L</span></div><p>GRUB clears <code>boot_ok</code> in grubenv at each start, and <code>bombadil-boot-ok.service</code> sets it once agentd answers and the bar is up. After one failed start GRUB shows its menu; after two it picks “Start from before turn 41 (install nvidia-open)” by itself, loading that snapshot's own kernel and initramfs so kernel and modules match.</p></div></li>
+        <li><span class="n">9</span><div><div class="oh"><h3>Next to Windows</h3><span class="tag effort">L</span></div><p>“Next to Windows” and a red “Replace Windows”, a handle on the bar that never leaves less than 40 GB for Bombadil or 20 GB free for Windows, and, with BitLocker on, the agent walks you through Shrink Volume in Windows first. Windows stays out of GRUB's menu, because starting it from a Linux entry can trigger BitLocker recovery. Its place in the order is question 3.</p></div></li>
+        <li><span class="n">10</span><div><div class="oh"><h3>Repair, reinstall and erase from the stick</h3><span class="tag effort">M</span></div><p>Repair reads the failed start from <code>@log</code> and offers “Go back to before that” or “Fix it”; Reinstall is piece 1's <code>--refresh</code>; Erase takes a second on an encrypted disk and removes the firmware entry.</p></div></li>
+        <li><span class="n">11</span><div><div class="oh"><h3>A copy somewhere else, and a new laptop</h3><span class="tag effort">L</span></div><p>“Keep a copy on my USB drive” becomes an Autopilot routine locked with your password; on a new laptop the stick finds the drive, installs stock Bombadil with this laptop's drivers, restores the home and replays the recipe as one turn. The same path adds encryption to an install made without it.</p></div></li>
+        <li><span class="n">12</span><div><div class="oh"><h3>Secure Boot and TPM</h3><span class="tag effort">M to L</span></div><p>“turn Secure Boot back on” as a red turn with sbctl, keeping Microsoft's keys, only after BitLocker is suspended; then TPM unlock through GRUB's TPM2 key protector, with a GRUB console password. Test with swtpm first; some ThinkPads and ASUS TUF laptops can be bricked by replaced platform keys.</p></div></li>
+        <li><span class="n">13</span><div><div class="oh"><h3>A Bombadil you carry</h3><span class="tag effort">S</span></div><p>Question 2. An install onto a second USB drive from the same card, with open GPU drivers only and a note that a USB drive is slower and easier to lose. Most of it arrives with pieces 1 and 3.</p></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section id="questions">
+  <div class="decide">
+    <h2>Questions only you can answer</h2>
+    <p>Each question changes what a person sees, or cannot be undone for people who already installed, so it is yours.</p>
+    <div class="qs">
+      <div class="qcard">
+        <h3><span>1</span>Should a new install lock the disk with a password?</h3>
+        <p>Once installed, encryption cannot be added without wiping the disk. It is not a wall between you and the agent, which keeps full access once the machine is on; it stops a thief who takes the laptop.</p>
+        <ol>
+          <li class="rec"><i>a</i><span>Yes, by default. You type one password when the computer starts, the same password unlocks the screen, and a recovery key is shown once.<span class="rtag">recommended</span><span class="why">The agent has sudo and your accounts are signed in, so a lost laptop is worth more to a thief than an ordinary one, and Windows 11, macOS, Pop!_OS and Omarchy all encrypt by default.</span></span></li>
+          <li><i>b</i><span>Offer it on the install card, off unless you tick it. The password then only locks the screen.</span></li>
+          <li><i>c</i><span>No password and no encryption in the first version, as today.</span></li>
+        </ol>
+      </div>
+      <div class="qcard">
+        <h3><span>2</span>What should a flash drive be for, besides installing?</h3>
+        <p>The premise of this pass is that Bombadil will be used on flash drives as well as installed.</p>
+        <ol>
+          <li><i>a</i><span>Only a stick you try Bombadil on, install from and repair with. It forgets everything at every restart.</span></li>
+          <li><i>b</i><span>The same stick also keeps your things between restarts. It gets no undo and no updates, so it becomes a second, weaker kind of Bombadil.</span></li>
+          <li class="rec"><i>c</i><span>a), plus a full Bombadil installed onto a USB drive you carry between computers, with undo and updates like any install.<span class="rtag">recommended</span><span class="why">It comes almost free with piece 1 (the start file every PC finds, and a start image that works on any hardware) and piece 3 (USB drives offered as targets).</span></span></li>
+        </ol>
+      </div>
+      <div class="qcard">
+        <h3><span>3</span>Who should be able to install it first?</h3>
+        <ol>
+          <li class="rec"><i>a</i><span>People installing on a whole disk or a spare laptop; installing next to Windows comes after.<span class="rtag">recommended</span><span class="why">It proves the disk layout and the update path before BitLocker, Fast Startup and Windows' small start partition enter the picture.</span></span></li>
+          <li><i>b</i><span>Windows laptops first: installing next to Windows ships before any public download.</span></li>
+          <li><i>c</i><span>Only you, until repair and next to Windows both exist.</span></li>
+        </ol>
+      </div>
+    </div>
+    <p class="answer-like">The owner answered <b>1a 2c 3a</b> on 30 Sep 2026.</p>
+  </div>
+</section>
+
+<section id="defaults">
+  <h2>Decisions I picked a default for</h2>
+  <p class="intro">Each of these forks. The default is what gets built unless you pick another option.</p>
+  <div class="expand"><button type="button" data-open="1">Expand all</button><button type="button" data-open="0">Collapse all</button></div>
+  <div class="decisions">
+    <details class="dec"><summary><span class="q">How does a merge reach other people's machines?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> CI signs every merge that passes the VM smoke test and publishes it to a testing channel, which the VM that mirrors a real install follows; the stable channel takes it after 3 days with no revert. Nothing waits on you, as you asked for merges, and your daily use catches what the smoke test misses.</p><p class="alt"><b>Other options</b> every passing merge goes to everyone at once; your own key signs stable when you say “release”.</p></div></details>
+    <details class="dec"><summary><span class="q">When is the time zone set, and is it asked?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Detected, never asked. On the stick, when the network first comes up, one HTTPS geo-IP request with no model sets the zone, and timesyncd (now enabled on the stick) sets the clock, so even the stick's greeting can say “Good morning”. The card shows the zone as one line with “change” (“Europe/Lisbon, from your network · change”), because geo-IP guesses wrong in countries with several zones and behind VPNs.</p><p>The installer writes it and records <code>timezone_source</code>: <code>detected</code>, <code>chosen</code> (changed on the card or by “set my time zone to …”) or <code>unset</code> (the stick never went online; the line then reads “Set when this computer first goes online · change”). An installed machine still <code>unset</code> does the same lookup once at its first network. The voice build treats the zone as unset only when <code>timezone_source</code> is <code>unset</code>, which separates a person in UTC from an unset machine, and shows its “Set my time zone” chip only then.</p><p class="alt"><b>Other options</b> ask on the card, as Debian does; read Windows' registry, which BitLocker hides on most laptops; wait for the first installed start. The service is the builder's pick (unverified).</p></div></details>
+    <details class="dec"><summary><span class="q">How does the system get onto the disk?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> The clean image as snapshot 1, the programs you installed on the stick replayed offline from its cache as snapshot 2, then the carry list. Two people who press the same button get the same system, and the stick's journal, keyring, root history and caches stay behind on purpose.</p><p class="alt"><b>Other options</b> today's <code>cp -ax</code> of the live root; pacstrap, which needs a network and differs from the tested image.</p></div></details>
+    <details class="dec"><summary><span class="q">Is snapshot 1 kept for good?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> No, it ages out like any restore point; the recipe's baseline is the image version and package list in install.json, and the way back to stock is “Reinstall, keep my files”. A reset to a months-old base meets new keys and months of Arch news at once.</p><p class="alt"><b>Other options</b> create it with no cleanup algorithm (<code>important=yes</code> would not protect it: those fall under <code>NUMBER_LIMIT_IMPORTANT</code>).</p></div></details>
+    <details class="dec"><summary><span class="q">Where does GRUB live?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Core, modules, grub.cfg and grubenv on the ESP; kernels in <code>@/boot</code>. Modules never skew against the core after an undo, grubenv is where the decided layout puts it, and grub.cfg is read before the disk is unlocked, so a line can sit above the prompt (inferred).</p><p class="alt"><b>Other options</b> /boot/grub inside <code>@</code>, where an undone grub-install leaves old modules under a new core and GRUB stops before any menu.</p></div></details>
+    <details class="dec"><summary><span class="q">Named firmware entry or fallback path?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Both on a whole disk or USB drive, only the named entry on a Windows ESP. Firmware forgets NVRAM entries after updates or a flat battery, and every Bombadil VM boots with no stored variables.</p><p class="alt"><b>Other options</b> fallback only, as today (Windows can overwrite it); named entry only (breaks every VM).</p></div></details>
+    <details class="dec"><summary><span class="q">Where is the password typed?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Once, at GRUB's prompt, with a key file in the initramfs, because the kernel inside restore points means GRUB must unlock the disk.</p><p class="alt"><b>Other options</b> Plymouth with kernels on the ESP (rejected in the first brief); TPM (piece 12).</p></div></details>
+    <details class="dec"><summary><span class="q">How many passwords, and whose account?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> One password for the disk, the account, the lock screen and the consoles, set even without encryption, because with passwordless sudo an empty password on tty2 is root for anyone at the keyboard. The account stays <code>user</code> (UID 1000): every path, unit and test uses /home/user, and your name lives in persona.toml. The agent's sudo stays passwordless.</p><p class="alt"><b>Other options</b> a separate disk passphrase; a login name typed on the card.</p></div></details>
+    <details class="dec"><summary><span class="q">A recovery key?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Yes, shown once as text and a QR code (its characters are meant for a US-layout prompt), replaceable with “new recovery key”. Otherwise a forgotten password, or GRUB rejecting a correct one, loses the disk.</p><p class="alt"><b>Other options</b> none.</p></div></details>
+    <details class="dec"><summary><span class="q">The keyring?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> No keyring daemon; Chromium's basic store, protected at rest by the encrypted disk. greetd's autologin skips PAM auth, and with GRUB unlocking the disk pam_systemd_loadkey has no passphrase to reuse.</p><p class="alt"><b>Other options</b> gnome-keyring with an empty password; pam_fde_boot_pw from the AUR.</p></div></details>
+    <details class="dec"><summary><span class="q">Keyboard, language and computer name?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Keyboard and language from the stick's session; the name from the DMI model, with your name in front when the voice card has one (“alexs-thinkpad”), else “bombadil-” and four characters of the machine id, because a fixed “bombadil” collides on a shared network.</p><p class="alt"><b>Other options</b> always “bombadil”; ask.</p></div></details>
+    <details class="dec"><summary><span class="q">The hardware clock?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> UTC on a whole disk, local time next to Windows, said on the card. Writing <code>RealTimeIsUniversal</code> into Windows' SYSTEM hive from Linux risks the one file Windows needs, and BitLocker usually hides it.</p><p class="alt"><b>Other options</b> UTC with the registry write; a command for you to run in Windows.</p></div></details>
+    <details class="dec"><summary><span class="q">Swap?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> zram at min(RAM/2, 8 GiB), no hibernation. A swapfile inside <code>@</code> blocks the snapshot before every turn; a top-level <code>@swap</code> can come later.</p><p class="alt"><b>Other options</b> <code>@swap</code> from day one.</p></div></details>
+    <details class="dec"><summary><span class="q">Install before sign-in or offline, and can the agent do it?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Yes, through the word “install” (a laptop whose Wi-Fi has no driver still needs a way in); the agent fills the card and you press the button.</p><p class="alt"><b>Other options</b> only after sign-in; the agent runs the installer when told.</p></div></details>
+    <details class="dec"><summary><span class="q">How do existing installs reach the new layout and the package?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> One refresh, with a host snapshot first on the VM; hand changes to its root are listed in refresh-&lt;date&gt;.txt and kept aside 14 days.</p><p class="alt"><b>Other options</b> <code>pacman --overwrite</code> in place (a one-off script, and <code>/etc/sudoers.d/bombadil</code> would still conflict); a fresh reinstall, which loses the login because wsl-vm.sh deletes the disk.</p></div></details>
+    <details class="dec"><summary><span class="q">Where do Bombadil's defaults live?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> /usr/share/bombadil, loaded by a short user file.</p><p class="alt"><b>Other options</b> <code>/etc/xdg/hypr/hyprland.lua</code> alone (one personal line forces a full copy); overwriting the user file each release.</p></div></details>
+    <details class="dec"><summary><span class="q">The stick's boot menu?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> One entry plus “Safe graphics” on release ISOs, test entries only in test builds. What the stick keeps between restarts is question 2.</p><p class="alt"><b>Other options</b> today's three entries, one of which erases /dev/vda.</p></div></details>
+    <details class="dec"><summary><span class="q">Secure Boot?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Off, said on the download page with the BitLocker steps and the cost in Windows; Arch's ISO does not boot with it on, and CachyOS, EndeavourOS and Omarchy say the same.</p><p class="alt"><b>Other options</b> Fedora's signed shim from the AUR with a MOK screen; sbctl now.</p></div></details>
+    <details class="dec"><summary><span class="q">Erase, and a new laptop?</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p class="def"><b>Default</b> Erase from the stick (a second on an encrypted disk), and move through the copy drive plus the recipe, which also covers a dead SSD or a stolen laptop.</p><p class="alt"><b>Other options</b> <code>cryptsetup erase</code> on the running root (unverified); a laptop-to-laptop network transfer.</p></div></details>
+  </div>
+</section>
+
+<section id="owned">
+  <h2>Owned by other pieces of work</h2>
+  <ul class="plain">
+    <li><b>Native provider login</b> owns the provider question, sign-in, the Wi-Fi chip, the browser panel and the installer's copy loop. Nothing before merge; piece 1 points the loop at carry.list, piece 3 adds an <code>install</code> action to its setup message, and after piece 2 <code>BROWSER</code> moves.</li>
+    <li><b>Setup voice and welcome lines</b> owns the name and voice card (a name field and three voice rows, after sign-in), the “Welcome home” line, the “Set my time zone” chip and every greeting. This brief decides its time zone step, writes install.json for its first-start line (its ledger, said.json, keeps an undo from repeating the line), and puts the recovery key after that line. The install card's words are this brief's, in the Plain register.</li>
+    <li><b>VM findings fixes</b> owns the mirror list, the hidden GRUB menu, the audio packages, Alt+Space and the <code>-Syu</code> prompt line. Asks: merge before piece 1, take the kernel fix, and change the <code>-Syu</code> line.</li>
+    <li><b>Bombadil logo and design system</b> owns every mark and visual. Placeholders in this flow: the download page's mark and pictures; the stick's boot menu (plain text in systemd-boot today); GRUB's power-on screen, its font, background and the line above the password prompt (only <code>GRUB_DISTRIBUTOR="Bombadil"</code> as text is set here); the greetd password prompt after a logout; the install card and the recovery key card; and whether there is a boot splash at all (this brief cuts Plymouth).</li>
+    <li><b>Named coding sessions and turn dots, Brain index and Focus view, Bombadil VM on Windows, Why lines and machine pictures, App skill and native component kit, Desk rails and first widgets, Noticed chip and self-checks:</b> see the table at the top. <b><a href="bombadil-at-work.html">Bombadil at work</a></b> designs daily work for non-developers and touches nothing here.</li>
+    <li><b>Passenger piece 6 (updates you can watch)</b> has no owner yet; piece 7 here builds it.</li>
+  </ul>
+</section>
+
+<section id="cut">
+  <h2>Cut, and why</h2>
+  <details class="fold">
+    <summary><span>Twelve things left out, each with its reason</span><span class="chev" aria-hidden="true">›</span></summary>
+    <div class="fold-body">
+      <ul class="plain cut">
+        <li><b>archinstall and Calamares.</b> archinstall uses pacstrap (the install would no longer be the tested image) and the busybox encrypt hook, and cannot shrink Windows; Calamares is a large Qt application only in the AUR, with its own screens. We keep our script and borrow their patterns.</li>
+        <li><b>Limine, systemd-boot, UKIs, sdbootutil.</b> GRUB was decided, and these copy kernels onto an ESP that Windows' 100 MiB cannot hold.</li>
+        <li><b>grub-btrfs snapshot entries.</b> Its overlay hook does not work with the systemd initramfs; piece 8's rename matches how undo already works.</li>
+        <li><b>An rsync of the live root over the finished install</b> (a draft's snapshot 2). It would delete fstab, crypttab, the key, the kernel and grub.cfg.</li>
+        <li><b><code>bombadil adopt</code> with <code>pacman --overwrite</code>, and “reset to snapshot 1” without the stick.</b> Existing installs move by refresh, and one way back to stock is enough.</li>
+        <li><b>Refresh as the way people take an update.</b> Layout changes ship as numbered steps inside the update turn.</li>
+        <li><b>Persistence on the live stick.</b> A second kind of Bombadil with no undo.</li>
+        <li><b>Manual partitioning, LVM, RAID, BIOS/CSM, another Linux beside it, OEM mode, ARM laptops and Macs.</b> Rare on day one, and each doubles the tests.</li>
+        <li><b>A Windows entry in GRUB, writing Windows' registry, encrypting an install in place.</b> BitLocker recovery, risk to the one file Windows needs, risk to someone's only copy.</li>
+        <li><b>Hibernation, snapper's hourly timeline, A/B roots, a Plymouth splash.</b> Nobody asked; turn snapshots are the timeline; a read-only root fights the agent; GRUB's prompt comes before any splash.</li>
+        <li><b>NVIDIA installed on the stick itself.</b> It blacklists nouveau and leaves older cards with no driver.</li>
+        <li><b>Our own stick writer, a username field, laptop-to-laptop transfer, TPM and shim now,</b> and any model call on the path that erases a disk.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<section id="extends">
+  <h2>Extends or changes the earlier briefs</h2>
+  <details class="fold">
+    <summary><span>Eleven changes to what earlier briefs decided</span><span class="chev" aria-hidden="true">›</span></summary>
+    <div class="fold-body">
+      <ul class="plain">
+        <li><b>“Installing from the live USB is one card”</b> (ux-brief.md, a body idea, not one of the 29 decisions). Extended with readiness rows, one password, one-line choices, the carry list, USB targets and “Reinstall, keep my files”. “Anything changed during the live session comes along too” changes: programs come as their own restore point, your files through the carry list, and other hand changes to the stick's system files stay behind, which the card says (today's installer already wipes home).</li>
+        <li><b>“Any pause before things no restore point can undo?”</b> (ux-brief.md). Unchanged. Extended: the stick is never offered, USB disks are marked, disks in use are refused, and the agent never presses the button. Until piece 3 only the owner installs, through the terminal.</li>
+        <li><b>“Where does the kernel live?”</b> (ux-brief.md). Kept and built. Extended: GRUB's modules and grub.cfg also sit on the ESP, a fallback initramfs is built, and rollback refuses a restore point with no kernel.</li>
+        <li><b>“One conversation”</b> (ux-brief.md, “One conversation or chat threads?”) <b>and retention</b> (“How many restore points are kept?”). Built in pieces 3 and 4, unchanged.</li>
+        <li><b>Rescue page</b> (ux-brief.md, “What is the rescue screen when the desktop is broken?”, a confirmed decision). Changed only while the screen is locked, and only if a password exists: “talk to Claude here” and “open a shell” ask for it first. Undo and “restart the desktop” stay one key.</li>
+        <li><b>“A bad boot rolls itself back”</b> (ux-brief.md) and the gaps “Lock screen and encryption”, “Exclusions for home snapshots must be decided at install time” and “The live USB has no snapshots at all” (ux-brief.md). Mechanism and designs given here.</li>
+        <li><b>Passenger brief.</b> “How does Bombadil itself update?” kept, built in two stages. Logs and cache at the top level. Lock and encryption go to question 1. The keyring changes to no daemon. The clock next to Windows changes to local time. “This computer” and “Next to Windows” move inside the install card. “A copy somewhere else” and the recipe become the new-laptop path. “Installed only on your word” is asked of the <code>-Syu</code> line.</li>
+        <li><b>Dev brief.</b> CLIs kept, with <code>DISABLE_AUTOUPDATER</code>, and the npm trees stay until piece 7. “Install this build” becomes <code>makepkg</code> plus <code>pacman -U</code>. ~/Projects is built by piece 1.</li>
+        <li><b>Self-improvement brief (accepted 30 Sep).</b> Its VERSION stamp comes from piece 2. Its one-time “install this build” tap to change the quickshell line in each home's hyprland.lua is no longer needed: that line lives in the shipped part. Its open config split is closed.</li>
+        <li><b>Voice brief (pending).</b> Its installer change (stop forcing UTC, enable timesyncd) is built in piece 1, its first-start line reads install.json, and its time zone question is answered here.</li>
+        <li><b>Foundation choice “boot into any old snapshot from the bootloader”</b> (foundation-choices.md). Piece 8 does it for failed starts; choosing any restore point from the menu stays later.</li>
+      </ul>
+    </div>
+  </details>
+</section>
+
+<section id="checked">
+  <h2>Checked today</h2>
+  <details class="fold">
+    <summary><span>Code, branches and upstream, as read on 30 Sep</span><span class="chev" aria-hidden="true">›</span></summary>
+    <div class="fold-body">
+      <h4>Code, read at d9dde3b</h4>
+      <p>bombadil-install:1-74 (typed disk name 7-9, suffix rule 14, home mounted before the copy 22, <code>cp -ax</code> 27, deletions 28-33, ESP at /boot and kernel from bootmnt 34-36, genfstab 38-41, single preset 43-47, UTC 51, hostname 52, account 53-55, <code>--removable</code> 63); bombadil-rollback:1-16; bombadil-smoke:12, :121-139; snapshots.py:31-34, :43, :63; agentd.py:66, :179, :391; launcher.py:284-285, :319-323, :426; mcp_server.py:101-114; bin/bombadil:108; paths.py:39-40; providers.py:249-262; StatusLine.qml:126-129; build-iso.sh; profiledef.sh:10, :15-26; iso/pacman.conf:7-10; packages.x86_64 (no microcode; cryptsetup comes as a systemd dependency); pacman-init.service:7-8; greetd/config.toml:4-9; the enabled units; the boot entries; hyprland.lua:5, :7-12; test-vm.sh:33-34, :73; run-vm.sh:12.</p>
+      <h4>Branches</h4>
+      <p>The VM findings fixes (15 commits past d9dde3b): hidden menu at bombadil-install:63-67, <code>-Syu</code> at providers.py:23, tests/test_iso_profile.py:51, :78. The native login: copy loop at bombadil-install:66-73, bombadil-setup:7, etc/environment:2, build-iso.sh:16, <code>actions</code> at agentd.py:35-40. The named coding sessions: linger at bombadil-install:56-58, skel <code>.codex/config.toml</code>, managed settings with hooks and no <code>DISABLE_*</code> flag. The Windows VM tools: wsl-vm.sh:8, :46, :68-69, :72, :89-90. The Brain index: <code>ExecStart</code> into /usr/local/bin in both units. The machine pictures: CardHost.qml, sysmap.py:507. The app kit: PasswordField.qml. The GitHub API listed the VM findings fixes, the native login, the named coding sessions, the machine pictures and the app kit as open drafts; the desk and the docs had landed, and main (2ee3838) had no changes under iso/ or scripts/ since d9dde3b.</p>
+      <h4>Upstream</h4>
+      <p>archiso hook v73: <code>copytoram=auto</code> (:221), the rule that skips <code>/dev/sr*</code> and needs an image under 4 GiB and MemAvailable above its size plus 2 GiB (:344-351), the image mounted at /run/archiso/airootfs (:370), bootmnt unmounted (:377-380). GRUB NEWS: 2.14 added Argon2 and the TPM2 key protector. CachyOS issue #470: GRUB caps EFI allocations at 4 GiB, so the 1 GiB Argon2 buffer fails on fragmented firmware and the correct password is rejected.</p>
+      <h4>From the research and critiques of 30 Sep 2026, not re-fetched</h4>
+      <p>nvidia-utils blacklists nouveau; a T480 rejecting default argon2id keys; Hyprland 0.56 <code>require</code> of absolute paths; <code>/etc/codex/config.toml</code> as a system layer; <code>DISABLE_AUTOUPDATER</code> against <code>DISABLE_UPDATES</code>; no packages in /usr/local; swapfiles block snapshots; greetd autologin skips PAM auth; BitLocker recovery and suspending; the Windows dual-boot traps; games needing Secure Boot; the keyring timer; keyring packages; Releases as a repository; snapper defaults; man systemd-cryptenroll (recovery key characters) and man cryptsetup-erase (keyslots only); the repository is public; /dev/kvm on hosted runners (search result only); three distributions' geo-IP endpoints answered, and for a lookup that resolved only to “US” all guessed America/Chicago. Sources are listed in the full brief.</p>
+    </div>
+  </details>
+</section>
+
+<section id="tocheck">
+  <h2>To check before building</h2>
+  <details class="fold">
+    <summary><span>In the VM, on a VM that mirrors a real install, and on real hardware</span><span class="chev" aria-hidden="true">›</span></summary>
+    <div class="fold-body">
+      <h4>In the VM</h4>
+      <ol class="plainn">
+        <li><code>findmnt -R /run/archiso</code> after a boot from a USB-attached ISO with 8 GB.</li>
+        <li>GRUB 2.16 opening an argon2id slot at 256 MiB, and the recovery-key slot, with <code>qmp.py send-keys</code> typing into its prompt.</li>
+        <li>grub-mkconfig with grub.cfg on the ESP: <code>cryptomount</code> inside each entry, <code>/@/boot/</code> paths, and a line printed before the prompt.</li>
+        <li>The offline replay of live packages from the stick's cache.</li>
+        <li><code>pcall(require, …)</code> fallback in Hyprland 0.56.2, and user lines overriding the defaults.</li>
+        <li><code>SigLevel</code> inside an included file; 10.0.2.2 reaching the WSL host.</li>
+        <li>Renames across nested home subvolumes (EXDEV in the CLIs' caches), the Brain's watcher seeing writes in them, and reflink copies across them during a refresh.</li>
+        <li>Whether pacman takes an existing unowned backup file as <code>.pacnew</code>.</li>
+      </ol>
+      <h4>On a VM that mirrors a real install, read-only</h4>
+      <p>The commands under piece 1, plus <code>systemctl is-enabled systemd-networkd systemd-resolved systemd-timesyncd</code> and <code>ls /var/log/journal</code>.</p>
+      <h4>On real hardware</h4>
+      <ol class="plainn">
+        <li>The copy-to-RAM failure: <code>findmnt /run/archiso/bootmnt</code> empty on a stick with 8 GB or more.</li>
+        <li>GRUB unlock time and memory on an older ThinkPad and a business Dell or HP.</li>
+        <li>Whether GRUB and its modules fit Windows' 100 MiB ESP.</li>
+        <li>Whether BitLocker asks once or at every start after Secure Boot is turned off without suspending.</li>
+        <li>at_keyboard with USB keyboards at GRUB's prompt, for a non-US keymap later.</li>
+        <li>Overnight battery drain on laptops with only s2idle sleep.</li>
+      </ol>
+    </div>
+  </details>
+</section>
+
+<section id="open">
+  <h2>Open questions</h2>
+  <ul class="plain">
+    <li>Which geo-IP service, and what the card says about the one request it makes.</li>
+    <li>Whether Bombadil may redistribute the Claude Code binary from its own repository; until someone knows, the CLIs stay npm trees (today) or user-level installs fetched from the vendor.</li>
+    <li>How big the ISO gets with firmware and the NVIDIA files on the stick, and whether the image stays under 4 GiB (above it, copy-to-RAM never happens).</li>
+    <li>What the clock does when you travel: a second geo-IP lookup at each new network, or only on “set my time zone”.</li>
+  </ul>
+</section>
+
+<footer>
+  <span>Full brief: <a href="../installed-os-brief.md">installed-os-brief.md</a></span>
+  <span>Seventh design pass. Sits on <a href="how-bombadil-feels.html">How Bombadil should feel</a>, <a href="building-on-bombadil.html">Building on Bombadil</a>, <a href="bombadils-brain.html">Bombadil's Brain</a>, <a href="the-bombadil-desk.html">The Bombadil Desk</a>, <a href="riding-with-bombadil.html">Riding with Bombadil</a>, <a href="bombadils-voice.html">Bombadil's voice</a> and <a href="bombadil-tends-itself.html">Bombadil tends itself</a>.</span>
+</footer>
+</div>
+
+<script>
+document.querySelectorAll('.expand button').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var open = b.getAttribute('data-open') === '1';
+    document.querySelectorAll('details.dec').forEach(function (d) { d.open = open; });
+  });
+});
+</script>
+
+</body></html>

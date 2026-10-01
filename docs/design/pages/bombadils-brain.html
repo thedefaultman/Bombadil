@@ -175,6 +175,7 @@ details.dec .more .alt b { font-family: var(--mono); font-size: 11.5px; letter-s
 .group ul, ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 10px; max-width: 74ch; }
 .group li, ul.plain li { color: var(--soft); font-size: 15.5px; }
 .group li strong, ul.plain li strong { color: var(--fg); }
+.group > .intro { color: var(--soft); font-size: 15.5px; max-width: 74ch; }
 .cut li { color: var(--muted); }
 .cut li strong { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 .pitfalls { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
@@ -204,7 +205,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <h1>Bombadil's Brain</h1>
   <p class="lede">You have a PDF open, tap Super and click the chip that names it. The Brain rises around it: the PDF in the middle, and in fixed places around it where it came from, what was made from it, what you used with it, and every time it changed, each line saying who and when. Zoom out and you see the whole machine as a map that holds still, each area a cluster of dots that are bright when they were touched lately and breathe while someone is touching them now: white for you, orange for the machine, blue for a coding session. Drag the strip along the bottom back to Tuesday and the map lights what you touched that day. Nobody writes any of it. The OS sees every save, download, turn and session edit as it happens, so the brain cannot fall behind, and every sentence a model writes about it is pinned to what it read and greys out when that changes. You learn one word, <q class="ui">brain</q>, and the chip you already click.</p>
   <div class="screen" role="img" aria-label="The Bombadil screen with the Brain window showing the Map above the pill.">
-    <div class="brainwin"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Latchkey, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
+    <div class="brainwin"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Acme, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
 <rect width="420" height="300" rx="10" fill="#101214"/>
 <path d="M160.0 138.0 Q118.2 94.4 66.0 64.0" stroke="#2c3238" stroke-width="7" fill="none" stroke-linecap="round" opacity=".9"/>
 <path d="M160.0 138.0 Q204.6 96.3 236.0 44.0" stroke="#2c3238" stroke-width="5" fill="none" stroke-linecap="round" opacity=".9"/>
@@ -327,7 +328,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <text x="66.0" y="47.7" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Arch Wiki</text>
 <text x="236.0" y="28.0" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">GitHub</text>
 <text x="160.0" y="102.5" font-size="10.5" font-weight="650" fill="#e6e8eb" text-anchor="middle">Bombadil</text>
-<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Latchkey</text>
+<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Acme</text>
 <text x="356.0" y="163.9" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">System</text>
 <text x="290.0" y="220.3" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Apps</text>
 <text x="74.0" y="187.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Lease</text>
@@ -369,7 +370,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 </svg></div>
     <div class="m-pill"><i class="dot"></i><span class="m-chip grey">snapshots.py <b>×</b></span><span class="m-ph">Ask anything</span><span class="m-meta">13:04</span></div>
   </div>
-  <p class="note">This is the third experience brief. It sits on top of How Bombadil should feel and Building on Bombadil (both 27 Sep 2026), whose 29 and 19 decisions are confirmed and stay in force. Where the brain needs one of them extended, the change is named at the end. Daniel confirmed this brief, its recommendation and its 17 defaults on 27 Sep 2026.</p>
+  <p class="note">This is the third experience brief. It sits on top of <a href="how-bombadil-feels.html">How Bombadil should feel</a> and <a href="building-on-bombadil.html">Building on Bombadil</a> (both 27 Sep 2026), whose 29 and 19 decisions are confirmed and stay in force. Where the brain needs one of them extended, the change is named at the end. The project owner confirmed this brief, its recommendation and its 17 defaults on 27 Sep 2026. Sentences that say what the code does or what exists describe the code on 27 Sep 2026; <a href="../brain-brief.md">brain-brief.md</a> says where each piece stands on 2026-10-01.</p>
   <div class="hero-meta">
     <span><b>4</b> ways to look at it, drawn</span>
     <span><b>6</b> to build first</span>
@@ -384,7 +385,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="compare">
   <h2>Graph, or something better</h2>
-  <p class="intro">You asked for Obsidian's graph view, natively, and for something better if the graph is not the best experience. Here are four ways to look at the same machine on the same afternoon, drawn in the OS's own colors. My recommendation is C as the view that opens, B as the overview, and D as the strip that runs under both.</p>
+  <p class="intro">The project owner asked for Obsidian's graph view, natively, and for something better if the graph is not the best experience. Here are four ways to look at the same machine on the same afternoon, drawn in the OS's own colors. My recommendation is C as the view that opens, B as the overview, and D as the strip that runs under both.</p>
   <div class="options">
     <figure class="opt" style="margin:0">
       <div class="opt-head"><span class="opt-letter">A</span><h3>The Obsidian graph, drawn natively</h3><span class="verdict">Not built as its own view</span></div>
@@ -835,7 +836,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     </figure>
     <figure class="opt rec" style="margin:0">
       <div class="opt-head"><span class="opt-letter">B</span><h3>The Map</h3><span class="verdict yes">The overview</span></div>
-      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Latchkey, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
+      <div class="frame"><svg class="mock-svg" viewBox="0 0 420 300" role="img" aria-label="The Map: areas such as Bombadil, Acme, Lease, Arch Wiki and System sit in fixed places as clusters of dots, joined by a few wide roads; three dots glow, snapshots.py in blue, a letter in white and qemu-full in orange; a week strip runs along the bottom.">
 <rect width="420" height="300" rx="10" fill="#101214"/>
 <path d="M160.0 138.0 Q118.2 94.4 66.0 64.0" stroke="#2c3238" stroke-width="7" fill="none" stroke-linecap="round" opacity=".9"/>
 <path d="M160.0 138.0 Q204.6 96.3 236.0 44.0" stroke="#2c3238" stroke-width="5" fill="none" stroke-linecap="round" opacity=".9"/>
@@ -958,7 +959,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <text x="66.0" y="47.7" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Arch Wiki</text>
 <text x="236.0" y="28.0" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">GitHub</text>
 <text x="160.0" y="102.5" font-size="10.5" font-weight="650" fill="#e6e8eb" text-anchor="middle">Bombadil</text>
-<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Latchkey</text>
+<text x="336.0" y="67.5" font-size="10.5" font-weight="650" fill="#6b737c" text-anchor="middle">Acme</text>
 <text x="356.0" y="163.9" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">System</text>
 <text x="290.0" y="220.3" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Apps</text>
 <text x="74.0" y="187.6" font-size="9" font-weight="650" fill="#e6e8eb" text-anchor="middle">Lease</text>
@@ -1114,7 +1115,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <line x1="12" y1="40" x2="410" y2="40" stroke="#1e2226"/>
 <text x="14" y="54" font-size="7.4" fill="#e6e8eb" font-weight="600">Bombadil</text>
 <line x1="12" y1="72" x2="410" y2="72" stroke="#1e2226"/>
-<text x="14" y="86" font-size="7.4" fill="#e6e8eb" font-weight="600">Latchkey</text>
+<text x="14" y="86" font-size="7.4" fill="#e6e8eb" font-weight="600">Acme</text>
 <line x1="12" y1="104" x2="410" y2="104" stroke="#1e2226"/>
 <text x="14" y="118" font-size="7.4" fill="#e6e8eb" font-weight="600">Lease</text>
 <line x1="12" y1="136" x2="410" y2="136" stroke="#1e2226"/>
@@ -1173,7 +1174,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <div class="legend"><span><i class="c-you"></i>you</span><span><i class="c-mac"></i>the machine's agent</span><span><i class="c-ses"></i>a coding session</span><span>Position says what, color says who.</span></div>
   <div class="recbox">
     <h3>Recommendation: C opens, B is the overview, D runs under both</h3>
-    <p>All three read one index. The free-floating graph of everything is not built as a view of its own, but the Map keeps its look, so the machine still feels like a brain when you zoom out. Obsidian's own users navigate with the local graph, links and search, and in 2025 Obsidian itself added Bases, table and card views, beside the graph. If you would rather have A as the main view anyway, say <q class="ui">graph</q> and the Map becomes a free layout instead.</p>
+    <p>All three read one index. The free-floating graph of everything is not built as a view of its own, but the Map keeps its look, so the machine still feels like a brain when you zoom out. Obsidian's own users navigate with the local graph, links and search, and in 2025 Obsidian itself added Bases, table and card views, beside the graph. Choosing A as the main view instead would turn the Map into a free layout.</p>
   </div>
 </section>
 
@@ -1266,7 +1267,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <div class="piece-body">
     <div class="mock">
       <div class="m-term">
-        <span><b>api · Latchkey</b> · Claude Code</span>
+        <span><b>api · Acme</b> · Claude Code</span>
         <span class="you">› use the approach from the zellij page I read last week</span>
         <span class="tool">● brain_search("zellij", kind: page, since: 7d)</span>
         <span>&nbsp;&nbsp;3 pages you read, Tue and Thu</span>
@@ -1274,7 +1275,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       </div>
     </div>
     <div class="piece-text">
-      <p class="see"><q class="ui">what was I doing on Latchkey before the weekend?</q> answers in two lines and opens that stretch in Time. In a coding session on Latchkey, <q class="ui">use the approach from the zellij page I read last week</q> works: the session asks the brain and gets the three pages with their URLs, instead of asking you. When a session starts on a project, its first line of context says <q class="ui">Since your last session here: kit changed shell.qml, PR 418 merged, you read 3 pages about zellij.</q></p>
+      <p class="see"><q class="ui">what was I doing on Acme before the weekend?</q> answers in two lines and opens that stretch in Time. In a coding session on Acme, <q class="ui">use the approach from the zellij page I read last week</q> works: the session asks the brain and gets the three pages with their URLs, instead of asking you. When a session starts on a project, its first line of context says <q class="ui">Since your last session here: kit changed shell.qml, PR 418 merged, you read 3 pages about zellij.</q></p>
       <dl>
         <dt>Why first</dt><dd>Today every turn starts blind and spends tokens rediscovering the machine with find, ls and grep. An index the OS already keeps makes both agents faster and cheaper, and it makes what the agent knows the same as what you see.</dd>
         <dt>What changes</dt><dd>os-mcp gains brain_search(query, kind, since), brain_focus(thing), brain_why(path), brain_timeline(since, area) and brain_recent. The bombadil-dev MCP from the second brief gains read-only brain_search and brain_focus scoped to the session's project, the pages linked to it and the machine turns it asked for, never your whole home. Results are plain text with paths and reasons, and page titles and URLs are marked as untrusted data, as the first brief's [Screen] block already is. The [Screen] block gains one line from the brain for <q class="ui">this</q>. The <q class="ui">since your last session here</q> line is built locally and added through the SessionStart hook, with no model call. Nothing else is added to a turn automatically; the agent calls the tools when it needs them.</dd>
@@ -1291,9 +1292,9 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
       <div class="m-pill"><i class="dot"></i><span class="m-typed">what's eating my disk?</span></div>
     </div>
     <div class="piece-text">
-      <p class="see">Type <q class="ui">map</q>, or press the Map crumb at the top of Focus. Your areas sit where they always sit: Bombadil and Latchkey, Passwords and Tracker, Lease and Taxes 2026, Arch Wiki and GitHub, System. Each is a cluster of dots, bigger and brighter for what was touched lately and often. While builder edits snapshots.py its dot breathes blue; your save of the letter to your landlord pulses white; the machine installing qemu-full glows orange in System. Roads between areas are as wide as what they share. Point at a dot and its lines appear; click and it opens in Focus. Scrolling zooms into an area, where the dimmer things appear. <q class="ui">what's eating my disk?</q> switches the Map to size: the same places, with every dot and area sized by bytes instead. The big picture is option B above.</p>
+      <p class="see">Type <q class="ui">map</q>, or press the Map crumb at the top of Focus. Your areas sit where they always sit: Bombadil and Acme, Passwords and Tracker, Lease and Taxes 2026, Arch Wiki and GitHub, System. Each is a cluster of dots, bigger and brighter for what was touched lately and often. While builder edits snapshots.py its dot breathes blue; your save of the letter to your landlord pulses white; the machine installing qemu-full glows orange in System. Roads between areas are as wide as what they share. Point at a dot and its lines appear; click and it opens in Focus. Scrolling zooms into an area, where the dimmer things appear. <q class="ui">what's eating my disk?</q> switches the Map to size: the same places, with every dot and area sized by bytes instead. The big picture is option B above.</p>
       <dl>
-        <dt>Why first</dt><dd>It is the overview you asked for, in the graph's look, but it can be learned like a city, it shows where work is happening right now, and it never becomes a hairball. It comes fifth because an empty brain draws an empty map.</dd>
+        <dt>Why first</dt><dd>It is the overview the project owner asked for, in the graph's look, but it can be learned like a city, it shows where work is happening right now, and it never becomes a hairball. It comes fifth because an empty brain draws an empty map.</dd>
         <dt>What changes</dt><dd>bombadil-brain lays areas out once with a force layout over the links between areas, places each thing around its area in a spiral ordered by when it arrived, and stores every position in brain.db. A new thing takes the nearest free spot to its area, and an area that grows makes room by moving only its newest members. The Brain app draws the Map in one scene-graph item (a few hundred dots and a dozen roads), and the live pulses come from the same event stream the witnesses feed. What is drawn at rest is chosen by aliveness (recency, frequency, and whether you or an agent touched it), with areas always shown.</dd>
       </dl>
     </div>
@@ -1329,10 +1330,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
     <li><h3>Where it came from</h3><p>With the PDF in front, a click on the chip. Focus shows it came from rent-portal's <q class="ui">Lease renewal 2026</q> page on Tuesday at 14:02, that the machine made letter-to-landlord.odt from it in turn 57 (<q class="ui">draft a reply saying we'll renew</q>), and that budget-2026.ods was open beside it both times.</p></li>
     <li><h3>A file you do not recognize</h3><p>~/setup-wg.sh sits in your home. <q class="ui">why is this here?</q> answers <q class="ui">Made by the machine in turn 41, 'install the VPN', on Monday. Nothing has opened it since.</q> with Move to Trash.</p></li>
     <li><h3>At the code</h3><p>You are reading snapshots.py in reviewer. A click on the chip shows that builder rewrote prune() an hour ago, flaky-snapshot touched it on Tuesday, and kit is changing launcher.py, which changed with it five times. <q class="ui">tell flaky-snapshot builder rewrote prune() an hour ago</q> reaches the session as typed text.</p></li>
-    <li><h3>A session that asks instead of guessing</h3><p>In Latchkey's Claude Code: <q class="ui">use the approach from the zellij page I read last week</q>. The session calls brain_search and continues with the right URL.</p></li>
+    <li><h3>A session that asks instead of guessing</h3><p>In Acme's Claude Code: <q class="ui">use the approach from the zellij page I read last week</q>. The session calls brain_search and continues with the right URL.</p></li>
     <li><h3>Friday</h3><p><q class="ui">history</q>, then drag back to Tuesday afternoon. The Map lights Lease, rent-portal, and flaky-snapshot's corner of Bombadil. You click the block named <q class="ui">fix the race</q> and see the four files it changed.</p></li>
     <li><h3>Tidying</h3><p><q class="ui">tidy my downloads</q> is a turn. On the Map, dots leave Downloads for Lease, Taxes 2026 and Installers as it works, keeping their links, and the closing line says <q class="ui">Moved 23 files into 4 folders. [Undo]</q>.</p></li>
-    <li><h3>Evening</h3><p><q class="ui">map</q>. Latchkey is dim after a quiet week, Bombadil is bright, and a new area, Wedding, has appeared since Wednesday from a folder and a few pages. <q class="ui">make me a reading list of what I read about btrfs this month</q> builds a small app that asks the brain, so it stays current without anyone updating it.</p></li>
+    <li><h3>Evening</h3><p><q class="ui">map</q>. Acme is dim after a quiet week, Bombadil is bright, and a new area, Wedding, has appeared since Wednesday from a folder and a few pages. <q class="ui">make me a reading list of what I read about btrfs this month</q> builds a small app that asks the brain, so it stays current without anyone updating it.</p></li>
   </ol>
 </section>
 
@@ -1362,7 +1363,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="decisions">
   <h2>Decisions, confirmed</h2>
-  <p class="intro">Each of these forks. I picked a default and say why; the other options are listed for the record. Daniel accepted every default on 2026-09-27, so these are confirmed decisions, not proposals.</p>
+  <p class="intro">Each of these forks. I picked a default and say why; the other options are listed for the record. The project owner accepted every default on 2026-09-27, so these are confirmed decisions, not proposals.</p>
   <div class="expand"><button type="button" id="open-all">Open all</button><button type="button" id="close-all">Close all</button></div>
   <div class="decisions">
     <details class="dec"><summary><span class="q">Is the main view a graph?</span><span class="d">Focus opens by default, the Map is the overview, and Time runs along the bottom.</span><span class="chev" aria-hidden="true">›</span></summary><div class="more"><p>The Map keeps the graph's look with pinned positions, a few hundred alive things and bundled roads; a free-floating force graph of everything is not built. The global graph is lovely for a minute and unusable after a month, while the local graph is what people actually navigate with.</p><p class="alt"><b>Other options</b> Obsidian's global graph as the home view; a 3D brain; a dashboard of cards.</p></div></details>
@@ -1420,7 +1421,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <ul class="plain cut">
     <li><strong>A free-floating global graph as the home view.</strong> A hairball at real size, no <q class="ui">where</q>, no <q class="ui">when</q>, and no reasons on the lines.</li>
     <li><strong>"Similar" links from embeddings drawn on the Map.</strong> Noise that looks like knowledge, and wrong often enough to make every line suspect.</li>
-    <li><strong>A wiki or notes folder the agent keeps.</strong> Exactly the stale markdown you ruled out; prose that is not pinned to its sources rots.</li>
+    <li><strong>A wiki or notes folder the agent keeps.</strong> Exactly the stale markdown the project owner ruled out; prose that is not pinned to its sources rots.</li>
     <li><strong>Tags you maintain.</strong> The same chore as notes. Areas and stretches of work come from what happened.</li>
     <li><strong>A virtual file system in place of folders.</strong> Every tool and both agents read plain paths.</li>
     <li><strong>A 3D brain.</strong> Harder to read, harder to click, and slower in a VM.</li>
@@ -1433,6 +1434,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   <h2>Gaps worth thinking about</h2>
   <div class="group">
     <h3>In the code today</h3>
+    <p class="intro">Checked against main on 2026-10-01: the first three gaps still hold. The turn row carries a read list but still has no list of the files a turn wrote; the installer creates a snapper config for / only; and an app is found by its process name, <code>bombadil-app run &lt;name&gt;</code>. The fourth is closed: <code>src/bombadil/browser.py</code> starts Chromium with its own <code>--user-data-dir</code>.</p>
     <ul>
       <li>A turns.jsonl row has no list of the files the turn touched, only the prompt, the result and a details string, so <q class="ui">made by turn 41</q> needs agentd to record them.</li>
       <li>There is no snapper config for /home yet, so versions of home files wait for it, as the first brief's live undo does.</li>
@@ -1469,7 +1471,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <section id="extends">
   <h2>Extends or changes the first two briefs</h2>
   <ul class="plain">
-    <li><strong>Rule 8, one memory you can read:</strong> extended. The brain is the machine's readable memory of what happened; memory.md stays the short list about Daniel.</li>
+    <li><strong>Rule 8, one memory you can read:</strong> extended. The brain is the machine's readable memory of what happened; memory.md stays the short list about the person.</li>
     <li><strong>Rewind:</strong> folded into the Brain as its time strip. <q class="ui">history</q> and Super+Z are unchanged; Rewind's thumbnails and rows are read as they are.</li>
     <li><strong>Why is this like this?:</strong> gets Focus and brain_why, reading the brain instead of turns.jsonl alone.</li>
     <li><strong>What skips the model:</strong> extended with Tab-accepted matches from the brain (files, pages, stretches of work), <q class="ui">brain</q>, <q class="ui">map</q>, <q class="ui">where did this come from?</q>, <q class="ui">why is this here?</q> and <q class="ui">forget this</q>. Enter on text that was not accepted still goes to the agent.</li>
@@ -1488,7 +1490,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <section id="facts">
   <div class="facts">
     <h2>Checked today</h2>
-    <p class="intro">These are the facts the design rests on, checked against kernel, browser and vendor sources on 27 Sep 2026. The build threads should re-check the ones marked as moving.</p>
+    <p class="intro">These are the facts the design rests on, checked against kernel, browser and vendor sources on 27 Sep 2026. A builder should re-check the ones marked as moving.</p>
     <ul>
       <li>fanotify: an unprivileged process gets only inode marks with no other process's pid, so the watcher is a root service. A filesystem mark (<code>FAN_MARK_FILESYSTEM</code>, needs CAP_SYS_ADMIN) reports creates, deletes, renames and moves with the writer's pid, and <code>FAN_REPORT_PIDFD</code> (since 5.15) gives a pidfd for a safe lookup of its cgroup. Directory-entry events still fail on mount marks in mainline, so it must be a filesystem mark.</li>
       <li>fanotify on btrfs: a filesystem mark with FID reporting placed on a subvolume such as /home fails with EXDEV, because btrfs mixes the subvolume id into the fsid, and the 6.8 change only allowed inode marks inside one subvolume. The way through, read from the source and not yet run: mount the top-level subvolume (subvolid=5) at a private path and mark that; every subvolume shares the one superblock, so /home is covered. Moving.</li>
@@ -1505,7 +1507,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
   </div>
 </section>
 
-<footer>Bombadil experience brief 3. Text: /mnt/project-files/design/brain-brief.md in the project's files. Earlier briefs: How Bombadil should feel, Building on Bombadil.</footer>
+<footer>Bombadil experience brief 3. Text, and where each piece stands: <a href="../brain-brief.md">brain-brief.md</a>. Earlier briefs: <a href="how-bombadil-feels.html">How Bombadil should feel</a>, <a href="building-on-bombadil.html">Building on Bombadil</a>.</footer>
 </div>
 <script>
 (function () {

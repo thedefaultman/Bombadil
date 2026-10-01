@@ -1,6 +1,13 @@
 # AI Linux distro: foundation choices
 
+> **Status:** Partly shipped. All seven choices are in force and each has code behind it. Not built: booting an old snapshot from the bootloader menu (choice 1), the custom compositor (choice 2, planned for later) and the agent seeing and acting in the browser page over the DevTools protocol (choice 7). A boot on real hardware (choice 3) is not recorded anywhere in the repository. The first milestone at the end of this brief is built.  
+> **Code:** `iso/packages.x86_64`, `iso/profiledef.sh`, `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-rollback`, `src/bombadil/snapshots.py` (1); `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `src/bombadil/hypr.py`, `shell/shell.qml` (2); `scripts/build-iso.sh`, `scripts/run-vm.sh`, `scripts/test-vm.sh` (3); `src/bombadil/agentd.py`, `src/bombadil/providers.py` (4); `src/bombadil/apps.py`, `src/bombadil/appkit/runtime.py`, `share/qml/Bombadil/` (5); `src/bombadil/mcp_server.py`, `src/bombadil/config.py` (6); `src/bombadil/browser.py`, `bin/bombadil-browser`, `iso/airootfs/etc/chromium/policies/managed/bombadil.json` (7)  
+> **Design:** this brief is the design and has no page. Where each choice is built: [architecture overview](../ARCHITECTURE.md), [ISO and install](../architecture/iso-and-install.md), [restore points](../architecture/restore-points.md), [shell](../architecture/shell.md), [agentd](../architecture/agentd.md), [app kit](../architecture/app-kit.md), [os-mcp](../architecture/os-mcp.md), [browser and sign-in](../architecture/browser-and-signin.md). The choices are in the [decision log](../decisions.md).  
+> **Verified:** 2026-10-01 against `main` at `26843d3`: the status above, by reading the code behind each claim and running the tests for agentd, providers, os-mcp, Hyprland, the browser, apps, the ISO profile, the launcher, sign-in, cards and config (440 pass). The VM smoke test (`scripts/test-vm.sh`) was not run for this check; its recorded logs are in `docs/review/boot-logs/`. Sizes, timings and what the options tables say about other distros, toolkits and browsers were not re-checked.
+
 Each section leads with the recommendation, then the alternatives. Answer with one word per choice (the **bold** word).
+
+> **Reading note.** This brief was written as a question, so its prompts to answer and to pick belong to the round in which the choices were made. The recommended option of each section is the choice in force. The text describes the design, and as of 2026-10-01 the code differs from it in four places. A restore point is taken before every turn, not only before turns that touch the system, and undo takes effect at the next boot through `bombadil-rollback`; the bootloader has no menu of old snapshots (section 1). Notifications are shown by `mako`, not by Quickshell (section 2). The provider is asked at first boot in the pill, or by `bombadil-setup`, not by the installer (section 6). No os-mcp tool lets the agent act in the browser page; the DevTools port is used only to list, open, raise and close tabs (section 7).
 
 ---
 
@@ -36,7 +43,7 @@ The shell itself (agent bar, panels, notifications) would be **Quickshell**, a t
 
 ## 3. First target → **VM**, with an ISO that also boots real hardware
 
-**Why:** a VM (QEMU with virtio-gpu) gives fast rebuild and test loops and cheap snapshots while the core is changing daily. Build it with `archiso` so the same ISO boots on your laptop whenever you want to try it.
+**Why:** a VM (QEMU with virtio-gpu) gives fast rebuild and test loops and cheap snapshots while the core is changing daily. Build it with `archiso` so the same ISO boots on a laptop whenever you want to try it.
 
 | Option | Pros | Cons |
 |---|---|---|
@@ -70,7 +77,7 @@ The agent runs as your user with passwordless sudo and the CLIs in their full-au
 | **QML** + Python (recommended) | Instant, no build; animations; hot reload; same language as the Quickshell shell | Qt adds roughly 200 MB to the image |
 | **GTK4** + Python (libadwaita) | Native GNOME look; also no build step | Custom animations and unusual layouts are harder; different language from the shell |
 | **Rust** (egui / iced / Slint) | Fast, small binaries | Compiles take 30 s to minutes and fail often, which breaks the "created on the spot" feel |
-| **Tauri / webview** | Agents are great at HTML | It is still a web app inside a window, which is what you said you don't want |
+| **Tauri / webview** | Agents are great at HTML | It is still a web app inside a window, which the project rules out (see [real native apps](../principles.md#real-native-apps)) |
 
 ---
 

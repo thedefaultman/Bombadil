@@ -1,12 +1,20 @@
 # Bombadil's Brain
 
-You have a PDF open, tap Super and click the chip that names it. The Brain rises around it: the PDF in the middle, and in fixed places around it where it came from (a page you read on Tuesday), what was made from it (a letter the machine drafted), what you used with it, and every time it changed, each line saying who and when. Zoom out and you see the whole machine as a map that holds still: Bombadil, Latchkey, Passwords, your lease, the sites you read, each a cluster of dots that are bright when they were touched lately and breathe while someone is touching them now, white for you, orange for the machine, blue for a coding session. Drag the strip along the bottom back to Tuesday and the map lights what you touched that day. Nobody writes any of it. The OS sees every save, download, turn and session edit as it happens, so the brain cannot fall behind, and every sentence a model writes about it is pinned to what it read and greys out when that changes. You learn one word, "brain", and the chip you already click.
+> **Status:** In progress. Pieces 1 and 2 have code that is not on `main`, and so has the search half of piece 3; pieces 4, 5 and 6 are designed and have no code.  
+> **Code:** none of the six pieces is on `main`. They build on `src/bombadil/agentd.py` (the `read` list in each `turns.jsonl` row), `src/bombadil/procs.py` (the `bombadil-turn-*` scope a turn runs in), `src/bombadil/launcher.py`, `src/bombadil/apps.py` (`builtin_dir()`, where apps that ship with Bombadil are looked up) and `src/bombadil/browser.py` (Chromium's own profile). Where each piece stands: the list under "Build these first", the [roadmap](../roadmap.md) and [the brain](../architecture/brain.md).  
+> **Design:** [Bombadil's Brain, the page](pages/bombadils-brain.html), [UX model](../ux/README.md), [Design system](../design-system/README.md)  
+> **Decided by:** the project owner, 2026-09-27 (this brief, its recommendation and its 17 defaults)  
+> **Verified:** 2026-10-01 against `main` at `26843d3`: that none of the six pieces is on `main`, the state of each piece below and the list "In the code today". What the unmerged work covers was read on its branch, not run. The kernel, browser and vendor facts under "Checked today" are dated 27 Sep 2026 and were not re-checked.
 
-This is the third experience brief. It sits on top of How Bombadil should feel and Building on Bombadil (both 27 Sep 2026), whose 29 and 19 decisions are confirmed and stay in force. Where the brain needs one of them extended, the change is named at the end. Daniel confirmed this brief, its recommendation (Focus, the Map and Time over one index) and its 17 defaults on 27 Sep 2026.
+You have a PDF open, tap Super and click the chip that names it. The Brain rises around it: the PDF in the middle, and in fixed places around it where it came from (a page you read on Tuesday), what was made from it (a letter the machine drafted), what you used with it, and every time it changed, each line saying who and when. Zoom out and you see the whole machine as a map that holds still: Bombadil, Acme, Passwords, your lease, the sites you read, each a cluster of dots that are bright when they were touched lately and breathe while someone is touching them now, white for you, orange for the machine, blue for a coding session. Drag the strip along the bottom back to Tuesday and the map lights what you touched that day. Nobody writes any of it. The OS sees every save, download, turn and session edit as it happens, so the brain cannot fall behind, and every sentence a model writes about it is pinned to what it read and greys out when that changes. You learn one word, "brain", and the chip you already click.
+
+This is the third experience brief. It sits on top of [How Bombadil should feel](ux-brief.md) and [Building on Bombadil](dev-brief.md) (both 27 Sep 2026, called the first and the second brief below), whose 29 and 19 decisions are confirmed and stay in force. Where the brain needs one of them extended, the change is named at the end. The project owner confirmed this brief, its recommendation (Focus, the Map and Time over one index) and its 17 defaults on 27 Sep 2026.
+
+> **Reading note.** Sentences that say what the code does or what exists ("today", "Most of it does not exist yet", the list under "In the code today") describe the code on the day the brief was written, 27 Sep 2026. The list under "Build these first" says how far each of the six pieces stands on 2026-10-01. [Known issues](../known-issues.md) and the [roadmap](../roadmap.md) say what holds on `main`.
 
 ## Graph, or something better
 
-Daniel asked for Obsidian's graph view, natively, and for something better if the graph is not the best experience. The page draws four options side by side. The short version:
+The project owner asked for Obsidian's graph view, natively, and for something better if the graph is not the best experience. The [page](pages/bombadils-brain.html) draws four options side by side. The short version:
 
 - **A. The Obsidian graph, drawn natively.** Every thing a dot, every link a line, a force layout. It is the best first minute there is: it looks like a brain, and clusters and orphans jump out. Used daily, it fails in four ways. At the size of a real machine (tens of thousands of files, pages, turns) it is a hairball. Positions reshuffle every time it opens, so there is no "where" to learn. A line has no reason and no date. And you cannot find anything by looking at it, so you search anyway. Obsidian's own users navigate with the local graph, links and search, and in 2025 Obsidian added Bases, table and card views of notes, beside the graph.
 - **B. The Map (the overview I recommend).** The same dots and lines, but clusters are your areas (projects, apps, the folders you use, the sites you read), laid out once and pinned, so you learn it like a city. Only the few hundred most alive things are drawn, lines between areas are bundled into one road whose width says how much they share, and lines to single things appear only for the one you point at. A dot breathes while someone touches it, in that actor's color.
@@ -28,6 +36,15 @@ Daniel asked for Obsidian's graph view, natively, and for something better if th
 ## Build these first
 
 Six pieces, in this order. The first one starts recording history, which cannot be recovered later, so it should start as early as possible. The next three are what gets used every day. The Map and Time come last because a map needs a few weeks of history to be worth looking at, and by then the first piece has collected it.
+
+Where each piece stands, checked against `main` on 2026-10-01:
+
+- **1. The brain writes itself: in progress, not on `main`.** `main` has two of its seams: every turn runs in its own `bombadil-turn-*` scope when systemd can make one (`src/bombadil/agentd.py`, `src/bombadil/procs.py`), and the turn's `turns.jsonl` row carries a `read` list (`src/bombadil/agentd.py`, `_log`). It has no `bombadil-brain` service, no watcher and no `brain.db`, and the row has no list of the files a turn wrote.
+- **2. Focus: in progress, not on `main`.** `src/bombadil/apps.py` already looks up apps that ship with Bombadil (`builtin_dir()` is `share/apps`), but that folder does not exist on `main`, so there is no Brain app.
+- **3. Find anything from the pill: in progress for the search, designed for the pill.** The index search is part of the unmerged work. `src/bombadil/launcher.py` on `main` matches app names, panels and a fixed list of commands, and offers no matches from an index.
+- **4. The agents read the same brain: designed.** `src/bombadil/mcp_server.py` has no `brain_*` tool, and nothing on `main` puts a line from the brain into a prompt.
+- **5. The Map: designed.** No code lays out areas or draws a map.
+- **6. Time: designed.** No code groups events into stretches of work. Rewind, the app this piece folds in, is designed in the first brief and has no code either: on `main`, `history` opens `bombadil history`, a list of recent turns and launcher actions in a terminal (`src/bombadil/launcher.py`, `bin/bombadil`).
 
 ### 1. The brain writes itself
 
@@ -71,7 +88,7 @@ Who made a file, and for a download where it came from, is also written on the f
 
 ### 4. The agents read the same brain
 
-**What you see:** "what was I doing on Latchkey before the weekend?" answers in two lines and opens that stretch in Time. In a coding session on Latchkey, "use the approach from the zellij page I read last week" works: the session asks the brain and gets the three pages with their URLs, instead of asking you. When a session starts on a project, its first line of context says "Since your last session here: kit changed shell.qml, PR 418 merged, you read 3 pages about zellij."
+**What you see:** "what was I doing on Acme before the weekend?" answers in two lines and opens that stretch in Time. In a coding session on Acme, "use the approach from the zellij page I read last week" works: the session asks the brain and gets the three pages with their URLs, instead of asking you. When a session starts on a project, its first line of context says "Since your last session here: kit changed shell.qml, PR 418 merged, you read 3 pages about zellij."
 
 **Why first:** Today every turn starts blind and spends tokens rediscovering the machine with find, ls and grep. An index the OS already keeps makes both agents faster and cheaper, and it makes what the agent knows the same as what you see.
 
@@ -81,9 +98,9 @@ Who made a file, and for a download where it came from, is also written on the f
 
 ### 5. The Map: the whole machine, holding still, showing what is alive
 
-**What you see:** Type "map", or press the Map crumb at the top of Focus. Your areas sit where they always sit: Bombadil and Latchkey, Passwords and Tracker, Lease and Taxes 2026, Arch Wiki and GitHub, System. Each is a cluster of dots, bigger and brighter for what was touched lately and often. While builder edits snapshots.py its dot breathes blue; your save of the letter to your landlord pulses white; the machine installing qemu-full glows orange in System. Roads between areas are as wide as what they share, so Bombadil to Arch Wiki is thick and Lease to Bombadil does not exist. Point at a dot and its lines appear; click and it opens in Focus. Scrolling zooms into an area, where the dimmer things appear. "what's eating my disk?" switches the Map to size: the same places, with every dot and area sized by bytes instead.
+**What you see:** Type "map", or press the Map crumb at the top of Focus. Your areas sit where they always sit: Bombadil and Acme, Passwords and Tracker, Lease and Taxes 2026, Arch Wiki and GitHub, System. Each is a cluster of dots, bigger and brighter for what was touched lately and often. While builder edits snapshots.py its dot breathes blue; your save of the letter to your landlord pulses white; the machine installing qemu-full glows orange in System. Roads between areas are as wide as what they share, so Bombadil to Arch Wiki is thick and Lease to Bombadil does not exist. Point at a dot and its lines appear; click and it opens in Focus. Scrolling zooms into an area, where the dimmer things appear. "what's eating my disk?" switches the Map to size: the same places, with every dot and area sized by bytes instead.
 
-**Why first:** It is the overview Daniel asked for, in the graph's look, but it can be learned like a city, it shows where work is happening right now, and it never becomes a hairball. It comes fifth because an empty brain draws an empty map.
+**Why first:** It is the overview the project owner asked for, in the graph's look, but it can be learned like a city, it shows where work is happening right now, and it never becomes a hairball. It comes fifth because an empty brain draws an empty map.
 
 **What changes:** bombadil-brain lays areas out once with a force layout over the links between areas, places each thing around its area in a spiral ordered by when it arrived, and stores every position in brain.db. A new thing takes the nearest free spot to its area, and an area that grows makes room by moving only its newest members. The Brain app draws the Map in one scene-graph item (a few hundred dots and a dozen roads), and the live pulses come from the same event stream the witnesses feed. What is drawn at rest is chosen by aliveness (recency, frequency, and whether you or an agent touched it), with areas always shown.
 
@@ -113,13 +130,13 @@ This is how a day should feel once the six pieces and the best of the rest are b
 
 **At the code.** You are reading snapshots.py in reviewer. A click on the chip shows that builder rewrote prune() an hour ago, flaky-snapshot touched it on Tuesday, and kit is changing launcher.py, which changed with it five times. "tell flaky-snapshot builder rewrote prune() an hour ago" reaches the session as typed text.
 
-**A session that asks instead of guessing.** In Latchkey's Claude Code: "use the approach from the zellij page I read last week". The session calls brain_search and continues with the right URL.
+**A session that asks instead of guessing.** In Acme's Claude Code: "use the approach from the zellij page I read last week". The session calls brain_search and continues with the right URL.
 
 **Friday.** "history", then drag back to Tuesday afternoon. The Map lights Lease, rent-portal, and flaky-snapshot's corner of Bombadil. You click the block named "fix the race" and see the four files it changed.
 
 **Tidying.** "tidy my downloads" is a turn. On the Map, dots leave Downloads for Lease, Taxes 2026 and Installers as it works, keeping their links, and the closing line says "Moved 23 files into 4 folders. [Undo]".
 
-**Evening.** "map". Latchkey is dim after a quiet week, Bombadil is bright, and a new area, Wedding, has appeared since Wednesday from a folder and a few pages. "make me a reading list of what I read about btrfs this month" builds a small app that asks the brain, so it stays current without anyone updating it.
+**Evening.** "map". Acme is dim after a quiet week, Bombadil is bright, and a new area, Wedding, has appeared since Wednesday from a folder and a few pages. "make me a reading list of what I read about btrfs this month" builds a small app that asks the brain, so it stays current without anyone updating it.
 
 ## What the brain is made of
 
@@ -145,7 +162,7 @@ Every link keeps when it first and last happened, how many times, and the events
 
 ## Decisions I picked a default for
 
-Each of these forks. I picked a default and say why; the other options are listed for the record. Daniel accepted every default on 2026-09-27, so these are confirmed decisions, not proposals.
+Each of these forks. I picked a default and say why; the other options are listed for the record. The project owner accepted every default on 2026-09-27, so these are confirmed decisions, not proposals.
 
 **Is the main view a graph?** Default: Focus opens by default, the Map is the overview, and Time runs along the bottom. The Map keeps the graph's look with pinned positions, a few hundred alive things and bundled roads; a free-floating force graph of everything is not built. The global graph is lovely for a minute and unusable after a month, while the local graph is what people actually navigate with. Other options: Obsidian's global graph as the home view; a 3D brain; a dashboard of cards.
 
@@ -211,7 +228,7 @@ Each of these forks. I picked a default and say why; the other options are liste
 
 - **A free-floating global graph as the home view.** A hairball at real size, no "where", no "when", and no reasons on the lines.
 - **"Similar" links from embeddings drawn on the Map.** Noise that looks like knowledge, and wrong often enough to make every line suspect.
-- **A wiki or notes folder the agent keeps.** Exactly the stale markdown Daniel ruled out; prose that is not pinned to its sources rots.
+- **A wiki or notes folder the agent keeps.** Exactly the stale markdown the project owner ruled out; prose that is not pinned to its sources rots.
 - **Tags you maintain.** The same chore as notes. Areas and stretches of work come from what happened.
 - **A virtual file system in place of folders.** Every tool and both agents read plain paths.
 - **A 3D brain.** Harder to read, harder to click, and slower in a VM.
@@ -221,6 +238,8 @@ Each of these forks. I picked a default and say why; the other options are liste
 ## Gaps worth thinking about
 
 ### In the code today
+
+Checked against `main` on 2026-10-01: the first three gaps still hold. The turn row carries a `read` list but still has no list of the files a turn wrote (`src/bombadil/agentd.py`); the installer creates a snapper config for `/` only (`iso/airootfs/usr/local/bin/bombadil-install`); and an app is found by its process name, `bombadil-app run <name>` (`src/bombadil/procs.py`). The fourth is closed: `src/bombadil/browser.py` starts Chromium with its own `--user-data-dir`.
 
 - A turns.jsonl row has no list of the files the turn touched, only the prompt, the result and a details string, so "made by turn 41" needs agentd to record them.
 - There is no snapper config for /home yet, so versions of home files wait for it, as the first brief's live undo does.
@@ -250,7 +269,7 @@ Each of these forks. I picked a default and say why; the other options are liste
 
 ## Extends or changes the first two briefs
 
-- **Rule 8, one memory you can read:** extended. The brain is the machine's readable memory of what happened; memory.md stays the short list about Daniel.
+- **Rule 8, one memory you can read:** extended. The brain is the machine's readable memory of what happened; memory.md stays the short list about the person.
 - **Rewind:** folded into the Brain as its time strip. "history" and Super+Z are unchanged; Rewind's thumbnails and rows are read as they are.
 - **Why is this like this?:** gets Focus and brain_why, reading the brain instead of turns.jsonl alone.
 - **What skips the model:** extended with Tab-accepted matches from the brain (files, pages, stretches of work), "brain", "map", "where did this come from?", "why is this here?" and "forget this". Enter on text that was not accepted still goes to the agent.
@@ -266,7 +285,7 @@ Each of these forks. I picked a default and say why; the other options are liste
 
 ## Checked today
 
-These are the facts the design rests on, checked against kernel, browser and vendor sources on 27 Sep 2026. The build thread should re-check the ones marked as moving.
+These are the facts the design rests on, checked against kernel, browser and vendor sources on 27 Sep 2026. A builder should re-check the ones marked as moving.
 
 - fanotify: an unprivileged process gets only inode marks with no other process's pid, so the watcher is a root service. A filesystem mark (`FAN_MARK_FILESYSTEM`, needs CAP_SYS_ADMIN) reports creates, deletes, renames and moves with the writer's pid, and `FAN_REPORT_PIDFD` (since 5.15) gives a pidfd for a safe lookup of its cgroup. Directory-entry events still fail on mount marks in mainline, so it must be a filesystem mark.
 - fanotify on btrfs: a filesystem mark with FID reporting placed on a subvolume such as /home fails with EXDEV, because btrfs mixes the subvolume id into the fsid, and the 6.8 change only allowed inode marks inside one subvolume. The way through, read from the source and not yet run: mount the top-level subvolume (subvolid=5) at a private path and mark that; every subvolume shares the one superblock, so /home is covered. Moving.

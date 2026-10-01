@@ -1,8 +1,14 @@
 # The desk: widgets for a passenger
 
+> **Status:** Partly shipped. The desk, Now and Watching are on `main`; the Needs you card is on `main` but its feed (the coding sessions) is on an unmerged branch; Sessions is in progress; Away, Machine, Alive and the widgets the agent makes are designed. See "Where the pieces stand" at the end.
+> **Code:** `src/bombadil/desk.py`, `src/bombadil/jobs.py`, `src/bombadil/watch.py`, `src/bombadil/agentd.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/narrate.py`, `src/bombadil/providers.py`, `shell/DeskState.qml`, `shell/DeskRails.qml`, `shell/DeskRail.qml`, `shell/DeskStrips.qml`, `shell/DeskStrip.qml`, `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml`, `shell/HyprCover.qml`, `shell/DeskTheme.js`, `shell/shell.qml`
+> **Design:** [The Bombadil Desk (page)](pages/the-bombadil-desk.html), [Desk](../architecture/desk.md), [UX model](../ux/README.md), [Design system](../design-system/README.md)
+> **Decided by:** the project owner, 2026-09-28: the design and all fifteen defaults, under "Decisions, confirmed by the owner on 28 Sep 2026"
+> **Verified:** 2026-10-01 against `main` at `26843d3`: the status above and the list "Where the pieces stand". The section "Checked today" is dated 27 Sep 2026 and its vendor facts were not re-checked.
+
 You type "install docker and set it up for my projects" and press Enter. The line above the pill says "On it", and a small card rises in the bottom-left corner with your words as its title and the route under them: four steps, the first ticked, the second pulsing orange with the exact command in amber, the last two grey. Beside it, Watching counts down a download and a timer. In the bottom-right corner, Needs you lists the two coding sessions waiting for you, one of them asking for root, and one tap gives it; above it, Machine says builder is near its memory limit, in blue. Then you open the browser. It slides in over the rails, and every card folds into a chip beside the pill, "step 2 of 4", "ISO 43%", "2 need you", so nothing is lost and nothing is in the way. Close the browser and the cards come back where they were. Nothing pops, nothing asks, and there is one word and one gesture to learn: "desk" folds everything to chips and back, and a drag by the title moves a card. The chips beside the pill are the ones the earlier briefs already decided, grown a full face for when there is room.
 
-This is the widget design for Bombadil's desktop. It sits on top of How Bombadil should feel, Building on Bombadil and Bombadil's Brain (all 27 Sep 2026), whose 29, 19 and 17 decisions stay in force. Daniel asked for widgets that are modular and that move, hide and make room for the apps, popups and other visuals the AI brings, on a machine where the AI drives and he rides along and gets things explained visually. The desk is how widgets live with the pill and the wallpaper; it does not re-argue the rest state, and a checker went through every decision in the three briefs before this reached him (the "Cut" list says what it took out). Daniel accepted the design and all fifteen defaults on 28 Sep 2026, so they are confirmed decisions, and the build of pieces 1 and 2 starts from here.
+This is the widget design for Bombadil's desktop. It sits on top of [How Bombadil should feel](ux-brief.md), [Building on Bombadil](dev-brief.md) and [Bombadil's Brain](brain-brief.md) (all 27 Sep 2026), whose 29, 19 and 17 decisions stay in force. The project owner asked for widgets that are modular and that move, hide and make room for the apps, popups and other visuals the AI brings, on a machine where the AI drives and the person rides along and gets things explained visually. The desk is how widgets live with the pill and the wallpaper; it does not re-argue the rest state, and every decision in the three briefs was checked against this design (the "Cut" list says what that took out). The owner accepted the design and all fifteen defaults on 28 Sep 2026, so they are confirmed decisions, and the build of pieces 1 and 2 starts from here.
 
 ## The rules
 
@@ -38,7 +44,7 @@ Seven, each in the kit's look (Theme.qml tokens: panel #1a1d21 at 96%, 12px corn
 
 **What you see:** The coding sessions' asks, one row each with the row's own button: a session whose turn it is ("reviewer on Bombadil: apply the migration? [Open]") and a session asking the machine for something it may not do itself ("builder asks: install qemu-full [Do it]"). The rows are the second brief's Tab walk, in its order, shown as rows; Tab from the empty pill still walks them and Enter on an empty pill still does nothing. One session waiting is the your-turn line in the pill, as decided, and no card; the card rises when two or more wait, and leaves when the walk is empty. The agent's own rare question, a notification you have not seen and a provider's limit or sign-out stay where the first brief put them, in the pill, and never move to the desk. Needs you cannot be hidden; it is silent when nothing waits.
 
-**Why:** Daniel runs several sessions at once, and the moment two of them want him is the moment one list beats one line.
+**Why:** A passenger can run several sessions at once, and the moment two of them want the person is the moment one list beats one line.
 
 **Feeds:** dev.py's your-turn and request events from the managed hooks (second brief, pieces 2 and 3). **Kit:** Panel, ListRow, Badge, Button. **Strip:** the your-turn line in the pill ("2 need you", with the white mark). **Dot:** the mark on the pill's dot the first brief decided.
 
@@ -118,7 +124,7 @@ Seven, each in the kit's look (Theme.qml tokens: panel #1a1d21 at 96%, 12px corn
 
 ## Build these first
 
-Two pieces a build thread can take. Both edit shell.qml, so they follow the merges of PR #2 (the kit) and PR #4 (the session dots, which are Sessions' strip).
+Two pieces that can each be built on their own. Both edit shell.qml, so they follow the merges of the app kit and of the session dots (which are Sessions' strip).
 
 ### 1. The desk, and Now
 
@@ -134,11 +140,11 @@ Two pieces a build thread can take. Both edit shell.qml, so they follow the merg
 
 **Effort:** M.
 
-**Then:** Away (turns.jsonl and the registries now, the brain's timeline when it lands), Machine (the sampler with cgroup attribution and its lines), Sessions' card as the chip's peek (after PR #4), Alive (after brain piece 1), and widgets the agent makes (the `[widget]` section, Widget.set, "keep this on the desk").
+**Then:** Away (turns.jsonl and the registries now, the brain's timeline when it lands), Machine (the sampler with cgroup attribution and its lines), Sessions' card as the chip's peek (after the session dots), Alive (after brain piece 1), and widgets the agent makes (the `[widget]` section, Widget.set, "keep this on the desk").
 
-## Decisions, confirmed by Daniel on 28 Sep 2026
+## Decisions, confirmed by the owner on 28 Sep 2026
 
-Each of these forks; I picked a default and say why, with the alternative for the record. Daniel confirmed all fifteen on 28 Sep 2026.
+Each of these forks; I picked a default and say why, with the alternative for the record. The owner confirmed all fifteen on 28 Sep 2026.
 
 **Where do widgets live?** Default: two rails at the sides, 300px wide, stacked from the bottom. The stage keeps the middle and the column keeps the conversation, so the answer lands where the first brief put it and the eye moves sideways from the line to the route. Other options: a grid of tiles on the wallpaper (fights the stage for the middle); a single dock along the bottom (the row is already that, for strips); a corner of the screen only.
 
@@ -206,10 +212,48 @@ Each of these forks; I picked a default and say why, with the alternative for th
 
 ## Checked today, and to verify before building
 
+> **Reading note.** This section is dated 27 Sep 2026, before the desk was built. On 2026-10-01 three of its statements about the code no longer hold: Codex's todo list reaches the `plan` event whole (`_codex_todos` in `src/bombadil/providers.py`), the pill's row is laid out as strips, pill, strips (`shell/DeskStrips.qml`), and the kit is on `main` (`share/qml/Bombadil`). The vendor facts (Claude Code's stream, Hyprland) were not re-checked.
+
 - The bar today is one Quickshell PanelWindow per screen on the Overlay layer with an input mask and `exclusiveZone: 64` (shell.qml); Quickshell's PanelWindow reserves its whole width by default when anchored to three edges, so the rails set `exclusionMode: Normal` and `exclusiveZone: 0` explicitly.
 - PillState.qml is fed by agentd's JSON events, drops kinds it does not know, and guards status against another turn's id; agentd stamps every event with the current turn. DeskState follows the same pattern: `plan` carries the turn and is matched, `desk` events are not turn-bound.
 - Claude Code 2.1.283's stream has no TodoWrite; the plan arrives as TaskCreate and TaskUpdate, one task per call, which narrate.py already reads one at a time (tests/fixtures/claude-install-ffmpeg.jsonl, narrate.py). Codex's todo list arrives per update with only done or not done per item, and providers.py today keeps only the first unfinished one; the `plan` event needs the whole list.
 - Apps open floating and centred in their own special workspace from a window rule (placement.py), sized to the monitor's usable area less the bar's reserved zone; with no exclusive zone on the rails, a 560x680 app on a 1280-wide screen never touches a 300px rail. Hyprland's `dim_special` is at its default (0.2) in the shipped config, so what lies under a special workspace is already dimmed.
 - The pill row today is one centred Rectangle capped at 900px with the queue chips above it (shell.qml); the row as strips, pill, strips is new layout in the bar window.
-- The kit has Panel, ListRow, Meter, Ring, Sparkline, StackedBar, Badge and Stat (share/qml/Bombadil on the app-kit branch), so every face is composition, not new drawing, except the Map corner, which the Brain app owns.
+- The kit has Panel, ListRow, Meter, Ring, Sparkline, StackedBar, Badge and Stat (share/qml/Bombadil, on an unmerged branch when this was checked), so every face is composition, not new drawing, except the Map corner, which the Brain app owns.
 - To verify in the VM: a Bottom-layer surface under floating and special-workspace windows on Hyprland 0.56 with the Lua config, reserving nothing; toplevel rectangles from Quickshell.Hyprland refreshed at 500 ms during a drag, and the special-workspace shown and hidden events; how far `dim_special` reaches; that the cgroup files of turn scopes, the dev slice and app units are readable by the user for the Machine sampler; that a press in a rail window ending over the bar window can be resolved from screen coordinates.
+
+## Where the pieces stand (2026-10-01)
+
+Read against `main` at `26843d3`. "Shipped" means on `main` and exercised by tests. The offscreen QML tests of the desk need PySide6; the others run with plain `pytest`.
+
+| Piece | Status | In one line |
+|---|---|---|
+| Build first, 1: the desk, and Now | Shipped, with the gaps below | Rails, strips, fold and unfold, the three modes, `desk.toml`, the word "desk", the `desk` tool and the route card |
+| Build first, 2: Watching | Shipped, with the gaps below | The jobs registry, the `job` tool, the rows card and its strip |
+| Build first, 2: Needs you | Card shipped, feed in progress | The card is on `main`; nothing on `main` feeds it |
+| Sessions (widget 4) | In progress | On an unmerged branch: the chips with a dot per session and the hover peek, not the card |
+| Away, Machine | Designed | Registered in the desk; no face and no feed |
+| Alive (widget 7) | Designed | Registered as opt in; no face and no feed |
+| Widgets the agent makes | Designed | No code |
+
+**The desk, and Now (shipped).**
+- Rails: `shell/DeskRails.qml` has one `PanelWindow` per side on `WlrLayer.Bottom` with `ExclusionMode.Normal`, `exclusiveZone: 0` and an input mask taken from `DeskRail.hitArea`; `shell/DeskRail.qml` places each card at its slot.
+- Row: `shell/DeskStrips.qml` and `shell/DeskStrip.qml`, placed either side of the pill in `shell/shell.qml`.
+- State: `shell/DeskState.qml` holds the faces, the slots, what fits, the fold within 150 ms and the unfold 400 ms after the cover leaves (values in `shell/DeskTheme.js`), the three modes, and three strips a side before `+N`. `shell/HyprCover.qml` feeds it Hyprland's windows and events.
+- Memory, words and tool: `src/bombadil/desk.py` keeps `desk.toml` and `asked_for_desk`; `src/bombadil/launcher.py` has the word `desk` and the widget names with show and hide; the `desk` tool is in `src/bombadil/mcp_server.py` and `desk-tool` in `src/bombadil/agentd.py`.
+- Now: `plan` events and `asked_by` on `turn_start` in `src/bombadil/agentd.py`, the task table in `src/bombadil/narrate.py` and `src/bombadil/providers.py`, the card in `shell/NowCard.qml` on `shell/DeskCard.qml`. A click on its title opens the turn's details in the drawer (`DeskState.openDetails`, drawn by `bombadil watch` in `src/bombadil/watch.py`).
+- Tests: `tests/test_desk.py`, `tests/test_desk_qml.py`, `tests/test_desk_cards_qml.py`, `tests/test_agentd.py`, `tests/test_narrate.py`, `tests/test_providers.py`, `tests/test_launcher.py`, `tests/test_theme.py`, and the desk steps of the headless desktop test in `tests/desktop/driver.py`.
+
+**Watching (shipped).** `src/bombadil/jobs.py` keeps the registry in `~/.local/state/bombadil/jobs/` and runs each job as a `systemd-run --user` unit; stopping one runs `systemctl --user stop`. The `job` tool is in `src/bombadil/mcp_server.py`; the `jobs` table and its stop, dismiss and why messages are in `src/bombadil/agentd.py`; the rows and the strip are in `shell/DeskState.qml` and `shell/RowsCard.qml`. Tests: `tests/test_jobs.py`, `tests/test_agentd.py`, `tests/test_desk_qml.py`, `tests/test_desk_cards_qml.py`.
+
+**Needs you (card shipped, feed in progress).** The card reads agentd's `dev` message (`shell/DeskState.qml`, `shell/RowsCard.qml`) and shows only for two or more waiting sessions. `main` has no `dev.py`, no `dev` message and no Tab walk, so outside its tests the card has nothing to show. The registry, the `dev` message and the Tab walk are on an unmerged branch. Request rows with a "Do it" button are not built: `DeskState` gives every row an "Open" button, `shell/RowsCard.qml` only styles a button named "Do it", and neither `main` nor the branch sends such a row.
+
+**Sessions (in progress).** The same branch has a chip per project with a dot per session and a hover peek (`shell/SessionChips.qml`, `shell/SessionPeek.qml`). There, "what's running?" is plain lines in the details drawer, not the card this brief draws.
+
+**Away, Machine and Alive (designed).** Their names, rails and words are registered (`src/bombadil/desk.py`, `shell/DeskState.qml`), so "show machine" and "hide machine" change `desk.toml`, and Alive is hidden until "show alive". No feed fills them and `shell/DeskRail.qml` draws only Now, Watching and Needs you. There is no sampler, and no card reads `turns.jsonl`.
+
+**Widgets the agent makes (designed).** There is no `[widget]` section in `app.toml`, no `Widget.set` and no free QML face.
+
+**Not built from the first two pieces.** Dragging a card by its title or a strip into a rail. Hover to peek and click to keep a strip's face up: `shell/DeskStrip.qml` emits `hoverChanged` and `clicked` and nothing connects to them. The typed face kinds timeline, stat and text (steps in `shell/NowCard.qml` and rows with meters in `shell/RowsCard.qml` exist). The `make` and `remove` ops of the `desk` tool, which has show, hide, move, fold, unfold and state. A counting card moving into Watching when a newer card replaces it, and the "what are you watching?" card for standing watchers. A word or tool op that puts the desk on another screen: `desk.toml` has a `screen` key and the shell follows it, but nothing sets it except an edit of the file. Request rows with a "Do it" button on Needs you: `shell/DeskState.qml` gives every row an "Open" button, `shell/RowsCard.qml` only styles a button named "Do it", and neither `main` nor the branch sends such a row. Reduced motion: the fold, the wash and the breathing do not yet become instant; only the pill's mark (`shell/Stone.qml`, fed from `shell/shell.qml`) has a reduced-motion switch.
+
+**Where the code differs from the text above.** The window list is asked for again every 300 ms while a window is on the stage (`pollMs` in `shell/HyprCover.qml`), not every 500 ms. The desk's faces are drawn with `shell/DeskCard.qml` and the values in `shell/DeskTheme.js`, not with the kit's `Panel`, `ListRow` and `Meter`; `DeskTheme.js` is a plain script that cannot import `Theme.qml`, so each value names its token and `tests/test_theme.py` fails when one drifts. The shell itself imports the kit as `Bombadil` through `QML2_IMPORT_PATH` (`bin/bombadil-shell`).
