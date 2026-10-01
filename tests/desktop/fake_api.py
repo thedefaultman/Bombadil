@@ -318,6 +318,29 @@ class H(BaseHTTPRequestHandler):
                     },
                 )
                 stop = "tool_use"
+        elif first == "ask me":
+            # A coding session asks its user: its dot lights and the pill's line asks.
+            if after_tool:
+                text("Migrated the local database.")
+            else:
+                tool(
+                    f"toolu_mg{N[0]}",
+                    "AskUserQuestion",
+                    {
+                        "questions": [
+                            {
+                                "question": "Run the migration on the local database?",
+                                "header": "Migration",
+                                "multiSelect": False,
+                                "options": [
+                                    {"label": "Yes", "description": "Apply it now"},
+                                    {"label": "No", "description": "Leave the database as it is"},
+                                ],
+                            }
+                        ]
+                    },
+                )
+                stop = "tool_use"
         elif "vpn" in first:
             if after_tool:
                 text("That is the picture: your laptop reaches the internet through the tunnel.")

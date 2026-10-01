@@ -44,6 +44,8 @@ async def test_turn_round_trip(home):
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
     setup = json.loads(await r.readline())
     assert setup["type"] == "setup" and setup["state"] == "ready" and setup["actions"] == []
+    sessions = json.loads(await r.readline())
+    assert sessions["type"] == "dev" and sessions["sessions"] == [] and sessions["line"] == ""
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
     await w.drain()
     msgs = await _read_until(r, "turn_end")
@@ -93,6 +95,7 @@ async def _start(d, state="ready"):
     await r.readline()   # status
     await r.readline()   # entries
     await r.readline()   # setup
+    await r.readline()   # coding sessions
     return server, r, w
 
 
@@ -564,6 +567,7 @@ async def _another(d):
     await r.readline()   # status
     await r.readline()   # entries
     await r.readline()   # setup
+    await r.readline()   # coding sessions
     return r, w
 
 
@@ -602,7 +606,7 @@ async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
     other_r, other_w = await _another(d)
-    assert await _silent(r) and await _silent(other_r)   # the greeting is still status and entries
+    assert await _silent(r) and await _silent(other_r)   # the greeting is still status, entries, setup and the coding sessions
     await _say(w, {"type": "desk", "op": "get"})
     state = json.loads(await asyncio.wait_for(r.readline(), 5))
     assert state == d.desk.snapshot() and state["type"] == "desk" and state["folded"] is False
@@ -2473,7 +2477,7 @@ async def test_the_real_os_mcp_job_tool_starts_lists_and_stops_a_job_from_inside
     assert "isError" not in said and text.startswith(f"Started Build as job {job_id}.")
     assert [x["id"] for x in d.jobs.snapshot()["jobs"]] == [job_id]
     assert sd.calls[0][:3] == ["systemd-run", "--user", f"--unit=bombadil-job-{job_id}"]
-    said = await call(Scripted(_mcp_turn({"op": "list"}, "job")), "what is running?")
+    said = await call(Scripted(_mcp_turn({"op": "list"}, "job")), "list my jobs")
     assert said["content"][0]["text"].startswith(f"{job_id} · Build · running ")
     said = await call(Scripted(_mcp_turn({"op": "stop", "id": job_id}, "job")), "stop the build")
     assert said["content"][0]["text"] == "Stopped Build." and "isError" not in said

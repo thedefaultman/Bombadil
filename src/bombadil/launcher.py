@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, browser, hypr, paths, snapshots, sysmap
+from . import apps, browser, dev, hypr, paths, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
 from .desk import WIDGETS, Desk
@@ -105,10 +105,19 @@ BRAIN_APP = "brain"
 
 @dataclass
 class Action:
-    kind: str          # "panel", "app", "widget", or a command name ("undo", "stop", ...)
-    target: str = ""   # panel, app or widget name
-    verb: str = "open"  # open, close, hide
-    title: str = ""    # what the line calls it: "the browser", "Passwords"
+    kind: str          # "panel", "app", "widget", "session", "project", or a command name ("undo", "stop", ...)
+    target: str = ""   # panel, app or widget name; a session's key; a project's folder name
+    verb: str = "open"  # open, close, hide; "start" for `claude <project> [role]`
+    title: str = ""    # what the line calls it: "the browser", "Passwords", "reviewer on Bombadil"
+    tool: str = ""     # coding sessions: claude, codex or shell
+    role: str = ""
+
+
+# Coding sessions: `claude|codex|shell <project> [role]`, a project's or a session's name,
+# "end <name>" and "what's running?". Checked before app names: project, then session, then app.
+DEV_RE = re.compile(r"(claude|codex|shell) ([^\s]+)(?: ([^\s]+))?")
+SESSIONS_WORDS = {"whats running", "what is running", "sessions", "coding sessions", "list sessions"}
+END_VERBS = ("end",)
 
 
 def normalize(text: str, keep_case: bool = False) -> str:
@@ -174,6 +183,76 @@ def known_apps() -> list:
     return out
 
 
+def _dev_match(t: str, d) -> Action | None:
+    """Coding sessions by name. `t` is normalized ASCII text."""
+    m = DEV_RE.fullmatch(t)
+    if m:
+        folder = d.project(m.group(2))
+        if folder is None:
+            return None   # "claude what is this" is for the agent
+        role = m.group(3) or m.group(1)
+        return Action("session", folder.name, "start", f"{role} on {dev.project_title(folder.name)}",
+                      tool=m.group(1), role=role)
+    if t.replace("'", "") in SESSIONS_WORDS:
+        return Action("sessions")
+    ending = _strip_verb(t, END_VERBS)
+    word = ending if ending is not None else (_strip_verb(t, OPEN_VERBS) or t)
+    if ending is not None:
+        found = _dev_end(ending, d)
+        if found is not None:
+            return found
+    else:
+        folder = d.project(word)
+        if folder is not None:
+            return Action("project", folder.name, "open", dev.project_title(folder.name))
+    # "reviewer", "reviewer bombadil", "reviewer on bombadil"; "end reviewer"
+    parts = word.split()
+    if len(parts) == 3 and parts[1] == "on":
+        parts = [parts[0], parts[2]]
+    if not parts or len(parts) > 2:
+        return None
+    found = d.named(parts[0])
+    if len(parts) == 2:
+        folder = d.project(parts[1])
+        found = [s for s in found if folder is not None and dev.key(s.project) == dev.key(folder.name)]
+    if len(found) > 1:
+        where = " and ".join(dev.project_title(s.project) for s in found)
+        return Action("choose", parts[0], "end" if ending is not None else "open", f"{parts[0]} is on {where}",
+                      role=found[0].project.lower())
+    if found:
+        s = found[0]
+        if ending is not None:
+            return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+        return Action("session", s.key, "open", s.title, tool=s.tool, role=s.role)
+    return None
+
+
+def _dev_end(word: str, d) -> Action | None:
+    """"end claude myapp" and "end myapp": the sessions a role cannot name. A project
+    with one session ends it; with several, say which."""
+    m = DEV_RE.fullmatch(word)
+    folder = d.project(m.group(2)) if m else d.project(word)
+    if folder is None:
+        return None
+    title = dev.project_title(folder.name)
+    if m:
+        role = m.group(3) or m.group(1)
+        k = f"{dev.slug(folder.name)}/{role}"
+        s = d.sessions.get(k)
+        if s is None or s.state == "ended":
+            return Action("end", "", "end", f"{role} on {title}", role=role)
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    found = [s for s in d.on_project(folder) if not s.yours]
+    if len(found) == 1:
+        s = found[0]
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    if not found:
+        return Action("end", "", "end", title)
+    roles = [s.role for s in found]
+    listed = ", ".join(roles[:-1]) + " and " + roles[-1]
+    return Action("choose", roles[0], "end", f"{title} runs {listed}", role=folder.name.lower())
+
+
 def _picture(t: str, typed: str = "") -> Action | None:
     """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's.
     `t` is the lowercased text, `typed` the same with the capitals it came with."""
@@ -188,9 +267,10 @@ def _picture(t: str, typed: str = "") -> Action | None:
     return None
 
 
-def match(text: str, app_list: list | None = None, busy: bool = False) -> Action | None:
-    """The local action for exactly this text, or None to send it to the agent. `busy`: a turn
-    is running, so a bare "why" asks about its current step."""
+def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = False) -> Action | None:
+    """The local action for exactly this text, or None to send it to the agent. `dev_names`
+    (agentd's dev.Dev) adds the coding sessions' words. `busy`: a turn is running, so a bare "why"
+    asks about its current step."""
     raw = str(text).strip()
     if not raw or raw.startswith("!"):
         return None   # "!cmd" is a shell command, whatever follows the "!"
@@ -220,6 +300,10 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    if dev_names is not None and plain:
+        found = _dev_match(t, dev_names)
+        if found is not None:
+            return found
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
@@ -258,11 +342,14 @@ def _widget_action(t: str, app_list: list) -> Action | None:
     return None
 
 
-def entries(app_list: list | None = None) -> list[dict]:
-    """What the pill can complete with Tab: apps first, then panels, widgets, then commands."""
+def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
+    """What the pill can complete with Tab: apps first, then projects and sessions, then panels,
+    widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
            for a in app_list]
+    if dev_names is not None:
+        out += dev_names.names()
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
@@ -292,10 +379,12 @@ class Launcher:
     """Does what `match` found, without the model. Blocking; agentd calls it in a thread."""
 
     def __init__(self, hyprland: hypr.Hyprland | None = None, snaps: snapshots.Snapshots | None = None,
-                 runner=subprocess.run, spawn=subprocess.Popen, desk: Desk | None = None):
+                 runner=subprocess.run, spawn=subprocess.Popen, desk: Desk | None = None,
+                 sessions: "dev.Dev | None" = None):
         self.hypr = hyprland or hypr.Hyprland()
         self.snaps = snaps or snapshots.Snapshots()
         self.desk_state = desk if desk is not None else Desk().load()
+        self.dev = sessions
         self._run = runner
         self._spawn = spawn
         self._drawer: list[str] | None = None   # what the details drawer shows, as its argv
@@ -304,6 +393,12 @@ class Launcher:
 
     @staticmethod
     def doing(action: Action) -> str:
+        if action.kind == "session":
+            return f"Starting {action.title}" if action.verb == "start" else f"Opening {action.title}"
+        if action.kind == "project":
+            return f"Opening {action.title}"
+        if action.kind == "end":
+            return f"Ending {action.title}"
         if action.kind in ("panel", "app"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
@@ -321,6 +416,10 @@ class Launcher:
 
     @staticmethod
     def failed(action: Action) -> str:
+        if action.kind in ("session", "project"):
+            return f"Could not open {action.title}"
+        if action.kind == "end":
+            return f"Could not end {action.title}"
         if action.kind in ("panel", "app"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
@@ -407,6 +506,45 @@ class Launcher:
                 self.hypr.dispatch(f'hl.dsp.workspace.toggle_special("{name.removeprefix("special:")}")')
                 hidden.append(name)
         return True, "Put everything away." if hidden else "Nothing to put away."
+
+    # -- coding sessions --
+
+    def _sessions_or_raise(self) -> "dev.Dev":
+        if self.dev is None:
+            raise RuntimeError("coding sessions are not running here")
+        return self.dev
+
+    def _session(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        if a.verb == "start":
+            return d.open(a.tool, a.target, a.role)
+        s = d.sessions.get(a.target)
+        if s is None:
+            return False, f"{a.title} is gone."
+        return d.bring(s)
+
+    def _project(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        folder = d.project(a.target)
+        if folder is None:
+            return False, f"{a.title} is not in your Projects folder any more."
+        return d.open_project(folder)
+
+    def _end(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        s = d.sessions.get(a.target) if a.target else None
+        if s is None or s.state == "ended":
+            return False, (f"{a.title[:1].upper()}{a.title[1:]} is not running." if a.role
+                           else f"Nothing runs on {a.title}.")
+        return d.end(s)
+
+    def _choose(self, a: Action) -> tuple[bool, str]:
+        verb = "end " if a.verb == "end" else ""
+        return False, f"{a.title[:1].upper()}{a.title[1:]}: say which, as in “{verb}{a.target} {a.role}”."
+
+    def _sessions(self, _a: Action) -> tuple[bool, str]:
+        self.details([_bombadil(), "dev", "list"])
+        return True, "Opened the list of coding sessions."
 
     # -- the brain --
 

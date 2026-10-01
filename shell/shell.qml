@@ -3,6 +3,8 @@
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
 // while it works and how the turn ended. The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
+// Above the pill's left end, a chip per project holds a dot per coding session; when one waits
+// for you the pill's empty line says so, and Tab goes there.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
 import Quickshell.Io
@@ -81,6 +83,20 @@ ShellRoot {
         function inject(message: string): void { root.handle(message) }
     }
 
+    // The coding sessions (dev.py): their dots, and the line the pill shows while one waits.
+    DevState {
+        id: devState
+        onOutgoing: msg => root.write(msg)
+    }
+    IpcHandler {
+        target: "dev"
+        // Where the first screen's chips sit, as JSON.
+        function chips(): string {
+            const w = bars.instances.length > 0 ? bars.instances[0] : null
+            return JSON.stringify(w ? w.chipsGeometry() : {})
+        }
+    }
+
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
     // to connect does not retry, so each attempt is a fresh Socket.
     property var agentd: null
@@ -96,7 +112,7 @@ ShellRoot {
                 root.connected = connected
                 deskState.connected = connected
                 if (connected) pillState.connected = true
-                else { pillState.lost(); deskState.lost() }
+                else { pillState.lost(); deskState.lost(); devState.lost() }
             }
         }
     }
@@ -113,6 +129,7 @@ ShellRoot {
         try { ev = JSON.parse(message) } catch (e) { return }
         pillState.handle(ev)
         deskState.handle(ev)
+        devState.handle(ev)   // only its own "dev" messages
     }
 
     function write(msg) {
@@ -173,6 +190,7 @@ ShellRoot {
     }
 
     Variants {
+        id: bars
         model: Quickshell.screens
         PanelWindow {
             id: win
@@ -187,6 +205,13 @@ ShellRoot {
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
+            // Where the session chips sit against the pill, for the desktop test (`quickshell ipc call dev chips`).
+            function chipsGeometry() {
+                const c = sessionChips.mapToItem(null, 0, 0)
+                const p = pillBox.mapToItem(null, 0, 0)
+                return { visible: sessionChips.visible, x: c.x, y: c.y, width: sessionChips.width,
+                         height: sessionChips.height, pillX: p.x, pillY: p.y, pillWidth: pillBox.width }
+            }
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
             // On Hyprland the pill takes keys only while summoned (a tap on Super, or a click on the
@@ -202,12 +227,14 @@ ShellRoot {
                 : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
             // The prompt bar, plus the app chips while apps run, so windows never cover them.
             exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
+                           + (sessionRow.visible ? sessionRow.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
+                Region { item: sessionChips.visible ? sessionChips : null }   // (a hidden item keeps its last place)
                 Region { item: appChips }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
@@ -311,6 +338,36 @@ ShellRoot {
                     Layout.fillWidth: false
                     Layout.alignment: Qt.AlignHCenter
                     Layout.maximumWidth: Math.max(360, win.pillMax)
+                }
+
+                // A hovered dot's last few lines, over its chip. It takes no clicks.
+                SessionPeek {
+                    id: sessionPeek
+                    dev: devState
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: implicitWidth
+                    // Over its chip, at the pill's left end.
+                    Layout.leftMargin: Math.max(0, Math.min(sessionChips.x, column.width - implicitWidth))
+                    Layout.rightMargin: 0
+                }
+
+                // The sessions' chips, above the pill's left end (the desk's strips keep the row beside it).
+                Item {
+                    id: sessionRow
+                    // Not sessionChips.visible: a child is only visible while its parent is, so the row
+                    // would never come back once hidden.
+                    visible: devState.sessions.length > 0
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: win.pillMax
+                    Layout.alignment: Qt.AlignHCenter
+                    implicitHeight: sessionChips.implicitHeight
+                    SessionChips {
+                        id: sessionChips
+                        dev: devState
+                        x: 14
+                        width: implicitWidth
+                        height: implicitHeight
+                    }
                 }
 
                 // Running apps: a chip per app. Click slides it in or out, × quits it.
@@ -430,9 +487,14 @@ ShellRoot {
                                 font.family: Kit.Theme.fontFamily
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
-                                placeholderText: pillState.face === "starting" ? "Starting" : (root.connected ? "Ask anything" : "Waiting for agentd…")
+                                // While a coding session waits for you, the empty pill says so ("reviewer on
+                                // Bombadil: run the migration?") and Tab goes there.
+                                placeholderText: pillState.face === "starting" ? "Starting"
+                                                 : (!root.connected ? "Waiting for agentd…"
+                                                    : (devState.line !== "" ? devState.line + "   ⇥" : "Ask anything"))
                                 color: Kit.Theme.fg
-                                placeholderTextColor: Kit.Theme.muted
+                                placeholderTextColor: devState.line !== "" && root.connected && pillState.face !== "starting"
+                                                      ? Kit.Theme.accentInk : Kit.Theme.muted
                                 font.pixelSize: Kit.Theme.promptSize
                                 background: null
                                 focus: true
@@ -445,8 +507,14 @@ ShellRoot {
                                     }
                                 }
                                 onTextChanged: if (win.summoned) idle.restart()
-                                // Tab takes the suggested name: "pass" + Tab = "passwords".
+                                // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
+                                // pill it walks to the next session waiting for you.
                                 Keys.onTabPressed: {
+                                    if (text === "" && devState.sessions.length > 0) {
+                                        devState.next()
+                                        root.release()
+                                        return
+                                    }
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }

@@ -12,6 +12,10 @@
   bombadil provider claude|codex       switch provider, signing in to it if needed
   bombadil signin [claude|codex]       sign in (again): the page opens in the browser panel
   bombadil open URL                    open a link in the browser panel (bombadil-browser)
+  bombadil dev list                    the coding sessions and what each is doing
+  bombadil dev next                    bring the next session waiting for you to the front
+  bombadil dev why <key>               the last screen of a session that stopped
+  bombadil dev run <key> [--resume]    (inside a session's pane) run its tool
   bombadil brain [status]              what the brain knows, and whether it sees every save
   bombadil brain why PATH              who made a file, and when
   bombadil brain find WORDS            things whose names match: title · where · when
@@ -27,7 +31,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, pager, paths, snapshots, watch  # noqa: E402
+from bombadil import config, dev, pager, paths, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 
@@ -119,6 +123,33 @@ def send(msg: dict) -> int:
         except OSError:
             pass
     return 0
+
+
+def dev_command(args: list[str]) -> int:
+    sub = args[0] if args else "list"
+    if sub == "run" and len(args) > 1:
+        return dev.run(args[1], resume="--resume" in args)
+    if sub == "next":
+        return send({"type": "dev", "action": "next"})
+    if sub == "list":
+        for line in dev.Dev().listing():
+            print(line)
+        watch.wait_for_key()
+        return 0
+    if sub == "why" and len(args) > 1:
+        s = dev.Dev().sessions.get(args[1])
+        path = Path(s.why) if s is not None and s.why else None
+        if path is None or not path.exists():
+            print("No last screen was kept for that session.")
+        else:
+            print(f"The last screen of {s.title}, before it stopped:\n")
+            print(path.read_text(errors="replace").rstrip())
+            print(f"\nType “{s.role if s.role != s.tool else s.tool + ' ' + s.project.lower()}” "
+                  "in the pill to resume it.")
+        watch.wait_for_key()
+        return 0
+    print(__doc__)
+    return 2
 
 
 def brain_ref(arg: str) -> str:
@@ -244,6 +275,8 @@ def main() -> int:
         s = snapshots.Snapshots().undo_last_turn()
         print(f"rolled back to {s.number}; reboot to apply" if s else "nothing to undo")
         return 0 if s else 1
+    elif cmd == "dev":
+        return dev_command(args)
     elif cmd == "brain":
         return brain(args)
     elif cmd == "provider":

@@ -115,10 +115,10 @@ qs_proc = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 events, lock = [], threading.Lock()
 
 
-def listen():
+def listen(mode="w"):
     s = socket.socket(socket.AF_UNIX)
     s.connect(str(sock_path))
-    with open(OUT / "events.jsonl", "w") as log:
+    with open(OUT / "events.jsonl", mode) as log:
         for raw in s.makefile("r"):
             try:
                 m = json.loads(raw)
@@ -734,6 +734,175 @@ check("the wallpaper's choices raised no QML error but the one for the picture t
       not [ln for ln in own_log.splitlines()
            if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
            and "Cannot open" not in ln and "wallpaper:" not in ln], own_log[-400:])
+
+# 10. Coding sessions: the real Claude Code in zellij, a window that is only a viewer, the dots.
+home = Path.home()
+proj = home / "Projects" / "spike"
+proj.mkdir(parents=True, exist_ok=True)
+run("git", "init", "-q", "-b", "main", str(proj))
+run("git", "-C", str(proj), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "one")
+cfg_path = home / ".claude.json"
+try:
+    cfg = json.loads(cfg_path.read_text())
+except (OSError, ValueError):
+    cfg = {}
+cfg.update(hasCompletedOnboarding=True, theme="dark", numStartups=5,
+           customApiKeyResponses={"approved": ["sk-ant-fake"], "rejected": []})
+cfg.setdefault("projects", {}).update({str(p): {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+                                       for p in (proj, home / "Projects" / ".work" / "spike" / "reviewer")})
+cfg_path.write_text(json.dumps(cfg))
+
+
+def zscreen(name):
+    return run("zellij", "-s", name, "action", "dump-screen", "-p", "terminal_0").stdout
+
+
+def zlisted():
+    return run("zellij", "list-sessions", "--short", "--no-formatting").stdout.split()
+
+
+def devmsg(pred, timeout=20, since=0):
+    return wait(lambda m: m.get("type") == "dev" and pred(m), timeout, since)
+
+
+def states(m):
+    return {s["key"]: s["state"] for s in m.get("sessions", [])}
+
+
+def viewer_open(app_id):
+    return f'"app_id": "{app_id}"' in run("swaymsg", "-t", "get_tree").stdout
+
+
+# a. "claude spike" starts the unchanged TUI in the project, in a window of its own.
+summon()
+typ("claude spike")
+time.sleep(0.3)
+shot("30-claude-spike-typed")
+n = mark()
+t0 = time.monotonic() + 0.2
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+results["timings"]["session_start_s"] = round(o["_t"] - t0, 3) if o else None
+check("claude spike started from the pill", o and o.get("ok") and o.get("text") == "Started claude on Spike.", o)
+check("its window opened", until(lambda: viewer_open("bombadil-session-spike-claude"), 15))
+panes = run("zellij", "-s", "bombadil-spike-claude", "action", "list-panes", "--all", "--json").stdout
+check("only the tool shows, no zellij bars", "tab-bar" not in panes and "status-bar" not in panes, panes[-300:])
+check("Claude Code runs in the project", until(lambda: "claude on Spike" in zscreen("bombadil-spike-claude"), 30),
+      zscreen("bombadil-spike-claude")[-400:])
+time.sleep(1)
+shot("31-claude-tui")
+
+# b. Typed into the window, it works; its hooks move the dot; it finishes and is your turn.
+n = mark()
+typ("tell me a joke")
+key("Return")
+w = devmsg(lambda m: states(m).get("spike/claude") == "working", 20, n)
+check("its dot moves while it works", w is not None)
+d = devmsg(lambda m: states(m).get("spike/claude") == "done", 30, n)
+check("its dot is lit when it finishes", d is not None and "finished" in (d or {}).get("line", ""), d and d.get("line"))
+time.sleep(1)
+shot("32-joke-done-dot-lit")
+try:
+    geo = json.loads(run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "dev", "chips").stdout)
+except ValueError:
+    geo = {}
+check("the bar shows the project's chip above the pill's left end",
+      geo.get("visible") and geo["width"] > 40 and geo["height"] == 28 and geo["y"] + geo["height"] <= geo["pillY"]
+      and geo["pillX"] <= geo["x"] < geo["pillX"] + geo["pillWidth"] / 2, geo)
+
+# c. Shift+Enter reaches Claude Code through foot and zellij: a newline, not a send.
+before = api_requests()
+typ("line one")
+run("wtype", "-s", "200", "-M", "shift", "-k", "Return", "-m", "shift")
+time.sleep(0.3)
+typ("line two")
+time.sleep(1)
+scr = zscreen("bombadil-spike-claude")
+check("Shift+Enter makes a new line in Claude Code", "line one" in scr and "line two" in scr and api_requests() == before,
+      scr[-300:])
+shot("33-shift-enter")
+
+# d. Closing the window only closes the viewer.
+run("swaymsg", '[app_id="bombadil-session-spike-claude"] kill')
+check("the window closed", until(lambda: not viewer_open("bombadil-session-spike-claude"), 10))
+time.sleep(2)
+check("the session runs on", "bombadil-spike-claude" in zlisted(), zlisted())
+shot("34-window-closed-dot-stays")
+
+# e. Its name brings it back mid-sentence.
+summon()
+typ("claude spike")
+n = mark()
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+check("typing its name brings it back", o and o.get("text") == "Back to claude on Spike.", o)
+check("in a new window", until(lambda: viewer_open("bombadil-session-spike-claude"), 15))
+time.sleep(1.5)
+scr = zscreen("bombadil-spike-claude")
+check("mid-sentence: the unsent lines and the joke are still there",
+      "line two" in scr and "penguins" in scr, scr[-300:])
+shot("35-back-mid-sentence")
+
+# f. A second session on the repository gets its own copy, and asks a question.
+summon()
+typ("claude spike reviewer")
+n = mark()
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+copy = home / "Projects" / ".work" / "spike" / "reviewer"
+check("a second session gets its own copy", o and "in its own copy" in (o.get("text") or "") and copy.is_dir(), o)
+until(lambda: "reviewer on Spike" in zscreen("bombadil-spike-reviewer"), 30)
+n = mark()
+typ("ask me")
+key("Return")
+a = devmsg(lambda m: states(m).get("spike/reviewer") == "asked", 30, n)
+check("a question lights its dot and becomes the pill's line",
+      a and a.get("line") == "reviewer on Spike: Run the migration on the local database?", a and a.get("line"))
+st = desk_state()
+check("and the stone knocks for it, the same message the desk's Needs you reads",
+      st.get("needsYou") and st.get("face") == "needs", {k: st.get(k) for k in ("needsYou", "face")})
+run("swaymsg", '[app_id="bombadil-session-spike-reviewer"] kill')
+time.sleep(1.5)
+shot("36-your-turn-line")
+summon()
+key("Tab")
+time.sleep(1)
+nx = wait(ev("local", action="session", phase="done"), 10, n)
+check("Tab from the empty pill goes to the session waiting for you",
+      nx and nx.get("text") == "Back to reviewer on Spike." and until(
+          lambda: viewer_open("bombadil-session-spike-reviewer"), 10), nx)
+time.sleep(1)
+shot("37-tab-to-reviewer")
+key("Return")   # answer its question in its own window
+time.sleep(3)
+check("answered, the stone stops knocking", until(lambda: not desk_state().get("needsYou"), 20), desk_state().get("face"))
+
+# g. agentd restarting touches no session.
+agentd = next(p for p in procs if p.args[0].endswith("agentd"))
+agentd.terminate()
+agentd.wait(5)
+procs.remove(agentd)
+time.sleep(1)
+start("agentd-2", [str(REPO / "bin" / "agentd")])
+until(lambda: sock_path.exists(), 10)
+time.sleep(4)
+threading.Thread(target=listen, args=("a",), daemon=True).start()
+check("sessions outlive an agentd restart", {"bombadil-spike-claude", "bombadil-spike-reviewer"} <= set(zlisted()),
+      zlisted())
+time.sleep(2)
+shot("38-after-agentd-restart")
+
+# h. "end reviewer" ends it and keeps its copy.
+summon()
+typ("end reviewer")
+n = mark()
+key("Return")
+e = wait(ev("local", phase="done"), 20, n)
+check("end reviewer ends it and keeps its copy",
+      e and e.get("text") == "Ended reviewer on Spike. Its copy is kept." and until(
+          lambda: "bombadil-spike-reviewer" not in zlisted(), 10) and copy.is_dir(), e)
+time.sleep(1)
+shot("39-ended")
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

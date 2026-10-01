@@ -6,7 +6,15 @@ set -u
 out=/dev/console
 say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
 ok=0; fail=0
-check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); fi; }
+check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); diag "$name"; fi; }
+# What a failed check leaves to read in the serial log: the windows Hyprland has and the programs that
+# should be running, for the first few failures (each costs a few seconds under emulation).
+ndiag=0
+diag() {
+  ndiag=$((ndiag+1)); (( ndiag > 4 )) && return 0
+  say "DIAG $1 windows: $(as_user hyprctl -j clients 2>&1 | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["pid"]) for c in json.load(sys.stdin)])' 2>&1 | tail -c 600)"
+  say "DIAG $1 programs: $(for n in Hyprland quickshell foot footclient zellij; do printf '%s=%s ' "$n" "$(pgrep -x "$n" | tr '\n' ,)"; done) agentd=$(pgrep -f agentd | head -3 | tr '\n' ,) chromium=$(pgrep -xc chromium)"
+}
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
 # bombadil.smoke          live checks, then power off
 # bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
@@ -191,6 +199,42 @@ check open-unit-has-keyboard wait_for 30 active_is bombadil-details
 shot open-unit
 keys esc
 check open-unit-esc-closes wait_for 30 drawer_gone
+
+# Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
+# slice with a floating viewer, lives on when that window closes, comes back by name and ends.
+# A shell needs no provider login, so this runs on a fresh VM.
+viewer=bombadil-session-smoke-shell
+unit_active() { as_user systemctl --user list-units --all --no-legend --plain "$1" | grep -q ' active '; }
+unit_gone() { ! unit_active "$1"; }
+zellij_has() { as_user zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$1"; }
+zellij_lacks() { ! zellij_has "$1"; }
+no_client() { ! has_client "$1"; }
+says() { local want=$1; shift; as_user bombadil ask "$*" | tee /dev/stderr | grep -q "$want"; }
+hypr_do() { local o; o=$(as_user hyprctl dispatch "$1") && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+close_viewer() { hypr_do "hl.dsp.focus({ window = \"class:^($viewer)\$\" })" && hypr_do 'hl.dsp.window.close()'; }
+# The viewer is most of the screen, not foot's own 700x500.
+viewer_big() { local m c; m=$(hypr_json monitors) && c=$(hypr_json clients) && python3 -c 'import json, sys; m = json.loads(sys.argv[1])[0]; c = [x for x in json.loads(sys.argv[2]) if x["class"] == sys.argv[3]]; print(m["width"], m["height"], [x["size"] for x in c]); sys.exit(not c or c[0]["size"][0] < 0.7 * m["width"] / m.get("scale", 1))' "$m" "$c" "$viewer"; }
+make_project() { as_user bash -c 'mkdir -p ~/Projects/smoke && cd ~/Projects/smoke && git init -q && git -c user.name=smoke -c user.email=smoke@localhost commit -q --allow-empty -m start'; }
+check dev-tools bash -c 'command -v zellij foot footclient bombadil-signal'
+check dev-hooks-parse python3 -c 'import json, tomllib; json.load(open("/etc/claude-code/managed-settings.d/50-bombadil.json")); tomllib.load(open("/etc/codex/requirements.toml", "rb"))'
+check dev-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes'
+check dev-project make_project
+check dev-start says "Started shell on Smoke" shell smoke
+check dev-zellij wait_for 20 zellij_has bombadil-smoke-shell
+check dev-scope wait_for 20 unit_active 'bombadil-dev-smoke-shell-*.scope'
+check dev-slice unit_active 'bombadil-dev-smoke.slice'
+check dev-window wait_for 60 has_client "c['class']=='$viewer' and c['floating']"
+check dev-window-size viewer_big
+shot session
+check dev-close-window close_viewer
+check dev-window-gone wait_for 30 no_client "c['class']=='$viewer'"
+check dev-lives-on zellij_has bombadil-smoke-shell
+check dev-back-by-name says "Back to shell on Smoke" shell smoke
+check dev-window-again wait_for 60 has_client "c['class']=='$viewer'"
+check dev-end says "Ended shell on Smoke" end shell smoke
+check dev-ended wait_for 20 zellij_lacks bombadil-smoke-shell
+check dev-scope-gone wait_for 20 unit_gone 'bombadil-dev-smoke-shell-*.scope'
+check dev-in-history history_has "Ended shell on Smoke"
 
 
 # Signing in (the live system has no provider picked and no login). agentd asks which AI in the

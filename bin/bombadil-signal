@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""bombadil-signal: what a coding tool's hooks run, so the dots beside the pill know its state.
+
+  bombadil-signal claude         a Claude Code hook: the event's JSON on stdin
+  bombadil-signal codex          a Codex hook: the event's JSON on stdin
+  bombadil-signal codex-notify J a Codex `notify` call: the JSON as the last argument
+
+It passes a small, trimmed message to agentd and returns at once; when agentd is not there the
+message waits in ~/.local/state/bombadil/dev/signals.jsonl. It never prints and never fails,
+so it can never block or change the tool it runs in. The machine's own agent (BOMBADIL_OS=1)
+is not a coding session and is skipped: managed hooks fire inside its turns too.
+
+Standard library only, and nothing from Bombadil: it runs on every tool call.
+"""
+import json
+import os
+import socket
+import sys
+import time
+
+KEEP = ("description", "command", "file_path", "path", "url", "pattern")
+
+
+def _trim(inp):
+    if not isinstance(inp, dict):
+        return {}
+    out = {k: str(inp[k])[:300] for k in KEEP if k in inp}
+    qs = inp.get("questions")
+    if isinstance(qs, list) and qs and isinstance(qs[0], dict):
+        out["questions"] = [{"question": str(qs[0].get("question", ""))[:300]}]
+    return out
+
+
+def _stat(pid):
+    stat = open(f"/proc/{pid}/stat").read()
+    fields = stat[stat.rindex(")") + 2:].split()
+    return stat[stat.index("(") + 1: stat.rindex(")")], int(fields[1]), int(fields[19])
+
+
+def _tool_pid(tool):
+    """The tool's own process (for liveness): Claude names it, Codex runs hooks under a shell."""
+    if tool == "claude" and os.environ.get("CLAUDE_PID", "").isdigit():
+        pid = int(os.environ["CLAUDE_PID"])
+        try:
+            return pid, _stat(pid)[2]
+        except (OSError, ValueError, IndexError):
+            return pid, 0
+    pid = os.getppid()
+    for _ in range(8):
+        try:
+            comm, ppid, start = _stat(pid)
+        except (OSError, ValueError, IndexError):
+            break
+        if comm.startswith(tool):
+            return pid, start
+        pid = ppid
+    return 0, 0
+
+
+def _text(ev, p):
+    if ev == "UserPromptSubmit":
+        return p.get("prompt", "")
+    if ev in ("Stop", "SubagentStop"):
+        return p.get("last_assistant_message", "")
+    if ev == "StopFailure":
+        return p.get("error") or p.get("message") or p.get("reason") or ""
+    if ev == "Notification":
+        return p.get("message", "")
+    if ev == "SessionEnd":
+        return p.get("reason", "")
+    return ""
+
+
+def message(tool, p):
+    if tool == "codex-notify":
+        # {"type": "agent-turn-complete", "thread-id", "turn-id", "cwd", "last-assistant-message"}
+        tool, ev = "codex", str(p.get("type", ""))
+        p = {"session_id": p.get("thread-id", ""), "cwd": p.get("cwd", ""),
+             "last_assistant_message": p.get("last-assistant-message") or ""}
+        text = p["last_assistant_message"]
+    else:
+        ev = str(p.get("hook_event_name", ""))
+        text = _text(ev, p)
+    pid, start = _tool_pid(tool)
+    return {"type": "dev-signal", "tool": tool, "event": ev, "session_id": str(p.get("session_id") or ""),
+            "cwd": str(p.get("cwd") or ""), "tool_name": str(p.get("tool_name") or ""),
+            "tool_input": _trim(p.get("tool_input")), "notification_type": str(p.get("notification_type") or ""),
+            "text": str(text or "")[:600], "dev_id": os.environ.get("BOMBADIL_DEV_ID", ""),
+            "run": os.environ.get("BOMBADIL_DEV_RUN", ""), "pid": pid, "pid_start": start, "t": time.time()}
+
+
+def _socket():
+    if os.environ.get("BOMBADIL_SOCKET"):
+        return os.environ["BOMBADIL_SOCKET"]
+    run = os.environ.get("BOMBADIL_RUNTIME") or os.path.join(
+        os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}", "bombadil")
+    return os.path.join(run, "agentd.sock")
+
+
+def _spool():
+    state = os.environ.get("BOMBADIL_STATE") or os.path.join(
+        os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "bombadil")
+    return os.path.join(state, "dev", "signals.jsonl")
+
+
+def send(msg):
+    line = (json.dumps(msg) + "\n").encode()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            s.connect(_socket())
+            s.sendall(line)
+            s.shutdown(socket.SHUT_WR)
+            while s.recv(65536):
+                pass
+        return
+    except OSError:
+        pass
+    try:
+        os.makedirs(os.path.dirname(_spool()), exist_ok=True)
+        with open(_spool(), "ab") as f:
+            f.write(line)
+    except OSError:
+        pass
+
+
+def main(argv):
+    if os.environ.get("BOMBADIL_OS") == "1" or len(argv) < 2:
+        return 0
+    tool = argv[1]
+    try:
+        raw = argv[-1] if tool == "codex-notify" and len(argv) > 2 else sys.stdin.read()
+        payload = json.loads(raw) if raw.strip() else {}
+        if isinstance(payload, dict):
+            send(message(tool, payload))
+    except Exception:  # noqa: BLE001 - a hook must never fail the tool it runs in
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -49,6 +49,15 @@ def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
 
 
+def projects_dir() -> Path:
+    return _env_path("BOMBADIL_PROJECTS", home() / "Projects")
+
+
+def dev_dir() -> Path:
+    """Where the coding sessions' registry and last screens live."""
+    return state_dir() / "dev"
+
+
 def is_turn_row(row) -> bool:
     """Is this row of turns.jsonl a turn? The log also holds launcher actions (kind "local")
     and the self-improvement loop's rows (kind "improve"); a turn's row has no kind, so any
