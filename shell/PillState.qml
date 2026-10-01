@@ -7,8 +7,9 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped).
-    signal summoned()
+    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
+    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
     // agentd asked what to call the user: the card is up and wants the keyboard.
@@ -160,7 +161,7 @@ QtObject {
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
-        if (ev.type === "summon") { summoned(); return }
+        if (ev.type === "summon") { summoned(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "welcome") { _welcome(ev); return }
         if (ev.type === "persona_ask") { _ask(ev); return }
         if (ev.type === "persona") { personaAsk = null; return }

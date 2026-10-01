@@ -75,6 +75,21 @@ def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
 
 
+def is_turn_row(row) -> bool:
+    """Is this row of turns.jsonl a turn? The log also holds launcher actions (kind "local")
+    and the self-improvement loop's rows (kind "improve"); a turn's row has no kind, so any
+    other kind, including one added later, is not counted as a turn."""
+    return isinstance(row, dict) and row.get("kind") in (None, "turn")
+
+
+def brain_socket() -> Path:
+    return _env_path("BOMBADIL_BRAIN_SOCKET", runtime_dir() / "brain.sock")
+
+
+def brain_db() -> Path:
+    return _env_path("BOMBADIL_BRAIN_DB", state_dir() / "brain.db")
+
+
 def desk_file() -> Path:
     return state_dir() / "desk.toml"
 

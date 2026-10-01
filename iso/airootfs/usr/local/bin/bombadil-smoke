@@ -16,6 +16,8 @@ say "START mode=${mode:-live}"
 
 check user-exists id user
 check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
+# `command -v a b` succeeds when either is found, so the brain's two are looked for one by one.
+check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
@@ -329,6 +331,36 @@ fi
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
+    # The brain, where the watcher has btrfs to watch: every save is named by its writer (a
+    # turn's file is the machine's, a file you write is yours) and a rename keeps the thing.
+    # The watcher and the brain each need a moment, hence wait_for.
+    brain_says() { as_user bombadil brain why "$1" | tee /dev/stderr | grep -q "$2"; }
+    brain_watching() { as_user bombadil brain status --json | tee /dev/stderr | grep -q '"watching": true'; }
+    brain_id() { as_user bombadil brain focus --json "$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["thing"]["id"])'; }
+    same_id() { [[ -n "$brain_before" && "$(brain_id "$1" 2>/dev/null)" == "$brain_before" ]]; }
+    check brain-watch-active wait_for 60 systemctl is-active --quiet bombadil-brain-watch
+    check brain-service-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-brain
+    check brain-status wait_for 90 as_user bombadil brain status
+    check brain-watching wait_for 60 brain_watching
+    # The writer stays alive a moment after its save, so the watcher names it and its scope: a
+    # writer that has exited is named by its nearest live ancestor, which for a turn's own shell
+    # is agentd, and for `sudo -u` is root. `ask` waits for the turn to end, so it gets a timeout:
+    # a turn that never ends must fail this check, not hang the run.
+    check brain-turn-writes as_user timeout 90 bombadil ask '!echo hi > ~/brain-smoke-turn.txt; sleep 2'
+    check brain-why-turn wait_for 60 brain_says /home/user/brain-smoke-turn.txt "Made by the machine in turn [0-9]"
+    check brain-you-write as_user sh -c 'echo hi > ~/brain-smoke-you.txt; sleep 2'
+    check brain-why-you wait_for 60 brain_says /home/user/brain-smoke-you.txt "You made it"
+    brain_before=$(wait_for 30 brain_id /home/user/brain-smoke-you.txt 2>/dev/null | tail -1)
+    check brain-rename as_user mv /home/user/brain-smoke-you.txt /home/user/brain-smoke-moved.txt
+    check brain-rename-keeps-thing wait_for 60 same_id /home/user/brain-smoke-moved.txt
+    # The Brain window is an app of the kit (built in, from share/apps): with the kit here it
+    # opens from its drawer and loads without errors, on a brain that knows things by now.
+    if declare -F app_ok >/dev/null && [[ -f /usr/share/bombadil/share/apps/brain/main.qml ]]; then
+      check brain-window mcp_call open_app '{"name":"brain"}'
+      check brain-window-shown wait_for 60 special_shown app-brain
+      check brain-window-status wait_for 30 app_ok brain
+      shot brain
+    fi
     check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'

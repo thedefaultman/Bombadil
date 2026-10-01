@@ -250,6 +250,8 @@ def history_lines(limit: int = 40, color: bool = False) -> list[str]:
     out = []
     day = None
     for e in rows:
+        if not (paths.is_turn_row(e) or (isinstance(e, dict) and e.get("kind") == "local")):
+            continue   # another kind of row (the self-improvement loop's) is not history of yours
         t = time.localtime(e.get("t", 0))
         d = time.strftime("%A %d %B", t)
         if d != day:

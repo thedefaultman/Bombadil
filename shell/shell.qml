@@ -18,6 +18,7 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
     // The screens that show the card and the welcome: the ones that had the focus when they
     // arrived ("" = every screen).
@@ -33,7 +34,7 @@ ShellRoot {
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
-        onSummoned: root.summon()
+        onSummoned: text => root.summon(text)
         onHandOff: root.release()
         onAsked: root.summonKeep()
         onWelcomeShown: root.welcomeOn = root.focusedScreen()
@@ -59,6 +60,9 @@ ShellRoot {
 
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
+
+    // The ground under everything: the wallpaper, on every screen.
+    Wallpaper { reducedMotion: root.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -146,10 +150,18 @@ ShellRoot {
 
     // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
     // focused screen takes the keyboard. A second tap gives it back.
-    function summon() {
+    function summon(text) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
         root.cardKeys = false
+        if (text) {
+            // Words to finish: always take the keyboard, never toggle it away. A card holding the keys
+            // here gives them to the pill.
+            root.draft = text
+            root.summonedOn = name
+            if (pillState.personaAsk !== null) pillState.focusPill()
+            return
+        }
         // Super while the card holds the keyboard here means the pill: the card stays, the keys move.
         if (pillState.personaAsk !== null && root.summonedOn === name) { pillState.focusPill(); return }
         root.summonedOn = root.summonedOn === name ? "" : name
@@ -265,6 +277,17 @@ ShellRoot {
                     else input.forceActiveFocus()
                 }
                 grab.active = summoned
+                takeDraft()
+            }
+            function takeDraft() {
+                if (!summoned || root.draft === "") return
+                input.text = root.draft
+                input.cursorPosition = input.text.length
+                root.draft = ""
+            }
+            Connections {
+                target: root
+                function onDraftChanged() { win.takeDraft() }
             }
 
             function takeCard() { if (personaCard.shown) personaCard.takeKeys() }
