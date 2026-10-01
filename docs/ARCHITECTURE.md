@@ -75,6 +75,14 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
 
+## Coding sessions
+
+The vendors' own Claude Code and Codex run unchanged in a zellij session (no bars, no keys of its
+own) inside a systemd user scope per session; a foot window is only a viewer, so closing it never
+costs work and typing the session's name brings it back. Managed hooks report each tool's state
+through `bombadil-signal` to agentd, which broadcasts one `dev` message that the bar turns into a
+dot per session and the desk into its Needs you card. See [`dev-sessions.md`](dev-sessions.md).
+
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,
