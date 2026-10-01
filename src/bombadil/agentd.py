@@ -787,10 +787,11 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
-        await self.event("local", turn=None, action=action.kind, target=action.target, phase="start", text=doing)
+        await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
+                         phase="start", text=doing)
         ok, text = await asyncio.to_thread(self.launcher.run, action)
-        await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
-                         text=text)
+        await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
+                         phase="done", ok=ok, text=text)
         if ok:
             # The brain's answers quote page titles, which whoever made the page wrote: the
             # model hears that it was asked, not what it said.
