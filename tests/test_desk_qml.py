@@ -2836,11 +2836,23 @@ def test_desk_messages_wait_for_the_drop_and_apply_in_the_order_they_came(desk):
 def test_a_drop_applies_what_waited_and_then_sends_its_own_message(desk):
     a_full_desk(desk)
     take(desk, "now", 960, 1050)
+    desk.send(**desk_msg(hidden=["machine"]))
+    assert desk.prop("hidden") == []
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("hidden") == ["machine"] and desk.prop("dragging") is False
+    assert sent_ops(desk) == [{"type": "desk", "op": "fold", "widget": "now"}]
+
+
+def test_what_waited_that_takes_the_card_in_hand_off_the_desk_leaves_nothing_to_drop(desk):
+    # Another bar folded the whole desk while the card was held: the drop finds it a strip, as it
+    # would have if the message had come first, and sends nothing.
+    a_full_desk(desk)
+    take(desk, "now", 960, 1050)
     desk.send(**desk_msg(folded=True))
     assert desk.prop("folded") is False
     desk.call("dragEnd", 960, 1050)
     assert desk.prop("folded") is True and desk.prop("dragging") is False
-    assert sent_ops(desk) == [{"type": "desk", "op": "fold", "widget": "now"}]
+    assert sent_ops(desk) == [] and desk.prop("settling") == ""
 
 
 def test_a_drop_dims_the_origin_until_agentd_answers_or_the_wait_runs_out(desk):

@@ -873,14 +873,13 @@ QtObject {
 
     // What a drop here would do: {kind: "rank", side, rank, markY}, {kind: "fold"} or null. It reads
     // the live layout, so the mark follows a rail that shifts under the pointer.
-    readonly property var dropTarget: _target()
+    readonly property var dropTarget: _target(drag)
     // The chip a card would fold into if it were dropped now, for the row to show; null elsewhere.
     readonly property var foldChip: dropTarget !== null && dropTarget.kind === "fold" ? _stripOf(drag.id) : null
 
     function _faceOf(from) { return from === "rail" ? "full" : from === "strip" ? "strip" : "" }
 
-    function _target() {
-        const d = drag
+    function _target(d) {
         if (d === null) return null
         // A window in front is the stage's, and a card under one is folded anyway.
         if (windows.some(w => d.x >= w.x && d.x < w.x + w.w && d.y >= w.y && d.y < w.y + w.h)) return null
@@ -931,16 +930,18 @@ QtObject {
     // The button went up at (x, y): what is in hand goes there, if there is a place for it. agentd
     // answers with the new desk; the shell never changes its own state first. What came in while it was
     // held is applied first, so the place is counted in the order agentd keeps now, and a card that
-    // stopped being what it was taken as ends the drag there.
+    // stopped being what it was taken as has nowhere to go. It is out of hand before that: a changed
+    // order rebuilds the rail's cards, and a card rebuilt under a drag that is still on ends the drag.
     function dragEnd(x, y) {
         if (!dragging) return
         dragMove(x, y)
+        const d = drag
+        drag = null
         const held = _held
         _held = []
         for (const ev of held) _applyDesk(ev)
-        if (!dragging) return
-        const d = drag, target = dropTarget
-        drag = null
+        if (faces[d.id] !== _faceOf(d.from)) return
+        const target = _target(d)
         if (target === null) return
         if (target.kind === "fold") foldWidget(d.id)
         else move(d.id, target.side, target.rank)
