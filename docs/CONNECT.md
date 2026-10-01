@@ -224,8 +224,8 @@ panel opening). Writing in a page, with the orange frame, is a later piece.
  "updated": float}
 ```
 
-`fingerprint` is `driver.fingerprint(kind, target, content)`. `shown` is the fingerprint the shell last reported
-having drawn. Warnings: `new_place` (the target conversation is one the person has not received a message from
+`fingerprint` is `driver.fingerprint(kind, target, content)`. `shown` is the fingerprint of the content the shell last
+reported having drawn (`op: shown`); the proposal is `ready` for a press while the two agree. Warnings: `new_place` (the target conversation is one the person has not received a message from
 in the last 14 days and has not posted in), `broadcast` (`@channel`, `@here` or `@everyone` in the text), `long`
 (over 3000 characters), `tainted` (a turn that had read other people's words made this, and the text is not the
 person's). A proposal made by the agent in a turn that read messages, mail or a page says so on the card.
@@ -237,7 +237,7 @@ Messages from a client to agentd, answered to the sender and broadcast to the ot
 |---|---|
 | `{"type": "proposal", "op": "open", "kind", "target"}` | the person opened a reply (Reply on a notice or a card): a proposal made `created_by: "person"` with empty content, and its card shown |
 | `{"type": "proposal", "op": "edit", "id", "content"}` | the box changed; clears `shown` |
-| `{"type": "proposal", "op": "shown", "id", "fingerprint"}` | the card drew exactly this |
+| `{"type": "proposal", "op": "shown", "id", "content"}` | the card drew exactly this content (agentd works the fingerprint out from it, so no hash is ever computed in the shell) |
 | `{"type": "proposal", "op": "discard", "id"}` | put away (an empty one is dropped at once) |
 | `{"type": "press", "kind": <the proposal's kind>, "id": <proposal id>, "fingerprint"}` | the press; `Outbox.press` as for mail, answered with `press_result` |
 
@@ -286,7 +286,7 @@ agentd, so nothing malformed reaches the bar. Text is plain.
 {"type": "message", "id", "title": "Priya Shah in #launch", "source": "connect",
  "thread": [{"ref", "from", "text", "ts", "mine": bool, "unread": bool}],          # the last six, oldest first
  "reply": {"proposal": "p3", "kind": "slack_reply", "target", "where": "#launch", "content", "warnings": [...],
-           "fingerprint", "state": "open", "by": "person", "receipt": null, "note": ""},
+           "fingerprint", "ready": false, "state": "open", "by": "person", "receipt": null, "note": ""},
  "open": {"kind": "url", "value": "https://..."} | null, "say": "Reply in #launch. Sending is yours."}
 ```
 
@@ -303,8 +303,11 @@ rows. Unread messages and "Connected here" are lists.
 
 The shell tells agentd about a card with `{"type": "card_action", "card", "row"?, "action"}` (`open`, `disconnect`,
 `connect`, `copy_open`, `dismiss`), the proposal messages above and `press`. None of them reaches the model. The
-send button has the orange ring and "Yours: Send" while the proposal is open and `shown` equals its fingerprint; it
-waits (as Mail's does) until the box has drawn exactly what would be sent.
+send button has the orange ring and "Yours: Send" while the proposal is `ready` (open, and `shown` equals its
+fingerprint) and the box still holds exactly the proposal's `content`; it waits (as Mail's does) until the box has
+drawn exactly what would be sent. A press carries the `fingerprint` the shell was last told for the content it
+draws. After an `edit` the shell keeps what the person is typing and takes only the proposal's state, `ready` and
+fingerprint from agentd's update.
 
 **Connected here** is the list card "Connected here": each mail account (from the mail service), the Slack app and
 each tool, one row each with what it reads (`reads`), its state, and "Disconnect" (mail's `remove_account` or

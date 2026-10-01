@@ -80,6 +80,10 @@ class Driver(abc.ABC):
     it. State changes and pushes go through `emit`."""
 
     kind = ""        # "slack" or "mcp"
+    # The secrets the person's setup may hand over by name (`store_secret`), each with the prefix its value must
+    # start with: {"app_token": "xapp-", "user_token": "xoxp-"} for Slack. A driver that gets its tokens some other
+    # way (MCP: through its own sign-in) lists none, and the service refuses `store_secret` for it.
+    secret_rules: dict[str, str] = {}
 
     def __init__(self, conn: dict, secrets: Secrets, emit: Callable[[dict], None],
                  clock: Callable[[], float]):
@@ -101,12 +105,28 @@ class Driver(abc.ABC):
     async def stop(self) -> None:
         """Close everything. After it nothing is emitted."""
 
+    async def secrets_changed(self) -> None:
+        """The service stored a secret for this connection (`store_secret`): look again at what is there and, if
+        it is now enough, connect. Called after every store, so it must be cheap when nothing new arrived."""
+
+    def owns(self, kind: str, target: str) -> bool:
+        """Whether a `perform(kind, target, ...)` is for this connection: Slack owns the refs of its workspace, an
+        MCP connection owns its service's tasks (`task_create` with its service as target, `task_comment` with a
+        task ref that starts with it). The service picks the one connection that owns a press."""
+        return False
+
     def reads(self) -> str:
         """One sentence saying what this connection reads, for "Connected here"."""
         return ""
 
     def can_post(self) -> bool:
         return False
+
+    def task_fields(self) -> dict:
+        """What a task card for this connection asks the person for, so the card can draw the boxes:
+        {"create": [{"key", "label", "edit": "line"|"text"|"date", "required"?: bool}], "comment": [...]}. The
+        service passes it on in the connection as `task_fields`; a connection that creates nothing returns {}."""
+        return {}
 
     # -- reading --
 
