@@ -474,6 +474,28 @@ def test_network_alone_still_opens_wifi(home):
     assert launcher.match("network", []).kind == "wifi"
 
 
+@pytest.mark.parametrize("text", [
+    "how's the machine?", "How is the machine", "hows the machine", "how’s the machine", "How's my computer doing?",
+])
+def test_how_is_the_machine_asks_for_the_machine_card_locally(home, text):
+    a = launcher.match(text, [])
+    assert (a.kind, a.target, a.verb) == ("widget", "machine", "open")
+
+
+@pytest.mark.parametrize("text", [
+    "how's the machine learning course going", "how is the machine room", "how's the machine's fan", "how's my computer science homework",
+    "!how's the machine",
+])
+def test_a_longer_question_about_the_machine_goes_to_the_agent(home, text):
+    assert launcher.match(text, []) is None
+
+
+def test_the_machine_question_never_hides_an_app_you_made(home):
+    apps.create("How's the machine", "import QtQuick\nItem {}\n")
+    a = launcher.match("how's the machine", apps.list_apps())
+    assert (a.kind, a.verb) == ("app", "open")
+
+
 def test_picture_actions_have_words_for_the_line(home):
     a = launcher.match("my disks", [])
     assert launcher.Launcher.doing(a) == "Drawing your disks"
@@ -578,7 +600,8 @@ def _lx(home, **k):
 
 @pytest.mark.parametrize("words, want", [
     (["hide machine"], [(True, "Put Machine away.")]),
-    (["hide machine", "show machine"], [(True, "Put Machine away."), (True, "Put Machine on the desk.")]),
+    (["hide machine", "show machine"], [(True, "Put Machine away."), (True, "Here is the machine.")]),
+    (["how's the machine?"], [(True, "Here is the machine.")]),
     (["close the machine"], [(True, "Put Machine away.")]),
     (["put watching away", "put watching away"],
      [(True, "Put Watching away."), (True, "Watching is already put away.")]),

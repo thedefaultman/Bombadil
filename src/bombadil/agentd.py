@@ -98,6 +98,14 @@ neither. While the table has anything in it agentd looks at it every JOBS_POLL s
 the table when it changes, and when a job ends says one line in the pill (a "local" event with no
 turn) and tells the next turn's prompt.
 
+The Machine card is one message, {"type": "machine", "present", "asked", "why", "strip", "rows"}
+(vitals.py has the whole shape). agentd samples the machine (vitals.py) only while a bar is connected and the
+desk has not put Machine away: every few seconds when calm, every second while the card is up or something
+is close to its line. It broadcasts the message when it differs from the last one, and the answer to
+{"type": "desk", "op": "get"} carries it when the card is up. {"type": "vitals", "op": "get"} asks for it
+again; {"type": "vitals", "op": "open", "row": "disk"} draws the disks picture (a click on that row), with
+no model. "show machine" and "how's the machine" raise the card on request (desk.on_ask).
+
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
@@ -147,13 +155,16 @@ DESK_DEBOUNCE = 0.03
 # The same for the jobs table, which is also looked at this often (seconds) while it has anything in it.
 JOBS_DEBOUNCE = 0.03
 JOBS_POLL = 2.0
+# What a click on a Machine row opens (vitals.py names the rows that open anything).
+VITALS_OPENS = {"disk": "disks"}
 
 
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
-                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None):
+                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
+                 vitals=None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
@@ -216,6 +227,15 @@ class AgentD:
         self._jobs_again = False                    # a job started while that task was deciding to stop
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
+        # The machine's readings. BOMBADIL_VITALS=0 turns the card off (the tests do, so nothing reads /proc).
+        if vitals is None and os.environ.get("BOMBADIL_VITALS") != "0":
+            from .vitals import Vitals      # (the sampler is stdlib only, and not imported when switched off)
+            vitals = Vitals()
+        self.vitals = vitals
+        self._vitals_task: asyncio.Task | None = None
+        self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
+        self._vitals_last: dict | None = None       # what the shell was last told
+        self.desk.on_ask = self._vitals_asked
 
     # -- socket --
 
@@ -235,7 +255,7 @@ class AgentD:
             try:
                 await server.serve_forever()
             finally:
-                for task in (worker, watcher, self._jobs_task):
+                for task in (worker, watcher, self._jobs_task, self._vitals_task):
                     if task is not None:
                         task.cancel()
 
@@ -247,6 +267,7 @@ class AgentD:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
             await self._send(writer, self._setup_msg())
+            self._vitals_kick()
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -332,6 +353,8 @@ class AgentD:
             await self._send(writer, await self._desk_tool(msg))
         elif t == "jobs":
             await self._jobs_op(msg, writer)
+        elif t == "vitals":
+            await self._vitals_op(msg, writer)
         elif t == "job-tool":
             await self._send(writer, await self._job_tool(msg))
         elif t == "status":
@@ -455,6 +478,7 @@ class AgentD:
         if state != self._desk_last:
             self._desk_last = state
             await self.broadcast(state)
+            self._vitals_kick()   # Machine put away stops the sampling; shown again starts it
 
     async def _desk_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the desk, or changes it (a click on a strip, a drag later)."""
@@ -466,6 +490,8 @@ class AgentD:
                 await self._send(writer, self.plan_msg)
             # And what is counting, which the desk's card and strip are made from.
             await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
+            if self.vitals is not None and self.vitals.message()["present"]:
+                await self._send(writer, self.vitals.message())
             return
         if op not in ("fold", "hide", "show", "move"):
             return
@@ -502,6 +528,73 @@ class AgentD:
         ok, text = await asyncio.to_thread(self.desk.apply, op, msg.get("widget"), msg.get("rail"),
                                            msg.get("rank"))
         return result(ok, text)
+
+    # -- the machine --
+
+    def _vitals_wanted(self) -> bool:
+        """Sample only while a bar is there to draw it and the person has not put Machine away."""
+        return self.vitals is not None and bool(self.clients) and "machine" not in self.desk.snapshot()["hidden"]
+
+    def _vitals_kick(self):
+        """Start looking at the machine, or look now: a bar came, the desk changed, or the card was asked for."""
+        if not self._vitals_wanted():
+            self._vitals_wake.set()      # a loop that is asleep wakes, finds nothing wanted and ends
+            return
+        self._vitals_wake.set()
+        if self._vitals_task is None or self._vitals_task.done():
+            self._vitals_task = asyncio.create_task(self._vitals_loop())
+
+    def _vitals_asked(self, widget: str):
+        """Desk.on_ask, from a worker thread: "show machine" raises the card even when nothing is wrong."""
+        if widget != "machine" or self.vitals is None:
+            return
+        self.vitals.ask()
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._vitals_kick)
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
+    async def _vitals_loop(self):
+        """One sample, the message when it is not what the shell was told, then sleep for as long as the
+        readings allow (long when calm, a second when close to a line or when the card is up). A wake
+        cuts the sleep short. The loop ends with the last bar or when Machine is put away."""
+        try:
+            while self._vitals_wanted():
+                self._vitals_wake.clear()
+                try:
+                    msg = await asyncio.to_thread(self.vitals.tick)
+                    if msg is not None:
+                        await self._vitals_send(msg)
+                except Exception as e:  # noqa: BLE001 - keep looking whatever one look found
+                    print(f"agentd: looking at the machine: {type(e).__name__}: {e}", file=sys.stderr)
+                try:
+                    await asyncio.wait_for(self._vitals_wake.wait(), self.vitals.next_delay())
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            # Nobody is looking any more: forget the streaks, and take a card that is up away.
+            self.vitals.reset()
+            if self._vitals_last is not None and self._vitals_last.get("present"):
+                await self._vitals_send(self.vitals.message())
+
+    async def _vitals_send(self, msg: dict):
+        if msg != self._vitals_last:
+            self._vitals_last = msg
+            await self.broadcast(msg)
+
+    async def _vitals_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the card again, or clicks a row that opens something (the disk)."""
+        op = str(msg.get("op", ""))
+        if self.vitals is None:
+            return
+        if op == "get":
+            await self._send(writer, self.vitals.message())
+        elif op == "open":
+            kind = VITALS_OPENS.get(str(msg.get("row", "")))
+            if kind is not None:
+                action = launcher.Action("picture", kind, "open", launcher.PICTURE_TITLES[kind])
+                self._background(self.picture(action, "the machine card"))
 
     # -- jobs --
 

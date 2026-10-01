@@ -50,6 +50,9 @@ WIDGETS: dict[str, Widget] = {w.id: w for w in (
 ALWAYS = ("needs",)
 # Opt in: it is on the desk only after "show alive".
 OPT_IN = ("alive",)
+# Widgets that are present only with something to say, and that "show" is also a question to: the word
+# brings the card up for a while even when nothing is wrong ("how's the machine"). The sentence is the answer.
+ASKABLE = {"machine": "Here is the machine."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
 _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
@@ -108,6 +111,7 @@ class Desk:
         self._path = path
         self._lock = threading.RLock()
         self.on_change = None
+        self.on_ask = None      # called with the widget's id when "show" asks for an askable widget
         self._reset()
 
     @property
@@ -156,6 +160,12 @@ class Desk:
                 self.on_change()
             except Exception as e:  # noqa: BLE001 - a broken listener never costs the change
                 print(f"desk: on_change: {type(e).__name__}: {e}", file=sys.stderr)
+        wid = find(widget) if ok and op == "show" else None
+        if wid in ASKABLE and self.on_ask is not None:
+            try:
+                self.on_ask(wid)
+            except Exception as e:  # noqa: BLE001 - the answer is the sentence, whatever the card does
+                print(f"desk: on_ask: {type(e).__name__}: {e}", file=sys.stderr)
         return ok, text
 
     def _apply(self, op: str, widget, rail, rank) -> tuple[bool, str, bool]:
@@ -182,6 +192,10 @@ class Desk:
             self.hidden.add(wid)
             return True, f"Put {name} away.", True
         if op == "show":
+            if wid in ASKABLE:
+                was_away = wid in self.hidden
+                self.hidden.discard(wid)
+                return True, ASKABLE[wid], was_away
             if wid not in self.hidden:
                 return True, f"{name} is already on the desk.", False
             self.hidden.discard(wid)
