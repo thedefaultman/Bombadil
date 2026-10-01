@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
