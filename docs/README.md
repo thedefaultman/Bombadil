@@ -16,6 +16,8 @@ The project's documents, next to its code.
   - `passenger-brief.md`: "Riding with Bombadil", the user as a passenger who gets things explained.
   - `voice-brief.md`: the one-time setup card, the voices and the welcome lines.
   - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
+  - `identity-brief.md`: the mark: what was asked, the three options drawn in round two, why the riding b, the orange, where the mark goes, and what was cut. The options and every state are on `pages/bombadil-mark.html`.
+  - `design-system.md`: the look written down: colour, type, shape, space, motion, icons and the pill's states.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
   - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
   - `boot-and-wallpaper.md`: every screen from power-on to the desk in the design system's colours: the quiet console, the wallpaper under the desk, and why the desk used to be black.
