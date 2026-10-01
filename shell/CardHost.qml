@@ -23,9 +23,10 @@ Rectangle {
     readonly property bool partial: !!(last && last.partial)
 
     // The height is not animated. The bar's window is as tall as its contents, so a height that
-    // grows over a few frames resizes the window every frame, and the compositor shows the pill
-    // jumping while it catches up. The window grows once; the card eases in inside the space, by
-    // fading and rising a few pixels instead, and gives the space back once it has faded out.
+    // grows over a few frames resizes the window every frame (each resize is a blip on the screen,
+    // and a compositor that animates layers, as Hyprland does unless its "layers" animation is off,
+    // swings the pill with every one). The window grows once; the card eases in inside the space,
+    // by fading and rising a few pixels instead, and gives the space back once it has faded out.
     implicitHeight: shown || opacity > 0 ? content.implicitHeight + 28 : 0
     radius: Kit.Theme.radiusLine
     color: Kit.Theme.glassLine

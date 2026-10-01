@@ -196,6 +196,11 @@ def sleeps():
 
 time.sleep(4)
 shot("00-resting")
+for _ in range(25):   # the picture is a 2560x1440 PNG decoded off the main thread: slow on a cold, busy machine
+    if mean_pixel("00-resting", 640, 180) != (16.0, 18.0, 20.0):
+        break
+    time.sleep(1)
+    shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
 check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
 
@@ -687,9 +692,10 @@ qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log"
               if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
 check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
 
-# 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image (the first one wants the bar
-# started again, after that a change is noticed), a picture that will not load falls back to the
-# standard one, and taking the file away brings it back.
+# 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image. The file new systems ship
+# holds only comments, so the standard picture shows and a first path is noticed with no restart; the
+# picture is dimmed toward the ground; a picture that will not load, a line that is not a path (an
+# image written into the file) and a missing file all fall back to the standard one.
 def paint(path, colour):
     from PySide6.QtGui import QColor, QImage
     img = QImage(2560, 1440, QImage.Format_RGB32)
@@ -708,35 +714,85 @@ def near(got, want, tol=8):
     return all(abs(g - w) <= tol for g, w in zip(got, want))
 
 
+def dimmed(rgb, dim=0.6, ground=(16, 18, 20)):
+    return tuple(c * (1 - dim) + g * dim for c, g in zip(rgb, ground))
+
+
 standard = mean_pixel("00-resting", 150, 400)
 home = Path.home()
 choice = home / ".config" / "bombadil" / "wallpaper"
 choice.parent.mkdir(parents=True, exist_ok=True)
+shipped = REPO / "iso" / "airootfs" / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
+choice.write_text(shipped.read_text())
 paint(home / "first.png", "#336699")
 paint(home / "second.png", "#993366")
-choice.write_text("~/first.png\n")
+paint(home / "white.png", "#ffffff")
 qs_proc.terminate()
 qs_proc.wait(10)
 start("quickshell-wallpaper", [str(REPO / "bin" / "bombadil-shell")])
 time.sleep(3)
+got = desk_colour("30-own-wallpaper-shipped-file")
+check("the file new systems ship (comments only) shows the standard picture", near(got, standard, 4),
+      (got, standard))
+choice.write_text(shipped.read_text() + "~/first.png\n")
 got = desk_colour("30-own-wallpaper")
-check("a picture named in ~/.config/bombadil/wallpaper replaces the standard one", near(got, (51, 102, 153)), got)
-choice.write_text("file://" + str(home / "second.png") + "\n")
+check("a first path is noticed with no restart, and the picture is dimmed toward the ground",
+      near(got, dimmed((51, 102, 153)), 6), (got, dimmed((51, 102, 153))))
+choice.write_text(choice.read_text() + "file://" + str(home / "second.png") + "\n")
 got = desk_colour("30-own-wallpaper-changed")
-check("changing the file changes the picture without a restart", near(got, (153, 51, 102)), got)
+check("adding a line changes the picture: the last line that is not a comment is the one used",
+      near(got, dimmed((153, 51, 102)), 6), got)
+choice.write_text("~/white.png\n")
+got = desk_colour("30-own-wallpaper-white")
+check("a white picture is no brighter than 115 on any channel, so the muted text reads over it",
+      max(got) <= 115, got)
+
+
+def paint_worst_case(path):
+    """Saturated bands, a white ellipse and white and yellow stripes across the bottom third, where
+    the pill and the cards sit: the picture the glass and the muted text have the hardest time over."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter
+    img = QImage(2560, 1440, QImage.Format_RGB32)
+    g = QLinearGradient(QPointF(0, 0), QPointF(2560, 960))
+    for i, c in enumerate(("#ff2020", "#20ff40", "#2040ff", "#ff20e0", "#ffee20", "#20ffee", "#ff2020")):
+        g.setColorAt(i / 6, QColor(c))
+    q = QPainter(img)
+    q.fillRect(QRectF(0, 0, 2560, 1440), QBrush(g))
+    q.setBrush(QColor("#ffffff"))
+    q.drawEllipse(QRectF(800, 160, 960, 640))
+    for i, x in enumerate(range(0, 2560, 64)):
+        q.fillRect(QRectF(x, 960, 32, 480), QColor("#ffffff" if i % 2 else "#ffee60"))
+    q.end()
+    assert img.save(str(path))
+
+
+paint_worst_case(home / "worst.png")
+choice.write_text("~/worst.png\n")
+desk_colour("30-own-wallpaper-worst-case")
+tmp = home / ".config" / "bombadil" / "wallpaper.new"
+tmp.write_text("~/first.png\n")
+os.replace(tmp, choice)
+got = desk_colour("30-own-wallpaper-replaced")
+check("a file replaced by renaming another over it is noticed too", near(got, dimmed((51, 102, 153)), 6), got)
 choice.write_text("/nowhere/at/all.png\n")
 got = desk_colour("30-own-wallpaper-missing")
 check("a picture that will not load falls back to the standard one", near(got, standard, 4), (got, standard))
+choice.write_bytes(Path(OUT / "30-own-wallpaper-missing.png").read_bytes())   # an image, not a path
+got = desk_colour("30-own-wallpaper-image-in-file")
+check("an image written into the file falls back to the standard one", near(got, standard, 4), (got, standard))
 choice.write_text("~/first.png\n")
 desk_colour("30-own-wallpaper-again")
 choice.unlink()
 got = desk_colour("30-own-wallpaper-gone")
 check("taking the file away brings the standard picture back", near(got, standard, 4), (got, standard))
 own_log = re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text())
+check("the log says once that the file holds a path, not the image",
+      own_log.count("holds the path of an image, on one line, not the image itself") == 1, own_log[-300:])
 check("the wallpaper's choices raised no QML error but the one for the picture that is not there",
       not [ln for ln in own_log.splitlines()
            if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
-           and "Cannot open" not in ln], own_log[-400:])
+           and "Cannot open" not in ln and "wallpaper:" not in ln], own_log[-400:])
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
