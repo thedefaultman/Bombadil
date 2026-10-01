@@ -58,6 +58,32 @@ TIME = """Startup finished in 8.221s (firmware) + 4.112s (loader) + 3.501s (kern
 graphical.target reached after 6.451s in userspace.
 """
 
+# The same chain as the machine prints it under LC_ALL=C, where the captures run it: no box-drawing
+# marks, "`-" for the last branch, "|-" and "| " for the ones with more beneath. (A UTF-8 locale gets
+# the marks in CHAIN above.)
+CHAIN_C = """The time when unit became active or started is printed after the "@" character.
+The time the unit took to start is printed after the "+" character.
+
+graphical.target @10.125s
+`-multi-user.target @10.125s
+  `-getty.target @10.124s
+    `-getty@tty1.service @10.123s
+      `-systemd-user-sessions.service @10.1s +20ms
+        `-network.target @10.0s
+          `-NetworkManager.service @6.1s +3.9s
+            |-dbus.service @5.9s
+            | `-dbus.socket @5.8s
+            |   `-sysinit.target @5.7s
+            |     |-systemd-timesyncd.service @5.2s +500ms
+            |     | `-systemd-tmpfiles-setup.service @4.9s +300ms
+            |     |   `--.mount @1.2s
+            |     `-local-fs.target @5.1s
+            `-polkit.service @4.0s +1.2s
+"""
+TIME_C = """Startup finished in 3.1s (kernel) + 14.8s (userspace) = 17.9s
+graphical.target reached after 10.125s in userspace.
+"""
+
 NM_SHOW = """Id=NetworkManager.service
 Description=Network Manager
 LoadState=loaded
@@ -219,6 +245,21 @@ def test_parse_critical_chain_reads_names_starts_and_durations():
     assert rows == sorted(rows, key=lambda r: r[1])   # earliest first
 
 
+def test_the_chain_is_read_in_the_c_locale_the_captures_run_under():
+    rows = sysmap.parse_critical_chain(CHAIN_C)
+    by = {r[0]: r for r in rows}
+    assert len(rows) == 15 and rows == sorted(rows, key=lambda r: r[1])
+    assert by["graphical.target"][1] == pytest.approx(10.125)
+    assert by["-.mount"][1:] == pytest.approx((1.2, 0))               # a unit that starts with a "-" keeps it
+    assert by["systemd-tmpfiles-setup.service"][1:] == pytest.approx((4.9, 0.3))
+    assert by["NetworkManager.service"][1:] == pytest.approx((6.1, 3.9))
+    assert by["getty@tty1.service"][1:] == pytest.approx((10.123, 0))
+    # ... and the same units in both locales
+    assert sorted(r[0] for r in sysmap.parse_critical_chain(CHAIN)) != sorted(by)
+    ascii_chain = CHAIN.replace("└─", "`-")
+    assert [r[0] for r in sysmap.parse_critical_chain(ascii_chain)] == [r[0] for r in sysmap.parse_critical_chain(CHAIN)]
+
+
 # -- network --
 
 def test_network_all_answers():
@@ -332,6 +373,16 @@ def test_boot_keeps_the_slowest_when_there_are_too_many():
     assert "step7" in labels and "step19" in labels
 
 
+def test_boot_in_the_c_locale_draws_the_whole_chain_not_its_root_alone():
+    card = sysmap.capture_boot(fake({"systemd-analyze critical-chain": CHAIN_C, "systemd-analyze time": TIME_C}))["card"]
+    assert len(card["nodes"]) == 12 and card["title"] == "What starts when you boot (17.9 s in all)"
+    labels = [n["label"] for n in card["nodes"]]
+    assert {"NetworkManager", "polkit", "dbus", "network.target"} <= set(labels)    # more than the root line
+    assert [n["time"] for n in card["nodes"]][:3] == ["1.2 s", "4 s", "4.9 s"]       # earliest first
+    warn = [n for n in card["nodes"] if n.get("state") == "warn"]
+    assert [n["label"] for n in warn] == ["NetworkManager"] and "takes 3.9 s" in card["say"]
+
+
 def test_boot_on_a_live_system_says_why_nothing_is_drawn():
     with pytest.raises(sysmap.Unavailable, match="no boot record"):
         sysmap.capture_boot(fake({}))
@@ -378,6 +429,80 @@ def test_service_shows_what_it_needs_and_what_it_wants():
     assert top["state"] == "ok" and top["sub"] == "active (running)" and "from networkmanager" in top["note"]
     assert top["rank"] == 0 and all(n["rank"] == 1 for n in card["nodes"][1:])
     assert "everything it needs is up" in card["say"]
+
+
+SHOW_PROPS = ("Id,Description,LoadState,ActiveState,SubState,UnitFileState,Requires,Wants,FragmentPath,"
+              "ActiveEnterTimestamp")
+NOT_FOUND = "Id=networkmanager.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\n"
+UNIT_FILES = """dbus.service                               static          -
+NetworkManager-dispatcher.service         enabled         disabled
+NetworkManager.service                    enabled         disabled
+getty@.service                            enabled         enabled
+"""
+
+
+def test_a_service_typed_without_its_capitals_is_found_as_systemd_spells_it():
+    run_ = fake({f"systemctl show -p {SHOW_PROPS} networkmanager.service": NOT_FOUND,
+                 f"systemctl show -p {SHOW_PROPS} NetworkManager.service": NM_SHOW,
+                 "systemctl list-unit-files": UNIT_FILES,
+                 "systemctl show -p Id,ActiveState,SubState": NM_DEPS})
+    r = sysmap.capture_service("networkmanager", run_)
+    assert r["card"]["target"] == "NetworkManager.service" and r["card"]["nodes"][0]["label"] == "NetworkManager"
+    # only a unit that is not there as typed costs the second lookup
+    asked = fake({f"systemctl show -p {SHOW_PROPS} NetworkManager.service": NM_SHOW,
+                  "systemctl show -p Id,ActiveState,SubState": NM_DEPS})
+    sysmap.capture_service("NetworkManager", asked)
+    assert not any("list-unit" in c for c in asked.calls)
+
+
+def test_find_unit_answers_with_the_name_the_machine_uses_or_nothing():
+    loaded = "LoadState=loaded\n"
+    assert sysmap.find_unit("bluetooth", fake({"systemctl show -p LoadState bluetooth.service": loaded})) == "bluetooth.service"
+    run_ = fake({"systemctl show -p LoadState networkmanager.service": "LoadState=not-found\n",
+                 "systemctl list-unit-files": UNIT_FILES})
+    assert sysmap.find_unit("networkmanager", run_) == "NetworkManager.service"
+    assert sysmap.find_unit("NETWORKMANAGER", run_) == "NetworkManager.service"
+    # a unit that only exists loaded (generated, or an instance) is found in the other list, whatever mark it has
+    loaded_list = "● Wg-Quick@wg0.service   loaded failed failed WireGuard\n  dbus.service loaded active running D-Bus\n"
+    run_ = fake({"systemctl show -p LoadState wg-quick@wg0.service": "LoadState=not-found\n",
+                 "systemctl list-units": loaded_list})
+    assert sysmap.find_unit("wg-quick@wg0", run_) == "Wg-Quick@wg0.service"
+    # a template cannot be shown, and a name that is nowhere is not a service
+    assert sysmap.find_unit("getty@", fake({"systemctl show -p LoadState getty@.service": "LoadState=not-found\n",
+                                            "systemctl list-unit-files": UNIT_FILES})) is None
+    assert sysmap.find_unit("the moon", fake({})) is None
+    assert sysmap.find_unit("x; rm -rf /", fake({})) is None
+
+
+def test_a_restart_that_leaves_the_service_as_it_was_still_gets_a_receipt():
+    today = time.strftime("%Y-%m-%d")
+
+    def facts(stamp: str):
+        show = NM_SHOW + f"ActiveEnterTimestamp=Thu {stamp} UTC\n"
+        return sysmap.capture_service("NetworkManager", fake({
+            "systemctl show -p Id,Description": show, "systemctl show -p Id,ActiveState,SubState": NM_DEPS}))["facts"]
+
+    before, after = facts(f"{today} 12:03:20"), facts(f"{today} 12:21:45")
+    assert any(f["key"] == "since" and f["value"] == "up since 12:03:20" for f in before)
+    card = sysmap.receipt("service", before, after, "NetworkManager")
+    assert card["title"] == "NetworkManager, before and after"
+    assert [(n["side"], n["sub"], n["state"]) for n in card["nodes"]] == [
+        ("before", "up since 12:03:20", "gone"), ("after", "up since 12:21:45", "new")]
+    assert card["say"] == "NetworkManager was restarted and is running again."
+    assert sysmap.receipt("service", before, facts(f"{today} 12:03:20")) is None        # no restart, no card
+    old = facts("2026-09-30 08:00:00")
+    assert any(f["value"] == "up since 2026-09-30 08:00:00" for f in old)               # not today: with its date
+
+
+def test_a_start_time_next_to_a_real_change_is_left_out_of_the_receipt():
+    today = time.strftime("%Y-%m-%d")
+    up = NM_SHOW + f"ActiveEnterTimestamp=Thu {today} 12:03:20 UTC\n"
+    stopped = NM_SHOW.replace("ActiveState=active", "ActiveState=inactive").replace("SubState=running", "SubState=dead")
+    f = lambda show: sysmap.capture_service("NetworkManager", fake({    # noqa: E731
+        "systemctl show -p Id,Description": show, "systemctl show -p Id,ActiveState,SubState": NM_DEPS}))["facts"]
+    card = sysmap.receipt("service", f(up), f(stopped), "NetworkManager")
+    assert [(n["side"], n["key"]) for n in card["nodes"]] == [("before", "state"), ("after", "state")]
+    assert not card.get("say")
 
 
 def test_service_that_failed_because_a_dependency_is_not_running():
@@ -508,6 +633,36 @@ def test_sound_shows_which_app_plays_to_which_speaker():
     assert labels["app80"]["label"] == "Spotify" and labels["app80"]["sub"] == "Blue in Green"
     assert card["links"] == [{"from": "app80", "to": "sink45"}]
     assert card["say"] == "Spotify is playing through Built-in Audio Analog Stereo at 70%."
+
+
+def pw_with(props: dict, sink_id: int = 45) -> str:
+    dump = json.loads(PW)
+    for o in dump:
+        if o["id"] == sink_id:
+            o["info"]["params"] = {"Props": [props]}
+    return json.dumps(dump)
+
+
+def test_a_hardware_speaker_keeps_its_level_in_the_channels_not_in_the_master_volume():
+    # A real sink at 40%: PipeWire leaves `volume` at 1.0 and puts 0.4 cubed in each channel.
+    props = {"volume": 1.0, "mute": False, "channelVolumes": [0.064, 0.064], "channelMap": ["FL", "FR"]}
+    card = sysmap.capture_sound(fake({"pw-dump": pw_with(props)}))["card"]
+    assert card["nodes"][0]["sub"] == "40%, default"
+    assert "at 40%" in card["say"]
+    # a software level on the master, and the two together
+    assert sysmap._volume({"params": {"Props": [{"volume": 0.343, "mute": False, "channelVolumes": [1.0, 1.0]}]}}) == (70, False)
+    assert sysmap._volume({"params": {"Props": [{"volume": 0.5, "channelVolumes": [0.5, 0.25]}]}}) == (63, False)   # 0.5 * 0.5 is 0.25, 63%
+    assert sysmap._volume({"params": {"Props": [{"mute": True}]}}) == (None, True)
+
+
+def test_the_sound_receipt_sees_the_volume_change_that_used_to_read_as_a_hundred_percent():
+    def facts(level: float):
+        props = {"volume": 1.0, "mute": False, "channelVolumes": [level, level]}
+        return sysmap.capture_sound(fake({"pw-dump": pw_with(props)}))["facts"]
+
+    card = sysmap.receipt("sound", facts(0.4 ** 3), facts(0.65 ** 3))
+    assert [(n["side"], n["sub"]) for n in card["nodes"]] == [("before", "on, 40%"), ("after", "on, 65%")]
+    assert sysmap.receipt("sound", facts(0.4 ** 3), facts(0.4 ** 3)) is None
 
 
 def test_sound_muted_is_amber_and_says_so():
