@@ -145,6 +145,13 @@ receipt for stopping a service still shows the state and nothing else.
   before its links, and the links carry the labels that decide how wide the gaps are, so a finished
   chain used to re-lay itself out from one row into two with a visible jump. `Diagram.qml` now
   leaves room for labels of about 14 characters while a chain has none yet.
+- **A note under a box stays on the picture.** What the machine says about a box ("names are looked
+  up at 10.0.2.3") is centred under it and 170 px wide at least, which is wider than a box in a
+  narrow card. The first box of a row sits at the left edge, so its note started off the picture and
+  lost its first letters ("ames are looked up", seen at the 360 px a window narrows the card to).
+  The note is moved inside the picture's edges (`Diagram.qml`, `boxNote`), and is still centred
+  everywhere it fits. At 360 px a chain also wraps to three rows with long connectors; that is
+  the card's width, not a fault of the note.
 - **A before and after sits together.** The two columns are at most 230 px wide with 76 px between
   them for the arrow, centred, instead of one at each edge of a wide card.
 - **The agent's own words on the line start at a word.** While the agent works, the line shows the
