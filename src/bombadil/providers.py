@@ -18,25 +18,48 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import persona
+from . import paths, persona
 
-SYSTEM_PROMPT = (
-    "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
-    "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
-    "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML, hot "
-    "reloaded, no web servers), take screenshots to check your work, and use rollback when the user says "
-    "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
-    "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
-    "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
-    "user a restart is needed: until then modprobe cannot load modules. The user sees your work on "
-    "screen and your final reply as at most four lines above the bar: one or two plain sentences saying what you did, "
-    "no markdown, no lists."
-)
+
+def kit_paths() -> tuple[Path, Path]:
+    """(the QML kit's folder, the bombadil-apps skill's folder), where they are on this system."""
+    for share in (Path(__file__).resolve().parents[2] / "share", paths.share_dir() / "share", paths.share_dir()):
+        if (share / "qml" / "Bombadil").is_dir():
+            return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+    share = Path("/usr/share/bombadil/share")
+    return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
+
+
+def base_prompt() -> str:
+    """The prompt every turn starts from, before the user's voice."""
+    kit, skill = kit_paths()
+    return (
+        "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
+        "The user talks to you instead of clicking around. Use the bombadil-os tools to show what they ask "
+        "for: slide the browser in with show_panel, build native apps with create_app (Qt Quick/QML with the "
+        "Bombadil kit, hot reloaded, no web servers). The kit is the QML module `Bombadil`: write "
+        f"`import Bombadil` and it resolves; its files are in {kit}/ (Theme.qml, AppWindow.qml, ...). "
+        f"Read {skill}/SKILL.md first, or call app_guide, and never search the disk for the kit. "
+        "Take screenshots to check your work, and use rollback when the user says "
+        "undo. You have full access to this machine as the user, with passwordless sudo; act, don't ask for "
+        "permission. Install software with `sudo pacman -Syu --noconfirm --needed <packages>`, and never "
+        "`pacman -Sy` alone (Arch breaks on a partial upgrade). If an upgrade replaced the kernel, tell the "
+        "user a restart is needed: until then modprobe cannot load modules. "
+        "The user sees your work on screen and your final reply as at most four lines above the "
+        "bar: one or two plain sentences saying what you did, no markdown, no lists. "
+        "When a request takes three or more steps, write the plan first with your task tool, in short plain "
+        "words the user will read (no file names, commands or tool names), and keep it updated. "
+        "Before each step that changes the machine, say in one short plain sentence why: the reason, not the action. "
+        "When an answer has parts, order or change, show it as a picture (system_map for this machine, "
+        "show_card otherwise), then say one line."
+    )
 
 
 def system_prompt() -> str:
-    """The fixed prompt of every session Bombadil starts, then the user's voice and where to change it."""
-    return SYSTEM_PROMPT + ("\n\n" + n if (n := persona.note()) else "")
+    """What both CLIs get on every turn, fresh or resumed: the base prompt, then the user's voice and
+    where to change it."""
+    return base_prompt() + ("\n\n" + n if (n := persona.note()) else "")
+
 
 DIAGNOSTIC = "[ede_diagnostic]"   # what the CLI prints when a turn was cut short
 
@@ -246,7 +269,10 @@ class Claude(Provider):
             # live line only (the complete message follows as "assistant").
             e = m.get("event") or {}
             et = e.get("type")
-            if et == "content_block_start":
+            if et == "message_start":
+                # A new model message: the sentence before its steps is their reason.
+                yield {"kind": "message_start"}
+            elif et == "content_block_start":
                 block = e.get("content_block") or {}
                 if block.get("type") == "tool_use":
                     yield {"kind": "tool_start", "index": e.get("index", 0), "name": block.get("name", ""),
@@ -431,17 +457,20 @@ class Codex(Provider):
             code = item.get("exit_code")
             yield {"kind": "tool_result", "id": item.get("id"), "output": item.get("aggregated_output") or "",
                    "error": code not in (0, None), "exit_code": code}
+            yield {"kind": "message_start"}   # what it says next explains the next step, not this one
         elif t == "item.completed" and item.get("type") == "mcp_tool_call":
             res, err = item.get("result"), item.get("error")
             out = err.get("message", "") if isinstance(err, dict) else (err or "")
             if not out and isinstance(res, dict):
                 out = _result_text(res.get("content"))
             yield {"kind": "tool_result", "id": item.get("id"), "output": out, "error": bool(err)}
+            yield {"kind": "message_start"}
         elif t == "item.started" and item.get("type") == "file_change":
             yield {"kind": "file_change", "id": item.get("id"), "changes": item.get("changes") or []}
         elif t == "item.completed" and item.get("type") == "file_change":
             yield {"kind": "tool_result", "id": item.get("id"), "output": "",
                    "error": item.get("status") == "failed"}
+            yield {"kind": "message_start"}
         elif t == "item.completed" and item.get("type") == "web_search":
             # No id: it arrives once, already finished, and nothing ever answers it (an id would
             # mark a tool as running for the rest of the turn).

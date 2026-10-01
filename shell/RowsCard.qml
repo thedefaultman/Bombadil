@@ -86,6 +86,7 @@ DeskCard {
                 // The title: a meter row's label, or the first line of a dot or plain row.
                 Text {
                     objectName: "rowsRowTitle"
+                    font.family: T.fontFamily
                     x: row.kind === "dot" ? 32 : 14
                     y: Math.round((row.kind === "meter" ? 22 : 26) - baselineOffset)
                     width: Math.max(0, (row.kind === "meter" ? meta.x - 8 : row.textRight) - x)
@@ -99,6 +100,7 @@ DeskCard {
                 Text {
                     id: meta
                     objectName: "rowsMeta"
+                    font.family: T.fontFamily
                     visible: row.kind === "meter"
                     x: 250 - row.meterRoom - Math.min(implicitWidth, 150)
                     y: Math.round(22 - baselineOffset)
@@ -112,6 +114,7 @@ DeskCard {
                 }
                 Text {
                     objectName: "rowsPercent"
+                    font.family: T.fontFamily
                     visible: row.kind === "meter" && row.hasMeter
                     x: 286 - row.meterRoom - implicitWidth
                     y: Math.round(22 - baselineOffset)
@@ -155,6 +158,7 @@ DeskCard {
                 }
                 Text {
                     objectName: "rowsRowSub"
+                    font.family: T.fontFamily
                     visible: row.kind !== "meter" && row.sub !== ""
                     x: row.kind === "dot" ? 32 : 14
                     y: Math.round(42 - baselineOffset)
@@ -193,10 +197,11 @@ DeskCard {
                         border.color: T.border
                         Text {
                             id: label
+                            font.family: T.fontFamily
                             anchors.centerIn: parent
                             text: pressButton.text
                             // Do it is orange with white on it; the theme's white is the you-colour, a shade short.
-                            color: pressButton.primary ? "white" : T.fg
+                            color: pressButton.primary ? T.onAccent : T.fg
                             font.pixelSize: 12
                             textFormat: Text.PlainText
                         }
@@ -218,6 +223,7 @@ DeskCard {
                         property string armedKey: ""
                         width: 22; height: 22
                         Text {
+                            font.family: T.fontFamily
                             anchors { right: parent.right; verticalCenter: parent.verticalCenter }
                             text: "×"
                             color: dropHover.hovered ? T.fg : T.muted

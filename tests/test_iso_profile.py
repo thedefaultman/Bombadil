@@ -24,8 +24,8 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
                if line.startswith("Server")]
     assert servers and all(re.fullmatch(r"Server = https://\S+/\$repo/os/\$arch", s) for s in servers)
     from bombadil import providers
-    assert "pacman -Syu --noconfirm --needed" in providers.SYSTEM_PROMPT
-    assert "never `pacman -Sy` alone" in providers.SYSTEM_PROMPT
+    assert "pacman -Syu --noconfirm --needed" in providers.system_prompt()
+    assert "never `pacman -Sy` alone" in providers.system_prompt()
 
 
 ARCH_GRUB_DEFAULTS = """\
@@ -84,4 +84,4 @@ def test_the_pill_opens_from_super_and_from_alt_space():
 def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers
-    assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.SYSTEM_PROMPT
+    assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.system_prompt()

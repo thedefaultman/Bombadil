@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import Bombadil as Kit
 
 // The card that asks what to call you and in which voice Bombadil should greet you: one name
 // field and a row per voice, each reading back how it would welcome you with the name typed so
@@ -74,9 +75,9 @@ Rectangle {
 
     implicitHeight: shown ? content.implicitHeight + 24 : 0
     radius: 14
-    color: "#e61a1d21"
+    color: Kit.Theme.glassLine
     border.width: 1
-    border.color: "#2a2f36"
+    border.color: Kit.Theme.border
     opacity: shown ? 1 : 0
     // Visible the moment it is shown, so the field can take the keyboard before the fade-in starts.
     visible: shown || opacity > 0
@@ -93,7 +94,7 @@ Rectangle {
             objectName: "cardLine"
             Layout.fillWidth: true
             text: card.ask && card.ask.line !== "" ? card.ask.line : "What should I call you?"
-            color: "#e6e8eb"
+            color: Kit.Theme.fg
             font.pixelSize: 15
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
@@ -106,9 +107,9 @@ Rectangle {
             Layout.fillWidth: true
             implicitHeight: 38
             radius: 10
-            color: "#22262b"
+            color: Kit.Theme.raised
             border.width: 1
-            border.color: card.problem ? "#c04a4a" : (field.activeFocus ? "#4a525c" : "#353b43")
+            border.color: card.problem ? Kit.Theme.bad : (field.activeFocus ? Kit.Theme.borderActive : Kit.Theme.borderStrong)
 
             // Not focus: true, it would compete with the pill's own field; takeKeys() is how it gets the keys.
             TextField {
@@ -118,8 +119,8 @@ Rectangle {
                 leftPadding: 12
                 rightPadding: 12
                 placeholderText: "Your name"
-                placeholderTextColor: "#8b939c"
-                color: "#e6e8eb"
+                placeholderTextColor: Kit.Theme.muted
+                color: Kit.Theme.fg
                 font.pixelSize: 15
                 background: null
                 maximumLength: 24
@@ -152,9 +153,9 @@ Rectangle {
                 Layout.fillWidth: true
                 implicitHeight: rowContent.implicitHeight + 14
                 radius: 10
-                color: on ? "#22262b" : "transparent"
+                color: on ? Kit.Theme.raised : "transparent"
                 border.width: 1
-                border.color: on ? "#d97757" : (rowHover.hovered ? "#353b43" : "#2a2f36")
+                border.color: on ? Kit.Theme.accent : (rowHover.hovered ? Kit.Theme.borderStrong : Kit.Theme.border)
 
                 HoverHandler { id: rowHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler {
@@ -178,11 +179,11 @@ Rectangle {
                         radius: 7
                         color: "transparent"
                         border.width: 1.5
-                        border.color: row.on ? "#d97757" : "#6b737c"
+                        border.color: row.on ? Kit.Theme.accent : Kit.Theme.faint
                         Rectangle {
                             anchors.centerIn: parent
                             width: 6; height: 6; radius: 3
-                            color: "#d97757"
+                            color: Kit.Theme.accent
                             visible: row.on
                         }
                     }
@@ -194,7 +195,7 @@ Rectangle {
                         Text {
                             objectName: "voiceName"
                             text: String(row.modelData.name || row.voiceId)
-                            color: "#e6e8eb"
+                            color: Kit.Theme.fg
                             font.pixelSize: 14
                             font.bold: true
                             textFormat: Text.PlainText
@@ -203,7 +204,7 @@ Rectangle {
                             objectName: "voiceSample"
                             Layout.fillWidth: true
                             text: card.sample(row.modelData)
-                            color: row.on ? "#a9b0b8" : "#8b939c"
+                            color: row.on ? Kit.Theme.muted : Kit.Theme.muted
                             font.pixelSize: 13
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
@@ -216,7 +217,7 @@ Rectangle {
                             Layout.fillWidth: true
                             visible: text !== ""
                             text: String(row.modelData.reply || "")
-                            color: row.on ? "#8f98a1" : "#6f7780"
+                            color: row.on ? Kit.Theme.muted : Kit.Theme.faint
                             font.pixelSize: 12
                             font.italic: true
                             textFormat: Text.PlainText
@@ -235,7 +236,7 @@ Rectangle {
             text: card.problem ? "A name is up to three words"
                 : card.voices.length > 0 ? "Enter keeps " + card.chosen + " · Up and Down to change · Esc skips"
                 : "Enter saves · Esc skips"
-            color: card.problem ? "#f0a0a0" : "#8b939c"
+            color: card.problem ? Kit.Theme.badInk : Kit.Theme.muted
             font.pixelSize: 12
             textFormat: Text.PlainText
             elide: Text.ElideRight

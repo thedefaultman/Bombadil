@@ -65,9 +65,9 @@ class Renderer:
             step = narrate.tool_step(ev.get("name", ""), ev.get("input"))
             if step is None:
                 return
-            yield from self._step(step, _what_ran(ev))
+            yield from self._step(step, _what_ran(ev), ev)
         elif kind == "file_change":
-            yield from self._step(narrate.file_change_step(ev.get("changes") or []))
+            yield from self._step(narrate.file_change_step(ev.get("changes") or []), "", ev)
             for ch in ev.get("changes") or []:
                 if isinstance(ch, dict):
                     yield c(DIM, f"    {ch.get('kind', 'update')}: {ch.get('path', '')}")
@@ -91,13 +91,34 @@ class Renderer:
                 yield f"  {line}"
         elif kind == "error":
             yield c(RED, f"  ! {ev.get('text', '')}")
+        elif kind == "card":
+            # A picture shown during or after the turn, in the words it has for screen readers and copying.
+            card = ev.get("card") if isinstance(ev.get("card"), dict) else {}
+            if card.get("text") and not card.get("partial"):
+                yield c(DIM, "  picture" + (" (what changed)" if card.get("receipt") else ""))
+                for line in str(card["text"]).splitlines():
+                    yield c(DIM, "  ┆ ") + line
         elif kind == "turn_end":
             end = ev.get("line") or ev.get("summary") or "Done."
             yield c(BOLD, f"  {end}") + c(DIM, f"   {ev.get('seconds', 0)} s")
             if ev.get("irreversible"):
                 yield c(RED, "  One step here cannot be undone.")
+            yield from self._read(ev.get("read"))
 
-    def _step(self, step: narrate.Step, ran: str = "") -> Iterator[str]:
+    def _read(self, reads) -> Iterator[str]:
+        """Everything the turn read, told apart: what is yours and what came from outside."""
+        c = self.c
+        reads = [r for r in reads if isinstance(r, dict)] if isinstance(reads, list) else []
+        if not reads:
+            return
+        yield c(DIM, "  read")
+        for outside in (False, True):
+            names = [str(r.get("label", "")) + (f" (from {r['origin']})" if r.get("origin") else "")
+                     for r in reads if bool(r.get("outside")) == outside]
+            if names:
+                yield "    " + ("outside  " if outside else "yours    ") + c(AMBER if outside else DIM, ", ".join(names))
+
+    def _step(self, step: narrate.Step, ran: str = "", ev: dict | None = None) -> Iterator[str]:
         """The step in words, then exactly what ran: the plain words can be wrong, this is not.
         Marked steps show it in their colour, the rest dimmed."""
         c = self.c
@@ -107,6 +128,13 @@ class Renderer:
         colour = AMBER if step.risk == "system" else RED if step.risk else DIM
         for i, line in enumerate(exact.splitlines()):
             yield c(colour, ("  $ " if i == 0 else "    ") + line[: self.width * 3])
+        # Why, in the agent's own words from just before it acted, and what it followed.
+        because = str((ev or {}).get("because") or "")
+        if because:
+            yield c(DIM, f"  why: {because}")
+        after = (ev or {}).get("after")
+        if isinstance(after, dict) and after.get("text"):
+            yield c(AMBER, f"  {after['text']}")
 
 
 def _what_ran(ev: dict) -> str:

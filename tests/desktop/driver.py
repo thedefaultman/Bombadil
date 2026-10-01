@@ -61,6 +61,17 @@ def shot(name):
         print("grim failed:", r.stderr, flush=True)
 
 
+def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
+    """How many pixels in the pill's rows are the stone's green (the pill draws no other green)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    for y in range(*rows):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
 # -- start everything --
 start("fake-api", [sys.executable, str(E2E / "fake_api.py"), "18555", str(OUT / "api-requests.jsonl")])
 (xdg / "sway.conf").write_text(
@@ -81,7 +92,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", ["quickshell", "-p", str(REPO / "shell" / "shell.qml")])
+start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -176,6 +187,7 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
+check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
 
 # 0. Bombadil says hello. No persona.toml yet, so the first bar to connect gets the card (name and voice),
 # with the keyboard already on it; Enter saves, the greeting follows, and the next turn's system prompt
@@ -279,6 +291,7 @@ check(
 inst = wait(ev("status", text=lambda t: (t or "").startswith("Installing ffmpeg")), 40, n)
 time.sleep(0.4)
 shot("03-installing-ffmpeg")
+check("the stone is not green while a turn runs", stone_pixels("03-installing-ffmpeg") < 20, stone_pixels("03-installing-ffmpeg"))
 check(
     "step reads Installing ffmpeg, marked system, with the exact command",
     inst and inst.get("risk") == "system" and "pacman -S" in (inst.get("command") or ""),
@@ -455,6 +468,71 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 7b. a click on a box in a picture that names a file opens it in the same drawer, in the viewer
+# (`bombadil view`: the image has no pager), and one Esc puts it away.
+m = mark()
+send({"type": "open", "kind": "path", "value": "/etc/os-release"})
+done = wait(ev("local", action="open", phase="done"), 15, m)
+check("a clicked file is opened and the line says so", done is not None and done.get("ok") is True, done and done.get("text"))
+check("the viewer opens in the drawer", until(drawer_open, 5) and "bombadil view --file /etc/os-release" in run("pgrep", "-af", "bombadil").stdout,
+      run("pgrep", "-af", "bombadil view").stdout[:200])
+time.sleep(1)
+shot("21-open-file")
+check("the viewer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("one Esc puts the viewer away", until(lambda: not drawer_open()))
+
+# 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
+# the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
+def glass_pixels(x, y, h):
+    """How many pixels of a one-pixel-wide strip are the bar's glass (#e61a1d21 over a dark screen)."""
+    r = subprocess.run(["grim", "-g", f"{x},{y} 1x{h}", "-t", "ppm", "-"], env=env, capture_output=True)
+    data = r.stdout
+    try:
+        head, rest = data.split(b"\n255\n", 1)
+    except ValueError:
+        return -1
+    return sum(1 for i in range(0, len(rest) - 2, 3)
+               if 21 <= rest[i] <= 30 and 24 <= rest[i + 1] <= 34 and 28 <= rest[i + 2] <= 38)
+
+
+m = mark()
+summon()
+typ("explain the vpn")
+key("Return")
+half = wait(ev("card", card=lambda c: bool(c and c.get("partial"))), 60, m)
+check("a picture streams into the bar while the model writes it", half is not None, half and half["card"].get("id"))
+full = wait(ev("card", card=lambda c: bool(c and not c.get("partial") and not c.get("gone"))), 60, m)
+check("the finished picture takes the streamed one's id",
+      full is not None and half is not None and full["card"]["id"] == half["card"]["id"], full and full["card"].get("id"))
+end = wait(ev("turn_end"), 60, m)
+check("the turn that drew it ends plainly", end is not None and not end.get("stopped"), end and end.get("summary"))
+time.sleep(1.0)
+shot("22-picture")
+with_card = glass_pixels(200, 300, 420)
+check("Quickshell draws the picture above the line", with_card > 80, with_card)
+qs_log = (OUT / "quickshell.log").read_text() if (OUT / "quickshell.log").exists() else ""
+bad = [ln for ln in qs_log.splitlines() if re.search(r"CardHost|Diagram|Theme\.qml|ReferenceError|TypeError", ln)]
+check("the bar loads the kit's Diagram without QML errors", not bad, bad[:3])
+summon()
+key("Escape")
+time.sleep(0.8)
+shot("22-picture-away")
+without = glass_pixels(200, 300, 420)
+check("Esc puts the picture away", without < with_card // 2, f"{with_card} -> {without}")
+
+before = api_requests()
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+pic = wait(ev("local", action="picture", phase="done"), 20, m)
+check("a picture word is answered with no model and no turn", pic is not None and api_requests() == before
+      and wait(ev("turn_start"), 1, m) is None, pic and pic.get("text"))
+time.sleep(0.8)
+shot("23-picture-word")
+
+
 # 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
 # `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
@@ -558,11 +636,31 @@ check("the failed row says why in one line, with Why?", w["rows"][2]["button"] =
 check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
 check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
       and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+# a picture with both rails up stays between them, as wide as the narrowed pill (328..951 at 1280 wide)
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.0)
+shot("26-desk-picture-between-rails")
+inside = glass_pixels(400, 480, 200)
+beside = glass_pixels(322, 480, 200)
+check("a picture with both rails up sits between them", inside > 60 and beside < 10, f"inside {inside}, beside {beside}")
+summon()
+key("Escape")
+time.sleep(0.8)
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
 inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+
+# Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
+# none of the checks above would notice one.
+qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
+              if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
+check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
