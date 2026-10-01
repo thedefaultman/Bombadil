@@ -1013,6 +1013,169 @@ st = desk_state()
 check("the card leaves when the machine says everything is back under its lines",
       st["faces"]["machine"] == "hidden" and not st["present"]["machine"], st.get("faces"))
 
+# 12. dragging: a card by its title, or a chip, to another rail, another place or the row, with a virtual pointer
+# (pointer.py: the test session has none). The grab has to go on delivering the pointer beyond the window it began
+# in, from a rail to the other rail and to the bar, and agentd's answer is what moves the card.
+ptr = subprocess.Popen([sys.executable, str(E2E / "pointer.py")], env=env, stdin=subprocess.PIPE,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+procs.append(ptr)
+
+
+def pointer(word):
+    """One word to the virtual pointer (pointer.py); "ok" once the compositor has taken it."""
+    ptr.stdin.write(word + "\n")
+    ptr.stdin.flush()
+    return ptr.stdout.readline().strip()
+
+
+def drag(points, hold=None):
+    """Press at the first point, move through the rest and, unless `hold` is called with the last one first, let go."""
+    pointer(f"move {points[0][0]} {points[0][1]}")
+    time.sleep(0.3)
+    pointer("press")
+    time.sleep(0.2)
+    for x, y in points[1:]:
+        pointer(f"move {x} {y}")
+        time.sleep(0.05)
+    time.sleep(0.4)
+    if hold:
+        hold()
+    pointer("release")
+    time.sleep(1.0)
+
+
+def line(a, b, steps=14):
+    return [(round(a[0] + (b[0] - a[0]) * i / steps), round(a[1] + (b[1] - a[1]) * i / steps)) for i in range(steps + 1)]
+
+
+inject({"type": "jobs", "jobs": [
+    {"id": "a1b2c3", "title": "Ubuntu 26.04 ISO", "kind": "job", "state": "running", "started": time.time() - 240,
+     "deadline": None, "ended": None, "pct": 43.0, "last": "12 MB/s", "unit": "bombadil-job-a1b2c3"}]})
+inject({"type": "dev", "sessions": [
+    REVIEWER,
+    {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
+     "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
+     "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
+    "attention": ["rev", "bld"], "front": "", "line": ""})
+inject({"type": "machine", "present": True, "asked": False, "why": "Memory is nearly full",
+        "strip": {"text": "memory 91%", "dot": "amber"},
+        "rows": [{"key": "memory", "kind": "meter", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
+                  "tone": "amber", "opens": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("40-drag-ready")
+check("a card on each rail to drag between: Watching on the left, Needs you and Machine on the right",
+      st["faces"]["watching"] == st["faces"]["needs"] == st["faces"]["machine"] == "full"
+      and [st["rails"][w] for w in ("watching", "needs", "machine")] == ["left", "right", "right"], st.get("faces"))
+w, nd, mc = (st["slots"][k] for k in ("watching", "needs", "machine"))
+grab = (w["x"] + 60, w["y"] + 22)                      # the title of Watching
+over = (nd["x"] + 150, nd["y"] + nd["h"] // 2 + 12)    # the right rail, just under the middle of Needs you
+mid = {}
+
+
+def midway():
+    mid["state"] = desk_state()
+    shot("41-drag-over-right-rail")
+
+
+drag(line(grab, over), midway)
+s = mid["state"]
+check("held over the right rail, the card in hand is Watching and the drop would put it first on the right",
+      s.get("drag") and s["drag"]["id"] == "watching" and s["dropTarget"] and s["dropTarget"]["kind"] == "rank"
+      and s["dropTarget"]["side"] == "right" and s["dropTarget"]["rank"] == 0, (s.get("drag"), s.get("dropTarget")))
+mark_y = (s.get("dropTarget") or {}).get("markY", 0)
+check("the right rail's window draws the mark under the pointer and the card in hand is dimmed where it stood",
+      region_pixels("41-drag-over-right-rail", (nd["x"], round(mark_y) - 3, 300, 6), "#e6e8eb") > 600
+      and region_pixels("41-drag-over-right-rail", (w["x"], w["y"], 300, w["h"]), "#e6e8eb") < 4000,
+      (mark_y, region_pixels("41-drag-over-right-rail", (nd["x"], round(mark_y) - 3, 300, 6), "#e6e8eb")))
+st = None
+for _ in range(40):
+    st = desk_state()
+    if st.get("rails", {}).get("watching") == "right":
+        break
+    time.sleep(0.1)
+shot("42-drag-dropped")
+check("the drop moves Watching to the right rail's first place, and the dim is gone",
+      st and st["rails"]["watching"] == "right" and st["order"]["right"][0] == "watching" and st.get("drag") is None
+      and st.get("settling") == "" and st["slots"]["watching"]["side"] == "right", st and (st["order"], st.get("settling")))
+toml = (Path.home() / ".local" / "state" / "bombadil" / "desk.toml").read_text()
+check("and desk.toml keeps it", 'watching = "right"' in toml, toml)
+
+# a card dropped into the row is folded alone
+mc = st["slots"]["machine"]
+grab = (mc["x"] + 60, mc["y"] + 22)
+mid.clear()
+
+
+def over_the_row():
+    mid["state"] = desk_state()
+    shot("43-drag-over-the-row")
+
+
+drag(line(grab, (640, 770)), over_the_row)
+s = mid["state"]
+check("held over the row the drop would fold it", s.get("dropTarget") == {"kind": "fold"}, s.get("dropTarget"))
+st = None
+for _ in range(40):
+    st = desk_state()
+    if st.get("stripped"):
+        break
+    time.sleep(0.1)
+time.sleep(0.8)
+shot("44-drag-folded")
+check("dropped in the row, Machine is a strip on its own and the desk is not folded",
+      st and st["stripped"] == ["machine"] and st["faces"]["machine"] == "strip" and not st["folded"]
+      and "machine" not in st["slots"] and st["faces"]["needs"] == "full", st and (st.get("stripped"), st.get("faces")))
+check("its chip stands beside the pill", [c for c in st["strips"]["right"] if "memory" in c], st["strips"])
+
+# the chip dragged back into a rail takes a place in it
+chip = (640 + round(st["pillWidth"] / 2) + 12 + 40, 762)
+mid.clear()
+
+
+def over_the_left_rail():
+    mid["state"] = desk_state()
+    shot("45-drag-chip-over-left-rail")
+
+
+drag(line(chip, (150, 500)), over_the_left_rail)
+s = mid["state"]
+check("a chip in hand shows where it would land", s.get("drag") and s["drag"]["from"] == "strip"
+      and s["drag"]["id"] == "machine" and s["dropTarget"] and s["dropTarget"]["side"] == "left", (s.get("drag"), s.get("dropTarget")))
+st = None
+for _ in range(40):
+    st = desk_state()
+    if st.get("rails", {}).get("machine") == "left":
+        break
+    time.sleep(0.1)
+shot("46-drag-chip-dropped")
+check("dropped on the left rail it is a card again, there",
+      st and st["rails"]["machine"] == "left" and st["stripped"] == [] and st["faces"]["machine"] == "full"
+      and st["slots"]["machine"]["side"] == "left", st and (st["rails"], st["stripped"], st["faces"]))
+
+# a drop where nothing can be dropped changes nothing and sends nothing
+n = mark()
+before = (st["rails"], st["order"], st["stripped"])
+grab = (st["slots"]["needs"]["x"] + 60, st["slots"]["needs"]["y"] + 22)
+drag(line(grab, (640, 300)))
+time.sleep(0.5)
+st = desk_state()
+check("a card let go in the middle of the screen stays where it was",
+      (st["rails"], st["order"], st["stripped"]) == before and st.get("drag") is None
+      and wait(lambda m: m.get("type") == "desk", 0.5, n) is None, (st["order"], st.get("drag")))
+
+# put the desk back as it was, for what follows
+send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
+send({"type": "desk", "op": "move", "widget": "machine", "rail": "right"})
+inject({"type": "jobs", "jobs": []})
+inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+      and st["stripped"] == [], (st["order"], st["stripped"]))
+
+
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
