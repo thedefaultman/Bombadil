@@ -60,7 +60,8 @@ async def test_send_to_the_project_opens_the_window_from_the_app_that_ships(rig_
     assert not (paths.apps_dir() / "noticed").exists()
     seen = await rig.do("report", found.fp)
     assert seen["ok"] and seen["text"] == (
-        "The report is ready. Nothing is sent until you press Submit on the page.")
+        "The report is ready. Opening the issue page sends it to GitHub as part of the address; "
+        "nothing is posted until you press Submit on the page.")
     assert rig.agent.launcher.ran == [("app", "noticed", "open")]
 
 
@@ -464,7 +465,7 @@ async def test_an_already_reported_problem_whose_page_will_not_open_is_still_sai
     found = plant()
     tag = f"[fp {found.fp.rsplit(':', 1)[-1]}]"
     rig = rig_of(opener=lambda url: "",
-                 fetcher=lambda url, timeout: {"items": [{"number": 7, "state": "closed", "title": f"Bar {tag}"}]})
+                 fetcher=lambda url, timeout: {"items": [{"number": 7, "state": "open", "title": f"Bar {tag}"}]})
     await rig.start()
     await rig.ask_state()
     await rig.do("report", found.fp)
