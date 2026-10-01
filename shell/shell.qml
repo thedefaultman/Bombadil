@@ -42,6 +42,7 @@ ShellRoot {
         id: deskState
         pill: pillState
         onOutgoing: msg => root.write(msg)
+        onWindowOpened: pillState.windowOpened()
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
