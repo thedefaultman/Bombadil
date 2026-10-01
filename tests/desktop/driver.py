@@ -72,6 +72,25 @@ def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
     return n
 
 
+def pixel(name, x, y):
+    """(r, g, b) of one pixel of a screenshot."""
+    from PySide6.QtGui import QImage
+    c = QImage(str(OUT / f"{name}.png")).pixelColor(x, y)
+    return c.red(), c.green(), c.blue()
+
+
+def mean_pixel(name, x, y, half=3):
+    """(r, g, b) averaged over the (2*half)-pixel square around x, y: a dithered picture's true colour."""
+    from PySide6.QtGui import QImage
+    img, tot, n = QImage(str(OUT / f"{name}.png")), [0, 0, 0], 0
+    for yy in range(y - half, y + half):
+        for xx in range(x - half, x + half):
+            c = img.pixelColor(xx, yy)
+            tot = [tot[0] + c.red(), tot[1] + c.green(), tot[2] + c.blue()]
+            n += 1
+    return tuple(round(v / n, 1) for v in tot)
+
+
 # -- start everything --
 start("fake-api", [sys.executable, str(E2E / "fake_api.py"), "18555", str(OUT / "api-requests.jsonl")])
 (xdg / "sway.conf").write_text(
@@ -92,7 +111,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
+qs_proc = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -179,6 +198,18 @@ time.sleep(4)
 shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
 check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
+
+# 0. the ground: Bombadil's wallpaper is under the desk, not the compositor's own colour (sway's
+# #33404d above). The corners are the ground falling to its darkest, the middle is lit, the stone
+# lies in the middle, and nothing in it is orange or anywhere near as light as the glass.
+corners = [mean_pixel("00-resting", x, y) for x, y in ((6, 6), (1273, 6), (6, 700), (1273, 700))]
+check("the corners of the desk are the wallpaper's ground, not sway's colour",
+      all(11 <= r <= 17 and 13 <= g <= 19 and 15 <= b <= 21 for r, g, b in corners), corners)
+lit, side = mean_pixel("00-resting", 640, 180), mean_pixel("00-resting", 250, 180)
+check("the wallpaper is lit softly in the middle", lit[2] - side[2] >= 3 and lit[2] <= 34, f"{lit} vs {side}")
+body = mean_pixel("00-resting", 640, 260)
+check("the stone lies faintly in the middle, lighter than its ground", body[2] - lit[2] >= 5 and body[2] <= 46, f"{body} vs {lit}")
+check("nothing in the wallpaper is orange", all(r - b <= 3 for r, g, b in corners + [lit, body]), [lit, body])
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
@@ -655,6 +686,57 @@ check("the card leaves when the machine says everything is back under its lines"
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
               if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
 check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
+
+# 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image (the first one wants the bar
+# started again, after that a change is noticed), a picture that will not load falls back to the
+# standard one, and taking the file away brings it back.
+def paint(path, colour):
+    from PySide6.QtGui import QColor, QImage
+    img = QImage(2560, 1440, QImage.Format_RGB32)
+    img.fill(QColor(colour))
+    assert img.save(str(path))
+
+
+def desk_colour(name, x=150, y=400):
+    # The Passwords window opened above is still up in the middle; the left side is bare ground.
+    time.sleep(1.5)   # the picture settles in over 300 ms, and a changed file is read a moment after
+    shot(name)
+    return mean_pixel(name, x, y)
+
+
+def near(got, want, tol=8):
+    return all(abs(g - w) <= tol for g, w in zip(got, want))
+
+
+standard = mean_pixel("00-resting", 150, 400)
+home = Path.home()
+choice = home / ".config" / "bombadil" / "wallpaper"
+choice.parent.mkdir(parents=True, exist_ok=True)
+paint(home / "first.png", "#336699")
+paint(home / "second.png", "#993366")
+choice.write_text("~/first.png\n")
+qs_proc.terminate()
+qs_proc.wait(10)
+start("quickshell-wallpaper", [str(REPO / "bin" / "bombadil-shell")])
+time.sleep(3)
+got = desk_colour("30-own-wallpaper")
+check("a picture named in ~/.config/bombadil/wallpaper replaces the standard one", near(got, (51, 102, 153)), got)
+choice.write_text("file://" + str(home / "second.png") + "\n")
+got = desk_colour("30-own-wallpaper-changed")
+check("changing the file changes the picture without a restart", near(got, (153, 51, 102)), got)
+choice.write_text("/nowhere/at/all.png\n")
+got = desk_colour("30-own-wallpaper-missing")
+check("a picture that will not load falls back to the standard one", near(got, standard, 4), (got, standard))
+choice.write_text("~/first.png\n")
+desk_colour("30-own-wallpaper-again")
+choice.unlink()
+got = desk_colour("30-own-wallpaper-gone")
+check("taking the file away brings the standard picture back", near(got, standard, 4), (got, standard))
+own_log = re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text())
+check("the wallpaper's choices raised no QML error but the one for the picture that is not there",
+      not [ln for ln in own_log.splitlines()
+           if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
+           and "Cannot open" not in ln], own_log[-400:])
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
