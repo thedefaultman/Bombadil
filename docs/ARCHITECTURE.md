@@ -211,6 +211,13 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    after 12 seconds like the resting line, and they go with it, when the ask is dropped or starts, when the
    AI is back, and when a newer ask is kept. A line with Undo on it (a turn the limit cut off) is not wiped
    by it. A press hands the keyboard over to the window it opens.
+
+   In the headless desktop test (the same scripted refusal, the real bar): a sentence that names an app
+   and a past ask, a sentence that names nothing, and a pause by hand that finds a past ask.
+
+   ![An app and a past ask found for a kept sentence](screens/resting/found-an-app-and-a-past-ask.png)
+   ![Nothing on this computer matches](screens/resting/found-nothing.png)
+   ![Paused by hand: the kept ask, what was found, and the Resume button](screens/resting/found-while-paused.png)
 10. **What is deliberately not done.** No test calls and no retry loops: one refusal is enough, and
    nothing more is sent until the reset, a press or a word. No ring or counter on the stone. Not a
    "needs you": no amber mark, no red line, no card on the desk, since nothing is the user's to do
