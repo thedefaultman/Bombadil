@@ -104,6 +104,12 @@ def test_thunderbird_is_on_the_image():
     assert "thunderbird" in _packages()
 
 
+def test_thunderbird_is_told_not_to_update_itself_or_report_or_ask_to_be_the_default_mail_program():
+    import json
+    policy = json.loads((ISO / "airootfs/etc/thunderbird/policies/policies.json").read_text())["policies"]
+    assert policy == {"DisableAppUpdate": True, "DisableTelemetry": True, "DontCheckDefaultClient": True}
+
+
 def test_the_mail_service_is_a_user_unit_that_starts_at_login_and_is_never_given_up_on():
     units = ISO / "airootfs/etc/systemd/user"
     unit = (units / "bombadil-mail.service").read_text()

@@ -82,6 +82,7 @@ REGISTRY = "bombadil-engine.json"
 XPI_COMMENT = b"bombadil-source:"
 ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 MAX_FORGOTTEN = 64         # leftovers of removed accounts waiting for Thunderbird to be stopped
+SYNC_DAYS = 180            # how far back Thunderbird keeps whole mails on this machine (headers: all of them)
 
 # Thunderbird's own class names for its windows, matched the way hyprland.lua's "mail-engine" rule does.
 _WINDOW_CLASS = re.compile(r"(?i)^(.*\.)?thunderbird.*$")
@@ -417,6 +418,9 @@ def account_prefs(a: dict) -> list[tuple[str, object]]:
         # The bodies are fetched ahead, so a mail reads at once and with no network.
         (s + "autosync_offline_stores", True),
         (s + "offline_download", True),
+        # ... but not the whole of a mailbox that is years deep: the headers of everything are kept, and the
+        # body of an older mail is fetched when it is opened.
+        (s + "autosync_max_age_days", SYNC_DAYS),
         (s + "max_cached_connections", 2),
         (i + "fullName", a["sender"] or a["name"]),
         (i + "useremail", a["email"]),
