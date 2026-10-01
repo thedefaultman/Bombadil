@@ -55,7 +55,7 @@ sequenceDiagram
     participant M as os-mcp
     P->>S: types a line and presses Enter
     S->>A: prompt
-    A-->>S: turn started (the line answers within 200 ms)
+    A-->>S: turn started (before the restore point is saved)
     A->>R: create a restore point
     A->>C: run one turn, os-mcp attached
     C->>M: tool calls
@@ -66,10 +66,10 @@ sequenceDiagram
     S-->>P: the answer, a receipt and Undo
 ```
 
-1. The shell (or `bombadil ask`) writes a `prompt` to the agentd socket. Words that must never wait for a model (`stop`, `undo`, `open ...`, a `!command`) are answered by agentd itself.
-2. agentd runs one turn at a time and queues the rest. Before the provider starts it asks snapper for a restore point, so any turn can be taken back.
-3. It starts the provider's CLI once, in full-access mode, with `bombadil-os-mcp` in its tool configuration and Bombadil's system prompt appended, and resumes the previous session so the machine has one conversation.
-4. The CLI's stream becomes events, broadcast to every connected client. The shell turns them into the line above the pill, the stone's face, cards and the desk. The OS tools act on Hyprland, on apps and on files, and ask agentd for what it owns (cards, jobs, the desk).
+1. The shell (or `bombadil ask`) writes a `prompt` to the agentd socket. Words that need no model (`undo`, `history`, `open ...`, the picture words, `pause claude` and the like) are matched first by the launcher and answered by agentd itself, so they never reach the provider. `stop` is a message of its own and works while a turn runs. A line that starts with `!` is a turn whose "provider" is the shell: it runs the command and shows what it printed.
+2. agentd runs one turn at a time and queues the rest, and it holds asks that need the AI while the person is signed out or the AI is resting. Before the provider starts it asks snapper for a restore point, so any turn can be taken back.
+3. For the turn it starts the provider's CLI as a fresh process, in full-access mode, with `bombadil-os-mcp` in its tool configuration and Bombadil's system prompt appended, and resumes the conversation's session id so the machine has one conversation.
+4. The CLI's stream becomes events, broadcast to every connected client. The shell turns them into the line above the pill, the stone's face, cards and the desk. The OS tools act on Hyprland, on apps, on files and on mail, and ask agentd for what it owns (cards, jobs, the desk, the mail view).
 5. The turn is appended to `~/.local/state/bombadil/turns.jsonl` and the brain is told, never waited for.
 
 The details, exact message names and the edge cases (a stopped turn, a missing provider, a sign-in that expires mid-turn) are in [agentd](architecture/agentd.md), and how each step reaches the screen is in [the UX flows](ux/flows.md).

@@ -244,7 +244,7 @@ rules keep a card from moving the pill or its own close mark.
 
 | Rule | Where | What it means |
 |---|---|---|
-| The `layers` animation is off | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:47` | The file's comment says Hyprland slides a layer to its new place whenever it is resized, which is every time a card appears, gains a box or goes, and the pill dipped and swung back. The file is a skeleton: the home folder is copied from `/etc/skel` when it is made (`iso/airootfs/usr/local/bin/bombadil-install:54`) and `scripts/vm-tools/update-in-place` leaves `~/.config/hypr/hyprland.lua` alone, so an installed system needs that line added by hand |
+| The `layers` animation is off | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:47` | The file's comment says Hyprland slides a layer to its new place whenever it is resized, which is every time a picture appears or grows, and the pill dipped and swung back. A card that goes resizes the bar the same way. The file is a skeleton: the home folder is copied from `/etc/skel` when it is made (`iso/airootfs/usr/local/bin/bombadil-install:54`) and `scripts/vm-tools/update-in-place` leaves `~/.config/hypr/hyprland.lua` alone, so an installed system needs that line added by hand |
 | The card is placed once | `CardHost.qml`: `implicitHeight` has no `Behavior`, and a `Translate` of 14 px | The card takes its height at once and fades in and rises inside that space, and it hands the space back after it has faded out. A height that grew over several frames resized the window every frame |
 | A picture the person asked for keeps its line | `PillState.pictureStays`, `StatusLine.qml` (`lineTimer`, `done` check) | The card sits above the line in a column anchored to the bottom, so a line that grew, shrank or went moved the card by the line's height and a click aimed at its close mark missed. `pictureStays` is true while a card is up that is not a receipt and not a draft; the line does not fade while it is true, and its timer stops running when the pill is not working and no flash is showing, so a picture left up costs no wake-ups. Esc puts line and picture away together. The close mark clears the card and the line fades on the timer's next tick unless it is `sticky`. A receipt is not asked for and fades with its line |
 | A card being drawn keeps the layout it will end with | `Diagram.qml`: `if (partial && links.length === 0) longest = 14` | The boxes of a streamed chain arrive before its links, and the links' labels decide how wide the gaps are, so a finished chain would lay itself out again from one row into two |
@@ -299,8 +299,9 @@ drawer instead when it already shows the same program (a second click on Details
 
 ### What `system_map` captures
 
-Every capture runs real commands with a fixed environment (`LC_ALL=C`, `LANG=C`, `SYSTEMD_COLORS=0`, `NO_COLOR=1`,
-`TERM=dumb`, no stdin), side by side in a worker pool. Each command has the capture's budget: 0.5 seconds (`BUDGET`),
+Every capture reads the machine with real commands (the network capture also opens a TCP connection and reads
+`/etc/resolv.conf`). The commands run with the process's own environment plus `LC_ALL=C`, `LANG=C`,
+`SYSTEMD_COLORS=0`, `NO_COLOR=1` and `TERM=dumb`, and no stdin, side by side in a worker pool. Each command has the capture's budget: 0.5 seconds (`BUDGET`),
 and anything that has not answered by then counts as missing, so a picture comes back within about that time, drawn
 from what could be read (a capture that reads in steps takes the budget once per step). Parsers are pure functions of text. If nothing at all could be read, the capture raises
 `sysmap.Unavailable` with one plain sentence ("Could not read the disks: lsblk did not answer.").
@@ -308,7 +309,7 @@ from what could be read (a capture that reads in steps takes the budget once per
 | `kind` | Reads | Budget | The picture |
 |---|---|---|---|
 | `network` | `ip -j route get 1.1.1.1`, `ip -j route show default`, three `nmcli` queries (devices, the Wi-Fi in use with its signal and no rescan, connectivity), `/etc/resolv.conf`, and a TCP connection to the active provider's host on port 443 (`api.anthropic.com` for Claude, `api.openai.com` for Codex) | 0.5 s, and up to 1.6 s (`PROBE_BUDGET`) for the provider connection when there is a route. A receipt snapshot gives that connection 0.5 s too, because a latency is never a change | `chain`: this machine, a VPN tunnel box when the route runs over a `wg`, `tun`, `tap`, `tailscale`, `ppp`, `vpn` or `zt` device, Wi-Fi (signal under 40 percent is `warn`) or cable, router (with the DNS servers as a note), internet, and the provider last. The first broken link is `bad` and lit, with one sentence in `say`. A captive portal is `warn` |
-| `boot` | `systemd-analyze critical-chain --no-pager`, `time --no-pager` and `blame --no-pager`, side by side. The tree is read both as the ASCII marks of the C locale and as box-drawing marks | 4.0 s (`BOOT_BUDGET`): the boot record is slow to read and does not change | `timeline`. The critical chain: one row per unit on it, at most 12 (the slowest 11 and the last, in order), each with its start time and a bar for how long it took. It is drawn when it has four rows or more (`THIN_CHAIN`), or when `blame` has no more units worth drawing than it has rows. Otherwise the slowest units: longest first, at most 12, each with its duration where the start time was, and a bar. In both, the slowest unit is `warn` and lit when it took at least a second, and each row opens its unit. A live system has no boot record, and the answer says so |
+| `boot` | `systemd-analyze critical-chain --no-pager`, `time --no-pager` and `blame --no-pager`, side by side. The tree is read both as the ASCII marks of the C locale and as box-drawing marks | 4.0 s (`BOOT_BUDGET`): the boot record is slow to read and does not change | `timeline`. The critical chain: one row per unit on it, at most 12 (the slowest 11 and the last, in order), each with its start time and a bar for how long it took. It is drawn when it has four rows or more (`THIN_CHAIN`), or when `blame` has no more units worth drawing than it has rows. Otherwise the slowest units: longest first, at most 12, each with its duration where the start time was, and a bar. In both, the slowest unit is `warn` and lit when it took at least a second, and each row opens its unit (except that a `.automount` unit among the `blame` rows makes the capture fail, see Known gaps). A live system has no boot record, and the answer says so |
 | `service` | `systemctl show` for the unit, with its state and its start time (`ActiveEnterTimestamp`); `target` is required, `bluetooth` and `bluetooth.service` both work, and a name that systemd reports `not-found` is looked up again ignoring case (`_spelt_like`), so `networkmanager` is drawn as `NetworkManager.service`. Then the states of what it `Requires` and `Wants` (at most 8, without the common noise such as `sysinit.target`), and `pacman -Qo` for the package that owns a unit file under `/usr/` | 0.5 s a step: the unit, then its dependencies and owner side by side, up to 1 s; a name that is not found adds a lookup and a second read, up to 2 s | `layers`: the unit on top, its dependencies below, each with its state (`active` ok, `activating` warn, `failed` bad, any other state warn; a required dependency that is failed or inactive is `bad` and lit). Each box opens its unit. The card carries `target`, the unit as systemd spells it |
 | `disks` | `lsblk -J -b` and `findmnt -b -J` | 0.5 s | `layers`: disks of at least 1 MB (so no floppy drive or empty card slot) that are not named `zram`, `loop`, `ram` or `fd`, their partitions and encrypted or logical volumes, with mount point, filesystem, size and how full. Amber from 90 percent, red from 97 percent; read-only filesystems such as `squashfs` and `iso9660` never warn. Each mounted box opens its mount point |
 | `sound` | `pw-dump` (PipeWire) | 0.5 s | `layers`: up to 4 speakers (the ones playing and the default), each with its volume (the node's master `volume` times its highest channel volume, as a cube root percent, which is what a slider shows) or "muted", and up to 6 playing apps per speaker linked to it. A muted speaker is `warn` |
@@ -332,8 +333,8 @@ Picture words).
 
 #### What reading a real machine taught
 
-Each of these passed its tests against output written by hand and was wrong on a real system. The fixtures in
-`tests/test_sysmap.py` carry the real shape.
+The fixtures in `tests/test_sysmap.py` are in the shape the real tools print (its module docstring). Each of these
+has tests of its own, named below.
 
 - **The boot tree is ASCII in the C locale.** `systemd-analyze critical-chain` draws its tree with `` `- ``, `|-` and
   `| ` there, and with box-drawing characters in a UTF-8 locale. `_CHAIN_RE` takes both, and a `-` counts as a tree mark
@@ -392,8 +393,9 @@ thread (`agentd.py:398`), and the service form asks the machine inside it.
 | `screens` | my screens, my monitors, screen map, what screens do i have |
 | `service` | `what does [the] <unit> [service] need`, `depend on` or `require` instead of `need` (`launcher._NEEDS_RE`) |
 
-For the service form the unit must exist, found with `sysmap.find_unit` (it also adds `.service` to a name without a
-unit suffix):
+For the service form the unit must exist, found with `sysmap.find_unit` (it adds `.service` to a name that does not end
+in `.service`, `.socket`, `.timer`, `.target`, `.mount`, `.path`, `.slice` or `.scope`, so a `.device`, `.swap` or
+`.automount` name is also given `.service`):
 
 1. `systemctl show -p LoadState` and `systemctl list-units --all` run side by side within `BUDGET`. A `LoadState` of
    `loaded` returns the name as typed.
@@ -438,8 +440,8 @@ from the turn's own log.
 | `web` | `WebFetch`, `curl`, `wget`, `aria2c`, `xh`, `http`, `https`, the URL of a `git clone` | the host is not `localhost`, `127.0.0.1`, `::1` or `0.0.0.0`. The label is host and path only, never a credential or query |
 | `file` | `Read`, `NotebookRead`, and `cat`, `less`, `more`, `head`, `tail`, `bat`, `batcat`, `zcat`, `xxd`, `hexdump` (up to 3 files) | the file's `user.xdg.origin.url` extended attribute names a host (a download); `origin` then holds that host |
 | `search` | `WebSearch` (the query, at most 50 characters) | always |
-| `screen` | the `[Screen]` block the "this" chip adds to a prompt | it holds a page address or a selection |
-| `session`, `app` | a prompt marked `[asked by <who>, untrusted]` | always |
+| `screen` | a `[Screen]` block at the start of a line in the prompt, if one is there (`narrate.prompt_reads`). Nothing on `main` writes it: the "this" chip that would is designed | it holds a page address or a selection |
+| `session`, `app` | a line `[asked by <who>, untrusted]` in the prompt (`narrate.prompt_reads`; `app <name>` is an `app`, anything else a `session`). Nothing on `main` writes it either | always |
 
 The list keeps the last 50 reads (`MAX_READS`), and a repeat moves to the end. **`after`** is the latest outside read,
 attached only to a step that carries a mark (`system` or `irreversible`), as `{"label", "kind", "text"}` with text such
@@ -508,14 +510,17 @@ appear. At most one receipt card is shown per turn. `explain` is a key in `confi
 
 ### The details drawer and `bombadil view`
 
-The drawer is where text goes when a picture is not the right answer. Two things open in it: a turn's own log
-(`bombadil watch`, started by `agentd.details`, listing each step with its command, output, `why:` and `after`, then
+The drawer is where text goes when a picture is not the right answer. This piece uses it for two things: a turn's own
+log (`bombadil watch`, started by `agentd.details`, listing each step with its command, output, `why:` and `after`, then
 what was read, and each picture shown in words as a `picture` block, labelled "what changed" for a receipt) and
-whatever a box opened (`bombadil view`).
+whatever a box opened (`bombadil view`). `launcher.details` runs other programs in the same drawer, which belong to
+other pages: `bombadil history` (the `history` word) and `nmtui connect` (the `wifi` word), see [agentd](agentd.md), and
+a background job's output (`Jobs.why`), see [the desk](desk.md).
 
 `bombadil view` (`bin/bombadil` calls `pager.view`) shows `--file PATH` (the first 2,000,000 bytes, with a note when the
 rest is cut) or the output of `-- COMMAND ARG...` (run with a 15 second limit, errors mixed in). A missing program
-says "<name> is not installed.", a silent one "<name> did not answer in time.", and no output "Nothing to show." With a
+says "<name> is not installed.", a program still running after the 15 seconds "<name> did not answer in time.", and one
+that prints nothing and exits "Nothing to show." With a
 terminal, text that fits is printed whole, followed by "Press Esc to close.", and any key closes it. Longer text takes the
 drawer's own screen with a window of rows and a footer such as `11-19 of 50 · Esc closes`. Esc alone (or `q`, `Q`, Ctrl-C,
 Ctrl-D) closes it; the arrows, PageUp and PageDown, Home and End, the space bar, `f`, `b`, `j`, `k`, `g` and `G` scroll, and
@@ -736,7 +741,7 @@ Claude. Cover it in `tests/test_sysmap.py` and `tests/test_providers.py`.
 | `tests/test_launcher.py` | picture phrases, a service typed with capitals, the drawer and what each `opens.kind` runs |
 | `tests/test_pill_qml.py` | the card lifecycle in the shell, hover and fade, `because` and `after` on the line, a card placed in one resize, a picture that keeps its line, a full-screen window and a window the launcher opens |
 | `tests/test_watch.py` | `why:`, `after` and pictures in Details |
-| `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, a click on a box that names a file opens it in the drawer, and a picture sits between the desk's rails |
+| `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, an `open` message for a file (the message a click on its box sends) opens it in the drawer and one Esc puts it away, and a picture sits between the desk's rails |
 | `scripts/vm-tools/lifttrace` (needs a running VM; its docstring says how) | whether the pill moves when a card changes size |
 | `iso/airootfs/usr/local/bin/bombadil-smoke` (a booted machine) | see below |
 
