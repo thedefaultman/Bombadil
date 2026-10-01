@@ -574,9 +574,9 @@ def test_shell_qml_hands_the_keyboard_to_the_card_without_toggling_it():
     # on the pill always mean the pill, even with the card up.
     assert "if (root.cardKeys && personaCard.shown) personaCard.takeKeys()" in shell
     assert "root.cardKeys = true" in keep
-    summon = shell[shell.index("function summon()"):]
+    summon = shell[shell.index("function summon(text)"):]
     summon = summon[:summon.index("\n    }")]
-    assert "root.cardKeys = false" in summon and "pillState.focusPill()" in summon
+    assert "root.cardKeys = false" in summon and summon.count("pillState.focusPill()") == 2   # words to finish, and a Super tap
     assert "function onFocusPill() { if (win.summoned) input.forceActiveFocus() }" in shell
     assert shell.count("TapHandler { onTapped: win.focusPill() }") == 2   # the pill and its field
     # The keyboard timer waits while the card does, and the input mask follows the card.

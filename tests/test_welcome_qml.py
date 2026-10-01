@@ -477,7 +477,7 @@ def test_shell_qml_only_reaches_for_what_pillstate_and_the_line_declare():
     signals = set(re.findall(r"\bsignal\s+(\w+)", (SHELL / "PillState.qml").read_text()))
     handlers = set(re.findall(r"\bon([A-Z]\w*)\s*:", _block(shell, "PillState {")))
     handlers |= set(re.findall(r"function\s+on([A-Z]\w*)\s*\(", shell))
-    handlers.discard("RawEvent")   # Hyprland's own signal, on its own Connections
+    handlers -= {"RawEvent", "DraftChanged"}   # Hyprland's signal and the shell's own draft, on their own Connections
     for h in handlers:
         name = h[0].lower() + h[1:]
         assert name in signals or (name.endswith("Changed") and name[:-7] in pill), h
