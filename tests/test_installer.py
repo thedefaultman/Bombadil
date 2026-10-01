@@ -263,14 +263,18 @@ def carry_fixture(tmp_path):
     (live / ".local/state/bombadil/undo.json").write_text('{"snapshot": 12}')
     (live / "Documents").mkdir()
     (live / "Documents/notes.txt").write_text("not on the list")
+    (live / "Apps/demo").mkdir(parents=True)
+    (live / "Apps/demo/main.qml").write_text("made before")
     (target / "home/user").mkdir(parents=True)
     return live, target
 
 
 def run_carry(tmp_path, live, target, mode, carry=None):
-    carry = carry if carry is not None else [".claude", ".claude.json", ".config/bombadil", ".local/state/bombadil", "Apps"]
-    arr = " ".join(f'"{c}"' for c in carry)
-    sh(f'target="{target}"; live_home="{live}"; mode={mode}; P_CARRY=({arr}); carry')
+    """carry() with P_CARRY from the plan module, as the installer has it: the shipped list, or the plan's own."""
+    args = "--plan " + str(tmp_path / "plan.json")
+    (tmp_path / "plan.json").write_text(json.dumps({"disk": "/dev/vda", **({"carry": carry} if carry is not None else {})}))
+    sh(f'parse_args {args}; load_plan; target="{target}"; live_home="{live}"; mode={mode}; carry',
+       env={"BOMBADIL_NM_CONNECTIONS": str(tmp_path / "none")})
 
 
 def test_a_fresh_install_brings_what_the_carry_list_names_and_nothing_else(tmp_path):
@@ -280,7 +284,8 @@ def test_a_fresh_install_brings_what_the_carry_list_names_and_nothing_else(tmp_p
     assert (home / ".claude/credentials.json").read_text() == "stick-login"
     assert (home / ".claude.json").read_text() == '{"stick": true}'
     assert (home / ".config/bombadil/config.toml").exists()
-    assert not (home / "Documents").exists() and not (home / "Apps").exists()
+    assert (home / "Apps/demo/main.qml").read_text() == "made before"   # on the shipped list
+    assert not (home / "Documents").exists()                            # not on it
     # A restore-point number from another system means nothing on this one.
     assert not (home / ".local/state/bombadil/undo.json").exists()
 
@@ -289,7 +294,8 @@ def test_only_what_the_person_chose_to_bring_comes(tmp_path):
     live, target = carry_fixture(tmp_path)
     run_carry(tmp_path, live, target, "fresh", carry=[".config/bombadil"])
     home = target / "home/user"
-    assert (home / ".config/bombadil/config.toml").exists() and not (home / ".claude").exists()
+    assert (home / ".config/bombadil/config.toml").exists()
+    assert not (home / ".claude").exists() and not (home / "Apps").exists()
 
 
 def test_a_refresh_never_replaces_a_sign_in_the_home_folder_already_has(tmp_path):
@@ -889,3 +895,68 @@ def test_the_smoke_test_recognises_the_stick_refusal_by_its_own_words_not_by_a_p
     assert "is the USB stick Bombadil started from" in text
     installer = INSTALL.read_text()
     assert "is the USB stick Bombadil started from" in installer
+
+
+# -- the check at the end of an install -----------------------------------------------------------------
+
+def _finished_install(tmp_path: Path, cryptomount: str | None):
+    """A target that looks like a finished install, and the shims verify() asks for."""
+    t = tmp_path / "target"
+    for f in ("boot/vmlinuz-linux", "boot/initramfs-linux.img", "boot/initramfs-linux-fallback.img",
+              "efi/EFI/BOOT/BOOTX64.EFI", "efi/grub/x86_64-efi/luks2.mod"):
+        (t / f).parent.mkdir(parents=True, exist_ok=True)
+        (t / f).write_text("x")
+    lines = ["linux /@/boot/vmlinuz-linux root=UUID=1 rootflags=subvol=@",
+             "initrd /@/boot/initramfs-linux.img", "initrd /@/boot/initramfs-linux-fallback.img"]
+    if cryptomount:
+        lines += ["\tinsmod luks2", f"\tcryptomount -u {cryptomount}", "\tset root='cryptouuid/x'"]
+    (t / "efi/grub").mkdir(parents=True, exist_ok=True)
+    (t / "efi/grub/grub.cfg").write_text("\n".join(lines) + "\n")
+    for m in ("good.ko.zst", "also-good.ko.zst"):
+        (t / "usr/lib/modules/7.0/kernel" / m).parent.mkdir(parents=True, exist_ok=True)
+        (t / "usr/lib/modules/7.0/kernel" / m).write_text("fine")
+    shims = tmp_path / "shims"
+    shim(shims, "btrfs", 'echo "ID 5 (FS_TREE)"')
+    # zstd -tq FILE...: fails for a file whose text says it is damaged
+    shim(shims, "zstd", 'rc=0; for f in "${@:2}"; do grep -q damaged "$f" && rc=1; done; exit $rc')
+    return t, shims
+
+
+LISTING = "etc/cryptsetup-keys.d/root.key\netc/crypttab\nusr/lib/systemd/systemd-cryptsetup"
+
+
+@pytest.mark.parametrize("spelling", ["3fd2b9ec-88c2-4c23-b979-2aa13b001965", "3fd2b9ec88c24c23b9792aa13b001965"])
+def test_the_check_accepts_the_disk_uuid_the_way_grub_writes_it_with_or_without_dashes(tmp_path, spelling):
+    # grub-mkconfig writes the dashed form in cryptomount and the plain one in the root name; either opens the disk.
+    t, shims = _finished_install(tmp_path, spelling)
+    r = sh(f'target={t}; encrypt=yes; luks_uuid=3fd2b9ec-88c2-4c23-b979-2aa13b001965; '
+           f'chroot_run() {{ printf "%s\\n" "{LISTING}"; }}; verify', path_first=shims, check=False)
+    assert r.returncode == 0, r.stderr
+
+
+def test_the_check_refuses_a_boot_loader_that_opens_another_disk(tmp_path):
+    t, shims = _finished_install(tmp_path, "00000000-1111-2222-3333-444444444444")
+    r = sh(f'target={t}; encrypt=yes; luks_uuid=3fd2b9ec-88c2-4c23-b979-2aa13b001965; '
+           f'chroot_run() {{ printf "%s\\n" "{LISTING}"; }}; verify', path_first=shims, check=False)
+    assert r.returncode != 0 and "different disk" in r.stderr
+
+
+def test_the_check_wants_no_disk_to_be_opened_when_nothing_is_encrypted(tmp_path):
+    t, shims = _finished_install(tmp_path, None)
+    r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_damaged_kernel_module_is_found_and_named_so_a_bad_stick_is_not_installed_from_twice(tmp_path):
+    t, shims = _finished_install(tmp_path, None)
+    (t / "usr/lib/modules/7.0/kernel/also-good.ko.zst").write_text("damaged")
+    r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
+    assert r.returncode != 0
+    assert "also-good.ko.zst" in r.stderr and "write it again" in r.stderr and "good.ko.zst) " not in r.stderr
+
+
+def test_a_system_with_no_kernel_modules_is_not_a_finished_install(tmp_path):
+    t, shims = _finished_install(tmp_path, None)
+    shutil.rmtree(t / "usr")
+    r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
+    assert r.returncode != 0 and "no kernel modules" in r.stderr

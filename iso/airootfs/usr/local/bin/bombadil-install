@@ -713,9 +713,22 @@ boot() {
 }
 
 # The things that must be true for the next start, checked before it is claimed.
+# The kernel modules are compressed files that nothing reads until a device needs one, so a damaged USB stick
+# or a bad copy shows up first as a driver that is missing months later. Every one is read back here.
+check_modules() {
+  local t=$1 bad
+  [[ -d "$t/usr/lib/modules" ]] || die "no kernel modules were copied"
+  find "$t/usr/lib/modules" -name '*.ko.zst' -print0 | xargs -0 -r -n 200 zstd -tq >/dev/null 2>&1 && return 0
+  # shellcheck disable=SC2016  # the quoted script is for the sh that xargs starts
+  bad=$(find "$t/usr/lib/modules" -name '*.ko.zst' -print0 \
+    | xargs -0 -n 1 sh -c 'zstd -tq "$1" >/dev/null 2>&1 || { echo "$1"; exit 255; }' _ 2>/dev/null | head -n 1) || true
+  die "a copied kernel module is damaged (${bad#"$t"}). The USB stick may be damaged: write it again, or try another stick"
+}
+
 verify() {
   step "Checking the result"
   local t="$target" cfg="$target/efi/grub/grub.cfg" listing
+  check_modules "$t"
   [[ -s "$t/boot/vmlinuz-linux" && -s "$t/boot/initramfs-linux.img" && -s "$t/boot/initramfs-linux-fallback.img" ]] \
     || die "the kernel or an initramfs is missing from /boot"
   [[ -s "$t/efi/EFI/BOOT/BOOTX64.EFI" && -s "$cfg" ]] || die "GRUB is not on the EFI partition"
@@ -727,7 +740,7 @@ verify() {
   [[ "$(btrfs subvolume get-default "$t")" == "ID 5 "* ]] || die "the filesystem's default subvolume is not the top level"
   if [[ "$encrypt" == yes ]]; then
     grep -q cryptomount "$cfg" || die "grub.cfg does not open the encrypted disk"
-    grep -q "cryptomount -u ${luks_uuid//-/}" "$cfg" || die "grub.cfg opens a different disk than the one just locked"
+    grep -qE "cryptomount -u (${luks_uuid}|${luks_uuid//-/})\$" "$cfg" || die "grub.cfg opens a different disk than the one just locked"
     [[ -s "$t/efi/grub/x86_64-efi/luks2.mod" || -s "$t/efi/grub/x86_64-efi/luks.mod" ]] || die "GRUB has no module to open the disk"
     # Captured first: grep -q would end the listing early, and pipefail would call that a failure.
     listing=$(chroot_run lsinitcpio /boot/initramfs-linux.img) || die "the initramfs cannot be read"

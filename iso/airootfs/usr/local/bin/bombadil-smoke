@@ -310,7 +310,7 @@ layout_checks() {
   check layout-efi bash -c '[[ "$(findmnt -no FSTYPE /efi)" == vfat ]]'
   check layout-boot-in-root bash -c '! mountpoint -q /boot && test -s /boot/vmlinuz-linux && test -s /boot/initramfs-linux.img && test -s /boot/initramfs-linux-fallback.img'
   check layout-grub-on-efi bash -c 'test -s /efi/EFI/BOOT/BOOTX64.EFI && test -s /efi/grub/grub.cfg && grep -q "/@/boot/vmlinuz-linux" /efi/grub/grub.cfg'
-  check layout-snapper bash -c 'snapper list-configs | grep -qw root && snapper list-configs | grep -qw home && snapper -c root get-config | grep -Eq "NUMBER_LIMIT +\| +30"'
+  check layout-snapper bash -c 'snapper list-configs | grep -qw root && snapper list-configs | grep -qw home && snapper -c root --csvout get-config | grep -q "^NUMBER_LIMIT,30"'
   check layout-home-subvolumes bash -c 'for d in .cache .claude .codex .config/chromium Projects; do btrfs subvolume show "/home/user/$d" >/dev/null || exit 1; done'
   check layout-time-sync systemctl is-enabled systemd-timesyncd
   if [[ "$enc" == True ]]; then
