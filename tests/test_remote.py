@@ -142,6 +142,9 @@ def test_a_folder_that_is_not_there_is_refused_before_anything_starts(tmp_path):
 
 @pytest.mark.parametrize("said,expect", [
     ("Error: Remote Control requires claude.ai subscription auth.", "Sign in to Claude first"),
+    # what Claude Code 2.1 really printed on a computer that was not signed in
+    ("Error: You must be logged in to use Remote Control.\nRemote Control is only available with claude.ai "
+     "subscriptions. Run `claude auth login` to sign in with your claude.ai account.", "Sign in to Claude first"),
     ("You are not signed in. Run /login", "Sign in to Claude first"),
     ("Remote Control is disabled by your organization's policy", "owner can turn it on"),
     ("Couldn't verify your organization's policy for remote control", "Wi-Fi"),

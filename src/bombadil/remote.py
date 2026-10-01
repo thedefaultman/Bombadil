@@ -29,13 +29,13 @@ from pathlib import Path
 
 SESSION = "bombadil-remote"
 
-URL = re.compile(r"https://claude\.ai/code(?:/|\?)\S+")
+URL = re.compile(r"https://claude\.(?:ai|com)/code(?:/|\?)\S+")
 TRUST = re.compile(r"Trust\b.*\[y/N\]", re.I)
 SIGN_IN = ("Sign in to Claude first (say “sign in” in the pill, or run `bombadil signin claude`), then try again. "
            "Remote control needs a claude.ai account; an API key does not work.")
 # What the program says when it cannot start, and the plain thing to do about it. First match wins.
 PROBLEMS = [
-    (re.compile(r"not signed in|requires? claude\.ai subscription|auth login|full-scope|/login", re.I), SIGN_IN),
+    (re.compile(r"not signed in|must be logged in|requires? claude\.ai subscription|auth login|full-scope|/login", re.I), SIGN_IN),
     (re.compile(r"disabled by your organization|not available for your organization|disableRemoteControl", re.I),
      "Remote control is turned off for your organization. An owner can turn it on at claude.ai/admin-settings/claude-code."),
     (re.compile(r"couldn.t verify|could not verify|couldn.t reach|could not reach|unable to reach|enotfound|offline",
