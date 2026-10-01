@@ -41,10 +41,10 @@ Beside the pill, each project gets a chip with one dot per session:
   through the same hooks but never wraps or restarts it.
 
 Hover a dot to read the session's last few lines. Click it to bring the session forward. When a
-session waits for you, the empty pill says so ("reviewer on Myapp: run the migration?") and Tab
-takes you there; with several waiting, Tab walks them, questions first, and ends on "Nothing needs
-you." The session in front of you never announces itself. With more than three projects the chips
-fold into one ("4 projects · 1 waiting").
+session waits for you, the empty pill says so ("reviewer on Myapp: run the migration?"), the stone
+knocks and Tab takes you there; with several waiting, Tab walks them, questions first, and ends on
+"Nothing needs you." The session in front of you never announces itself. With more than three
+projects the chips fold into one ("4 projects · 1 waiting").
 
 ## How it is built
 
@@ -116,8 +116,9 @@ nothing can raise it.
 whenever something changes, and sends it to each client that connects. `shell/DevState.qml` holds it
 (grouping by project, the fold, Tab's walk), `shell/SessionChips.qml` draws the chips and dots,
 `shell/SessionPeek.qml` the hover. The desk's Needs you card reads the same message, so two or more
-waiting sessions also show there. The chips sit in a row above the pill's left end because the desk's
-strips use the row beside the pill.
+waiting sessions also show there, and the pill's stone knocks (amber) while any session waits and
+goes still when the last one is answered. The chips sit in a row above the pill's left end because
+the desk's strips use the row beside the pill.
 
 **Launcher.** `launcher.py` matches the exact forms (`claude|codex|shell <project> [role]`, project
 and role names, `end <name>`, `what's running?`) before app names, so none of them waits for the
@@ -133,7 +134,8 @@ model. Project names come from the folders under `~/Projects`.
   Claude Code under a headless sway against a scripted API. A session starts, its dot moves and
   lights, Shift+Enter makes a new line, closing the window keeps the session, typing its name brings
   it back mid-sentence, a second session gets its own copy, a question lights its dot and becomes the
-  pill's line, sessions outlive an agentd restart, and `end` ends one and keeps its copy.
+  pill's line and makes the stone knock, sessions outlive an agentd restart, and `end` ends one and
+  keeps its copy.
 - `bombadil-smoke` (the `dev-*` checks, run by `scripts/test-vm.sh`): what needs real Hyprland and
   systemd: the scope and slice, the viewer floating and large, closing it leaving the session
   running, lingering, and the focus events.

@@ -802,6 +802,9 @@ key("Return")
 a = devmsg(lambda m: states(m).get("spike/reviewer") == "asked", 30, n)
 check("a question lights its dot and becomes the pill's line",
       a and a.get("line") == "reviewer on Spike: Run the migration on the local database?", a and a.get("line"))
+st = desk_state()
+check("and the stone knocks for it, the same message the desk's Needs you reads",
+      st.get("needsYou") and st.get("face") == "needs", {k: st.get(k) for k in ("needsYou", "face")})
 run("swaymsg", '[app_id="bombadil-session-spike-reviewer"] kill')
 time.sleep(1.5)
 shot("36-your-turn-line")
@@ -816,6 +819,7 @@ time.sleep(1)
 shot("37-tab-to-reviewer")
 key("Return")   # answer its question in its own window
 time.sleep(3)
+check("answered, the stone stops knocking", until(lambda: not desk_state().get("needsYou"), 20), desk_state().get("face"))
 
 # g. agentd restarting touches no session.
 agentd = next(p for p in procs if p.args[0].endswith("agentd"))
