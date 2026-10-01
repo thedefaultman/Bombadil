@@ -22,7 +22,12 @@ Rectangle {
     readonly property bool shown: !!current
     readonly property bool partial: !!(last && last.partial)
 
-    implicitHeight: shown ? content.implicitHeight + 28 : 0
+    // The height is not animated. The bar's window is as tall as its contents, so a height that
+    // grows over a few frames resizes the window every frame (each resize is a blip on the screen,
+    // and a compositor that animates layers, as Hyprland does unless its "layers" animation is off,
+    // swings the pill with every one). The window grows once; the card eases in inside the space,
+    // by fading and rising a few pixels instead, and gives the space back once it has faded out.
+    implicitHeight: shown || opacity > 0 ? content.implicitHeight + 28 : 0
     radius: Kit.Theme.radiusLine
     color: Kit.Theme.glassLine
     border.width: 1
@@ -31,7 +36,10 @@ Rectangle {
     visible: opacity > 0
     clip: true
     Behavior on opacity { NumberAnimation { duration: Kit.Theme.normal } }
-    Behavior on implicitHeight { NumberAnimation { duration: Kit.Theme.fast; easing.type: Easing.OutCubic } }
+    transform: Translate {
+        y: host.shown ? 0 : 14
+        Behavior on y { NumberAnimation { duration: Kit.Theme.normal; easing.type: Easing.OutCubic } }
+    }
 
     // Resting the mouse on a picture keeps the closing line (and a receipt with it) from fading.
     HoverHandler {

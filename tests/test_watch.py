@@ -60,12 +60,14 @@ def test_history_lists_turns_and_launcher_actions(home):
     log.parent.mkdir(parents=True, exist_ok=True)
     rows = [{"t": 1790000000, "prompt": "install ffmpeg", "summary": "Installed ffmpeg.", "snapshot": 4},
             {"t": 1790000060, "kind": "local", "prompt": "passwords", "result": "Opened Passwords."},
+            {"t": 1790000090, "kind": "improve", "prompt": "noticed a repeat", "what": "x"},
             {"t": 1790000120, "prompt": "set up docker", "stopped": True}]
     log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     out = watch.history_lines()
     assert any("install ffmpeg" in x and "Installed ffmpeg." in x and "restore point 4" in x for x in out)
     assert any("passwords: Opened Passwords." in x for x in out)
     assert any("set up docker" in x and "Stopped." in x for x in out)
+    assert not any("noticed a repeat" in x for x in out)
 
 
 def _agentd(home, events):

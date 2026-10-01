@@ -33,11 +33,13 @@ Window {
     color: "#3b4a5a"
     property var sent: []
     property int screens: 1
+    property var summons: []
     property int handOffs: 0
     PillState {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onSummoned: text => w.summons = w.summons.concat([text])
         onHandOff: w.handOffs += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
@@ -552,6 +554,14 @@ def test_hovering_the_line_on_one_screen_keeps_it_on_all(bar):
     assert bar.pill.property("mode") == "idle"
 
 
+def test_a_summon_can_carry_words_for_the_pill(bar):
+    bar.send(type="summon")
+    bar.send(type="summon", text="About ~/Documents/lease.pdf: ")
+    summons = bar.win.property("summons")
+    summons = summons.toVariant() if hasattr(summons, "toVariant") else summons
+    assert list(summons) == ["", "About ~/Documents/lease.pdf: "]
+
+
 def _hover_line(bar):
     line = bar.item("statusLine")
     centre = line.mapToScene(QtCore.QPointF(line.width() / 2, 6)).toPoint()
@@ -619,9 +629,49 @@ def test_a_card_event_draws_the_picture_above_the_line(bar):
     assert bar.text("cardSource") == "drawn by the agent"
     assert bar.text("cardSay") == "Everything goes through the tunnel."
     assert bar.items("box-n1") and bar.items("box-n3")
-    # It sits above the status line, over the pill.
+    # It sits above the status line, over the pill (once it has finished rising into place).
+    bar.pump(0.3)
     assert bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y() < bar.item("statusLine").mapToScene(QtCore.QPointF(0, 0)).y() + 1
     bar.snap("card-agent")
+    assert bar.warnings == []
+
+
+def test_the_card_makes_room_at_once_so_the_bars_window_is_resized_once_not_every_frame(bar):
+    # The bar's window is as tall as its contents. A height that grew over a few frames resized it
+    # every frame, and on the compositor the pill jumped about while it caught up.
+    _card_event(bar, _diagram())
+    host = bar.item("cardHost")
+    first = host.property("implicitHeight")
+    assert first > 100
+    bar.pump(0.5)
+    assert host.property("implicitHeight") == first
+    bar.call("dismissCard")
+    bar.pump(0.06)
+    assert host.property("implicitHeight") == first and host.property("opacity") < 1     # still there, fading out
+    bar.pump(0.4)
+    assert host.property("implicitHeight") == 0 and not bar.shown("cardHost")
+
+
+def test_the_agents_words_on_the_line_start_at_a_word_not_in_the_middle_of_one(bar):
+    said = ("A VPN builds an encrypted tunnel to a server, so your network cannot read your traffic and websites see "
+            "the server's address instead of yours. The catch is that you are trusting the VPN company, which can "
+            "see the traffic that comes out of its server.")
+    bar.call("submit", "how does a vpn work")
+    bar.send(kind="turn_start", turn=1, prompt="how does a vpn work")
+    bar.send(kind="status", turn=1, text="Drawing a picture", source="step")
+    bar.send(kind="status", turn=1, text=said, source="agent")
+    shown = bar.text()
+    line = bar.item("line")
+    assert shown.startswith("…") and said.endswith(shown[1:])
+    assert said[len(said) - len(shown) + 1 - 1] == " " and shown[1] != " "      # a whole word follows the "…"
+    assert line.property("contentWidth") <= line.property("width") and shown.endswith("its server.")
+    # More room shows more words; a line that fits shows all of it.
+    bar.send(kind="status", turn=1, text="and it is ready to use.", source="agent")
+    assert bar.text() == "and it is ready to use."
+    # When the turn is over the whole answer is there, wrapped.
+    bar.send(kind="result", turn=1, ok=True, text=said)
+    bar.send(kind="turn_end", turn=1, seconds=4, changed=False, summary=said)
+    assert bar.text() == said
     assert bar.warnings == []
 
 
@@ -707,6 +757,21 @@ def test_a_picture_that_fails_puts_the_old_one_away_but_a_failed_click_does_not(
     _card_event(bar, _diagram(id="card-2"))
     bar.send(kind="local", turn=None, action="open", target="nginx.service", phase="done", ok=False, text="Could not open nginx.service.")
     assert bar.pill.property("card") is not None                # the picture is still true; only the click failed
+
+
+def test_a_window_the_launcher_opens_puts_the_picture_away_but_hiding_one_does_not(bar):
+    # The picture sits over the middle of the screen, where a window opens: the Brain's list was under it.
+    def opened(action, verb, ok=True, phase="done"):
+        _card_event(bar, _diagram())
+        bar.send(kind="local", turn=None, action=action, target="x", verb=verb, phase=phase, ok=ok, text="Opened.")
+        return bar.pill.property("card") is None
+    for action in ("brain", "app", "panel"):
+        assert opened(action, "open"), action
+    assert not opened("brain", "open", ok=False)                 # nothing opened: the picture is still true
+    assert not opened("brain", "open", phase="start")           # it goes once the window is up
+    assert not opened("panel", "hide") and not opened("app", "close")
+    assert not opened("open", "open")                           # a click on a box in the picture keeps it
+    assert not opened("undo", "open")
 
 
 def test_hovering_the_picture_keeps_the_line_from_fading(bar):

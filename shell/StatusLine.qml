@@ -55,6 +55,23 @@ Rectangle {
         }
     }
 
+    // The agent's own words, while it works, show their newest end. Text.ElideLeft alone cuts the
+    // first word in half ("…d of yours."), so the line is cut here instead: at a word, with a
+    // "…" before it, as many words as fit.
+    FontMetrics { id: lineMetrics; font: lineText.font }
+    function newest(full, room) {
+        const text = String(full).replace(/\s+/g, " ").trim()
+        if (room <= 0 || lineMetrics.advanceWidth(text) <= room) return text
+        const words = text.slice(-400).split(" ")
+        let out = ""
+        for (let i = words.length - 1; i > 0; i--) {     // words[0] may be cut by the slice
+            const next = words[i] + (out ? " " + out : "")
+            if (lineMetrics.advanceWidth("…" + next) > room) break
+            out = next
+        }
+        return out ? "…" + out : text      // one long word fills the line: let the elide cut it
+    }
+
     HoverHandler {
         id: hover
         onHoveredChanged: bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
@@ -80,7 +97,9 @@ Rectangle {
                 objectName: "line"
                 font.family: Kit.Theme.fontFamily
                 Layout.fillWidth: true
-                text: bar.pill.flash !== "" ? bar.pill.flash : bar.pill.line
+                text: bar.pill.flash !== "" ? bar.pill.flash
+                    : bar.pill.mode === "working" && bar.pill.source === "agent" ? bar.newest(bar.pill.line, lineText.width)
+                    : bar.pill.line
                 color: bar.pill.source === "error" && bar.pill.flash === "" ? Kit.Theme.badInk : Kit.Theme.fg
                 font.pixelSize: Kit.Theme.lineSize
                 textFormat: Text.PlainText

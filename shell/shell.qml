@@ -18,6 +18,7 @@ ShellRoot {
     property bool connected: false
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
+    property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
     // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
@@ -26,12 +27,15 @@ ShellRoot {
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
-        onSummoned: root.summon()
+        onSummoned: text => root.summon(text)
         onHandOff: root.release()
     }
 
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
+
+    // The ground under everything: the wallpaper, on every screen.
+    Wallpaper { reducedMotion: root.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -119,9 +123,15 @@ ShellRoot {
 
     // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
     // focused screen takes the keyboard. A second tap gives it back.
-    function summon() {
+    function summon(text) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+        if (text) {
+            // Words to finish: always take the keyboard, never toggle it away.
+            root.draft = text
+            root.summonedOn = name
+            return
+        }
         root.summonedOn = root.summonedOn === name ? "" : name
     }
 
@@ -208,6 +218,17 @@ ShellRoot {
             onSummonedChanged: {
                 if (summoned) input.forceActiveFocus()
                 grab.active = summoned
+                takeDraft()
+            }
+            function takeDraft() {
+                if (!summoned || root.draft === "") return
+                input.text = root.draft
+                input.cursorPosition = input.text.length
+                root.draft = ""
+            }
+            Connections {
+                target: root
+                function onDraftChanged() { win.takeDraft() }
             }
 
             // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the

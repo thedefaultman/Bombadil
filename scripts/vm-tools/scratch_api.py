@@ -12,6 +12,8 @@ the laptop VM tests needed. A prompt containing the word picks the script:
   vpn         a show_card call streamed a box at a time (the pictures)
   sysfile     a WebFetch, then a sudo change of /etc/wireguard (why and after lines)
   sysslow     the same change held open 30 s (to rest the pointer on the status line)
+  tsync       a sudo restart of systemd-timesyncd (a service receipt)
+  volup       wpctl set-volume to 65% (a sound receipt)
 and the original ones: ffmpeg (sudo pacman, 4 s), password (create_app, streamed), docker (a 120 s
 root sleep for Stop), joke (only talks). Anything else answers "OK.".
 """
@@ -19,9 +21,9 @@ root sleep for Stop), joke (only talks). Anything else answers "OK.".
 import json
 import sys
 import time
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LOG = open(sys.argv[2], "a")
+LOG = open(sys.argv[2], "a")  # noqa: SIM115 - one log for the life of the server
 N = [0]
 
 QML = """import QtQuick
@@ -89,7 +91,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("content-length", 0))
         try:
             body = json.loads(self.rfile.read(n))
-        except Exception:
+        except Exception:  # noqa: BLE001 - a body that is not JSON is an empty request
             body = {}
         msgs = body.get("messages", [])
         if "count_tokens" in self.path or not body.get("stream"):
@@ -313,6 +315,20 @@ class H(BaseHTTPRequestHandler):
                                 {"label": "The website", "sub": "sees the server, not you"}],
                       "say": "Your traffic travels wrapped to a server you trust, which passes it on."},
                      step=14, pause=0.35)
+                stop = "tool_use"
+        elif "tsync" in first:
+            if after_tool:
+                text("Restarted the time sync service; it is running again.")
+            else:
+                text("I will restart the time sync service.")
+                tool(f"toolu_ts{N[0]}", "Bash", {"command": "sudo systemctl restart systemd-timesyncd", "description": "Restart the time sync service"})
+                stop = "tool_use"
+        elif "volup" in first:
+            if after_tool:
+                text("The speaker volume is now 65 percent.")
+            else:
+                text("I will set the speaker volume to 65 percent.")
+                tool(f"toolu_vu{N[0]}", "Bash", {"command": "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.65", "description": "Set the speaker volume"})
                 stop = "tool_use"
         elif "sysslow" in first:
             if after_tool:

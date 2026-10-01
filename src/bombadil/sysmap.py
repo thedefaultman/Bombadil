@@ -22,6 +22,7 @@ import json
 import re
 import socket
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -77,10 +78,46 @@ def _within(fn: Callable[[], object], budget: float):
     return _gather({"one": fn}, budget)["one"]
 
 
+def _unescape(text: str) -> str:
+    """systemd's \\xNN escapes back to the characters they stand for."""
+    return re.sub(r"\\x([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)), text)
+
+
+def _path_of(text: str) -> str:
+    """A path-escaped name ("dev-disk-by\\x2duuid-1234") as the path: dashes are slashes first, and
+    only then do the escapes (a real dash is \\x2d) turn back into characters."""
+    return "/" + _unescape(text.replace("-", "/")).strip("/")
+
+
+def _pretty(unit: str) -> str:
+    """A unit's name as people read it: without .service, and without systemd's escaping, which
+    turns /dev/disk/by-uuid/1234 into dev-disk-by\\x2duuid-1234 (what `systemd-escape -u` undoes)."""
+    stem, _, kind = unit.rpartition(".")
+    if not stem:
+        return unit
+    if "@" in stem and not stem.endswith("@"):
+        template, _, instance = stem.partition("@")
+        # An instance that starts like a device or a mount is a path (systemd-fsck@dev-disk-...).
+        stem = f"{template}@{_path_of(instance) if re.match(r'(dev|run|mnt|media|home)-', instance) else _unescape(instance)}"
+    elif kind in ("device", "mount", "swap", "automount"):
+        return f"{_path_of(stem)} {kind}"
+    else:
+        stem = _unescape(stem)
+    return stem if kind == "service" else f"{stem}.{kind}"
+
+
 def _short(unit: str) -> str:
-    """A unit as people say it: without .service, at most a label long."""
-    unit = unit.removesuffix(".service")
-    return unit if len(unit) <= cards.MAX_LABEL else unit[:cards.MAX_LABEL - 1] + "…"
+    """A unit as people say it, at most a label long (an instance keeps its end: the device is
+    what tells two of them apart)."""
+    name = _pretty(unit)
+    if len(name) <= cards.MAX_LABEL:
+        return name
+    if "@" in name:
+        template, _, instance = name.partition("@")
+        keep = cards.MAX_LABEL - len(template) - 2
+        if keep >= 8:
+            return f"{template}@…{instance[-keep:]}"
+    return name[:cards.MAX_LABEL - 1] + "…"
 
 
 def _json(text: str | None):
@@ -343,7 +380,10 @@ def _read_text(path: str) -> str | None:
 
 # ---------------------------------------------------------------- boot
 
-_CHAIN_RE = re.compile(r"^[\s│└├─]*([\w@.:\\-]+\.(?:target|service|socket|mount|path|timer|device|swap|slice|scope))"
+# The tree's own marks before the unit: box-drawing ones in a UTF-8 locale, "|-", "`-" and "| " in
+# the C locale the captures run under (a "-" counts only right after a "|" or a backtick, so a
+# unit that starts with one, like -.mount, keeps it).
+_CHAIN_RE = re.compile(r"^(?:[\s|`│└├─]|(?<=[|`])-)*([\w@.:\\-]+\.(?:target|service|socket|mount|path|timer|device|swap|slice|scope))"
                        r"\s+@([\d.]+\s*(?:min|ms|us|s)?(?:\s*[\d.]+\s*(?:s|ms))?)(?:\s+\+([\d.]+\s*(?:min|ms|us|s)?"
                        r"(?:\s*[\d.]+\s*(?:s|ms))?))?\s*$")
 _TIME_RE = re.compile(r"Startup finished in (.*?)(?: = ([\d.]+\s*(?:min|ms|s)(?:\s*[\d.]+\s*s)?))?\s*$", re.M)
@@ -360,19 +400,59 @@ def parse_critical_chain(text: str | None) -> list[tuple[str, float, float]]:
     return rows
 
 
+_BLAME_RE = re.compile(r"^\s*((?:[\d.]+\s*(?:min|ms|us|s|h)\s*)+?)\s+([\w@.:\\-]+)\s*$")
+# A boot with so little on the way to the desktop that the chain is no picture (a quiet one reaches
+# graphical.target through three targets that all finish together): the slowest units are drawn instead.
+THIN_CHAIN = 4
+
+
+def parse_blame(text: str | None) -> list[tuple[str, float]]:
+    """`systemd-analyze blame`: (unit, how long it took), the slowest first."""
+    rows = []
+    for line in (text or "").splitlines():
+        m = _BLAME_RE.match(line)
+        if m:
+            rows.append((m.group(2), _secs(m.group(1))))
+    rows.sort(key=lambda r: -r[1])
+    return rows
+
+
+def _boot_from_blame(rows: list[tuple[str, float]], total: float) -> dict:
+    """The slowest units of the boot, longest first, each with a bar as long as it took."""
+    keep = [r for r in rows if r[1] >= 0.001][:cards.MAX_NODES]
+    nodes = [{"id": f"u{i + 1}", "label": _short(unit), "time": _fmt_secs(took), "weight": round(took, 3),
+              "opens": {"kind": "unit", "value": unit}} for i, (unit, took) in enumerate(keep)]
+    lit = []
+    if keep and keep[0][1] >= 1.0:
+        nodes[0]["state"] = "warn"
+        lit = [nodes[0]["id"]]
+    say = (f"{_short(keep[0][0])} takes {_fmt_secs(keep[0][1])}, the longest step of the boot." if lit
+           else "Nothing holds the boot up: no step takes a second.")
+    title = "What takes longest when you boot" + (f" ({_fmt_secs(total)} in all)" if total else "")
+    spec = {"shape": "timeline", "title": title[:cards.MAX_TITLE], "nodes": nodes, "links": [], "highlight": lit,
+            "say": say}
+    return _result("boot", spec, [])
+
+
 def capture_boot(run_: Run = run, budget: float = BUDGET) -> dict:
     """What holds the boot up, from the critical chain: each unit on the way to the desktop, the
-    slow one in amber."""
+    slow one in amber. A chain too short to draw (a quiet boot) gives way to the slowest units."""
     t0 = time.monotonic()
     got = _gather({"chain": lambda: run_(["systemd-analyze", "critical-chain", "--no-pager"], budget),
-                   "time": lambda: run_(["systemd-analyze", "time", "--no-pager"], budget)}, budget)
+                   "time": lambda: run_(["systemd-analyze", "time", "--no-pager"], budget),
+                   "blame": lambda: run_(["systemd-analyze", "blame", "--no-pager"], budget)}, budget)
     rows = parse_critical_chain(got["chain"] if isinstance(got["chain"], str) else None)
-    if not rows:
+    blamed = parse_blame(got["blame"] if isinstance(got["blame"], str) else None)
+    if not rows and not blamed:
         if time.monotonic() - t0 >= budget * 0.9:
             raise Unavailable("Could not read the boot: systemd-analyze took longer than expected.")
         raise Unavailable("Could not read the boot: there is no boot record to read (a live system has none).")
     m = _TIME_RE.search(got["time"] if isinstance(got["time"], str) else "")
     total = _secs(m.group(2)) if m and m.group(2) else 0.0
+    if len(rows) < THIN_CHAIN and len([b for b in blamed if b[1] >= 0.001]) > len(rows):
+        return _boot_from_blame(blamed, total)
+    if not rows:
+        raise Unavailable("Could not read the boot: there is no boot record to read (a live system has none).")
     keep = rows
     if len(rows) > cards.MAX_NODES:
         # The slowest steps and the last one, in the order they happened.
@@ -425,16 +505,131 @@ def unit_name(name: str) -> str:
     return name if re.search(r"\.(service|socket|timer|target|mount|path|slice|scope)$", name) else name + ".service"
 
 
+def _since(stamp: str) -> str:
+    """`ActiveEnterTimestamp` ("Thu 2026-10-01 00:01:57 UTC") as a time of day, with the date when it is not today's."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})", stamp or "")
+    if not m:
+        return ""
+    return m.group(2) if m.group(1) == time.strftime("%Y-%m-%d") else f"{m.group(1)} {m.group(2)}"
+
+
+class _UnitFiles:
+    """The names of every unit file, by lowercase. `systemctl list-unit-files` takes about two
+    seconds on a small VM and far longer under load, so it is never waited for: it is read in the
+    background (agentd starts that when it starts) and kept, and the quick lookups use what is
+    there. A list that is a while old still answers, and is read again."""
+
+    FRESH = 600.0       # seconds before it is read again (a unit installed since is found then)
+    READ_BUDGET = 60.0
+
+    def __init__(self) -> None:
+        self.names: dict[str, str] = {}
+        self.at: float | None = None      # when they were read (None: never)
+        self.reading = False
+        self.lock = threading.Lock()
+
+
+_FILES = _UnitFiles()
+
+
+def warm_unit_names(run_: Run = run, budget: float = _UnitFiles.READ_BUDGET) -> None:
+    """Read the unit file names now, however long it takes (up to the budget). Keeps the old list
+    when the read fails."""
+    with _FILES.lock:
+        _FILES.reading = True
+    try:
+        text = run_(["systemctl", "list-unit-files", "--no-legend", "--no-pager"], budget)
+        names: dict[str, str] = {}
+        for line in (text or "").splitlines():
+            words = line.split()
+            if words and not words[0].endswith("@.service"):     # a template is not a unit
+                names.setdefault(words[0].lower(), words[0])
+        with _FILES.lock:
+            if names:
+                _FILES.names, _FILES.at = names, time.monotonic()
+    finally:
+        with _FILES.lock:
+            _FILES.reading = False
+
+
+def _start_thread(target: Callable[[], None]) -> None:
+    threading.Thread(target=target, daemon=True, name="sysmap-unit-files").start()
+
+
+def _spelling_from_files(unit: str, run_: Run) -> str | None:
+    """The unit as the unit files spell it, from the kept list. A list that is missing or old is
+    read again in the background (only with the real runner), and answers the next ask."""
+    with _FILES.lock:
+        found = _FILES.names.get(unit.lower())
+        stale = _FILES.at is None or time.monotonic() - _FILES.at > _FILES.FRESH
+        start = stale and not _FILES.reading and run_ is run
+    if start:
+        _start_thread(warm_unit_names)
+    return found
+
+
+def _spelling_from_loaded(text: str | None, unit: str) -> str | None:
+    """The unit as `systemctl list-units --all` spells it: the name as typed if it is there, else the
+    one that differs only in its capitals."""
+    low, found = unit.lower(), None
+    for line in (text or "").splitlines():
+        words = line.split()
+        if words and words[0] in ("●", "*", "○", "×"):
+            words = words[1:]
+        if not words or words[0].endswith("@.service"):
+            continue
+        if words[0] == unit:
+            return unit
+        if words[0].lower() == low and found is None:
+            found = words[0]
+    return found
+
+
+_LIST_LOADED = ["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager"]
+
+
+def _spelt_like(unit: str, run_: Run = run, budget: float = BUDGET) -> str | None:
+    """The unit named like this but for its capitals, spelt as systemd has it. Unit names are
+    case-sensitive (NetworkManager.service) and people type networkmanager."""
+    text = _within(lambda: run_(_LIST_LOADED, budget), budget)
+    return _spelling_from_loaded(text if isinstance(text, str) else None, unit) or _spelling_from_files(unit, run_)
+
+
+def find_unit(name: str, run_: Run = run, budget: float = BUDGET) -> str | None:
+    """The unit a typed name means, spelt as systemd has it ("networkmanager" is
+    "NetworkManager.service"), or None when the machine has no such unit. The picture words ask
+    before "what does bluetooth need" draws, so this is quick: the loaded units are listed, which
+    takes a tenth of a second, and the unit files come from the kept list."""
+    unit = unit_name(name)
+    if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
+        return None
+    got = _gather({"show": lambda: run_(["systemctl", "show", "-p", "LoadState", unit], budget),
+                   "loaded": lambda: run_(_LIST_LOADED, budget)}, budget)
+    show = parse_show(got["show"] if isinstance(got["show"], str) else None)
+    if show and show[0].get("LoadState") == "loaded":
+        return unit
+    return _spelling_from_loaded(got["loaded"] if isinstance(got["loaded"], str) else None, unit) \
+        or _spelling_from_files(unit, run_)
+
+
 def capture_service(target: str, run_: Run = run, budget: float = BUDGET) -> dict:
     """One service and what it needs (Requires and Wants), each with its state, and the package
     that owns it."""
     unit = unit_name(target)
     if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
         raise Unavailable(f"“{target}” is not a service name.")
-    props = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,Requires,Wants,FragmentPath"
-    main = parse_show(_within(lambda: run_(["systemctl", "show", "-p", props, unit], budget), budget))
+    props = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,Requires,Wants,FragmentPath,ActiveEnterTimestamp"
+
+    def show(u: str) -> list[dict[str, str]]:
+        return parse_show(_within(lambda: run_(["systemctl", "show", "-p", props, u], budget), budget))
+
+    main = show(unit)
     if not main:
         raise Unavailable("Could not read services: systemctl did not answer.")
+    if main[0].get("LoadState") == "not-found":
+        spelt = _spelt_like(unit, run_, budget)      # "networkmanager" is NetworkManager.service
+        if spelt:
+            unit, main = spelt, show(spelt) or main
     m = main[0]
     if m.get("LoadState") == "not-found":
         raise Unavailable(f"There is no service called {target}.")
@@ -491,6 +686,11 @@ def capture_service(target: str, run_: Run = run, budget: float = BUDGET) -> dic
             "nodes": nodes, "links": links, "highlight": bad or (["unit"] if active == "failed" else []), "say": say}
     facts = [{"key": "state", "label": top["label"], "value": sub},
              {"key": "enabled", "label": "Starts at boot", "value": m.get("UnitFileState", "") or "unknown"}]
+    since = _since(m.get("ActiveEnterTimestamp", "")) if active == "active" else ""
+    if since:
+        # A restart that comes back as it was changes only this, so it counts only when nothing else did.
+        facts.append({"key": "since", "label": top["label"], "value": f"up since {since}", "alone": True,
+                      "say": f"{top['label']} was restarted and is running again."})
     facts += [{"key": f"dep:{d}", "label": d, "value": (states.get(d) or {}).get("ActiveState", "unknown")}
               for d in deps]
     res = _result("service", spec, facts)
@@ -682,10 +882,18 @@ def parse_pw_dump(dump: list | None) -> dict:
 
 
 def _volume(node: dict) -> tuple[int | None, bool]:
+    """The level as wpctl and the sliders say it, and whether it is muted. PipeWire keeps a master
+    `volume` and one level per channel (`channelVolumes`); a hardware speaker holds its level in the
+    channels and leaves the master at 1.0, a software one the other way round, so what plays is
+    the two together. Both are linear: the percent people see is their cube root."""
     for p in (node.get("params") or {}).get("Props") or []:
-        if isinstance(p, dict) and ("volume" in p or "mute" in p):
-            v = p.get("volume")
-            return (round(float(v) ** (1 / 3) * 100) if v is not None else None), bool(p.get("mute"))
+        if isinstance(p, dict) and ("volume" in p or "channelVolumes" in p or "mute" in p):
+            levels = [float(c) for c in p.get("channelVolumes") or [] if isinstance(c, (int, float))]
+            master = p.get("volume")
+            if not levels and master is None:
+                return None, bool(p.get("mute"))
+            linear = (float(master) if master is not None else 1.0) * (max(levels) if levels else 1.0)
+            return round(max(0.0, linear) ** (1 / 3) * 100), bool(p.get("mute"))
     return None, False
 
 
@@ -811,15 +1019,6 @@ def apply_overrides(card: dict, highlight=None, say: str | None = None) -> dict:
     return card
 
 
-def service_exists(name: str, run_: Run = run, budget: float = BUDGET) -> bool:
-    """Is there a unit by this name? The picture words ask before "what does bluetooth need" draws."""
-    unit = unit_name(name)
-    if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
-        return False
-    show = parse_show(run_(["systemctl", "show", "-p", "LoadState", unit], budget))
-    return bool(show) and show[0].get("LoadState") == "loaded"
-
-
 # ---------------------------------------------------------------- receipts
 
 # What a turn can change in each part, checked before and after it. Only what a turn's steps
@@ -852,7 +1051,15 @@ def receipt(kind: str, before: list[dict], after: list[dict], target: str = "") 
     b = {f["key"]: f for f in before or [] if not f.get("volatile")}
     a = {f["key"]: f for f in after or [] if not f.get("volatile")}
     changed = [k for k in list(b) + [k for k in a if k not in b] if (k in b) != (k in a) or b[k]["value"] != a[k]["value"]]
-    if not changed:
+    # A fact marked `alone` (a service's start time) is a change only when nothing else changed: a
+    # restart that leaves it running as it was. Next to a real change it is just noise.
+    loud = [k for k in changed if not (a.get(k) or b.get(k) or {}).get("alone")]
+    say = ""
+    if loud:
+        changed = loud
+    elif changed:
+        say = next((a[k].get("say", "") for k in changed if k in a), "")
+    else:
         return None
     nodes: list[dict] = []
     for k in changed[:6]:
@@ -867,7 +1074,7 @@ def receipt(kind: str, before: list[dict], after: list[dict], target: str = "") 
     title = {"service": f"{unit_name(target).removesuffix('.service')}" if target else "Service"}.get(kind, TITLES.get(kind, kind))
     spec = {"shape": "compare", "title": f"{title}, before and after"[:cards.MAX_TITLE], "nodes": nodes, "links": [],
             "highlight": [n["id"] for n in nodes if n["side"] == "after"],
-            "say": f"{len(changed) - 6} more changed." if len(changed) > 6 else ""}
+            "say": f"{len(changed) - 6} more changed." if len(changed) > 6 else say}
     card, errors = cards.validate_diagram(spec)
     if card is None:
         return None

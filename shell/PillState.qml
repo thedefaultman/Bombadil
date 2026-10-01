@@ -7,8 +7,9 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped).
-    signal summoned()
+    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
+    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
 
@@ -158,7 +159,7 @@ QtObject {
         if (ev.type === "setup") { _setup(ev); return }
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
         if (ev.type === "summon") {
-            summoned()
+            summoned(typeof ev.text === "string" ? ev.text : "")
             // The pill comes up: say why the AI does not answer, unless a line is being read.
             if (resting && setupLine) { if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true }
             return
@@ -251,6 +252,10 @@ QtObject {
             // A picture that could not be drawn puts the last one away: the error under a picture of
             // something else reads as if it were about that picture.
             if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
+            // A window the launcher just opened (the Brain, an app, a panel) takes the stage: a picture
+            // left over the middle of the screen would sit on top of it.
+            if (ev.phase === "done" && ev.ok === true && ev.verb === "open"
+                    && (ev.action === "brain" || ev.action === "app" || ev.action === "panel")) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
                 flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
