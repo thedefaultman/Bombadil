@@ -211,7 +211,10 @@ def test_welcome_done_follows_the_rule_for_any_clock(bar):
     t0 = bar.prop("lineAt")      # the clock is passed in, so nothing here waits
     bar.set("fadeAfter", 8000)
     bar.set("welcomeMax", 30000)
-    done = lambda now: bar.call("welcomeDone", now)
+
+    def done(now):
+        return bar.call("welcomeDone", now)
+
     assert done(t0 + 29999) is False and done(t0 + 30001) is True           # untouched: the cap
     bar.set("touchedAt", t0 + 5000)
     assert done(t0 + 5000 + 8000) is False and done(t0 + 5000 + 8001) is True   # touched: fadeAfter later
@@ -460,7 +463,8 @@ def _block(src, head):
 def test_the_bar_and_its_parts_import_only_plain_qtquick():
     for name in ("PillState.qml", "StatusLine.qml", "PersonaCard.qml"):
         imports = re.findall(r"^import\s+(\S+)", (SHELL / name).read_text(), re.MULTILINE)
-        assert imports and all(i.startswith("QtQuick") for i in imports), (name, imports)
+        # QtQuick, and the kit's tokens (`import Bombadil as Kit`), which the tests put on the import path
+        assert imports and all(i.startswith("QtQuick") or i == "Bombadil" for i in imports), (name, imports)
 
 
 def test_shell_qml_only_reaches_for_what_pillstate_and_the_line_declare():
@@ -473,6 +477,7 @@ def test_shell_qml_only_reaches_for_what_pillstate_and_the_line_declare():
     signals = set(re.findall(r"\bsignal\s+(\w+)", (SHELL / "PillState.qml").read_text()))
     handlers = set(re.findall(r"\bon([A-Z]\w*)\s*:", _block(shell, "PillState {")))
     handlers |= set(re.findall(r"function\s+on([A-Z]\w*)\s*\(", shell))
+    handlers.discard("RawEvent")   # Hyprland's own signal, on its own Connections
     for h in handlers:
         name = h[0].lower() + h[1:]
         assert name in signals or (name.endswith("Changed") and name[:-7] in pill), h

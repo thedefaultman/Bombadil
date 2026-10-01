@@ -95,7 +95,8 @@ Rectangle {
             Layout.fillWidth: true
             text: card.ask && card.ask.line !== "" ? card.ask.line : "What should I call you?"
             color: Kit.Theme.fg
-            font.pixelSize: 15
+            font.family: Kit.Theme.fontFamily
+            font.pixelSize: Kit.Theme.lineSize
             textFormat: Text.PlainText
             wrapMode: Text.Wrap
             maximumLineCount: 2
@@ -121,7 +122,8 @@ Rectangle {
                 placeholderText: "Your name"
                 placeholderTextColor: Kit.Theme.muted
                 color: Kit.Theme.fg
-                font.pixelSize: 15
+                font.family: Kit.Theme.fontFamily
+                font.pixelSize: Kit.Theme.lineSize
                 background: null
                 maximumLength: 24
                 // What agentd accepts in a name: a letter first, then letters, marks, spaces, hyphens,
@@ -196,7 +198,8 @@ Rectangle {
                             objectName: "voiceName"
                             text: String(row.modelData.name || row.voiceId)
                             color: Kit.Theme.fg
-                            font.pixelSize: 14
+                            font.family: Kit.Theme.fontFamily
+                            font.pixelSize: Kit.Theme.textSize
                             font.bold: true
                             textFormat: Text.PlainText
                         }
@@ -205,7 +208,8 @@ Rectangle {
                             Layout.fillWidth: true
                             text: card.sample(row.modelData)
                             color: row.on ? Kit.Theme.muted : Kit.Theme.muted
-                            font.pixelSize: 13
+                            font.family: Kit.Theme.fontFamily
+                            font.pixelSize: Kit.Theme.smallSize
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
                             maximumLineCount: 2
@@ -218,7 +222,8 @@ Rectangle {
                             visible: text !== ""
                             text: String(row.modelData.reply || "")
                             color: row.on ? Kit.Theme.muted : Kit.Theme.faint
-                            font.pixelSize: 12
+                            font.family: Kit.Theme.fontFamily
+                            font.pixelSize: Kit.Theme.captionSize
                             font.italic: true
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
@@ -237,7 +242,8 @@ Rectangle {
                 : card.voices.length > 0 ? "Enter keeps " + card.chosen + " · Up and Down to change · Esc skips"
                 : "Enter saves · Esc skips"
             color: card.problem ? Kit.Theme.badInk : Kit.Theme.muted
-            font.pixelSize: 12
+            font.family: Kit.Theme.fontFamily
+            font.pixelSize: Kit.Theme.captionSize
             textFormat: Text.PlainText
             elide: Text.ElideRight
         }
