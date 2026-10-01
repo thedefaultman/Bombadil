@@ -2842,18 +2842,55 @@ def test_the_snapshot_carries_what_is_in_hand(desk):
     assert snap["dropTarget"]["kind"] == "rank" and snap["dropTarget"]["rank"] == 1
 
 
-def test_a_desk_message_as_the_python_half_sends_it_is_what_the_desk_reads(desk):
-    # The shape Desk.snapshot() has once it carries the widgets folded by hand. When it does, build this
-    # message from the real Desk instead of by hand.
-    msg = {"type": "desk", "folded": False, "hidden": ["machine"], "stripped": ["watching", "needs"],
-           "rails": {"now": "left", "watching": "left", "alive": "left", "needs": "right", "away": "right",
-                     "machine": "right"},
-           "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}, "screen": ""}
+def test_what_the_real_desk_says_is_what_the_shell_draws_and_a_drop_is_what_it_answers(desk, home):
+    """Both ends of a drag joined: the shell's drop goes to the real Desk, whose snapshot is read back."""
+    from bombadil import desk as pydesk
+    py = pydesk.Desk()
+    py.apply("show", "alive")           # a new desk has it put away; the full desk below has it
+
+    def agentd():
+        """What agentd does with the shell's last message, and the state it sends back."""
+        m = sent_ops(desk)[-1]
+        ok, _ = py.apply("toggle" if m["op"] == "fold" and not m.get("widget") else m["op"],
+                         m.get("widget"), m.get("rail"), m.get("rank"))
+        assert ok
+        desk.send(**json.loads(json.dumps(py.snapshot())))
+        desk.pump(0.3)
+
+    s = a_full_desk(desk)
+    # A card dropped into the row is folded alone: a strip, no slot, and the cards above it slide down.
+    take(desk, "watching", 100, 1040)
+    desk.call("dragEnd", 100, 1040)
+    agentd()
+    assert desk.prop("stripped") == ["watching"] and desk.prop("folded") is False
+    assert desk.faces["watching"] == "strip" and "watching" not in desk.slots
+    assert desk.slots["alive"]["y"] > s["alive"]["y"] and desk.prop("settling") == ""
+    assert [c["text"] for c in desk.prop("leftStrips")] == ["2 counting"]
+    # The strip dropped on the other rail: moved, and a card again.
+    assert take(desk, "watching", 1700, centre(s["needs"]) + 10, "strip")["kind"] == "rank"
+    desk.call("dragEnd", 1700, centre(s["needs"]) + 10)
+    agentd()
+    assert desk.prop("stripped") == [] and desk.prop("rails")["watching"] == "right"
+    assert desk.prop("order")["right"][0] == "watching" and desk.faces["watching"] == "full"
+    # What the real Desk keeps across a restart is what the shell reads again.
+    again = pydesk.Desk().load()
+    desk.send(**json.loads(json.dumps(again.snapshot())))
+    assert desk.prop("order") == py.snapshot()["order"] and desk.prop("stripped") == []
+
+
+def test_a_desk_message_with_folded_widgets_is_what_the_desk_reads(desk, home):
+    from bombadil import desk as pydesk
+    py = pydesk.Desk()
+    py.apply("hide", "machine")
+    py.apply("fold", "watching")
+    py.apply("fold", "needs")
+    msg = json.loads(json.dumps(py.snapshot()))
+    assert msg["stripped"] == ["watching", "needs"]
     desk.turn(1, steps=TWO)
     desk.set("watchModel", rows(2))
     desk.set("needsModel", rows(2))
     desk.send(**msg)
-    assert desk.prop("stripped") == ["watching", "needs"] and desk.prop("hidden") == ["machine"]
+    assert desk.prop("stripped") == ["watching", "needs"] and desk.prop("hidden") == ["alive", "machine"]
     assert (desk.faces["now"], desk.faces["watching"], desk.faces["needs"]) == ("full", "strip", "strip")
     assert [c["text"] for c in desk.prop("leftStrips")] == ["2 counting"]
     assert [c["text"] for c in desk.prop("rightStrips")] == ["2 need you"]
