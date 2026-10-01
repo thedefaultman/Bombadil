@@ -804,6 +804,21 @@ def test_a_picture_that_fails_puts_the_old_one_away_but_a_failed_click_does_not(
     assert bar.pill.property("card") is not None                # the picture is still true; only the click failed
 
 
+def test_a_window_the_launcher_opens_puts_the_picture_away_but_hiding_one_does_not(bar):
+    # The picture sits over the middle of the screen, where a window opens: the Brain's list was under it.
+    def opened(action, verb, ok=True, phase="done"):
+        _card_event(bar, _diagram())
+        bar.send(kind="local", turn=None, action=action, target="x", verb=verb, phase=phase, ok=ok, text="Opened.")
+        return bar.pill.property("card") is None
+    for action in ("brain", "app", "panel"):
+        assert opened(action, "open"), action
+    assert not opened("brain", "open", ok=False)                 # nothing opened: the picture is still true
+    assert not opened("brain", "open", phase="start")           # it goes once the window is up
+    assert not opened("panel", "hide") and not opened("app", "close")
+    assert not opened("open", "open")                           # a click on a box in the picture keeps it
+    assert not opened("undo", "open")
+
+
 def test_hovering_the_picture_keeps_the_line_from_fading(bar):
     _card_event(bar, _diagram())
     it = bar.item("cardHost")
