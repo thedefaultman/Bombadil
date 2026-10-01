@@ -1,5 +1,10 @@
 # Boot and the wallpaper
 
+> **Status:** Shipped. The quiet console, Hyprland's opaque ground colour, the wallpaper and the user's own picture are on `main`. The stone in the wallpaper is an open taste choice (see the end of the page).
+> **Code:** `shell/Wallpaper.qml`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `iso/efiboot/loader/entries/01-bombadil.conf`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`, `iso/airootfs/etc/greetd/config.toml`, `tests/test_wallpaper.py`, `tests/test_boot_console.py`
+> **Design:** [The Bombadil mark](identity-brief.md) and the [design system](../design-system/README.md) set the colours; [Shell](../architecture/shell.md) and [ISO and install](../architecture/iso-and-install.md) describe the parts this page touches
+> **Verified:** 2026-10-01 against `main` at `6150431`: the paths above exist and the sections below are the note that shipped with the change.
+
 From the moment the computer powers on to the desk at rest, every screen is in the design system:
 the dark ground (`#101214`), the text colour (`#e6e8eb`), and the orange (`#d97757`) only on the
 working stone and the dot of the i. This page says what each stage shows, how it is made, and how to
@@ -140,7 +145,7 @@ text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is n
   disk password.
 - **The live stick's loader** is systemd-boot, which draws text only. A graphical menu would mean
   moving the live image to GRUB too; the live menu is three seconds and one entry, so it stays.
-- **The firmware's logo** before any of this. Some machines let the owner turn it off.
+- **The firmware's logo** before any of this. Some machines let the person turn it off.
 - **Lock and login screens** become the pill (a separate piece of the installed-system design).
 
 ## Checking it

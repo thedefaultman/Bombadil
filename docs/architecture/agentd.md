@@ -48,8 +48,8 @@ What happens to a prompt that becomes a turn, in order (all of it in `src/bombad
 1. A `prompt` that is not a launcher word gets the next turn id and goes on the `pending` list. The sender is told `{"type": "queued", "turn": n}` at once. The single `_worker` task takes the first prompt that can run (setup is `ready`, or the line starts with `!`) when no turn is running.
 2. `turn_start` goes out before anything slow. The restore point is saved after it, so something true is on screen while snapper works.
 3. If the provider's CLI is not installed (and the line is not a `!` command), the turn says so with an `error` event and ends with an empty `turn_end`. No line is added to `turns.jsonl` for it.
-4. The turn counter `turns` goes up, `launcher.clear_undo()` runs, and, unless the line starts with `!` or `explain` is `brief`, a capture of the network, disks, sound and screens starts in the background for the receipt.
-5. If the snapshot object says `available`, the status line says "Saving a restore point", `Snapshots.create("turn:<turns>: <first 60 characters of the prompt>")` runs off the event loop and a `snapshot` event carries its number. A snapper failure is an `error` event ("no undo point for this turn: ...") and the turn goes on. See [restore-points.md](restore-points.md) for what snapper and `bombadil-rollback` do.
+4. The turn counter `turns` goes up, `launcher.clear_undo()` runs (it keeps the undo marker while an undo still waits for its restart), and, unless the line starts with `!` or `explain` is `brief`, a capture of the network, disks, sound and screens starts in the background for the receipt.
+5. If the snapshot object says `available`, the status line says "Saving a restore point", `Snapshots.create("turn:<turns>: <first 60 characters of the prompt>")` runs off the event loop and a `snapshot` event carries its number. A failing `snapper create` (a non-zero exit) is an `error` event ("no undo point for this turn: ...") and the turn goes on. Any other exception from it ends the turn through the worker's handler: an `error` event and a short `turn_end`, the CLI never starts, and no line goes to `turns.jsonl`. See [restore-points.md](restore-points.md) for what snapper and `bombadil-rollback` do.
 6. If Stop arrived while the restore point was saved, the CLI never starts: `turn_end` with `stopped: true`, and the turn is logged.
 7. The command is built by the provider (see Providers below). If the person did things without the model since the last turn (a launcher word, a desk gesture, a job that ended), they are put in front of the prompt as `[Done by the user without you since your last turn: ...]`. A `!` line does not take them.
 8. The CLI starts in its own systemd user scope, with the prompt written to its stdin and stdin closed. The status line says "Waiting for Claude" (or Codex, Fake). Every stdout line goes to `provider.parse`; each event goes through the `Narrator` (the live line, the plan), the card follower and `_on_event`, which broadcasts it.
@@ -77,7 +77,7 @@ flowchart TB
 
 `launcher.match` decides the second diamond. It is exact on purpose: after lowercasing and trimming, the whole line must be a known word, with an optional verb in front. A parser that guesses would give the machine two brains that sometimes disagree. A line that starts with `!` never matches, whatever follows. A line in another script, or with extra words, goes to the agent. The words are in the launcher table under Interfaces.
 
-A launcher action runs beside the socket reader (`_background`), so a `stop` sent right after it is read at once. `AgentD.local` sends it one of three ways. `why`, `picture`, `signin`, `provider` and `stop` need agentd's own state and are done in place. `undo`, `restart` and `shutdown` first take the `_exclusive` lock, stop the running turn, wait until it has ended and raise `_hold`, so no queued turn starts until the action is done: an undo that raced a turn would roll back to that turn's own restore point. Everything else goes to `Launcher.run`, which calls Hyprland, the apps and snapper directly, in a worker so the event loop stays free.
+A launcher action runs beside the socket reader (`_background`), so a `stop` sent right after it is read at once. `AgentD.local` sends it one of three ways. `why`, `picture`, `signin`, `provider` and `stop` need agentd's own state and are done in place. `undo`, `restart` and `shutdown` first raise `_hold`, so no queued turn starts until the action is done, then take the `_exclusive` lock, stop the running turn and wait until it has ended, run the action, and lower `_hold`: an undo that raced a turn would roll back to that turn's own restore point. Everything else goes to `Launcher.run`, which calls Hyprland, the apps and snapper directly, in a worker so the event loop stays free.
 
 ### One turn at a time, and the queue
 
@@ -96,7 +96,7 @@ A launcher action runs beside the socket reader (`_background`), so a `stop` sen
 2. With a turn running it sets `stopping`, takes the closing line from the `Narrator` ("Stopped while installing docker."), sends a `status` "Stopping", and hands the process to `procs.Stopper`. From then on the turn's own status, plan and failure events are suppressed: a Stop is not reported as an error.
 3. `Stopper.stop` finds every process of the turn: the descendants of the CLI, everything in its scope's cgroup (`bombadil-turn-<pid>-<turn>-<seconds>`) and its process group. It spares the windows the turn opened: processes started with `--class=bombadil-browser`, `--app-id=bombadil-terminal` or `--app-id=bombadil-details`, `nautilus` and `bombadil-app run <name>`, and their children (`PROTECTED_ARGS`, `_is_window`).
 4. Everything else gets SIGINT first, so the CLI saves its conversation and `sudo` relays the signal to a root command. After 3 s (`grace`), what is left gets SIGTERM, then SIGKILL after 1 s. A root process with no `sudo` to relay goes through `sudo -n kill`.
-5. `pacman` is the exception. It is never sent SIGTERM or SIGKILL. The rest of the turn is frozen (SIGSTOP), pacman gets SIGINT and finishes its package for as long as that takes (up to `pacman_grace`, 900 s), the status line says "Stopping after this package", and only then is the rest stopped. A stale `/var/lib/pacman/db.lck` is removed if no pacman runs.
+5. `pacman` is the exception. A pacman that was running when Stop began is never sent SIGTERM or SIGKILL (one that starts during Stop is treated like any other process). The rest of the turn is frozen (SIGSTOP), pacman gets SIGINT and finishes its package for as long as that takes (up to `pacman_grace`, 900 s), the status line says "Stopping after this package", and only then is the rest stopped. A stale `/var/lib/pacman/db.lck` is removed if no pacman runs.
 6. Without a systemd user manager (`BOMBADIL_NO_SCOPE=1`, no `/run/systemd/system`, or a failed probe at start) the turn is just the CLI's process tree and process group.
 
 ### The restore point
@@ -128,7 +128,7 @@ claude -p --output-format stream-json --verbose --include-partial-messages \
   --append-system-prompt "<system prompt>" [--model <model>] [--resume <session id>]
 ```
 
-`--strict-mcp-config` keeps the account's own connectors (mail, drive) from loading beside the OS tools. `--include-partial-messages` is what lets the live line show the reply and each tool call as they are written.
+A comment in `Claude.command` gives the reason for `--strict-mcp-config`: without it the account's own connectors (mail, drive) load beside the OS tools and end replies with notices to authorize them. `--include-partial-messages` is what lets the live line show the reply and each tool call as they are written.
 
 Codex, as built by `Codex.command`, fresh and resumed:
 
@@ -140,11 +140,11 @@ codex exec resume --json --dangerously-bypass-approvals-and-sandbox <overrides> 
 #   --skip-git-repo-check [--model <model>]
 ```
 
-The overrides are the same on a fresh and a resumed turn, because a resumed Codex turn without them loses the OS tools. `resume` takes no `-C`; agentd already starts the CLI in the turn's `cwd` (the home folder, `Turn.cwd`).
+The overrides are the same on a fresh and a resumed turn; a comment in `Codex.command` says a resumed turn without them loses the OS tools (`tests/test_providers.py` asserts they are present on a resumed command). `resume` takes no `-C`; agentd already starts the CLI in the turn's `cwd` (the home folder, `Turn.cwd`).
 
-**Session resume.** `AgentD.session_id` is the provider's conversation id. It is adopted only from a `result` that worked (Claude's result line carries it, Codex's comes from `thread.started`), so a dead id is not kept. It is cleared when the person switches provider, and when the CLI says the conversation is gone (`num_turns == 0` or "no conversation found"), with a plain note on the error. It is not written to disk.
+**Session resume.** `AgentD.session_id` is the provider's conversation id. It is adopted only from a `result` that worked (Claude's result line carries it, Codex's comes from `thread.started`), so a dead id is not kept. It is cleared when the person switches provider, and when the CLI says the conversation is gone (`num_turns == 0` or "no conversation found"), with a plain note on the error. It is held in memory and is not restored at start. It is only recorded in `turns.jsonl` as `session`.
 
-**How os-mcp is passed in.** agentd never starts os-mcp. It chooses the command (`providers.get`: `bombadil-os-mcp` on `PATH`, else `bin/bombadil-os-mcp` in the checkout), registers it with the CLI as the MCP server `bombadil-os`, and gives the CLI the environment the server needs to call back: `BOMBADIL_TURN`, `BOMBADIL_SOCKET` and, when a restore point was taken, `BOMBADIL_TURN_SNAPSHOT`. The CLI starts the server as its child. Codex starts MCP servers with an allow-list of variables, so the adapter lists what to forward in `MCP_ENV`. If Claude's `init` line does not report `bombadil-os` as `connected` or `pending`, the adapter yields an `error` event ("the OS tools did not start"). The tools themselves are in [os-mcp.md](os-mcp.md).
+**How os-mcp is passed in.** agentd never starts os-mcp. It chooses the command (`providers.get`: `bombadil-os-mcp` on `PATH`, else `bin/bombadil-os-mcp` in the checkout), registers it with the CLI as the MCP server `bombadil-os`, and gives the CLI the environment the server needs to call back: `BOMBADIL_TURN`, `BOMBADIL_SOCKET` and, when a restore point was taken, `BOMBADIL_TURN_SNAPSHOT`. The CLI starts the server as its child. A comment on `MCP_ENV` says Codex starts MCP servers with only a few variables (`HOME`, `PATH` and the like), so the adapter lists what to forward there. If Claude's `init` line does not report `bombadil-os` as `connected` or `pending`, the adapter yields an `error` event ("the OS tools did not start"). The tools themselves are in [os-mcp.md](os-mcp.md).
 
 **The system prompt** is built by `providers.system_prompt()` and sent on every turn, fresh or resumed, to both CLIs. It says who the agent is, to use the `bombadil-os` tools, where the QML kit and the `bombadil-apps` skill are (`kit_paths()`: the checkout's `share/`, else `$BOMBADIL_SHARE/share`, `$BOMBADIL_SHARE`, else `/usr/share/bombadil/share`), that the agent has full access with passwordless sudo and should not ask, how to install packages (`sudo pacman -Syu --noconfirm --needed`, never `pacman -Sy` alone), that the final reply is at most four plain lines, to write a plan first for three or more steps, to give a one-sentence reason before each step that changes the machine, and to show answers that have parts as a picture (`system_map`, `show_card`) with one line after.
 
@@ -156,11 +156,11 @@ The overrides are the same on a fresh and a resumed turn, because a resumed Code
 
 | Where | How |
 |---|---|
-| Live ISO and installed system | The session's Hyprland config runs `agentd` on `hyprland.start` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua`). The ISO build links `bin/agentd` to `/usr/local/bin/agentd` (`scripts/build-iso.sh`). Nothing restarts it if it dies. See [iso-and-install.md](iso-and-install.md). |
-| Restart by hand | `hyprctl dispatch 'hl.dsp.exec_cmd("agentd")'`, which `bombadil-setup` also does. |
-| Development | `BOMBADIL_PROVIDER=fake bin/agentd`, or `scripts/dev-session.sh`, which also starts the shell and points `BOMBADIL_SHARE` at the checkout. See [development.md](../contributing/development.md). |
+| Live ISO and installed system | The session's Hyprland config runs `agentd` on `hyprland.start` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua`). The ISO build copies the tree to `/usr/share/bombadil` and links `/usr/local/bin/agentd` to `/usr/share/bombadil/bin/agentd` (`scripts/build-iso.sh`). Nothing restarts it if it dies. See [iso-and-install.md](iso-and-install.md). |
+| Start by hand, or restart | `hyprctl dispatch 'hl.dsp.exec_cmd("agentd")'` starts one, and `bombadil-setup` runs the same dispatch when no agentd answers. It does not replace a running agentd: stop that one first (`restart_agentd` in `iso/airootfs/usr/local/bin/bombadil-smoke` does `pkill -u user -f 'bin/agentd'` and waits for it to end). |
+| Development | `BOMBADIL_PROVIDER=fake bin/agentd`, or `scripts/dev-session.sh`, which also starts the shell and points `BOMBADIL_SHARE` at the checkout. On a live session set `BOMBADIL_SOCKET` (or `BOMBADIL_RUNTIME`) to a different path first, or the new agentd takes over the live one's socket path. See [development.md](../contributing/development.md). |
 
-`bin/agentd` puts `src/` on `sys.path` and calls `bombadil.agentd.main`, which takes no arguments. `main` loads the config, picks the provider (`BOMBADIL_PROVIDER` first, then `provider`), builds `AgentD` and serves. A provider whose CLI is missing does not stop it: agentd keeps serving so the bar can say what is missing. `SIGTERM` ends a sign-in it started, closes every client and stops. On start it removes a stale socket file and probes for systemd scopes once (`procs.scope_supported`), so the first Enter does not pay for it.
+`bin/agentd` puts `src/` on `sys.path` and calls `bombadil.agentd.main`, which takes no arguments. `main` loads the config, picks the provider (`BOMBADIL_PROVIDER` first, then `provider`), builds `AgentD` and serves. A provider whose CLI is missing does not stop it: agentd keeps serving so the bar can say what is missing. `SIGTERM` ends a sign-in it started, closes every client and stops. On start it removes any file at the socket path, live or stale: it does not check that nobody listens, so a second agentd leaves the first running with no socket. It then probes for systemd scopes once (`procs.scope_supported`), so the first Enter does not pay for it.
 
 ## Interfaces other pieces depend on
 
@@ -169,11 +169,11 @@ The overrides are the same on a fresh and a resumed turn, because a resumed Code
 | | |
 |---|---|
 | Path | `paths.socket_path()`: `$BOMBADIL_SOCKET`, else `<runtime dir>/agentd.sock`, where the runtime dir is `$BOMBADIL_RUNTIME`, else `$XDG_RUNTIME_DIR/bombadil` (`/run/user/<uid>/bombadil` when the variable is not set) |
-| Framing | one JSON object per line, in both directions. A line that is not JSON or not an object is skipped. A message with an unknown `type` is ignored without an answer. |
+| Framing | one JSON object per line, in both directions. A line that is not JSON or not an object is skipped. A message with an unknown `type` is ignored without an answer. A line longer than 65,536 bytes (the asyncio stream limit, which `serve` leaves at its default) ends the connection without an answer, so a client that sends a long prompt or a `card` keeps it under that. |
 | Greeting | on connect, in this order: `status`, `entries`, `setup` |
 | Broadcast | every `event`, and `status`, `setup`, `entries`, `desk`, `jobs`, `summon`, go to every client. A reply to one request goes to the sender only. |
 | Slow clients | each client has a queue of `CLIENT_BACKLOG` (10,000) messages and each write gets `SEND_TIMEOUT` (5 s). A client that stops reading is dropped, so it cannot hold up the others. |
-| A message that raises | the sender gets an `error` event ("agentd could not handle that: ...") with `turn: null`, and the connection stays open. |
+| A message that raises | the sender gets an `error` event ("agentd could not handle that: ...") with `turn: null`, and the connection stays open. A line over the size limit is not this case: it closes the connection. |
 | Access | agentd sets no mode on the socket and does not check who connects. |
 
 ### Messages a client sends
@@ -186,11 +186,11 @@ The overrides are the same on a fresh and a resumed turn, because a resumed Code
 | `local` | `action`: one of the names in `CORE_COMMANDS` or `UTILITY_COMMANDS` | runs that launcher action (the Undo button) | `local` events; an unknown name is ignored, and there is no `{"type": "local"}` reply as there is for a typed word |
 | `details` | `turn` (optional) | opens the turn's log in the details drawer (`bombadil watch --file`, `--follow` for the running turn); again while it shows closes it | `local` event with `action: "details"` only on failure |
 | `close_details` | none | closes the drawer | none |
-| `open` | `kind`: `path`, `unit`, `package`, `url` or `turn`; `value` | checks again with `cards.check_opens`, then opens it | `local` event with `action: "open"` |
+| `open` | `kind`: `path`, `unit`, `package`, `url` or `turn`; `value` | checks again with `cards.check_opens`, then opens it | `path`, `unit`, `package` and `url` answer with a `local` event, `action: "open"`, and so does a value that fails the check. `turn` opens the details drawer and answers only on failure (`local` with `action: "open"` when the turn's log is not kept, or `action: "details"`) |
 | `summon` | none | broadcasts `{"type": "summon"}` | every client |
 | `card` | `card` | `cards.accept`, then draws it | `{"type": "card_ack", "shown": bool, "errors"?: [...]}` to the sender; `shown` is true when a client besides the sender is connected |
 | `desk` | `op`: `get`, `fold`, `hide`, `show`, `move`; `widget`, `rail`, `rank` | `get` answers; the others change the desk | `desk` state to everyone on change. `get` also sends the plan of a running turn and the `jobs` table |
-| `desk-tool` | `id`, `turn`, `op`, `widget`, `rail`, `rank` | the os-mcp `desk` tool; refused unless `turn` is the running turn, not being stopped, and its typed words asked for the desk | `desk-result` to the sender |
+| `desk-tool` | `id`, `turn`, `op` (`show`, `hide`, `move`, `fold`, `unfold`, `state`; any other value is refused with a plain sentence), `widget`, `rail`, `rank` | the os-mcp `desk` tool; refused unless `turn` is the running turn, not being stopped, and its typed words asked for the desk | `desk-result` to the sender |
 | `jobs` | `op`: `get`, `stop`, `dismiss`, `why`; `id` | acts on the jobs table, never through the model | `jobs` table; `why` opens the output in the drawer |
 | `job-tool` | `id`, `turn`, `op`: `start`, `list`, `stop`; `title`, `command`, `kind`, `seconds`, `job` | the os-mcp `job` tool; `start` needs the running turn | `job-result` to the sender |
 | `status` | none | reads the state | `status` |
@@ -233,7 +233,7 @@ Every `event` message is `{"type": "event", "kind": ..., "turn": n or null, ...}
 | `file_change` | `id`, `changes`, optional `because`, `after` | Codex edited files |
 | `output` | `text` | one line of a `!` command's output |
 | `plan` | `steps`: `[{id, subject, active, status}]`, the whole table | the plan changed. `status` is `pending`, `in_progress` or `completed`; a step just made has `id: null` and comes last |
-| `card` | `card`; `partial: true` while a `show_card` call is being written; `{id, gone: true}` takes one back | a picture to draw. A receipt follows `turn_end` |
+| `card` | `card` (it holds `partial: true` while a `show_card` call is being written), or `{id, gone: true}` to take one back | a picture to draw. A receipt follows `turn_end` |
 | `result` | `ok`, `text`; Claude adds `session_id`, `subtype`, `terminal_reason`, `num_turns` | the provider finished |
 | `error` | `text` | a failure, in plain words. Account limits and rate limits are rewritten (`_limit_text`); a `!` line's failure is passed through |
 | `turn_end` | `seconds`, `summary`, `changed`, `irreversible`, `stopped`, `line` (the closing sentence), `read` (`[{label, kind, outside, origin?}]`) | the turn is over. An early end sends fewer: no `read` when the CLI is missing, and only `seconds` and `stopped` when the turn raised |
@@ -248,10 +248,10 @@ These are handled by `launcher.match` and never reach the model. A line is compa
 | Group | Words | Action | Does |
 |---|---|---|---|
 | Stop | `stop`, `cancel`, `stop it`, `stop that` | `stop` | `AgentD.stop()`; answers "Stopping." or "Nothing is running." |
-| Undo | `undo`, `undo that`, `undo it`, `undo the last change` | `undo` | ends the running turn, then `Launcher._undo` rolls the system back to the restore point saved before the latest turn, and one turn further on each repeat until a turn runs. It says what it covered and applies at the next restart |
+| Undo | `undo`, `undo that`, `undo it`, `undo the last change` | `undo` | ends the running turn, then `Launcher._undo` rolls the system back to the restore point saved before the latest turn, and one turn further back on each repeat. A new turn clears the marker only once a restart has applied the undo; before that, the next `undo` after a new turn says it is already undone, then continues further back. It says what it covered and applies at the next restart |
 | History | `history`, `rewind` | `history` | `bombadil history` in the details drawer |
 | Put away | `hide`, `hide it`, `hide that`, `hide everything`, `put it away`, `put that away` | `hide` | puts away every panel or app drawer that is showing |
-| Desk | `desk` | `desk` | folds or unfolds the desk |
+| Desk | `desk` | `desk` | folds or unfolds the desk. With a `?` at the end the line goes to the agent |
 | Lock | `lock`, `lock screen`, `lock the screen` | `lock` | `hyprlock` |
 | Restart, shut down | `restart`, `reboot`, `restart the computer`; `shut down`, `shutdown`, `power off`, `poweroff` | `restart`, `shutdown` | ends the running turn, then `systemctl reboot` or `poweroff`. With a `?` at the end the line goes to the agent |
 | Sign in | `sign in`, `log in`, `login`, `signin`, `sign in again`, `log in again`, `sign me in`, `log me in` | `signin` | `AgentD.signin_asked` |
@@ -312,10 +312,10 @@ agentd sets these for the process of each turn, a model turn or a `!` line: `BRO
 | `bombadil stop` | `stop` | sends and returns at once, for key binds |
 | `bombadil pill` | `summon` | the same |
 | `bombadil provider claude` or `codex` | `setup_action` `provider:<name>` | prints the setup line until it settles; exit 0 ready, 1 otherwise, 3 when nothing answers. With no socket it writes the config instead |
-| `bombadil signin [provider]` | `signin` | the same |
+| `bombadil signin [provider]` | `signin` | prints the setup line like `provider` does. It never writes the config: with no agentd it prints "agentd is not running" and exits 3 |
 | `bombadil undo` | none | calls `Snapshots.undo_last_turn()` itself, without agentd |
 | `bombadil open URL` | `open_url`, through `bin/bombadil-browser` | opens a link in the browser panel |
-| `bombadil watch`, `history`, `view` | none | read the turn logs and show them in the drawer |
+| `bombadil watch`, `history`, `view` | none | read the turn logs (or a file or command) and print them in the terminal they run in. They show in the details drawer when agentd or the launcher starts them there |
 
 ### The turn log
 
@@ -352,7 +352,7 @@ Each turn also has an event log, `<state dir>/turns/<unix ms>-<turn>.jsonl`: its
 | Desk and jobs | `<state dir>/desk.toml`, `<state dir>/jobs/` | see [desk.md](desk.md) |
 | Settings | `/etc/bombadil/config.toml`, `<config dir>/config.toml` | the pill writes the user's file when the person picks a provider |
 | Turn scopes | systemd user scopes `bombadil-turn-<pid>-<turn>-<seconds>` | one per turn, gone when it ends |
-| In memory only | the session id, `pending`, turn ids and the turn counter, the notes for the next prompt (the last 10), the setup state, the clients | lost when agentd stops |
+| In memory only | the session id (each turn line in `turns.jsonl` records it as `session`, but agentd never reads it back), `pending`, turn ids and the turn counter, the notes for the next prompt (the last 10), the setup state, the clients | lost when agentd stops |
 | The CLI's own | the conversation store and the login of Claude Code or Codex | not touched by agentd |
 
 `<state dir>` is `paths.state_dir()`, which is `~/.local/state/bombadil` unless `BOMBADIL_STATE` or `XDG_STATE_HOME` says otherwise. The restore points themselves are snapper's, see [restore-points.md](restore-points.md).
@@ -375,7 +375,8 @@ Each turn also has an event log, `<state dir>/turns/<unix ms>-<turn>.jsonl`: its
 3. Register it: add the class to the `PROVIDERS` dict (`providers.py`), or assign `PROVIDERS["name"] = Cls` as `Fake` does at the bottom of the file. `providers.get(name)` and `BOMBADIL_PROVIDER=name` then work.
 4. To offer it to people, add its name to `config.PROVIDERS`. That tuple is what `config.load`, `AgentD.choose`, `bombadil provider`, `bombadil signin` and the chips from `AgentD._describe` check. Add its words to `launcher.PROVIDER_WORDS` for "use <name>". Add its host to `sysmap.PROVIDER_HOSTS` so the network picture names it (an unknown provider falls back to Claude's entry).
 5. Sign-in: implement `signin_command` (or `login_command`), `signin_url_kind`, `code_from_url`, `signed_in`, `credentials`, `SIGNED_OUT`, `SIGNIN_ERRORS` and `signin_host`, as [browser-and-signin.md](browser-and-signin.md) describes. A `signed_in()` that returns `None` makes agentd treat the provider as ready.
-6. Tests: save a real run as `tests/fixtures/<name>-*.jsonl` and parse it the way `tests/test_providers.py` does (`_kinds`), assert `command()` for a fresh and a resumed turn, and drive agentd with a `Scripted` subclass as `tests/test_agentd.py` does.
+6. To offer the provider on the ISO and in the terminal setup, also update `iso/airootfs/usr/local/bin/bombadil-setup` (the `select provider in` list, the install `case` and the login `case`), `scripts/build-iso.sh` (the CLI package in its `npm install -g` line) and `iso/airootfs/usr/local/bin/bombadil-install` (the login files it copies, now `.claude .claude.json .codex`, so the installed system starts signed in). Without them the provider works in agentd and the pill but cannot be picked in `bombadil-setup`, is not on the ISO, and its login is not carried to the installed system. See [iso-and-install.md](iso-and-install.md).
+7. Tests: save a real run as `tests/fixtures/<name>-*.jsonl` and parse it the way `tests/test_providers.py` does (`_kinds`), assert `command()` for a fresh and a resumed turn, and drive agentd with a `Scripted` subclass as `tests/test_agentd.py` does.
 
 ### Add a launcher word
 
@@ -383,7 +384,7 @@ Each turn also has an event log, `<state dir>/turns/<unix ms>-<turn>.jsonl`: its
 2. For a new action, add `"<kind>": [words]` to `CORE_COMMANDS` (checked before apps: it must always mean the same thing) or to `UTILITY_COMMANDS` (checked after apps and panels: an app of that name wins).
 3. Add the method `Launcher._<kind>(self, action)` returning `(ok, one plain sentence)`. `Launcher.run` finds it with `getattr(self, f"_{action.kind}")`; a kind with no method answers "Nothing here can <kind> yet."
 4. Add the line for while it works in `Launcher.doing` and the failure line in `Launcher.failed`, or the line says "On it" and "That did not work".
-5. `entries()` offers every word of those two tables for Tab completion. Put the kind in `NO_COMPLETE` if one Tab must never land on it. `agentd._action` accepts `{"type": "local", "action": "<kind>"}` for any kind in the two tables, so a button needs no agentd change.
+5. `entries()` offers the first word of each command in `CORE_COMMANDS` and `UTILITY_COMMANDS` for Tab completion, except the kinds in `NO_COMPLETE`, plus a hard-coded `sign in` entry. Other aliases are matched when typed but are not completed. Put the kind in `NO_COMPLETE` if one Tab must never land on it. `agentd._action` accepts `{"type": "local", "action": "<kind>"}` for any kind in the two tables, so a button needs no agentd change.
 6. If the action needs agentd's own state (the running turn, the clients, the sign-in), handle it in `AgentD.local` as `why`, `stop`, `signin` and `provider` are. If it changes the system under a running turn, join `undo`, `restart` and `shutdown` in the branch that takes `_exclusive` and `_hold`.
 7. Tests: a row in `test_exact_words_open_locally` and a sentence in `test_everything_else_goes_to_the_agent` (`tests/test_launcher.py`), and an agentd test that replaces `d.launcher.run`, as `test_what_happened_without_the_model_is_told_to_the_next_turn` does.
 
@@ -403,13 +404,20 @@ Each turn also has an event log, `<state dir>/turns/<unix ms>-<turn>.jsonl`: its
 5. Clients: the shell writes through `outgoing({...})` in `PillState.qml` and `DeskState.qml`; a script uses `bin/bombadil`'s `talk` or `send`.
 6. Update the message tables above and the docstring of `agentd.py`. Test with `_start(d)` and `_say(w, {...})` from `tests/test_agentd.py`.
 
+### Add a config key
+
+1. Add the field and its default to `Config` in `src/bombadil/config.py`, and read it in `config.load` with `merged.get("<key>", default)`. Validate it there when only some values make sense: `explain` falls back to `normal`, `provider` raises.
+2. Use it where agentd starts: `agentd.main` reads `cfg` and passes what it needs to `AgentD(...)` or picks an object from it, as `snapshots` and `explain` do.
+3. If the person can set it from the pill or the terminal, also keep it in `config.save_user`. That function rewrites the user's file with only `provider`, `model` and a kept `explain`, so any other key is dropped the next time a provider is chosen. That is the `snapshots` item under Known gaps.
+4. Add a row to the Configuration table above (and a line to `iso/airootfs/etc/bombadil/config.toml` if the ISO ships a default), and a case to `tests/test_config.py`: the default, the user's file overriding it, and a `save_user` round trip if step 3 applies.
+
 ## Tests
 
 | File | Covers |
 |---|---|
 | `tests/test_agentd.py` | the socket, turns, the queue, Stop, `!` lines, the restore point order, notes, the desk and job messages, plan and card events, the watchdog, limit texts (100 tests) |
 | `tests/test_agentd_signin.py` | the setup states and sign-in inside agentd ([browser-and-signin.md](browser-and-signin.md)) |
-| `tests/test_providers.py` | the commands and the event streams of Claude, Codex, Shell and Fake, with the captured streams in `tests/fixtures/*.jsonl` |
+| `tests/test_providers.py` | the commands and the event streams of Claude, Codex, Shell and Fake. `tests/fixtures/*.jsonl` holds captured Claude streams (four runs and a signed-out one) and one captured Codex stream (signed out); the other Codex lines are hand-written in the test |
 | `tests/test_launcher.py` | the exact words, what goes to the agent, undo, the drawer |
 | `tests/test_procs.py` | Stop: scopes, `sudo`, the protected windows, a reused pid, pacman |
 | `tests/test_config.py` | defaults, the user's file, an unknown provider |
@@ -419,11 +427,11 @@ python3 -m pytest -q tests/test_agentd.py tests/test_providers.py tests/test_con
 python3 -m pytest -q -x -k "stop or queue" tests/test_agentd.py
 ```
 
-The tests need `pytest` and `pytest-asyncio` (`pip install -e '.[dev]'`) and a Linux `/proc`. They point every Bombadil path at a temporary folder (the `home` fixture in `tests/conftest.py`). On 2026-10-01 these five files passed together: 315 tests. More in [development.md](../contributing/development.md).
+The tests need `pytest` and `pytest-asyncio` (`pip install -e '.[dev]'`) and a Linux `/proc`. They point every Bombadil path at a temporary folder (the `home` fixture in `tests/conftest.py`). On 2026-10-01 these five files passed together: 319 tests. More in [development.md](../contributing/development.md).
 
 ## Known gaps
 
-- The conversation does not survive a restart of agentd. `session_id` lives in memory only (`src/bombadil/agentd.py`, `__init__` and `_on_event`), so every start begins a new conversation. The design keeps one conversation across reboots, with a fresh session seeded from memory after a long idle ([UX brief, decisions](../design/ux-brief.md#decisions-i-picked-a-default-for)); that is not built.
+- The conversation does not survive a restart of agentd. `session_id` is held in memory and is not restored at start (`src/bombadil/agentd.py`, `__init__` and `_on_event`; `_log` only writes it to `turns.jsonl`), so every start begins a new conversation. The design keeps one conversation across reboots, with a fresh session seeded from memory after a long idle ([UX brief, decisions](../design/ux-brief.md#decisions-i-picked-a-default-for)); that is not built.
 - Turn ids and the `turn:<n>` in restore point descriptions start again at 1 each time agentd starts (`agentd.py`, `self.turns` and `self.next_id`, and the `snaps.create` call). Undo only looks for the `turn:` prefix, so it still works, but the numbers are not unique across runs.
 - One CLI process is started per turn (`agentd.py`, `create_subprocess_exec`). The design's warm Claude process kept alive with `--input-format stream-json` is not built; neither are a model chosen per turn, a `redo` word (`launcher.py`, `CORE_COMMANDS`) or a health check that puts changes back by itself.
 - `config.save_user` writes only `provider`, `model` and a kept `explain` (`src/bombadil/config.py`), and `AgentD.choose` calls it with no model when the provider changes. A user's `snapshots = false` is dropped whenever a provider is chosen (in the pill, with `use codex`, or with `bombadil provider`), and the system default of `true` applies again at the next start.
