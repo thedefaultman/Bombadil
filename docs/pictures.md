@@ -118,7 +118,11 @@ receipt for stopping a service still shows the state and nothing else.
   tries, and clicks missed. `PillState.pictureStays` is true while a picture that is not a receipt
   and not half-drawn is up, and the line's fade timer (`StatusLine.qml`) waits while it is. The line
   goes with the picture, when it is put away with Esc or the ×. A receipt still fades with its
-  closing line, as before (the two are read together), and so does a line with no picture.
+  closing line, as before (the two are read together), and so does a line with no picture. The
+  line's timer sleeps while a picture holds the line (it has no seconds to count and nothing to
+  fade), so a picture left up costs no wake-ups. The card's top is still its own height above the
+  line, so two different pictures sit at different heights; the same picture sits at the same place
+  each time it is drawn.
 - **A full-screen window puts the picture away.** In a full-screen window the bar is a dot and a
   clock in a 360 px capsule, and a card hanging over it landed in the middle of whatever the window
   showed (the Brain's list, for one). `CardHost.suppressed` follows `win.capsule` in `shell.qml`: the

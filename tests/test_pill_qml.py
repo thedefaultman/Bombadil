@@ -752,6 +752,7 @@ def test_a_picture_you_asked_for_keeps_its_line_so_the_picture_does_not_drop_whe
     bar.pill.setProperty("fadeAfter", 200)
     bar.pump(1.0)
     assert bar.pill.property("mode") == "local" and bar.shown("line")           # long past its time, still there
+    assert not bar.item("statusLine").findChild(QtCore.QObject, "lineTimer").property("running")   # nothing to tick for while it is held
     top = bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y()
     bar.pump(0.5)
     assert bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y() == top
