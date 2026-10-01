@@ -14,6 +14,7 @@ The project's documents, next to its code.
   - `voice-brief.md`: the one-time setup card, the voices and the welcome lines.
   - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
+  - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
   fonts without a connection. They are copies of what the pages showed on 2026-09-30.
