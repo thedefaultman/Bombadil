@@ -6,6 +6,7 @@ The project's documents, next to its code.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
 - `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
+- `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
