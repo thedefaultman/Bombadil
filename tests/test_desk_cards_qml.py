@@ -756,6 +756,9 @@ def test_a_stack_updates_in_place_and_a_message_every_second_builds_nothing_agai
     cards.set(card, model=rows(dict(moved, parts=moved["parts"][:2]), *MACHINE[1:], title="Machine")["model"])
     assert len(pieces(cards, memory)) == 2 and cards.find(card, "rowsRow")[0].property("marker") == 1
     assert card.property("washLevel") == 0
+    cards.set(card, model=rows(dict(moved, parts=moved["parts"][:1]), *MACHINE[1:], title="Machine")["model"])
+    cards.pump(0.2)
+    assert len(pieces(cards, memory)) == 1 and cards.warnings == []     # (a piece taken away has no parent to read)
 
 
 def test_a_stack_draws_nothing_that_moves(cards):

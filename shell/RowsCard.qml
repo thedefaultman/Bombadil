@@ -194,7 +194,7 @@ DeskCard {
                             readonly property bool last: index === row.pieces.length - 1
                             x: piece.x
                             width: piece.w
-                            height: parent.height
+                            height: track.height        // (not parent: a piece being taken away has none)
                             color: card.toneColor(piece.tone)
                             // Only the ends of the whole stack are round, as the track's are.
                             topLeftRadius: piece.x === 0 ? 3 : 0
