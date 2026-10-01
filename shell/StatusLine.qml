@@ -6,6 +6,8 @@ import Bombadil as Kit
 // turn ended. One line while it works; at most four when it is done. A step that touches the
 // system gets an amber edge with the exact command under it, one no restore point can undo a
 // red one; neither pauses anything. Clicking a finished line shows every command and its output.
+// The line that says the AI rests (out of plan or paused) is a plain step line: it fades like a
+// finished one, and never turns red.
 Rectangle {
     id: bar
     required property var pill       // a PillState
@@ -51,7 +53,7 @@ Rectangle {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
             // The line shows on every screen; hovering it on any of them keeps it.
-            const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
+            const done = bar.pill.mode === "closing" || bar.pill.mode === "local" || bar.pill.mode === "resting"
             if (done && !bar.pill.sticky && !bar.pill.pictureStays && bar.pill.hovers === 0
                     && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
