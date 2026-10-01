@@ -151,6 +151,7 @@ A model turn (no `kind`):
 | `tools` | `{"n": steps, "names": [unique tool names in order of first use]}` |
 | `model`, `cost`, `usage` | the provider's model name, dollars, `{input, output, cache_read, cache_write}`; null when the provider does not say |
 | `rate_limit` | the provider's rate-limit event when it sent one, else null |
+| `n`, `unit`, `read`, `files` | the turn's number, its systemd unit, what it read from outside, and `{wrote, read}` files: kept for the brain's index; the loop does not use them |
 | `drift` | only when non-empty: `{"<type>": n}`, how many stream lines were valid JSON of a `type` the adapter does not know (the tripwire for a vendor CLI changing) |
 | `v` | 2 |
 

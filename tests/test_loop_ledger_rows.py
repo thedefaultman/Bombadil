@@ -318,7 +318,7 @@ async def test_a_word_the_loop_made_is_logged_as_a_word(home, monkeypatch):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     made = agentd.launcher.Action("app", "passwords", "open", "Passwords")
     made.word = "my passwords"      # what launcher.match sets on a match from words.toml
-    monkeypatch.setattr(agentd.launcher, "match", lambda text, app_list=None: made)
+    monkeypatch.setattr(agentd.launcher, "match", lambda text, app_list=None, busy=False, **kw: made)
     monkeypatch.setattr(d.launcher, "run", lambda action: (True, "Opened Passwords."))
     server, r, w = await _start(d)
     await _send(w, type="prompt", text="my passwords")
@@ -349,7 +349,8 @@ async def test_launcher_rows_say_what_was_done_and_how_it_was_asked(home, monkey
 # -- the sample kept in tests/fixtures/loop/ledger_v2.jsonl --
 
 MODEL_KEYS = {"t", "prompt", "result", "ok", "snapshot", "provider", "session", "stopped", "summary", "details",
-              "id", "started", "seconds", "origin", "tools", "model", "cost", "usage", "rate_limit", "v", "n"}
+              "id", "started", "seconds", "origin", "tools", "model", "cost", "usage", "rate_limit", "v", "n",
+              "read", "unit", "files"}      # the last three are written for the brain (docs/LOOP.md)
 LOCAL_KEYS = {"t", "kind", "prompt", "action", "target", "result", "ok", "v", "verb", "via", "word", "of",
               "of_snapshot"}
 

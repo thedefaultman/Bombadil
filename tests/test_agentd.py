@@ -370,10 +370,12 @@ async def test_a_summon_can_carry_words_for_the_pill(home):
     other_r, other_w = await asyncio.open_unix_connection(str(paths.socket_path()))
     other_w.write(b'{"type": "summon", "text": "About ~/lease.pdf: "}\n')
     await other_w.drain()
-    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon", "text": "About ~/lease.pdf: "}
+    got = json.loads(await asyncio.wait_for(r.readline(), 5))
+    assert isinstance(got.pop("id"), int) and got == {"type": "summon", "text": "About ~/lease.pdf: "}
     other_w.write(b'{"type": "summon", "text": 7}\n')
     await other_w.drain()
-    assert json.loads(await asyncio.wait_for(r.readline(), 5)) == {"type": "summon"}
+    got = json.loads(await asyncio.wait_for(r.readline(), 5))
+    assert isinstance(got.pop("id"), int) and got == {"type": "summon"}
     other_w.close()
     w.close()
     server.cancel()
@@ -2396,6 +2398,7 @@ async def test_words_for_the_pill_are_one_printable_line(home):
         other_w.write((json.dumps({"type": "summon", "text": sent}) + "\n").encode())
         await other_w.drain()
         msg = json.loads(await asyncio.wait_for(r.readline(), 5))
+        assert isinstance(msg.pop("id"), int)           # the summon's id is the bar's to acknowledge
         assert msg == ({"type": "summon", "text": got} if got else {"type": "summon"})
     other_w.close()
     w.close()
