@@ -219,6 +219,10 @@ QtObject {
             // A picture that could not be drawn puts the last one away: the error under a picture of
             // something else reads as if it were about that picture.
             if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
+            // A window the launcher just opened (the Brain, an app, a panel) takes the stage: a picture
+            // left over the middle of the screen would sit on top of it.
+            if (ev.phase === "done" && ev.ok === true && ev.verb === "open"
+                    && (ev.action === "brain" || ev.action === "app" || ev.action === "panel")) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
                 flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500
