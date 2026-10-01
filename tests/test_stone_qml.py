@@ -187,7 +187,8 @@ def test_needs_you_is_amber_with_a_glow_and_two_knocks(mark):
     mark.set(face="needs")
     assert near(mark.at(12, 8), THEME["warn"])
     knocks, glows = [], set()
-    for _ in range(40):                 # one beat is 1.6 s
+    end = time.monotonic() + 1.55       # one beat is 1.6 s: by the clock, so a slow machine still samples one
+    while time.monotonic() < end:
         mark.pump(0.04)
         knocks.append(mark.stone.property("knock"))
         glows.add(round(mark.stone.property("glowOpacity"), 1))

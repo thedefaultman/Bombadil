@@ -82,7 +82,9 @@ under 360 px; 360 px with a window in front; a capsule under a full-screen windo
 ## The needs-you mark
 
 Something waits for the person when `needsModel` has a row: a coding session asked a question, or
-finished and has not been looked at. `DeskState.needsYou` says so, and a `Binding` inside `DeskState`
+finished or failed and has not been looked at (agentd's `dev` message lists those keys in `attention`).
+Until the coding-sessions code that sends `dev` is on the branch you run, nothing feeds the table and the
+stone never knocks for it. `DeskState.needsYou` says so, and a `Binding` inside `DeskState`
 writes it to `PillState.needsYou`, which turns the pill's stone amber and makes it knock twice every
 1.6 seconds (`shell/Stone.qml`, the look is in the identity brief).
 
