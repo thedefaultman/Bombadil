@@ -139,7 +139,7 @@ defaults chosen here and kept as constants at the top of `vitals.py`:
 
 A line has to hold for three samples in a row to raise the card and ten in a row to let it go, and no
 sooner than ten seconds after it rose, so a spike never flickers it. The lines are listed worst first. The
-sentence names them in that order (`Memory is nearly full · coding sessions use most`), the chip shows the
+sentence names them in that order (`Memory is nearly full · sessions use most`), the chip shows the
 worst one, and the card's dot is amber, or red when the disk is past 97% (the number the disks picture
 uses). Memory's meter turns amber with the memory line; the disk's turns amber with the disk line and red
 from 97%.
@@ -148,7 +148,7 @@ from 97%.
 and its background jobs, which run as systemd units named `bombadil-turn-…`, `bombadil-job-…` and
 `bombadil-timer-…`), *coding sessions* (units named `bombadil-dev-…`), and *you* (what is left of what is in
 use: the apps you are running, the browser). Apps have no unit of their own, so *you* is the rest. The
-clause "coding sessions use most" is added to the memory sentence only when one group holds half of the
+clause "sessions use most" (or "the machine uses most", "your apps use most") is added to the memory sentence only when one group holds half of the
 used memory or more. Each unit's memory is its cgroup's `memory.current` less the file cache that can be
 dropped. Where the cgroup tree is not readable the stack shows one part, *you*, and the sentence leaves out
 the "who".

@@ -53,7 +53,7 @@ WHY = {
 }
 HOLDS = {
     "machine": "the machine uses most",
-    "sessions": "coding sessions use most",
+    "sessions": "sessions use most",
     "you": "your apps use most",
 }
 
@@ -712,7 +712,7 @@ class Vitals:
 
     @staticmethod
     def _cpu_row(r: Reading) -> dict:
-        busy = f"{_pct(r.cpu or 0.0)}% busy" + (f" · {_deg(r.heat)}°" if r.heat is not None else "")
+        busy = f"{_deg(r.heat)}°" if r.heat is not None else ""     # the meter says how busy; the words say how hot
         return {"key": "cpu", "kind": "meter", "title": "Processor", "meter": _frac(r.cpu or 0.0),
                 "meterText": busy, "tone": "you", "opens": ""}
 

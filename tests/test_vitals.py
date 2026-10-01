@@ -840,7 +840,7 @@ def test_heat_is_crossed_at_eighty_degrees_and_left_at_seventy_two():
     assert m["why"] == "The processor is hot"
     assert m["strip"] == {"text": "hot · 82°", "dot": "amber"}
     cpu = next(r for r in m["rows"] if r["key"] == "cpu")
-    assert cpu["meterText"] == "10% busy · 82°" and cpu["tone"] == "you"
+    assert cpu["meterText"] == "82°" and cpu["tone"] == "you"
     run(v, fake, clock, 15, heat=73.0)
     assert v.message()["present"] is True
     run(v, fake, clock, 10, heat=72.0)
@@ -861,7 +861,7 @@ def test_the_lines_are_named_worst_first_in_one_line():
 def test_memory_says_who_holds_half_of_it_or_more():
     full = "Memory is nearly full"
     for held, said in (
-            ({"held": 8 * GB}, f"{full} · coding sessions use most"),
+            ({"held": 8 * GB}, f"{full} · sessions use most"),
             ({"machine_": 8 * GB}, f"{full} · the machine uses most"),
             ({"held": 2 * GB}, f"{full} · your apps use most"),             # 12.5 GB of the 14.5 are yours
             ({"held": 5 * GB, "machine_": 2 * GB}, f"{full} · your apps use most"),
@@ -874,7 +874,7 @@ def test_memory_says_who_holds_half_of_it_or_more():
 def test_half_exactly_is_enough():
     v, fake, clock = rig()
     # used 14.4 of 16 GB: 7.2 is half
-    assert rise(v, fake, clock, memory=0.9, held=7_200_000_000)["why"].endswith("coding sessions use most")
+    assert rise(v, fake, clock, memory=0.9, held=7_200_000_000)["why"].endswith("sessions use most")
 
 
 # -- the message --
@@ -888,7 +888,7 @@ def test_the_message_has_the_shape_the_shell_reads():
         clock.t += 1
     assert m == {
         "type": "machine", "present": True, "asked": False,
-        "why": "Memory is nearly full · coding sessions use most",
+        "why": "Memory is nearly full · sessions use most",
         "strip": {"text": "memory 91%", "dot": "amber"},
         "rows": [
             {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
@@ -897,7 +897,7 @@ def test_the_message_has_the_shape_the_shell_reads():
                        {"tone": "you", "fraction": 0.29}]},
             {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "138 of 230 GB", "meter": 0.6,
              "tone": "you", "opens": "disk"},
-            {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "37% busy · 62°", "meter": 0.37,
+            {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "62°", "meter": 0.37,
              "tone": "you", "opens": ""},
             {"key": "net", "kind": "plain", "title": "Network", "sub": "↓ 1.2 MB/s   ↑ 40 kB/s", "tone": "you",
              "opens": ""}]}
@@ -928,7 +928,7 @@ def test_rows_for_what_could_not_be_read_are_left_out_but_the_processor_and_netw
         clock.t += 1
     assert m["present"] is True and m["why"] == "The processor is hot"
     assert [r["key"] for r in m["rows"]] == ["cpu", "net"]
-    assert m["rows"][0]["meterText"] == "50% busy · 85°"
+    assert m["rows"][0]["meterText"] == "85°"
     assert m["rows"][1]["sub"] == "↓ 0 B/s   ↑ 0 B/s"                  # no rate yet is none going
 
 
@@ -936,7 +936,7 @@ def test_the_processor_row_has_no_heat_clause_without_a_reading():
     v, fake, clock = rig()
     m = rise(v, fake, clock, memory=0.95, heat=None, cpu=None)
     cpu = next(r for r in m["rows"] if r["key"] == "cpu")
-    assert cpu["meterText"] == "0% busy" and cpu["meter"] == 0.0
+    assert cpu["meterText"] == "" and cpu["meter"] == 0.0
 
 
 def test_the_network_row_is_always_there_and_says_the_last_rates():
@@ -1187,7 +1187,7 @@ def test_a_crowded_machine_end_to_end_through_the_real_sampler_on_a_fake_tree():
         m = v.tick()
         clock.t += 1
     assert m["why"] == ("Coding sessions are near their memory limit · memory is nearly full · "
-                        "coding sessions use most")
+                        "sessions use most")
     assert m["strip"] == {"text": "sessions 92%", "dot": "amber"}
     assert [r["key"] for r in m["rows"]] == ["memory", "disk", "cpu", "net"]
     memory = m["rows"][0]

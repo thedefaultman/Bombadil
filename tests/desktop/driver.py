@@ -647,7 +647,7 @@ check("asking how the machine is answers in a line, with no model", asked and as
       and asked.get("text") == "Here is the machine." and api_requests() == before, asked and asked.get("text"))
 key("Escape")
 inject({"type": "machine", "present": True, "asked": False,
-        "why": "Memory is nearly full \u00b7 coding sessions use most",
+        "why": "Memory is nearly full \u00b7 sessions use most",
         "strip": {"text": "memory 91%", "dot": "amber"},
         "rows": [
             {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
