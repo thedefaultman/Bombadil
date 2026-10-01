@@ -65,7 +65,7 @@ one. Look at the first real counts before trusting them.
 
 ```python
 Signals(loop_dir=None, clock=time.time)     # loop_dir None: paths.loop_dir(), looked up at each write
-  .hello(msg) .alive() .rects(msg) .focus_ack(msg) .friction(msg) .bar_gone()
+  .hello(msg) .alive() .rects(msg) .focus_ack(msg) .focus_cancel(msg) .friction(msg) .bar_gone()
   .summon(screen="") -> int                 # 1, 2, 3 ... per Signals; restarts at 1 with agentd
   .tick(now=None)                           # timeouts, and bar.json caught up; every 3 s from agentd
   .agentd_started(socket_path)              # writes agentd.json; runs git, so call it off the event loop
@@ -75,13 +75,18 @@ build_id() -> str                           # VERSION, else git short hash, else
 ```
 
 `signals.jsonl` rows: `hello {client, pid, build}`, `summon {id, screen?}`, `focus_ack {id, ms, late?}`,
-`focus_timeout {id, waited, bar}`, `friction {what, count, seconds, drawer, ...}`, `restart {pid, was}`.
+`focus_cancel {id}`, `focus_timeout {id, waited, bar}`, `friction {what, count, seconds, drawer, card, ...}`,
+`restart {pid, was}`.
 Every row has `t` (epoch seconds). `alive` and `rects` write no row, only `bar.json`.
 
 - `focus_timeout` is written once per summon that had no `focus_ack` 1.5 s later, found by `tick`, which
   agentd runs every 3 s: `waited` is between 1.5 and 4.5 s, and the ack's own `ms` is the real delay.
   `bar` is whether a bar was connected when it was summoned; without one the timeout says nothing about
   focus. An ack that still comes is written with `late: true`.
+- `focus_cancel` is written when the bar says a summon was answered by giving the keyboard back (a second
+  tap on Super toggles the pill off). It is not an ack: it does not say the input had the keyboard. The
+  summon stops waiting, so no `focus_timeout` follows, and the `summon-focus` probe leaves out any summon
+  that has one.
 - `restart` is written after a `hello` from a different pid than the last one, or after any `hello`
   once `bar_gone` has been called (the same pid included). The first hello after agentd starts is none.
 - `bar.json` is whole or absent (written beside, then renamed) and at most 2 s behind, except that
@@ -99,7 +104,7 @@ Every row has `t` (epoch seconds). `alive` and `rects` write no row, only `bar.j
 
 - Hears `hello` (only `client: "bar"`; the hangup of *that* connection calls `bar_gone`, and a newer
   bar's hello moves the claim so the old one's later hangup is not a gone), `alive`, `rects`,
-  `focus_ack`, `friction`. `ping` gets `{"type":"pong","t","pid"}` to the sender only.
+  `focus_ack`, `focus_cancel`, `friction`. `ping` gets `{"type":"pong","t","pid"}` to the sender only.
 - `summon` is broadcast as `{"type":"summon","id":n}`.
 - `agentd.json` is written once the socket listens, from a background task.
 - `self.loop = None` is where the loop's service goes. `_loop_hook(name, *args)` calls

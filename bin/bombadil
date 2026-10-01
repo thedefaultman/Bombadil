@@ -527,7 +527,7 @@ def main() -> int:
         return 2
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "ask":
-        return talk({"type": "prompt", "text": " ".join(args)})
+        return talk({"type": "prompt", "text": " ".join(args), "origin": "cli"})
     elif cmd == "status":
         return talk({"type": "status"}, until="status")
     elif cmd == "stop":

@@ -55,6 +55,7 @@ AGENTD_TIMEOUT = 2.0     # a pong within this, or agentd does not answer
 COREDUMP_TIMEOUT = 8.0
 COREDUMP_EVERY = 300.0   # coredumpctl reads the journal: not more often than this
 COREDUMP_DAYS = 7
+COREDUMP_LOOKS = 10      # Python dumps asked about with `coredumpctl info`: the newest of them
 OS_MCP_TIMEOUT = 20.0    # the smoke test's own limit
 CANARY_TIMEOUT = 30.0
 STUCK_MAX = 4            # hyprctl calls left blocked before it is not asked at all
@@ -139,15 +140,35 @@ def hypr_dir() -> Path:
     return Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "hypr"
 
 
+def _running(instance: Path) -> bool:
+    """Is the Hyprland of this instance folder there? Its socket is, and the process its lock names is
+    (a Hyprland that crashed leaves both files). With no lock to read, the socket is all there is to go on."""
+    if not (instance / ".socket.sock").exists():
+        return False
+    try:
+        pid = int((instance / "hyprland.lock").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def find_instance() -> str | None:
-    """The signature of the running Hyprland: the one in the environment when its socket is there, else
-    the newest instance whose socket is. A user unit does not always get the environment Hyprland had."""
+    """The signature of the running Hyprland: the one in the environment when it is running, else the
+    newest instance that is. A user unit does not always get the environment Hyprland had."""
     base = hypr_dir()
     sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-    if sig and (base / sig / ".socket.sock").exists():
+    if sig and _running(base / sig):
         return sig
     try:
-        live = [d for d in base.iterdir() if (d / ".socket.sock").exists()]
+        live = [d for d in base.iterdir() if _running(d)]
     except OSError:
         return None
     return max(live, key=lambda d: d.stat().st_mtime).name if live else None
@@ -293,6 +314,7 @@ class Collectors:
     def __init__(self, hyprland=None, hypr_timeout: float = HYPR_TIMEOUT,
                  clock: Callable[[], float] = time.time, agentd_timeout: float = AGENTD_TIMEOUT):
         self.hypr = hyprland if hyprland is not None else hypr.Hyprland()
+        self._follows = hyprland is None     # the real one: it may restart under this process
         self.hypr_timeout = hypr_timeout
         self.agentd_timeout = agentd_timeout
         self._clock = clock
@@ -302,7 +324,10 @@ class Collectors:
         self._requests: tuple[float, tuple | None] | None = None
 
     def begin(self) -> None:
-        """A new look is starting: a hyprctl that hung is asked about again."""
+        """A new look is starting: a hyprctl that hung is asked about again, and a Hyprland that came
+        back under a new signature is the one asked (this process outlives the compositor)."""
+        if self._follows:
+            adopt_instance()
         self._hypr_down = False
 
     def refresh(self) -> None:
@@ -386,13 +411,18 @@ class Collectors:
             return None
         if not isinstance(rows, list):
             return None
-        floor, ours, looked = self._clock() - COREDUMP_DAYS * 86400, [], 0
-        for row in (r for r in rows if isinstance(r, dict)):
-            exe = os.path.basename(str(row.get("exe") or "")).lower()
+        floor, ours = self._clock() - COREDUMP_DAYS * 86400, []
+        rows = [r for r in rows if isinstance(r, dict)]
+
+        def python(row: dict) -> bool:
             when = _epoch(row.get("time"))
-            recent = when is None or when >= floor
-            if recent and exe.startswith("python") and isinstance(row.get("pid"), int) and looked < 10:
-                looked += 1
+            return ((when is None or when >= floor) and isinstance(row.get("pid"), int)
+                    and os.path.basename(str(row.get("exe") or "")).lower().startswith("python"))
+        # The list is oldest first: it is the newest Python dumps that are asked about, and the rows
+        # are still kept in the list's order.
+        asked = [i for i, row in enumerate(rows) if python(row)][-COREDUMP_LOOKS:]
+        for i, row in enumerate(rows):
+            if i in asked:
                 row = {**row, **self._who(row["pid"])}
             if program_of(row) is not None:
                 ours.append(row)
@@ -1030,12 +1060,8 @@ class Runner:
             if r.component == "hypr":
                 sig = find_instance()
                 return tail_lines(hypr_dir() / sig / "hyprland.log") if sig else []
-            unit = {"agentd": "bombadil-agentd", "bar": "bombadil-shell"}.get(r.component)
-            if unit:
-                cmd = ["journalctl", "--user", "-u", f"{unit}.service", "-n", str(LOG_LINES), "--no-pager",
-                       "-o", "cat"]
-                done = versions_mod.capture(cmd, timeout=3)
-                return done.out.splitlines()[-LOG_LINES:] if done is not None and done.code == 0 else []
+            # (agentd and the bar start from hyprland.lua with the session's own output: no unit and no
+            # log file of their own, so a finding about them carries no log.)
             if r.component == "apps":
                 apps = [a for a in obs.apps or [] if isinstance(a, dict) and a.get("log")]
                 worst = [a for a in apps if a.get("ok") is False] or apps

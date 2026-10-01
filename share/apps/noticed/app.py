@@ -323,6 +323,7 @@ class Backend(QObject):
         self._buffer = b""
         self._ask.stop()
         self._last_noticed = ""
+        self._ready = False          # what it said before is old: the next connection answers afresh
         if self._pending:
             self._pending = {}
             self.pendingChanged.emit()

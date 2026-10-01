@@ -16,8 +16,9 @@ Item {
     property string screenName: ""
 
     readonly property bool shown: loop.cardOpen && loop.cardScreen === screenName
-    // Above the chip; beside the pill the chip is lower than the pill's top, so above the pill.
-    readonly property real bottomGap: chip.beside ? chip.edge + chip.pillHeight + 6 : chip.bottomGap + chip.implicitHeight + 8
+    // Above the chip; beside the pill the chip is lower than the pill's top, so above everything the
+    // bar draws in the pill's column (the status line with its Undo and Details, the chips).
+    readonly property real bottomGap: chip.beside ? chip.edge + chip.columnHeight + 6 : chip.bottomGap + chip.implicitHeight + 8
     // How far above the window's bottom edge the card reaches: the layer must grow to hold it.
     readonly property real reach: shown ? bottomGap + implicitHeight + 12 : 0
 
@@ -179,6 +180,8 @@ Item {
                         font.pixelSize: Kit.Theme.captionSize
                         textFormat: Text.PlainText
                         wrapMode: Text.Wrap
+                        maximumLineCount: 6
+                        elide: Text.ElideRight
                     }
                 }
 

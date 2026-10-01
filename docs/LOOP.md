@@ -147,7 +147,7 @@ A model turn (no `kind`):
 | `t`, `prompt`, `result`, `ok`, `snapshot`, `provider`, `session`, `stopped`, `summary`, `details` | as before (`t` is when the row was written, the turn's end) |
 | `id` | the per-turn log's stem, `<ms>-<n>`: lasting and unique, unlike the turn counter |
 | `started`, `seconds` | epoch seconds the turn began, and its length |
-| `origin` | `typed` (the pill), `button`, `app`, `session`, `routine`, `loop`, `retry`, `cli` (`bombadil ask`) |
+| `origin` | `typed` (the pill), `button`, `app`, `session`, `routine`, `loop`, `retry`, `cli` (`bombadil ask` sends it; it is never counted). A turn that is run again after a sign-in keeps the origin it was asked with (and who asked, for a coding session's), so a loop's or a routine's prompt is not counted as his words the second time |
 | `tools` | `{"n": steps, "names": [unique tool names in order of first use]}` |
 | `model`, `cost`, `usage` | the provider's model name, dollars, `{input, output, cache_read, cache_write}`; null when the provider does not say |
 | `rate_limit` | the provider's rate-limit event when it sent one, else null |
@@ -178,7 +178,7 @@ except `words.toml` (`paths.words_file()`, `~/.config/bombadil/words.toml`).
   A damaged `loop.db` is never replaced on its own: the service says so once on stderr and counts nothing
   until it is deleted (with its `-wal` and `-shm`); the counts are then read from `turns.jsonl` again, and
   what he said no to, what was offered and what was forgotten are lost.
-- `signals.jsonl`: what agentd heard from the bar, append only: `{"t", "kind": "hello"|"summon"|"focus_ack"|"friction"|"restart", …}`.
+- `signals.jsonl`: what agentd heard from the bar, append only: `{"t", "kind": "hello"|"summon"|"focus_ack"|"focus_cancel"|"focus_timeout"|"friction"|"restart", …}`.
 - `bar.json`: the bar's last report, rewritten atomically at most every 2 s:
   `{"pid", "connected_at", "alive_at", "build", "screens": {"<name>": {"w", "h", "rects": [{"name", "x", "y", "w", "h"}]}}}`.
 - `agentd.json`: `{"pid", "started", "build", "socket"}`, written when agentd starts.
@@ -189,12 +189,16 @@ except `words.toml` (`paths.words_file()`, `~/.config/bombadil/words.toml`).
 
 Existing messages are unchanged. New (client → agentd):
 
-- `{"type":"prompt","text":…,"origin":"typed"|"cli"|"app"|…}`: `origin` optional (`typed` when absent; `app` when the text starts with "[from app ").
+- `{"type":"prompt","text":…,"origin":"typed"|"cli"|"app"|…}`: `origin` optional (`typed` when absent, which is what the pill sends; `app` when the text starts with "[from app "). `bombadil ask` sends `"origin":"cli"`.
 - `{"type":"hello","client":"bar","pid":n,"build":"…"}`, `{"type":"alive","t":…}` every 5 s,
   `{"type":"rects","screen":"Virtual-1","w":1920,"h":1080,"rects":[{"name","x","y","w","h"}]}`,
   `{"type":"focus_ack","id":n,"ms":120}` after a summon once the input has the keyboard (`id` is the
   `id` of the summon message agentd broadcast, which now carries one: `{"type":"summon","id":n}`),
-  `{"type":"friction","what":"esc","count":3,"seconds":10,"drawer":true}`.
+  `{"type":"focus_cancel","id":n}` when the bar answers a summon by giving the keyboard back (a second tap
+  on Super toggles the pill off, so no ack will come; agentd writes a `focus_cancel` row and the summon is
+  not written up as one that got no keyboard),
+  `{"type":"friction","what":"esc","count":3,"seconds":10,"drawer":true,"card":false}` (`drawer` and `card`
+  are what was up when the burst began).
 - `{"type":"ping"}` → `{"type":"pong","t":…,"pid":n}`.
 - `{"type":"noticed_do","op":…,"id":…,"form":…}`; ops: `open` (the Noticed window), `accept`,
   `not_now`, `never`, `got_it`, `other_ways`, `preview`, `report`, `send`, `undo`, `bring_back`,

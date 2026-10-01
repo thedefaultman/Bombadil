@@ -776,6 +776,9 @@ class LoopService:
         if res.preview is not None:
             answer["preview"] = res.preview
         await self.agentd._send(writer, answer)
+        if op == "undo" and not res.ok:
+            # The status line's own Undo is gone from the line once pressed: the line says it failed.
+            await self.agentd._send(writer, _local_line(res.text, ok=False))
         await self._refresh(to=writer)
 
     async def _op_open(self, rid, form, writer) -> Result:

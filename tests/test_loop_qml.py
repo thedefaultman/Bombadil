@@ -705,7 +705,7 @@ def test_three_escapes_in_ten_seconds_with_a_drawer_up_say_so_once(bar):
     for step in range(3):
         bar.set(fixedNow=50000.0 + step * 2000)
         bar.call("esc")
-    assert bar.drain() == [{"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": True}]
+    assert bar.drain() == [{"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": True, "card": False}]
     for step in range(3, 6):                          # the same burst goes on: still one
         bar.set(fixedNow=50000.0 + step * 2000)
         bar.call("esc")
@@ -737,7 +737,7 @@ def test_escapes_at_a_peeked_card_count_with_the_card_not_the_drawer(bar):
     for step in range(3):
         bar.set(fixedNow=70000.0 + step * 1000)
         bar.call("esc")
-    assert bar.drain() == [{"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": False}]
+    assert bar.drain() == [{"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": False, "card": True}]
 
 
 def test_the_drawer_guess_follows_details_and_close(bar):
