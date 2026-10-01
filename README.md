@@ -11,6 +11,17 @@ apps you describe appear as native windows seconds later, and "undo that" rolls 
 system back. The agent runs as you, with full access; the undo is a snapshot, not a
 permission prompt.
 
+## Documentation
+
+The documents live in [`docs/`](docs/README.md), next to the code. Start with
+[the principles](docs/principles.md) (the rules the design keeps), then
+[the architecture](docs/ARCHITECTURE.md) (the parts and the path of one turn). Each piece has a page
+in [`docs/architecture/`](docs/architecture/), the reasoning behind each is in the
+[design briefs](docs/design/README.md), and [the decision log](docs/decisions.md) and
+[the roadmap](docs/roadmap.md) say what was decided and what is built. To fork it and build on it,
+read [making it yours](docs/forking.md) and [CONTRIBUTING.md](CONTRIBUTING.md); AI coding agents
+start at [AGENTS.md](AGENTS.md).
+
 ## How it fits together
 
 ```
@@ -66,7 +77,7 @@ scripts/run-vm.sh --disk     # then `sudo bombadil-install /dev/vda` inside
 ```
 
 On first boot the pill asks which AI should run the computer and signs in to it, with the
-provider's page in the browser panel (see "Signing in" in `docs/ARCHITECTURE.md`).
+provider's page in the browser panel (see [browser and sign-in](docs/architecture/browser-and-signin.md)).
 
 On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an Arch WSL
 distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
@@ -79,6 +90,7 @@ screenshots, the smoke checks, scratch copies to try a branch on); see its READM
 
 ## Status
 
-First milestone: the pieces above, tested where they can be without a display.
-Not yet exercised on real Hyprland: the bar, the QML runtime and the ISO build. See
-`docs/ARCHITECTURE.md` for the decisions and what comes next.
+The first milestone (the session daemon, the OS tools, native apps, the ISO) is built and tested
+without a display where it can be, and the pill, the desk, the sign-in, the brain and the app kit have
+been added on top of it. Which pieces are shipped, in progress and only designed is in
+[the roadmap](docs/roadmap.md); what is still broken is in [known issues](docs/known-issues.md).

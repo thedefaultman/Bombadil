@@ -1,107 +1,116 @@
 # Architecture
 
-## Decisions (2026-09-27)
+> **Status:** Partly shipped
+> **Code:** `bin/`, `src/bombadil/`, `shell/`, `share/`, `iso/`
+> **Design:** [Design briefs](design/README.md), [Principles](principles.md)
+> **Verified:** 2026-10-01 against `main` at `a30ebc8`: the parts and the turn below are read from `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/mcp_server.py` and `shell/shell.qml`, and each piece's own page was checked against its code.
 
-| Choice | Pick | Why |
-|---|---|---|
-| Base | Arch + btrfs/snapper | Agents know it; rolling graphics stack; archiso; snapshots are the undo |
-| Display | Hyprland now, custom compositor later | Slide-in special workspaces and IPC out of the box; a browser needs a real Wayland server |
-| First target | QEMU VM, ISO also boots hardware | Fast loop while the core changes daily |
-| Agent runtime | Official Claude Code / Codex CLIs wrapped by `agentd` | Logins and subscriptions just work; vendor tool use for free |
-| Generated apps | QML via PySide6, `~/Apps/<name>/` | No build step, hot reload, real windows, no ports |
-| Provider switching | One MCP server (`bombadil-os-mcp`) | Same OS abilities whatever the provider |
-| Browser | Chromium with remote debugging on | Agent can drive it while you watch |
+Bombadil is a Linux distribution whose interface is an AI agent. The person types in one pill at the bottom of the screen; the agent, one of the vendors' own command-line programs running in full-access mode, does the work; and every step it takes is shown on screen and can be undone. This page is the map: the parts, the path of one turn through them, where the code lives and which pieces are not built yet. Each part has a page of its own in [`architecture/`](architecture/), with its interfaces, where its state lives and how to extend it.
+
+## The parts
+
+```mermaid
+flowchart LR
+    person(["the person"]) --> shell["shell: pill, line, cards, desk"]
+    shell <-->|"JSON lines on a Unix socket"| agentd["agentd: one turn at a time"]
+    agentd -->|"before each turn"| snap["snapper: a restore point"]
+    agentd -->|"runs, full access"| cli["provider CLI: claude or codex"]
+    cli <-->|"MCP over stdio"| mcp["bombadil-os-mcp: the OS as tools"]
+    mcp --> hypr["Hyprland: panels and windows"]
+    mcp --> apps["kit apps in ~/Apps"]
+    mcp -.->|"cards, jobs, desk"| agentd
+    agentd -.->|"turn notes"| brain["brain: the index of what happened"]
+```
+
+| Piece | What it is | Status | Page |
+|---|---|---|---|
+| agentd | The session daemon: one socket, one turn at a time, the queue, Stop, the turn log | Shipped | [agentd](architecture/agentd.md) |
+| os-mcp | The MCP server both CLIs load: the OS as typed tools | Shipped | [os-mcp](architecture/os-mcp.md) |
+| shell | The Quickshell bar: the pill, the line above it, the stone, chips, the wallpaper | Partly shipped | [shell](architecture/shell.md) |
+| desk | Cards in two rails and strips beside the pill, fed by jobs and the route of a turn | Partly shipped | [desk](architecture/desk.md) |
+| app kit | `import Bombadil`: native apps the agent writes, with a runtime, a checker and a skill | Partly shipped | [app kit](architecture/app-kit.md) |
+| browser and sign-in | Chromium as a slide-in panel, and provider sign-in that happens in the pill | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
+| cards and pictures | Validated diagrams the agent and the machine draw above the pill, and the reasons behind each step | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
+| restore points | A btrfs snapshot before each turn, and "undo" | Partly shipped | [restore points](architecture/restore-points.md) |
+| ISO and install | The archiso image, the installer, the boot and the console | Shipped | [ISO and install](architecture/iso-and-install.md) |
+| brain | An index that writes itself from what the machine saw, and the Focus window | Partly shipped | [brain](architecture/brain.md) |
+| coding sessions | Named sessions of the vendors' coding tools that outlive their window | In progress | [coding sessions](architecture/coding-sessions.md) |
+| voice | A name, three voices, the welcome line and the words of empty places | In progress | [voice](architecture/voice.md) |
+| self-improvement loop | Noticing repeated asks and checking itself | In progress | [loop](architecture/loop.md) |
+| mail | Mail in Bombadil's own view, with Thunderbird as the unseen engine | In progress | [mail](architecture/mail.md) |
+| poor man switch | What the machine does when the AI's plan runs out | In progress | [poor man switch](architecture/poor-man-switch.md) |
+| installed OS | An encrypted disk, packages and updates | Designed | [installed OS](architecture/installed-os.md) |
+
+[The roadmap](roadmap.md) says where each piece stands and what is left. [The glossary](glossary.md) explains the project's own words.
 
 ## One turn
 
-1. The bar (or `bombadil ask`) writes `{"type":"prompt","text":…}` to the socket.
-2. `agentd` takes a snapper snapshot named `turn:<n>: <prompt>`.
-3. It runs the provider CLI once, in full-access mode, resuming the previous session id,
-   with `bombadil-os-mcp` in its MCP config and `providers.system_prompt()` appended.
-4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
-5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
+```mermaid
+sequenceDiagram
+    participant P as the person
+    participant S as shell
+    participant A as agentd
+    participant R as snapper
+    participant C as provider CLI
+    participant M as os-mcp
+    P->>S: types a line and presses Enter
+    S->>A: prompt
+    A-->>S: turn started (the line answers within 200 ms)
+    A->>R: create a restore point
+    A->>C: run one turn, os-mcp attached
+    C->>M: tool calls
+    M-->>C: results
+    C-->>A: a stream of JSON events
+    A-->>S: text, tool and result events for every client
+    A->>A: append the turn to turns.jsonl
+    S-->>P: the answer, a receipt and Undo
+```
 
-"Undo that" is the agent calling `rollback` (or the user running `bombadil undo`): snapper
-rolls the root subvolume back to the last `turn:` snapshot; it applies on reboot. Home is
-its own subvolume and is not rolled back.
+1. The shell (or `bombadil ask`) writes a `prompt` to the agentd socket. Words that must never wait for a model (`stop`, `undo`, `open ...`, a `!command`) are answered by agentd itself.
+2. agentd runs one turn at a time and queues the rest. Before the provider starts it asks snapper for a restore point, so any turn can be taken back.
+3. It starts the provider's CLI once, in full-access mode, with `bombadil-os-mcp` in its tool configuration and Bombadil's system prompt appended, and resumes the previous session so the machine has one conversation.
+4. The CLI's stream becomes events, broadcast to every connected client. The shell turns them into the line above the pill, the stone's face, cards and the desk. The OS tools act on Hyprland, on apps and on files, and ask agentd for what it owns (cards, jobs, the desk).
+5. The turn is appended to `~/.local/state/bombadil/turns.jsonl` and the brain is told, never waited for.
 
-## Signing in
+The details, exact message names and the edge cases (a stopped turn, a missing provider, a sign-in that expires mid-turn) are in [agentd](architecture/agentd.md), and how each step reaches the screen is in [the UX flows](ux/flows.md).
 
-agentd never handles a password or a token: it runs the provider CLI's own login
-(`claude auth login`, `codex login`) in a terminal it holds, so the CLI stores its
-credentials exactly as it would in a terminal of yours (`signin.py`).
+## Where the code lives
 
-1. Setup states, shown in the pill with chips: `choose` (first boot: Claude or Codex),
-   `checking`, `signed_out`, `offline`, `signing_in`, `ready`. Prompts wait until `ready`
-   and then run; a `!command` runs anyway.
-2. The CLI runs with `BROWSER=bombadil-browser`, which hands its page to agentd over the
-   socket, tagged with the sign-in's id. The page opens in the browser panel's Chromium
-   (own profile under `~/.local/share/bombadil/browser`, no first-run pages, DevTools on
-   127.0.0.1:9222) and comes back to the CLI's localhost callback.
-3. If `$BROWSER` is not used within 2 s, the printed URL opens instead. A Claude page that
-   ends on the code page gets `code#state` typed into the CLI, read from the tab's address.
-4. DevTools and Hyprland tell it when the panel slid out or the browser was closed; the
-   pill offers the page again. Esc cancels (the pill says "Cancelling" at once, and a page
-   still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
-   an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
-   status` or `codex login status`. A browser that cannot open the page is an error the pill
-   shows with "Open it again", not a quiet success.
-5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
-   Wi-Fi, and the sign-in starts once the host answers.
-6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again
-   and runs the prompt once more, with what you did meanwhile told to the model. If the
-   rerun says it too, the login is not what is wrong (a 403, an API key in the environment):
-   the CLI's own words show and there is no second sign-in. Only the provider whose turn
-   failed is signed in again, even if you switched AI meanwhile. A `/login` typed in a
-   terminal lands in the panel too, and agentd watches for it to finish.
-7. "Sign in" typed while signed in starts a new login, except for a provider whose login
-   signs the stored one out as it starts (`login_replaces`: Codex, even if the new one is
-   then called off): there it answers "already signed in".
+| Path | What is there |
+|---|---|
+| `bin/` | The commands: `agentd`, `bombadil`, `bombadil-os-mcp`, `bombadil-app`, `bombadil-browser`, `bombadil-shell`, and the brain's two services |
+| `src/bombadil/` | The Python behind them. Standard library only, apart from the app kit's `PySide6` and `cryptography` |
+| `shell/` | The Quickshell bar in QML |
+| `share/qml/Bombadil/` | The app kit and the design tokens (`Theme.qml`) the shell and every app read |
+| `share/skills/bombadil-apps/`, `share/app-template/`, `share/apps/` | The skill that teaches the CLIs to build apps, the template they start from and the built-in apps |
+| `iso/` | The archiso profile: packages, the live session, the installer, units, the boot menu |
+| `scripts/` | Building the ISO, running it in a VM, a development session, the VM tools |
+| `tests/` | Unit tests, QML tests, the headless desktop test, the VM smoke |
+| `docs/` | Everything you are reading, with [an index](README.md) |
 
-`fake_signin.py` plays a provider login on localhost for the tests and the VM smoke test
-(`BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail`).
+The full map with the conventions the code shows is in [the development guide](contributing/development.md), and every name the system exposes (commands, environment variables, files, units, ports) is in [the reference](reference.md).
 
-## Generated apps
+## The foundation
 
-`create_app` writes `main.qml`, optional `app.py` (a `Backend(QObject)` exposed as
-`backend`), `app.toml` and a `.desktop` entry, checks the app offscreen (errors with
-`file:line` plus a screenshot go back to the agent), then starts `bombadil-app run <name>`.
-The runtime owns the window and reloads the QML into it on every write, so the agent
-iterates by calling `create_app` again and the app keeps its place, size and saved state.
-Each app lives in its own Hyprland special workspace and gets a chip in the bar.
+These choices were made on 2026-09-27 and are the ground the pieces stand on. The reasons are in [the foundation brief](design/foundation-choices.md) and the full list of decisions is [the decision log](decisions.md).
 
-`import Bombadil` is the app kit (`share/qml/Bombadil`, native types in
-`src/bombadil/appkit/native`), and the `bombadil-apps` skill in `share/skills` tells the
-agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
-`~/.agents/skills`) and through the `app_guide` tool.
+| Choice | Pick | Why |
+|---|---|---|
+| Base | Arch with btrfs and snapper | Agents know it; a rolling graphics stack; archiso; snapshots are the undo |
+| Display | Hyprland first, a custom compositor later | Slide-in special workspaces and IPC out of the box; a browser needs a real Wayland server |
+| First target | A VM, with an ISO that also boots hardware | A fast loop while the core changes daily |
+| Agent runtime | The official Claude Code and Codex CLIs, wrapped by `agentd` | Logins and subscriptions just work; the vendors' tool use comes free |
+| Generated apps | QML through PySide6, in `~/Apps/<name>/` | No build step, hot reload, real windows, no ports |
+| Provider switching | One MCP server, `bombadil-os-mcp` | The same OS abilities whichever provider runs |
+| Browser | Chromium with remote debugging on | The panel is a real browser the person can watch |
 
-## Why lines and pictures
+## What every piece keeps
 
-Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
-step (`because`) and what the turn read from outside (`after`); the status line shows both on
-hover. A bare "why" during a turn is answered from that record.
+[The principles](principles.md) are the rules the design keeps, and each piece page says which ones it leans on. Four decide most questions:
 
-`show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
-over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
-service, disks, sound or screens from the real machine in parallel, under half a second; the boot
-record and the check that the provider answers get longer, since both are slow by nature). `agentd`
-broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
-agent gets the same picture back in words. A card still being written streams in a box at a time;
-a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
-box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
-package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
-closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
-was there. A picture that cannot be drawn takes the last one away. (How each picture reads the
-machine, and what a real VM taught us, is in [pictures.md](pictures.md).)
-The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
-the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
-import from outside its own folder any other way.)
+- **The person is a passenger.** The machine does the work and shows what it did, in plain words and pictures ([the principle](principles.md#the-person-is-a-passenger)).
+- **Full access, with undo instead of guard rails.** Nothing asks permission for what a restore point can reverse ([the principle](principles.md#full-access-with-undo)).
+- **Something true is on screen within 200 ms.** Nothing waits on a model for what the machine already knows ([the principle](principles.md#something-true-in-200-ms)).
+- **Every piece degrades.** A missing part costs its own feature, never the bar ([the principle](principles.md#degrade-and-recover)).
 
-## Next
-
-- Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,
-  app window rules, greetd autologin, snapper config on the installed system).
-- Browser control: a Playwright/CDP MCP against Chromium's port 9222, so the agent can
-  read and act in pages the user is watching.
-- Voice input and a screen-aware mode (periodic screenshots into context).
-- Custom compositor once the interaction model is settled.
+Before you change a piece, read its page and run [the checklist](principles.md#checking-a-change-against-the-principles). What a change must also update is in [documenting your piece](contributing/documenting.md).

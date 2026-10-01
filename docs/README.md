@@ -1,32 +1,60 @@
 # Bombadil docs
 
-The project's documents, next to its code.
+Everything about how Bombadil is designed, how it is built and how to build on it, next to its code. The documents describe the product, not the people who work on it. If you have just cloned the repository, read the first section in order and then jump to what you want to do.
 
-- `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
-- `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
-- `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
-- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
-- `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
-- `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
-- `design/`: the design briefs. Every decision in them was confirmed by Daniel.
-  - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
-  - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
-  - `dev-brief.md`: building other projects on Bombadil (named coding sessions, dots, fences).
-  - `brain-brief.md`: the native index of files, projects and turns, and its Focus, Map and Time views.
-  - `widgets-brief.md`: the desk and its widgets.
-  - `passenger-brief.md`: "Riding with Bombadil", the user as a passenger who gets things explained.
-  - `voice-brief.md`: the one-time setup card, the voices and the welcome lines.
-  - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
-  - `identity-brief.md`: the mark: what was asked, the three options drawn in round two, why the riding b, the orange, where the mark goes, and what was cut. The options and every state are on `pages/bombadil-mark.html`.
-  - `design-system.md`: the look written down: colour, type, shape, space, motion, icons and the pill's states.
-  - `rust-question.md`: whether Bombadil should use Rust, with measurements.
-  - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
-  - `boot-and-wallpaper.md`: every screen from power-on to the desk in the design system's colours: the quiet console, the wallpaper under the desk, and why the desk used to be black.
-- `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
-  Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
-  fonts without a connection. They are copies of what the pages showed on 2026-09-30.
-- `review/`: the first-milestone review findings, hand-off notes, boot-test logs and an unapplied lint patch.
-- `screens/`: screenshots from the first boot, the pill walkthrough, the details drawer fix and the boot and wallpaper.
+## Start here
 
-The chat transcripts and the project memory are not in this repository. They name Daniel's machine and
-his conversation, so they live in a private bundle outside it.
+1. [The README](../README.md): what Bombadil is, the parts in one table, how to try it.
+2. [The principles](principles.md): the rules the design keeps, with a checklist for any change. They decide most questions before you ask them.
+3. [The architecture](ARCHITECTURE.md): the parts, the path of one turn, where the code lives.
+4. [The development guide](contributing/development.md): run it from a checkout, run the tests, and what each layer of testing proves.
+5. [Making it yours](forking.md): what carries Bombadil's identity, what to keep in a fork, and recipes for the common changes.
+
+[CONTRIBUTING.md](../CONTRIBUTING.md) is the short version for a pull request, and [AGENTS.md](../AGENTS.md) is the same for an AI coding agent.
+
+## I want to understand a piece
+
+| Piece | Status | Page |
+|---|---|---|
+| The session daemon, the queue, providers | Shipped | [agentd](architecture/agentd.md) |
+| The OS as tools for the agent | Shipped | [os-mcp](architecture/os-mcp.md) |
+| The pill, the line, the stone, chips, wallpaper | Partly shipped | [shell](architecture/shell.md) |
+| Cards in rails and strips, jobs | Partly shipped | [desk](architecture/desk.md) |
+| Apps the agent writes, the kit and its skill | Partly shipped | [app kit](architecture/app-kit.md) |
+| The browser panel and signing in | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
+| Diagrams and reasons above the pill | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
+| Undo | Partly shipped | [restore points](architecture/restore-points.md) |
+| The image, the installer, boot | Shipped | [ISO and install](architecture/iso-and-install.md) |
+| The index that writes itself | Partly shipped | [brain](architecture/brain.md) |
+| Named coding sessions | In progress | [coding sessions](architecture/coding-sessions.md) |
+| A name, voices and welcome lines | In progress | [voice](architecture/voice.md) |
+| Noticing repeated asks, self-checks | In progress | [loop](architecture/loop.md) |
+| Mail and everyday work | In progress | [mail](architecture/mail.md) |
+| When the AI's plan runs out | In progress | [poor man switch](architecture/poor-man-switch.md) |
+| An encrypted installed system | Designed | [installed OS](architecture/installed-os.md) |
+
+## I want to know how it should look and feel
+
+- [The interaction model](ux/README.md): the surfaces, the stone's states, one conversation, and a gallery of screens.
+- [Flows](ux/flows.md): first boot, sign-in, a turn, undo, building an app, and what the person sees when something fails.
+- [Keys, timings and limits](ux/keys-and-timings.md): every key, duration and limit, with where it is defined.
+- [The design system](design-system/README.md): colour, type, shape, motion, icons and the tokens that carry them.
+- [Brand assets](brand/README.md): the mark and its files.
+- [Design briefs](design/README.md): the reasoning behind each piece, written before it was built, each with a drawn page of mock-ups.
+
+## I want to know what was decided and what is next
+
+- [The decision log](decisions.md): every decision the briefs record, with its reason, its status and where it is built.
+- [The roadmap](roadmap.md): what is shipped, in progress and designed.
+- [Known issues](known-issues.md): defects that are still true.
+- [History](history.md): how the project got here, in order.
+- [The glossary](glossary.md): the project's own words.
+
+## I want to look something up or check my work
+
+- [Reference](reference.md): every command, environment variable, file, socket, unit and configuration key, with the page that owns it.
+- [The security model](security-model.md): what the agent can do, who can reach what, and what undo covers and does not.
+- [Documenting your piece](contributing/documenting.md): where things go, the shape of a page, diagrams, what must never be committed, and the checker.
+- [Writing a design brief](contributing/design-briefs.md).
+- [Measuring the desk](contributing/measuring-the-desk.md): measuring the stone and the pill from outside a VM.
+- `docs/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).

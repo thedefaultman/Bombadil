@@ -1,5 +1,12 @@
 # The Bombadil mark
 
+> **Status:** Partly shipped
+> **Code:** `shell/Stone.qml`, `shell/PillState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Theme.qml`, `shell/DeskTheme.js`, `docs/brand/`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg`, `share/grub/bombadil/`, `README.md`
+> **Pieces:** piece 1 (one set of tokens for the shell and the kit) is shipped. Piece 2 (the mark in the machine) is partly shipped: the pill's stone and its states, the installed icons and the README banner are on `main`. The GRUB theme's files are on `main` but nothing installs them. `LOGO=bombadil` in `os-release`, the greeter and the lock as the pill, and a separate 16 px colour drawing are designed, with no file or code for them.
+> **Design:** this brief and its page, [The Bombadil mark](pages/bombadil-mark.html); [Brand assets](../brand/README.md); [Design system](../design-system/README.md#the-mark-and-its-states); [Shell](../architecture/shell.md)
+> **Decided by:** the project owner, 2026-09-30 (the mark: E, the riding b; the orange stays, the owner not objecting to the recommendation); the other choices under "Defaults picked" are defaults
+> **Verified:** 2026-10-01 against `main` at `a30ebc8`: the files named above exist, `iso/airootfs/etc/os-release` does not exist and nothing under `iso/` or `scripts/` mentions the GRUB theme, so the two gaps above hold. The checks listed under "Checked" are the brief's own and were not re-run.
+
 The mark is a stone with a lowercase b cut through it, and it is the pill's dot. This brief is the
 design record: what was asked, the options that were drawn, what was chosen and why, where the mark goes,
 and what was cut. How the stone is drawn and built today is in [`docs/brand/README.md`](../brand/README.md);
