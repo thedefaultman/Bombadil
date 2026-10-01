@@ -1,0 +1,53 @@
+# Design briefs
+
+A design brief is the document a piece of Bombadil starts as, before any code: it says what the person sees and does, which rules the piece keeps, what to build first and what the project owner decided. [Writing a design brief](../contributing/design-briefs.md) says when to write one and gives the shape they share. Each of the eleven briefs in this folder, named `<name>-brief.md`, has a page in [`pages/`](pages/) that draws it, with mock-ups and drawings. The pages are single `.html` files, so open them in a browser: they load fonts from Google Fonts when you are online, use system fonts otherwise and make no other outside request. The top of every brief and note here is a status block that says how much of it is built, and several briefs carry a reading note that dates their sentences about the code "today" to the day they were written, so read the status block before the body.
+
+## Reading order
+
+Read [the principles](../principles.md) first: it lists the rules the briefs decided. Then skim the seven stack choices in [foundation choices](#notes-that-are-not-briefs), which the principles cite for two of their rules. Then read the briefs in this order. Each one after the first builds on earlier ones, leaves their decisions in force and names the ones it changes under its "Extends or changes" heading.
+
+1. [How Bombadil should feel](ux-brief.md): the first brief, and the one whose eight rules every later brief builds on, so read it before any other.
+2. [The Bombadil mark](identity-brief.md): the stone in the pill with a shape for each state, and the colour code (white the person, orange the machine, blue a coding session) that the desk and the Brain use too.
+3. [Building on Bombadil](dev-brief.md): coding sessions, and the rule that nothing is pushed until the person says "ship". The desk's Sessions and Needs you widgets and the Brain's record of session edits rest on it.
+4. [Bombadil's Brain](brain-brief.md): the index of what happened on the machine, which the desk, passenger and voice briefs refer to.
+5. [The desk](widgets-brief.md): where widgets live beside the pill, which the briefs after it use for their cards and chips.
+6. [Riding with Bombadil](passenger-brief.md): how the machine explains itself and shows pictures of itself, and where "records before models" was decided.
+7. [Bombadil's voice](voice-brief.md): the words of greetings and empty places, which the passenger brief hands to it.
+8. [Bombadil tends itself](self-improvement-brief.md): the loop that counts what the person repeats and mends the machine on their word. It runs beside the voice brief and builds on the passenger brief.
+9. [Bombadil, installed](installed-os-brief.md): what has to hold once a person installs Bombadil, a machine the earlier briefs already assume, and the order to build it in.
+10. [Bombadil at work](everyday-work-brief.md): mail, messages and the rule that only the person's own press reaches other people, built on eight earlier briefs.
+11. [The poor man switch](poor-man-switch-brief.md): the last of them, on what the machine does when an AI is at its limit, built on ten earlier briefs.
+
+## All briefs
+
+In reading order. The Status column is copied from the word or words that open each brief's own status block. [Documenting your piece](../contributing/documenting.md#the-shape-of-a-page) defines them.
+
+| Brief | Page | Status | What it decides | Read it when |
+|---|---|---|---|---|
+| [How Bombadil should feel](ux-brief.md) | [How Bombadil Feels](pages/how-bombadil-feels.html) | Partly shipped | Eight rules for how the machine feels: one pill and three things to learn, the answer as the thing itself, something true within 200 ms, no prompts, "this" as what is in front of the person, native apps, recovery that avoids the broken part, and one conversation. | you change anything the person sees, presses or waits for |
+| [The Bombadil mark](identity-brief.md) | [The Bombadil Mark](pages/bombadil-mark.html) | Partly shipped | The mark is a stone with a lowercase b cut through it (option E, the riding b), colour says who, every state has a shape or movement that reads without colour, and the orange `#d97757` stays. | you change the stone, a state's colour or movement, an icon or how boot looks |
+| [Building on Bombadil](dev-brief.md) | [Building on Bombadil](pages/building-on-bombadil.html) | In progress | Claude Code and Codex run exactly as shipped and Bombadil hosts them: sessions are named, outlive their windows, get their own room and show in the pill as one list, and nothing is pushed or merged until the person says "ship" or "land". | you work on coding sessions or on anything that could push or merge |
+| [Bombadil's Brain](brain-brief.md) | [Bombadil's Brain](pages/bombadils-brain.html) | In progress | The machine writes its own index of what happened, each link saying why and when, over plain files that stay the truth, and shows it as Focus by default, the Map as the overview and Time along the bottom. | you work on what the machine remembers: the index, search, links that say why, the Focus view |
+| [The desk](widgets-brief.md) | [The Bombadil Desk](pages/the-bombadil-desk.html) | Partly shipped | Widgets live in two side rails and in the pill's row, each answers one question a passenger asks, appears only when it has something to say, and gives way to whatever the AI brings. | you add or change a card, a strip or a chip beside the pill |
+| [Riding with Bombadil](passenger-brief.md) | [Riding with Bombadil](pages/riding-with-bombadil.html) | Partly shipped | The machine explains itself while it drives, in the agent's own words from that moment, pictures of the machine are captured from it, records answer before a model is asked, and everything that runs on its own is one list of units the person can stop. | you add an explanation, a picture of the machine, a background job or a promise |
+| [Bombadil's voice](voice-brief.md) | [Bombadil's Voice](pages/bombadils-voice.html) | In progress | Bombadil speaks only when the person arrives or leaves, in one true line built from local templates and in one of three voices (Merry, Plain, Quiet) that change words and never facts, and an empty place says what is empty and offers one way to fill it. | you write a greeting, an empty-place line or any text the machine says |
+| [Bombadil tends itself](self-improvement-brief.md) | [Bombadil Tends Itself](pages/bombadil-tends-itself.html) | In progress | Bombadil counts what the person repeats and offers to turn it into a word, a widget, an app or another form as a strip they can ignore, and fixes its own bugs only on their word, only with a test that failed before and passes after, and only while they are away. | you add anything that counts, checks or changes Bombadil by itself |
+| [Bombadil, installed](installed-os-brief.md) | [Bombadil, installed](pages/bombadil-installed.html) | Designed | The installed machine is the product and the stick is the door: only what an update cannot change is fixed at install (disk layout, encryption, where GRUB lives, the account name `user`), every file Bombadil ships has an owner, and nothing is erased that the person did not name. | you touch the installer, the disk layout, updates, rollback or repair from the stick |
+| [Bombadil at work](everyday-work-brief.md) | [Bombadil at Work](pages/bombadil-at-work.html) | In progress | Mail, chat and the calendar are glanced at and answered in Bombadil's own views, work inside a tool stays on that tool's own page in the browser panel, and anything that reaches another person waits for the person's own press. | you touch mail, messages, the calendar or any step that sends something to another person |
+| [The poor man switch](poor-man-switch-brief.md) | [The Poor Man Switch](pages/the-poor-man-switch.html) | In progress | Running into an AI's limit is a state the machine says once with the time it ends: asks wait instead of failing, apps and files keep working, the pill still finds things on the computer, and the person gets a switch to pause an AI. | you handle an AI that is at its limit, paused or not signed in |
+
+The status words were read on 2026-10-01 against `main` at `6150431`. The status block of a brief names which of its pieces are built. [The roadmap](../roadmap.md) tracks every piece in one place and links the architecture page that describes what runs.
+
+## Notes that are not briefs
+
+Three files here are not briefs: they are not named `<name>-brief.md`, have no page, and do not follow the shape in [Writing a design brief](../contributing/design-briefs.md). Each has a status block.
+
+| Note | Status | What it holds |
+|---|---|---|
+| [`foundation-choices.md`](foundation-choices.md) | Partly shipped | The seven stack choices in force, each with the options that were weighed: Arch as the base, Hyprland with a custom compositor later, a VM as the first target, the official agent CLIs wrapped by `agentd`, QML for generated apps, MCP (`os-mcp`) as the shared tool layer and Chromium as the browser. It ends with the first milestone. Its own status block calls it a brief, but it has no rules section and no page. |
+| [`rust-question.md`](rust-question.md) | Partly shipped | The question whether Bombadil should use Rust, and the answer: keep Python and QML. Rust has two later places, a custom compositor and the Brain's root file watcher, and the watcher moves only if a big write makes the machine lag or the compositor work brings in a Rust toolchain. It holds a count of the code by language, measurements, a verdict for each piece, six design problems the survey found and where each stands. `main` has no `.rs` file and no `Cargo.toml`. |
+| [`boot-and-wallpaper.md`](boot-and-wallpaper.md) | Shipped | What the screen shows at each stage from power-on to the desk at rest, and how each is made: the quiet console's kernel parameters, `greetd` sending Hyprland's start-up text to the journal, Hyprland's opaque ground colour, the wallpaper `share/wallpaper/bombadil.png` drawn by `scripts/make-wallpaper.py`, and the person's own picture from `~/.config/bombadil/wallpaper`. It is a record of what shipped and leaves one open choice, the stone in the wallpaper. |
+
+## The rules in one place
+
+[Principles](../principles.md) collects the rules the briefs decided, each linked to where it was decided, with a checklist to run against a change before a pull request. [The decision log](../decisions.md) lists the dated decisions, why they were taken, their status and where each is built. A brief that contradicts a rule says so under "Extends or changes the earlier briefs", and the principles page changes with the brief.

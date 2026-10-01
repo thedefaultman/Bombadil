@@ -1,9 +1,9 @@
 # The app kit
 
-> **Status:** Shipped
+> **Status:** Partly shipped
 > **Code:** `bin/bombadil-app`, `src/bombadil/apps.py`, `src/bombadil/app_runtime.py`, `src/bombadil/appkit/`, `share/qml/Bombadil/`, `share/app-template/`, `share/skills/bombadil-apps/`
 > **Design:** [Foundation choices, section 5](../design/foundation-choices.md#5-how-generated-apps-are-built-and-shown--qml-qt-quick-via-pyside6), [UX brief, piece 3](../design/ux-brief.md#3-apps-change-in-front-of-you-and-undo-in-a-second)
-> **Verified:** 2026-10-01 against `main` at `26843d3`
+> **Verified:** 2026-10-01 against `main` at `6150431`
 
 The app kit is everything that turns a folder of QML into a native window. An app is a directory under `~/Apps/<name>/` with a `main.qml` written against the kit (`import Bombadil`). `bombadil-app run` opens it as a real native window in its own slide-in drawer, reloads it in place on every write and keeps the last working version on screen when an edit does not load. `bombadil-app check` loads it offscreen, so the agent gets errors with `file:line` and a screenshot without a display. The kit exists so that what the agent builds is a real app with no build step and no port, and so that every app looks like the rest of the system.
 
@@ -28,7 +28,7 @@ flowchart TB
 
 **The tool path.** `create_app` (`src/bombadil/appkit/tools.py:167`) calls `apps.create` (`src/bombadil/apps.py:101`). The title becomes the name (`slug`, which must match `^[a-z0-9][a-z0-9-]{0,40}$`). Every key of `files` is checked first: a plain relative path, never under `data/`, no hidden parts, one of `.qml .js .mjs .json .txt .svg`, and not `main.qml`. A refused call writes nothing. Then extra files are written first, `app.py` if `python` was given, `app.toml`, and `main.qml` last, each through a hidden temp file and a rename, so the reloader never reads half a file. The launcher entry `bombadil-app-<name>.desktop` is written last. `create` never writes under `data/` and never deletes a file, so calling it again with the same title is an edit in place that keeps the saved state.
 
-**Show, then check.** Unless `open` is false, `placement.show` runs before the check, so the person watches the app (or its reload) while the check runs (`tools.py:193-198`). A stopped app is started detached by `apps.run`, with stdout and stderr appended to its log. A running app is not restarted: its own watcher reloads it. `run_check` then runs `bombadil-app check <app folder> --screenshot <state>/apps/<name>.check.png` in a subprocess with a 40 s limit, so a Qt crash never takes the MCP server down. `report` returns the summary as text (`ok`, `errors`, `warnings`, `console`, `size`, `reloaded`, `window`) followed by the screenshot as an image block. The tool catalogue is in [os-mcp.md](os-mcp.md).
+**Show, then check.** Unless `open` is false, `placement.show` runs before the check, so the person watches the app (or its reload) while the check runs (`tools.py:193-198`). A stopped app is started detached by `apps.run`, with stdout and stderr appended to its log. A running app is not restarted: its own watcher reloads it. `run_check` then runs `bombadil-app check <app folder> --screenshot <state>/apps/<name>.check.png` in a subprocess with a 40 s limit, so a Qt crash never takes the MCP server down. `report` returns the summary as text (`app`, `path`, `ok`, `errors`, `warnings`, `console`, `size`; `create_app` adds `reloaded` and `window`) followed by the screenshot as an image block. The tool catalogue is in [os-mcp.md](os-mcp.md).
 
 **The runtime path.** `bombadil-app run <name>` (`appkit/runtime.py:833`) takes a per-app lock, sends output to the log when it was not started from a terminal, builds the `QGuiApplication` (`engine.make_app`) and a `Host`, and calls `Host.start`, which calls `Host.load` and then starts watching. `load` compiles `main.qml` with a `QQmlComponent` before it touches the screen. Only when that succeeds does it create the root, put it on screen and discard the old root. A failed load leaves whatever was on screen where it was.
 
@@ -48,7 +48,7 @@ stateDiagram-v2
 
 `errors` is the built-in error list (`ERROR_VIEW` in `runtime.py`): the title, "could not load", and each error. `previous` is the old UI with the red banner `AppWindow` draws from `App.lastError`: click it to read the whole error.
 
-**The Python backend.** An optional `app.py` defines `Backend(QObject)`, exposed to QML as the context property `backend`. It is compiled and executed afresh on start, on every change to a `.py` file, and on every reload while it is failing (no `.pyc`, a module named `bombadil_app_<name>_<n>`). The runtime points `backend` at the fresh object only once the edited QML compiles, so a failed reload leaves the old UI on its old backend. Before the old backend is dropped, its `QThread`s are asked to quit and waited for up to 2 s, because Qt aborts the process when a running `QThread` is destroyed; one that does not stop keeps its backend alive (`runtime.py:444-459`). An exception in `app.py` or in a backend slot is an app error shown as `app.py:12: NameError: ...` (`python_error`). The bindings below make `app.py` unnecessary for most apps, and the skill says to prefer them.
+**The Python backend.** An optional `app.py` defines `Backend(QObject)`, exposed to QML as the context property `backend`. It is compiled and executed afresh on start, on every change to a `.py` file, and on every reload while it is failing (no `.pyc`, a module named `bombadil_app_<name with hyphens as underscores>_<n>`). The runtime points `backend` at the fresh object only once the edited QML compiles, so a failed reload leaves the old UI on its old backend. Before the old backend is dropped, its `QThread`s are asked to quit and waited for up to 2 s, because Qt aborts the process when a running `QThread` is destroyed; one that does not stop keeps its backend alive (`runtime.py:444-459`). An exception in `app.py` or in a backend slot is an app error shown as `app.py:12: NameError: ...` (`python_error`). The bindings below make `app.py` unnecessary for most apps, and the skill says to prefer them.
 
 ### The app folder
 
@@ -77,12 +77,13 @@ An app of the same name in `~/Apps` takes the place of a built-in one (see [Add 
 |---|---|
 | One window per app | The runtime owns a `QQuickWindow` (`_runtime_window`) and parents the `AppWindow` item into it, so a reload swaps the content in the same window: same place, same size, no flicker. A root that is itself a `Window` (first-milestone apps) keeps that window, which is recreated on each reload. Any other root type is an error: "the root object must be AppWindow" |
 | Identity | `setDesktopFileName("bombadil-app-<name>")` makes the Wayland `app_id`, which Hyprland rules and the bar match on. The window title follows `AppWindow.title` |
-| The drawer | Before the window first maps, `placement.prepare` adds a Hyprland window rule named `bombadil-app-<name>` that opens it floating, centered, at its size, in the special workspace `special:app-<name>`, so it slides in. `show` focuses that workspace, `hide` toggles it off if it is on screen, `toggle` does either, `close` sends SIGTERM and, after 3 s, kills the app with the programs its `Command`s started. Without Hyprland these calls report "Hyprland is not running" and do nothing, `show` still starts a stopped app, and the app opens as a plain window |
+| The drawer | Before the window first maps, `placement.prepare` adds a Hyprland window rule named `bombadil-app-<name>` that opens it floating, centered, at its size, in the special workspace `special:app-<name>`, so it slides in. `show` focuses that workspace, `hide` toggles it off if it is on screen, `toggle` does either, `close` sends SIGTERM and, after 3 s, kills the app with the programs its `Command`s started. Without Hyprland, `prepare`, `show`, `hide` and `toggle` send nothing and report "Hyprland is not running; ..." (`show` and `toggle` still start a stopped app and say so instead), and the app opens as a plain window. `close` does not use Hyprland |
 | Keys and the bar | `Esc` inside an app hides it and `Ctrl+W` closes it (both in `AppWindow.qml`). The bar draws a chip for each running app and a click toggles its workspace; that is the shell's side, in [shell.md](shell.md) |
 | Size | The first size is the root's `width` x `height` after bindings run (560 x 680 when unset), clamped to 240 x 160 .. 3840 x 2160 and shrunk to the focused monitor's room: its logical size less the area the bar reserves, 24 px of margin on each side and 56 px of height for the line above the prompt (`placement.usable_area`, `fit`). After that the size the person leaves is kept. An edit that changes the declared size resizes the window to it |
 | Saved size | 600 ms after a resize the runtime writes `<state>/apps/<name>.window.json` (`width`, `height`, `declared`). A size the runtime shrank to fit the screen is not saved, and a saved size is ignored when `declared` no longer matches |
 | Saved state | `Store` writes `data/<name>.json` 300 ms after a change and on reload and quit; `Vault` writes `data/<name>.vault`; `TextFile` writes where its `path` says. A built-in app's folder is read-only, so its `data/` lives under `<state>/apps/<name>/data/` |
 | One instance | `run` holds an exclusive `flock` on `<state>/apps/<name>.lock`; a second `run` shows the first and exits 0 |
+| Running | An app counts as running when a process command line ends in `bombadil-app run <name>` (`placement.running` runs `pgrep -a -f` and matches `_RUN_RE`). `close`, `bombadil-app list`, `list_apps`, `open_app`, `show` and the bar's x all use it, so a flag placed after the name in how an app is launched breaks them |
 | Leaving | `close()` emits `aboutToReload` once more, saves the size, and destroys the UI so every `Store` saves and every `Command` ends its program before `bombadil-app` leaves with `os._exit` |
 | Errors out | After each load, and when messages arrive, the runtime writes `<state>/apps/<name>.status.json` (`app`, `ok`, `loaded`, `errors`, `warnings`, `console`, `reloads`, `showing`, `size`, `pid`, `at`). A launched app logs to `<state>/apps/<name>.log`, moved to `.log.1` past 1 MB. The status and window files are best effort: a full disk costs a log line, not the app |
 
@@ -106,11 +107,11 @@ flowchart TB
     shell --> theme
 ```
 
-`import Bombadil` is one import for two halves that Qt merges: the QML files listed in `share/qml/Bombadil/qmldir` and the Python types registered under the URI `Bombadil` 1.0 before any QML loads. `engine.qml_dirs` lists the `share/qml` of the checkout ahead of the installed tree (`$BOMBADIL_SHARE/share/qml`, default `/usr/share/bombadil/share/qml`), keeping the ones that exist, and `engine.make_engine` puts them on the import path in that order, so a checkout's kit wins over the installed one. Only `Store.qml` among the kit's files has `import Bombadil`; the others resolve the module's types from their own folder. The style is chosen by the engine, so an app never imports it.
+`import Bombadil` is one import for two halves that Qt merges: the QML files listed in `share/qml/Bombadil/qmldir` and the Python types registered under the URI `Bombadil` 1.0 before any QML loads. `engine.qml_dirs` lists the `share/qml` of the checkout ahead of the installed tree (`$BOMBADIL_SHARE/share/qml`, default `/usr/share/bombadil/share/qml`), keeping the ones that exist, and `engine.make_engine` puts them on the import path in that order, so a checkout's kit wins over the installed one. Among the component files in `share/qml/Bombadil/`, only `Store.qml` has `import Bombadil`; the others resolve the module's types from their own folder. The files in `Style/` are the separate module `Bombadil.Style`: 42 of its 44 files import `Bombadil` for `Theme` (`Page.qml` and `EditMenu.qml` do not). The style is chosen by the engine, so an app never imports it.
 
 ### The kit
 
-All 35 entries of `share/qml/Bombadil/qmldir` (two singletons and 33 types), one line each. The properties and signals of each are in `share/skills/bombadil-apps/references/components.md`, which is also what the agent reads; the look in words is in [the design system](../design-system/README.md).
+All 35 entries of `share/qml/Bombadil/qmldir` (two singletons and 33 types), one line each. The properties and signals of every entry except `Store` are in `share/skills/bombadil-apps/references/components.md`, which is also what the agent reads; `Store` (`name`, `loaded`, `save()`, `reset()`) is in `share/skills/bombadil-apps/references/native.md`. The look in words is in [the design system](../design-system/README.md).
 
 | Group | Component | What it is |
 |---|---|---|
@@ -138,7 +139,7 @@ All 35 entries of `share/qml/Bombadil/qmldir` (two singletons and 33 types), one
 | Data | `DataTable` | A sortable table with a sticky header; columns are `{key, title, width, align, format, mono, sortable}`; scroll position and selection survive a replaced `rows` |
 | Data | `EmptyState` | What a list or screen shows when it is empty or locked: icon, title, text, an optional action button |
 | Dialogs | `ConfirmDialog` | A modal "are you sure" with `title`, `text`, `confirmText`; `danger` makes the confirm button red and gives Cancel the focus; signal `confirmed` |
-| State | `Store` | Every property declared on it is saved to `data/<name>.json` and restored before any `Component.onCompleted`; written in QML over `KitFiles` |
+| State | `Store` | Every writable value property declared on it is saved to `data/<name>.json` and restored before any `Component.onCompleted`, except `name`, `loaded`, names starting with `_`, read-only properties and object-typed ones (`property Item x`); written in QML over `KitFiles` |
 | Charts | `Series` | Records `value` every `interval` ms into `values` (up to `capacity`), for a chart or `Sparkline` |
 | Charts | `LineChart` | Lines over time on one y axis, drawn on a canvas; legend, hover crosshair and tooltip |
 | Charts | `BarChart` | Bars for a few named values, horizontal or vertical |
@@ -154,7 +155,7 @@ Dialogs and menus not in this table are Qt's own, drawn by the style below. A ki
 
 ### Theme and the style
 
-`share/qml/Bombadil/Theme.qml` is a singleton of tokens: surfaces (`bg`, `panel`, `raised`, `overlay`, `sunken`), borders, ink (`fg`, `muted`, `faint`), the accent and the status tones, eight chart colours in `series`, shape and rhythm (`radius`, `radiusSmall`, `pad`, `gap`, `controlHeight`, `rowHeight`), type (Inter, `textSize` 14) and motion (`fast`, `normal`, `slow`). No QML file in `share/qml/Bombadil/` other than `Theme.qml` has a hex colour or a named colour. The shell reads the same file (`import Bombadil as Kit`, with `bin/bombadil-shell` putting `share/qml` on the import path), and `tests/test_theme.py` keeps `shell/DeskTheme.js` equal to the tokens it names.
+`share/qml/Bombadil/Theme.qml` is a singleton of tokens: surfaces (`bg`, `panel`, `raised`, `overlay`, `sunken`), borders, ink (`fg`, `muted`, `faint`), the accent and the status tones, eight chart colours in `series`, shape and rhythm (`radius`, `radiusSmall`, `pad`, `gap`, `controlHeight`, `rowHeight`), type (Inter, `textSize` 14) and motion (`fast`, `normal`, `slow`). No visible colour is hard-coded outside `Theme.qml`: the only literals in the other files of `share/qml/Bombadil/` are `"transparent"` (`Diagram`, `StackedBar`, `Style/FocusRing`, `Style/Frame`, `Style/GroupBox`) and a `"#000"` mask for a cut-out in `LineChart.qml` that is never drawn visibly. Nothing enforces this for the kit. The shell reads the same file (`import Bombadil as Kit`, with `bin/bombadil-shell` putting `share/qml` on the import path), and `tests/test_theme.py` keeps `shell/DeskTheme.js` equal to the tokens it names.
 
 The style is what makes plain Qt Quick controls look like the OS:
 
@@ -165,7 +166,7 @@ The style is what makes plain Qt Quick controls look like the OS:
 
 ### Native bindings
 
-Ten Python types are registered into the `Bombadil` module by `appkit/native/__init__.py`. `register(ctx)` runs once per process, from `engine.make_engine`, and calls each module's own `register(ctx)`. They import PySide6, which is why only `engine`, `runtime`, `check` and `native` do: agentd and os-mcp never load Qt.
+Ten Python types are registered into the `Bombadil` module by `appkit/native/__init__.py`. `register(ctx)` runs once per process, from `engine.make_engine`, and calls each module's own `register(ctx)`. The modules in `native/` import PySide6 at module level. `engine`, `runtime` and `check` import it only inside functions, so agentd and os-mcp can import `runtime` (for `status`) without loading Qt.
 
 | Type | Registered as | What it gives QML | Registered in |
 |---|---|---|---|
@@ -188,12 +189,12 @@ Rules every type follows: nothing is written, connected or sent when `ctx.check`
 
 1. `check.main` copies stdout aside and points fd 1 at stderr, so only the JSON result reaches stdout and what `app.py` prints cannot break it. A watchdog process is forked before Qt starts.
 2. `engine.configure(check=True)` sets `QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software` (unless set) and `BOMBADIL_CHECK=1`, and Qt's own storage (`Settings`, `LocalStorage`) goes to its test location, not the person's configuration.
-3. `Host.start` loads once, with no watcher and no placement. The check then runs the event loop for `--wait` ms (default 1200), resizes to `--size` if given, and saves `grabWindow()` to the PNG.
+3. `Host.start` loads once, with no watcher and no placement. If it loaded, the check resizes to `--size` if given, runs the event loop for `--wait` ms (default 1200), then saves `grabWindow()` to the PNG. A failed load returns `screenshot: null` and `size: null`.
 4. A `Collector` sorts every message into `errors`, `warnings` and `console`. QML load errors and `engine.warnings` arrive with `file:line`, and paths are shown relative to the app. A runtime message is an error when it matches `FATAL` (for example `Error:`, "is not defined", "Cannot assign", "Binding loop", "is not a type") and a warning otherwise; Qt platform noise matching `NOISE` is dropped; `console.log` goes to `console`.
 5. The result is `{app, ok, loaded, errors, warnings, console, screenshot, size, seconds}`, with at most 20 entries of each list. The exit code is 0 when `ok`, 1 otherwise. For example, an `AppWindow` with `Panel { nosuchprop: 3 }` returns `"main.qml:8:13: Cannot assign to non-existent property \"nosuchprop\""` and `ok: false`.
 6. If the app does not settle within `--wait` plus 25 s (a loop that never ends), the watchdog stops the check, kills the programs its `Command`s started, prints the result the check could not (`ok: false`, "the app did not settle ...") and kills it.
 
-A check is read-only. `Store`, `Vault` and `TextFile` keep their writes in memory or drop them, `Agent` never connects, `Clipboard.copy`, `App.notify`, `App.openUrl` and the window calls do nothing, and `Processes.kill` returns false. `Command`s do run, so the screenshot shows real data. `App.checking` and `BOMBADIL_CHECK=1` let an app or the programs it starts tell.
+A check writes nothing through the kit's types. `Store`, `Vault` and `TextFile` keep their writes in memory or drop them, `Agent` never connects, `Clipboard.copy`, `App.notify`, `App.openUrl` and the window calls do nothing, and `Processes.kill` returns false. `Command`s do run, so the screenshot shows real data and whatever their programs do happens; the watchdog kills them if the check hangs. `App.checking` and `BOMBADIL_CHECK=1` let an app or the programs it starts tell.
 
 ### The skill and the examples
 
@@ -207,9 +208,9 @@ The skill `share/skills/bombadil-apps/` teaches the agent to build an app in one
 | `references/runtime.md` | the contract: the app on disk, loading and hot reload, window size, where it shows up, errors and logs, commands and tools |
 | `examples/memory`, `examples/password-manager` | two complete apps (an `app.toml`, a `main.qml` and components) |
 
-It reaches both agent CLIs three ways. `iso/airootfs/etc/skel/.claude/skills/bombadil-apps` and `iso/airootfs/etc/skel/.agents/skills/bombadil-apps` are links to `/usr/share/bombadil/share/skills/bombadil-apps` (the ISO smoke test checks both, `iso/airootfs/usr/local/bin/bombadil-smoke:99`; which CLI reads which folder is that CLI's own convention). `providers.system_prompt()` tells both where the kit and the skill are (`kit_paths()`) and to call `app_guide` first. And `app_guide(topic?)` serves it over MCP, so a provider with no skill support gets it too: with no topic it returns `SKILL.md` and a footer naming the topics; a topic is a reference's file name without `.md` (`components`, `native`, `runtime`) or an example's folder name, which returns each `.qml`, `.js`, `.py`, `.toml` and `.md` file of the example as a fenced block. Topics are read from the folder on each call, so a file added to `references/` becomes a topic with no code change.
+It reaches both agent CLIs three ways. `iso/airootfs/etc/skel/.claude/skills/bombadil-apps` and `iso/airootfs/etc/skel/.agents/skills/bombadil-apps` are links to `/usr/share/bombadil/share/skills/bombadil-apps` (the ISO smoke test checks both, `iso/airootfs/usr/local/bin/bombadil-smoke:99`; which CLI reads which folder is that CLI's own convention). `providers.system_prompt()` gives both the paths of the kit and the skill (`kit_paths()`) and says to read `SKILL.md` first or call `app_guide`. And `app_guide(topic?)` serves it over MCP, so a provider with no skill support gets it too: with no topic it returns `SKILL.md` and a footer naming the topics; a topic is a reference's file name without `.md` (`components`, `native`, `runtime`) or an example's folder name, which returns each `.qml`, `.js`, `.py`, `.toml` and `.md` file of the example as a fenced block. Topics are read from the folder on each call, so a file added to `references/` becomes a topic with no code change.
 
-The examples are built from the skill alone. `memory` shows live RAM (`System`, `Series`, `Processes`, `LineChart`, `StackedBar`, `DataTable`, and a `ProcessDetails.qml` component). `password-manager` is a `Vault` behind a lock screen (`PasswordField`, `ItemList`, `DetailGrid`, `ConfirmDialog`, `LockScreen.qml`, `EntryDialog.qml`). Both load with `ok: true` under `bombadil-app check`, as does `share/app-template/` (the starter `app_template` returns: a `Store`, an `ItemList` and a toast in `main.qml`, and an `app.py` with a `Backend` that `main.qml` does not use). The ISO smoke test copies each example into `~/Apps` and opens it with `open_app` (`iso/airootfs/usr/local/bin/bombadil-smoke:96`).
+Both examples are complete apps that use nothing outside the kit and the native bindings. `memory` shows live RAM (`System`, `Series`, `Processes`, `LineChart`, `StackedBar`, `DataTable`, and a `ProcessDetails.qml` component). `password-manager` is a `Vault` behind a lock screen (`PasswordField`, `ItemList`, `DetailGrid`, `ConfirmDialog`, `LockScreen.qml`, `EntryDialog.qml`). Both load with `ok: true` under `bombadil-app check`, as does `share/app-template/` (the starter `app_template` returns: a `Store`, an `ItemList` and a toast in `main.qml`, and an `app.py` with a `Backend` that `main.qml` does not use). The ISO smoke test copies each example into `~/Apps` and opens it with `open_app` (`iso/airootfs/usr/local/bin/bombadil-smoke:96`).
 
 ## Interfaces other pieces depend on
 
@@ -221,7 +222,7 @@ The examples are built from the skill alone. `memory` shows live RAM (`System`, 
 | `bombadil-app check <target> [--screenshot PNG] [--wait MS] [--size WxH]` | the check above; `target` is an app name, an app folder or a `.qml` file (a gallery); JSON on stdout; exit 0 when `ok` |
 | `bombadil-app list` | one line per app in `~/Apps`: name, `shown` or `running` or blank, title, path |
 | `bombadil-app create <title> <qml> [--python F] [--description T] [--icon NAME]` | `apps.create` from files; prints the folder (there is no `--files`) |
-| `bombadil-app show`, `hide`, `toggle`, `close <name>` | `appkit/placement.py`; `show` starts the app if needed; `close` is what a bar chip's x runs |
+| `bombadil-app show`, `hide`, `toggle`, `close <name>` | `appkit/placement.py`; `show` and `toggle` start the app if it is not running; `close` is what a bar chip's x runs |
 | `bombadil-app status <name>` | `status.json` merged with `running` and the last 40 lines of the log, as JSON. No Qt |
 
 **Agent tools** registered by `appkit/tools.py:147`, described in [os-mcp.md](os-mcp.md): `app_guide`, `create_app`, `check_app`, `open_app`, `show_app`, `hide_app`, `close_app`, `app_status`, `list_apps`, `app_template`. They replace the four first-milestone app tools of `mcp_server.py` and are listed together at the end.
@@ -235,11 +236,14 @@ The examples are built from the skill alone. `memory` shows live RAM (`System`, 
 | `BOMBADIL_SHARE` | the installed tree, default `/usr/share/bombadil`; where the kit and skill are found when the checkout has none |
 | `BOMBADIL_SOCKET`, `BOMBADIL_RUNTIME` | where `Agent` finds agentd's socket |
 | `XDG_DATA_HOME` | where the `.desktop` entry goes, under `applications/` |
+| `HYPRLAND_INSTANCE_SIGNATURE`, `XDG_RUNTIME_DIR` | where `placement` finds Hyprland's socket, `$XDG_RUNTIME_DIR/hypr/<signature>/.socket.sock` (default `/run/user/<uid>`); without the signature or the socket Hyprland counts as not running (`hypr.Hyprland.available`) |
 | `BOMBADIL_CHECK` | `1` during a check (set by `engine.configure`, removed for `run`); read by `app.py` and the programs `Command`s run |
 | `QT_QUICK_CONTROLS_STYLE` | defaults to `Bombadil.Style` |
 | `QT_QPA_PLATFORM`, `QT_QUICK_BACKEND` | a check sets `offscreen` and, unless set, `software` |
 
-**The compositor contract.** Window class and `app_id` `bombadil-app-<name>`; special workspace `special:app-<name>`; a runtime window rule per app, named `bombadil-app-<name>`, added by `placement.prepare`; and a static rule `bombadil-apps` in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` that floats and centers every `bombadil-app-*` window at 540 x 660. The shell builds its chips from toplevels in `special:app-*` workspaces ([shell.md](shell.md)).
+**The compositor contract.** Window class and `app_id` `bombadil-app-<name>`; special workspace `special:app-<name>`; a runtime window rule per app, named `bombadil-app-<name>`, added by `placement.prepare`; and a static rule `bombadil-apps` in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` that floats and centers every `bombadil-app-*` window at 540 x 660. The shell builds its chips from toplevels in `special:app-*` workspaces ([shell.md](shell.md)). The window rule is sent as `eval hl.window_rule({...})` and showing and hiding as `dispatch hl.dsp.focus({...})` and `dispatch hl.dsp.workspace.toggle_special(...)`, which are Lua, so the drawer needs a Hyprland whose dispatchers are Lua (`src/bombadil/hypr.py` says this holds since 0.55).
+
+**Messages to agentd.** `Agent` sends `{type: "prompt", text}` and reads `status` (`busy`, `provider`), `queued` (`turn`) and `event` messages of kind `queued`, `unqueued`, `turn_start`, `text`, `result`, `error` and `turn_end`, matched to its own prompts by `turn`. [agentd.md](agentd.md) owns the protocol; a change to these messages needs a matching change in `appkit/native/agent.py`, which `tests/test_appkit_agent.py` covers.
 
 **Files an app and its tools read and write** are listed under Where state lives. **The QML contract** an agent writes against is `import Bombadil` with an `AppWindow` root, `backend` when `app.py` exists, and the kit and native names above.
 
@@ -266,32 +270,32 @@ The examples are built from the skill alone. `memory` shows live RAM (`System`, 
 
 - [Real native apps](../principles.md#real-native-apps): an app is a folder of QML in a real window, opened by name, with no server and no port. The agent's tool is `create_app`, and the skill forbids web pages, `QtWebEngine` and terminal UIs. The trap is a feature that only works as a local web page or a web view: it does not belong in the kit.
 - [One design language](../principles.md#one-design-language): every component and every style control reads `Theme`, and plain Qt controls are restyled so an app that never mentions colour still matches the shell. The trap is a hex colour or a one-off radius in a component or an app: nothing but this convention stops it in the kit (`tests/test_theme.py` guards only the shell). `Highlighter` is an example of drift: it holds its own hex palette in Python.
-- [Degrade and recover](../principles.md#degrade-and-recover): a reload that fails leaves the last working UI up with the reason; an app that never loaded shows its errors; without Hyprland an app opens as a plain window; a full disk costs the log, not the app. The trap is Qt leaking out of the kit: `agentd` and os-mcp must not import `engine`, `runtime`, `check` or `native`, which import PySide6.
+- [Degrade and recover](../principles.md#degrade-and-recover): a reload that fails leaves the last working UI up with the reason; an app that never loaded shows its errors; without Hyprland an app opens as a plain window; a full disk costs the log, not the app. The trap is Qt leaking out of the kit: `agentd` and os-mcp must never import `PySide6` or `appkit.native`. `runtime`, `engine` and `check` are safe to import because they import PySide6 only inside functions (`tools.py` relies on that for `runtime.status`); a module-level PySide6 import in any of them breaks the rule, and `no_qt` in `tests/test_appkit_tools.py` catches it.
 - [Plain files stay the truth](../principles.md#plain-files-stay-the-truth): an app is text files in a folder, written atomically, and `data/` is never written by `create`. A `Store` keeps a saved value it cannot take, and a file that is not valid JSON is renamed `.bad`, never overwritten. The trap is a "cleanup" that trims the saved file to the declared properties or writes into `data/`.
-- [Nothing runs unseen](../principles.md#nothing-runs-unseen): a running app is a chip the person can close, a `Command` ends with the UI that made it, a check changes nothing, and `Agent.ask` marks its prompt `[from app <name>]`. The trap is a native type that starts background work that outlives its object, or that acts during a check.
+- [Nothing runs unseen](../principles.md#nothing-runs-unseen): a running app is a chip the person can close, a `Command` ends with the UI that made it, a check writes nothing through `Store`, `Vault`, `TextFile`, `Clipboard`, `Agent` or the window calls (the programs a `Command` starts do run, and the watchdog kills them if the check hangs), and `Agent.ask` marks its prompt `[from app <name>]`. The trap is a native type that starts background work that outlives its object, or that writes or sends during a check.
 
 ## Extending it
 
 ### Add a kit component
 
-1. Write `share/qml/Bombadil/<Name>.qml`. Use `Theme`, `Fmt` and sibling components by name, and no colour literals. Import `QtQuick` and, if needed, `QtQuick.Controls` and `QtQuick.Layouts`. The module's own types, native ones included, resolve without `import Bombadil` (`AppWindow.qml` uses `App`, `Editor.qml` uses `TextFile`); only `Store.qml` has that import.
-2. Add `<Name> 1.0 <Name>.qml` to `share/qml/Bombadil/qmldir` (`singleton <Name> 1.0 <Name>.qml` for a singleton). Without the line an app's `import Bombadil` reports "<Name> is not a type" (checked on a copy of the kit on 2026-10-01).
+1. Write `share/qml/Bombadil/<Name>.qml`. Use `Theme`, `Fmt` and sibling components by name, and no colour literals. Import `QtQuick` and, if needed, `QtQuick.Controls` and `QtQuick.Layouts`. The module's own types, native ones included, resolve without `import Bombadil` (`AppWindow.qml` uses `App`, `Editor.qml` uses `TextFile`); of these files only `Store.qml` has that import.
+2. Add `<Name> 1.0 <Name>.qml` to `share/qml/Bombadil/qmldir`. For a singleton, start the QML file with `pragma Singleton` (as `Theme.qml` and `Fmt.qml` do) and add `singleton <Name> 1.0 <Name>.qml`: without the pragma every app fails to load ("qmldir defines type as singleton, but no pragma Singleton found"). Without the qmldir line an app's `import Bombadil` reports "<Name> is not a type". Both were checked on a copy of the kit on 2026-10-01.
 3. If it needs an icon, add `share/qml/Bombadil/icons/<name>.svg` and its name to the icon list at the end of `references/components.md`.
-4. Document it: a `### <Name>` section with a property table under the matching group in `share/skills/bombadil-apps/references/components.md`, and its name in "The kit at a glance" of `SKILL.md` (and the patterns table if it adds a shape). `app_guide("components")` serves that file, so no code changes.
+4. Document it: add a row to the kit table above and update its count ("All 35 entries", two singletons and 33 types); add a `### <Name>` section with a property table under the matching group in `share/skills/bombadil-apps/references/components.md`, and its name in "The kit at a glance" of `SKILL.md` (and the patterns table if it adds a shape). `app_guide("components")` serves that file, so no code changes. For a new `Theme` token, an icon or a `Bombadil.Style` control follow [Extending it](../design-system/README.md#extending-it) in the design system, which owns those registration steps.
 5. Use it in a gallery, `tests/qml/components_gallery.qml` (`charts_gallery.qml` for a chart), in each state it has. Run `bin/bombadil-app check tests/qml/components_gallery.qml --screenshot out.png` and expect `"ok": true` with no errors or warnings, and look at the picture.
 6. If it has logic (selection, keys, focus), add a test to `tests/test_appkit_kit.py` with `run(home, qml, body)`.
 
-Nothing enforces steps 2, 4 and 5 except the first use: no test compares `qmldir` with the reference or the galleries. `Store` and `Diagram` are in no gallery (`Diagram` has `tests/test_diagram_qml.py`).
+Nothing enforces steps 2, 4 and 5 except the first use: no test compares `qmldir` with the reference, the galleries or the table in this document. `Store` and `Diagram` are in no gallery (`Diagram` has `tests/test_diagram_qml.py`).
 
 ### Add a native binding
 
 1. Write `src/bombadil/appkit/native/<thing>.py` with a `QObject` class and a module-level `register(ctx)`. Import `MAJOR, MINOR, URI` from the package. Choose how it is made:
-   - a type QML creates, one per use: `qmlRegisterType(Cls, URI, MAJOR, MINOR, "Name")`; read the context in `__init__` with `native.context()` (`Command`, `Processes`, `TextFile`, `Vault`, `Highlighter`);
+   - a type QML creates, one per use: `qmlRegisterType(Cls, URI, MAJOR, MINOR, "Name")`; read the context in `__init__` with `native.context()` when it needs the app's folders or `check` (`Processes`, `TextFile`, `Vault`); a type that needs neither (`Command`, `Highlighter`) does not read it;
    - a singleton made on the first mention in QML: `qmlRegisterSingletonType(Cls, URI, MAJOR, MINOR, "Name", lambda engine: Cls(ctx))` (`System`, `Clipboard`, `Agent`, `KitFiles`);
    - an instance the runtime also needs: `qmlRegisterSingletonInstance` (only `App`).
 2. Register the module: add it to the import on line 23 and to the tuple on line 25 of `src/bombadil/appkit/native/__init__.py`. That is the only registration point; `engine.make_engine` calls it before the engine exists.
 3. Honour `ctx.check`: no writes, no sockets, no processes you would not want in a screenshot (see `KitFiles.writeText`, `Agent.start`, `Processes.kill`).
-4. Give QML real values: `js_value(self, data)` for arrays and objects, `to_js` so `None` becomes `null`, `from_js` for what QML passes in. End anything you started when the object is destroyed (`Command` does it in `destroyed`), because a hot reload destroys objects.
+4. Give QML real values with `from .files import js_value, to_js, from_js` (as `command.py` and `system.py` do): `js_value(self, data)` for arrays and objects, `to_js` so `None` becomes `null`, `from_js` for what QML passes in. End anything you started when the object is destroyed (`Command` does it in `destroyed`), because a hot reload destroys objects.
 5. Document it in `share/skills/bombadil-apps/references/native.md` and the "Native:" line of `SKILL.md`, and add it to the comment at the top of `share/qml/Bombadil/qmldir`.
 6. Test it in `tests/test_appkit_native.py` (the `kit` and `checking` fixtures), with a case for check mode.
 
@@ -308,7 +312,7 @@ There is a place for one and no app in it on `main`. Put the app in `share/apps/
 ### Add a field to `app.toml`
 
 1. Add the field, with a default, to the `App` dataclass in `src/bombadil/apps.py`, read it in `apps.load`, and write it in `apps.create` (through `_toml_str`, which escapes any text). Add the argument to `create`.
-2. Expose it where it is set: the `create_app` input schema in `appkit/tools.py` (`tests/test_appkit_tools.py` asserts the exact set of properties) and a flag on `bombadil-app create` in `appkit/cli.py`.
+2. Expose it where it is set: the `create_app` input schema in `appkit/tools.py` (`tests/test_appkit_tools.py` asserts the exact set of properties) and a flag on `bombadil-app create` in `appkit/cli.py`. Both call sites must also pass the value to `apps.create`: `create_app(a)` in `tools.py` calls it positionally and the `create` branch of `cli.py` by keyword (`icon=args.icon`), so a field added only to the schema or the flag is dropped.
 3. If QML should see it, carry it on `AppContext` (`appkit/context.py`, including `for_target`, which reads `title` itself) and add a constant `Property` to `App` in `appkit/native/app.py`. If it should follow edits on reload, update it in `Host._refresh_meta` as `title` is.
 4. Document it: "An app on disk" in `references/runtime.md` and the `App` table in `references/native.md`.
 5. Add the field to the round trip in `tests/test_apps.py::test_toml_escaping_survives_any_title`.
@@ -333,7 +337,9 @@ pytest -q tests/test_appkit_kit.py tests/test_appkit_runtime.py tests/test_appki
 bin/bombadil-app check tests/qml/style_gallery.qml --screenshot gallery.png
 ```
 
-The second command needs PySide6, and the `Vault` tests need `cryptography`. On 2026-10-01 the first passed 31 tests and the second 170. `style_gallery.qml`, `components_gallery.qml`, `charts_gallery.qml` (with `--wait 2500`) and `appwindow_demo.qml` each loaded with `ok: true` and no errors or warnings. How to set up and run everything is in [development.md](../contributing/development.md).
+The second command needs PySide6, and the `Vault` tests need `cryptography`. On 2026-10-01 the first passed 31 tests and the second 173. `style_gallery.qml`, `components_gallery.qml`, `charts_gallery.qml` (with `--wait 2500`) and `appwindow_demo.qml` each loaded with `ok: true` and no errors or warnings.
+
+The drawer requests are tested against a fake Hyprland socket (`tests/test_appkit_placement.py`); that a window slides into its special workspace on a real compositor is checked only by the ISO smoke test (`iso/airootfs/usr/local/bin/bombadil-smoke`), which was not run when this page was verified. How to set up and run everything is in [development.md](../contributing/development.md).
 
 ## Known gaps
 
@@ -345,6 +351,6 @@ The second command needs PySide6, and the `Vault` tests need `cryptography`. On 
 - **`Highlighter` keeps its own hex palette** (`native/highlighter.py:18-36`). Only some entries equal `Theme` tokens, and no test ties the two, so a change of theme leaves the editor's colours behind.
 - **`appDir` is set and unused.** `engine.make_engine` sets a root context property `appDir` (`engine.py:69`) that no QML, test or skill file uses; `App.dir` is the documented way.
 - **`pyproject.toml` does not declare `cryptography`.** The `apps` extra lists PySide6 only (`pyproject.toml:9`), and `Vault` needs `cryptography` (`native/vault.py:114`); the ISO installs `python-cryptography`.
-- **A first-milestone cascade placement is still in the tree.** `Hyprland.place_app` and `app_slots` in `src/bombadil/hypr.py` are called only by code the kit has replaced: the fallback in `launcher.py` for when `appkit.placement` cannot be imported (`_placement()`, line 671) and the first-milestone `create_app` and `open_app` in `mcp_server.py` (lines 85 and 92), which `appkit.tools.register` pops from the tool table; see [os-mcp.md](os-mcp.md).
+- **A first-milestone cascade placement is still in the tree.** `Hyprland.place_app` and `app_slots` in `src/bombadil/hypr.py` are called only by code the kit has replaced: the fallback in `launcher.py` for when `appkit.placement` cannot be imported (`_placement()` and the `place_app` call in `_app`) and the first-milestone `create_app` and `open_app` in `mcp_server.py` (lines 85 and 92), which `appkit.tools.register` pops from the tool table; see [os-mcp.md](os-mcp.md).
 
 Other open items are in [known-issues.md](../known-issues.md).

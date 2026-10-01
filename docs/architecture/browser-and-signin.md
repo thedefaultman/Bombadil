@@ -1,13 +1,15 @@
 # Browser and sign-in
 
 > **Status:** Partly shipped
-> **Code:** `src/bombadil/browser.py`, `src/bombadil/signin.py`, `src/bombadil/fake_signin.py`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/hypr.py`, `src/bombadil/appkit/placement.py`, `bin/bombadil-browser`, `shell/SetupChips.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/chromium/policies/managed/bombadil.json`, `iso/airootfs/etc/skel/.config/chromium-flags.conf`, `iso/airootfs/etc/xdg/mimeapps.list`, `iso/airootfs/usr/share/applications/bombadil-browser.desktop`, `iso/airootfs/usr/local/bin/bombadil-setup`
+> **Code:** `src/bombadil/browser.py`, `src/bombadil/signin.py`, `src/bombadil/fake_signin.py`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/hypr.py`, `src/bombadil/appkit/placement.py`, `bin/bombadil-browser`, `shell/SetupChips.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/chromium/policies/managed/bombadil.json`, `iso/airootfs/etc/skel/.config/chromium-flags.conf`, `iso/airootfs/etc/xdg/mimeapps.list`, `iso/airootfs/usr/share/applications/bombadil-browser.desktop`, `iso/airootfs/usr/local/bin/bombadil-setup`, `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/etc/environment`, `src/bombadil/launcher.py`, `src/bombadil/procs.py`, `src/bombadil/config.py`, `src/bombadil/mcp_server.py`, `src/bombadil/narrate.py`, `src/bombadil/appkit/native/app.py`, `shell/PillState.qml`, `bin/bombadil`
 > **Design:** [UX brief, piece 6: first boot happens in the pill](../design/ux-brief.md#6-first-boot-happens-in-the-pill), [Foundation choices, 7: the browser](../design/foundation-choices.md#7-the-browser--chromium-driven-over-cdp), [Passenger brief, piece 3: the machine's hands in the browser](../design/passenger-brief.md#3-the-machines-hands-in-the-browser-and-taking-the-wheel)
-> **Verified:** 2026-10-01 against `main` at `26843d3`
+> **Verified:** 2026-10-01 against `main` at `6150431`
 
-The browser panel is Chromium with its own profile, slid in over the screen as a Hyprland special workspace, and every link that goes through the system's opener routes opens in it (a program that starts a browser itself, such as `chromium URL` typed in a terminal, bypasses them). Provider sign-in runs the provider CLI's own login in a terminal that `agentd` holds and shows the CLI's page in the panel, so first boot needs no terminal and no copied code. The shipped parts are the panel, the link routing, the sign-in and the first-boot flow in the pill. An agent that reads and acts in the browser is designed and has no code: the panel is shown by tools, and the whole-screen `screenshot` tool is the only way the agent sees it, but no tool reads or drives a page (see "What agent-driven browser means in the code").
+The browser panel is Chromium with its own profile, slid in over the screen as a Hyprland special workspace. Every link that goes through the system's opener opens in it (a program that starts a browser itself, such as `chromium URL` typed in a terminal, bypasses this), and provider sign-in runs the provider CLI's own login in a terminal that `agentd` holds and shows the CLI's page in the panel, so first boot needs no terminal and no copied code. The panel, the link routing, the sign-in and the first-boot flow in the pill are shipped; an agent that reads and acts in the browser is designed and has no code (see "What agent-driven browser means in the code").
 
 ## How it works
+
+What this page says about the real `claude` and `codex` logins (the pages they print, the `code#state` text, the success line Codex prints for a stray visit to its success page, `codex login` revoking the stored login) is as observed on 2026-09-27 with Claude Code 2.1.283 and Codex 0.157.1, as recorded in comments in `src/bombadil/providers.py` and in the captured output used by `tests/test_providers.py`. The same holds for Chromium cutting a `/json/new` query at its first `&` (a comment in `tests/test_browser.py`). The real CLIs were not run for this page, and what Chromium does with the flags and policy keys below was not checked (see "Tests").
 
 ### Where a link goes
 
@@ -32,7 +34,7 @@ Not every opener ends in `browser.open_url`: a native app's `App.openUrl` goes t
 
 | Opener | Route |
 |---|---|
-| A CLI or program that honours `$BROWSER` | `/etc/environment` sets `BROWSER=/usr/local/bin/bombadil-browser`. `agentd` also sets `BROWSER` to the path of `bin/bombadil-browser` in the environment of every turn's process and of the sign-in CLI (`_bombadil_browser`). |
+| A CLI or program that honours `$BROWSER` | `/etc/environment` sets `BROWSER=/usr/local/bin/bombadil-browser`. `agentd` also sets `BROWSER` to the absolute path of `bin/bombadil-browser`, or to the bare name `bombadil-browser` when that file is not found next to the package, in the environment of every turn's process and of the sign-in CLI (`_bombadil_browser`). |
 | `xdg-open` and apps with "open in browser" | `/etc/xdg/mimeapps.list` makes `bombadil-browser.desktop` the default for `x-scheme-handler/http`, `x-scheme-handler/https`, `text/html` and `application/xhtml+xml`; its `Exec` is `bombadil-browser %u`. |
 | `bombadil open URL` | Runs `bin/bombadil-browser` with the arguments. |
 | A box in a picture that names an `http` or `https` page | `{"type": "open", "kind": "url"}` reaches `Launcher.open_thing`, which calls `browser.open_url` inside `agentd`, without `bin/bombadil-browser`. |
@@ -154,7 +156,7 @@ sequenceDiagram
 
 ### The cases around it
 
-- **A code page.** Claude's printed URL ends at a page on `platform.claude.com` or `console.anthropic.com` whose address holds `code` and `state` (`Claude.code_from_url` returns `code#state`). `SignIn._look` reads every tab's address, and types the code and Enter into the pty once per code. The code must end in `#` plus the `state` of the page this run opened, and be printable (`_is_mine`), so a code page left in the browser by an earlier sign-in is never typed. Codex has no code page (`Codex.code_from_url` is the base `None`).
+- **A code page.** Claude's printed URL ends at a page on `platform.claude.com` or `console.anthropic.com` whose address holds `code` and `state` (`Claude.code_from_url` returns `code#state`). `SignIn._look` reads every tab's address, and types the code and Enter into the pty once per code. The code must be printable and, if the page this run opened carried a `state` parameter, end in `#` plus that state (`_is_mine`), so a code page left in the browser by an earlier sign-in is never typed. Without a `state`, any printable code is typed. Codex has no code page (`Codex.code_from_url` is the base `None`).
 - **Cancel.** Esc in the pill, the Stop button and the `cancel` chip send `stop` or `setup_action cancel`; both call `AgentD.stop`. With no turn running it calls `SignIn.cancel`, which sets the phase to `ending` at once (`Cancelling the T sign-in`, however slow the browser is) and sets the run's `_over` event, so a page still being opened in a slow browser is dropped and never slid in afterwards. With a turn running, the same keys end the turn first and leave the sign-in. What state a cancelled run ends in follows the rule under "A run that does not end `done`" below; only the `Sign-in cancelled.` line and dropping the prompts that waited for it (`_drop_waiting`) belong to cancel.
 - **Timeout.** `BOMBADIL_SIGNIN_TIMEOUT` seconds (default 600), counted from when the CLI starts, end the run with `timeout`; the line is `The T sign-in timed out.` (tone `error`), unless the login is still valid (next bullet).
 - **A run that does not end `done`.** `AgentD._run_signin` first asks whether the login it was for is still valid (`signed_in()` true, and no turn found it dead, `_login_gone`). If so, whatever the outcome (cancel, timeout or failure), the state is `ready` with no line and the queue stays. Otherwise each outcome ends in `signed_out` with its own line: `The T sign-in timed out.`, `Sign-in cancelled.` (and the prompts that waited are dropped) or `Could not sign in to T: <reason>.`.
@@ -166,7 +168,7 @@ sequenceDiagram
 
 ### What agent-driven browser means in the code
 
-The only way the agent sees the panel is the whole-screen `screenshot` tool, which returns pixels. No tool reads page text, the DOM or the accessibility tree, clicks, types or evaluates script, and no tool targets a tab. What exists:
+`screenshot` is the only os-mcp tool through which the agent sees the panel: it returns the whole screen as pixels. No os-mcp tool reads page text, the DOM or the accessibility tree, clicks, types or evaluates script, and none targets a tab. The agent's own shell is not limited to os-mcp (`providers.system_prompt` gives it full access with passwordless `sudo`), so it can still reach the debugging port, for instance with `curl` on `http://127.0.0.1:9222/json/list`, or take its own `grim` picture; nothing in Bombadil's tools or prompt points it there. What exists:
 
 | Piece | What it does | What it cannot do |
 |---|---|---|
@@ -180,7 +182,7 @@ Running `OsTools().tools` lists 21 tools, and none of them is a browser tool bes
 
 ### First boot
 
-1. The live image boots, greetd starts `start-hyprland` as `user`, and `hyprland.lua` starts `agentd`, `bombadil-shell` and `mako`.
+1. The live image boots, greetd starts `start-hyprland` as `user` (through `systemd-cat`, which sends Hyprland's start-up text to the journal), and `hyprland.lua` starts `agentd`, `bombadil-shell` and `mako`.
 2. `agentd.main` reads `/etc/bombadil/config.toml` and `~/.config/bombadil/config.toml`. Without the user file (and without `BOMBADIL_PROVIDER`) the provider counts as not picked (`Config.configured`), so the state is `choose`.
 3. The pill asks `Which AI should run this computer?` with two big chips. Typing `claude` or `codex` answers too. Prompts typed meanwhile wait in the queue; a `!command` runs.
 4. A pick sends `setup_action provider:<name>`. `AgentD.choose` ends any run, writes `~/.config/bombadil/config.toml` (`config.save_user`), switches the provider (forgetting the old provider's session id when it changes), then runs `check_access(start=True, announce=True)`: `ready` with `T is ready. Ask me for anything.` when already signed in, otherwise `offline` or the sign-in in the diagram above.
@@ -211,7 +213,7 @@ How the built flow differs from the design of piece 6:
 | `never` | The page never finishes (timeouts, a closed panel, cancel). |
 | `fail` | The page comes back with `error=access_denied`; the CLI says `Login failed: access_denied` and exits 1. |
 
-`providers.Fake` connects it: `BOMBADIL_PROVIDER=fake` picks it, `BOMBADIL_FAKE_SIGNIN=<mode>` makes it need signing in (unset, `Fake.signed_in()` is true and `signin_command()` falls back to `auto`), and `BOMBADIL_FAKE_SIGNIN_HOST=host:port` plays an unreachable sign-in server. `Fake` is not in `config.PROVIDERS`, so it cannot be written to a config file.
+`providers.Fake` connects it: `BOMBADIL_PROVIDER=fake` picks it, `BOMBADIL_FAKE_SIGNIN=<mode>` makes it need signing in (unset, `Fake.signed_in()` is true and `signin_command()` falls back to `auto`), and `BOMBADIL_FAKE_SIGNIN_HOST=host:port` plays an unreachable sign-in server. `Fake` is not in `config.PROVIDERS`: `AgentD.choose`, `bombadil provider` and `bombadil signin` refuse any name that is not in it, and a config file that names `fake` makes `config.load` raise `ValueError`. `BOMBADIL_PROVIDER=fake`, which `agentd.main` reads after `config.load`, is the only way to pick it.
 
 ## Interfaces other pieces depend on
 
@@ -226,6 +228,7 @@ Socket messages (newline-delimited JSON on `agentd`'s socket; `agentd.md` owns t
 | `{"type": "prompt", "text"}` | client to `agentd` | The launcher words `sign in`, `log in`, `use codex` and, while `choose`, a provider's name are answered by `agentd` without a turn. |
 | `{"type": "setup", "state", "provider", "title", "line", "tone", "actions", "phase", "view"}` | `agentd` to every client | Sent on connect and on every change. `tone` is `step`, `ask`, `error` or `done`; `phase` and `view` come from the running `SignIn` (`null` without one); `actions` is `[{"id", "label", "style"}]`. |
 | `{"type": "status", "setup": <state>, ...}` | `agentd` to every client | The same state as a field of the status message. |
+| `{"type": "event", "kind": "local", "action": "signin" or "provider", "target", "phase": "done", "ok", "text"}` | `agentd` to every client | What `AgentD.local` sends when a launcher word (`sign in`, `use codex`) is answered without a turn: `text` is the pill line the answer leaves (`Done.` when there is none), and `ok` is false only in the `offline` state. `bombadil ask "use codex"` ends on it. |
 
 Python surface:
 
@@ -235,6 +238,7 @@ Python surface:
 | `browser.Panel` | same | `open`, `tabs`, `shown`, `show`, `hide`, `close_tab`; what `SignIn` and `AgentD` use, and what tests replace. |
 | `browser.DevTools(port, host)` | same | `up`, `tabs`, `new_tab`, `activate`, `close`. |
 | `browser.command()`, `profile_dir()`, `binary()`, `running()`, `same_url()`, `close_spare_tab()`, `find_tab()` | same | The start command, the profile, the binary, process check, address comparison, tab helpers. |
+| `hypr.Hyprland.panel(name, show=True, wait=20.0)`, `hypr.PANELS` | `src/bombadil/hypr.py` | Slide a panel in or out, launching its program when it has no window and is not starting. `PANELS` maps a panel name (`browser`, `files`, `terminal`) to its command (`None` for `browser`, which `browser.command()` supplies). What `show_panel`, `hide_panel`, the launcher words, `Panel` and `placement.open_url` call. Raises `ValueError` for a name not in `PANELS` and `RuntimeError` when its program is not installed. |
 | `signin.SignIn(provider, on_change, *, panel, env, timeout, grace, poll)` | `src/bombadil/signin.py` | One run. `run()`, `cancel()`, `show()`, `browser_url(url)`, `type(text)`; fields `phase`, `view`, `reason`, `hiccup`, `url`, `tab`, `text`, `id`, `running`. |
 | `signin.TIMEOUT`, `URL_GRACE`, `POLL`, `COLUMNS`, `reachable()`, `clean()`, `urls()`, `links()`, `last_words()` | same | Timing and output helpers. |
 | `Provider.signin_command`, `signin_url_kind`, `code_from_url`, `signed_in`, `credentials`, `login_stamp`, `signed_out`, `SIGNED_OUT`, `ends_when_signed_out`, `login_replaces`, `signin_error`, `SIGNIN_ERRORS`, `signin_host` | `src/bombadil/providers.py` | What a provider supplies to be signed in. |
@@ -251,7 +255,7 @@ Environment variables:
 | `BOMBADIL_SIGNIN_TIMEOUT` | `signin.py` at import | Seconds a run may last (default 600). |
 | `BOMBADIL_PROVIDER` | `agentd.main` | Picks the provider and counts as "picked". |
 | `BOMBADIL_FAKE_SIGNIN`, `FAKE_SIGNIN_DELAY`, `BOMBADIL_FAKE_SIGNIN_HOST` | `providers.Fake`, `fake_signin.py` | Test logins (see above). |
-| `BOMBADIL_SOCKET`, `BOMBADIL_DATA`, `XDG_DATA_HOME`, `HYPRLAND_INSTANCE_SIGNATURE` | `paths.py`, `hypr.py` | Where `agentd`'s socket is, where the profile lives, and whether Hyprland can be asked. |
+| `BOMBADIL_SOCKET`, `BOMBADIL_RUNTIME`, `BOMBADIL_DATA`, `XDG_DATA_HOME`, `HYPRLAND_INSTANCE_SIGNATURE` | `paths.py`, `hypr.py` | Where `agentd`'s socket is (`BOMBADIL_SOCKET`, else `agentd.sock` in `BOMBADIL_RUNTIME`, default `$XDG_RUNTIME_DIR/bombadil`), where the profile lives, and whether Hyprland can be asked. |
 
 Fixed names: window class `bombadil-browser` (`browser.CLASS`), special workspace `special:browser`, window rule `panel-browser`, key `SUPER + B`, DevTools port `9222`, and `procs.PROTECTED_ARGS`, which holds `--class=bombadil-browser`. Stop spares the panel's Chromium only because of that entry, so a change to `browser.CLASS` or to the `--class=` flag in `browser.command()` needs the same change there, or Stop kills the browser a turn opened.
 
@@ -260,6 +264,7 @@ Fixed names: window class `bombadil-browser` (`browser.CLASS`), special workspac
 | What | Where |
 |---|---|
 | The browser profile (cookies, history, logins to websites) | `~/.local/share/bombadil/browser` (`browser.profile_dir()`: `paths.data_dir() / "browser"`). |
+| `agentd`'s socket | `$XDG_RUNTIME_DIR/bombadil/agentd.sock` (`paths.socket_path()`; `/run/user/<uid>` when `XDG_RUNTIME_DIR` is unset). The socket `bin/bombadil-browser`, `bombadil` and the shell connect to. |
 | Open tabs | Inside Chromium; read at `http://127.0.0.1:9222/json/list`. |
 | Whether the panel is on screen | Hyprland's special workspace `special:browser`; `Panel.shown()` asks `j/monitors`. |
 | The setup state and the running sign-in | `agentd`'s memory (`AgentD.access`, `chosen`, `signin`, `_login_gone`). Lost on restart and found again by `check_access`. |
@@ -300,9 +305,10 @@ Files in the image (`iso/airootfs/`), see [iso-and-install.md](iso-and-install.m
 5. If the login ends on a code to paste, write `code_from_url(url)` returning exactly the text to type (`SignIn` adds Enter). Otherwise keep the base `None`.
 6. Write `signed_in()` as `True`, `False` or `None` from the CLI's own status command (`self._status([...])`), and set `credentials` to the CLI's login file so that a login which changed the file is noticed through its modification time.
 7. For turns, add `SIGNED_OUT` patterns (and a `signed_out` event from `parse` when the CLI has a structured sign). Set `ends_when_signed_out` if the CLI retries for a while, and `login_replaces` if its login signs the stored one out as it starts. Add `SIGNIN_ERRORS`, pairs of a regular expression and one plain line; the first match wins, else the last readable line of output shows.
-8. Register it: `PROVIDERS` at the end of `providers.py` and `PROVIDERS` in `src/bombadil/config.py` (these decide the first-boot chips, the names `config.load` accepts and the arguments of `bombadil provider`), the words in `launcher.PROVIDER_WORDS`, `sysmap.PROVIDER_HOSTS` (the API host the network picture probes; an unknown provider falls back to Claude's entry), the two places that name the CLIs, the `select provider in claude codex` list in `bombadil-setup` and the `npm install` line in `scripts/build-iso.sh`, and, for a CLI that `npm` puts under a new scope in `/usr/lib/node_modules/`, an entry for that scope in `file_permissions` in `iso/profiledef.sh` (`mkarchiso` copies `airootfs` without modes, so what runs needs `0:0:755`; `@anthropic-ai/` and `@openai/` are listed).
-9. Test it with a subclass of `providers.Fake` like `Browsing` in `tests/test_agentd_signin.py` for the flow, and with captured CLI output for the hooks, as in `tests/test_providers.py`.
-10. Update the expected chips in `test_first_boot_asks_which_ai_and_holds_prompts_until_signed_in` (`tests/test_agentd_signin.py`), which asserts the exact list `["provider:claude", "provider:codex"]`; it fails once a third provider is in `config.PROVIDERS`.
+8. Register it: `PROVIDERS` at the end of `providers.py` and `PROVIDERS` in `src/bombadil/config.py` (these decide the first-boot chips, the names `config.load` accepts and the arguments of `bombadil provider`), the words in `launcher.PROVIDER_WORDS`, `sysmap.PROVIDER_HOSTS` (the API host the network picture probes; an unknown provider falls back to Claude's entry), the two files that name the CLIs (in `bombadil-setup`, the `select provider in claude codex` list and a branch in both of its `case "$provider"` blocks, the first of which runs `npm install -g` when the CLI is missing and the second the no-daemon login, `claude auth login` or `codex login`; and the `npm install` line in `scripts/build-iso.sh`), and, for a CLI that `npm` puts under a new scope in `/usr/lib/node_modules/`, an entry for that scope in `file_permissions` in `iso/profiledef.sh` (`mkarchiso` copies `airootfs` without modes, so what runs needs `0:0:755`; `@anthropic-ai/` and `@openai/` are listed).
+9. Add the CLI's login folder or file to the carry-over list (`for f in .claude .claude.json .codex .config/bombadil`) in `iso/airootfs/usr/local/bin/bombadil-install`, or an installed system starts signed out of the new provider (see "Where state lives").
+10. Test it with a subclass of `providers.Fake` like `Browsing` in `tests/test_agentd_signin.py` for the flow, and with captured CLI output for the hooks, as in `tests/test_providers.py`.
+11. Update the expected chips in `test_first_boot_asks_which_ai_and_holds_prompts_until_signed_in` (`tests/test_agentd_signin.py`), which asserts the exact list `["provider:claude", "provider:codex"]`; it fails once a third provider is in `config.PROVIDERS`.
 
 ### Handle another kind of sign-in page
 
@@ -330,7 +336,7 @@ From a process, run `bombadil open URL` or the program named by `$BROWSER`. From
 1. Add the name to `hypr.PANELS` with its command as a list, or `None` and a branch in `hypr.panel_command` as `browser` has. Give the command a `--class=` or `--app-id=` argument: `hypr._launching` takes the first such argument and searches for it with `pgrep -f`, and without it a second `show_panel` while the app is still starting launches a duplicate.
 2. In `hyprland.lua` add a `panel-<name>` window rule for the window's class or app id with `workspace = "special:<name> silent"` (`silent`, as the existing rules have, so the window is not focused as it lands), and a key bind on `hl.dsp.workspace.toggle_special("<name>")` if wanted. A key bind only toggles; it launches nothing.
 3. Add the marker, as one whole argument, to `procs.PROTECTED_ARGS`, or Stop kills the window a turn opened (`tests/test_procs.py`).
-4. Add the spoken words to `launcher.PANEL_WORDS` and `launcher.PANEL_TITLES`, and the line words to `narrate.PANEL_WORDS`. `show_panel` and `hide_panel` take their names from `sorted(hypr.PANELS)`; see [os-mcp.md](os-mcp.md).
+4. Add the spoken words to `launcher.PANEL_WORDS` and `launcher.PANEL_TITLES`, and the line words to `narrate.PANEL_WORDS`. `show_panel` and `hide_panel` take the names in their `enum` from `sorted(hypr.PANELS)`, so the new panel is offered with no change; the description string of `show_panel` in `src/bombadil/mcp_server.py` names the panels as the literal text `(browser, terminal, files)` and needs the new name added by hand. See [os-mcp.md](os-mcp.md).
 
 ## Tests
 
@@ -338,23 +344,27 @@ From a process, run `bombadil open URL` or the program named by `$BROWSER`. From
 python3 -m pytest -q tests/test_browser.py tests/test_signin.py tests/test_agentd_signin.py
 ```
 
-These need `pytest` and `pytest-asyncio` (the `dev` extra in `pyproject.toml`) and no Chromium, no Hyprland and no provider account. The three files hold 10, 16 and 28 tests; on 2026-10-01 all 54 passed in about 53 s.
+These need `pytest` and `pytest-asyncio` (the `dev` extra in `pyproject.toml`) and no Chromium, no Hyprland and no provider account. The three files hold 10, 16 and 26 test functions. That is 54 tests on a host with three Python interpreters, because `test_agentd_exits_on_sigterm_with_the_bar_connected` runs once for the current Python and for each `python3.12`, `python3.13` and `python3.14` on `PATH`, so a host with one interpreter collects 52. On 2026-10-01 all 54 passed in about 54 s on a host with Python 3.11, 3.12 and 3.13.
 
 | File | Covers |
 |---|---|
-| `tests/test_browser.py` | A stand-in for the DevTools port that parses `/json/new` as Chromium does (PUT only, query cut at the first `&`): a sign-in URL opens whole, the last tab is never closed, a browser that is not running has no tabs and one that runs but does not answer has `None`, the command keeps its profile and `--no-first-run`, the three `RuntimeError` cases, and a page nobody wants any more never slides the panel in. |
+| `tests/test_browser.py` | A stand-in for the DevTools port that parses `/json/new` as Chromium does (PUT only, query cut at the first `&`): a sign-in URL opens whole, the last tab is never closed, a browser that is not running has no tabs and one that runs but does not answer has `None`, the command keeps its profile and `--no-first-run`, three of the four `RuntimeError` cases of `open_url` (`chromium is not installed` is the untested one), and a page nobody wants any more never slides the panel in. |
 | `tests/test_signin.py` | `SignIn` against `fake_signin.py` and a `FakePanel`: the page from `$BROWSER` returns to the CLI, a printed page that ends on a code gets the code typed, timeout, a refused login, hidden and closed views with `show`, a missing CLI, `reachable`, a page that would not open, a code page left from an earlier run, cancel while the browser is still opening, a double tap, a tab that will not close. |
-| `tests/test_agentd_signin.py` | `agentd` with the fake provider: first boot, held prompts, Esc, hidden panel, timeout, failure reasons, no network then back, a turn that finds the login gone (once, not in a loop, not after a stop, not for a provider switched meanwhile), links from `bombadil-browser`, a terminal login, `login_replaces`, `Cancelling` at once, and `SIGTERM` with the bar connected. |
-| `tests/test_providers.py` | The sign-in hooks of Claude and Codex from captured output: `signin_url_kind`, `code_from_url`, `signin_error`, `signed_in`. |
+| `tests/test_agentd_signin.py` | `agentd` with the fake provider: first boot, held prompts, Esc, hidden panel, timeout, failure reasons, no network then back, a turn that finds the login gone (once, not in a loop, not after a stop, not for a provider switched meanwhile), links from `bombadil-browser`, a terminal login, `login_replaces`, `Cancelling` at once, and `SIGTERM` with the bar connected. Here the fake login's `$BROWSER` is the real `bin/bombadil-browser` (see below). |
+| `tests/test_providers.py` | The sign-in hooks of Claude and Codex from captured output: `signin_url_kind`, `code_from_url` and `signin_error` for both, and `signed_in` for Codex only (`test_codex_signed_in_asks_codex_login_status`). `Claude.signed_in` (`claude auth status`, with the `loggedIn` JSON fallback) has no test. |
 | `tests/test_pill_qml.py` | The shell's side: the two big chips, `setup_action` messages, `Cancel`, `Show sign-in`, the offline and error lines (offscreen Qt). |
-| `tests/test_mcp_server.py` (`test_panels`) | `show_panel` and `hide_panel` call `Hyprland.panel`. |
-| `iso/airootfs/usr/local/bin/bombadil-smoke` | In a booted image: the browser window lands in `special:browser`, the `signin-*` checks run the whole round trip against `fake_signin.py` and read the page's address from `127.0.0.1:9222`. How to run it is in [development.md](../contributing/development.md). |
+| `tests/test_mcp_server.py` (`test_panels`) | `show_panel` and `hide_panel` call `Hyprland.panel` (a fake that overrides it). `Hyprland.panel` itself has no direct test: `tests/test_hypr.py` has none. |
+| `tests/test_appkit_placement.py`, `tests/test_appkit_runtime.py` (`test_open_url_validates_and_opens_in_the_browser_panel`) | `placement.open_url`: its scheme rule, the command it runs, and that the browser it starts is not the app's child. |
+| `tests/test_launcher.py` | `Launcher.open_thing("url", ...)` calls `browser.open_url`, and says why when it raises. |
+| `tests/test_procs.py` | Stop spares a `--class=bombadil-browser` window (`PROTECTED_ARGS`, `procs._is_window`). |
+| `tests/test_narrate.py` | The line for an `open_url` tool call (`Opening x.com`), a tool that os-mcp does not register. |
+| `iso/airootfs/usr/local/bin/bombadil-smoke` | In a booted image: the browser window lands in `special:browser`, the panel slides in and out (`show_panel`, `hide_panel`, the launcher word `browser` after a Super tap or Alt+Space), and the `signin-*` checks run the whole round trip against `fake_signin.py` and read the page's address from `127.0.0.1:9222/json/list`. The `signin-codex-*` and `signin-claude-*` checks also drive the real `codex` and `claude` logins as far as their page (an address on `auth.openai.com` or `chatgpt.com`, or on `claude.com`, `claude.ai` or `platform.claude.com`; or the `No internet` line when the machine is offline), then cancel, and check that Claude's login process ends and that Codex's port 1455 is freed. This is the only live check of the real CLIs' pages. How to run it is in [development.md](../contributing/development.md). |
 
-No test runs `bin/bombadil-browser` itself (its argument fix-up, its exit codes, its no-daemon fallback): its only exercise is `bombadil-smoke`, through `fake_signin.py` handing its page to `$BROWSER`. No test reads the policy file, `chromium-flags.conf`, `mimeapps.list`, the `.desktop` file or `/etc/environment`, and none checks what Chromium does with the flags and policy keys above, that `/etc/environment` reaches the greetd session, or that `xdg-open` is in the image (`iso/packages.x86_64` lists `chromium` and no `xdg-utils`). `bombadil-smoke` only checks that the browser window lands in `special:browser`.
+`tests/test_agentd_signin.py` runs `bin/bombadil-browser` as the fake login's `$BROWSER`: `AgentD.start_signin` puts its absolute path in `BROWSER`, `fake_signin.py` runs it with the page URL, and it reaches `agentd` through `tell_agentd` with a `signin` tag. No test asserts its argument fix-up, its exit codes (2 with no URL, 1 when `agentd` did not answer and `browser.open_url` raised) or its no-daemon fallback. No test reads the policy file, `chromium-flags.conf`, `mimeapps.list`, the `.desktop` file or `/etc/environment`, and none checks what Chromium does with the flags and policy keys above, that `/etc/environment` reaches the greetd session, or that `xdg-open` is in the image (`iso/packages.x86_64` does not list `xdg-utils`; whether `chromium` pulls it in was not checked). `bombadil-smoke` does not check the policy keys, `chromium-flags.conf`, `mimeapps.list`, `/etc/environment` or `xdg-open` either.
 
 ## Known gaps
 
-- **No browser tool for the agent.** `src/bombadil/mcp_server.py` registers `show_panel` and `hide_panel` and no tool that opens a URL, reads a page or acts in one (the whole-screen `screenshot` is the only view of it); `browser.DevTools` (`src/bombadil/browser.py`) is an HTTP client for tabs only.
+- **No browser tool for the agent.** `src/bombadil/mcp_server.py` registers `show_panel` and `hide_panel` and no tool that opens a URL, reads a page or acts in one (the whole-screen `screenshot` is the only os-mcp view of it); `browser.DevTools` (`src/bombadil/browser.py`) is an HTTP client for tabs only.
 - **No Wi-Fi chips or password field in the pill.** The `offline` state offers a `Wi-Fi` chip that opens `nmtui connect` in the details drawer (`src/bombadil/agentd.py` `_describe`, `src/bombadil/launcher.py` `_wifi`).
 - **No example chips and no first-day line after sign-in.** A search of `shell/`, `src/` and `share/` finds neither the example prompts nor the line.
 - **`SUPER + B` is a plain toggle.** `hl.dsp.workspace.toggle_special("browser")` in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` does not go through `Hyprland.panel`, so it never launches Chromium and, with no browser window, flips an empty `special:browser`.

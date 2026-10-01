@@ -1,9 +1,9 @@
 # Cards and pictures
 
 > **Status:** Partly shipped
-> **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `shell/CardHost.qml`, `shell/StatusLine.qml`, `share/qml/Bombadil/Diagram.qml`
+> **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/launcher.py` (picture words, the drawer), `src/bombadil/agentd.py` (cards, pictures, receipts, streaming), `src/bombadil/watch.py` (Details), `bin/bombadil` (`view`), `shell/CardHost.qml`, `shell/StatusLine.qml`, `share/qml/Bombadil/Diagram.qml`
 > **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch)
-> **Verified:** 2026-10-01 against `main` at `26843d3`
+> **Verified:** 2026-10-01 against `main` at `6150431`
 
 A card is validated data for a picture that the shell draws above the status line. One card type exists,
 `diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`), and every card carries a text
@@ -12,6 +12,10 @@ exact questions typed in the pill such as "how am I connected" (no turn, no mode
 a turn. The same piece keeps why the agent did each step (`because`) and what it had read from outside
 (`after`), so a person can see the road without asking. Nothing in it asks a model: pictures of the machine are
 read from real commands, and a reason is the agent's own sentence from just before it acted.
+
+What running the readers on a real machine taught (the C-locale boot tree, PipeWire levels, unit names with capitals,
+the `alone` receipt rule, the card placed once) is written up in [pictures.md](../pictures.md); this page links to it
+instead of repeating it.
 
 ## What is built and what is designed
 
@@ -67,7 +71,9 @@ flowchart LR
    `_show` with no socket hop.
 5. **The shell draws it.** `PillState._takeCard` keeps one card. `CardHost.qml`, loaded through a `Loader`, holds
    the title, a source label, a close mark, the kit's `Diagram` inside a scroll area (the shell caps the host at 60
-   percent of the screen height, and a taller picture scrolls), and the `say` line. The
+   percent of the screen height, and a taller picture scrolls), and the `say` line, which shows at most three lines
+   (`maximumLineCount: 3`). `shell.qml` makes the host as wide as the pill (`Layout.maximumWidth: Math.max(360,
+   win.pillMax)`), so a picture stays between the desk's rails. The
    `Diagram` draws the card and places its boxes; Python computes only the `rank` and `col` of a `layers` card and the
    `row` pairing of a `compare` card.
 
@@ -130,7 +136,7 @@ saying what and why, so the agent can correct the call in one go. This is what i
 | `side` | `before` or `after`; required on every node of a `compare` card |
 | `key` | `compare`: the same key on both sides puts the two boxes on one row (cut at 40 characters) |
 | `time` | `timeline`: text such as `0.4 s`, cut at 24 characters |
-| `weight` | `timeline`: a number (anything else is an error); a negative one or `nan` becomes 0 without an error. The bar is as long as this against the longest step |
+| `weight` | `timeline`: anything `float()` reads (numbers, numeric strings such as `"3"`, `true` and `false`); any other value is an error ("weight must be a number"). A negative value or `nan` becomes 0 without an error. The bar is as long as this against the longest step |
 | `note` | a line under the box, cut at 60 characters |
 | `volatile` | a boolean that is kept on the node; nothing reads it (see Known gaps) |
 | `opens` | `{"kind", "value"}`, what a click opens (next table) |
@@ -170,7 +176,7 @@ stamps an `id` (`card-<n>`, or `stream-<tool id>` when the card was drawn while 
 |---|---|---|
 | `chain` | the path, boxes left to right, wrapping to rows when they do not fit | `Diagram.qml` |
 | `layers` | a link from a box to what it needs; a box sits below everything that points at it | `cards.rank_layers` writes `rank` and `col`: cycles lose the edge that closes them, rank is the longest path, four sweeps order each row to avoid crossings |
-| `compare` | none; `side` puts a box left (`before`) or right (`after`), `key` pairs rows | `cards.validate_diagram` writes `row`; `Diagram.qml` places it |
+| `compare` | none; `side` puts a box left (`before`) or right (`after`), `key` pairs rows | `cards.validate_diagram` writes `row`; `Diagram.qml` places it: two columns of at most `maxCompareWidth` (230 px), centred, with `compareGap` (76 px) between them for the arrow |
 | `timeline` | none; one row per box with its `time`, `label`, a bar for `weight` and `sub` on the right | `Diagram.qml` |
 
 How `Diagram.qml` draws a `state` (`_tone` and `_mark`):
@@ -209,7 +215,8 @@ yields `tool_start` and `tool_input` events (the call's JSON as it is written). 
    call), when the turn ends with the draft still open, or (in the shell) when the connection to `agentd` is lost.
 
 In the shell a draft shows the label "drawing…", and each box fades in as it arrives. Because a draft has no links and no `rank`,
-a `layers` draft shows its boxes in one row until the finished card replaces it.
+a `layers` draft shows its boxes in one row until the finished card replaces it. A `chain` draft (`partial` and no links)
+reserves room for link labels of about 14 characters, so the finished chain does not wrap again when its links arrive.
 
 ### Replacing in place
 
@@ -280,15 +287,16 @@ sentence ("Could not read the disks: lsblk did not answer.").
 | `kind` | Reads | Budget | The picture |
 |---|---|---|---|
 | `network` | `ip -j route get 1.1.1.1`, `ip -j route show default`, three `nmcli` queries (devices, the Wi-Fi in use with its signal, connectivity; no rescan), `/etc/resolv.conf`, and a TCP connection to the active provider's host on port 443 (`api.anthropic.com` for Claude, `api.openai.com` for Codex) | 0.5 s, and up to 1.6 s (`PROBE_BUDGET`) for the provider connection when there is a route | `chain`: this machine, a VPN tunnel box when the route runs over a `wg`, `tun`, `tap`, `tailscale`, `ppp`, `vpn` or `zt` device, Wi-Fi (signal under 40 percent is `warn`) or cable, router (with the DNS servers as a note), internet, and the provider last. The first broken link is `bad` and lit, with one sentence in `say`. A captive portal is `warn` |
-| `boot` | `systemd-analyze critical-chain --no-pager` and `systemd-analyze time --no-pager` | 4.0 s (`BOOT_BUDGET`): the boot record is slow to read and does not change | `timeline`: one row per unit on the critical chain, at most 12 (the slowest 11 and the last, in order), each with its start time and a bar for how long it took. The slowest unit is `warn` and lit when it took at least a second. Each row opens its unit. A live system has no boot record, and the answer says so |
-| `service` | `systemctl show` for the unit (`target` required, `bluetooth` and `bluetooth.service` both work), then the states of what it `Requires` and `Wants` (at most 8, without the common noise such as `sysinit.target`), and `pacman -Qo` for the package that owns a unit file under `/usr/` | 0.5 s | `layers`: the unit on top, its dependencies below, each with its state (`active` ok, `activating` warn, `failed` bad; a required dependency that is failed or inactive is `bad` and lit). Each box opens its unit. The card carries `target` |
+| `boot` | `systemd-analyze critical-chain --no-pager` and `systemd-analyze time --no-pager`; the tree is read both as the ASCII marks of the C locale and as box-drawing marks | 4.0 s (`BOOT_BUDGET`): the boot record is slow to read and does not change | `timeline`: one row per unit on the critical chain, at most 12 (the slowest 11 and the last, in order), each with its start time and a bar for how long it took. The slowest unit is `warn` and lit when it took at least a second. Each row opens its unit. A live system has no boot record, and the answer says so |
+| `service` | `systemctl show` for the unit, with its state and its start time (`ActiveEnterTimestamp`); `target` is required, `bluetooth` and `bluetooth.service` both work, and a name that is not found is looked up again ignoring case (`_spelt_like`), so `networkmanager` is drawn as `NetworkManager.service`. Then the states of what it `Requires` and `Wants` (at most 8, without the common noise such as `sysinit.target`), and `pacman -Qo` for the package that owns a unit file under `/usr/` | 0.5 s | `layers`: the unit on top, its dependencies below, each with its state (`active` ok, `activating` warn, `failed` bad, any other state warn; a required dependency that is failed or inactive is `bad` and lit). Each box opens its unit. The card carries `target`, the unit as systemd spells it |
 | `disks` | `lsblk -J -b` and `findmnt -b -J` | 0.5 s | `layers`: disks of at least 1 MB (no `zram`, `loop`, `ram` or floppy), their partitions and encrypted or logical volumes, with mount point, filesystem, size and how full. Amber from 90 percent, red from 97 percent; read-only filesystems such as `squashfs` and `iso9660` never warn. Each mounted box opens its mount point |
-| `sound` | `pw-dump` (PipeWire) | 0.5 s | `layers`: up to 4 speakers (the ones playing and the default), each with its volume or "muted", and up to 6 playing apps per speaker linked to it. A muted speaker is `warn` |
+| `sound` | `pw-dump` (PipeWire) | 0.5 s | `layers`: up to 4 speakers (the ones playing and the default), each with its volume (the node's master `volume` times its highest channel volume, as a cube root percent, which is what a slider shows) or "muted", and up to 6 playing apps per speaker linked to it. A muted speaker is `warn` |
 | `screens` | `hyprctl -j monitors` | 0.5 s | `chain`, unlinked: the monitors left to right with mode, refresh rate and scale; the focused one is `active`, a disabled one `warn` |
 
 `sysmap.capture(kind, target)` returns `{"card", "facts"}`. The card has `source` set to the kind. `facts` are the
 plain values the card was made from, `{"key", "label", "value"}`, with `volatile: true` on values that move on their
-own (a disk's used space); receipts compare them (see Receipts).
+own (a disk's used space); receipts compare them (see Receipts). A running service also has a fact `since` ("up since
+<time>") marked `alone: true`, with a `say` sentence (see Receipts).
 
 What the model never does: it does not capture, parse, lay out or caption anything. `apply_overrides` lets the agent
 choose only `highlight` (ids that exist; an unknown id leaves the machine's own highlight) and `say` (at most 160
@@ -301,9 +309,10 @@ Picture words).
 
 ### Picture words
 
-`launcher._picture` matches the typed text exactly, after it is lowercased, its spaces are folded and `. ! ? , ; :` are
-stripped from its ends (a curly apostrophe counts as a straight one). Any other wording goes to the agent, which has
-`system_map` for the same pictures.
+`launcher._picture` matches the fixed phrases exactly, after the typed text is lowercased, its spaces are folded and
+`. ! ? , ; :` are stripped from its ends (a curly apostrophe counts as a straight one). The service form is matched on the
+text as typed, in any case, because unit names have capitals. Text with any other non-ASCII character is never a picture word.
+Any other wording goes to the agent, which has `system_map` for the same pictures.
 
 | Picture | Phrases (`launcher.PICTURE_PHRASES`) |
 |---|---|
@@ -314,8 +323,11 @@ stripped from its ends (a curly apostrophe counts as a straight one). Any other 
 | `screens` | my screens, my monitors, screen map, what screens do i have |
 | `service` | `what does [the] <unit> [service] need`, `depend on` or `require` instead of `need` (`launcher._NEEDS_RE`) |
 
-For the service form the unit must exist (`sysmap.service_exists` asks `systemctl show -p LoadState` and wants
-`loaded`); a name without a unit suffix gets `.service`. When the text is also the name or title of an installed app,
+For the service form the unit must exist, found with `sysmap.find_unit`: it tries the name (a name without a unit suffix
+gets `.service`) with `systemctl show -p LoadState` and wants `loaded`, and failing that looks for the name ignoring case in
+`systemctl list-unit-files` and `systemctl list-units --all`. It returns the unit as systemd spells it, so "what does
+networkmanager need" draws `NetworkManager` and the action's target is `service:NetworkManager`. `capture_service`
+resolves a name that is not found the same way, so `system_map` with target `networkmanager` also works. When the text is also the name or title of an installed app,
 the app wins. `agentd.picture` captures the picture without a model, shows it, and says "Showing ..." in the line. It
 also keeps a note (the typed words and the first 400 characters of the picture's text twin), and the next prompt to the
 agent starts with `[Done by the user without you since your last turn: ...]`, so a follow-up such as "why is that red"
@@ -346,7 +358,7 @@ log.
 | `kind` | Comes from | `outside` when |
 |---|---|---|
 | `web` | `WebFetch`, `curl`, `wget`, `aria2c`, `xh`, `http`, `https`, the URL of a `git clone` | the host is not `localhost`, `127.0.0.1`, `::1` or `0.0.0.0`. The label is host and path only, never a credential or query |
-| `file` | `Read`, `NotebookRead`, and `cat`, `less`, `more`, `head`, `tail`, `bat`, `zcat`, `xxd`, `hexdump` (up to 3 files) | the file's `user.xdg.origin.url` extended attribute names a host (a download); `origin` then holds that host |
+| `file` | `Read`, `NotebookRead`, and `cat`, `less`, `more`, `head`, `tail`, `bat`, `batcat`, `zcat`, `xxd`, `hexdump` (up to 3 files) | the file's `user.xdg.origin.url` extended attribute names a host (a download); `origin` then holds that host |
 | `search` | `WebSearch` (the query, at most 50 characters) | always |
 | `screen` | the `[Screen]` block the "this" chip adds to a prompt | it holds a page address or a selection |
 | `session`, `app` | a prompt marked `[asked by <who>, untrusted]` | always |
@@ -386,8 +398,8 @@ the agent called `show_card` or `system_map` in the turn.
 
 ### Receipts
 
-A receipt is a `compare` card, titled with the part's picture title and ", before and after", of what a turn changed
-in a part of the machine it touched.
+A receipt is a `compare` card, titled with the part's picture title (the unit's short name for a service, such as
+"bluetooth") followed by ", before and after", of what a turn changed in a part of the machine it touched.
 
 1. At `turn()` start, unless the turn is a typed `!command` or `explain` is `brief`, `agentd` starts
    `sysmap.snapshot` for `BEFORE_KINDS` (`network`, `disks`, `sound`, `screens`) in the background. Nobody waits for
@@ -400,7 +412,10 @@ in a part of the machine it touched.
    the turn touched them. The first part that changed wins; if none did, up to two services are compared (a service
    caught while `activating` or `reloading` is not a valid before).
 4. `sysmap.receipt` compares only facts without `volatile`, by `key`: added, removed or changed values. It returns
-   `None` when nothing changed, so a signal, a latency or a used-space figure moving is never a change. For at most 6
+   `None` when nothing changed, so a signal, a latency or a used-space figure moving is never a change. A fact marked
+   `alone` (a service's start time) counts only when nothing else changed: next to another change it is left out. On its
+   own, a restart that leaves the service as it was, it makes the receipt: the card shows the start time before and
+   after, and says the service was restarted and is running again (the fact's `say`). For at most 6
    changed keys it draws a `before` box (`gone`) and an `after` box (`new`), paired on one row per key, lights the
    after boxes, sets `receipt: true` and `source`, and says "N more changed." in `say` when there are more.
 5. The card is shown only when no other turn has started (`_closed_turn == turn`). It carries the turn's number, so it
@@ -423,8 +438,9 @@ whatever a box opened (`bombadil view`).
 rest is cut) or the output of `-- COMMAND ARG...` (run with a 15 second limit, errors mixed in). A missing program
 says "<name> is not installed.", a silent one "<name> did not answer in time.", and no output "Nothing to show." With a
 terminal, text that fits is printed whole, followed by "Press Esc to close.", and any key closes it. Longer text takes the
-drawer's own screen with a window of rows and a footer such as `11-19 of 50 · Esc closes`. Esc alone (or `q`, Ctrl-C,
-Ctrl-D) closes it; the arrows, PageUp and PageDown, Home and End, the space bar, `f`, `b`, `j`, `k`, `g` and `G` scroll.
+drawer's own screen with a window of rows and a footer such as `11-19 of 50 · Esc closes`. Esc alone (or `q`, `Q`, Ctrl-C,
+Ctrl-D) closes it; the arrows, PageUp and PageDown, Home and End, the space bar, `f`, `b`, `j`, `k`, `g` and `G` scroll, and
+Enter scrolls down one row.
 The text is laid out again at the next key press after the drawer was resized. Keys are read from `/dev/tty`, so text may be piped in; with no
 terminal at all the text is printed. It is a small module rather than `less`; its docstring gives the reason: `less`
 cannot leave on Esc, and it was not on the image.
@@ -467,9 +483,10 @@ lists what this piece owns.
 | `turn_end` | event | carries `read`: `[{"label","kind","outside","origin"?}]` |
 | `explain` | config key | `brief`, `normal` or `teach` in `/etc/bombadil/config.toml` or `~/.config/bombadil/config.toml` |
 | `BOMBADIL_PROVIDER` | environment | the provider whose host the network picture ends with; `cardtools.provider_name` reads it, then the config, then `claude` |
+| `sysmap.PROVIDER_HOSTS` | Python | provider name to the brand and host the network picture ends with (`claude`, `codex`); an unknown provider falls back to the Claude host |
 | `BOMBADIL_SOCKET` | environment | the `agentd` socket `cardtools.deliver` connects to |
 | `bombadil view --file PATH`, `bombadil view -- CMD...` | commands | the drawer's viewer |
-| `Diagram` (`import Bombadil`) | kit component | `spec`, `showTitle`, `minBoxWidth`, `maxBoxWidth`; signals `opened(target)` and `picked(node)`. Also used by apps, see [the app kit](app-kit.md); documented in `share/skills/bombadil-apps/references/components.md` |
+| `Diagram` (`import Bombadil`) | kit component | `spec`, `showTitle`, `minBoxWidth` (132), `maxBoxWidth` (208), `maxCompareWidth` (230), `compareGap` (76); signals `opened(target)` and `picked(node)`. Also used by apps, see [the app kit](app-kit.md); documented in `share/skills/bombadil-apps/references/components.md` |
 | `PillState.card`, `dismissCard()`, `openThing(target)` | shell state | what `CardHost.qml` reads and calls |
 | `cards.validate_diagram`, `cards.accept`, `cards.text_of`, `cards.check_opens` | Python | the data contract |
 | `sysmap.capture`, `sysmap.snapshot`, `sysmap.receipt`, `sysmap.apply_overrides` | Python | captures and receipts |
@@ -485,7 +502,7 @@ lists what this piece owns.
 | One line per turn | `~/.local/state/bombadil/turns.jsonl`, with the `read` list and the path of the turn's log. A picture word adds a `local` line there |
 | The socket | `$XDG_RUNTIME_DIR/bombadil/agentd.sock` (`BOMBADIL_SOCKET`) |
 | `explain` | `/etc/bombadil/config.toml`, overridden by `~/.config/bombadil/config.toml` |
-| The picture's component and icons | `share/qml/Bombadil/Diagram.qml`, its line in `share/qml/Bombadil/qmldir`, 78 icons in `share/qml/Bombadil/icons/` |
+| The picture's component and icons | `share/qml/Bombadil/Diagram.qml`, its line in `share/qml/Bombadil/qmldir`, 77 icons in `share/qml/Bombadil/icons/` |
 | The drawer window rule | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` (`panel-details`, class `bombadil-details`) |
 
 There is no database. The agent is told to use pictures by two clauses of `providers.system_prompt`: say in one
@@ -547,10 +564,13 @@ There is no card-type registry and no subject registry. These steps follow how t
 `diagram` is the only type, and three places assume it, so a second type touches all of them.
 
 1. In `cards.py`, write a validator next to `validate_diagram` that returns the card and a `text` twin, and make
-   `accept` call it by `card["type"]`. `accept` calls `validate_diagram` for every card.
+   `accept` call it by `card["type"]`. `accept` calls `validate_diagram` for every card, and `AgentD._card_message` (in
+   `agentd.py`) runs `accept` on every card that reaches the socket, so a card of another type is refused ("shape must be
+   one of ...") until `accept` dispatches on the type.
 2. In `cardtools.py`, add the kind to the `enum` of `show_card`'s `kind` and its properties to the schema, and branch on
-   `kind` in `show_card`. It has one flat schema and raises for any `kind` but `diagram`. `deliver`, `_card_message`
-   and `_show` carry any card unchanged.
+   `kind` in `show_card`. It has one flat schema and raises for any `kind` but `diagram`. `cardtools.deliver` and
+   `AgentD._show` carry any card unchanged. Describe the type in `SHOW_CARD`, the only place the agent is told what each
+   kind is for, and keep the two tool listings under 6500 characters (asserted in `tests/test_cardtools.py`).
 3. In `shell/PillState.qml`, let `_takeCard` accept the type (it returns for anything but `diagram`). In
    `shell/CardHost.qml`, add a face for it next to the `Diagram` and choose by `card.type`. Put a reusable drawing
    component in the kit (a file in `share/qml/Bombadil/`, a line in `qmldir`, a section in
@@ -564,14 +584,44 @@ There is no card-type registry and no subject registry. These steps follow how t
 ### Add a diagram shape
 
 1. Add the name to `cards.SHAPES` (the tool's `enum` follows it) and any extra rule to `validate_diagram`.
-2. In `cards.text_of`, add a branch for the shape, and put the shape in the tuple on the `body =` line (`("layers",
+2. Describe the shape in `cardtools.SHOW_CARD`, the only place the agent is told what each shape means and how to fill
+   it. Without it the `enum` allows the shape and the agent does not know what it is. Keep the two tool listings
+   (`SHOW_CARD`, `SYSTEM_MAP` and the schemas) under 6500 characters, and keep the sentence that tells the agent never to
+   draw this machine's state from memory.
+3. In `cards.text_of`, add a branch for the shape, and put the shape in the tuple on the `body =` line (`("layers",
    "timeline", "compare")`): those are the shapes whose lines are joined with newlines, and a shape left out has its
    lines run together.
-3. In `Diagram.qml`, add a branch in `_layout` and the drawing for it. Check each shape test that exists there: the
+4. In `Diagram.qml`, add a branch in `_layout` and the drawing for it. Check each shape test that exists there: the
    box `Repeater` draws every shape except `timeline`, and links are drawn only for `chain` and `layers` (`_svg`, the
    `Shape` and the link `Repeater`). Document the shape in `share/skills/bombadil-apps/references/components.md`. Keep
    the layout deterministic.
-4. Tests: the validator and the text twin in `tests/test_cards.py`, the drawing in `tests/test_diagram_qml.py`.
+5. Tests: the validator and the text twin in `tests/test_cards.py`, the drawing in `tests/test_diagram_qml.py`, and the
+   literal list of shapes that `tests/test_cardtools.py` compares the tool's `enum` with
+   (`test_the_picture_tools_are_listed_with_their_inputs`), which fails until the shape's name is added to it.
+
+### Support another provider
+
+The narrator and the card follower read the events a provider adapter yields (`providers.py`; registration is in
+[agentd](agentd.md#providers)). A provider need not yield all of them: the reason and the reads work from `text`,
+`tool` and `message_start` alone.
+
+| Event | Fields | Read by |
+|---|---|---|
+| `message_start` | none | `Narrator`: forgets the previous message's sentence and `because`. Without one at each message boundary a reason can belong to the wrong step |
+| `text_delta` | `text` | `Narrator`: the live line from the agent's words, and the sentence kept for `because` |
+| `text` | `text` | `Narrator`: the complete message |
+| `thinking` | `text` (optional) | `Narrator`: a short heading becomes the live line; never a reason |
+| `tool_start`, `tool_input` | `index`, `name`, `id`; `index`, `partial` | `Narrator` (the live line of a call being written) and `CardStream.feed` (calls whose name ends in `__show_card`): streaming |
+| `tool` | `name`, `input`, `id`, `parent` (optional) | `Narrator`: the step, what it read, the parts it touched, its `because` |
+| `file_change` | `changes` | `Narrator`: the step and the parts it touched |
+| `tool_result` | `id`, `output`, `error` | `Narrator` (the plan) and `agentd`, which takes back the draft of a `show_card` call that failed |
+| `output` | `text` | `Narrator`: the newest line of a typed `!command` |
+
+Claude yields every one except `file_change` (Codex) and `output` (the `!command` adapter). Codex yields `text`, `tool`,
+`file_change`, `tool_result`, `thinking` and a `message_start` after each result, so the reason works on both providers
+and streaming does not (`providers.py`, `Codex.parse`). Another provider also needs an entry in `sysmap.PROVIDER_HOSTS`:
+`capture_network` falls back to the Claude host for a name it does not know, so the network picture would end with
+Claude. Cover it in `tests/test_sysmap.py` and `tests/test_providers.py`.
 
 ### Add a `narrate` rule
 
@@ -600,6 +650,7 @@ There is no card-type registry and no subject registry. These steps follow how t
 | `tests/test_launcher.py` | picture phrases, the drawer and what each `opens.kind` runs |
 | `tests/test_pill_qml.py` | the card lifecycle in the shell, hover and fade, `because` and `after` on the line |
 | `tests/test_watch.py` | `why:`, `after` and pictures in Details |
+| `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, a click on a box that names a file opens it in the drawer, and a picture sits between the desk's rails |
 
 ```sh
 pytest tests/test_cards.py tests/test_cardtools.py tests/test_sysmap.py tests/test_narrate.py \
@@ -607,8 +658,11 @@ pytest tests/test_cards.py tests/test_cardtools.py tests/test_sysmap.py tests/te
 ```
 
 The async tests need `pytest-asyncio` and the QML tests need PySide6 (they skip without it); see
-[development](../contributing/development.md). On 2026-10-01 these six files gave 389 passed. The VM smoke script
-`bombadil-smoke` calls `system_map` for every kind through `bombadil-os-mcp`, expects "shown above the bar", and logs
+[development](../contributing/development.md). On 2026-10-01 these six files gave 400 passed (`test_agentd.py`, `test_launcher.py`,
+`test_pill_qml.py`, `test_watch.py` and `test_mcp_server.py`, which cover the rest of the piece, gave 368 passed). Without `pytest-asyncio`,
+`test_a_card_really_crosses_the_socket_to_agentd` in `tests/test_cardtools.py` fails. The VM smoke script
+`bombadil-smoke` calls `system_map` for every kind through `bombadil-os-mcp`, expects "shown above the bar", requires at
+least three timed rows in the boot picture, and logs
 the time of each capture; a capture over 500 ms on real hardware is a finding, not a failure. It also sends `open`
 for a unit and checks that the drawer window appears with the keyboard and that Esc closes it.
 

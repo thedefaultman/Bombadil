@@ -1,45 +1,45 @@
 # The desk
 
 > **Status:** Partly shipped
-> **Code:** `src/bombadil/desk.py`, `src/bombadil/jobs.py`, `src/bombadil/watch.py`, `shell/DeskState.qml`, `shell/DeskRails.qml`, `shell/DeskRail.qml`, `shell/DeskStrips.qml`, `shell/DeskStrip.qml`, `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml`, `shell/DeskTheme.js`, `shell/HyprCover.qml`
+> **Code:** `src/bombadil/desk.py`, `src/bombadil/jobs.py`, `src/bombadil/watch.py`, `src/bombadil/agentd.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/narrate.py`, `src/bombadil/providers.py`, `shell/DeskState.qml`, `shell/DeskRails.qml`, `shell/DeskRail.qml`, `shell/DeskStrips.qml`, `shell/DeskStrip.qml`, `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml`, `shell/DeskTheme.js`, `shell/HyprCover.qml`, `shell/shell.qml`
 > **Design:** [The desk: widgets for a passenger](../design/widgets-brief.md)
-> **Verified:** 2026-10-01 against `main` at `26843d3`
+> **Verified:** 2026-10-01 against `main` at `6150431`
 
 The desk is where Bombadil's widgets live around the pill: cards in two rails at the sides of the screen, and small chips (strips) in the pill's row when a card has no room. A widget is on the desk only while it has something to say, so a machine at rest is wallpaper and a pill. It exists so the person can see the route of a turn and what is counting in the background, without the line above the pill carrying more than one line.
 
-Shipped on `main`: the desk's memory and words (`desk.py`, `desk.toml`, the word `desk`, widget names with show and hide), the rails, strips and fold rules, the `desk` tool, the `now` card (the route of a turn), the jobs registry with the `job` tool, and the `watching` card. The `needs` card is on `main`, but nothing on `main` sends the `dev` message that feeds it. `away`, `machine` and `alive` are registered names with no card and no feed. Designed and not built: the dot face, dragging a card, peeking at a strip, the widgets the agent makes, and the `make` and `remove` ops of the `desk` tool. `src/bombadil/watch.py` is listed because the `now` card's title opens it; it is not a watcher ([below](#what-watchpy-is)).
+Shipped on `main`: the desk's memory and words (`desk.py`, `desk.toml`, the word `desk`, widget names with show and hide), the rails, strips and fold rules, the `desk` tool, the `now` card (the route of a turn), the jobs registry with the `job` tool, and the `watching` card. The `needs` card and the stone's mark for a waiting session (`needsYou`) are on `main`, but nothing on `main` sends the `dev` message that feeds them. `away`, `machine` and `alive` are registered names with no card and no feed. Designed and not built: the dot face, dragging a card, peeking at a strip, the widgets the agent makes, and the `make` and `remove` ops of the `desk` tool. `src/bombadil/watch.py` is listed because the `now` card's title opens it; it is not a watcher ([below](#what-watchpy-is)).
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    CLI["provider CLI: task calls"] --> NAR["Narrator.take_plan"]
-    NAR -->|"plan event"| DS
-    TURN["turn events and status"] --> DS
-    JOBS["Jobs.poll and Jobs.snapshot"] -->|"jobs table"| DS
-    DEV["dev message, not on main"] -.-> DS
-    DESKPY["Desk and desk.toml"] -->|"desk state"| DS
+    CLI["provider CLI: task calls"] -->|"Narrator.take_plan"| AGD["agentd"]
+    JOBS["Jobs.poll and Jobs.snapshot"] --> AGD
+    DESKPY["Desk and desk.toml"] --> AGD
+    AGD -->|"socket: plan, turn events, status, jobs, desk"| DS["DeskState"]
+    AGD -.->|"dev message, not sent on main"| DS
     COVER["HyprCover: window rectangles"] -->|"setWindows"| DS
-    DS["DeskState"] -->|"nowModel"| NOW["now card"]
+    DS -->|"nowModel"| NOW["now card"]
     DS -->|"watchModel"| WATCH["watching card"]
     DS -->|"needsModel"| NEEDS["needs card"]
     DS -->|"faces, slots, strips"| DRAW["DeskRail and DeskStrips"]
+    DS -->|"needsYou"| PILL["PillState: the stone"]
 ```
 
 1. **The desk's memory.** `Desk` in `src/bombadil/desk.py` holds `folded`, the put-away widgets (`hidden`), each widget's rail (`rails`), each rail's `order` (bottom up: rank 0 is nearest the pill) and `screen`. One `Desk` is shared by the launcher, agentd's handler of the shell's messages and the agent's tool (`AgentD.__init__`). Every change goes through `Desk.apply(op, widget, rail, rank)`, which returns `(ok, one plain sentence)`, writes `desk.toml` when something changed, and then calls `on_change`. agentd turns that into one `desk` message to every client (changes within 30 ms go out as the state they end in).
-2. **What a turn says.** agentd already broadcasts `turn_start`, `status` and the other turn events ([agentd.md](agentd.md#messages-agentd-sends)). The desk adds `asked_by` on `turn_start` and the `plan` event. `Narrator` in `src/bombadil/narrate.py` builds the plan from the provider's task calls (`TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`; Codex's `todo_list` is turned into a `TodoWrite` by `_codex_todos` in `src/bombadil/providers.py`), keeps at most 24 steps (`MAX_PLAN`), and agentd sends the whole table whenever it differs from the last one sent.
+2. **What a turn says.** agentd already broadcasts `turn_start`, `status` and the other turn events ([agentd.md](agentd.md#messages-agentd-sends)). The desk adds `asked_by` on `turn_start` and the `plan` event. `Narrator` in `src/bombadil/narrate.py` builds the plan from the provider's task calls (`TaskCreate`, `TaskUpdate`, `TaskList`, `TodoWrite`; Codex's `todo_list` is turned into a `TodoWrite` by `_codex_todos` in `src/bombadil/providers.py`), keeps at most 24 steps (`MAX_PLAN`), and agentd sends the whole table whenever it differs from the last one sent. A plan reaches the desk only if the CLI offers its task tools: `Claude.env()` sets `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` (`src/bombadil/providers.py:241`) and the Codex command passes `-c tools.update_plan.enabled=true` (`:413`), as [agentd.md](agentd.md) says.
 3. **What is counting.** `Jobs` in `src/bombadil/jobs.py` is the registry of background commands, watchers and timers. agentd looks at it every 2 s while it has rows and sends the `jobs` table when the table changes.
-4. **What the shell does.** `shell/shell.qml` hands every line from agentd to `PillState.handle` and to `DeskState.handle`. `DeskState` is plain Qt Quick with no Quickshell types, so tests load it offscreen. It turns messages into three models (`nowModel`, `watchModel`, `needsModel`), decides each widget's face, and works out each card's slot. `DeskRails` draws the cards in two layer-shell windows, `DeskStrips` draws the strips in the bar window, and `HyprCover` tells `DeskState` where the windows are ([shell.md](shell.md#the-desks-hosts)). When the socket connects, `DeskState` asks for `desk get`.
+4. **What the shell does.** `shell/shell.qml` hands every line from agentd to `PillState.handle` and to `DeskState.handle`. `DeskState` is plain Qt Quick with no Quickshell types, so tests load it offscreen. It turns messages into three models (`nowModel`, `watchModel`, `needsModel`), decides each widget's face, works out each card's slot, and sets `PillState.needsYou` ([The needs-you mark](#the-needs-you-mark)). `DeskRails` draws the cards in two layer-shell windows, `DeskStrips` draws the strips in the bar window, and `HyprCover` tells `DeskState` where the windows are ([shell.md](shell.md#the-desks-hosts)). When the socket connects, `DeskState` asks for `desk get`.
 5. **Three routes change the desk, one function does it.** A launcher word (`desk`, `hide machine`) reaches `Desk.apply` through `Launcher`. A message from the shell (`desk` with `op`) reaches it through `AgentD._desk_op`. The agent's `desk` tool reaches it through `AgentD._desk_tool`, which refuses unless the person's own words asked for the desk. Nothing here starts a model turn.
 
 ### When the desk shows
 
-At rest there is no card, no strip and no rail window: a rail's window is up only while a card is in full, and for `foldMs + 80` ms after, and the clock that moves the `watching` rows runs only while the jobs table has a running or a finished row.
+At rest there is no card, no strip and no rail window: a rail's window is up only while a card is in full, and for `foldMs + 80` ms after, and the clock that moves the `watching` rows runs only while the table has a running or a done row that the person has not removed (`DeskState.ticking`); a table of failed rows runs no clock.
 
 | Widget | On the desk when | Code |
 |---|---|---|
 | `now` | a turn runs and has a plan of two or more steps or has touched the system (a step with a `risk`); after `turn_end`, while the pill still shows its closing line. A stopped or failed turn, or one that never qualified, leaves at once | `DeskState.nowVisible`, `_qualifies`, `_end` |
-| `watching` | the jobs table has a row the person has not removed; a finished row leaves 12 s after it ended | `watchingPresent`, `_refreshWatch` |
+| `watching` | the jobs table has a row the person has not removed; a done row leaves 12 s after it ended, a failed row stays until dropped (agentd drops it after 30 min) | `watchingPresent`, `_refreshWatch` |
 | `needs` | two or more sessions want the person; one is the line in the pill and not a card. It cannot be put away | `needsPresent`, `isHidden` |
 | `away`, `machine`, `alive` | their model has rows. Nothing fills those models, so they never show | `awayPresent`, `machinePresent`, `alivePresent` |
 | any but `needs` | and it is not in `hidden`; `alive` starts put away until "show alive" | `isHidden`, `OPT_IN` |
@@ -84,6 +84,10 @@ The card's line says `N counting · each ends with one line in the pill`, or `fi
 
 **`needs`.** One row per key in `attention`, in that order: title `<role> on <project>`, the first line of what the session said (70 characters), a pulsing blue dot while its `state` is `asked`, and an `Open` button that sends `{"type": "dev", "action": "open", "key": key}`. Its line reads `Tab walks these · one alone is just the line`; there is no Tab walk on `main` (see [Known gaps](#known-gaps)).
 
+### The needs-you mark
+
+`DeskState.needsYou` is true while `needsModel` has one row or more, so one waiting session counts, although a single session is the line in the pill and not a card. A `Binding` in `DeskState` writes it to `PillState.needsYou`, which gives the stone its `needs` face (amber, two knocks; `shell/PillState.qml`, `shell/Stone.qml`). The mark does not follow the card's face: a fold, a covering window, a narrow screen and the capsule under a full-screen window take the card away and leave the mark, and `needs` cannot be put away. It clears with the last row and when the socket drops (`lost()` empties the sessions). Setup's own ask (`choose`, `signed_out`, `offline`) gives the same face by another cause, and the desk clearing its rows never clears it. With nothing on `main` sending `dev`, the mark has no cause outside the tests.
+
 ### Faces, folding and fit
 
 `DeskState.faces` gives each widget one of three values. The brief's third face, a dot on the pill, has no value here.
@@ -113,7 +117,7 @@ flowchart TB
 | Right of way | a window or panel rectangle overlaps the card's slot (touching edges do not count) | the card folds at once (a 150 ms scale and fade toward the rail's outer bottom corner) and its strip fades in; it unfolds 400 ms after no window covers it, and a window back inside that time keeps it folded. Each widget has its own timer, and a folded card keeps its slot |
 | Full-screen window | any window has `fullscreen` | every face is `hidden`: no rail windows, no strips, and the pill becomes a 100 px capsule |
 
-Heights, which the stack and the drawn cards must agree on: `now` is `68 + 26 * steps`, plus 20 with a command and 18 with a caption; a rows card is `50 + 18` plus 34 per meter row and 44 per other row; `machine` is 210 and `alive` is 168 (fixed numbers for faces that do not exist). Rails are 16 px from the screen edge, start 40 px from the top, stop 16 px above the bar's 64 px zone, and cards are 12 px apart.
+Heights, which the stack and the drawn cards must agree on: `now` is `68 + 26 * steps`, plus 20 with a command and 18 with a caption; a rows card is `50 + 18` plus 34 per meter row and 44 per other row; `machine` is 210 and `alive` is 168 (fixed numbers for faces that do not exist). Rails are 16 px from the screen edge, start 40 px from the top, stop 16 px above the bar's exclusive zone, and cards are 12 px apart. The bar's zone is 64 px plus the app-chip row while apps run, and `DeskState` lays the stack out from a fixed `rowZone` of 64 ([Known gaps](#known-gaps)).
 
 `DeskState.mode` is `immersive` with any full-screen window, `shared` with any window or panel on the stage, and `open` otherwise. The pill's width follows it: 100, 360, or `max(360, min(900, screenWidth - 2 * (max(left strips, right strips, 300 if a card is full) + 12 + 16)))`, animated over 150 ms. The pill itself is in [shell.md](shell.md).
 
@@ -128,7 +132,7 @@ Heights, which the stack and the drawn cards must agree on: `now` is `68 + 26 * 
 | `alive` | `N alive` | none |
 | `machine` | `machine` | none |
 
-**Layers and input.** `shell/DeskRails.qml` makes one `PanelWindow` a side on `WlrLayer.Bottom` (over the wallpaper, under every app window), namespace `bombadil-desk-left` or `bombadil-desk-right`, with `exclusionMode: ExclusionMode.Normal` and `exclusiveZone: 0`, so it reserves nothing. Its `mask` is one box around the full cards (`DeskRail.hitArea`), so a click beside them reaches what is behind. The window is not visible on a screen the desk does not live on, under a full-screen window, or while no card is full. The strips are children of the bar window, and the bar's input mask lists `stripsLeft` and `stripsRight` with the pill, the line and the chips (`shell/shell.qml`, `mask`); a side with no strips has zero width and takes no input.
+**Layers and input.** `shell/DeskRails.qml` makes one `PanelWindow` a side on `WlrLayer.Bottom` (the layer meant to sit over the wallpaper and under app windows; no test observes that, see [Known gaps](#known-gaps)), namespace `bombadil-desk-left` or `bombadil-desk-right`, with `exclusionMode: ExclusionMode.Normal` and `exclusiveZone: 0`, so it reserves nothing. Its `mask` is one box around the full cards (`DeskRail.hitArea`), so a click beside them is meant to reach what is behind. The window is not visible on a screen the desk does not live on, under a full-screen window, or while no card is full. The strips are children of the bar window, and the bar's input mask lists `stripsLeft` and `stripsRight` with the pill, the line and the chips (`shell/shell.qml`, `mask`); a side with no strips has zero width and takes no input.
 
 ### The jobs registry
 
@@ -158,7 +162,7 @@ stateDiagram-v2
 | Step | What `src/bombadil/jobs.py` does |
 |---|---|
 | `start` | checks the request: a title (cut to 80 characters) and a command (at most 20 000, no NUL byte) for a job or watch; a timer of 1 s to 7 days, rounded up, whose title defaults to `Timer, <span>`; an optional absolute `cwd` that is a folder (the tool does not offer it); at most 20 running. Writes `<id>.json` first, then runs `systemd-run`. If systemd refuses or is missing, it forgets the record and raises `JobError` in one plain sentence |
-| the unit's shell | `/bin/sh -c <command> >> <id>.log 2>&1; s=$?; echo $s > <id>.exit; exit $s`. The command runs in a shell of its own, so an `exit` in it cannot skip the status. The id is six hex digits, checked before any path or unit name is built; the title is passed only as the unit's `--description` |
+| the unit's shell | `/bin/sh -c <command> >> <id>.log 2>&1; s=$?; echo $s > <id>.exit; exit $s`. The command runs in a shell of its own, so an `exit` in it cannot skip the status. The id is six hex digits as made (`secrets.token_hex(3)`) and 4 to 12 are accepted (`ID_RE`), checked before any path or unit name is built; the title is passed only as the unit's `--description` |
 | `poll` | for each running job: the `.exit` file decides first; else `systemctl --user is-active` says whether the unit is there. While it is, the last 4096 bytes of the log give the percent (the last `NN%`, 0 to 100) and the last non-empty line (120 characters). A unit that died with no status is `failed` ("it stopped before it finished"); one that is gone with no status (`systemctl stop` from outside, a reboot) is forgotten without a word; systemd that cannot be asked counts as active. Returns the jobs that ended since the last look, once each |
 | `snapshot` | the table in the order the jobs began. A done row stays 15 s, a failed one until dismissed or 30 min; a record and its log are deleted 24 h after the job ended |
 | `stop`, `dismiss` | `stop` runs `systemctl --user stop` (a timer's `.timer` too), clears a failed unit, and deletes the record, log and exit file at once; it raises `JobError` and keeps the row if systemd will not stop it. `dismiss` only hides a finished row |
@@ -206,6 +210,7 @@ agentd owns the loop (`AgentD._jobs_loop`): every `JOBS_POLL` (2 s) while the ta
 | `{"type": "desk", "op": "get"}` | the socket connects | `desk`, the running turn's last `plan`, and `jobs` |
 | `{"type": "desk", "op": "fold" \| "hide" \| "show" \| "move", "widget", "rail", "rank"}` | `DeskState.fold`, `hide`, `show`, `move`; nothing in `shell/` calls them | `fold` toggles; there is no `unfold` here; `desk` to everyone if the state changed, and a note for the agent plus a `turns.jsonl` entry |
 | `{"type": "jobs", "op": "stop" \| "dismiss", "id"}` | `×` on a row | `jobs` table |
+| `{"type": "jobs", "op": "get"}` | nothing in `shell/` sends it; any client may (`src/bombadil/agentd.py`, `_jobs_op`) | the `jobs` table to that client |
 | `{"type": "jobs", "op": "why", "id"}` | `Why?` | opens the log in the details drawer |
 | `{"type": "dev", "action": "open", "key"}` | `Open` on a `needs` row | nothing on `main` handles it |
 
@@ -214,14 +219,14 @@ agentd owns the loop (`AgentD._jobs_loop`): every `JOBS_POLL` (2 s) while the ta
 | Message | Fields | Gate in `agentd` |
 |---|---|---|
 | `desk-tool` / `desk-result` | `id`, `turn`, `op`, `widget`, `rail`, `rank` / `id`, `ok`, `text` | `turn` is the running turn, not stopping, and `asked_for_desk(turn_prompt)`; `op` is one of `show`, `hide`, `move`, `fold`, `unfold`, `state` |
-| `job-tool` / `job-result` | `id`, `turn`, `op`, `title`, `command`, `kind`, `seconds`, `job` / `id`, `ok`, `text` | `start` needs the running turn that is not stopping, and no typed words; `list` and `stop` need no turn check |
+| `job-tool` / `job-result` | `id`, `turn`, `op`, `title`, `command`, `kind`, `seconds`, `job` / `id`, `ok`, `text` | `start` needs the running turn that is not stopping and does not need the person's own words; `list` and `stop` need no turn check |
 
-**Tools** (the catalogue is in [os-mcp.md](os-mcp.md#the-tool-catalogue)). Both need `BOMBADIL_TURN` in the tool process's environment, which agentd sets per turn, and both raise `ToolError` in plain words otherwise.
+**Tools** (the catalogue is in [os-mcp.md](os-mcp.md#the-tool-catalogue)). Both need `BOMBADIL_TURN` in the tool process's environment, which agentd sets per turn, and both raise `ToolError` in plain words otherwise. A call waits for agentd's answer for `DESK_TIMEOUT` (10 s) or `JOB_TIMEOUT` (25 s, because starting a job waits for systemd); after that the error says `agentd did not answer within N seconds, so the desk (or the job table) may be unchanged`.
 
 | Tool | Arguments | Notes |
 |---|---|---|
-| `desk` | `op` (`show`, `hide`, `move`, `fold`, `unfold`, `state`), `widget` (`now`, `watching`, `alive`, `needs`, `away`, `machine`), `rail` (`left`, `right`), `rank` (integer, 0 is nearest the pill; none puts it last, and a rank past the end is the end) | the line says what it tried and claims no change, offers no Undo, and the desk is outside the restore points |
-| `job` | `op` (`start`, `list`, `stop`), `title`, `command`, `kind` (`job`, `watch`), `seconds`, `id` | `id` is the job's; it travels as `job` because `id` names the request. A timer is `seconds`, not a kind |
+| `desk` | `op` (`show`, `hide`, `move`, `fold`, `unfold`, `state`), `widget` (`now`, `watching`, `alive`, `needs`, `away`, `machine`), `rail` (`left`, `right`), `rank` (integer, 0 is nearest the pill; none puts it last, and a rank past the end is the end) | the line (`src/bombadil/narrate.py:906-919`) says what it tried and claims no change, offers no Undo, and the desk is outside the restore points |
+| `job` | `op` (`start`, `list`, `stop`), `title`, `command`, `kind` (`job`, `watch`), `seconds`, `id` | `id` is the job's; it travels as `job` because `id` names the request. A timer is `seconds`, not a kind. The pill's line is `Watching <title>` (or `Starting a background job`), `Stopped <title>` or `Checking the background jobs` (`src/bombadil/narrate.py:920-928`); like the `desk` line it claims no change and offers no Undo |
 
 **`Desk.apply` ops and their sentences** (`src/bombadil/desk.py`): `toggle` (the word `desk`), `fold`, `unfold`, `hide`, `show`, `move`, `state`. Examples: `Put Machine away.`, `Needs you cannot be hidden.`, `Moved Watching to the right rail.`, `The rails are left and right.`, `The desk is already folded.` A widget is named by its id, title or words (`find`): `needs`, `needs you`, `Needs-You` and `while you were away` all work; `Needs You.` does not.
 
@@ -242,9 +247,19 @@ agentd owns the loop (`AgentD._jobs_loop`): every `JOBS_POLL` (2 s) while the ta
 | `~/.local/state/bombadil/jobs/<id>.json`, `.log`, `.exit` | one job's record, output and exit status |
 | `~/.local/state/bombadil/turns.jsonl` | a `local` entry for a desk word (the typed words), a desk gesture (`at the desk`), and a job that ended or was stopped (`background job`) |
 
+**`desk.toml` keys** (`Desk.load` and `Desk.save`).
+
+| Key | Meaning |
+|---|---|
+| `folded` | `true` shows every present widget as a strip (the word `desk`) |
+| `hidden` | the put-away widgets; `needs` is never kept here and `alive` is in the default |
+| `screen` | the output the desk lives on, such as `DP-1`; `""` is the first screen. The shell (`deskScreen` in `shell/shell.qml`) shows the rails, the strips and the narrowed pill only on that screen, takes `screenWidth` and `screenHeight` from it, and falls back to the first screen when the named output is not plugged in. No `Desk.apply` op, launcher word or tool sets it: it is edited by hand while agentd is stopped |
+| `[rails]` | each widget id, `left` or `right` |
+| `[order]` | `left` and `right`, each a list of widget ids, bottom up (rank 0 is nearest the pill) |
+
 **Developer hooks.** `quickshell ipc call desk state` prints `DeskState.snapshot()` as JSON; `desk cover '{"windows": [{"x", "y", "w", "h", "fullscreen"}]}'` stands in for Hyprland's windows; `desk inject '<message>'` feeds the shell a message as agentd would send it (`shell/shell.qml`, `IpcHandler`). `BOMBADIL_STATE` moves the state directory and `BOMBADIL_SOCKET` the socket (`src/bombadil/paths.py`).
 
-**Constants** (`src/bombadil/jobs.py`, `shell/DeskState.qml`).
+**Constants** (`src/bombadil/jobs.py`, `src/bombadil/mcp_server.py`, `shell/DeskState.qml`, `shell/DeskTheme.js`).
 
 | Name | Value | Meaning |
 |---|---|---|
@@ -252,6 +267,7 @@ agentd owns the loop (`AgentD._jobs_loop`): every `JOBS_POLL` (2 s) while the ta
 | `MAX_RUNNING`, `MAX_TITLE`, `MAX_COMMAND`, `MAX_SECONDS`, `MAX_LAST`, `TAIL` | 20, 80, 20 000, 7 days, 120, 4096 | limits |
 | `doneStaysMs`, `goneMs`, `tickMs` | 12 000, 5000, 1000 | the shell's own clock for a done row, a removed row and the rows' time |
 | `foldMs`, `unfoldDelayMs` | 150, 400 | fold and unfold timing (`DeskTheme.js`) |
+| `DESK_TIMEOUT`, `JOB_TIMEOUT` | 10 s, 25 s | how long a `desk` or `job` tool call waits for agentd (`src/bombadil/mcp_server.py:30-31`) |
 
 ## Where state lives
 
@@ -259,10 +275,12 @@ agentd owns the loop (`AgentD._jobs_loop`): every `JOBS_POLL` (2 s) while the ta
 |---|---|---|
 | The desk | `~/.local/state/bombadil/desk.toml` | `folded`, `hidden`, `screen`, a `[rails]` table and an `[order]` table; read at start by `Desk.load()` and written by `save()` through a `.tmp` file and `os.replace`. Edit it by hand only while agentd is stopped |
 | Jobs | `~/.local/state/bombadil/jobs/` | `<id>.json`, `<id>.log`, `<id>.exit` |
-| The units | the user's systemd: `bombadil-job-<id>`, `bombadil-timer-<id>` | transient; a reboot removes them |
+| The units | the user's systemd: `bombadil-job-<id>`, `bombadil-timer-<id>` | transient; a reboot removes them (inferred from how `systemd-run` units work, not tested) |
 | What the shell shows | `DeskState` in the shell process | rebuilt from `desk get` when the bar connects; `lost()` empties the jobs and sessions when the socket drops |
 
 Both directories are under the home folder, outside every restore point, so an undo never moves the desk or removes a job's record ([restore-points.md](restore-points.md)).
+
+A desk the person has changed: Watching moved to the right rail and Machine put away. The default has `hidden = ["alive"]`, Watching in the left rail and the orders `now, watching, alive` and `needs, away, machine`.
 
 ```toml
 # Bombadil's desk: which widget sits in which rail, and which are put away.
@@ -299,23 +317,32 @@ right = ["watching", "needs", "away", "machine"]
 
 **Add a widget** (a card of rows is the least work).
 
-1. In `src/bombadil/desk.py`, add `Widget(id, title, words, rail)` to `WIDGETS`; its place among the widgets of its rail is its default rank. Add the id to `ALWAYS` if it may never be put away, or `OPT_IN` if it starts put away. This already gives it a `desk.toml` key, a `desk` tool `widget` value (`mcp_server.py` reads `list(WIDGETS)`) and launcher words with Tab completion (`launcher.WIDGET_WORDS`).
+1. In `src/bombadil/desk.py`, add `Widget(id, title, words, rail)` to `WIDGETS`; its place among the widgets of its rail is its default rank. Add the id to `ALWAYS` if it may never be put away, or `OPT_IN` if it starts put away. This already gives it a `desk.toml` key, a `desk` tool `widget` value (the enum in `src/bombadil/mcp_server.py` is `list(WIDGETS)`) and launcher words with Tab completion (`launcher.WIDGET_WORDS`). The tool's description lists the widgets by hand (`src/bombadil/mcp_server.py:135-136`): add the name there.
 2. Add its words to `_DESK_ASK` in `desk.py`, a hand-written list of widget names. Without that, a sentence about it does not open the `desk` tool's gate.
 3. In `shell/DeskState.qml`: add the id to `widgetIds` and to the default `rails` and `order`; add `property var xModel` shaped `{title, why, rows, strip}`; add an `xPresent` property and put it in `present`; return the model from `_model(id)`; add a case to `_stripOf(id)` if the strip should not read the id; fill the model from a message in `handle(ev)`, as `_applyJobs` does.
-4. In `shell/DeskRail.qml`, add the id to the `Loader`'s `sourceComponent` (rows widgets use `rowsFace`). Answer its buttons in `DeskState.onRowAction` and `onRowRemove`, which know only `watching` and `needs`.
+4. In `shell/DeskRail.qml`, add the id to the `Loader`'s `sourceComponent` (rows widgets use `rowsFace`), and change the `model:` line of `rowsFace` (`:98`), which gives `watchModel` to `watching` and `needsModel` to every other id: a new rows widget would draw the Needs you rows until it picks its own model, for example with `rail.desk._model(cell.modelData)`. Answer its buttons in `DeskState.onRowAction` and `onRowRemove`, which know only `watching` and `needs`.
 5. Make `heightOf(id)` match the drawn card (a rows card: `50 + 18`, plus 34 per meter row and 44 per other row).
 6. In agentd, send its table the way `jobs` goes out (`_jobs_soon`, `_jobs_broadcast`), and include it in the reply to `desk get` (`_desk_op`).
-7. Update the tests that list the widgets: `tests/test_desk.py` (`test_a_new_desk_is_the_one_the_shell_expects`), `tests/test_launcher.py` (`test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes`) and `tests/test_desk_qml.py`. No test reads `widgetIds` and `WIDGETS` together: keep the two lists equal by hand.
+7. Update the tests that spell the widgets out. `tests/test_desk.py`: the default desk (`test_a_new_desk_is_the_one_the_shell_expects`), the `state` sentence and every op sentence that ends `The widgets are Now, Watching, Alive, Needs you, Away and Machine.` (`_names()` builds it from `WIDGETS`). `tests/test_agentd.py`: the default `order` (`:592`) and the same sentences in the `desk` tool cases (`:817`, `:826`). `tests/test_launcher.py`: `test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes`. `tests/test_desk_qml.py`, which spells out the default `order`. No test reads `widgetIds` and `WIDGETS` together: keep the two lists equal by hand.
 
 **Add a job kind.**
 
 1. In `src/bombadil/jobs.py`, add the name to `KINDS`; `_read` drops a record whose kind is not there.
 2. In `Jobs.start`, the first `if` decides `kind` and the seconds; add the kind and its checks.
-3. If its unit differs, change `_unit`, `_argv` and `_wrapper`. A kind with more than one unit, as a timer has a `.timer` and a `.service`, must also be known to `_units` and to `Jobs.stop`, which builds its own unit list.
-4. Say it: `ending(rec)` and `started_text(rec, log)` branch on `rec["kind"]`.
+3. If its unit differs, change `_unit`, `_argv` and `_wrapper`. A kind with more than one unit, as a timer has a `.timer` and a `.service`, must also be known to `_units` and to `Jobs.stop`, which builds its own unit list, and to `_reset_failed`, which resets only the unit `_unit(...)` names (a timer's `.timer` is not reset), so a second unit of a new kind would keep its failed state.
+4. Say it: `ending(rec)`, `started_text(rec, log)` and `Jobs.listing` (the countdown of a running timer) branch on `rec["kind"]`.
 5. Offer it: the `kind` enum and description of the `job` tool in `src/bombadil/mcp_server.py`.
 6. Show it: `DeskState._cleanJobs` turns any kind but `watch` and `timer` into `job`, and `_jobRow` gives a kind its look and fallback title.
 7. Test it in `tests/test_jobs.py` (the `Systemd` stand-in answers `systemd-run` and `systemctl`) and `tests/test_desk_qml.py`.
+
+**Add a desk op** (`make` and `remove`, which the brief designs, would be two).
+
+1. In `src/bombadil/desk.py`, handle the op in `Desk._apply` (`:161`), which returns `(ok, one plain sentence, changed)`. An op it does not know ends as `The desk cannot <op>.`; an op that names a widget joins the `("hide", "show", "move")` tuple so the widget is looked up first. Update the list of ops in the docstring of `Desk.apply`.
+2. Offer it to the agent: the `op` enum of the `desk` tool and the ops listed in its description (`src/bombadil/mcp_server.py:134-146`). A new argument also goes into the `desk` tool's schema, into the keys `_desk` forwards (`op`, `widget`, `rail`, `rank`), into the call to `Desk.apply` and into agentd's calls of it.
+3. Let it through the gate: the tuple of ops in `AgentD._desk_tool` (`src/bombadil/agentd.py:499`) and the sentence under it that names the ops by hand. If a new verb should open the gate for it, add the verb to `_DESK_ASK` in `desk.py`.
+4. If the shell may send it: the tuple in `AgentD._desk_op` (`agentd.py:470`), which maps the shell's `fold` to `toggle` and passes the others through, and a function in `DeskState.qml` that calls `outgoing` like `fold`, `hide`, `show` and `move`. A spoken word is separate: `Launcher._desk` and `Launcher._widget` call `Desk.apply`.
+5. Say it in the pill: the `desk` branch of `tool_step` in `src/bombadil/narrate.py` (`:906-919`). An op it does not know shows `Looking at the desk`.
+6. Test it: the op sentences in `tests/test_desk.py` (the pill's line is tested there too), the tool cases and the shell's messages in `tests/test_agentd.py`, and the literal `op` enum in `tests/test_mcp_server.py`.
 
 **Change what a rail shows.**
 
@@ -338,33 +365,36 @@ A change to a card's height needs the matching change in `heightOf`, or the stac
 | `tests/test_desk.py` | `desk.py`: every op and its sentence, `desk.toml` round trip and damage, concurrent changes, the gate's words, the line the `desk` tool shows |
 | `tests/test_jobs.py` | `jobs.py` with a `Systemd` stand-in: starting, the wrapper (run with a real `/bin/sh`), polling, expiry, stop, dismiss, restart, odd ids and folders |
 | `tests/test_watch.py` | `watch.py`: details, history, following a turn |
-| `tests/test_desk_qml.py` | `DeskState`, `DeskRail`, `DeskStrips` offscreen: presence, fit, cover, modes, strips, jobs rows, the clock, needs rows |
+| `tests/test_desk_qml.py` | `DeskState`, `DeskRail`, `DeskStrips` offscreen: presence, fit, cover, modes, strips, jobs rows, the clock, needs rows, the stone's mark |
 | `tests/test_desk_cards_qml.py` | `DeskCard`, `NowCard`, `RowsCard`, `DeskStrip`: geometry, states, buttons, elision |
 | `tests/test_theme.py` | `DeskTheme.js` against `Theme.qml`, no colour literal in `shell/*.qml` |
 | `tests/test_agentd.py`, `tests/test_mcp_server.py`, `tests/test_launcher.py`, `tests/test_narrate.py`, `tests/test_providers.py` | the desk and job messages and tools, the words, the plan |
-| `tests/desktop/driver.py` | the headless desktop test: the route, a window over it, `desk`, injected jobs and sessions (not run for this page) |
+| `tests/desktop/driver.py` | the headless desktop test: the route, a window over it, `desk`, injected jobs and sessions (not run) |
 
 ```sh
 python3 -m pytest -q tests/test_desk.py tests/test_jobs.py tests/test_watch.py tests/test_theme.py
 python3 -m pytest -q tests/test_agentd.py tests/test_mcp_server.py tests/test_launcher.py -k "desk or job or plan or widget"
+python3 -m pytest -q tests/test_narrate.py tests/test_providers.py -k "plan or job or desk or todo or task"
 QT_QPA_PLATFORM=offscreen python3 -m pytest -q tests/test_desk_qml.py tests/test_desk_cards_qml.py
 ```
 
-The last needs PySide6, and `test_agentd.py` needs `pytest-asyncio`. On 2026-10-01 the first line passed 273 tests, the second passed 80, and the third passed 148 and failed one (below). More in [development.md](../contributing/development.md).
+The fourth needs PySide6, and `test_agentd.py` in the second needs `pytest-asyncio` (without it those cases fail). On 2026-10-01 the first command passed 275 tests, the second 80, the third 53 and the fourth 155, with no failure. More in [development.md](../contributing/development.md).
 
 ## Known gaps
 
-- The `needs` card has no feed. `shell/DeskState.qml:383,683` read a `dev` message and `:23` sends `{"type": "dev", "action": "open"}`, but `AgentD.handle` in `src/bombadil/agentd.py` has no `dev` branch, nothing sends one, and `src/bombadil/dev.py` is not on `main`. Its line says `Tab walks these` (`shell/DeskState.qml:716`) and no Tab walk exists.
+- The `needs` card has no feed. `shell/DeskState.qml:396,696` read a `dev` message and `:23` sends `{"type": "dev", "action": "open"}`, but `AgentD.handle` in `src/bombadil/agentd.py` has no `dev` branch, nothing sends one, and `src/bombadil/dev.py` is not on `main`. Its line says `Tab walks these` (`shell/DeskState.qml:729`) and no Tab walk exists.
 - `away`, `machine` and `alive` have no face. They are in `WIDGETS` (`src/bombadil/desk.py:41-48`), `shell/DeskRail.qml:84-85` loads a face only for `now`, `watching` and `needs`, their models are `null`, and `heightOf` holds fixed 210 and 168.
-- The dot face does not exist, and `PillState.needsYou` is never set outside tests (`shell/PillState.qml:72`), so a waiting session never marks the pill's dot.
+- The dot face does not exist: `DeskState.faces` has no value for it. The one mark a widget puts on the pill is `needsYou` (`shell/DeskState.qml:122`, written to `PillState.needsYou` by the `Binding` at `:270-278`), and it depends on the `needs` model, so on the missing feed above.
 - Hovering a strip, clicking it and dragging a card are not wired. `shell/DeskStrip.qml:18-19` emits `clicked` and `hoverChanged`, `shell/DeskStrips.qml` connects neither, `shell/` has no `DragHandler`, and nothing calls `DeskState.fold`, `hide`, `show` or `move`.
 - The gate's word list is shorter than the names `find` accepts. `src/bombadil/desk.py:60-64` lacks `needs`, `away` and `route`, so `hide away`, `show needs` and `move away to the right` do not open the `desk` tool, although the launcher takes `hide away` as a word.
 - The `desk` tool has no `make` or `remove` (`src/bombadil/mcp_server.py:142`), and `WIDGETS` is a fixed table, so no widget can be added at run time.
 - Two literal copies of the widget list and its defaults exist (`src/bombadil/desk.py:41-48`, `shell/DeskState.qml:28,46-47`), and no test compares them.
 - Eight `DeskTheme.js` values have no token and no test (`shell/DeskTheme.js:41-44,46,51-53`).
-- Real systemd is never exercised. `tests/test_jobs.py` stands in for `systemd-run` and `systemctl`. The comment at `tests/desktop/driver.py:516` says the VM smoke runs real jobs, but `iso/` has no job step.
-- Jobs do not survive a reboot: transient units are gone, and `Jobs._look` forgets a unit that is gone with no status without a word (`src/bombadil/jobs.py:396-397`), so a timer set before a reboot never fires and is not reported.
-- A running timer's row is blue (`shell/DeskState.qml:628`), the colour the brief gives to coding sessions. A running meter row shows the elapsed time and percent, not the job's last line (`:631-634`), so `12 MB/s` in the brief's example is never drawn.
+- Real systemd is never exercised. `tests/test_jobs.py` stands in for `systemd-run` and `systemctl`. The comment at `tests/desktop/driver.py:547` says the VM smoke runs real jobs, but `iso/` has no job step.
+- Jobs do not survive a reboot, as far as the code shows (no test reboots): transient units are gone, and `Jobs._look` forgets a unit that is gone with no status without a word (`src/bombadil/jobs.py:396-397`), so a timer set before a reboot never fires and is not reported.
+- A running timer's row is blue (`shell/DeskState.qml:641`), the colour the brief gives to coding sessions. A running meter row shows the elapsed time and percent, not the job's last line (`:644-647`), so `12 MB/s` in the brief's example is never drawn.
 - A card still counting when a newer card replaces it does not move into `watching`, and standing watchers have no card: nothing links `shell/CardHost.qml` or `src/bombadil/cards.py` to the jobs table.
 - The cover refresh polls every 300 ms (`shell/HyprCover.qml:14`); the brief says 500 ms.
-- `tests/test_desk_qml.py::test_moving_a_widget_moves_its_card_and_its_strip` fails where the Inter font is not installed: it compares the strips' unrounded `x` (`1048.015625`) with a rounded scene position (`tests/test_desk_qml.py:902`).
+- The rails and the bar's zone can disagree. The bar's `exclusiveZone` is 64 plus the app-chip row while apps run (`shell/shell.qml:197`), and `DeskState` lays the stack out from a fixed `rowZone` of 64 (`shell/DeskState.qml:157`). With an app chip row up the two numbers differ; what that does to the bottom card (it may be clipped by the rail window, which stops at the bar's zone) was not observed.
+- `shell/RowsCard.qml:188` styles a primary `Do it` button, and no producer sends one: `_refreshNeeds` gives every row `Open` (`shell/DeskState.qml:726`) and `_jobRow` gives `Why?` or no button.
+- Layer stacking, the input masks and the Hyprland coverage are read from the QML and from the VM checklist in [the brief](../design/widgets-brief.md), not observed on a compositor by a test in this repository: the headless desktop test runs on sway and `desk cover` stands in for Hyprland's window list. That transient units vanish at reboot is inferred from how `systemd-run` units work.

@@ -3,7 +3,7 @@
 > **Status:** Shipped
 > **Code:** `pyproject.toml`, `tests/`, `scripts/dev-session.sh`, `scripts/test-vm.sh`, `scripts/vm-tools/`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `src/bombadil/providers.py`
 > **Design:** none for the test layers. Planned `scripts/test-vm.sh` modes (`install-encrypted`, `refresh`) are designed, not built, in [the installed-OS brief](../design/installed-os-brief.md); running the VM smoke test from a coding session is in [the developer brief](../design/dev-brief.md)
-> **Verified:** 2026-10-01 against `main` at `26843d3`
+> **Verified:** 2026-10-01 against `main` at `6150431`
 
 This page is for someone who has cloned the repository and wants to run Bombadil from the checkout,
 change it, and prove the change. It covers setting up, the five layers of testing from a
@@ -26,7 +26,8 @@ runtime dependencies: `dependencies = []`. Use a virtual environment kept outsid
 
 ```sh
 python3 -m pip install -e '.[dev,apps]'
-python3 -m pip install cryptography
+python3 -m pip install cryptography                # the Vault tests
+python3 -m pip install pillow numpy cairosvg       # the two wallpaper tests that draw the picture again
 pytest
 ```
 
@@ -34,11 +35,13 @@ pytest
 |---|---|---|
 | none | `dependencies = []` | `agentd`, `bombadil`, `bombadil-os-mcp`, the launcher, the card and picture code: standard library only |
 | `dev` | `pytest`, `pytest-asyncio`, `ruff` | the tests and the linter |
-| `apps` | `PySide6` | the app kit and its runtime (`bombadil-app`), and the ten test files that load QML |
+| `apps` | `PySide6` | the app kit and its runtime (`bombadil-app`), the ten test files that load QML, and five pixel tests in `tests/test_wallpaper.py` |
 | not declared | `cryptography` | `Vault` (`src/bombadil/appkit/native/vault.py`); 27 tests fail without it (see below) |
+| not declared | `pillow`, `numpy`, `cairosvg` | `scripts/make-wallpaper.py`, and the two tests in `tests/test_wallpaper.py` that draw the picture again; they skip without them |
 
-Third-party imports exist only under `src/bombadil/appkit/` and in `share/app-template/app.py`:
-`PySide6`, `shiboken6` (installed with PySide6) and `cryptography`. The ISO installs
+In `src/`, third-party imports exist only under `src/bombadil/appkit/` and in `share/app-template/app.py`:
+`PySide6`, `shiboken6` (installed with PySide6) and `cryptography`. `scripts/make-wallpaper.py` is the
+one script that imports packages of its own (`pillow`, `numpy`, `cairosvg`). The ISO installs
 `pyside6` and `python-cryptography` as packages (`iso/packages.x86_64`). The editable install adds
 `src/` to the import path through a `.pth` file; it is optional, because `pythonpath = ["src"]` in the
 pytest configuration and a `sys.path.insert` at the top of every Python entry point in `bin/` do the
@@ -67,50 +70,62 @@ ruff check src tests bin scripts share iso
 The configuration defines no markers. Selection is by file or `-k`. Async tests carry
 `@pytest.mark.asyncio` (strict mode: `asyncio_mode` is not set), and all 132 do.
 
+Run `pytest` in the foreground, or with SIGINT reset to its default. A parent that ignores SIGINT (a
+background job started with `&` in a script, some job runners and CI) hands that on, and Python keeps
+it ignored. Stop's SIGINT then does nothing to the child that
+`tests/test_agentd.py::test_a_stopped_turn_sends_no_more_plan` starts, so that one test fails. The cause is
+the environment only.
+
 Results on 2026-10-01 (pytest 9.1.1, pytest-asyncio 1.4.0, PySide6 6.11.2):
 
 | Install | Result | Time |
 |---|---|---|
-| `.[dev]` | 1120 passed, 40 skipped, 1 or 2 warnings | 172 s |
-| `.[dev,apps]` | 1461 passed, 28 failed, 1 or 2 warnings | 413 s |
-| `.[dev,apps]` and `cryptography` | 1487 passed, 2 failed, 1 or 2 warnings | 424 s |
+| `.[dev]` | 1146 passed, 47 skipped, 1 warning | 170 s |
+| `.[dev,apps]` | 27 failed, 1504 passed, 2 skipped, 1 warning | 427 s |
+| `.[dev,apps]` and `cryptography` | 1531 passed, 2 skipped, 1 warning | 441 s |
 
-The 40 skips with `.[dev]` all say `could not import 'PySide6'`: eight whole modules
-(`test_appkit_agent`, `test_appkit_kit`, `test_appkit_native`, `test_desk_cards_qml`,
-`test_desk_qml`, `test_diagram_qml`, `test_pill_qml`, `test_stone_qml`), 18 tests in
-`test_appkit_reload.py` and 14 in `test_appkit_runtime.py`. The suite collects 1489 tests in 34
-files. The slowest single tests are the 5 to 10 second waits in `tests/test_launcher.py`.
+The 47 skips with `.[dev]` are 45 that say `could not import 'PySide6'` and two that say
+`could not import 'PIL'`. The PySide6 ones are eight whole modules (`test_appkit_agent`,
+`test_appkit_kit`, `test_appkit_native`, `test_desk_cards_qml`, `test_desk_qml`, `test_diagram_qml`,
+`test_pill_qml`, `test_stone_qml`), 18 tests in `test_appkit_reload.py` and 14 in `test_appkit_runtime.py`
+(40 in all), and five tests in `tests/test_wallpaper.py` that need `PySide6.QtGui`. The two `PIL` skips are
+the tests in that file that draw the picture again, and they stay skipped with `.[dev,apps]`, because no
+extra installs `pillow`, `numpy` and `cairosvg`. The suite collects 1533 tests in 36 files. The slowest
+single tests are the 5 to 10 second waits in `tests/test_launcher.py`.
 
 | Failure | Count | Cause | Environment-only? |
 |---|---|---|---|
 | `test_vault_*` and `test_lists_from_native_types_are_real_arrays` in `tests/test_appkit_native.py` | 27 | `cryptography` is not installed, so `Vault.create` returns false | Yes. With the package installed that file passes (70 of 70), and no extra declares it |
-| `test_desk_qml.py::test_moving_a_widget_moves_its_card_and_its_strip` | 1 | the assertion compares the unrounded `x` of `stripsRight` with a rounded pixel position; text widths in this container are fractional (`x` 1048.016 against 1048) | Depends on font metrics. It failed alone, with the fallback font, and with Inter loaded; it was not run on the image the Dockerfile builds |
-| `test_stone_qml.py::test_needs_you_is_amber_with_a_glow_and_two_knocks` | 0 or 1 | samples the stone's knock in real time (40 samples of `pump(0.04)`) and counts two peaks; on a busy machine it counted three | No. It failed in 1 of 4 full runs with PySide6, the one made while other test runs used the CPU (1460 passed, 29 failed: the 28 above and this one), and passed in 5 of 5 runs alone |
 
-The table is not a complete list of what can fail: a test that samples an animation in real time
-(`tests/test_stone_qml.py`) can fail on a loaded machine.
+With `cryptography` installed and SIGINT at its default, nothing failed in the runs on 2026-10-01. The
+table is not a complete list of what can fail: `tests/test_appkit_native.py::test_agent_talks_to_agentd`
+can (see Known gaps).
 
-The warnings are stray thread exceptions in test stand-ins, and the set is intermittent. One appears in
-every run: a `BrokenPipeError` in the `serve` function of the `_agentd` stand-in
+The warning is a stray thread exception in a test stand-in, and a second one appears sometimes. One
+appears in every run: a `BrokenPipeError` in the `serve` function of the `_agentd` stand-in
 (`tests/test_mcp_server.py`, line 145). It writes its greeting after the client has hung up, and pytest
 reports it against `test_without_a_turn_the_job_tool_says_so_and_asks_nobody`. The other appears
 sometimes: a `PytestUnhandledThreadExceptionWarning` from the `_browse` thread of the `FakePanel` stand-in
 (`tests/test_signin.py`, line 62, an `http.client.IncompleteRead` that the `except OSError` does not
-catch), reported against `tests/test_agentd_signin.py::test_hidden_panel_and_show`. It showed in 1 of 6
-full runs on 2026-10-01. No test fails because the container has no Hyprland, no systemd or no snapper:
-the tests fake each of them (see Conventions).
+catch), reported against `tests/test_agentd_signin.py::test_hidden_panel_and_show`. No test fails because
+the container has no Hyprland, no systemd or no snapper: the tests fake each of them (see Conventions).
 
 `ruff check` has one setting, `line-length = 110`, and otherwise uses ruff's default rules. With ruff
-0.15.20 it reports 28 findings on `src tests bin scripts share iso`, none under `src/`, `bin/`, `share/`
-or `iso/`: five in `tests/` (two unused imports, three lambda assignments) and 23 in
-`scripts/vm-tools/` (`agentprobe.py` and `scratch_api.py`, mostly several statements on one line).
-A newer ruff (0.16.9) applies more default rules and reports 148. `ruff format --check` on the same
-folders would reformat 75 of the 84 Python files, so the formatter is not applied.
+0.15.20 it reports 27 findings on `src tests bin scripts share iso`, none under `src/`, `share/` or `iso/`:
+22 in `scripts/vm-tools/` (`agentprobe.py` and `scratch_api.py`: 13 `E701` and 9 `E702`, several
+statements on one line) and five in `tests/` (three lambda assignments, two unused imports). The command
+does not cover Python scripts without a `.py` extension, because ruff scans a folder for `*.py` only: the
+five entry points in `bin/` and the six VM tools `serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink` and
+`vmlogin`. Named on the command line, the five in `bin/` are clean and the six VM tools report 43.
+A newer ruff (0.16.9) applies more default rules and reports 152 on the same command.
+`ruff format --check` on the same folders would reformat 79 of the 88 Python files, so the formatter is not
+applied.
 
 ## How it works
 
-Five layers, each one adding a real part that the one before it fakes. The arrows go from the
-fastest layer to the slowest.
+Five layers; the first four each add a real part that the one before fakes. The solid arrows run
+from the cheapest layer to the booted image. The dashed arrow shows that `vmsmoke` replays the smoke
+test in a VM you keep running.
 
 ```mermaid
 flowchart LR
@@ -123,7 +138,7 @@ flowchart LR
 | Layer | Real | Faked | Proves | Run it |
 |---|---|---|---|---|
 | pytest unit tests | the Python code, sockets in a temp folder, plain files | Hyprland, snapper, systemd, the provider CLIs (`providers.Fake`, a `Scripted` adapter), `bombadil-app check` | the socket protocol and turn lifecycle, provider stream parsing from recorded output, tool results, plain-word narration, the launcher, jobs, the desk model, card checking, picture parsers; and static guards over files (tokens, colours, brand files, the ISO profile) | `pytest` |
-| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd (the tests send the events it would), the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys | `pytest` with `.[apps]` |
+| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd in the shell tests, which send the events it would (the `Agent` type's tests run a real `AgentD` with the fake provider on a Unix socket); the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys | `pytest` with `.[apps]` |
 | desktop test | Quickshell, agentd, the real Claude Code CLI, `bombadil` commands, a Wayland compositor (sway) | the model (a scripted Anthropic API), Hyprland, systemd, snapper | the pieces work together: timings, a key press to the screen, Stop ends everything a turn started, pictures streamed into the bar | `tests/desktop/run.sh` |
 | ISO smoke | the built image, Hyprland, greetd, systemd, the installer, snapper on btrfs | the model; sign-in uses a stand-in login, plus the real Codex and Claude pages when the VM has internet | a booted machine does what the product promises: session, bar, panels, apps, pictures, the pill keys, sign-in, install, undo over a reboot | `scripts/test-vm.sh` |
 | VM tools | a running VM you keep | nothing | a shell, keys, clicks and screenshots on a VM without a window; `vmsmoke` runs the smoke inside it | `scripts/vm-tools/` |
@@ -159,20 +174,22 @@ Where to add a test for each kind of change:
 | the plain words of a step or a risk | `tests/test_narrate.py` | a row in a parametrized `(command, text, risk)` table |
 | a launcher word | `tests/test_launcher.py` | `launcher.match(text, app_list=[])` |
 | an os-mcp tool | `tests/test_mcp_server.py`; picture tools `tests/test_cardtools.py`; app tools `tests/test_appkit_tools.py` | `make()` and `call(server, "tool", **args)` in the first and last; the `tools` fixture and `call(tools, name, args)` in `test_cardtools.py`; the `fake_check` fixture in `test_appkit_tools.py` |
-| a card or a `system_map` subject | `tests/test_cards.py` (checking, layout, text twin), `tests/test_sysmap.py` (parsers fed recorded command output), `tests/test_diagram_qml.py` (drawn) | `fixtures.fake({...})` from `test_sysmap` |
+| a card or a `system_map` subject | `tests/test_cards.py` (checking, layout, text twin), `tests/test_sysmap.py` (parsers fed recorded command output), `tests/test_diagram_qml.py` (drawn) | `fake({...})` from `tests/test_sysmap.py` (`import test_sysmap as fixtures` in the QML tests) |
 | a job or a desk widget | `tests/test_jobs.py`, `tests/test_desk.py`; their cards in `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py` | the `Systemd` stand-in in `test_jobs.py` |
 | a kit component | `tests/test_appkit_kit.py`; add the component to a gallery in `tests/qml/` | `run(home, qml, body)` |
 | a native type (`App`, `System`, `Processes`, `Command`, `Vault`, `TextFile`, `Clipboard`, `Agent`, `Highlighter`, `KitFiles`), or the `Store` component | `tests/test_appkit_native.py` (`Store` is the QML component `share/qml/Bombadil/Store.qml` over `KitFiles`, and its tests are here too); `Agent` against agentd's events in `tests/test_appkit_agent.py` | the `kit` fixture and `make(kit, source)` |
-| the app runtime: hot reload, placement, status | `tests/test_appkit_runtime.py`, `tests/test_appkit_reload.py`, `tests/test_appkit_placement.py` | `drive(name, body)` |
+| the app runtime: hot reload, placement, status | `tests/test_appkit_runtime.py`, `tests/test_appkit_reload.py`, `tests/test_appkit_placement.py` | `drive(name, body)` (defined in `test_appkit_runtime.py`, also used by `test_appkit_reload.py`) for hot reload and status; `FakeHypr` and `ScriptedHypr` for placement |
 | a shell component | the line, chips and card host: `tests/test_pill_qml.py`; the desk: `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; the stone: `tests/test_stone_qml.py` | the `Bar`, `Desk` or `Cards` helper class with a `HARNESS` string |
-| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`) | the desktop test: no offscreen test loads them | a check in `tests/desktop/driver.py` |
-| a token or the look | edit `share/qml/Bombadil/Theme.qml`; `tests/test_theme.py` keeps `shell/DeskTheme.js` equal and `shell/*.qml` free of hex colours and `"white"` and `"black"`; `tests/test_brand.py` for brand files | the `THEME` dict from `tests/qml_theme.py` |
+| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`, `Wallpaper.qml`) | the desktop test: no offscreen test loads them (`tests/test_wallpaper.py` reads `Wallpaper.qml` as text, and the desktop test checks the wallpaper's pixels) | a check in `tests/desktop/driver.py` |
+| a token or the look | edit `share/qml/Bombadil/Theme.qml`; `tests/test_theme.py` keeps `shell/DeskTheme.js` equal and `shell/*.qml` free of hex colours and `"white"` and `"black"`; `tests/test_brand.py` for brand files. A changed token that the picture uses (`bg`, `sunken`, `panel`, `raised`, `border`) or a changed mark means running `scripts/make-wallpaper.py` again, or `tests/test_wallpaper.py` fails | the `THEME` dict from `tests/qml_theme.py` |
+| the wallpaper (`share/wallpaper/bombadil.png`, `shell/Wallpaper.qml`) | `tests/test_wallpaper.py`: the picture's pixels against the tokens (PySide6) and `Wallpaper.qml` read as text; the picture is drawn again and compared (`pillow`, `numpy`, `cairosvg`) | `_mean(img, cx, cy)` and `rgb(token)` |
 | the ISO profile or installer | static facts in `tests/test_iso_profile.py`; booted behaviour as a check in `bombadil-smoke` | `_packages()`, `_installer_grub_lines()` |
+| the quiet console between the boot loader and the desk | `tests/test_boot_console.py` keeps the kernel parameters in `iso/efiboot/loader/entries/01-bombadil.conf` and `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` equal to the output of `scripts/console-palette.py`; paste that output again when a token it maps changes | `kernel_options(text)`, `colour_params(options)` |
 | anything that needs the real Hyprland: the Super binds, drawers, focus | a check in `bombadil-smoke` | `has_client`, `special_shown`, `active_is` |
 | generated apps on disk: names, files, running one (`apps.py`) | `tests/test_apps.py` | `test_create_and_list(home)` |
 | the browser panel's DevTools client (`browser.py`) | `tests/test_browser.py` | the `Chromium` handler and the `devtools` fixture: a stand-in for Chromium's debugging port |
 | app window slots and the rules that place them (`hypr.py`) | `tests/test_hypr.py` | the `Ipc` stand-in, which records the requests and answers `j/monitors` and `j/clients`; its autouse fixture takes the `home` fixture |
-| the details drawer's viewer (`pager.py`, `bombadil view`) | `tests/test_pager.py` | `run_page(text, keys)`, which runs the viewer on a pseudo-terminal |
+| the details drawer's viewer (`pager.py`, `bombadil view`) | `tests/test_pager.py` | `run_page(text, keys)`, which runs the viewer in-process with a key iterator and a size function and returns what it wrote (one separate test uses a pseudo-terminal) |
 | Stop and the turn's process scope (`procs.py`) | `tests/test_procs.py` | the tests that start real child processes and check them with `_alive` or `_pids_running` |
 | signing in (`signin.py`, `fake_signin.py`) | `tests/test_signin.py`; agentd's side in `tests/test_agentd_signin.py` | the `FakePanel` stand-in browser and the `fake(mode)` fixture |
 | `bombadil watch` and `bombadil history` (`watch.py`) | `tests/test_watch.py` | `watch.Renderer().lines(events)` fed event dictionaries; `watch.history_lines()` over a turn log written into the `home` folder |
@@ -191,8 +208,10 @@ scripts/dev-session.sh                          # fake provider: the bar echoes 
 BOMBADIL_PROVIDER=claude scripts/dev-session.sh # the real CLI, which must be signed in
 ```
 
-The script isolates nothing else. Without overrides a dev session uses the real `~/.local/state/bombadil`
-(the turn log and desk file), `~/.config/bombadil`, `~/Apps` and `$XDG_RUNTIME_DIR/bombadil/agentd.sock`.
+The script isolates nothing else. Without overrides a dev session uses the real state folder
+(`$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil`: the turn log and desk file), the real config
+folder (`$XDG_CONFIG_HOME/bombadil`, else `~/.config/bombadil`), `~/Apps` and
+`$XDG_RUNTIME_DIR/bombadil/agentd.sock`.
 Point those elsewhere with the variables in `src/bombadil/paths.py`:
 
 ```sh
@@ -278,7 +297,7 @@ CLAUDE_BIN=/path/to/claude tests/desktop/run.sh     # defaults to `command -v cl
 | `tests/desktop/run.sh` | builds the image `bombadil-desktop-test` if it is missing (`docker rmi` it to rebuild); mounts the checkout at `/repo` and `tests/desktop` at `/e2e` (both read-only), the output folder at `/out` and the `claude` binary at `/opt/claude` (read-only); passes if `driver.log` contains `DONE pass=N fail=0`. `OUT` (default `out/desktop`) is deleted first |
 | `tests/desktop/Dockerfile` | Arch with `quickshell`, `sway`, `hyprland`, `foot`, `grim`, `wtype`, `pyside6`, `inter-font` and the Qt 6 modules the shell imports |
 | `tests/desktop/inside.sh` | in the container, creates an ordinary user with passwordless sudo (as Bombadil's), copies sway so it drops its file capability, runs the driver as that user |
-| `tests/desktop/driver.py` | starts the scripted API, sway, agentd and `bin/bombadil-shell`; types with `wtype`, summons the pill with `bombadil pill`, screenshots with `grim`, listens on the agentd socket; prints `PASS` or `FAIL` for 53 checks and takes 32 screenshots |
+| `tests/desktop/driver.py` | starts the scripted API, sway, agentd and `bin/bombadil-shell`; types with `wtype`, summons the pill with `bombadil pill`, screenshots with `grim`, listens on the agentd socket; prints `PASS` or `FAIL` for 66 checks and takes 40 screenshots (35 `shot(...)` calls and 5 `desk_colour(...)` calls, which each take one) |
 | `tests/desktop/fake_api.py` | a scripted Anthropic Messages API, started by the driver on port 18555, that answers by keyword in the newest prompt (below) |
 | `tests/desktop/bin/claude` | first on `PATH`: runs the real binary with `ANTHROPIC_BASE_URL` pointing at the scripted API, a fake key and telemetry off |
 
@@ -296,11 +315,12 @@ earlier branch's keyword.
 | `joke` | text only |
 | anything else | `OK.` |
 
-What the 53 checks cover, grouped by area, not in the order the driver runs them (the launcher timing runs after the app turn, `!uname -sr` after Stop, and the picture word after the pictures):
+What the 66 checks cover, grouped by area, not in the order the driver runs them (the wallpaper's ground is checked first and a picture of the user's own last, after the QML check; the launcher timing runs after the app turn, `!uname -sr` after Stop, and the picture word after the pictures):
 
 | Area | Examples |
 |---|---|
-| connection and stone | the bar connects to agentd; the stone is green at rest and not green while a turn runs |
+| connection and stone | the bar connects to agentd; the stone is green at rest and not green while a turn runs; it is amber while one or two sessions wait for you, and still once they are answered or nothing waits |
+| wallpaper | at rest the desk's corners are the wallpaper's ground and not sway's colour, the middle is lit, the stone lies faintly in it and nothing is orange; then a picture named in `~/.config/bombadil/wallpaper` (the shell is started again for the first one) replaces it, a changed file changes it without a restart, a file that will not load falls back to the standard picture, taking the file away brings it back, and the second shell logs no QML error but the one for the missing file |
 | speed | `turn_start` within 200 ms of Enter; a launcher word answered in under 0.5 s |
 | a turn | the step reads "Installing ffmpeg", marked system, with the exact command; the turn ends changed, with a summary |
 | an app | the line counts lines while a `create_app` call streams; the Passwords window opens |
@@ -308,12 +328,12 @@ What the 53 checks cover, grouped by area, not in the order the driver runs them
 | Stop and queue | a second prompt waits as a chip; Esc stops the turn and says what it stopped; no `sleep 120` is left, the root one included; the queued prompt then runs |
 | undo and details | undo answers plainly without restore points; the details drawer opens, takes the keyboard, and closes by Esc, by Details again and by Esc in the pill; a clicked file opens in the viewer |
 | pictures | a `show_card` call streams into the bar as `partial` cards that the finished card replaces under the same id; Esc puts it away |
-| the desk | Now lists a two-step plan in a 300 px slot; a window over it folds it to a strip and the pill narrows to 360 px; the `desk` word folds and unfolds every card; Needs you cannot be hidden; Watching and Needs you show injected jobs and coding sessions |
-| QML errors | the shell logged no QML error (Quickshell logs one as a warning and carries on, so no other check would notice) |
+| the desk | Now lists a two-step plan in a 300 px slot; a window over it folds it to a strip and the pill narrows to 360 px; the `desk` word folds and unfolds every card; Needs you cannot be hidden; Watching and Needs you show injected jobs and coding sessions; one waiting session gets a line in the pill and no card, and with nothing counting or waiting both cards leave |
+| QML errors | the shell logged no QML error (Quickshell logs one as a warning and carries on, so no other check would notice); the wallpaper section does the same for the shell it starts again |
 
 Outputs land in `out/desktop/`: `driver.log`, `results.json` (checks and timings), `events.jsonl`
 (every event agentd sent), `api-requests.jsonl` (one line per model request, with `first`,
-`after_tool` and `shape`), a log per process and the screenshots. The shell exposes three hooks for
+`after_tool` and `shape`), a log per process (`quickshell.log`, and `quickshell-wallpaper.log` for the shell that the wallpaper section starts again) and the screenshots. The shell exposes three hooks for
 the driver through Quickshell IPC: `quickshell ipc -p shell/shell.qml call desk state`, `... cover
 '{"windows": [...]}'` for stand-in windows, and `... inject '<message>'` to feed the shell a message
 as agentd would (`shell/shell.qml`, `IpcHandler` with target `desk`).
@@ -335,8 +355,10 @@ after `greetd` when the kernel command line contains `bombadil.smoke`
 | `bombadil.smoke=install` | install | the same, then `bombadil-install /dev/vda --yes` with the next boot's kernel argument set to `bombadil.smoke=undo` through `BOMBADIL_INSTALL_CMDLINE` | `03-bombadil-install-test.conf` (erases `/dev/vda` without asking) |
 | `bombadil.smoke=undo` | undo, on the installed disk | the common checks, then a restore point, a change, `bombadil undo` and a reboot; after the reboot the common checks run again and `undo-applied` checks the change is gone | set by the install mode |
 
-A live boot makes 96 checks by a count of the script (92 lines start with `check`, less the install
-and undo blocks, plus 11 made in loops). The groups:
+A live boot makes 93 checks by a count of the script when both example apps are present: 92 lines
+start with `check`, less one in the install block and six in the undo block leaves 85; the example-app
+loop runs its three checks twice (3 more) and the picture loop runs one check five times (5 more).
+The groups:
 
 | Group | Names | Proves |
 |---|---|---|
@@ -404,7 +426,7 @@ FIFO is in `/run`, or set `VMFIFO`.
 | `vmsmoke` | runs `bombadil-smoke` inside the running VM with `BOMBADIL_SMOKE_NO_POWEROFF=1`, pressing the keys and taking the screenshots it asks for; results in `$VMDIR/smoke/` |
 | `vmlink up\|down` | sets the network link of netdev `n0`, to see what a person sees offline |
 | `vmwatch` | a screenshot every `EVERY` seconds (10) when the screen changed, in `$VMDIR/shots/`; it exits when no QEMU named `Bombadil` is running, which is the usual case with only the scratch VM up (`BombadilScratch` does not match) |
-| `probe PROMPT SECS [STOP_AT]` | sends a prompt to agentd's socket in the guest and prints the `status`, `card`, `local`, `turn_start`, `snapshot`, `queued`, `tool`, `text`, `result`, `error` and `turn_end` events, each with its time (other message types, such as `plan`, `jobs`, `desk` and `setup`, are skipped); it ends at `turn_end` or after `SECS`; `_` stands for a space, `@` for `;` and `BANG` for `!` |
+| `probe PROMPT SECS [STOP_AT]` | sends a prompt to agentd's socket in the guest and prints the `status`, `card`, `local`, `turn_start`, `snapshot`, `queued`, `tool`, `text`, `result`, `error` and `turn_end` events, each with its time (other messages, such as `jobs`, `desk`, `setup` and `entries`, and the other event kinds, `plan`, `tool_result`, `file_change` and `unqueued`, are skipped); it ends at `turn_end` or after `SECS`; `_` stands for a space, `@` for `;` and `BANG` for `!` |
 | `update-in-place [--reboot] [--no-system] [--from URL] REF` | moves the installed VM to a git ref without reinstalling: packs `bin`, `src`, `shell`, `share`, `bombadil-smoke` and the ISO files the profile owns from that ref (committed work only: it runs `git archive`), serves the tarball to the guest, takes a snapper restore point, keeps the old tree in `/usr/share/bombadil.bak`, copies and diffs |
 | `scratch-up [fresh]`, `with-scratch TOOL` | a headless copy of the disk under `out/scratch/`, and any tool above pointed at it |
 | `scratch_api.py PORT LOG` | a scripted Anthropic API for the real `claude` CLI, no model and no login, bound to all addresses: `silent` (accepted and never answered), `slowtool`, `story`, `thinkslow`, `vpn`, `sysfile`, `sysslow`, and `ffmpeg`, `password`, `docker`, `joke` as in `tests/desktop/fake_api.py` |
@@ -443,13 +465,14 @@ tools pass `bash -n`.
 | `bin/` | entry points: `agentd`, `bombadil`, `bombadil-app`, `bombadil-browser`, `bombadil-os-mcp` (Python; each inserts `src/` on the path) and `bombadil-shell` (shell script: Quickshell on `shell/shell.qml` with `share/qml` on the import path) |
 | `src/bombadil/` | the Python package: `agentd.py` (session daemon), `providers.py`, `signin.py`, `fake_signin.py`, `snapshots.py`, `procs.py`, `narrate.py`, `launcher.py`, `jobs.py`, `desk.py`, `cards.py`, `cardtools.py`, `sysmap.py`, `mcp_server.py`, `hypr.py`, `browser.py`, `apps.py`, `pager.py`, `watch.py`, `config.py`, `paths.py`, and `app_runtime.py`, a seven-line shim over `appkit.runtime` kept for callers of the first milestone (nothing in the tree imports it) |
 | `src/bombadil/appkit/` | the app runtime: `runtime.py`, `check.py`, `placement.py`, `engine.py`, `context.py`, `cli.py`, `tools.py`; `native/` holds the Python types registered into the QML module (`App`, `System`, `Processes`, `Command`, `Vault`, `TextFile`, `Clipboard`, `Agent`, `Highlighter`, and `KitFiles`, the helper behind the kit's `Store`) |
-| `shell/` | the Quickshell bar: `shell.qml`, the pill and line (`PillState.qml`, `StatusLine.qml`, `QueueChips.qml`, `SetupChips.qml`, `LineButton.qml`, `CardHost.qml`, `Stone.qml`) and the desk (`DeskState.qml`, `DeskRails.qml`, `DeskRail.qml`, `DeskStrips.qml`, `DeskStrip.qml`, `DeskCard.qml`, `NowCard.qml`, `RowsCard.qml`, `HyprCover.qml`, `DeskTheme.js`) |
+| `shell/` | the Quickshell bar: `shell.qml`, the pill and line (`PillState.qml`, `StatusLine.qml`, `QueueChips.qml`, `SetupChips.qml`, `LineButton.qml`, `CardHost.qml`, `Stone.qml`), the desk (`DeskState.qml`, `DeskRails.qml`, `DeskRail.qml`, `DeskStrips.qml`, `DeskStrip.qml`, `DeskCard.qml`, `NowCard.qml`, `RowsCard.qml`, `HyprCover.qml`, `DeskTheme.js`) and `Wallpaper.qml`, the picture on the Background layer under the desk |
 | `share/qml/Bombadil/` | the app kit (`import Bombadil`): `Theme.qml`, components, `Style/` (the look of every Qt Quick control), `icons/`, `qmldir` |
 | `share/app-template/` | the starter `main.qml` and `app.py` that the `app_template` tool returns |
 | `share/skills/bombadil-apps/` | the skill both CLIs load: `SKILL.md`, `references/`, `examples/` (`memory`, `password-manager`) |
 | `share/grub/bombadil/` | the GRUB theme |
+| `share/wallpaper/` | `bombadil.png`, the standard wallpaper that `shell/Wallpaper.qml` shows (drawn by `scripts/make-wallpaper.py`), and a README on using a picture of your own; the design is in [boot and the wallpaper](../design/boot-and-wallpaper.md) |
 | `iso/` | the archiso profile: `profiledef.sh`, `packages.x86_64`, `pacman.conf`, `airootfs/` (an overlay of `etc/` and `usr/`, including `usr/local/bin/bombadil-setup`, `-install`, `-rollback` and `-smoke`) and `efiboot/loader/entries/` (three boot entries) |
-| `scripts/` | `dev-session.sh`, `build-iso.sh`, `build-in-container.sh`, `run-vm.sh`, `test-vm.sh`, `qmp.py` (a small QMP client), `wsl-vm.sh` and `bombadil-vm.cmd` (launchers for a Windows host, not covered here), `vm-tools/` |
+| `scripts/` | `dev-session.sh`, `build-iso.sh`, `build-in-container.sh`, `run-vm.sh`, `test-vm.sh`, `qmp.py` (a small QMP client), `make-wallpaper.py` (draws `share/wallpaper/bombadil.png` from the tokens; needs `pillow`, `numpy` and `cairosvg`), `console-palette.py` (prints the kernel console's colour parameters from the tokens), `wsl-vm.sh` and `bombadil-vm.cmd` (launchers for a Windows host, not covered here), `vm-tools/` |
 | `tests/` | `conftest.py`, `qml_theme.py`, `test_*.py`, `fixtures/` (recorded CLI output), `qml/` (four example windows for `bombadil-app check`), `desktop/` (the Docker test) |
 | `docs/` | this documentation (start at [docs/README.md](../README.md)), and `docs/brand/`, the logos that `tests/test_brand.py` and the README read |
 | `pyproject.toml` | package metadata, the extras, the pytest and ruff settings |
@@ -470,17 +493,17 @@ These are visible in the code and the configuration; none is written down elsewh
 
 | Area | Convention |
 |---|---|
-| Python | 3.11 syntax (`X | None`, built-in generics), a docstring at the top of every module in `src/bombadil/`, comments that say why. Standard library only outside `appkit/` |
+| Python | 3.11 syntax (`X \| None`, built-in generics), a docstring at the top of every module in `src/bombadil/`, comments that say why. Standard library only outside `appkit/` |
 | Format and lint | `line-length = 110` is the only ruff setting; ruff's default rules apply. The formatter is not applied, nothing pins the ruff version, there is no type-checker configuration, and the repository has no CI workflow or pre-commit file |
 | Test files | `tests/test_<surface>.py`; the five tests of the bar and the pictures it draws end in `_qml` (`test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`), while the other five files that load QML (`test_appkit_kit`, `test_appkit_native`, `test_appkit_runtime`, `test_appkit_reload`, `test_appkit_agent`) have no suffix. There is no `tests/__init__.py`, so test file names must be unique across the folder and modules import each other by bare name (`from test_jobs import Systemd`, `from qml_theme import THEME`) |
 | Test names | a snake-case sentence that states the behaviour (`test_a_dead_session_is_dropped`, `test_the_pill_opens_from_super_and_from_alt_space`); a comment or docstring gives the reason where it is not obvious. A few early tests are short (`test_defaults`) |
-| Isolation | the `home` fixture (`tests/conftest.py`) points `HOME`, `BOMBADIL_RUNTIME`, `BOMBADIL_STATE`, `BOMBADIL_CONFIG`, `BOMBADIL_APPS` and `XDG_DATA_HOME` at a temp folder and clears `HYPRLAND_INSTANCE_SIGNATURE`. Use it in any test that touches a path or a socket |
+| Isolation | the `home` fixture (`tests/conftest.py`) points `HOME`, `BOMBADIL_RUNTIME`, `BOMBADIL_STATE`, `BOMBADIL_CONFIG`, `BOMBADIL_APPS` and `XDG_DATA_HOME` at a temp folder and clears `HYPRLAND_INSTANCE_SIGNATURE`. It does not reset `BOMBADIL_SOCKET`, `BOMBADIL_PROVIDER`, `BOMBADIL_SHARE` or `BOMBADIL_DATA`, so run pytest in a shell that has none of a dev session's `BOMBADIL_*` variables exported: with `BOMBADIL_SOCKET` set, an agentd test serves on that path, and `AgentD.serve` deletes a socket that is already there. Use the fixture in any test that touches a path or a socket |
 | Fakes | defined in the test module that needs them, not in a shared mock library: `FakeHypr`, `FakeSnaps`, `FakeAgentd`, `FakePanel`, `Systemd`, `Scripted`. Shared ones are imported from the module that owns them. Tests give agentd `agentd._NoSnapshots()`, the class `main` also uses when `config.toml` sets `snapshots = false` |
 | Async | `@pytest.mark.asyncio` on every `async def test_`; agentd is served on a Unix socket in the temp runtime folder and read with `asyncio.open_unix_connection` |
-| Recorded data | `tests/fixtures/*.jsonl` are lines a provider CLI printed; `tests/test_sysmap.py` holds recorded command output; a parser is fed text, never the live tool. Credentials in fixtures are built at run time (`"not" + "-a-" + "real-one"`) so no secret scanner mistakes them for real ones |
-| Qt tests | `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`; `pytest.importorskip("PySide6")` at module level; QML warnings and binding errors are collected (`engine.warnings`, `qInstallMessageHandler`) and asserted empty; `BOMBADIL_SCREENS=<dir>` saves a PNG of each state |
+| Recorded data | `tests/fixtures/*.jsonl` are lines a provider CLI printed; `tests/test_sysmap.py` holds recorded command output; a parser is fed text, never the live tool. The narration tests build their sample passwords at run time (`"not" + "-a-" + "real-one"` in `tests/test_narrate.py`) so no secret scanner mistakes them for real ones; the desktop test's `claude` wrapper uses a literal fake API key |
+| Qt tests | `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`, which the five `*_qml` files and `test_appkit_native.py` put in `os.environ` and the kit, runtime and reload tests pass to their child processes (`test_appkit_agent.py` sets only `QT_QPA_PLATFORM`); two forms of skipping without PySide6: `pytest.importorskip("PySide6")` at module level in `test_appkit_agent`, `test_appkit_kit` and `test_appkit_native` and inside each test of `test_appkit_runtime` and `test_appkit_reload`, and `pytest.importorskip("PySide6.QtCore", exc_type=ImportError)` (with the other Qt modules) at module level in the five `*_qml` files; QML warnings and binding errors are collected (`engine.warnings`, `qInstallMessageHandler`) and asserted empty; `BOMBADIL_SCREENS=<dir>` saves a PNG of each state |
 | Shell QML | colours come from `Theme` tokens through `import Bombadil as Kit`, and `DeskTheme.js` mirrors them for the desk; every `Text` and `TextField` sets a font family; every launcher runs `bin/bombadil-shell` and none starts `quickshell -p` directly. `tests/test_theme.py` checks exactly this much: in `shell/*.qml`, no hex colour of 6 to 8 digits and no `"white"` or `"black"` (other named colours and 3-digit hex are not checked), a `font.family` or whole `font` in every `Text` and `TextField` block, and `import Bombadil as Kit` as the only import that names the kit; `DeskTheme.js` equal to `Theme.qml` for the tokens it maps; and no `quickshell -p ...shell.qml` in the ISO's `hyprland.lua`, `scripts/dev-session.sh` and `tests/desktop/driver.py` (another launcher is not checked) |
-| Scripts | mostly `bash` with `set -euo pipefail` (`bombadil-smoke`, `vmsmoke` and `vmwatch` use `set -u`, so one failed command does not end the run); `bin/bombadil-shell` and `tests/desktop/bin/claude` are `sh`, and `scripts/qmp.py` and six of the VM tools (`serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink`, `vmlogin`) are Python. A header comment gives the usage and the variables. Options are mostly variables with defaults; `run-vm.sh` (`--disk`, `--installed`) and `update-in-place` (`--reboot`, `--no-system`, `--from`) also take flags, and `wsl-vm.sh` takes subcommands |
+| Scripts | mostly `bash` with `set -euo pipefail` (`bombadil-smoke`, `vmsmoke` and `vmwatch` use `set -u`, so one failed command does not end the run, and `tests/desktop/inside.sh` uses `set -e`); `bin/bombadil-shell` and `tests/desktop/bin/claude` are `sh`, and `scripts/qmp.py`, `scripts/make-wallpaper.py`, `scripts/console-palette.py` and six of the VM tools (`serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink`, `vmlogin`) are Python. A header comment gives the usage and the variables. Options are mostly variables with defaults; `run-vm.sh` (`--disk`, `--installed`) and `update-in-place` (`--reboot`, `--no-system`, `--from`) also take flags, and `wsl-vm.sh` takes subcommands |
 | Smoke lines | `BOMBADIL-SMOKE: PASS <name>`, `FAIL <name>: <tail>`, `SHOT`, `KEYS`, `DONE pass=N fail=M` |
 
 The protected files: `tests/test_brand.py` reads `README.md` (it must open with the lockup for dark
@@ -495,19 +518,35 @@ Variables a developer sets. The paths come from `src/bombadil/paths.py`.
 | `BOMBADIL_PROVIDER` | `agentd.py` (`main`), `cardtools.py` | `fake`, `claude` or `codex`; wins over `config.toml` and counts as chosen |
 | `BOMBADIL_RUNTIME` | `paths.runtime_dir` (Python only; `shell.qml` does not read it) | the runtime folder: the agentd socket by default, and `app-placements.json` with its lock (`hypr.py`); default `$XDG_RUNTIME_DIR/bombadil`, else `/run/user/<uid>/bombadil` |
 | `BOMBADIL_SOCKET` | `paths.socket_path`, `shell.qml` | the agentd socket; default `<runtime>/agentd.sock` for Python, and `$XDG_RUNTIME_DIR/bombadil/agentd.sock` for the bar, which reads only this variable. To move a session, set both |
-| `BOMBADIL_STATE` | `paths.state_dir` | `turns.jsonl`, `turns/`, `desk.toml`, `jobs/`; default `~/.local/state/bombadil` |
-| `BOMBADIL_CONFIG` | `paths.config_dir` | `config.toml`; default `~/.config/bombadil` |
-| `BOMBADIL_DATA`, `BOMBADIL_APPS` | `paths` | data (default `~/.local/share/bombadil`) and generated apps (default `~/Apps`) |
+| `BOMBADIL_STATE` | `paths.state_dir` | `turns.jsonl`, `turns/`, `desk.toml`, `jobs/`; default `$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil` |
+| `BOMBADIL_CONFIG` | `paths.config_dir` | `config.toml`; default `$XDG_CONFIG_HOME/bombadil`, else `~/.config/bombadil` |
+| `BOMBADIL_DATA`, `BOMBADIL_APPS` | `paths` | data (default `$XDG_DATA_HOME/bombadil`, else `~/.local/share/bombadil`) and generated apps (default `~/Apps`) |
 | `BOMBADIL_SHARE` | `paths.share_dir` | the installed tree, default `/usr/share/bombadil`, whose `share/` is a subfolder. Code run from a checkout finds `share/` beside `src/` first. The readers differ: `appkit/engine.py` and `appkit/tools.py` append `share/`, `providers.kit_paths` tries `<value>/share` and then `<value>`, and `skill_dir` and `mcp_server.py` also take `<value>` as the `share/` folder itself, which is how `dev-session.sh` sets it |
 | `BOMBADIL_NO_SCOPE=1` | `procs.py` | do not run a turn in a systemd user scope |
-| `BOMBADIL_REDUCE_MOTION=1` | `shell.qml` | the stone pulses instead of rolling |
+| `BOMBADIL_REDUCE_MOTION=1` | `shell.qml` | the stone pulses instead of rolling, and the wallpaper's picture appears without fading in |
 | `BOMBADIL_CHECK=1` | set by `bombadil-app check` | tells `app.py` and the programs `Command` runs that it is a check |
 | `BOMBADIL_SMOKE_NO_POWEROFF` | `bombadil-smoke` | do not power off or reboot at the end |
 | `BOMBADIL_INSTALL_CMDLINE` | `bombadil-install` | kernel arguments added to the installed system's GRUB |
 | `BOMBADIL_SCREENS` | the QML tests | a folder to save a PNG of each state into |
 
+Set by agentd, not by a developer. agentd adds these to the environment of each turn's process
+(`src/bombadil/agentd.py`), and the OS tools and providers depend on them.
+
+| Variable | Set | Read by | Effect |
+|---|---|---|---|
+| `BOMBADIL_TURN` | for each turn: the turn number | `mcp_server.py` (the `desk` and `job` tools) | says which turn the tool speaks for; without a number both tools refuse |
+| `BOMBADIL_TURN_SNAPSHOT` | for a turn that took a restore point: its number | `snapshots.py` (`undo_last_turn`) | "undo that" inside a turn skips that restore point and newer ones |
+| `BOMBADIL_SOCKET` | for each turn: agentd's own socket path | `paths.socket_path`, so the OS tools reach this agentd | |
+| `BROWSER` | for each turn and for a sign-in login: `bin/bombadil-browser` of the checkout when it exists, else `bombadil-browser` | the CLIs | a link the agent opens goes to agentd, which slides the browser panel in |
+| `BOMBADIL_SIGNIN` | by `signin.py`, for the login process it runs | `bin/bombadil-browser` | the sign-in's id, sent with the link so agentd knows which sign-in the page belongs to |
+
+`providers.MCP_ENV` is the list of variable names that `Codex.command` hands to its MCP server
+(`-c mcp_servers.bombadil-os.env_vars=...`), because Codex starts MCP servers with a short environment.
+An OS tool that reads a new variable needs the name added to that list to see it under Codex.
+
 What a developer puts in `config.toml` (`src/bombadil/config.py`). `/etc/bombadil/config.toml` is read first and
-`$BOMBADIL_CONFIG/config.toml` (default `~/.config/bombadil/config.toml`) over it, key by key. The existence of
+`$BOMBADIL_CONFIG/config.toml` (default `$XDG_CONFIG_HOME/bombadil/config.toml`, else
+`~/.config/bombadil/config.toml`) over it, key by key. The existence of
 the user file counts as "the user chose", like `BOMBADIL_PROVIDER`.
 
 | Key | Values | Default | Effect |
@@ -557,7 +596,7 @@ Script variables are given beside each script above. The commands: `pytest`, `ru
   modules skip), no network (`BOMBADIL_FAKE_SIGNIN_HOST`, the smoke's `signin-offline`). The trap: a new
   dependency with no test for the day it is missing.
 - [One design language](../principles.md#one-design-language): `tests/test_theme.py` fails on a 6 to 8 digit hex
-  colour or the word `white` or `black` in `shell/*.qml`, a `Text` without a font family, or a `DeskTheme.js`
+  colour or a `"white"` or `"black"` string literal in `shell/*.qml`, a `Text` without a font family, or a `DeskTheme.js`
   value that differs from `Theme.qml`. The trap: a quick hex colour in a shell file; add the token to `Theme.qml` instead.
 - [Nothing runs unseen](../principles.md#nothing-runs-unseen): the desktop test asserts that no
   `sleep 120` survives Stop, root one included, and the smoke asserts that Super+Esc ends a `!` turn.
@@ -571,7 +610,8 @@ Script variables are given beside each script above. The commands: `pytest`, `ru
 ### Add a unit test
 
 1. Pick the file from the table above and copy the nearest test. Add no new module unless the surface is new.
-2. Take the `home` fixture for anything that touches a path or a socket (`tests/conftest.py`).
+2. Take the `home` fixture for anything that touches a path or a socket (`tests/conftest.py`). It does not
+   reset every `BOMBADIL_*` variable: see Isolation under Conventions.
 3. For agentd, mark the test `@pytest.mark.asyncio`, build `agentd.AgentD(providers.Fake("x"),
    agentd._NoSnapshots())`, serve it with `_start(d)`, send with `_ask(w, "text")` and read with
    `_read_until(r, "turn_end")`; end with `w.close()` and `server.cancel()`. `_start` reads the three
@@ -587,8 +627,16 @@ Script variables are given beside each script above. The commands: `pytest`, `ru
    (`src/bombadil/mcp_server.py`). `@t(name, description, properties, required)` inside `OsTools._register`
    defines most of them. At its end it calls `cardtools.register(self)` (`show_card` and `system_map`) and
    `appkit.tools.register(self)`, whose app tools replace the `create_app`, `open_app`, `list_apps` and
-   `app_template` that `_register` defined earlier. `tools/list` returns all of them, so a test can also
-   check a schema. The helpers go with the file: `tests/test_mcp_server.py` builds
+   `app_template` that `_register` defined earlier. Register a new tool before the `appkit.tools.register`
+   call: `test_app_tools_are_listed_together_and_point_at_the_guide` (`tests/test_appkit_tools.py`) expects
+   the last ten tools to be the app tools. The model learns of a tool from its description in
+   `tools/list`, from `providers.system_prompt()` for the few it names, and for app tools from
+   `share/skills/bombadil-apps/SKILL.md`; edit the last two only when the tool changes how the agent
+   should behave. Add the tool's line to `_os_tool` in `src/bombadil/narrate.py` and a row to the
+   `tests/test_narrate.py` table before the test below: `tool_step` falls back to "Working on it" for an
+   unknown `bombadil-os` tool, which tells the person nothing (see
+   [Nothing runs unseen](../principles.md#nothing-runs-unseen)). `tools/list` returns all of them, so a
+   test can also check a schema. The helpers go with the file: `tests/test_mcp_server.py` builds
    `mcp_server.OsTools(FakeHypr(), FakeSnaps())` (both stand-ins are defined in that file) and calls
    `call(server, "tool_name", arg=...)`; `tests/test_appkit_tools.py` has its own `FakeHypr`, `make()` and
    `call(server, tool, **args)`; `tests/test_cardtools.py` uses the `tools` fixture and
@@ -597,12 +645,22 @@ Script variables are given beside each script above. The commands: `pytest`, `ru
 5. For a provider adapter, save the lines the CLI printed as `tests/fixtures/<provider>-<case>.jsonl` and
    assert on `[e for line in lines for e in provider.parse(line)]`. A new provider is a subclass of
    `Provider` in `src/bombadil/providers.py` that sets `name`, `title` and `binary` and defines `command`
-   and `parse`, and, for signing in, `signin_command`, `signin_url_kind`, `code_from_url` and `signed_in`.
-   It is registered in four places: `providers.PROVIDERS`; `config.PROVIDERS`, which `config.toml`, the
-   first-run picker and `bombadil provider` and `bombadil signin` accept; `launcher.PROVIDER_WORDS`, the
-   words that follow a verb such as "use" or "switch to"; and `sysmap.PROVIDER_HOSTS`, the host the network picture
-   probes. `providers.PROVIDERS` alone makes the name reachable only through `BOMBADIL_PROVIDER`, which is
-   how `fake` is registered, and `fake` shows how a stand-in is made.
+   and `parse`. `command` must hand the CLI the `bombadil-os` MCP server (`providers.mcp_config`, or
+   Codex's `-c mcp_servers.bombadil-os.*` overrides with `providers.MCP_ENV`) and `providers.system_prompt()`,
+   or the agent has no OS tools. For signing in, `Claude` and `Codex` override `login_command` (the base
+   `signin_command` returns it; only `Fake` overrides `signin_command`) and `signin_url_kind`,
+   `code_from_url` and `signed_in`, and set or override `signin_host`, `credentials`, `SIGNED_OUT`,
+   `SIGNIN_ERRORS`, `ends_when_signed_out`, `login_replaces`, `quiet_factor`, `is_progress` and `env()` as
+   the CLI needs (the comments in `Provider` say what each is for). It is registered in four places:
+   `providers.PROVIDERS`; `config.PROVIDERS`, which `config.toml`, the first-run picker and `bombadil provider` and `bombadil signin`
+   accept; `launcher.PROVIDER_WORDS`, the words that follow a verb such as "use" or "switch to"; and
+   `sysmap.PROVIDER_HOSTS`, the host the network picture probes. `providers.PROVIDERS` alone makes the name
+   reachable only through `BOMBADIL_PROVIDER`, which is how `fake` is registered, and `fake` shows how a
+   stand-in is made. The ISO knows only `claude` and `codex` by name: `bombadil-setup` (`select provider in
+   claude codex`, the `npm install` and login lines), `scripts/build-iso.sh` (which installs the two CLIs),
+   the usage text in `bin/bombadil` (`claude|codex`), `bombadil-install` (which copies `.claude`,
+   `.claude.json` and `.codex`) and the smoke's `claude-cli` and `codex-cli` checks. A provider for the
+   installed system needs each of them.
 6. Run `pytest -q -x -k <your test name>`, then the whole file.
 
 ### Add a QML test
@@ -642,7 +700,9 @@ out.png`.
    Use `send({...})` for a raw agentd message, `desk_ipc(...)` and `inject(...)` for the shell, and
    `api_requests()` to assert that no model call happened. `desk_ipc` and `inject` are defined only from
    the desk section of the driver onward, so a check placed earlier in the file cannot call them.
-4. Put the checks before the final "no QML errors" check, which reads the whole Quickshell log. Run
+4. Put the checks before the "the shell logged no QML errors" check, which reads the whole Quickshell log.
+   The wallpaper section after it stops Quickshell and starts it again with its own log
+   (`quickshell-wallpaper.log`), so a check that needs the first shell comes before that check. Run
    `tests/desktop/run.sh` and read `out/desktop/driver.log`; a failing check prints `FAIL` with its detail.
 
 ### Add a smoke check
@@ -695,18 +755,18 @@ Each of these was verified in the files named. Defects of the product are in
 
 - `cryptography` is imported by `src/bombadil/appkit/native/vault.py` but declared in no extra
   (`pyproject.toml`); 27 tests fail without it.
-- `tests/test_appkit_native.py::test_agent_talks_to_agentd` is intermittent: it asserts `provider` before the
-  first status message is guaranteed to have arrived.
-- `tests/test_desk_qml.py::test_moving_a_widget_moves_its_card_and_its_strip` compares an unrounded layout
-  position with a rounded one and fails when text widths are fractional.
-- `tests/test_stone_qml.py` samples animations in real time (`pump` sleeps between samples), so
-  `test_needs_you_is_amber_with_a_glow_and_two_knocks` can count a third knock on a loaded machine.
+- `tests/test_appkit_native.py::test_agent_talks_to_agentd` can fail: it asserts `provider` as soon as
+  `connected` is true, but `Agent` sets `connected` when the socket connects and `provider` only from the
+  first `status` message (`src/bombadil/appkit/native/agent.py`). It did not fail in the runs on 2026-10-01.
+- `pillow`, `numpy` and `cairosvg` are imported by `scripts/make-wallpaper.py` and used by two tests in
+  `tests/test_wallpaper.py`, but no extra declares them; the tests skip without them.
 - `tests/test_mcp_server.py` leaves a stand-in server that raises `BrokenPipeError` after its test, which
   pytest reports as a warning in every run. The stand-in browser in `tests/test_signin.py` sometimes leaves
   an `http.client.IncompleteRead` in its `_browse` thread, which pytest reports as a second warning.
 - The repository has no CI workflow and no pre-commit file, so nothing in it runs the suite for you; the
   desktop test and the ISO smoke are started by hand. A fork that wants checks on every push has to add them.
-- No test loads `shell/shell.qml`, `shell/DeskRails.qml` or `shell/HyprCover.qml` offscreen, and the smoke
+- No test loads `shell/shell.qml`, `shell/DeskRails.qml`, `shell/HyprCover.qml` or `shell/Wallpaper.qml`
+  offscreen (`tests/test_wallpaper.py` reads the last as text, and the desktop test checks its pixels), and the smoke
   takes only a screenshot of the desktop (`shot desktop`) and has no desk check. `HyprCover.qml` does nothing
   without Hyprland, so the desktop test stands in for the windows with `desk cover`, and the part that asks
   Hyprland where windows are has no automated test.
