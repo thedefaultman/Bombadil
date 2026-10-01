@@ -29,4 +29,27 @@ if [[ -z "${BOMBADIL_NO_CLIS:-}" ]]; then
     --prefix "$profile/airootfs/usr" @anthropic-ai/claude-code @openai/codex
 fi
 mkarchiso -v -w "$work/build" -o "$out" "$profile"
+
+# The image is read back and compared with the tree it was made from: a file the image holds wrongly is
+# found here, not as a driver that will not load on someone's laptop (see profiledef.sh).
+verify_image() {
+  local iso rootfs="$work/build/x86_64/airootfs" tmp differ
+  iso=$(find "$out" -maxdepth 1 -name 'bombadil-*.iso' -printf '%T@ %p\n' | sort -n | tail -n 1 | cut -d' ' -f2-)
+  if [[ $EUID -ne 0 ]] || ! command -v xorriso >/dev/null || [[ ! -d "$rootfs" ]]; then
+    echo "Note: the image was not read back (needs root, xorriso and the tree it was made from)"; return 0
+  fi
+  tmp=$(mktemp -d); mkdir "$tmp/mnt"
+  xorriso -osirrox on -indev "$iso" -extract /arch/x86_64/airootfs.erofs "$tmp/airootfs.erofs" >/dev/null 2>&1 \
+    || { echo "Note: could not take the image out of $iso; not read back"; rm -rf "$tmp"; return 0; }
+  if ! mount -t erofs -o ro,loop "$tmp/airootfs.erofs" "$tmp/mnt" 2>/dev/null; then
+    echo "Note: this system cannot mount the image; it was not read back"; rm -rf "$tmp"; return 0
+  fi
+  differ=$(diff -rq "$rootfs" "$tmp/mnt" 2>&1 | grep ' differ$' || true)
+  umount "$tmp/mnt"; rm -rf "$tmp"
+  if [[ -n "$differ" ]]; then
+    echo "Error: the image does not hold these files as they were:" >&2; head -n 20 <<<"$differ" >&2; exit 1
+  fi
+  echo "The image was read back and matches the tree it was made from."
+}
+verify_image
 echo "ISO in $out"

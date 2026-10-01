@@ -158,7 +158,7 @@ def shell_assignments(plan: dict) -> str:
 
 
 _JUNK_MODEL = re.compile(r"to be filled|default string|system product|not specified|not applicable|standard pc|"
-                         r"virtual machine|^none$|^o\.?e\.?m|unknown|^[0-9a-z]{10}$", re.I)
+                         r"virtual machine|^none$|^o\.?e\.?m|unknown|^[0-9a-z]{10}$|^pc-(i440fx|q35)|^rev ", re.I)
 
 
 def _slug(text: str) -> str:
@@ -206,6 +206,8 @@ def list_disks(lsblk: dict, stick: str = "") -> list[dict]:
         path = dev.get("path") or ""
         if dev.get("type") != "disk" or path.startswith(("/dev/zram", "/dev/ram", "/dev/loop", "/dev/sr")):
             continue
+        if not int(dev.get("size") or 0):
+            continue   # a floppy drive with nothing in it, an empty card reader
         nodes = list(_walk(dev))[1:]
         fstypes = {(n.get("fstype") or "").lower() for n in nodes} - {""}
         labels = {(n.get("partlabel") or "") for n in nodes}

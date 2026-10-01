@@ -61,3 +61,16 @@ def test_the_installed_clock_is_kept_right_by_timesyncd():
 def test_the_image_has_what_remote_control_runs_in():
     # `bombadil remote` keeps Claude Code's remote-control server in a detached tmux session.
     assert "tmux" in _packages()
+
+
+def test_the_image_is_built_without_erofs_tail_packing():
+    # erofs-utils 1.9.4 zeroed the last block of some incompressible files with `-E ztailpacking`, among them kernel
+    # modules; the installer reads every module back and refuses an install from an image like that.
+    profiledef = (ISO / "profiledef.sh").read_text()
+    options = re.search(r"^airootfs_image_tool_options=\((.*)\)", profiledef, re.M).group(1)
+    assert "ztailpacking" not in options
+
+
+def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
+    script = (ISO.parent / "scripts/build-iso.sh").read_text()
+    assert "verify_image" in script and "diff -rq" in script

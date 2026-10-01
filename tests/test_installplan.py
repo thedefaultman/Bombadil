@@ -160,6 +160,8 @@ def test_run_as_a_module_it_prints_assignments_and_a_bad_plan_exits_2(tmp_path, 
     (None, "Daniel", "4dd00922", "bombadil-4dd0"),
     ("20L5CTO1WW", "Daniel", "abcdef", "bombadil-abcd"),
     ("", None, "", "bombadil-home"),
+    ("pc-i440fx-noble-v2", "Daniel", "77aa11", "bombadil-77aa"),
+    ("pc-q35-9.2", None, "77aa11", "bombadil-77aa"),
 ])
 def test_the_name_the_card_offers_is_readable_when_the_maker_gave_a_model_and_distinct_when_not(model, name, seed, expected):
     host = installplan.suggest_hostname(seed, model=model, name=name)
@@ -184,6 +186,7 @@ def test_the_disks_a_person_can_pick_from_and_the_reason_for_each_one_that_is_mi
         _node("/dev/sdd", "disk", size=256 * 1000**3, model="Busy", children=[
             _node("/dev/sdd1", "part", fstype="ext4", mountpoints=["/mnt/data"])]),
         _node("/dev/zram0", "disk", size=8 * 1000**3),
+        _node("/dev/fd0", "disk", size=0),
         _node("/dev/loop0", "loop", size=1000**3),
         _node("/dev/sr0", "rom", size=1000**3),
     ]}
