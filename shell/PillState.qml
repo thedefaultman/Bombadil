@@ -33,6 +33,12 @@ QtObject {
     property var rest: null
     // What the empty field says while resting ("Open or find anything. Asks wait for 15:00."), else "".
     readonly property string restHint: resting && rest && rest.hint ? String(rest.hint) : ""
+    // While resting, what agentd found on this computer for the ask just kept (apps, launcher words, past
+    // asks): {turn, line, matches: [{id, kind, label, hint}]}, else null. The line says when the ask runs
+    // and what was found, and the matches are the chips under it, only while that line is on screen.
+    property var found: null
+    readonly property bool foundShown: mode === "resting" && found !== null && line === found.line
+    readonly property var foundChips: foundShown ? found.matches : []
 
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
     // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
@@ -105,6 +111,8 @@ QtObject {
     property string _error: ""
     property bool _cutOff: false     // the closing line is of a turn the limit stopped halfway
     property bool _restOwed: false   // the resting line is due as soon as the line is free (a turn, or a line with Undo, holds it)
+    property bool _foundOwed: false  // the same for the line of what was found
+    property var _gone: []           // asks that left the queue (dropped, or started): a found for one is late news
     property string _backLine: ""    // "Claude is back. Running your 3 waiting asks.", while it is on screen
 
     function _now() { return Date.now() }
@@ -178,10 +186,14 @@ QtObject {
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
+        if (ev.type === "found") { _takeFound(ev); return }
         if (ev.type === "summon") {
             summoned(typeof ev.text === "string" ? ev.text : "")
             // The pill comes up: say why the AI does not answer, unless a line is being read.
-            if (resting && setupLine) { if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true }
+            if (resting && setupLine) {
+                if (foundShown) return   // the line of what was found is being read: it stays
+                if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
+            }
             return
         }
         if (ev.type === "local") {
@@ -197,12 +209,14 @@ QtObject {
         if (ev.type !== "event") return
         switch (ev.kind) {
         case "queued":
+            _gone = _gone.filter(t => t !== ev.turn)   // (a turn the limit cut off goes back to the front under its id)
             if (!queue.some(q => q.turn === ev.turn))
                 _setQueue(queue.concat([{ turn: ev.turn, prompt: ev.prompt || "", wait: _waitFor(ev.prompt) }]))
             break
         case "unqueued":
             // Also an app's newer ask taking its older one's place ("replaced"): the chip goes, with no line.
             _setQueue(queue.filter(q => q.turn !== ev.turn))
+            _dropFound(ev.turn)
             break
         case "card":
             _takeCard(ev.card)
@@ -212,6 +226,7 @@ QtObject {
             // "Claude is back. Running your 3 waiting asks." goes on being said over the turn it starts.
             if (_backLine !== "" && mode === "local" && line === _backLine) { flash = line; flashAt = lineAt; flashFor = fadeAfter }
             _setQueue(queue.filter(q => q.turn !== ev.turn))
+            _dropFound(ev.turn)
             if (!optimistic || mode !== "working") startedAt = _now()
             optimistic = false
             mode = "working"; turn = ev.turn; busy = true
@@ -286,6 +301,11 @@ QtObject {
                 // Undo says what it covered, and a picture brings its own words: give people time to read them.
                 fadeAfter = ev.action === "undo" && ev.phase === "done" ? 15000
                           : ev.action === "picture" && ev.phase === "done" ? 8000 : 5000
+                // The answer to "pause claude" is the resting line itself. It stays the resting line, with its
+                // button, whichever of the two (this answer, agentd's setup) comes first.
+                if (resting && ev.phase === "done" && setupLine !== "" && line === setupLine) {
+                    mode = "resting"; fadeAfter = 12000
+                }
             }
             break
         }
@@ -304,6 +324,53 @@ QtObject {
         _restOwed = false
     }
 
+    // The line of what was found, for 12 s, with its chips under it.
+    function _showFound() {
+        mode = "resting"; line = found.line; source = "step"
+        risk = ""; command = ""; sticky = false; flash = ""
+        lineAt = _now(); fadeAfter = 12000
+        _restOwed = false; _foundOwed = false
+    }
+
+    // The matches of this ask go, and its line ("Kept for 15:00 ...") with them when that is the line on screen:
+    // the ask is on its way out, so the line is no longer true.
+    function _clearFound(t) {
+        if (found === null || found.turn !== t) return
+        if (foundShown) { mode = "idle"; line = "" }
+        found = null
+    }
+
+    // The ask left the queue (dropped, or started). A found for it that comes late is ignored.
+    function _dropFound(t) {
+        if (_gone.indexOf(t) < 0) _gone = _gone.concat([t]).slice(-50)
+        _clearFound(t)
+    }
+
+    // A waiting ask of the user's own, not an app's ("[from app notes] ...") nor a shell command.
+    function _isUserAsk(prompt) {
+        const p = String(prompt || "")
+        return !p.startsWith("!") && !/^\[from app /.test(p)
+    }
+
+    // agentd looked on this computer for the ask it just kept. The "queued" event comes first; one that has
+    // not come yet is no reason to wait.
+    function _takeFound(ev) {
+        if (!resting || ev.turn === undefined || ev.turn === null || typeof ev.line !== "string" || ev.line === "") return
+        if (_gone.indexOf(ev.turn) >= 0) return     // dropped, or already running, while agentd looked
+        // A newer ask waits too: these are the matches for a sentence you have moved on from.
+        if (queue.some(q => q.turn > ev.turn && _isUserAsk(q.prompt))) return
+        const matches = []
+        for (const m of (ev.matches && typeof ev.matches === "object" ? Array.from(ev.matches) : [])) {
+            if (matches.length >= 3) break
+            if (!m || typeof m !== "object" || m.id === undefined || m.id === null || !m.label) continue
+            matches.push({ id: String(m.id), kind: String(m.kind || ""), label: String(m.label), hint: String(m.hint || "") })
+        }
+        found = { turn: ev.turn, line: ev.line, matches: matches }   // replaces any older one
+        // A turn has the line, and a line with Undo is not wiped (as for the resting line): it waits for the line to go.
+        _foundOwed = mode === "working" || (mode === "closing" && (_cutOff || sticky))
+        if (!_foundOwed) _showFound()
+    }
+
     function _setup(ev) {
         const was = setupState, wasLine = setupLine
         setupState = ev.state || ""
@@ -314,10 +381,13 @@ QtObject {
         // The line is due the moment the state flips (or says something new), however busy the line is.
         const flipped = resting && setupLine !== "" && (was !== "resting" || setupLine !== wasLine)
         if (flipped) _restOwed = true
+        // What was found is of this state: it goes when the AI is back, and when what it says of the wait changes.
+        if (!resting || flipped) { found = null; _foundOwed = false }
         if (mode === "working" && !optimistic) return   // a turn has the line; the setup waits for it
         if (resting) {
             if (mode === "working") optimistic = false   // the ask "On it" was for waits instead
             if (!setupLine) return
+            if (!flipped && foundShown) return   // the same words again (not news): the found line stays
             // A turn the limit stopped keeps its closing line (with Undo); so does one that changed something.
             if (mode === "working" || mode === "resting" || (flipped && !(mode === "closing" && (_cutOff || sticky)))) _showRest()
             return
@@ -359,6 +429,7 @@ QtObject {
         if (resting && !t.startsWith("!")) {
             // The AI rests: the ask waits as a chip and the line says so (a launcher word does not wait:
             // its own answer is the line). Never "On it".
+            if (exact(t) === "") { found = null; _foundOwed = false }   // an earlier ask's matches are not this one's
             if (exact(t) === "" && setupLine) { if (mode === "working") _restOwed = true; else _showRest() }
             return true
         }
@@ -389,6 +460,7 @@ QtObject {
         busy = false
         optimistic = false
         aiOpen = false   // its switches reach nobody now
+        found = null; _foundOwed = false; _gone = []   // its chips reach nobody; its turn numbers may start over
         if (card && card.partial) card = null   // a half-drawn picture will not be finished
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
@@ -413,6 +485,18 @@ QtObject {
         if (_offline()) return
         outgoing({ type: "unqueue", turn: t })
         _setQueue(queue.filter(q => q.turn !== t))
+        _dropFound(t)
+    }
+
+    // A press on a chip under the found line: agentd opens the thing (an app, a panel or a word, or the steps
+    // of a past ask) and lets go of the kept ask it came from. The opened window must take the keyboard.
+    function openFound(id) {
+        if (_offline()) return
+        if (found === null || !found.matches.some(m => m.id === String(id))) return
+        handOff()
+        outgoing({ type: "found_open", turn: found.turn, id: String(id) })
+        // agentd lets go of the ask it came from ("unqueued"), unless the thing could not be opened.
+        _clearFound(found.turn)
     }
 
     // When a prompt that has to wait will run ("15:00", "paused"), the label of its chip; "" when it does not wait.
@@ -466,9 +550,11 @@ QtObject {
     function _putLineAway() {
         if (mode === "closing" || mode === "local" || mode === "resting") {
             sticky = false
+            const foundDue = _foundOwed && found !== null && resting
             const owed = _restOwed && resting && setupLine !== "" && line !== setupLine
-            _restOwed = false
+            _restOwed = false; _foundOwed = false
             if (!ready && !resting && setupLine) _showSetup()
+            else if (foundDue) _showFound()
             else if (owed) _showRest()
             else { mode = "idle"; line = "" }
         }
