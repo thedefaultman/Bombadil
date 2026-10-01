@@ -1,15 +1,17 @@
 """The pill is also the launcher: a small exact list of words that never wait for the model.
 
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
-or one of a few commands ("undo", "stop", "history", "wifi", "desk") is handled here, by
-agentd, in a fraction of a second and offline. So are the desk's widgets, but only with a
-verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the agent.
-Everything else goes to the agent. The list is deliberately exact (after lowercasing and
-trimming, with an optional "open"/"close" in front): a parser that guesses would give the
-machine two brains that sometimes disagree.
+or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
+is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
+only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
+agent. Everything else goes to the agent. The list is deliberately exact (after lowercasing and
+trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
+two brains that sometimes disagree.
 
-`match()` decides; `Launcher` does the work by calling Hyprland, the apps and snapper
-directly. Every action returns one plain sentence for the line above the pill.
+`match()` decides; `Launcher` does the work by calling Hyprland, the apps, snapper and the
+brain directly. Every action returns one plain sentence for the line above the pill. The
+brain's words are about what is in front of you (brain/this.py) and are answered from its
+index, never by a model; when the brain is not there, they say so rather than wait for it.
 """
 
 import json
@@ -21,6 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from . import apps, browser, hypr, paths, remote, snapshots, sysmap
+from .brain import client as brain_client
+from .brain import this
 from .desk import WIDGETS, Desk
 
 PANEL_WORDS = {
@@ -43,6 +47,13 @@ CORE_COMMANDS = {
     "lock": ["lock", "lock screen", "lock the screen"],
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
+}
+# Checked after the core commands and before app names: the brain's words, about what is
+# in front of you. "brain" opens the Brain on it; the questions answer in the line.
+BRAIN_COMMANDS = {
+    "brain": ["brain", "the brain", "open the brain", "show the brain", "open brain", "show brain"],
+    "whyhere": ["why is this here", "where did this come from", "where is this from", "who made this",
+                "what made this"],
 }
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
@@ -86,10 +97,12 @@ HIDE_VERBS = ("hide", "put away")
 # A widget takes only the verbs that mean a thing on the screen: "start now" and "run now" are
 # sentences for the agent, not the desk.
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
-# Not offered as completions: Tab should never land on these by accident.
-NO_COMPLETE = {"restart", "shutdown", "lock", "stop"}
+# Not offered as completions: Tab should never land on these by accident, and a question
+# is typed rather than completed.
+NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "why", "whyhere"}
 
 DETAILS_CLASS = "bombadil-details"
+BRAIN_APP = "brain"
 
 
 @dataclass
@@ -214,6 +227,9 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    brain = _lookup(t, BRAIN_COMMANDS) if plain else None
+    if brain:
+        return Action(brain)
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
@@ -258,7 +274,7 @@ def entries(app_list: list | None = None) -> list[dict]:
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
             for w, words in WIDGET_WORDS.items()]
-    for table in (CORE_COMMANDS, UTILITY_COMMANDS):
+    for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
@@ -308,6 +324,7 @@ class Launcher:
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "remote": "Starting remote control", "install": "Opening the installer",
                 "provider": f"Switching to {action.title or action.target}",
+                "brain": "Opening the Brain", "whyhere": "Looking it up",
                 "desk": "Changing the desk"}.get(action.kind, "On it")
 
     @staticmethod
@@ -325,6 +342,7 @@ class Launcher:
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
                 "remote": "Could not start remote control", "install": "Could not open the installer",
+                "brain": "Could not open the Brain", "whyhere": "Could not look it up",
                 "desk": "Could not change the desk"}.get(action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
@@ -398,6 +416,45 @@ class Launcher:
                 self.hypr.dispatch(f'hl.dsp.workspace.toggle_special("{name.removeprefix("special:")}")')
                 hidden.append(name)
         return True, "Put everything away." if hidden else "Nothing to put away."
+
+    # -- the brain --
+
+    def _brain(self, a: Action) -> tuple[bool, str]:
+        ref = this.resolve(self.hypr)
+        try:
+            # Asked first, so the window finds the thing waiting when it opens (or, already
+            # open, is pushed to it).
+            shown = brain_client.request("show", ref=ref or str(paths.home()))
+        except brain_client.BrainUnavailable as e:
+            return False, _down(e)
+        except brain_client.BrainError as e:
+            return False, _said(e) or f"{self.failed(a)}."
+        self.open_brain()
+        title = _shown_title(shown) if ref else ""
+        return True, f"Opened the Brain on {title}." if title else "Opened the Brain."
+
+    def open_brain(self) -> None:
+        """The Brain window: the app kit's drawer when there is one, else its own window,
+        brought forward when it is already open."""
+        placement = _placement()
+        if placement is not None:
+            placement.show(BRAIN_APP)
+        elif _app_running(BRAIN_APP):
+            self._focus_class(f"bombadil-app-{BRAIN_APP}")
+        else:
+            apps.run(BRAIN_APP)
+
+    def _whyhere(self, a: Action) -> tuple[bool, str]:
+        ref = this.resolve(self.hypr)
+        if not ref:
+            return False, "Nothing is in front to ask about."
+        try:
+            answer = brain_client.request("why", ref=ref)
+        except brain_client.BrainUnavailable as e:
+            return False, _down(e)
+        except brain_client.BrainError as e:
+            return False, _said(e) or f"{self.failed(a)}."
+        return True, _said(answer) or "The brain does not know this yet."
 
     # -- undo --
 
@@ -648,6 +705,29 @@ class Launcher:
     def _shutdown(self, _a: Action) -> tuple[bool, str]:
         self._run(["systemctl", "poweroff"], capture_output=True, check=True, timeout=10)
         return True, "Shutting down."
+
+
+def _down(e: Exception) -> str:
+    """Why the brain did not answer: it is not there, or it is busy (the first index)."""
+    if isinstance(e.__cause__, TimeoutError) or getattr(e, "detail", "") == "timed out":
+        return "The brain did not answer in time."
+    return "The brain is not running yet."
+
+
+def _said(answer) -> str:
+    """The brain's sentence, from an answer or an error, as one line."""
+    if isinstance(answer, dict):
+        answer = answer.get("text") or answer.get("line") or answer.get("why") or ""
+    return " ".join(str(answer or "").split())
+
+
+def _shown_title(shown) -> str:
+    """The name of what the Brain opened on, from the brain's answer to "show"."""
+    if not isinstance(shown, dict):
+        return ""
+    thing = shown.get("thing") if isinstance(shown.get("thing"), dict) else {}
+    title = " ".join(str(shown.get("title") or thing.get("title") or "").split())
+    return title if len(title) <= 60 else title[:59].rstrip() + "…"
 
 
 def _is_text(path: Path) -> bool:

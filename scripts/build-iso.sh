@@ -20,7 +20,7 @@ if [[ -z "${BOMBADIL_TEST_ENTRIES:-}" ]]; then
   rm -f "$profile"/efiboot/loader/entries/0[2-9]-*.conf
 fi
 mkdir -p "$profile/airootfs/usr/local/bin"
-for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp bombadil-shell; do
+for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp bombadil-shell bombadil-brain bombadil-brain-watch; do
   ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
 done
 # Bake the provider CLIs in, so the first-run picker only has to log in.
