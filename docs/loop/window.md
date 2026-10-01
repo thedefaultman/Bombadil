@@ -1,6 +1,7 @@
 # The Noticed window
 
-A kit app. It opens from the bar chip (`noticed_do open`), or when he says "noticed". Contract: `docs/LOOP.md`. Files: `share/apps/noticed/` (`app.py`, `main.qml`,
+A kit app that ships with Bombadil (`share/apps/noticed`, so nothing is copied into `~/Apps`). It opens from the bar
+chip (`noticed_do open`), or when he says "noticed"; when it cannot open, the answer says so. Contract: `docs/LOOP.md`. Files: `share/apps/noticed/` (`app.py`, `main.qml`,
 `text.js`, one QML file per section, `SendCard.qml`, `Line.qml`, `Section.qml`, `Well.qml`,
 `FootLink.qml`). Tests: `tests/test_noticed_app.py`.
 
@@ -12,13 +13,17 @@ sections. A section with nothing in it is hidden; when all five are empty the fi
 - **What you ask most**: his own words, "4 times on 3 days", what it became. Where an offer waits, one
   button (the row's own, else "Make it") and "Other ways", which opens the other forms, "Show me", "Not
   now" and "Never".
-- **Changed itself**: newest first, each with its sentence, when, and Undo. An undone one says so and
-  offers "Put it back".
+- **Changed itself**: newest first, each with its sentence, when, and Undo (an app changed in place has none:
+  the turn's own Undo has the old files). An undone one says so and offers "Put it back": a word he took out is
+  made again, a word the sweep put away is put away again.
 - **Found**: a plain sentence, the count, "Why?" (only when agentd sent the evidence) and "Send to the
   project". That opens the Send card inside the window: what goes, what stays here, the exact text, then
   "Open the issue page", "Not now", "Never for this". Opening the page puts the text in its address, so
-  GitHub gets it then; nothing is posted until he presses Submit on the page.
-- **You said no to**: each with "Bring back".
+  GitHub gets it then; nothing is posted until he presses Submit on the page. A problem the project already
+  had is not sent again: its issue opens instead, and the row says "already reported as #42" after its count.
+- **You said no to**: each with "Bring back": the ideas he said Never to, and the problems it found that he
+  said Not now or Never to (a Not now returns by itself after 30 days or when the problem has happened twice
+  as many times; Bring back opens it again at once).
 - **Words**: the words he made, what each opens, "Bring back" on a put-away one. There is no "Put away":
   the contract has no op for it (see followups in the build notes).
 - A footer: muted "Forget what I ask" and "Clear what it found" (each asks once; what he said no to

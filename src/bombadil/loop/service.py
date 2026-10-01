@@ -59,6 +59,7 @@ BUTTONS = {"A": "Make the word", "D": "Make an app"}
 UNDOABLE = ("remove_word", "trash_app", "bring_back_word")
 
 NOT_SAVED = "Noticed cannot look at its notes right now, so nothing was changed."
+WINDOW_WONT_OPEN = "The Noticed window would not open."
 
 
 @dataclass
@@ -409,15 +410,21 @@ class LoopService:
         said_no = []
         for r in store.said_no():
             try:
-                form = forms.get(r["form"]).name
+                form = forms.get(r["form"]).id    # the id: the window words it itself ("a word", "an app")
             except KeyError:
                 form = ""
             said_no.append({"id": r["id"], "title": r["sentence"] or r["label"], "t": r["t"], "form": form})
+        for f, said_t in finds.said_no():    # a problem he said Not now or Never to
+            said_no.append({"id": f.fp, "title": f.title, "t": said_t, "form": ""})
+        said_no.sort(key=lambda r: -r["t"])
         listed = [{"phrase": w.phrase, "away": w.away,
                    "opens": forms.thing_title(f"{w.kind}:{w.name}", titles)} for w in words.load()]
         found = []
         for f in finds.all(("open", "reported", "sent")):
-            entry = {"id": f.fp, "title": f.title, "meta": _times(f.n, f.days), "fp": f.fp, "state": f.state,
+            meta = _times(f.n, f.days)
+            if f.state == "sent" and (issue := self._flag(f"issue:{f.fp}")):
+                meta += f" · already reported as #{issue}"
+            entry = {"id": f.fp, "title": f.title, "meta": meta, "fp": f.fp, "state": f.state,
                      "can_send": f.state in ("open", "reported"),   # the window's button says report first
                      "why": [t for t in (f"Expected: {f.expected}" if f.expected else "",
                                          f"Seen: {f.observed}" if f.observed else "") if t]}
@@ -529,6 +536,7 @@ class LoopService:
             return
         self._failed_at = None
         _, self._swept = await self._work(self._w_hidden, default=(False, 0.0), where="settings")
+        await self._work(self._w_app_lost, {p["group"] for p in self._app_turns}, self.clock(), where="app")
         await self._ingest_now()
 
     async def _ticker(self) -> None:
@@ -713,7 +721,8 @@ class LoopService:
             return True, "Noticed is hidden. Say “show noticed” to bring it back."
         await self._set_hidden(False)
         await self.agentd.broadcast({"type": "noticed_open"})
-        await self._open_window()
+        if not await self._open_window():
+            return False, WINDOW_WONT_OPEN
         return True, "Opened Noticed."
 
     async def _set_hidden(self, hidden: bool) -> bool:
@@ -726,14 +735,16 @@ class LoopService:
         return True
 
     async def _open_window(self) -> bool:
-        """Open the Noticed window, when that app is on this machine; quietly not when it is not."""
+        """Open the Noticed window. True only when it opened: False when that app is not on this machine
+        (quietly) or would not open. The app ships with Bombadil, so it is looked up as an app is run, his
+        own copy first and then the built-in one, and not in `known_apps()`, which lists only his."""
         lx = getattr(self.agentd, "launcher", None)
         if lx is None:
             return False
         try:
-            found = await asyncio.to_thread(launcher.known_apps)
-            app = next((a for a in found if a.name == launcher.NOTICED), None)
-            if app is None:
+            try:
+                app = await asyncio.to_thread(apps_mod.load, launcher.NOTICED)
+            except OSError:    # (FileNotFoundError) neither a copy of his nor the one that ships is here
                 return False
             ok, _ = await asyncio.to_thread(lx.run, launcher.Action("app", app.name, "open", str(app.title)))
             return bool(ok)
@@ -768,8 +779,9 @@ class LoopService:
         await self._refresh(to=writer)
 
     async def _op_open(self, rid, form, writer) -> Result:
-        opened = await self._open_window()
-        return Result(True, "Opened the Noticed window." if opened else "")
+        if not await self._open_window():
+            return Result(False, WINDOW_WONT_OPEN)
+        return Result(True, "Opened the Noticed window.")
 
     async def _op_other_ways(self, rid, form, writer) -> Result:
         return Result(True, "Those are the other ways it could be done.")
@@ -779,8 +791,15 @@ class LoopService:
         said = {"not_now": "Okay. That will not come up again for a while.",
                 "never": "Okay. That will not be offered again.", "got_it": "Okay, nothing to make."}[op]
         if await self._work(self._w_finding, rid, default=None, where=op) is not None:
-            await self._work(self._w_mark, rid, "never" if op == "never" else "dismissed", where=op)
-            return Result(True, said)
+            # A problem is not an offer: Not now keeps it quiet for a month, or until it has happened twice
+            # as many times; Never keeps it quiet for good. Both are in "You said no to", with Bring back.
+            marked = await self._work(self._w_mark, rid, "never" if op == "never" else "dismissed",
+                                      self.clock(), default=None, where=op)
+            if marked is None:
+                return Result(False, "That did not work.")
+            return Result(True, "Okay. That will not come up again." if op == "never" else
+                          f"Okay. That will stay quiet for {findings_mod.SNOOZE_DAYS} days, or until it has "
+                          "happened twice as many times.")
         res = await self._work(self._w_answer, rid, op, None, self.clock(), default=None, where=op)
         if res is None:
             return Result(False, "That did not work.")
@@ -789,8 +808,8 @@ class LoopService:
     def _w_finding(self, rid: str):
         return self._findings.get(rid) if ":" in rid else None
 
-    def _w_mark(self, fp: str, state: str):
-        return self._findings.mark(fp, state)
+    def _w_mark(self, fp: str, state: str, now: float | None = None):
+        return self._findings.mark(fp, state, now)
 
     # accept: a word, or an app
 
@@ -834,8 +853,15 @@ class LoopService:
             return Result(False, str(e)), None
         except words.WordError as e:
             return Result(False, str(e)), None
-        store.note_word_made(word.phrase, now)
-        store.answer(ask["id"], offers.ACCEPT, form="A", now=now)
+        try:
+            store.note_word_made(word.phrase, now)
+            store.answer(ask["id"], offers.ACCEPT, form="A", now=now)
+        except Exception:
+            # The notes would not take it: no trail row, no Undo and the offer still showing. Take the word
+            # out again, so that the failure he is told about is true and a second tap can make it.
+            with contextlib.suppress(Exception):
+                words.remove(word.phrase)
+            raise
         title = f"Made “{word.phrase}” open {forms.thing_title(ask['opens'], store._titles())}."
         return Result(True, title), {"phrase": word.phrase, "title": title, "group": ask["id"],
                                      "opens": {"kind": kind, "name": name}}
@@ -871,15 +897,25 @@ class LoopService:
                 undo_msg={"type": "noticed_do", "op": "undo", "id": row["id"]}))
         return res
 
-    def _app_names(self) -> dict[str, str]:
-        return {a.name: str(a.title) for a in launcher.known_apps()}
+    @staticmethod
+    def _stamp(path: Path) -> tuple:
+        """What an app's files were when last looked at (its own files, not what it saves in data/): a
+        different stamp means the app was changed."""
+        try:
+            files = [(f, f.stat()) for f in path.iterdir() if f.is_file()]
+        except OSError:
+            return ()
+        return tuple(sorted((f.name, st.st_mtime_ns, st.st_size) for f, st in files))
+
+    def _app_stamps(self) -> dict[str, tuple[str, tuple]]:
+        """His apps: name -> (title, stamp)."""
+        return {a.name: (str(a.title), self._stamp(Path(a.path))) for a in launcher.known_apps()}
 
     async def _make_app(self, ask: dict) -> Result:
         """Form D is an ordinary turn, asked on his tap: a request in his own words, origin "loop"."""
         if getattr(self.agentd, "access", "ready") != "ready":
-            return Result(False, "Bombadil is not signed in to its AI right now, so it cannot make an app "
-                                 "yet.")
-        before = set(await asyncio.to_thread(self._app_names))
+            return Result(False, "Bombadil needs you to sign in before it can make an app.")
+        before = await asyncio.to_thread(self._app_stamps)
         pending = {"text": _app_prompt(ask), "before": before, "group": ask["id"],
                    "said": sentence_of(ask["sentences"][0]) if ask["sentences"] else ask["label"]}
         self._app_turns = [*self._app_turns[-(MAX_PENDING_APPS - 1):], pending]
@@ -888,27 +924,62 @@ class LoopService:
         except BaseException:
             self._app_turns.remove(pending)
             raise
-        await self._work(self._w_answer, ask["id"], offers.ACCEPT, "D", self.clock(), where="accept")
+        await self._work(self._w_app_started, ask["id"], self.clock(), where="accept")
         return Result(True, "Making a small app for it now. It will say what it made when it is done.")
+
+    def _w_app_started(self, group: str, now: float) -> None:
+        """The group is "made", and the turn that makes it is written down until its row comes: a turn
+        lost with agentd (a restart) leaves this note, and the next start puts the ask back."""
+        self._set_flag(f"app:{group}", now)
+        self._store.answer(group, offers.ACCEPT, "D", now=now)
+
+    def _w_app_done(self, group: str, made: bool, now: float) -> None:
+        """The app turn's row came: the note goes, and when nothing was made the ask is "not now" again."""
+        self._store.conn.execute("DELETE FROM service_state WHERE key=?", (f"app:{group}",))
+        if not made:
+            self._w_not_now(group, now)
+
+    def _w_app_lost(self, live: set[str], now: float) -> None:
+        """At start: an app turn whose row never came (agentd went away while it was queued or running) is
+        not coming. Its group goes back to "not now", unless it is not "made" any more."""
+        store = self._store
+        for row in store.conn.execute("SELECT key FROM service_state WHERE key LIKE 'app:%'").fetchall():
+            group = row["key"].removeprefix("app:")
+            if group in live:
+                continue
+            store.conn.execute("DELETE FROM service_state WHERE key=?", (row["key"],))
+            g = store.group(group, now)
+            if g is not None and g.state == "made":
+                store.answer(group, offers.NOT_NOW, now=now)
 
     async def _app_row(self, entry: dict) -> None:
         """A model turn's row: if it is the one an "app" tap started, and it went well, find the app it
-        made (what the apps folder gained) and put it in the trail."""
+        made or changed (what the apps folder gained, or what changed in it) and put it in the trail. A
+        turn that failed, was stopped, or touched no app made nothing: the ask goes back to "not now"."""
         if entry.get("origin") != "loop":
             return
         pending = next((p for p in self._app_turns if p["text"] == entry.get("prompt")), None)
         if pending is None:
             return
         self._app_turns.remove(pending)
-        if entry.get("ok") is not True or entry.get("stopped"):
+        before = pending["before"]
+        went_well = entry.get("ok") is True and not entry.get("stopped")
+        after = await asyncio.to_thread(self._app_stamps) if went_well else before
+        new = sorted(n for n in after if n not in before)
+        changed = sorted(n for n in after if n in before and after[n][1] != before[n][1])
+        if not (new or changed):
             # It did not get made: the ask goes back to "not now" instead of staying "made".
-            await self._work(self._w_not_now, pending["group"], self.clock(), where="app")
+            await self._work(self._w_app_done, pending["group"], False, self.clock(), where="app")
             await self._refresh()
             return
-        after = await asyncio.to_thread(self._app_names)
-        for name in sorted(set(after) - pending["before"])[:3]:
-            title = f"Made the app {after[name]} from “{pending['said']}”."
+        await self._work(self._w_app_done, pending["group"], True, self.clock(), where="app")
+        for name in new[:3]:
+            title = f"Made the app {after[name][0]} from “{pending['said']}”."
             self._improve("app", title, group=pending["group"], undo={"op": "trash_app", "name": name})
+        for name in changed[:3 - len(new[:3])]:
+            # No Undo on this row: the folder is his app's. The turn's own Undo has the old files.
+            title = f"Changed the app {after[name][0]} from “{pending['said']}”."
+            self._improve("app", title, group=pending["group"])
         await self._publish()
 
     # preview
@@ -938,7 +1009,10 @@ class LoopService:
         made = await self._work(self._w_report, rid, default=None, where="report")
         if made is None:
             return Result(False, "That is not in the list of things it found any more.")
-        await self._open_window()
+        if not await self._open_window():
+            return Result(True, "The report is ready, but the Noticed window would not open. Say “noticed” to "
+                                "look at it. Opening the issue page sends it to GitHub as part of the address; "
+                                "nothing is posted until you press Submit on the page.", made)
         return Result(True, "The report is ready. Opening the issue page sends it to GitHub as part of the "
                             "address; nothing is posted until you press Submit on the page.", made)
 
@@ -958,11 +1032,11 @@ class LoopService:
     async def _op_send(self, rid: str, form, writer) -> Result:
         if rid in self._sending:
             return Result(False, "That is already being sent.")
-        rep = await self._work(self._w_reported, rid, default=None, where="send")
-        if rep is None:
-            return Result(False, "Look at the report first, then send it.")
-        self._sending.add(rid)
+        self._sending.add(rid)    # before the first await: a second tap must find it there
         try:
+            rep = await self._work(self._w_reported, rid, default=None, where="send")
+            if rep is None:
+                return Result(False, "Look at the report first, then send it.")
             return await self._send_report(rid, rep)
         finally:
             self._sending.discard(rid)
@@ -972,8 +1046,7 @@ class LoopService:
         this fingerprint and the page itself are slow and run off the worker, so nothing waits on them."""
         number = await asyncio.to_thread(report.already_reported, fp, fetch=self.fetcher)
         if number is not None:
-            await self._work(self._w_mark, fp, "sent", where="send")
-            return Result(True, f"Already reported (#{number}). Nothing more was sent.")
+            return await self._already_reported(fp, rep, number)
         link = await asyncio.to_thread(report.issue_url, rep, copy=report.copy_text)
         shown = await asyncio.to_thread(self.opener or report.open_issue_page, link.url)
         if not shown:
@@ -986,6 +1059,25 @@ class LoopService:
             return Result(True, f"The issue page is open. {tail}")
         return Result(True, "The issue page is open with the report filled in. "
                             "Press Submit there if it looks right.")
+
+    async def _already_reported(self, fp: str, rep: report.Report, number: int) -> Result:
+        """The project has this problem already, so nothing new is sent. Its issue page opens instead, and
+        a line saying how often it was seen goes on the clipboard, for him to paste there if he wants to
+        add that it happened again (an issue page cannot be filled in with a comment). The finding is
+        "sent", and the window says which issue it is."""
+        await self._work(self._w_sent_already, fp, number, where="send")
+        said = f"Already reported (#{number}), so nothing new was sent."
+        page = f"https://github.com/{report.DEFAULT_REPO}/issues/{number}"
+        if not await asyncio.to_thread(self.opener or report.open_issue_page, page):
+            return Result(True, said)
+        if await asyncio.to_thread(report.copy_text, f"Seen again: {rep.seen}."):
+            return Result(True, f"{said} Its page is open. If you want to add that it happened again, a "
+                                "line for that is on the clipboard: paste it there.")
+        return Result(True, f"{said} Its page is open if you want to add that it happened again.")
+
+    def _w_sent_already(self, fp: str, number: int) -> None:
+        self._set_flag(f"issue:{fp}", number)
+        self._findings.mark(fp, "sent")
 
     # undo and bring back
 
@@ -1094,6 +1186,12 @@ class LoopService:
                 return False, str(e)
             self._store.note_word_made(word.phrase, now)
             return True, f"Brought back the word “{word.phrase}”."
+        if ":" in rid and (found := self._findings.get(rid)) is not None:
+            if found.state not in ("dismissed", "never"):
+                return False, "That is not on the list any more."
+            if self._findings.mark(rid, "open", now) is None:
+                return False, "That did not work."
+            return True, "Okay. It is back in what Bombadil found."
         if any(r["id"] == rid for r in self._store.said_no()) or self._store.group(rid, now) is not None:
             out = self._store.bring_back(rid, now)
             if out["ok"]:
@@ -1115,6 +1213,29 @@ class LoopService:
             self._improve("word", text, group=row.get("group"), of=rid, undone=False)
         return Result(ok, text)
 
+    async def _bring_back_swept_word(self, row: dict) -> Result:
+        """A word the sweep put away and he brought back with Undo: put it away again, so the change
+        stands as it did. (The word is still there, so it is not made again.)"""
+        rid = row["id"]
+        undo = row.get("undo") if isinstance(row.get("undo"), dict) else {}
+        phrase = str(undo.get("phrase") or "")
+        if not (self._undone(rid) and phrase):
+            return Result(False, "That word is already put away, so there is nothing to put back.")
+        ok, text = await self._work(self._w_word_away, phrase, default=(False, "That did not work."),
+                                    where="bring back")
+        if ok:
+            self._improve("word", text, of=rid, undone=False)
+        return Result(ok, text)
+
+    def _w_word_away(self, phrase: str) -> tuple[bool, str]:
+        try:
+            word = words.put_away(phrase)
+        except words.WordError as e:
+            return False, str(e)
+        if word is None:
+            return False, f"“{phrase}” is not a word that is in use any more."
+        return True, f"Put the word “{phrase}” away again."
+
     def _w_remake_word(self, phrase: str, opens: dict, group: str | None, now: float) -> tuple[bool, str]:
         try:
             word = words.add(phrase, {"kind": opens["kind"], "name": opens["name"]}, group=group, now=now)
@@ -1128,6 +1249,9 @@ class LoopService:
         """An undone change whose app is in the trash: move it back, if its name is free."""
         rid = row["id"]
         if row.get("what") == "word":
+            undo = row.get("undo") if isinstance(row.get("undo"), dict) else {}
+            if undo.get("op") == "bring_back_word":    # the sweep put it away
+                return await self._bring_back_swept_word(row)
             return await self._bring_back_made_word(row)
         answer = next((r for r in self._newest_first() if r.get("of") == rid), None)
         if answer is None or not answer.get("undone") or not answer.get("trash"):
@@ -1171,6 +1295,7 @@ class LoopService:
         return Result(True, "Cleared what it found. A problem that is still there will be found again.")
 
     def _findings_clear(self) -> int:
+        self._store.conn.execute("DELETE FROM service_state WHERE key LIKE 'issue:%'")
         return self._findings.clear_found()
 
     async def _op_hide(self, rid, form, writer) -> Result:

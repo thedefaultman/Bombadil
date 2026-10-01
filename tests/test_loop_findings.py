@@ -237,20 +237,19 @@ def test_a_friction_nobody_repeated_is_forgotten_after_a_month(store):
 
 # -- what he said no to --
 
-def test_a_dismissed_finding_is_not_raised_again_and_neither_is_one_he_said_never_to(store):
+def test_a_finding_he_said_never_to_is_not_raised_again_until_he_brings_it_back(store):
     fp = store.record(result(), noon()).fp
-    for state in ("dismissed", "never"):
-        assert store.mark(fp, state).state == state
-        assert store.record(result(), noon() + 2 * DAY) is None
-        assert store.record_retry(result(retry_after=0.5), result(), noon() + 2 * DAY) is None
-        got = store.get(fp)
-        assert got.state == state and got.n == 1 and got.last == noon()
+    assert store.mark(fp, "never").state == "never"
+    assert store.record(result(), noon() + 2 * DAY) is None
+    assert store.record_retry(result(retry_after=0.5), result(), noon() + 2 * DAY) is None
+    got = store.get(fp)
+    assert got.state == "never" and got.n == 1 and got.last == noon()
     assert store.open_findings() == [] and [f.fp for f in store.all(["dismissed", "never"])] == [fp]
     assert store.mark(fp, "open").state == "open"                               # Bring back
     assert store.record(result(), noon() + 3 * DAY).n == 2
 
 
-def test_a_dismissed_crash_stays_dismissed_even_when_it_happens_again(store):
+def test_a_crash_he_said_never_to_stays_quiet_even_when_it_happens_again(store):
     crash = result("crash", "quickshell crashed (SIGSEGV)", "coredump", "bar", at=noon())
     fp = store.record(crash, noon()).fp
     store.mark(fp, "never")
@@ -516,7 +515,7 @@ def test_two_stores_on_one_file_see_the_same_findings(home):
     a, b = FindingsStore(), FindingsStore()
     found = a.record(result(), noon())
     assert b.get(found.fp) == found
-    b.mark(found.fp, "dismissed")
+    b.mark(found.fp, "never")
     assert a.record(result(), noon() + DAY) is None
 
 

@@ -472,7 +472,7 @@ async def test_never_is_remembered_across_a_restart_and_can_be_brought_back(rig_
     # A new service, the same loop.db: the group is still said no to, and listed so he can bring it back.
     again = await rig_of(clock=Clock(gc.epoch(6, "23:30"))).start()
     full = await again.full()
-    assert [s["id"] for s in full["said_no"]] == [first["id"]] and full["said_no"][0]["form"] == "A word"
+    assert [s["id"] for s in full["said_no"]] == [first["id"]] and full["said_no"][0]["form"] == "word"
     assert full["said_no"][0]["title"] == LoopStore(paths.loop_db()).said_no()[0]["sentence"]
     assert all(r["id"] != first["id"] for r in (await again.ask_state())["rows"])
     back = await again.do("bring_back", first["id"])
@@ -563,13 +563,13 @@ async def test_an_app_that_was_not_made_puts_the_ask_back_to_not_now(rig_of):
 
 
 @pytest.mark.asyncio
-async def test_no_app_is_asked_for_while_the_ai_is_not_signed_in(rig_of):
+async def test_no_app_is_asked_for_while_he_is_not_signed_in(rig_of):
     rig = rig_of(run_asks(), clock=Clock(gc.epoch(2, "12:00")))
     await rig.start()
     row = the_offer(await rig.ask_state())
     rig.agent.access = "signed_out"
     got = await rig.do("accept", row["id"], "app")
-    assert got["ok"] is False and "not signed in" in got["text"]
+    assert got["ok"] is False and got["text"] == "Bombadil needs you to sign in before it can make an app."
     assert rig.agent.prompts == [] and rig.store().group(row["id"]).state == "offered"
 
 
@@ -747,17 +747,23 @@ async def test_the_hide_and_show_taps_do_the_same_and_say_so(rig_of):
 
 
 @pytest.mark.asyncio
-async def test_the_word_opens_the_noticed_app_when_it_is_here_and_quietly_does_not_when_it_is_not(rig_of):
+async def test_the_word_opens_the_noticed_app_that_ships_and_says_so_only_when_a_window_opened(rig_of, monkeypatch):
     rig = rig_of()
     await rig.start()
-    assert await rig.service.noticed_word("open") == (True, "Opened Noticed.")
-    assert rig.agent.launcher.ran == []                              # no app of that name here
-    apps.create("Noticed", "import QtQuick\nItem {}\n")
+    # A stock install: nothing named noticed in his apps, the app that ships with Bombadil is the one.
+    assert not (paths.apps_dir() / "noticed").exists() and (apps.builtin_dir() / "noticed" / "main.qml").exists()
     assert await rig.service.noticed_word("open") == (True, "Opened Noticed.")
     assert rig.agent.launcher.ran == [("app", "noticed", "open")]
     opened = await rig.do("open")
     assert opened["ok"] and opened["text"] == "Opened the Noticed window."
     assert rig.agent.launcher.ran[-1] == ("app", "noticed", "open")
+    # Where no such app is anywhere, no window opens and nothing says one did.
+    monkeypatch.setattr(apps, "builtin_dir", lambda: paths.state_dir() / "no-apps")
+    ran = list(rig.agent.launcher.ran)
+    assert await rig.service.noticed_word("open") == (False, "The Noticed window would not open.")
+    nothing = await rig.do("open")
+    assert nothing["ok"] is False and nothing["text"] == "The Noticed window would not open."
+    assert rig.agent.launcher.ran == ran
 
 
 # -- what it found: a report he reads, and sends himself --
@@ -828,8 +834,9 @@ async def test_a_finding_becomes_a_row_a_held_report_and_an_issue_page_he_submit
 
 
 @pytest.mark.asyncio
-async def test_a_problem_the_project_already_has_is_not_sent_again(rig_of):
+async def test_a_problem_the_project_already_has_is_not_sent_again(rig_of, monkeypatch):
     opened = []
+    monkeypatch.setattr(report, "copy_text", lambda text, timeout=3.0: False)      # no wl-copy here
     found = plant()
     tag = f"[fp {found.fp.rsplit(':', 1)[-1]}]"
     rig = rig_of(opener=lambda url: opened.append(url) or "panel",
@@ -838,8 +845,10 @@ async def test_a_problem_the_project_already_has_is_not_sent_again(rig_of):
     await rig.ask_state()
     await rig.do("report", found.fp)
     sent = await rig.do("send", found.fp)
-    assert sent["ok"] and sent["text"] == "Already reported (#42). Nothing more was sent."
-    assert opened == [] and finding_state(found.fp) == ["sent"]
+    assert sent["ok"] and sent["text"] == (
+        "Already reported (#42), so nothing new was sent. Its page is open if you want to add that it "
+        "happened again.")
+    assert opened == ["https://github.com/thedefaultman/Bombadil/issues/42"] and finding_state(found.fp) == ["sent"]
 
 
 @pytest.mark.asyncio
@@ -958,7 +967,9 @@ async def test_forget_what_i_asked_empties_the_counts_and_keeps_the_words_made_f
 async def test_nothing_of_his_reaches_a_found_row_a_report_a_link_or_stderr_except_the_offer_he_is_meant_to_see(
         rig_of, capsys, monkeypatch):
     his_words = "zq-plum-" + "7781"
-    asks = [dict(a, text=f"{a['text']} {his_words}") for a in passwords_asks()]
+    asks = passwords_asks()
+    newest = max(a["t"] for a in asks if a["group"] == "passwords")     # the offer quotes this one
+    asks = [dict(a, text=f"{a['text']} {his_words}") if a["t"] == newest else a for a in asks]
     opened = []
     rig = rig_of(asks, opener=lambda url: opened.append(url) or "panel",
                  fetcher=lambda url, timeout: {"items": []})
@@ -1752,7 +1763,8 @@ async def test_accepting_an_app_runs_one_turn_of_his_and_undo_puts_the_app_in_th
 @pytest.mark.asyncio
 async def test_the_words_hide_noticed_show_noticed_and_noticed_go_to_the_service(machine, monkeypatch):
     d = daemon()
-    monkeypatch.setattr(d.launcher, "run", lambda action: (_ for _ in ()).throw(AssertionError("not the launcher")))
+    ran = []       # the launcher is asked for the window only, as the app it is: never for the word "noticed"
+    monkeypatch.setattr(d.launcher, "run", lambda action: ran.append(action.kind) or (True, "ok"))
     server = await boot(d)
     r, w = await the_bar(d)
     await until(lambda: d.loop._ingested > 0)
@@ -1772,6 +1784,7 @@ async def test_the_words_hide_noticed_show_noticed_and_noticed_go_to_the_service
     rows = [json.loads(line) for line in paths.turns_log().read_text().splitlines()]
     assert [(x["action"], x["verb"], x["ok"]) for x in rows if x.get("kind") == "local"] == [
         ("noticed", "hide", True), ("noticed", "open", True), ("noticed", "open", True)]
+    assert ran == ["app", "app"]
     await stop(d, server, w)
 
 

@@ -171,6 +171,8 @@ def ideal(g: Group) -> str:
 def _usable(letter: str, g: Group, built: Iterable[str] | None, stopped: set[str]) -> bool:
     if letter in stopped:
         return False
+    if letter == "A" and not g.word:
+        return False    # asks too long or too loose to say as a phrase: there is no word to make
     if letter == "D":
         # Extending the app that holds the data needs per-app git; a second app beside it would not do.
         needs = "per_app_git" if holder(g) else "create_app"

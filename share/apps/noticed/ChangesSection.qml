@@ -16,7 +16,7 @@ Section {
 
     objectName: "section:changes"
     title: "Changed itself"
-    hint: "What Bombadil made or fixed, newest first"
+    hint: "What Bombadil made, newest first"
     count: rows.length
     emptyText: "Bombadil has not changed anything by itself."
 
