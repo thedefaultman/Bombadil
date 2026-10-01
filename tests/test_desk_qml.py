@@ -2676,7 +2676,7 @@ def test_a_drop_with_no_target_sends_nothing_and_dims_nothing(desk):
     assert sent_ops(desk) == [] and desk.prop("drag") is None and desk.prop("settling") == ""
     take(desk, "now", 100, 900)                                              # where it is
     desk.call("dragEnd", 100, 900)
-    assert sent_ops(desk) == [] and desk.prop("settling") == ""
+    assert sent_ops(desk) == [] and desk.prop("settling") == "" and desk.warnings == []
 
 
 def test_a_card_dropped_in_the_row_folds_and_a_strip_dropped_on_a_rail_is_moved(desk):
@@ -2698,9 +2698,9 @@ def test_a_strip_that_is_one_for_the_room_is_never_in_its_place(desk):
     a_full_desk(desk)
     desk.send(**desk_msg(folded=True))                                       # the word "desk": every card is a strip
     assert set(desk.faces.values()) == {"strip"}
-    assert take(desk, "watching", 100, 800, "strip") == rank("left", 0, desk.prop("railBottomY"))
+    assert take(desk, "now", 100, 800, "strip") == rank("left", 0, desk.prop("railBottomY"))
     desk.call("dragEnd", 100, 800)
-    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 0}]
+    assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "left", "rank": 0}]
 
 
 def test_the_chip_a_card_would_fold_into_is_the_ghost_for_the_row(desk):
@@ -2713,6 +2713,8 @@ def test_the_chip_a_card_would_fold_into_is_the_ghost_for_the_row(desk):
     assert chip["id"] == "watching" and chip["text"] == "2 counting"
     desk.call("dragMove", 960, 500)
     assert desk.prop("foldChip") is None
+    desk.call("dragMove", 1700, 700)                                         # over a rail it is a card's place, no chip
+    assert desk.prop("dropTarget")["kind"] == "rank" and desk.prop("foldChip") is None
 
 
 def test_desk_messages_wait_for_the_drop_and_apply_in_the_order_they_came(desk):
