@@ -879,9 +879,15 @@ def line_top(name, x=195, rows=(560, 735)):
     whose left end is at x=190 and over which nothing else is drawn that far left. None when there is no line."""
     from PySide6.QtGui import QImage
     img = QImage(str(OUT / f"{name}.png"))
-    for y in range(*rows):
+
+    def glass(y):
         c = img.pixelColor(x, y)
-        if 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38:
+        return 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38
+
+    # A single row of it is not a line: the bar's window edge is a hairline that comes and goes at the
+    # edge of that colour. The line is a box a few dozen rows high.
+    for y in range(*rows):
+        if all(glass(y + i) for i in range(12)):
             return y
     return None
 
