@@ -167,7 +167,12 @@ skip `improve` rows (`watch.history_lines` shows them as a dim line).
 All under `paths.loop_dir()` (`~/.local/state/bombadil/loop`, overridable with `BOMBADIL_LOOP`),
 except `words.toml` (`paths.words_file()`, `~/.config/bombadil/words.toml`).
 
-- `loop.db`: derived counts and the few facts that cannot be made again (see db.py).
+- `loop.db`: derived counts and the few facts that cannot be made again (see db.py). It holds his own
+  words, so the loop directory is made 0700 and `loop.db`, its `-wal` and `-shm`, and `reports/` are kept
+  to their owner (0600 for files, 0700 for the directories), including ones made by an older version.
+  A damaged `loop.db` is never replaced on its own: the service says so once on stderr and counts nothing
+  until it is deleted (with its `-wal` and `-shm`); the counts are then read from `turns.jsonl` again, and
+  what he said no to, what was offered and what was forgotten are lost.
 - `signals.jsonl`: what agentd heard from the bar, append only: `{"t", "kind": "hello"|"summon"|"focus_ack"|"friction"|"restart", …}`.
 - `bar.json`: the bar's last report, rewritten atomically at most every 2 s:
   `{"pid", "connected_at", "alive_at", "build", "screens": {"<name>": {"w", "h", "rects": [{"name", "x", "y", "w", "h"}]}}}`.
@@ -224,6 +229,12 @@ user unit) is a separate process writing the same loop.db; the service reads fin
 20 s while a client is connected. An offer is only recorded as shown (`store.ripe_offer`) while no turn runs,
 nothing is queued and a bar is connected. Undoing a made word answers its group `not_now`. `hidden` (Noticed
 hidden, offers held) is kept in loop.db.
+
+A look at `turns.jsonl` counts at most 150 rows to a database transaction, each its own worker job
+with the byte offset saved in the same transaction, so a long backlog (the first look at an old ledger)
+never holds the write lock for more than a moment, a tap or the prober's write gets in between, a crash
+resumes at the last chunk, and stopping agentd waits for one chunk, not for the backlog. A poll for an offer
+reads only the groups that could be ripe, so what it costs does not grow with every ask he ever made.
 
 ## Launcher
 

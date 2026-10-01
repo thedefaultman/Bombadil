@@ -2,7 +2,8 @@
 
 `LoopStore.ingest()` reads turns.jsonl from a byte offset, turns each new model turn into a request
 (reading its per-turn log once for its route), decides whether it counts, and puts it in a group,
-all in one transaction, so a crash costs nothing and reading the same file twice changes nothing.
+`CHUNK` rows to a transaction and the byte offset in the same one, so a crash costs at most
+that chunk and reading the same file twice changes nothing.
 Group ids come from the first member's id and members never move, so a group that was offered stays
 the group it was offered as. Nothing here ever runs on a turn's path; agentd calls it from a thread.
 
@@ -118,10 +119,12 @@ CREATE TABLE meta (
 
 # Why a request was not counted, for the report; "" is counted.
 REASONS = ("", "origin", "empty", "shell", "sign-in", "private", "long", *habits.FRICTION, "never", "error")
-_TEXT_KEPT = ("", "never", *habits.FRICTION)   # the words of anything else are not stored at all
+_UNGROUPED = ("never", *habits.FRICTION)        # asks that may belong to no group: its aging cannot reach them
+_TEXT_KEPT = ("", *_UNGROUPED)                  # the words of anything else are not stored at all
 
 WITHDRAWN = "withdrawn"     # an offer taken back because its group changed under it: nobody answered it
 STATES = ("counting", "offered", "not_now", "said_no", "made", "got_it")
+CHUNK = 150     # requests counted in one transaction: the write lock is held for well under a second
 MEMORY = Path(":memory:")
 _OPEN_LOCK = threading.Lock()
 
@@ -134,9 +137,19 @@ class IngestResult:
     changed: list[str] = field(default_factory=list)   # ids of the groups that changed
     reset: bool = False          # the file was replaced or shrank and was read again from the start
     offset: int = 0
+    more: bool = False           # a `limit` stopped the read: there may be more rows to read
 
     def __bool__(self) -> bool:
         return bool(self.new or self.changed)
+
+    def add(self, other: "IngestResult") -> None:
+        """Fold in the result of the chunk read after this one."""
+        self.new += other.new
+        self.counted += other.counted
+        self.friction += other.friction
+        self.changed = sorted({*self.changed, *other.changed})
+        self.reset = self.reset or other.reset
+        self.offset, self.more = other.offset, other.more
 
 
 class LoopStore:
@@ -231,24 +244,46 @@ class LoopStore:
 
     # -- reading what was written --
 
-    def ingest(self, log: Path | str | None = None, now: float | None = None) -> IngestResult:
+    def ingest(self, log: Path | str | None = None, now: float | None = None,
+               limit: int | None = None) -> IngestResult:
         """Read what turns.jsonl gained since last time and count it. Safe to call as often as you
         like, and again on the same file: a line is read once (by byte offset) and a request once (by
-        id). A file that was replaced or shrank is read again from the top."""
+        id). A file that was replaced or shrank is read again from the top. Rows are counted `CHUNK`
+        to a transaction, so a long backlog never holds the write lock for long and a crash resumes at
+        the last chunk; with `limit` only that many rows are read, and `more` says to call again."""
         log = Path(log) if log else paths.turns_log()
         now = time.time() if now is None else now
+        if limit is not None:
+            return self._ingest_chunk(log, now, limit)
+        total = IngestResult()
+        while True:
+            chunk = self._ingest_chunk(log, now, CHUNK)
+            total.add(chunk)
+            if not chunk.more:
+                return total
+
+    def _ingest_chunk(self, log: Path, now: float, limit: int) -> IngestResult:
         with self._lock:
             offset = int(self._meta("offset", 0))
             inode = self._meta("inode")
-            batch = ledger_mod.read_rows(log, offset, int(inode) if inode not in (None, "") else None)
+            batch = ledger_mod.read_rows(log, offset, int(inode) if inode not in (None, "") else None, limit)
             result = self._apply([row for row, _ in batch.rows], now, batch.end, batch.inode)
-            result.reset = batch.reset
+            result.reset, result.more = batch.reset, batch.more
             return result
 
     def _apply(self, rows: list[dict], now: float, end: int | None = None, inode: int | None = None) -> IngestResult:
         app_list = self._apps()
         things = habits.things_from_launcher(app_list)
         result = IngestResult()
+        # What needs no write lock is done before it is taken: a restart rebuilds the groups here, and a
+        # turn's route comes from its log, which depends on nothing stored.
+        with self._lock:
+            self._load_grouper(things, app_list)
+        routes: dict[str, tuple[list[str], int]] = {}
+        for row in rows:
+            req = ledger_mod.request_from_row(row) if row.get("kind") is None else None
+            if req is not None and _wants_route(req):
+                routes[req.id] = self._route_of(req)
         with self._lock, _abandon_on_error(self), db.transaction(self.conn):
             forgot = float(self._meta("forgot_t", 0))
             grouper = self._load_grouper(things, app_list)
@@ -281,7 +316,7 @@ class LoopStore:
                     prev = req
                     continue
                 try:
-                    self._count(req, prev, grouper, things, app_list, nevers, changed, result)
+                    self._count(req, prev, grouper, things, app_list, nevers, changed, result, routes)
                 except sqlite3.Error:
                     raise
                 except Exception:  # noqa: BLE001 - one turn the counting cannot read must not stop the rest
@@ -309,17 +344,20 @@ class LoopStore:
             return Path(self.logs_dir) / Path(req.details).name
         return Path(req.details)
 
+    def _route_of(self, req: Request) -> tuple[list[str], int]:
+        """What a turn did, from its log: its topics and how many tools it ran."""
+        events = ledger_mod.read_turn_log(self._log_path(req), kinds=("tool", "file_change"))
+        return route.route(events), sum(1 for e in events if e.get("kind") == "tool")
+
     def _count(self, req: Request, prev: Request | None, grouper: Grouper, things: dict, app_list: list,
-               nevers: list[Profile], changed: set[str], result: IngestResult) -> None:
-        """Decide one new turn, group it if it counts, and store it."""
-        wants_route = (req.origin == "typed" and bool(req.text.strip()) and not req.text.lstrip().startswith("!")
-                       and not req.signin)
+               nevers: list[Profile], changed: set[str], result: IngestResult,
+               routes: dict[str, tuple[list[str], int]] | None = None) -> None:
+        """Decide one new turn, group it if it counts, and store it. `routes` holds the ones already read."""
         topics: list[str] = []
-        if wants_route:
-            events = ledger_mod.read_turn_log(self._log_path(req), kinds=("tool", "file_change"))
-            topics = route.route(events)
+        if _wants_route(req):
+            topics, tools = (routes or {}).get(req.id) or self._route_of(req)
             if not req.steps:
-                req.steps = sum(1 for e in events if e.get("kind") == "tool")
+                req.steps = tools
         ok, why = habits.counted(req, prev, topics, nevers, things)
         p = None
         if why in _TEXT_KEPT:
@@ -439,18 +477,26 @@ class LoopStore:
         return g
 
     def groups(self, states: Iterable[str] | None = None, now: float | None = None,
-               listed_only: bool = False) -> list[Group]:
+               listed_only: bool = False, *, min_n: int = 0, since: float | None = None) -> list[Group]:
         """The groups, heaviest first (each ask weighs 1 and halves every 14 days). `states` picks some
         of counting, offered, not_now, said_no, made, got_it; `listed_only` leaves out what has had no
-        ask for 30 days."""
+        ask for 30 days. `min_n` and `since` leave out, in the query, the groups with fewer asks or
+        whose last ask is older, so those are never loaded."""
         now = time.time() if now is None else now
         apps = self._apps()
-        if states is None:
-            rows = self.conn.execute("SELECT * FROM asks")
-        else:
+        where: list[str] = []
+        args: list = []
+        if states is not None:
             wanted = list(states)
-            marks = ",".join("?" * len(wanted))
-            rows = self.conn.execute(f"SELECT * FROM asks WHERE state IN ({marks})", wanted)
+            where.append(f"state IN ({','.join('?' * len(wanted))})")
+            args += wanted
+        if min_n:
+            where.append("n>=?")
+            args.append(min_n)
+        if since is not None:
+            where.append("last>=?")
+            args.append(since)
+        rows = self.conn.execute("SELECT * FROM asks" + (f" WHERE {' AND '.join(where)}" if where else ""), args)
         out = [self._group_of(r, now, apps) for r in rows]
         if listed_only:
             out = [g for g in out if habits.listed(g, now)]
@@ -511,9 +557,10 @@ class LoopStore:
         return result
 
     def forget_asks(self, now: float | None = None) -> dict:
-        """"Forget what I ask": erases the requests and the groups made of them, and the words in the
-        offers already made. What he said no to, the words used, and how many offers were taken stay, and
-        so does the place in turns.jsonl, with a mark so that what he forgot is not read in again."""
+        """"Forget what I ask": erases the requests and the groups made of them, the words in the offers
+        already made, and the sentences he said no to (the Said no list falls back to the label). What he
+        said no to (as a signature), the words used, and how many offers were taken stay, and so does the
+        place in turns.jsonl, with a mark so that what he forgot is not read in again."""
         now = time.time() if now is None else now
         with self._lock, db.transaction(self.conn):
             n = self.conn.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
@@ -522,6 +569,7 @@ class LoopStore:
             self.conn.execute("DELETE FROM requests")
             self.conn.execute("DELETE FROM asks")
             self.conn.execute("UPDATE offers SET label='' WHERE 1")
+            self.conn.execute("UPDATE nevers SET sentence='' WHERE 1")
             self.conn.execute("UPDATE offers SET outcome=?, answered_t=? WHERE outcome=''", (WITHDRAWN, now))
             self._set_meta("forgot_t", max(float(self._meta("forgot_t", 0)), newest, now))
             self._bump()
@@ -529,7 +577,8 @@ class LoopStore:
 
     def _maintain(self, now: float) -> None:
         """Let time pass: offers nobody answered expire into Not now, a Not now that is over lets its
-        group count again, and a group gone quiet for 90 days loses its words."""
+        group count again, and a group gone quiet for 90 days loses its words (and the sentence he said
+        no to it with), and so does what no group holds: an ask held back by a Never or kept as friction."""
         cfg = self.cfg
         for r in list(self.conn.execute("SELECT id, grp, shown_t FROM offers WHERE outcome=''")):
             if offers.expired(r["shown_t"], now, cfg):
@@ -546,6 +595,12 @@ class LoopStore:
             self.conn.execute("UPDATE asks SET label='', text_dropped=1, data=? WHERE id=?",
                               (json.dumps(data), r["id"]))
             self.conn.execute("UPDATE requests SET text='' WHERE grp=?", (r["id"],))
+        # A group's own aging does not reach these: no group holds them (a Never kept them from
+        # counting, or a retry that joined nothing), so their words go on the same 90 days.
+        self.conn.execute("UPDATE requests SET text='' WHERE text!='' AND grp IS NULL AND ended<? "
+                          f"AND reason IN ({','.join('?' * len(_UNGROUPED))})", (cutoff, *_UNGROUPED))
+        self.conn.execute("UPDATE nevers SET sentence='' WHERE sentence!='' "
+                          "AND grp NOT IN (SELECT id FROM asks WHERE text_dropped=0)")
 
     # -- offers --
 
@@ -583,9 +638,9 @@ class LoopStore:
                 self._close(r["grp"], WITHDRAWN, now, offer_id=r["id"], state="counting")
             if waiting:
                 return None
-            groups = self.groups(("counting",), now)
-            pick = offers.next_offer(groups, self._history(), now, self.cfg, built=self.built, stopped=stopped,
-                                     titles=titles)
+            history = self._history()
+            pick = offers.next_offer(self._ripe_groups(history, now), history, now, self.cfg, built=self.built,
+                                     stopped=stopped, titles=titles)
             if pick is None:
                 return None
             g, rec = pick
@@ -604,8 +659,20 @@ class LoopStore:
         with self._lock:
             if self.waiting():
                 return None
-            return offers.next_offer(self.groups(("counting",), now), self._history(), now, self.cfg,
+            history = self._history()
+            return offers.next_offer(self._ripe_groups(history, now), history, now, self.cfg,
                                      built=self.built, stopped=self._stopped(), titles=self._titles())
+
+    def _ripe_groups(self, history: list[offers.Past], now: float) -> list[Group]:
+        """The counting groups `offers.next_offer` could pick, and only when it could pick one: none are
+        loaded while offers rest or the allowance is spent (a few rows of offers say so), and a group
+        with fewer asks than the bar, or none since it left the list, can never be ripe, so the query
+        leaves it out. What an idle poll costs does not grow with every ask he ever made."""
+        cfg = self.cfg
+        if offers.resting_until(history, now, cfg) or not offers.cadence_ok(history, now, cfg)[0]:
+            return []
+        return self.groups(("counting",), now, min_n=offers.asks_needed(history, cfg),
+                           since=now - habits.LIST_DAYS * offers.DAY - 1)
 
     def waiting(self) -> int:
         """How many offers are showing and unanswered (at most one)."""
@@ -880,6 +947,11 @@ def _became(g: Group) -> str:
         f = forms.get(g.form)
         return ("made " if g.state == "made" else "offered: ") + f.name.lower()
     return {"got_it": "already had a word", "said_no": "said no", "not_now": "not now"}.get(g.state, "")
+
+
+def _wants_route(req: Request) -> bool:
+    return (req.origin == "typed" and bool(req.text.strip()) and not req.text.lstrip().startswith("!")
+            and not req.signin)
 
 
 def _mark(req: Request, eff: tuple) -> None:

@@ -20,7 +20,7 @@ fact, calls no model, and a failure inside it costs a count, never a turn or the
 
 ```python
 store = LoopStore(path=None, *, app_list=None, built=None, config=None, logs_dir=None)
-store.ingest(log=None, now=None) -> IngestResult     # idempotent, cheap when nothing is new
+store.ingest(log=None, now=None, limit=None) -> IngestResult   # idempotent, cheap when nothing is new
 store.ripe_offer(now) -> offers.Offer | None         # the one offer to show; showing it records it
 store.answer(group_id, op, form=None, now=None)      # accept | not_now | never | got_it | expired
 store.groups(states=None, now=None, listed_only=False) / .group(id) / .members(id)
@@ -31,6 +31,14 @@ store.regroup(now)                                   # decide every stored ask a
 LoopStore.replay(turns_jsonl, now=None, corpus_dir=None, app_names=(), pairs=100) -> dict
 offers.Offer.to_row(titles) -> dict                  # the Noticed row (`id` is the group id)
 ```
+
+`ingest` counts `CHUNK` (150) rows to a transaction, the byte offset saved in the same one, so a long backlog
+never holds the write lock for more than a moment and a crash resumes at the last chunk. With `limit` it
+reads only that many rows and `IngestResult.more` says to call again (the service does, one chunk to a
+worker job). A turn's route is read from its log before the transaction opens. `ripe_offer` and
+`peek_offer` look at the offers table first (resting, the day's allowance) and then load only the counting
+groups with at least as many asks as the bar and an ask in the last 30 days, so a poll does not grow with
+every ask he ever made.
 
 Every time-dependent call takes `now`; nothing reads a clock otherwise, so each rule is tested with
 an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`).
@@ -45,14 +53,18 @@ an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`
   Make and fix asks ignore the route.
 - Ripe: 3 asks on 2 days in 21 days, worth 45 s or 3 steps each (or a near miss of an existing word).
   Bar of 5 when fewer than 3 of the last 10 offers were taken. One a day, three a week.
-- Decay: an ask halves every 14 days, leaves the list at 30 days, loses its words at 90.
+- Decay: an ask halves every 14 days, leaves the list at 30 days, loses its words at 90. The words of an
+  ask that belongs to no group (one a Never held back, or a retry that joined nothing) go after 90 days
+  too, and so does the sentence kept for a Never when its group's words go.
 
 ## Traps
 
 - Group ids are `"g" + first member id` and members never move, so two groups that later turn out to
   be one stay two. Friction (retry, stop, undo) attaches to a group without raising its count.
-- A Never is stored as a signature (stems and route), not a sentence. It survives `forget_asks` and
-  keeps later look-alikes from counting; `bring_back` lifts it and regroups.
+- A Never is stored as a signature (stems and route), a label, and the one sentence of his that the
+  "Said no" list shows. The signature survives `forget_asks` and keeps later look-alikes from counting;
+  the sentence does not: `forget_asks` and the 90-day rule blank it, and the list shows the label.
+  `bring_back` lifts the Never and regroups.
 - `forget_asks` keeps the file offset and sets a mark, or the forgotten rows would be read in again.
 - `regroup` leaves a group that was offered, answered or hidden exactly as it was.
 - The verb and named things of an ask are fixed when it is read, so an app made later does not change

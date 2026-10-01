@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import hypr, paths
+from . import db
 from .findings import evidence_dir
 
 DEFAULT_REPO = "thedefaultman/Bombadil"
@@ -471,9 +472,11 @@ def hold(report: Report) -> Path | None:
     """Write the report where it waits for him: reports/<fingerprint>.md. None when the disk says no."""
     path = paths.loop_dir() / "reports" / f"{evidence_dir(report.fp).name}.md"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        db.private_dir(path.parent.parent)
+        db.private_dir(path.parent)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(report.render())
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            f.write(report.render())
         os.replace(tmp, path)
     except OSError:
         return None

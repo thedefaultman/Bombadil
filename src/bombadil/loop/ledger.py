@@ -126,11 +126,13 @@ class Batch:
     end: int                       # where the next read starts: after the last line used or skipped
     inode: int                     # the file's, to keep next to `end`
     reset: bool = False            # the file was replaced or shrank, so this read started at 0
+    more: bool = False             # it stopped at `limit` rows: there may be more after `end`
 
 
-def read_rows(path: Path, offset: int = 0, inode: int | None = None) -> Batch:
-    """Everything in turns.jsonl after `offset`. A last line without its newline is left for
-    next time unless it already is whole JSON (something wrote it by hand)."""
+def read_rows(path: Path, offset: int = 0, inode: int | None = None, limit: int | None = None) -> Batch:
+    """Everything in turns.jsonl after `offset`, or the first `limit` rows of it (`end` is then just
+    after the last of them, and `more` says to read again from there). A last line without its
+    newline is left for next time unless it already is whole JSON (something wrote it by hand)."""
     path = Path(path)
     try:
         st = os.stat(path)
@@ -139,10 +141,14 @@ def read_rows(path: Path, offset: int = 0, inode: int | None = None) -> Batch:
     start = start_offset(path, offset, inode)
     rows: list[tuple[dict, int]] = []
     pos = start
+    more = False
     try:
         with path.open("rb") as f:
             f.seek(start)
             for raw in f:
+                if limit is not None and len(rows) >= limit:
+                    more = True
+                    break
                 whole = raw.endswith(b"\n")
                 try:
                     obj = json.loads(raw) if len(raw) <= MAX_LINE else None
@@ -158,7 +164,7 @@ def read_rows(path: Path, offset: int = 0, inode: int | None = None) -> Batch:
                     rows.append((row, pos))
     except OSError:
         pass
-    return Batch(rows, pos, st.st_ino, reset=start == 0 and offset > 0)
+    return Batch(rows, pos, st.st_ino, reset=start == 0 and offset > 0, more=more)
 
 
 def iter_rows(path: Path, offset: int = 0, inode: int | None = None) -> Iterator[tuple[dict, int]]:
