@@ -600,7 +600,7 @@ check("both cards leave when nothing is counting or waiting", st["faces"]["watch
 # and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
 # the same conversation: the first time the owner says so, the second time the clock does.
 STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
-LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, with the chip row below it (see glass_pixels)
+LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
 claude_ai = Path.home() / ".e2e-claude-ai"
 claude_ai.touch()
 rest_file = Path.home() / ".local" / "state" / "bombadil" / "rest.json"
@@ -608,7 +608,8 @@ rest_file = Path.home() / ".local" / "state" / "bombadil" / "rest.json"
 
 def ink(shot_name):
     """What colours the stone is drawn in: grey while the AI rests, green at rest, amber for needs, red for offline."""
-    return {c: colour_pixels(shot_name, v, STONE) for c, v in (("grey", "#8b939c"), ("green", "#5fb36b"), ("amber", "#e0a93b"), ("red", "#d05555"))}
+    tokens = {"grey": "#8b939c", "green": "#5fb36b", "amber": "#e0a93b", "red": "#d05555"}
+    return {c: colour_pixels(shot_name, v, STONE) for c, v in tokens.items()}
 
 
 summon()
@@ -632,7 +633,11 @@ end = wait(ev("turn_end", turn=haiku), 20, n)
 time.sleep(1.0)
 shot("27-resting")
 refusals = [r for r in api_log()[before:] if r["refused"]]
-check("the API refused the ask once and the CLI did not retry it", len(refusals) == 1 and len(api_log()) == before + 1, len(api_log()) - before)
+check(
+    "the API refused the ask once and the CLI did not retry it",
+    len(refusals) == 1 and len(api_log()) == before + 1,
+    len(api_log()) - before,
+)
 r = (resting or {}).get("rest") or {}
 check(
     "the CLI's own limit notice puts the machine to rest, with the time the plan gave",
@@ -641,8 +646,8 @@ check(
 )
 check(
     "the line says when and that the apps still work, and offers no button",
-    resting and resting["line"].startswith("Claude is at its limit until ") and resting["line"].endswith("Your apps and files still work.")
-    and resting["actions"] == [] and resting["tone"] == "step",
+    resting and resting["line"].startswith("Claude is at its limit until ")
+    and resting["line"].endswith("Your apps and files still work.") and resting["actions"] == [] and resting["tone"] == "step",
     resting and (resting["line"], resting["actions"]),
 )
 check(
@@ -657,7 +662,14 @@ check(
     ),
     end and end.get("line"),
 )
-check("the log of the turn says the limit stopped it", wait(ev("rest", turn=haiku, window="five_hour", until=reset), 1, n) is not None)
+check(
+    "the log of the turn says the limit stopped it",
+    wait(ev("rest", turn=haiku, window="five_hour", until=reset), 1, n) is not None,
+)
+check(
+    "the ask goes back to the front of the queue under the same id",
+    wait(ev("queued", turn=haiku, prompt="write a haiku about rain"), 1, n) is not None,
+)
 with lock:
     sts = [m for m in events[n:] if m.get("type") == "status" and m.get("setup") == "resting"]
 st = sts[-1] if sts else None
@@ -666,6 +678,13 @@ check(
     st and st["queue"] and st["queue"][0]["turn"] == haiku and st["queue"][0].get("wait") == r.get("wait") and not st["busy"],
     st and st["queue"],
 )
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "limit" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check(
+    "the AI card has a row for Claude that says when it is back",
+    row and row["text"].startswith("at its limit until ") and row["current"] and row["enabled"] and row["on"],
+    row,
+)
 stone = ink("27-resting")
 check(
     "the stone rests as a grey hollow: no green, no amber, no red",
@@ -673,7 +692,11 @@ check(
     stone,
 )
 check("the line above the pill says it", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
-check("the line fades by itself and the empty field carries the state", until(lambda: glass_pixels(*LINE) < 5, 30), glass_pixels(*LINE))
+check(
+    "the line fades by itself and the empty field carries the state",
+    until(lambda: glass_pixels(*LINE) < 5, 30),
+    glass_pixels(*LINE),
+)
 shot("28-resting-field")
 summon()
 time.sleep(0.8)
@@ -723,7 +746,11 @@ check(
 again = wait(ev("turn_start", turn=haiku), 20, m)
 done = wait(ev("turn_end", turn=haiku), 60, m)
 res = wait(ev("result", turn=haiku), 1, m)
-check("the same ask runs again under the same id", again is not None and again["prompt"] == "write a haiku about rain", again and again.get("prompt"))
+check(
+    "the same ask runs again under the same id",
+    again is not None and again["prompt"] == "write a haiku about rain",
+    again and again.get("prompt"),
+)
 check(
     "it ends well, with the answer, in the same conversation",
     done and not done.get("requeued") and res and res.get("ok") and "kettle" in res.get("text", "")
@@ -734,9 +761,9 @@ time.sleep(2.5)
 shot("32-back")
 check("the stone is green again", stone_pixels("32-back") > 100, stone_pixels("32-back"))
 
-# and by itself: the plan says it is back in ten seconds, a second ask waits behind the first, and the machine
+# and by itself: the plan says it is back in fifteen seconds, a second ask waits behind the first, and the machine
 # wakes on the clock, a minute after the time (agentd's REST_POLL looks, the wall clock decides).
-reset = int(time.time()) + 10
+reset = int(time.time()) + 15
 api_control({"reset": reset})
 summon()
 typ("write a haiku about rain")
@@ -745,7 +772,11 @@ key("Return")
 asked = wait(ev("turn_start"), 10, n)
 haiku = asked and asked.get("turn")
 resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
-check("a second refusal rests the machine again, with the new time", resting and resting["rest"]["until"] == reset, resting and resting.get("rest"))
+check(
+    "a second refusal rests the machine again, with the new time",
+    resting and resting["rest"]["until"] == reset,
+    resting and resting.get("rest"),
+)
 summon()
 typ("tell me a joke")
 key("Return")
@@ -768,10 +799,57 @@ with lock:
     k = events.index(woke) if woke else n
 d1 = wait(ev("turn_end", turn=haiku), 60, k)
 d2 = wait(ev("turn_end", turn=lambda t: t is not None and t > haiku), 60, k)
-check("both asks run, the first one first", d1 is not None and d2 is not None and d1["_t"] < d2["_t"] and not d1.get("requeued"), (d1 and d1.get("line"), d2 and d2.get("line")))
+check(
+    "both asks run, the first one first",
+    d1 is not None and d2 is not None and d1["_t"] < d2["_t"] and not d1.get("requeued"),
+    (d1 and d1.get("line"), d2 and d2.get("line")),
+)
 time.sleep(2.5)
 shot("34-woke")
 check("the stone is green again after the wake", stone_pixels("34-woke") > 100, stone_pixels("34-woke"))
+
+# a CLI that does not end the turn: in its unattended retry mode it sleeps until the reset and says api_retry, so
+# agentd ends the turn for it (the first long wait), puts the CLI away and rests the same way.
+watchdog = Path.home() / ".e2e-retry-watchdog"
+watchdog.touch()
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 30, n)
+end = wait(ev("turn_end", turn=haiku), 10, n)
+check(
+    "a CLI that waits out the limit instead of ending is ended for it, and the machine rests",
+    resting and resting["rest"]["until"] == reset and resting["rest"]["kind"] == "five_hour" and end and end.get("requeued") is True,
+    resting and resting.get("rest"),
+)
+check(
+    "putting it away is not an error, and says no result",
+    not any(m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]),
+    [(m["kind"], m.get("text")) for m in events[n:] if m.get("kind") in ("error", "result") and m.get("turn") == haiku],
+)
+clis = lambda: [ln for ln in run("ps", "-eo", "pid,args").stdout.splitlines() if "--output-format stream-json" in ln]
+check("and the CLI is not left sleeping", until(lambda: not clis(), 10), clis())
+watchdog.unlink()
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+res = wait(ev("result", turn=haiku), 60, m)
+check(
+    "the same ask runs again once it is back",
+    res is not None and res.get("ok") and "kettle" in res.get("text", ""),
+    res and res.get("text"),
+)
+time.sleep(2.5)
 
 # paused by hand: the same rest with no time and one button; an ask waits as "paused", and the button lets it run.
 summon()
@@ -779,6 +857,9 @@ typ("pause claude")
 n = mark()
 key("Return")
 paused = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 10, n)
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "paused" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check("the AI card's row says paused, with its switch off", row and row["text"] == "paused" and not row["on"] and row["enabled"], row)
 check(
     "pause claude rests it by hand, with one button to resume",
     paused and paused["rest"]["why"] == "hand" and paused["rest"]["until"] is None

@@ -48,6 +48,14 @@ if mode == "partial":
     out({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "w1", "content": "ok"}]}})
 if mode == "waiting":
     # What the CLI does when a host switches on its unattended retry: it sleeps until the reset.
+    import signal
+    def bye(*_):
+        # The real CLI answers the stop (SIGINT first, then SIGTERM) with a result line of its own.
+        out({"type": "result", "subtype": "error_during_execution", "is_error": True, "num_turns": 1,
+             "terminal_reason": "aborted_streaming", "result": "", "session_id": "s-cut"})
+        sys.exit(1)
+    signal.signal(signal.SIGINT, bye)
+    signal.signal(signal.SIGTERM, bye)
     out({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": time.time() + 7200,
          "rateLimitType": "five_hour", "isUsingOverage": False}})
     out({"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 0, "retry_delay_ms": 7200000,
@@ -309,7 +317,8 @@ async def test_a_cli_that_sleeps_until_the_reset_is_ended_and_the_ask_waits_like
     until = rest.limit("claude").until
     assert end["requeued"] is True and end["line"] == _line(until)
     assert abs(until - (time.time() + 7200)) < 30 and rest.limit("claude").kind == "five_hour"
-    assert not [m for m in msgs if m.get("kind") == "error"]
+    # What the CLI says on its way out ("cancelled") is not how the turn ended: no error, no result.
+    assert not [m for m in msgs if m.get("kind") in ("error", "result")]
     await _until(r, _resting)
     assert d.proc is None or d.proc.returncode is not None
     await _stop(server, w)

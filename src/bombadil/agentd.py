@@ -1324,7 +1324,7 @@ class AgentD:
             print(f"agentd: limit check: {type(e).__name__}: {e}", file=sys.stderr)
             return None
 
-    def _waiting(self, turn: providers.Turn, ev: dict) -> rest.Limit | None:
+    def _limit_wait(self, turn: providers.Turn, ev: dict) -> rest.Limit | None:
         if turn.prompt.startswith("!") or self._turn_provider is None:
             return None
         try:
@@ -1774,6 +1774,10 @@ class AgentD:
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
+        if self._limit is not None and kind in ("error", "result"):
+            # The turn was ended for the account's limit (a CLI that waits it out was put away): what the
+            # CLI says on its way out ("cancelled") is not how the turn ended.
+            return pending_session, True
         if kind == "session":
             return ev.get("session_id") or pending_session, reported_error
         if kind in ("meta", "limit", "retry"):
@@ -1783,7 +1787,7 @@ class AgentD:
                 self._seen["rate_limit"] = ev.get("rate_limit")
             elif kind == "limit":
                 self._seen["notice"] = {k: v for k, v in ev.items() if k != "kind"}
-            elif (found := self._waiting(turn, ev)) is not None and self._limit is None:
+            elif (found := self._limit_wait(turn, ev)) is not None and self._limit is None:
                 # The CLI is waiting out the account's limit instead of ending the turn: end it for it.
                 await self._refused(found)
                 if self.proc is not None and self.proc.returncode is None:

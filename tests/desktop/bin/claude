@@ -7,6 +7,11 @@ if [ -e "$HOME/.e2e-claude-ai" ]; then
 else
   export ANTHROPIC_API_KEY=sk-ant-fake
 fi
+# While the driver keeps ~/.e2e-retry-watchdog the CLI is in its unattended retry mode (what an agent's own
+# environment may carry): a limit is waited out, with api_retry lines, and the turn does not end.
+if [ -e "$HOME/.e2e-retry-watchdog" ]; then
+  export CLAUDE_CODE_RETRY_WATCHDOG=1
+fi
 export ANTHROPIC_BASE_URL=http://127.0.0.1:18555 DISABLE_TELEMETRY=1 \
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
 exec /opt/claude "$@"
