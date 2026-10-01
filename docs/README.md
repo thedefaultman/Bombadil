@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `VOICE.md`: the name card, the three voices, the welcome line and empty places: how it is built and how to extend it.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
