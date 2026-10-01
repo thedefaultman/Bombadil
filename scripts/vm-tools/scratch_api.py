@@ -19,9 +19,9 @@ root sleep for Stop), joke (only talks). Anything else answers "OK.".
 import json
 import sys
 import time
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-LOG = open(sys.argv[2], "a")
+LOG = open(sys.argv[2], "a")  # noqa: SIM115 - one log for the life of the server
 N = [0]
 
 QML = """import QtQuick
@@ -89,7 +89,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("content-length", 0))
         try:
             body = json.loads(self.rfile.read(n))
-        except Exception:
+        except Exception:  # noqa: BLE001 - a body that is not JSON is an empty request
             body = {}
         msgs = body.get("messages", [])
         if "count_tokens" in self.path or not body.get("stream"):
