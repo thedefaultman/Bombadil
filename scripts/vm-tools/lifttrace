@@ -30,7 +30,7 @@ while time.time() - t0 < dur:
     card = None
     for y in range(300, 900):
         o = (y * w + 352) * 3
-        if pix[o] > 14 and pix[o] < 60 and abs(pix[o] - pix[o + 2]) < 20:
+        if 22 <= pix[o] < 60 and abs(pix[o] - pix[o + 2]) < 20:
             card = y; break
     rows.append((round(t, 2), top, card))
     time.sleep(max(0, iv - 0.02))
