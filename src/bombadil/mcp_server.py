@@ -172,8 +172,11 @@ class OsTools:
         from . import cardtools  # pictures: show_card, system_map
         cardtools.register(self)
 
+        from .mail import tools as mail_tools  # mail_search, mail_read, mail_mark, mail_draft, mail_show
+        mail_tools.register(self)
+
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
-        app_tools.register(self)
+        app_tools.register(self)   # last: the tools of the app kit are listed together, at the end
 
     # MCP plumbing
 
@@ -295,6 +298,16 @@ def _job(a: dict) -> str:
     return str(reply.get("text") or "Done.")
 
 
+def _line(msg: dict) -> bytes:
+    """One line for agentd. Text goes as it is and not as \\u escapes, which would make a long mail in a language
+    that is not English six times as long as agentd expects; a lone surrogate cannot be written as text, so that
+    one message goes escaped."""
+    try:
+        return (json.dumps(msg, ensure_ascii=False) + "\n").encode()
+    except UnicodeEncodeError:
+        return (json.dumps(msg) + "\n").encode()
+
+
 def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk",
                 recheck: str = "the `state` op says what it is now.") -> dict:
     """Send one line to agentd and wait for the reply of type `answer` with this message's id.
@@ -306,7 +319,7 @@ def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.settimeout(timeout)
             s.connect(str(path))
-            s.sendall((json.dumps(msg) + "\n").encode())
+            s.sendall(_line(msg))
             buf = b""
             while True:
                 s.settimeout(max(deadline - time.monotonic(), 0.001))

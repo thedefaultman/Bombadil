@@ -935,6 +935,18 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     if tool == "open_url":
         host = _host(str(a.get("url", "")))
         return Step(f"Opening {host}" if host else "Opening the browser")
+    # Mail: lines only. Nothing here claims a change (a draft is the person's to send), so no
+    # closing sentence and no Undo.
+    if tool == "mail_search":
+        return Step("Looking through your mail")
+    if tool == "mail_read":
+        return Step("Reading a mail")
+    if tool == "mail_mark":
+        return Step("Marking the mail that needs a reply")
+    if tool == "mail_draft":
+        return Step("Writing a draft")
+    if tool == "mail_show":
+        return Step("Opening Mail")
     return None
 
 
@@ -1261,8 +1273,8 @@ def reason_from(text: str) -> str:
 class Read:
     """Something the turn read, and whether it came from outside the machine's own files."""
     label: str            # "wireguard.com/quickstart", "notes.txt", "coding session api on Latchkey"
-    kind: str             # web, file, search, screen, session, app
-    outside: bool         # a web page, a downloaded file, the page on screen, a request from a session or app
+    kind: str             # web, file, search, screen, session, app, mail
+    outside: bool         # a web page, a downloaded file, the page on screen, a mail, a request from a session or app
     origin: str = ""      # for a downloaded file, the host it came from
 
     def as_dict(self) -> dict:
@@ -1372,6 +1384,9 @@ def tool_reads(name: str, a: dict | None) -> list[Read]:
         return [Read(_quote(a["query"], 50), "search", True)] if a.get("query") else []
     if name == "Bash":
         return command_reads(str(a.get("command", "")))
+    if name in ("mcp__bombadil-os__mail_read", "mcp__bombadil-os__mail_search"):
+        # Other people's words: a step that follows says "after reading a mail".
+        return [Read("a mail" if name.endswith("_read") else "your mail", "mail", True)]
     return []
 
 

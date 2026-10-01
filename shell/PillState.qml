@@ -40,6 +40,19 @@ QtObject {
     readonly property bool foundShown: mode === "resting" && found !== null && line === found.line
     readonly property var foundChips: foundShown ? found.matches : []
 
+    // Notices: lines another service says (new mail, a draft that is ready, a receipt), kept by
+    // agentd and sent here as "notice" and "notice_end". The newest takes the line while nothing
+    // else has it (no turn, no setup, no answer to something typed); a warning stays ahead of news,
+    // so a run of new mail never hides "That was not your press on Send".
+    // A warning also takes the line from a finished turn, an answer and the setup line, which can last
+    // for good (a sticky Undo, a signed-out AI) and so would keep a warning from ever being read; only a
+    // turn that is running keeps the line from it, and the warning is there when it ends. News waits.
+    property var notices: []         // [{id, source, line, tone, actions: [{id, label, style, notice}], ttl, at, ended}]
+    readonly property var notice: notices.length > 0 ? notices[0] : null
+    readonly property bool noticeShown: notice !== null && flash === ""
+                                        && (mode === "idle" || (notice.tone === "error" && mode !== "working"))
+    readonly property int maxNotices: 8   // agentd keeps four; a number here only guards against a runaway
+
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
     // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
     // "resting" for the AI out of plan or paused (it fades like a closing line), "idle" when there
@@ -185,6 +198,8 @@ QtObject {
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
+        if (ev.type === "notice") { _notice(ev); return }
+        if (ev.type === "notice_end") { _noticeEnd(ev.id); return }
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
         if (ev.type === "found") { _takeFound(ev); return }
         if (ev.type === "summon") {
@@ -417,6 +432,93 @@ QtObject {
         outgoing({ type: "setup_action", id: id })
     }
 
+    // -- notices --
+
+    // Mail is other people's words: nothing in a line may start another line or turn the text around.
+    // agentd strips this already; the bar does not lean on it.
+    function _plain(s, limit) {
+        const t = String(s === undefined || s === null ? "" : s)
+            .replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]+/g, " ")
+            .replace(/\s+/g, " ").trim()
+        return t.length > limit ? t.slice(0, limit - 1) + "…" : t
+    }
+
+    property int _seq: 0
+    property var _acted: ({})        // ids the person pressed a chip of: agentd's end of them is not to be read
+
+    // Errors first, then the newest. (`at` is agentd's clock, and a replaced notice carries a new one;
+    // `seq` settles a tie by arrival.)
+    function _newer(a, b) {
+        const e = (b.tone === "error" ? 1 : 0) - (a.tone === "error" ? 1 : 0)
+        return e !== 0 ? e : (b.at - a.at) || (b.seq - a.seq)
+    }
+
+    // An ended notice goes at once, unless it is the line being read.
+    function _settled(list) { return list.filter((n, i) => !n.ended || (i === 0 && hovers > 0)) }
+
+    function _notice(ev) {
+        const id = Number(ev.id)
+        const words = _plain(ev.line, 400)
+        // Nothing to say once the control characters are gone (a mail made of them): not a line.
+        if (!isFinite(id) || words === "") return
+        delete _acted[id]   // changed by agentd, so what was pressed is not this
+        const raw = ev.actions || [], actions = []
+        for (let i = 0; i < raw.length && actions.length < 3; i++) {
+            const a = raw[i]
+            if (!a || typeof a.id !== "string" || a.id === "" || _plain(a.label, 40) === "") continue
+            actions.push({ id: a.id, label: _plain(a.label, 40), style: a.style === "primary" ? "primary" : "quiet",
+                           notice: id })   // a chip knows whose it is
+        }
+        const n = { id: id, source: _plain(ev.source, 40), line: words,
+                    tone: ["step", "ask", "done", "error"].indexOf(ev.tone) >= 0 ? ev.tone : "step",
+                    actions: actions, ttl: Number(ev.ttl) || 0, at: Number(ev.at) || _now() / 1000,
+                    seq: ++_seq, ended: false }
+        notices = _settled(notices.filter(x => x.id !== id).concat([n]).sort(_newer)).slice(0, maxNotices)
+    }
+
+    function _noticeEnd(id) {
+        id = Number(id)   // as _notice took it
+        const i = notices.findIndex(n => n.id === id)
+        const acted = _acted[id] === true
+        delete _acted[id]
+        if (i < 0) return
+        if (!acted && i === 0 && noticeShown && hovers > 0) {
+            // Being read: it stays until the pointer leaves, as the other lines do, but without its chips,
+            // since agentd has let go of it. (Not when the press that ended it was this person's: the pointer
+            // is on the chip they pressed, and nothing is left to read.)
+            const kept = notices.slice()
+            kept[0] = Object.assign({}, kept[0], { actions: [], ended: true })
+            notices = kept
+        } else {
+            notices = notices.filter(n => n.id !== id)
+        }
+    }
+
+    onHoversChanged: if (hovers === 0 && notices.some(n => n.ended)) notices = notices.filter(n => !n.ended)
+
+    // A chip of a notice. The chip brings its notice's id: one that took the line a moment ago must
+    // never be handed a chip that was drawn for the one before.
+    function noticeAction(id, action) {
+        if (_offline()) return
+        handOff()   // Reply and Open slide a window in, and it must be able to take the keyboard
+        // agentd ends the notice as it answers: a notice the pointer is still on goes then, not when it leaves.
+        const acted = {}
+        for (const n of notices) if (n.id === id || _acted[n.id] === true) acted[n.id] = true   // none for a gone one
+        _acted = acted
+        outgoing({ type: "notice_action", id: id, action: action })
+    }
+
+    function dismissNotice(id) {
+        if (_offline()) return
+        outgoing({ type: "notice_dismiss", id: id })
+        notices = notices.filter(n => n.id !== id)
+    }
+
+    // What the line is saying, for `quickshell ipc call line state` (the VM smoke test and the desktop test).
+    function snapshot() {
+        return { mode: mode, line: line, flash: flash, noticeShown: noticeShown, notices: notices }
+    }
+
     function submit(text) {
         const t = String(text || "").trim()
         if (!t) return false
@@ -456,6 +558,8 @@ QtObject {
 
     // The socket dropped: agentd restarted or died. Its status says what runs when it is back.
     function lost() {
+        notices = []   // agentd's own stack died with it; the new one sends what is live
+        _acted = ({})
         connected = false
         busy = false
         optimistic = false

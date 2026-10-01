@@ -9,7 +9,7 @@ RowLayout {
     id: chips
     required property var pill
 
-    visible: pill.setupActions.length > 0 && (pill.mode === "setup" || pill.mode === "resting")
+    visible: pill.setupActions.length > 0 && (pill.mode === "setup" || pill.mode === "resting") && !pill.noticeShown   // a warning over the line hides its chips
     spacing: 8
 
     Repeater {
