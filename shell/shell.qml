@@ -148,6 +148,8 @@ ShellRoot {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
         root.summonedOn = root.summonedOn === name ? "" : name
+        // The tap that gives the pill back asks for no keyboard: say so, or the summon looks unanswered.
+        if (root.summonedOn === "") loopState.summonCancelled()
     }
 
     function release() { root.summonedOn = "" }

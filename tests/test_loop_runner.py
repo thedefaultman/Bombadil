@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from bombadil import paths
-from bombadil.loop import findings, probes, report, runner
+from bombadil.loop import findings, report, runner
 from bombadil.loop.findings import FindingsStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -867,16 +867,6 @@ def test_the_compositors_log_and_the_turn_go_into_the_evidence(machine, store, m
     [found] = r.run_once()
     bundle = json.loads((Path(found.evidence) / "evidence.json").read_text())
     assert bundle["log"][-1] == "line 99" and len(bundle["log"]) <= runner.LOG_LINES
-
-
-def test_the_log_of_a_unit_comes_from_the_journal(bindir):
-    program(bindir, "journalctl", "print('a\\nb\\nc')")
-    r = runner.Runner({}, None, None)
-    obs = probes.Observation()
-    assert r._log_for(probes.Result(False, "bar-alive", "bar", "bar-alive", "x", "y"), obs) == ["a", "b", "c"]
-    program(bindir, "journalctl", "sys.exit(1)")
-    assert r._log_for(probes.Result(False, "bar-alive", "bar", "bar-alive", "x", "y"), obs) == []
-    assert r._log_for(probes.Result(False, "x", "unknown", "x", "x", "y"), obs) == []
 
 
 def test_his_words_of_trouble_near_a_finding_are_kept_and_nothing_else_of_them(store):

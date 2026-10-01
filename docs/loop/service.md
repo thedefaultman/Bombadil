@@ -95,7 +95,9 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
   raises. `id` is always read as text.
 - A receipt (`{"type":"event","kind":"local","turn":null,"action":"noticed","phase":"done","ok":…,
   "text":…,"undo_msg":{"type":"noticed_do","op":"undo","id":"i…"}}`) goes to the client that tapped, not to
-  everyone. It is not a ledger row; the trail row is.
+  everyone. It is not a ledger row; the trail row is. An `undo` that fails sends the same kind of line with
+  `ok:false` and the failure's sentence (no `undo_msg`), because the status line's Undo button is gone from
+  the line once pressed and the answer to the tap is not drawn there.
 - `noticed_full` is as `docs/LOOP.md` says. `changes` come from the trail (each change once, newest first;
   `undone` says whether the latest row that answers it undid it; `can_undo` only for a word, an app, or a
   put-away word).

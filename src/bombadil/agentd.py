@@ -41,7 +41,9 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "alive"}                    every 5 s
                    {"type": "rects", "screen": "...", "w": n, "h": n, "rects": [{"name", "x", "y", "w", "h"}]}
                    {"type": "focus_ack", "id": n, "ms": n}   the input has the keyboard after summon n
-                   {"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": true}
+                   {"type": "focus_cancel", "id": n}    summon n gave the keyboard back (a second tap): no ack will come
+                   {"type": "friction", "what": "esc", "count": 3, "seconds": 10, "drawer": true,
+                    "card": false}                      what was up when the burst began
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
                     "local"|"plan", "turn": n, ...}
@@ -153,6 +155,7 @@ class _Facts:
     n: int
     started: float
     origin: str
+    asked_by: str | None = None      # the helper that asked for it, when a coding session did
     steps: int = 0
     names: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)       # model, cost, usage, rate_limit: the provider's meta events
@@ -367,6 +370,8 @@ class AgentD:
             self.signals.rects(msg)
         elif t == "focus_ack":
             self.signals.focus_ack(msg)
+        elif t == "focus_cancel":
+            self.signals.focus_cancel(msg)
         elif t == "friction":
             self.signals.friction(msg)
         elif t == "setup_action":
@@ -1091,6 +1096,12 @@ class AgentD:
         if not stopped:
             self._retried.add(turn_id)
             self.pending.insert(0, (turn_id, prompt))
+            # It is the same ask: who asked stays with it, so a loop's or a session's turn is not
+            # counted as his own words on the second run.
+            if self._facts is not None and self._facts.n == turn_id:
+                self._origins[turn_id] = self._facts.origin
+                if self._facts.asked_by:
+                    self.asked_by[turn_id] = self._facts.asked_by
             # The rerun starts from the prompt as typed: tell the model what happened without it.
             self.notes = (self._turn_notes + self.notes)[-10:]
             await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
@@ -1166,7 +1177,7 @@ class AgentD:
         # Turns run in the order they were asked, so a mark left by one that was unqueued is dead.
         self.asked_by = {i: who for i, who in self.asked_by.items() if i > self.current}
         origin = self._origins.pop(self.current, "typed")
-        self._facts = _Facts(log.stem, self.current, started, "session" if asked_by else origin)
+        self._facts = _Facts(log.stem, self.current, started, "session" if asked_by else origin, asked_by)
         # Something true on screen before snapper, which can take a second.
         await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)
         await self.broadcast(self._status())

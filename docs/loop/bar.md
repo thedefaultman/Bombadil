@@ -3,7 +3,7 @@
 The "noticed" chip beside the pill, the card that rises from it, and what the bar tells agentd about
 itself. Contract: `docs/LOOP.md`. Files: `shell/LoopState.qml`, `NoticedChip.qml`, `NoticedCard.qml`,
 a small wiring in `shell/shell.qml`, `undo_msg` in `PillState.qml` and `StatusLine.qml`, two variants
-(`primary`, `quiet`) in `LineButton.qml`. Tests: `tests/test_loop_qml.py`.
+(`primary`, `quiet`) in `LineButton.qml`. Tests: `tests/test_loop_qml.py`, `tests/test_loop_fixes_bar_qml.py`.
 
 ## What he sees
 
@@ -15,7 +15,10 @@ until 3 Nov" when resting and "Lately: 2 changes this week · See all". A row is
 second question), a quiet "Other ways" that opens the other forms as small choices, and quiet "Not now" /
 "Never" at the right of the meta line. Click the chip: the card stays up and agentd opens the Noticed
 window; click again, press Esc, or click elsewhere and it goes. Nothing is shown during a turn, and the
-chip never turns up on its own while the pill has the keyboard.
+chip never turns up on its own while the pill has the keyboard. When the chip is beside the pill the card
+rises above everything the bar draws in the pill's column (the status line with its Undo and Details, the
+chips), so it never covers them. If agentd goes away the card goes with the chip: there is nobody to answer
+a button, and a card with dead buttons would say nothing.
 
 ## LoopState (plain QtQuick, no Quickshell types)
 
@@ -25,8 +28,8 @@ Feed it with `handle(ev)`; it speaks through `outgoing(msg)` (shell.qml writes t
 |---|---|
 | `noticed` | sets `count`, `hidden`, `resting`, `lately`, `rows`; clears `pending`; closes the card when `hidden` turns on or the last row is gone |
 | `noticed_open` | `kept = true`, emits `opened()` (shell.qml picks the screen and takes the keyboard) |
-| `noticed_result` | `result = {op, id, ok, text, preview}`: a preview or a failure shows under its row |
-| `summon` | remembers `id` and the time, for `focus_ack` |
+| `noticed_result` | `result = {op, id, ok, text, preview}`: a preview or a failure shows under its row. The answer to `report` and `send` carries no preview here: the Noticed window shows the whole report, and a card with it would be taller than the screen. A long preview is clipped to six lines |
+| `summon` | remembers `id` and the time, for `focus_ack` (or `focus_cancel`) |
 
 Properties: `count`, `hidden`, `rows`, `resting`, `lately`, `result`, `pending` (row id a tap waits on),
 `connected`, `busy`, `typing`, `drawer` (set by shell.qml from `root.connected`, `pillState.stoppable`,
@@ -39,7 +42,7 @@ timing knobs `peekDelay` (250), `leaveDelay` (300), `aliveMs` (5000), `focusWait
 
 Functions the window calls: `hoverChip(screen, on)`, `hoverCard(screen, on)`, `chipClicked(screen)`,
 `closeCard()`, `keyboardLost(screen)`, `esc()` (true when it put a kept card away), `inputFocused()`,
-`reportRects(screen, w, h, dy, [[name, item], ...])`, `hello()`, `openWindow()`.
+`summonCancelled()`, `reportRects(screen, w, h, dy, [[name, item], ...])`, `hello()`, `openWindow()`.
 
 Pure functions for rows: `primary(row)` -> `{label, op, form?}` (the row's own, else by kind: "Make it"
 accept, "Use it" accept, "Send to the project" report); `others(row)` -> at most two `{label, op, form?}`
@@ -61,9 +64,15 @@ Actions: `press(row)`, `choose(row, way)`, `notNow(row)`, `never(row)`, `toggleW
   `noticedChip`, `noticedCard`; only what is showing. Sent 250 ms after the layout settles, only when it
   differs from what agentd last heard, and again after a reconnect.
 - `focus_ack {id, ms}` when a summon arrived and the input then has the keyboard within 3 s. A summon that
-  toggles the pill off, or never gets the keyboard, sends nothing.
-- `friction {what:"esc", count:3, seconds:10, drawer}` once per burst: a burst starts with an Esc while a
-  drawer (as far as the bar knows) or the card is up, and every Esc within 10 s of the last belongs to it.
+  never gets the keyboard sends nothing, and agentd writes it up when the time is out.
+- `focus_cancel {id}` when a summon is answered by giving the keyboard back: a second tap on Super toggles
+  the pill off, so no ack is coming and none was meant to. shell.qml's `summon()` calls
+  `loopState.summonCancelled()` when the tap leaves `summonedOn` empty; it says it once, for the summon
+  that was just answered, and an earlier summon that never got the keyboard stays unanswered.
+- `friction {what:"esc", count:3, seconds:10, drawer, card}` once per burst: a burst starts with an Esc
+  while a drawer (as far as the bar knows) or the card is up, and every Esc within 10 s of the last belongs
+  to it. `drawer` and `card` say what was up when the burst began (a kept card is put away by the first
+  press, so asking at the end would always say "nothing").
 - `noticed_do {op, id?, form?}`: `open` (chip click, See all), `accept`, `not_now`, `never`, `report`, or
   whatever a row's own buttons say.
 
@@ -71,7 +80,9 @@ Actions: `press(row)`, `choose(row, way)`, `notNow(row)`, `never(row)`, `toggleW
 
 A local event may carry `undo_msg`. The line then shows the receipt with Undo (and no Details), it stays
 until the next prompt like any change, and Undo sends `undo_msg` instead of the machine's undo
-(`PillState.undoMsg`; any new line clears it).
+(`PillState.undoMsg`; any new line clears it). Pressing Undo takes the button away at once. If agentd
+cannot do it, it answers with a local line that says so in one plain sentence (`ok: false`, with no Undo of
+its own), and the line shows that instead of the receipt.
 
 ## Traps
 

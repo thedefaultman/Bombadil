@@ -23,6 +23,7 @@ AppWindow {
 
     property string sendId: ""             // the found row whose Send card is open
     property var declined: ({})            // rows whose card he put away: it does not open by itself again
+    property var reportedSeen: ({})        // the rows that were waiting as reports in the last list
     property var answers: ({})             // what agentd said to a tap, by row: a preview or what went wrong
     property bool slow: false              // connected, and agentd has still not answered
     property bool reporting: false         // a report was asked for and the lists have not come back since
@@ -60,11 +61,20 @@ AppWindow {
     function showReport() {
         if (sendId !== "" && sendRow === null)
             sendId = ""
-        if (sendId !== "")
-            return
-        const held = full.found.find(f => f.state === "reported" && f.preview.text && !declined[f.id])
-        if (held)
-            sendId = held.id
+        const held = full.found.filter(f => f.state === "reported" && f.preview.text && !declined[f.id])
+        // A row that has only just become a report was asked for just now (in the bar, or here): it takes
+        // the card, even from another that is open. Otherwise an open card stays, and a report left
+        // waiting opens when there is none.
+        const asked = held.find(f => !reportedSeen[f.id])
+        const seen = {}
+        for (const f of full.found)
+            if (f.state === "reported" && f.preview.text)
+                seen[f.id] = true
+        reportedSeen = seen
+        if (asked)
+            sendId = asked.id
+        else if (sendId === "" && held.length > 0)
+            sendId = held[0].id
     }
     onFullChanged: showReport()
 

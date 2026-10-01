@@ -1,9 +1,11 @@
 """What the bar and agentd say about themselves, kept where the loop's probes can read it.
 
-agentd hears the bar say hello, stay alive, report where its parts are, acknowledge a summon and
-complain about friction. `Signals` writes that down and does nothing else with it:
+agentd hears the bar say hello, stay alive, report where its parts are, acknowledge a summon (or say
+it gave the keyboard back instead) and complain about friction. `Signals` writes that down and does
+nothing else with it:
 
-  signals.jsonl   append only, one row a fact: hello, summon, focus_ack, focus_timeout, friction, restart
+  signals.jsonl   append only, one row a fact: hello, summon, focus_ack, focus_cancel, focus_timeout,
+                  friction, restart
   bar.json        the bar's last report, rewritten whole and atomically, at most every 2 s
   agentd.json     who is serving: pid, start, build, socket; written once when agentd starts
 
@@ -232,6 +234,17 @@ class Signals:
         if self._summons.pop(sid, None) is None and sid in self._timed_out:
             row["late"] = True
         self._append(row)
+
+    @_quiet
+    def focus_cancel(self, msg: dict) -> None:
+        """The bar gave the keyboard back before it came: {"id"}. A second tap on Super toggles the pill
+        off, so that summon never gets an ack and was never meant to. Written as its own row (an ack
+        would say the input had the keyboard), and the summon stops waiting, so no timeout follows."""
+        sid = msg.get("id") if isinstance(msg.get("id"), int) and not isinstance(msg.get("id"), bool) else None
+        if sid is None:
+            return
+        self._summons.pop(sid, None)
+        self._append({"t": _t(self._clock()), "kind": "focus_cancel", "id": sid})
 
     # -- the clock --
 

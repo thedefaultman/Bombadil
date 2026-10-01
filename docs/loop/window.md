@@ -2,7 +2,7 @@
 
 A kit app. It opens from the bar chip (`noticed_do open`), or when he says "noticed". Contract: `docs/LOOP.md`. Files: `share/apps/noticed/` (`app.py`, `main.qml`,
 `text.js`, one QML file per section, `SendCard.qml`, `Line.qml`, `Section.qml`, `Well.qml`,
-`FootLink.qml`). Tests: `tests/test_noticed_app.py`.
+`FootLink.qml`). Tests: `tests/test_noticed_app.py`, `tests/test_loop_fixes_bar_qml.py`.
 
 ## What he sees
 
@@ -62,7 +62,10 @@ said-no id or a word's phrase (a word has no id).
 - **Never stuck.** A tap with no answer is let go after `answer_s` with "Bombadil did not answer." A
   second tap on a row that still waits is ignored, so nothing is sent twice.
 - **Survives agentd.** Not connected: the window shows "Bombadil is not listening right now." and tries
-  again every `tick_ms` (3 s). A tap while away says so and sends nothing. Reconnects ask again.
+  again every `tick_ms` (3 s). A tap while away says so and sends nothing. A lost connection also forgets
+  that a list had come (`ready` goes false), so a reconnect asks again at once and then every tick until
+  agentd answers. The old list is never shown as if it were live: the pane is empty until the first new
+  list, and says "Bombadil has not answered yet." after two seconds without one.
 - **Survives bad messages.** Every field is read through a cleaner (`_text`, `_int`, `_rows`, ...). A
   missing field is an empty one, a bad row is dropped, at most 50 rows a list, and a bad line costs one
   log line a minute. A partial line over 16 MB is dropped.
@@ -70,7 +73,9 @@ said-no id or a word's phrase (a word has no id).
 - **Report flow.** `report` marks the window as waiting (`reporting`); the preview arrives on the found
   row in the next `noticed_full`. The Send card shows "Writing it up..." until then, and after 4 s
   says "Nothing written up yet." instead. A held `reported` row with a preview opens the card by itself on the first list,
-  and "Back" sends nothing.
+  and "Back" sends nothing. A row that has only just become a report (it was not one in the last list:
+  he pressed "See the report" for it in the bar) takes the card even from another that is open; a list
+  that comes again changes nothing.
 - **Check mode.** With `BOMBADIL_CHECK` set the backend does not connect (`bombadil-app check` must not).
 
 ## Traps
@@ -104,3 +109,7 @@ network. Set `NOTICED_SHOTS=<dir>` to write a screenshot of each state there (no
 What this cannot check, and needs a real Hyprland or a real agentd for: the slide-in and where the
 window lands, focus when it opens from the chip, the wording of real result texts, and the Inter
 font (the test machine has none, so text is a little wider there than on his).
+
+## Known gaps
+
+- A report asked for in the bar while the window is closed, or for a row he already put away with "Back" in this window, opens no card by itself: the service does not say which row was asked for, so the window cannot tell it from the others that are held.

@@ -50,9 +50,9 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `monitor-narrow` | invariant | every enabled monitor is 1024 logical pixels wide or more (scale and rotation handled) | monitors |
 | `hypr-config` | invariant | `configerrors` is empty (paths scrubbed) | configerrors |
 | `bar-layer` | invariant | the `bombadil-bar` namespace is on some layer; `{}` is not checked | layers |
-| `summon-focus` | event | every `summon` has a `focus_ack` within 1.5 s (late ack and no ack are both red); `focus_timeout` with `bar: false` is nothing; not judged for 4.5 s | events |
+| `summon-focus` | event | every `summon` has a `focus_ack` within 1.5 s (late ack and no ack are both red); `focus_timeout` with `bar: false` is nothing; a summon with a `focus_cancel` row (the bar gave the keyboard back with a second tap) is nothing; not judged for 4.5 s | events |
 | `agentd-ping` | invariant | a real connection to agentd's socket got a pong | agentd |
-| `bar-alive` | invariant | `bar.json`'s `alive_at` is under 15 s old; not for 30 s after `agentd_started` | bar, now |
+| `bar-alive` | invariant | `bar.json`'s `alive_at` is under 15 s old; not for 30 s after `agentd_started`, and not while agentd itself does not answer (only agentd writes `bar.json`, so a stale `alive_at` then says nothing about the bar, and `agentd-ping` is the finding) | bar, now, agentd |
 | `bar-restarts` | event | fewer than 3 `restart` rows in 600 s (one result per burst) | events |
 | `coredump` | crash | no dump of agentd, the bar, Hyprland, an app, os-mcp or the browser panel in 7 days (each dump is one sighting at its own time; microseconds or seconds both read) | coredumps |
 | `turn-failed` | friction | a turn with `ok` false or null that was not stopped, not a `!command`, and not signed out, a limit or offline | ledger |
@@ -64,7 +64,7 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `rephrase` | friction | no typed ask repeated within 120 s of a failed, stopped or undone turn (shared words, or similarity 0.6) | ledger |
 | `slow-turn` | friction | no turn took 3 times its group's median | ledger, groups, medians |
 | `provider-drift` | drift | no turn had a stream message type the provider adapter does not know (`drift` in the row) | ledger |
-| `esc-friction` | friction | no bar `friction` row `what: esc` of 3 presses or more in 10 s or less (the drawer or a card up is noted) | events |
+| `esc-friction` | friction | no bar `friction` row `what: esc` of 3 presses or more in 10 s or less (the drawer or a card that was up when the burst began is named) | events |
 | `app-health` | invariant | no app's status is not ok with its process gone, and no FATAL line after the log's last `---` run marker | apps |
 
 ### Red on the six the VM found, green on the fixed state

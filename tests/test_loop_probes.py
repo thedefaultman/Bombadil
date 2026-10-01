@@ -314,9 +314,12 @@ def test_agentd_has_to_answer_ping():
     assert one("agentd-ping", Observation()).ok is None
 
 
+UP = {"connected": True, "ponged": True, "latency": 0.003}
+
+
 def test_the_bars_alive_has_to_be_fresh_but_not_while_agentd_is_only_just_back():
     def alive(age, **kw):
-        return one("bar-alive", Observation(bar={"alive_at": T0 - age}, now=T0, **kw))
+        return one("bar-alive", Observation(bar={"alive_at": T0 - age}, now=T0, agentd=UP, **kw))
     assert alive(5).ok is True and alive(15).ok is True
     assert alive(15.5).ok is False and alive(15.5).observed == "the bar's last alive is more than 15 s old"
     assert alive(40, agentd_started=T0 - 10).ok is None                         # the bar has not said hello to it yet

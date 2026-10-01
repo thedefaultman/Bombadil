@@ -26,6 +26,10 @@ start of it. A bare `bombadil loop report` names the one finding that waits, or 
 Plain words, never a traceback: a broken file costs one line on stderr and the command carries on as if
 there were nothing in it.
 
+`bombadil ask` is not a loop command, but the loop depends on it: it marks its prompt `"origin":"cli"`, so
+what a script, a cron job or another tool asks through it is never counted as something he types. (The pill
+sends no origin, which agentd reads as typed; agentd does not guess one for a message that has none.)
+
 ## Looking never writes
 
 The read commands open `loop.db` with `mode=ro` (a `LoopStore` whose `_open` is the read-only connection,
@@ -63,8 +67,12 @@ with no user systemd (a dev session, the headless test) has no prober; one line 
 says "Unknown key name"), which is where the agentd and bar units have it today.
 
 The prober finds Hyprland itself (`runner.adopt_instance()`): a user unit does not get
-`HYPRLAND_INSTANCE_SIGNATURE`. With no Hyprland it runs and idles, so the unit is fine on a machine without
-a session yet.
+`HYPRLAND_INSTANCE_SIGNATURE`. It does so again at the start of every look (`Collectors.begin()`), because
+the unit outlives the compositor: a Hyprland that restarted under a new signature is followed, not left
+as stale `hyprctl` answers that make every compositor check "not checked". An instance counts as running
+only while the process its `hyprland.lock` names exists, so a crashed Hyprland that left its socket behind
+is not mistaken for the live one (with no lock to read, the socket alone decides). With no Hyprland it
+runs and idles, so the unit is fine on a machine without a session yet.
 
 ## The `asks` tool (os-mcp)
 

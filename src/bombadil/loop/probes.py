@@ -572,6 +572,8 @@ def _summon_focus(obs):
             waiting[sid] = r
         elif kind == "focus_timeout":
             timed_out[sid] = r
+        elif kind == "focus_cancel":
+            waiting.pop(sid, None)    # the bar gave the keyboard back (a second tap): no ack was meant to come
         elif kind == "focus_ack" and sid in waiting:
             s = waiting.pop(sid)
             ms = _num(r.get("ms"))
@@ -603,7 +605,7 @@ def _agentd_ping(obs):
 
 
 @probe("bar-alive", "bar", "invariant", "The bar has stopped answering",
-       "the bar's last alive is less than 15 seconds old", needs=("bar", "now"))
+       "the bar's last alive is less than 15 seconds old", needs=("bar", "now", "agentd"))
 def _bar_alive(obs):
     if not isinstance(obs.bar, dict):
         return unchecked("the bar's report was not readable")
@@ -613,6 +615,9 @@ def _bar_alive(obs):
     started = _num(obs.agentd_started)
     if started is not None and alive < started and now - started < AGENTD_SETTLE:
         return unchecked("agentd has only just started and the bar has not said hello to it yet")
+    live = obs.agentd
+    if isinstance(live, dict) and (live.get("connected") is not True or live.get("ponged") is not True):
+        return unchecked("agentd is not answering, so it cannot hear the bar")   # agentd-ping says so
     age = now - alive
     if age <= BAR_FRESH:
         return green(age=round(age, 1))

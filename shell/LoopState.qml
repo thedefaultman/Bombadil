@@ -65,6 +65,7 @@ QtObject {
     property var _esc: []            // when Esc was pressed in this burst (epoch ms)
     property bool _escSent: false
     property bool _escDrawer: false
+    property bool _escCard: false
     property var _lastRects: ({})    // per screen: what agentd was last told
 
     function _now() { return fixedNow >= 0 ? fixedNow : Date.now() }
@@ -88,10 +89,13 @@ QtObject {
             break
         case "noticed_result": {
             const p = ev.preview
+            const op = String(ev.op || "")
             result = {
-                op: String(ev.op || ""), id: String(ev.id === undefined || ev.id === null ? "" : ev.id),
+                op: op, id: String(ev.id === undefined || ev.id === null ? "" : ev.id),
                 ok: ev.ok !== false, text: String(ev.text || ""),
-                preview: typeof p === "string" ? p : (p && p.text ? String(p.text) : "")
+                // The report and the send hand over to the Noticed window, which shows the whole
+                // text: the card never draws it (a full report is taller than the screen).
+                preview: op === "report" || op === "send" ? "" : (typeof p === "string" ? p : (p && p.text ? String(p.text) : ""))
             }
             pending = ""
             break
@@ -313,7 +317,15 @@ QtObject {
 
     onConnectedChanged: {
         if (connected) { _lastRects = ({}); _hello.restart() }
-        else { _hello.stop(); pending = "" }
+        else {
+            // Nobody to answer a tap: the card goes with the chip, so it is never up with buttons that do nothing.
+            _hello.stop()
+            pending = ""
+            kept = false
+            peeked = false
+            focusedRow = ""
+            result = null
+        }
         _refresh()
     }
 
@@ -363,6 +375,16 @@ QtObject {
         if (ms >= 0 && ms <= focusWaitMs) _send({ type: "focus_ack", id: id, ms: ms })
     }
 
+    // The summon was answered by giving the keyboard back (a second tap on Super): no focus_ack is
+    // coming and none was meant to, and agentd is told so, or it would write the summon up as one
+    // that never got the keyboard.
+    function summonCancelled() {
+        if (_summonId === null) return
+        const id = _summonId
+        _summonId = null
+        _send({ type: "focus_cancel", id: id })
+    }
+
     // Esc was pressed in the pill. Three within 10 s while a drawer or the card is up says the
     // thing will not go away: agentd hears it once per burst. Returns true when it put a kept card
     // away, so the pill does nothing else with that press.
@@ -372,12 +394,13 @@ QtObject {
         if (last >= 0 && t - last > 10000) { _esc = []; _escSent = false }
         // A burst starts with something up; after that, every press within 10 s of the last belongs to it.
         if (_esc.length > 0 || drawer || cardOpen) {
-            if (_esc.length === 0) _escDrawer = drawer
+            // What was up when it began: a kept card is put away by the first press, so asking later says "nothing".
+            if (_esc.length === 0) { _escDrawer = drawer; _escCard = cardOpen }
             _esc = _esc.concat([t])
             const recent = _esc.filter(x => t - x <= 10000)
             if (recent.length >= 3 && !_escSent) {
                 _escSent = true
-                _send({ type: "friction", what: "esc", count: recent.length, seconds: 10, drawer: _escDrawer })
+                _send({ type: "friction", what: "esc", count: recent.length, seconds: 10, drawer: _escDrawer, card: _escCard })
             }
         }
         if (kept) { closeCard(); return true }

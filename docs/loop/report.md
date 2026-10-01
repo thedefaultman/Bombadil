@@ -81,11 +81,12 @@ A link over about 7000 characters after quoting opens the empty new-issue page (
 - **Window checks wait a second.** A window event schedules the layout probes at +1 s (`SETTLE`), because a window that is still being placed looks stacked or oversize and would flip red-green, which quarantines a good probe. The drawer is judged at +2.1 s, after the probe's own grace.
 - **Tool errors are os-mcp's only.** `tool_results` keeps `mcp__bombadil-os__*` results; a failing Bash command in a turn is his shell's, not Bombadil's.
 - **App names are his words.** The runner reads them for its own use (it must find the status file) but they reach no finding: the apps probes leave them out, and the report cannot read them.
-- **Coredumps of Python programs** show as `python3`. The runner asks `coredumpctl info` (for at most ten recent ones) for the command line, so agentd and `bombadil-app` are told apart from other scripts.
+- **Coredumps of Python programs** show as `python3`. The runner asks `coredumpctl info` (for the ten newest recent ones, as `coredumpctl list` is oldest first) for the command line, so agentd and `bombadil-app` are told apart from other scripts, however many dumps of other Python programs came before.
 - **Presence is asked rarely.** Away is one pgrep and a few file reads, so it is asked at most every 15 s and only when a run or the doctor could be due. With nothing to go on (a fresh install) he is present.
 - **A kernel detail.** Right after a process is started, `/proc/<pid>/cmdline` can show a part of the command line for a moment; tests that start a stand-in app wait for it.
 - **`bombadil-app check`** may not exist yet in an older kit: the canary check is then skipped, not failed.
-- **A user unit does not always have `HYPRLAND_INSTANCE_SIGNATURE`.** `adopt_instance()` (called by `main()`) finds the newest live instance.
+- **A user unit does not always have `HYPRLAND_INSTANCE_SIGNATURE`.** `adopt_instance()` (called by `main()`, and at the start of every look by `Collectors.begin()`, since the prober outlives the compositor) finds the newest live instance. An instance is live while its socket is there and the process in its `hyprland.lock` exists.
+- **Evidence logs.** A finding about Hyprland carries the tail of `hyprland.log`; one about an app, that app's log. agentd and the bar start from `hyprland.lua` with the session's own output and have no unit, so a finding about them carries no log and the report has no Log section.
 
 ## What needs a real machine
 
@@ -96,3 +97,7 @@ A link over about 7000 characters after quoting opens the empty new-issue page (
 - `coredumpctl info` line names (`PID: 1234 (python3)`, `Command Line: ...`) and `systemctl --user --failed --plain` output, written from memory of systemd.
 - That a real agentd answers the ping within 2 s under load, and `bombadil-app check <dir> --wait 800` prints `{ok, errors}` as the kit's status does.
 - The machine kind: `systemd-detect-virt` and the DMI chassis type on the laptop.
+
+## Known gaps
+
+- agentd and the bar have no log file of their own, so findings about them carry no log lines; a file under the state directory that `hyprland.lua` redirects each one to would give them one, but it needs a size limit decided first.
