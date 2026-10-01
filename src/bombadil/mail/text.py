@@ -11,15 +11,19 @@ left out, since a person looking at the mail would not see it either.
 import fnmatch
 import os
 import re
+import time
 import unicodedata
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
 from .. import paths
+from .protocol import INVISIBLE as _INVISIBLE
 
 MAX_TEXT = 200_000        # characters of a mail's text that any caller is given
-MAX_HTML = 4 << 20        # characters of HTML that are looked at
+MAX_HTML = 1 << 20        # characters of HTML that are looked at: a person reads far less than this
+HTML_BUDGET_S = 1.0       # seconds one conversion may take; what it had by then is what there is
+RAW_FACTOR = 4            # text taken in, counted before whitespace is collapsed, is at most this many limits
 MAX_DEPTH = 200           # open elements remembered; deeper than this is not a mail
 MAX_TARGET = 500          # characters of a link's address that are shown
 NAME_BYTES = 120
@@ -76,8 +80,6 @@ def _far(value: str) -> bool:
 
 
 _SPACES = re.compile("[ \t\r\f\v\xa0\u2000-\u200a\u202f\u205f\u3000]+")
-# Invisible padding that newsletters put after the subject line, and marks that reorder text on screen.
-_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 _SCHEME = re.compile(r"^(?:https?://|mailto:)(?:www\.)?", re.IGNORECASE)
 
@@ -92,13 +94,20 @@ def _same_target(words: str, href: str) -> bool:
     return norm(words) == norm(href)
 
 
+class _Stop(Exception):
+    """Raised out of the parser when the reader has what it will use or has used its time."""
+
+
 class _Reader(HTMLParser):
     """Collects lines. `self.lines` holds (quote depth, text) and blank lines as (depth, "")."""
 
-    def __init__(self, limit: int):
+    def __init__(self, limit: int, deadline: float = float("inf")):
         super().__init__(convert_charrefs=True)
         self.limit = limit
-        self.size = 0
+        self.deadline = deadline
+        self.partial = False                   # stopped early for time or for taking in too much
+        self.size = 0                          # characters of finished lines
+        self.raw = 0                           # characters of text taken in, finished or not
         self.lines: list[tuple[int, str]] = []
         self.cur: list[str] = []
         self.depth = 0
@@ -111,7 +120,14 @@ class _Reader(HTMLParser):
 
     @property
     def full(self) -> bool:
-        return self.size >= self.limit
+        return self.size >= self.limit or self.raw >= self.limit * RAW_FACTOR
+
+    def tick(self) -> None:
+        """Called at every tag and between feeds: the parser is quadratic on markup that never closes, and a
+        mail may be nothing but that, so the time it may take is bounded, not only the text it may give."""
+        if time.monotonic() > self.deadline:
+            self.partial = True
+            raise _Stop
 
     # -- output --
 
@@ -145,6 +161,7 @@ class _Reader(HTMLParser):
     # -- the parser's events --
 
     def handle_starttag(self, tag, attrs):
+        self.tick()
         if self.full:
             return
         if self.dropping == "head" and tag == "body":
@@ -197,6 +214,7 @@ class _Reader(HTMLParser):
             self.handle_endtag(tag)
 
     def handle_endtag(self, tag):
+        self.tick()
         if self.dropping:
             if tag == self.dropping:
                 self.dropping = None
@@ -227,6 +245,10 @@ class _Reader(HTMLParser):
     def handle_data(self, data):
         if self.dropping or self.hidden_at is not None or self.full:
             return
+        self.raw += len(data)   # what a line is made of is counted as it comes, not when the line is done
+        if self.raw >= self.limit * RAW_FACTOR:
+            self.partial = True
+        self.tick()
         if self.pre and self.link is None:
             *first, last = data.split("\n")
             for piece in first:
@@ -266,20 +288,29 @@ class _Reader(HTMLParser):
         return "\n".join(out)
 
 
-def html_to_text(html: str, limit: int = MAX_TEXT) -> str:
-    """The text a person would read in this HTML, at most `limit` characters. Nothing is fetched."""
-    reader = _Reader(limit)
+def convert(html: str, limit: int = MAX_TEXT, budget: float = HTML_BUDGET_S) -> tuple[str, bool]:
+    """The text a person would read in this HTML, at most `limit` characters, and whether the HTML was given
+    up on before its end (too long, too slow to read, or more text than anyone would). Nothing is fetched."""
+    reader = _Reader(limit, time.monotonic() + budget)
+    partial = len(html) > MAX_HTML
     html = html[:MAX_HTML]
     try:
         for i in range(0, len(html), 1 << 16):
             reader.feed(html[i:i + (1 << 16)])
             if reader.full:
                 break
+            reader.tick()
         else:
             reader.close()
+    except _Stop:
+        pass
     except (AssertionError, RecursionError, ValueError):
         pass   # the parser gave up on markup it cannot make sense of: what it had is what there is
-    return reader.result()[:limit]
+    return reader.result()[:limit], partial or reader.partial
+
+
+def html_to_text(html: str, limit: int = MAX_TEXT) -> str:
+    return convert(html, limit)[0]
 
 
 def tidy(text: str) -> str:
@@ -289,14 +320,18 @@ def tidy(text: str) -> str:
 
 def body_text(text: str | None, html: str | None, limit: int = MAX_TEXT) -> tuple[str, bool]:
     """What to show of a mail's body, and whether it was cut: its plain part when it has one,
-    otherwise its HTML turned into text."""
+    otherwise its HTML turned into text. Only the front of either is looked at (a frame from the engine may
+    be tens of megabytes, and the answer is cut at `limit` anyway), and it is slow work for a hostile mail, so
+    a caller in an event loop runs it on a thread."""
+    partial = False
     if text and text.strip():
-        out = tidy(text)
+        head = text[:limit * 2 + 2]   # control characters are dropped from it: room for some
+        out, partial = tidy(head), len(head) < len(text)
     elif html:
-        out = html_to_text(html, limit + 1)
+        out, partial = convert(html, limit + 1)
     else:
         out = ""
-    return out[:limit], len(out) > limit
+    return out[:limit], partial or len(out) > limit
 
 
 def quote_reply(text: str, sender, when: float | None = None) -> str:
@@ -318,7 +353,7 @@ _UNSAFE = re.compile(r'[/\\<>:"|?*]')
 def sanitize_filename(name: str, limit: int = NAME_BYTES) -> str:
     """A name that is safe to create in any folder: no separators, no control or direction-changing
     characters, no leading dot, no Windows-reserved name, at most `limit` bytes with its extension kept."""
-    name = "".join(c for c in str(name) if unicodedata.category(c) not in ("Cc", "Zl", "Zp"))
+    name = "".join(c for c in str(name) if unicodedata.category(c) not in ("Cc", "Cs", "Zl", "Zp"))
     name = _INVISIBLE.sub("", name)
     name = _UNSAFE.sub("_", name).strip(" .")
     stem, dot, ext = name.rpartition(".")

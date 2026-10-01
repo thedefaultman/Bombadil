@@ -37,6 +37,7 @@ import math
 import mimetypes
 import os
 import re
+import select
 import shutil
 import signal
 import socket
@@ -81,6 +82,7 @@ BACKOFF_MIN, BACKOFF_MAX = 2.0, 60.0
 STABLE_S = 60.0            # Thunderbird up this long is well, and the next stop starts the pauses over
 LINK_WAIT_S = 120.0        # running with no add-on connected for this long is a Thunderbird to start again
 DETECT_S = 8.0
+SEED_WAIT_S = 8.0          # how long adding or removing an account waits for Thunderbird to be set up for it
 PUSH_S = 0.25              # "changed" goes out at most four times a second
 REQUESTED_S = 120.0
 SEND_CAP = 4 << 20         # bytes queued for a client that stopped reading before it is dropped
@@ -103,6 +105,21 @@ NEW_MAIL_AGE_S = 86400.0   # mail older than this is not "new", whatever the eng
 EVENTS_MAX = 200
 PRESS_LOG_ROTATE = 1 << 20
 DOWNLOAD_SLOTS = 2
+GONE_CHECKS = 8            # marks whose mail is missing from a page that are looked into at once
+IDLE_S = 600.0             # a connection that is not a window waiting for pushes and says nothing this long is closed
+MAX_SCOPED_CLIENTS = 8     # connections an agent's turn may hold: it shares the socket with the person, not every place
+MAX_AGENT_DRAFTS = 20      # open drafts the agent may have made, of the MAX_DRAFTS: the person's room is not its to fill
+MAX_COPY_BYTES = 1 << 30   # attachment copies kept for open drafts, all together ...
+MAX_AGENT_COPY_BYTES = 256 << 20   # ... and those of drafts the agent made
+AGENT_ROW_S = 10.0         # presses refused for being in a turn are written to the log once in this long
+QUIET_S = 30.0             # an add-on silent this long is asked if it is there
+PING_S = 5.0               # ... and has this long to say so
+PING_MISSES = 2            # misses in a row that make Thunderbird a hung program: started again
+ACCOUNTS_S = 4.0           # the engine's account list is quick: it is asked for no longer than this
+REFUSED_S = 3.0            # an account list that could not be had is not asked for again at once
+PROCESS_S = 20.0           # a call that starts, stops or sets up Thunderbird
+PROBE_S = 5.0              # a call that only asks it something
+BLOBS_S = 8.0              # attachments given to the add-on, all of them, before a send begins: with SEND_S, within agentd's 70 s
 UNKNOWN_SENTENCE = "Thunderbird did not say whether this went; look in Sent before pressing again."
 
 OPS = ("ping", "status", "accounts", "add_account", "remove_account", "views", "list", "search", "read",
@@ -118,6 +135,7 @@ PERSONS_ONLY = {"set_flags": "Marking mail read or flagged", "archive": "Archivi
                 "engine_window": "Showing Thunderbird", "requested": "Taking what the window was asked to show"}
 ENGINE_STATES = {"ok": "ok", "syncing": "syncing", "signin": "signin", "error": "error", "blocked": "blocked",
                  "idle": "ok"}
+UNSAFE_IN_NAME = re.compile(r'[<>"@,;:\\()\[\]]')   # what would make a display name structure of an address header
 
 
 _DRAFT_ID = re.compile(r"d[0-9]{1,12}")
@@ -125,6 +143,10 @@ _DRAFT_ID = re.compile(r"d[0-9]{1,12}")
 
 class AlreadyRunning(Exception):
     pass
+
+
+class ProcessTimeout(Exception):
+    """A call on Thunderbird's process that did not come back in time."""
 
 
 def _bad(sentence: str) -> Refusal:
@@ -225,31 +247,83 @@ def _paths(req: dict, name: str) -> list[tuple[str, str | None]]:
 
 
 def _clean(value, limit: int = 500) -> str:
-    return " ".join(str(value or "").split())[:limit]
+    return protocol.one_line(value, limit)
+
+
+def _state_of(value, default: str | None = None) -> str | None:
+    """The state an engine row or event names, if it names one: what it sent may be any shape at all."""
+    return ENGINE_STATES.get(value, default) if isinstance(value, str) else default
+
+
+def _https(value) -> str | None:
+    """Where a provider's own mail is, as the engine says it: a web address, and nothing the window could be
+    talked into opening some other way (a file, a share, an app's own scheme)."""
+    url = _clean(value, 500)
+    return url if url.lower().startswith("https://") else None
+
+
+def _for_header(addrs: list[dict]) -> list[dict]:
+    """Recipients as the add-on gets them. A display name made of somebody else's words must not be able to
+    end the name and begin another address, so what structures a header is taken out of it."""
+    return [{"name": " ".join(UNSAFE_IN_NAME.sub(" ", a["name"]).split()), "email": a["email"]} for a in addrs]
 
 
 def _local_time(ts: float) -> str:
     return time.strftime("%H:%M", time.localtime(ts))
 
 
+_TITLES = {"dr", "mr", "mrs", "ms", "mx", "prof", "sir", "dame"}
+_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "md", "phd", "esq", "mba", "cpa"}
+
+
 def _who(addrs: list[dict]) -> str:
-    """"Priya" for Priya Shah <priya@acme.test>, else the address; and how many more there are."""
+    """"Priya" for Priya Shah <priya@acme.test>, for "Shah, Priya" and for "Dr. Priya Shah", else the address;
+    and how many more there are."""
     first = addrs[0]
-    words = first["name"].split()
-    name = words[0].strip(",") if words and words[0].strip(",") else first["email"]
-    return name + (f" and {len(addrs) - 1} more" if len(addrs) > 1 else "")
+    before, comma, after = first["name"].partition(",")
+    name = after if comma and after.strip(" .").lower() not in _SUFFIXES else before   # "Shah, Priya"
+    words = [w for w in name.split() if w.strip(".").lower() not in _TITLES]
+    return (words[0] if words else first["email"]) + (f" and {len(addrs) - 1} more" if len(addrs) > 1 else "")
+
+
+SO_PEERPIDFD = getattr(socket, "SO_PEERPIDFD", 77)   # Linux 6.5: a handle on the process, which is not its number
+
+
+def _peer_pidfd(sock) -> int | None:
+    try:
+        return struct.unpack("i", sock.getsockopt(socket.SOL_SOCKET, SO_PEERPIDFD, struct.calcsize("i")))[0]
+    except (OSError, AttributeError, struct.error):
+        return None   # an older kernel, or a process that was gone by the time it was asked
 
 
 class Conn:
     """One client of mail.sock, and what is known of the process at the other end."""
 
-    def __init__(self, writer: asyncio.StreamWriter, pid: int, uid: int):
+    def __init__(self, writer: asyncio.StreamWriter, pid: int, uid: int, pidfd: int | None = None):
         self.writer = writer
         self.pid = pid
         self.uid = uid
+        self.pidfd = pidfd
         self.scoped = False      # is the process inside an agent's turn, as it was when it connected
         self.subscribed = False
         self.closed = False
+
+    def alive(self) -> bool:
+        """Is the process that connected still there? The kernel names the process that called connect(), and
+        a socket outlives it: a process inside a turn can connect, give the socket to a child and exit, and
+        then nobody is at the number the kernel recorded, or somebody else is. Only a live process is asked
+        which cgroup it is in, so a peer that is gone is not one that could be told apart from the person."""
+        if self.pid <= 0:
+            return False
+        fd = self.pidfd
+        if fd is not None:
+            try:   # a pidfd is readable once its process has ended
+                poll = select.poll()
+                poll.register(fd, select.POLLIN)
+                return not poll.poll(0)
+            except (OSError, ValueError):
+                pass
+        return os.path.exists(f"/proc/{self.pid}")
 
     def send(self, data: bytes) -> bool:
         if self.closed or self.writer.is_closing():
@@ -273,6 +347,10 @@ class Conn:
         if self.closed:
             return
         self.closed = True
+        fd, self.pidfd = self.pidfd, None
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         try:
             transport = self.writer.transport
             if abort:
@@ -285,13 +363,21 @@ class Conn:
             pass
 
 
+_blind = False
+
+
 def turn_scope(pid: int) -> bool:
-    """Is this process inside an agent turn's scope? What cannot be told is not (the check that matters
-    is agentd's; this one is the second)."""
+    """Is this process inside an agent turn's scope? What cannot be told is not (the check that matters is
+    agentd's; this one is the second), and it is said once in the log when it cannot be."""
+    global _blind
     try:
         from .. import procs
         return procs.cgroup_of(pid) is not None
-    except Exception:  # noqa: BLE001 - unknown means allowed
+    except Exception as e:  # noqa: BLE001 - unknown means allowed
+        if not _blind:
+            _blind = True
+            log(f"cannot tell which cgroup a client is in ({type(e).__name__}: {e}); no client is refused for being "
+                "in an agent's turn")
         return False
 
 
@@ -320,6 +406,7 @@ class Service:
         self._stopping: asyncio.Event | None = None
         self._poke: asyncio.Event | None = None
         self._tasks: set[asyncio.Task] = set()
+        self._clients: set[asyncio.Task] = set()
         self._events: deque = deque(maxlen=EVENTS_MAX)
         self._event_ready: asyncio.Event | None = None
         self._eacc: list[dict] | None = None   # the engine's accounts result and when it came
@@ -329,7 +416,7 @@ class Service:
         self._dlocks: dict[str, list] = {}   # draft id -> [lock, how many hold or wait for it]
         self._downloads = asyncio.Semaphore(DOWNLOAD_SLOTS)   # no loop is bound until first use
         self._show_seq = int(time.time() * 1000)
-        self._lock_fd: int | None = None
+        self._lock_fds: list[int] = []
         self._sock_ino: int | None = None
         self._running_since: float | None = None
         self._fails = 0
@@ -337,13 +424,19 @@ class Service:
         self._cut = 0.0                        # when the add-on's link was last seen to be gone
         self._status_sent: tuple | None = None
         self._restarting = False
+        self._hung: str | None = None          # the call on the process that has not come back, if one has
+        self._silent = 0                       # pings of the add-on that went unanswered, in a row
+        self._upping = 0                       # _engine_up calls going on
+        self._eacc_failed = float("-inf")      # when the engine's account list last could not be had
+        self._agent_row = (0.0, 0)             # when a refused press was last logged, and how many since
+        self._adding = asyncio.Lock()          # no loop is bound until first use
 
     # -- running --
 
     async def serve(self) -> None:
         self.loop = asyncio.get_running_loop()
         self._stopping, self._poke, self._event_ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
-        self._take_lock()
+        self._take_locks()
         server = None
         try:
             await self.job(self._open)
@@ -351,7 +444,7 @@ class Service:
             self.engine.on_state = self._on_state
             await self.engine.start()
             server = await self._listen()
-            for task in (self._pusher(), self._event_loop(), self._supervise()):
+            for task in (self._pusher(), self._event_loop(), self._supervise(), self._check_scopes()):
                 self._spawn(task)
             if self.engine.connected:   # a link that was there before the service listened (the fake, a test)
                 self._spawn(self._engine_up())
@@ -359,23 +452,51 @@ class Service:
         finally:
             await self._close(server)
 
+    async def _check_scopes(self) -> None:
+        """Said once at start: where turns have no systemd scope there is nothing to tell an agent's process on
+        this socket from the person's by, and the one check left is agentd's."""
+        if self.in_turn is not turn_scope:
+            return
+        try:
+            from .. import procs
+            scoped = await asyncio.to_thread(procs.scope_supported)
+        except Exception as e:  # noqa: BLE001 - a warning is never worth the service
+            log(f"could not find out whether agent turns get a scope: {type(e).__name__}: {e}")
+            return
+        if not scoped:
+            log("agent turns run without a systemd scope here, so this service cannot tell an agent's process on its "
+                "socket from yours: only agentd's look at the running turn's own processes stands between a shell "
+                "and a press")
+
     def stop(self) -> None:
         """Close cleanly (SIGTERM). Call on the loop, or through call_soon_threadsafe."""
         if self._stopping is not None:
             self._stopping.set()
             self._poke.set()
 
-    def _take_lock(self) -> None:
-        """One service per mail.db: two would each believe they are the only one sending."""
-        lock = Path(f"{self.db_path}.lock")
-        lock.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+    def _take_locks(self) -> None:
+        """One service per mail.db, and one per socket: two on the same notes would each believe they are the only
+        one sending, and a second on the same socket would take it from the first, which would go on running with
+        its Thunderbird and nobody able to reach it."""
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+            for what, path in ((self.db_path, Path(f"{self.db_path}.lock")),
+                               (self.socket_path, Path(f"{self.socket_path}.lock"))):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    os.close(fd)
+                    raise AlreadyRunning(f"another bombadil-mail is already keeping {what}") from None
+                self._lock_fds.append(fd)
+        except BaseException:
+            self._unlock()
+            raise
+
+    def _unlock(self) -> None:
+        for fd in self._lock_fds:
             os.close(fd)
-            raise AlreadyRunning(f"another bombadil-mail is already keeping {self.db_path}") from None
-        self._lock_fd = fd
+        self._lock_fds = []
 
     async def _listen(self):
         path = self.socket_path
@@ -398,6 +519,11 @@ class Service:
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
+        # A request in flight ends here, before the link and the notes it is using are closed under it: a press
+        # that was cancelled has written "sending", which the next start calls unknown, as it should.
+        for task in list(self._clients):
+            task.cancel()
+        await asyncio.gather(*self._clients, return_exceptions=True)
         for conn in list(self.conns):
             conn.close()
         try:
@@ -420,9 +546,7 @@ class Service:
                 self.socket_path.unlink()
         except OSError:
             pass
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
+        self._unlock()
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -467,12 +591,32 @@ class Service:
     def _recovered(self) -> None:
         """On the loop, after the notes were made again: the accounts come back from Thunderbird's own list."""
         self._eacc = None
+        self._poke.set()   # accounts are there again: the supervisor looks at Thunderbird now, not at its next round
         if self._stopping is not None and not self._stopping.is_set():
             self._spawn(self._refresh(fresh=True, push=True))
 
-    async def _process(self, fn, *args):
-        """A call on the engine's process, which may block (it starts and stops a program)."""
-        return await self.loop.run_in_executor(self.procs, fn, *args)
+    async def _process(self, fn, *args, timeout: float | None = None):
+        """A call on the engine's process, which may block (it starts and stops a program), for as long as
+        `timeout`. A call that does not come back keeps its thread, and the next ones are refused at once
+        instead of waiting behind it, so a Thunderbird that cannot be controlled is a state, not a stall."""
+        if self._hung is not None:
+            raise ProcessTimeout(f"Thunderbird's controls are stuck in {self._hung}.")
+        timeout = PROCESS_S if timeout is None else timeout
+        name = getattr(fn, "__name__", "a call")
+        future = self.loop.run_in_executor(self.procs, fn, *args)
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except TimeoutError:
+            if future.done():   # it came back as the time ran out
+                return future.result()
+            self._hung = name
+            future.add_done_callback(self._unstuck)
+            raise ProcessTimeout(f"Thunderbird's controls did not answer in {name}.") from None
+
+    def _unstuck(self, future) -> None:
+        self._hung = None
+        if not future.cancelled():
+            future.exception()   # said to be retrieved: nobody is waiting for what the late call did
 
     async def _file(self, fn, *args):
         return await self.loop.run_in_executor(self.files, fn, *args)
@@ -523,8 +667,9 @@ class Service:
         if found is not None:
             return found
         hint = row.get("provider")
-        key = hint if hint in accts.PROVIDERS else accts.detect(email.email, resolver=lambda _d: []).key
-        state = ENGINE_STATES.get(row.get("state"), "syncing")
+        key = hint if isinstance(hint, str) and hint in accts.PROVIDERS \
+            else accts.detect(email.email, resolver=lambda _d: []).key
+        state = _state_of(row.get("state"), "syncing")
         return self.store.add_account(email.email, key, state, name=_clean(row.get("name") or email.email, 200),
                                       note=_clean(row.get("note") or row.get("detail"), 300), now=self.clock())
 
@@ -565,12 +710,16 @@ class Service:
         blocked, and how much is unread. False when the engine could not be asked."""
         if not fresh and self._eacc is not None and time.monotonic() - self._eacc_at < COUNTS_S:
             return True
+        if not fresh and time.monotonic() - self._eacc_failed < REFUSED_S:
+            return False   # asked a moment ago and it did not answer: the next caller does not wait as long again
         if not self.engine.connected:
             return False
         try:
-            rows = await self._ask("accounts")
+            rows = await self._ask("accounts", ACCOUNTS_S)
         except Refusal:
+            self._eacc_failed = time.monotonic()
             return False
+        self._eacc_failed = float("-inf")
         rows = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
         changed = await self.job(self._apply_accounts, rows)
         self._eacc, self._eacc_at = rows, time.monotonic()
@@ -596,10 +745,12 @@ class Service:
             identities = row.get("identities") if isinstance(row.get("identities"), list) else []
             sender = next((_clean(i.get("name"), 200) for i in identities
                            if isinstance(i, dict) and str(i.get("email", "")).lower() == a["email"]), a["sender"])
-            state = ENGINE_STATES.get(row.get("state"), a["state"])
-            fresh = {"engine_id": str(row.get("engine_id") or "") or None, "state": state,
-                     "note": _clean(row.get("detail"), 300) if state != "ok" else "", "sender": sender,
-                     "web_name": _clean(web.get("name"), 40) or None, "web_url": _clean(web.get("url"), 500) or None}
+            state = _state_of(row.get("state"), a["state"])
+            detail = _clean(row.get("detail"), 300)
+            # the steps a person is given when the account is added stay until the engine has something to say
+            note = "" if state == "ok" else detail or (a["note"] if state == a["state"] else "")
+            fresh = {"engine_id": str(row.get("engine_id") or "") or None, "state": state, "note": note,
+                     "sender": sender, "web_name": _clean(web.get("name"), 40) or None, "web_url": _https(web.get("url"))}
             if any(a[k] != v for k, v in fresh.items()):
                 self.store.update_account(a["id"], **fresh)
                 changed = True
@@ -657,11 +808,12 @@ class Service:
         if not isinstance(key, str) or not key or len(key) > protocol.MAX_KEY:
             return None
         ts = _float(e.get("ts")) or 0.0
-        folder = e.get("folder") if e.get("folder") in FOLDERS else "other"
+        folder = e.get("folder") if isinstance(e.get("folder"), str) and e["folder"] in FOLDERS else "other"
+        to, cc = (v if isinstance(v, list) else [] for v in (e.get("to"), e.get("cc")))
         return {"id": msg_id(aid, key), "account": aid, "key": key,
                 "from": protocol.addr_or_raw(e.get("from")).as_dict(),
-                "to": [protocol.addr_or_raw(x).as_dict() for x in e.get("to") or [] if x][:50],
-                "cc": [protocol.addr_or_raw(x).as_dict() for x in e.get("cc") or [] if x][:50],
+                "to": [protocol.addr_or_raw(x).as_dict() for x in to if x][:50],
+                "cc": [protocol.addr_or_raw(x).as_dict() for x in cc if x][:50],
                 "subject": _clean(e.get("subject")), "ts": ts, "unread": bool(e.get("unread")),
                 "flagged": bool(e.get("flagged")), "attachments": bool(e.get("attachments")), "folder": folder,
                 "needs_reply": mark is not None, "why": mark["why"] if mark else None,
@@ -757,18 +909,26 @@ class Service:
         if len(self.conns) >= MAX_CLIENTS or uid not in (os.getuid(), 0):
             writer.close()
             return
-        conn = Conn(writer, pid, uid)
-        conn.scoped = bool(pid) and bool(self.in_turn(pid))
+        conn = Conn(writer, pid, uid, _peer_pidfd(writer.get_extra_info("socket")))
+        conn.scoped = self._scoped(conn)
+        if conn.scoped and sum(c.scoped for c in self.conns) >= MAX_SCOPED_CLIENTS:
+            conn.close()   # what an agent's turn may hold is a few places: the window and agentd keep theirs
+            return
         self.conns.add(conn)
+        me = asyncio.current_task()
+        self._clients.add(me)
         try:
             while not conn.closed:
                 try:
-                    line = await reader.readline()
+                    # a window waiting for pushes is quiet for as long as it likes; anything else that is quiet
+                    # (or has said half a line and no more) is a leak, and the places are few
+                    waiting = conn.subscribed and not conn.scoped
+                    line = await asyncio.wait_for(reader.readline(), None if waiting else IDLE_S)
                 except ValueError:
                     conn.send(_wire({"id": None, "ok": False, "error": "That request is too long.",
                                      "code": BAD_REQUEST}))
                     break
-                except OSError:
+                except (OSError, TimeoutError):
                     break
                 if not line:
                     break
@@ -786,11 +946,12 @@ class Service:
                         break
         finally:
             self.conns.discard(conn)
+            self._clients.discard(me)
             conn.close()
 
     async def _engine_connected(self, reader, writer, conn: Conn) -> None:
         """The host says it is the engine: the rest of this connection is engine frames."""
-        if conn.scoped or self.in_turn(conn.pid) or not hasattr(self.engine, "attach"):
+        if self._scoped(conn) or not hasattr(self.engine, "attach"):
             return   # an agent's process is not Thunderbird, and the fake engine has no host
         self.conns.discard(conn)
         await bridge.serve_engine(reader, writer, self.engine)
@@ -820,7 +981,15 @@ class Service:
         return {**head, "ok": True, "result": result}
 
     def _scoped(self, conn: Conn | None) -> bool:
-        return conn is not None and (conn.scoped or (bool(conn.pid) and bool(self.in_turn(conn.pid))))
+        """Is whoever is on the other end to be treated as inside an agent's turn? Asked again for every request,
+        so a process that joined a turn after it connected is caught, and it fails closed: a peer the kernel could
+        not name, or that has gone since it connected (and may have left the socket to a child that is in the
+        turn), is the agent's. The check is on the process that connected, which a socket can outlive."""
+        if conn is None:
+            return False
+        if conn.scoped or conn.pid <= 0 or not conn.alive():
+            return True
+        return bool(self.in_turn(conn.pid)) or not conn.alive()   # gone while it was being asked: too late
 
     def _yours(self, conn: Conn | None, what: str) -> None:
         """Some things are the person's alone: a process inside an agent's turn is refused."""
@@ -848,29 +1017,39 @@ class Service:
         email = protocol.parse_addr(given.strip()) if isinstance(given, str) else None
         if email is None or email.name or not accts.valid_email(email.email):
             raise _bad("That is not an email address.")
-        known = await self.job(lambda: self.store.account_by_email(email.email))
-        if known is not None and known["state"] in USABLE:
-            return self._account_out(known, self._unread(known))
-        try:
-            provider = await asyncio.wait_for(asyncio.to_thread(accts.detect, email.email, self.resolver), DETECT_S)
-        except TimeoutError:
-            provider = accts.detect(email.email, resolver=lambda _d: [])
-        state = "signin" if provider.auth == "oauth2" else "syncing"
-        row = known or await self.job(lambda: self.store.add_account(email.email, provider.key, state,
-                                                                      note=provider.note, now=self.clock()))
-        if known is not None:   # asked again for one that is not working yet: the same steps, once more
-            await self.job(lambda: self.store.update_account(known["id"], state=state, note=provider.note))
-            row = await self.job(lambda: self.store.account(known["id"]))
-        if self.process is not None:
-            await self._seed(row, provider)
+        async with self._adding:   # two asks for one address (the window and the CLI) are one account, not an error
+            known = await self.job(lambda: self.store.account_by_email(email.email))
+            if known is not None and known["state"] in USABLE:
+                return self._account_out(known, self._unread(known))
+            try:
+                provider = await asyncio.wait_for(asyncio.to_thread(accts.detect, email.email, self.resolver),
+                                                  DETECT_S)
+            except TimeoutError:
+                provider = accts.detect(email.email, resolver=lambda _d: [])
+            state = "signin" if provider.auth == "oauth2" else "syncing"
+            row = known or await self.job(lambda: self.store.add_account(email.email, provider.key, state,
+                                                                          note=provider.note, now=self.clock()))
+            if known is not None:   # asked again for one that is not working yet: the same steps, once more
+                await self.job(lambda: self.store.update_account(known["id"], state=state, note=provider.note))
+                row = await self.job(lambda: self.store.account(known["id"]))
         self._changed("accounts", "list")
+        if self.process is not None:
+            await self._soon(self._seed(row, provider))
         return self._account_out(row)
+
+    async def _soon(self, work) -> None:
+        """Run work on Thunderbird that the answer waits for a little: a controller that is slow does not hold the
+        window's call. What fails in that time is said; what is still going on goes on, and is logged if it fails."""
+        task = self._spawn(work)
+        done, _ = await asyncio.wait({task}, timeout=SEED_WAIT_S)
+        if task in done and not task.cancelled():
+            task.result()
 
     async def _seed(self, row: dict, provider: accts.Provider) -> None:
         """Write the account into Thunderbird's settings (effective at its next start) and start or restart it."""
         try:
             await self._process(self.process.seed_account, dict(row), provider)
-            if await self._process(self.process.running):
+            if await self._process(self.process.running, timeout=PROBE_S):
                 await self._restart("a new account was added")
             else:
                 self._next_try = 0.0
@@ -888,19 +1067,22 @@ class Service:
         for did in gone:
             await self._file(drafts.remove_copies, did)
         self._eacc = None
-        if self.process is not None:
-            try:
-                await self._process(self.process.forget_account, dict(a))
-                left = await self.job(lambda: len(self.store.accounts()))
-                if not left:
-                    await self._process(self.process.stop)
-                elif await self._process(self.process.running):
-                    await self._restart("an account was removed")
-            except Exception as e:  # noqa: BLE001 - the account is gone from here; Thunderbird's settings follow
-                log(f"forgetting {a['email']}: {type(e).__name__}: {e}")
         self._poke.set()
         self._changed("accounts", "list", "drafts")
+        if self.process is not None:
+            await self._soon(self._forget(a))
         return {}
+
+    async def _forget(self, a: dict) -> None:
+        try:
+            await self._process(self.process.forget_account, dict(a))
+            left = await self.job(lambda: len(self.store.accounts()))
+            if not left:
+                await self._process(self.process.stop)
+            elif await self._process(self.process.running, timeout=PROBE_S):
+                await self._restart("an account was removed")
+        except Exception as e:  # noqa: BLE001 - the account is gone from here; Thunderbird's settings follow
+            log(f"forgetting {a['email']}: {type(e).__name__}: {e}")
 
     async def _op_views(self, req, conn):
         accounts = await self._accounts_out()
@@ -980,8 +1162,8 @@ class Service:
         msgs.sort(key=lambda m: (-m["ts"], m["id"]))
         more = len(msgs) > limit or any(flag for _, _, flag in pages)
         page = msgs[:limit]
-        await self.job(self._drop_gone, [(a["id"], [m["key"] for m in rows_ if isinstance(m.get("key"), str)],
-                                          before, more_) for a, rows_, more_ in pages if a["state"] == "ok"])
+        await self._drop_gone([(a, [m["key"] for m in rows_ if isinstance(m.get("key"), str)], before, more_)
+                               for a, rows_, more_ in pages if a["state"] == "ok"])
         nxt = None
         if more and page:
             edge = page[-1]["ts"]
@@ -995,9 +1177,9 @@ class Service:
                 "note": a["note"] or ("Thunderbird has not set this account up yet." if waiting else ""),
                 "web": self._account_out(a)["web"]}
 
-    def _drop_gone(self, pages: list) -> None:
-        """A mark whose mail is no longer in the inbox page that should hold it is dropped: it was archived
-        or moved somewhere Bombadil did not see."""
+    def _missing(self, pages: list) -> list[tuple[str, str]]:
+        """On the worker: the marks whose mail is not in the inbox page that should have held it."""
+        out = []
         for aid, keys, newest, more in pages:
             dated = self.store.marks(200, 0, aid)
             if not dated:
@@ -1009,9 +1191,33 @@ class Service:
                 low = min((m["ts"] for m in dated if m["key"] in here), default=None)
                 if low is None:
                     continue   # no mark is in the page: nothing tells how far it reached
-            for m in dated:
-                if m["key"] not in here and m["ts"] <= top and (low is None or m["ts"] > low):
-                    self.store.clear_mark(aid, m["key"])
+            out += [(aid, m["key"]) for m in dated if m["key"] not in here and m["ts"] <= top
+                    and (low is None or m["ts"] > low)]
+        return out
+
+    async def _drop_gone(self, pages: list) -> None:
+        """A mark whose mail has left the inbox is dropped: it was archived or moved somewhere Bombadil did not
+        see. A page that does not hold the mail is not proof (a folder Thunderbird has not loaded yet comes back
+        empty, and the person's marks are their work), so each is asked about, and goes only when Thunderbird says
+        the mail is not there or is not in the inbox any more."""
+        found = await self.job(self._missing, [(a["id"], keys, newest, more) for a, keys, newest, more in pages])
+        if not found:
+            return
+        engine = {a["id"]: a["engine_id"] for a, *_ in pages}
+        found = found[:GONE_CHECKS]
+
+        async def left(aid: str, key: str) -> bool:
+            try:
+                got = await self._ask("get", KNOWN_S, account=engine[aid], key=key)
+            except Refusal as e:
+                return e.code == NOT_FOUND
+            msg = self._msg(aid, got.get("message") if isinstance(got, dict) else None, None)
+            return msg is not None and msg["folder"] != "inbox"
+        verdicts = await asyncio.gather(*(left(aid, key) for aid, key in found))
+        gone = [pair for pair, went in zip(found, verdicts, strict=True) if went]
+        if gone:
+            await self.job(lambda: [self.store.clear_mark(aid, key) for aid, key in gone])
+            self._changed("list")
 
     async def _op_search(self, req, conn):
         limit = _int(req.get("limit"), 20, 1, 100)
@@ -1056,7 +1262,8 @@ class Service:
         if msg is None:
             raise Refusal(ENGINE_ERROR, "Thunderbird gave that mail in a shape mail cannot use.")
         plain = got.get("text") if isinstance(got.get("text"), str) else ""
-        body, cut = text.body_text(plain, got.get("html") if isinstance(got.get("html"), str) else None)
+        # on a thread: hostile markup is slow to read however it is bounded, and nothing else waits for it
+        body, cut = await self._file(text.body_text, plain, got.get("html") if isinstance(got.get("html"), str) else None)
         headers = got.get("headers") if isinstance(got.get("headers"), dict) else {}
         attachments = [{"part": str(p.get("part"))[:64], "name": text.sanitize_filename(str(p.get("name") or "")),
                         "content_type": _clean(p.get("content_type"), 100), "size": _int(p.get("size"), 0, 0, 2**40),
@@ -1097,12 +1304,16 @@ class Service:
         needs = _flag(req, "needs")
         if needs is None:
             raise _bad("Say whether it needs a reply.")
-        a, eid, key = await self._target(req)
-        if not needs:
-            await self.job(lambda: self.store.clear_mark(a["id"], key))
+        if not needs:   # only notes change, so it needs nobody else: not Thunderbird, not even the mail
+            try:
+                aid, key = split_id(req.get("id"))
+            except protocol.BadId as e:
+                raise _bad(str(e)) from None
+            await self.job(lambda: self.store.clear_mark(aid, key))
             self._changed("list")
             return {"id": req["id"], "needs_reply": False, "why": None}
-        why = _clean(_string(req, "why", 4000) or "", WHY_MAX)
+        a, eid, key = await self._target(req)
+        why = _clean(_string(req, "why", LINE_LIMIT) or "", WHY_MAX)   # a long one is cut to a line, not refused
         got = await self._ask("get", account=eid, key=key)
         found = got.get("message") if isinstance(got, dict) else None
         msg = self._msg(a["id"], found, None)
@@ -1220,6 +1431,9 @@ class Service:
         tainted = self._scoped(conn) or req.get("tainted") is True
         if await self.job(lambda: self.store.count_drafts()) >= MAX_DRAFTS:
             raise Refusal(REFUSED, "There are too many drafts open. Discard some first.")
+        if by == "agent" and await self.job(lambda: self.store.count_drafts("agent")) >= MAX_AGENT_DRAFTS:
+            raise Refusal(REFUSED, f"There are already {MAX_AGENT_DRAFTS} drafts from the agent waiting for you. "
+                                   "Send or put some away before it makes more.")
         to, cc, bcc = (_addresses(req, n) for n in ("to", "cc", "bcc"))
         subject = _string(req, "subject", MAX_SUBJECT, line=True)
         body = _body(req) or ""
@@ -1271,8 +1485,10 @@ class Service:
             said |= {x.email for x in (*(to or []), *(cc or []), *(bcc or []))}
         d["typed"] = sorted(said)
         try:
+            room = await self._room(by) if files else 0
             for path, label in files:
-                c = await self._file(drafts.copy_attachment, did, path, label, by)
+                c = await self._file(drafts.copy_attachment, did, path, label, by, room)
+                room -= c["size"]
                 d["attachments"].append(c)
         except BaseException:
             await self._file(drafts.remove_copies, did)
@@ -1287,6 +1503,15 @@ class Service:
             raise
         self._changed("drafts")
         return await self.job(self._draft_out, d)
+
+    async def _room(self, by: str) -> int:
+        """Bytes of attachment copies that may still be put on disk. What is waiting in drafts is all together
+        under a cap, and what the agent made is under a smaller one, so it cannot fill the disk or the person's room."""
+        used, theirs = await self.job(lambda: (self.store.copy_bytes(), self.store.copy_bytes("agent")))
+        room = MAX_COPY_BYTES - used
+        if by == "agent":
+            room = min(room, MAX_AGENT_COPY_BYTES - theirs)
+        return max(0, room)
 
     async def _first_account(self) -> dict:
         rows = await self.job(lambda: self.store.accounts())
@@ -1386,8 +1611,10 @@ class Service:
             raise _bad(f"A draft has at most {drafts.ATTACHMENTS_MAX} attachments.")
         added: list[dict] = []
         try:
+            room = await self._room(by) if files else 0
             for path, label in files:
-                added.append(await self._file(drafts.copy_attachment, d["id"], path, label, by))
+                added.append(await self._file(drafts.copy_attachment, d["id"], path, label, by, room))
+                room -= added[-1]["size"]
         except BaseException:
             for a in added:
                 await self._file(drafts.remove_copy, d["id"], a["name"])
@@ -1456,9 +1683,16 @@ class Service:
         try:
             self._yours(conn, "Sending")
         except Refusal as e:
-            self._press_row({"kind": "mail", "id": _clean(req.get("id"), 32),
-                             "fingerprint": _clean(req.get("fingerprint"), 64), "ok": False, "code": "agent",
-                             "pid": conn.pid if conn else 0, "src": "mail"})
+            # One row now and then with a count, not one for each: a process that tries over and over would
+            # otherwise push the presses before it out of a log that is cut at a size.
+            last, skipped = self._agent_row
+            if time.monotonic() - last >= AGENT_ROW_S:
+                self._agent_row = (time.monotonic(), 0)
+                self._press_row({"kind": "mail", "id": _clean(req.get("id"), 32),
+                                 "fingerprint": _clean(req.get("fingerprint"), 64), "ok": False, "code": "agent",
+                                 "pid": conn.pid if conn else 0, "src": "mail", **({"more": skipped} if skipped else {})})
+            else:
+                self._agent_row = (last, skipped + 1)
             raise Refusal(REFUSED, "Sending is yours: press Send in the Mail window. It cannot be done from an "
                                    "agent's turn.") from e
 
@@ -1499,22 +1733,23 @@ class Service:
         eid = await self._engine_account(a)
         data = await self._file(drafts.read_verified, did, d["attachments"])
         xfers = []
-        for att, blob in zip(d["attachments"], data, strict=True):
-            xfer = bridge.new_xfer()
-            try:
-                await self.engine.send_blob(xfer, blob)
-            except bridge.EngineGone:
-                raise self._down() from None
-            except bridge.EngineTimeout:
-                raise Refusal(ENGINE_ERROR, "Thunderbird did not take the attachments in time. Nothing was sent.") \
-                    from None
-            except bridge.EngineError as e:
-                raise Refusal(ENGINE_ERROR, f"{e} Nothing was sent.") from None
-            xfers.append({"name": att["name"], "content_type": mimetypes.guess_type(att["name"])[0]
-                          or "application/octet-stream", "xfer": xfer})
+        try:
+            async with asyncio.timeout(BLOBS_S):   # all of them: BLOBS_S + SEND_S stays inside the 70 s agentd waits
+                for att, blob in zip(d["attachments"], data, strict=True):
+                    xfer = bridge.new_xfer()
+                    await self.engine.send_blob(xfer, blob)
+                    xfers.append({"name": att["name"], "content_type": mimetypes.guess_type(att["name"])[0]
+                                  or "application/octet-stream", "xfer": xfer})
+        except bridge.EngineGone:
+            raise self._down() from None
+        except (bridge.EngineTimeout, TimeoutError):
+            raise Refusal(ENGINE_ERROR, "Thunderbird did not take the attachments in time. Nothing was sent.") \
+                from None
+        except bridge.EngineError as e:
+            raise Refusal(ENGINE_ERROR, f"{e} Nothing was sent.") from None
         payload = {"account": eid, "kind": d["kind"], "reply_to": split_id(d["reply_to"])[1] if d["reply_to"] else None,
-                   "to": d["to"], "cc": d["cc"], "bcc": d["bcc"], "subject": d["subject"], "body": d["body"],
-                   "attachments": xfers}
+                   "to": _for_header(d["to"]), "cc": _for_header(d["cc"]), "bcc": _for_header(d["bcc"]),
+                   "subject": d["subject"], "body": d["body"], "attachments": xfers}
         if len(json.dumps(payload, ensure_ascii=False).encode()) > bridge.FRAME_MAX - 1000:
             raise Refusal(TOO_BIG, "The words of this mail are too many to send in one go. Shorten it.")
         prior, now = d["state"], self.clock()
@@ -1540,18 +1775,35 @@ class Service:
         except Exception as e:  # noqa: BLE001 - after the request was written, nothing is known
             log(f"send {did}: {type(e).__name__}: {e}")
             await self._unknown(did)
-        receipt = self._receipt(d, a, provider, answer)
+        # It has gone. From here nothing may fail the press: an answer that says it did not go, or is "internal",
+        # would be believed, and the person would send it again.
         try:
-            await self.job(lambda: self.store.finish_send(
-                did, receipt, [x["email"] for x in recipients],
-                split_id(d["reply_to"]) if d["reply_to"] else None, self.clock()))
-        except Exception as e:  # noqa: BLE001 - it went; the record of it failed, and "sending" is the honest state
-            log(f"send {did}: sent, but could not write it down: {type(e).__name__}: {e}")
-        else:
+            receipt = self._receipt(d, a, provider, answer)
+        except Exception as e:  # noqa: BLE001 - what the add-on said about the message is the only odd part
+            log(f"send {did}: the receipt would not be made from {str(answer)[:80]!r}: {type(e).__name__}: {e}")
+            receipt = self._receipt(d, a, provider, None)
+        reply = split_id(d["reply_to"]) if d["reply_to"] and d["kind"] in ("reply", "reply_all") else None
+        if await self._written_down(did, receipt, [x["email"] for x in recipients], reply):
             await self._file(drafts.remove_copies, did)
         self._changed("drafts", "list")
         self._broadcast({"push": "sent", "receipt": receipt})
         return {"receipt": receipt, "already": False}
+
+    async def _written_down(self, did: str, receipt: dict, recipients: list[str], reply) -> bool:
+        """Everything that is true now that a message has gone, at once; if that cannot be written (a full disk),
+        at least that the draft is sent, since "sending" would be called unknown at the next start and the person
+        asked to look in Sent, and a press with `again` could send it twice."""
+        for _ in range(2):
+            try:
+                await self.job(lambda: self.store.finish_send(did, receipt, recipients, reply, self.clock()))
+                return True
+            except Exception as e:  # noqa: BLE001
+                log(f"send {did}: sent, but could not write it down: {type(e).__name__}: {e}")
+        try:
+            return await self.job(lambda: self.store.set_state(did, "sent", self.clock(), was=("sending",)))
+        except Exception as e:  # noqa: BLE001 - "sending" it stays, and the next start says unknown
+            log(f"send {did}: sent, and not even that could be written down: {type(e).__name__}: {e}")
+            return False
 
     async def _unknown(self, did: str) -> None:
         """A send that may or may not have gone: said so, and never tried again by anyone but the person."""
@@ -1646,7 +1898,7 @@ class Service:
         if self.process is None:
             raise self._down()
         try:
-            return {"staged": bool(await self._process(self.process.stage, action == "stage"))}
+            return {"staged": bool(await self._process(self.process.stage, action == "stage", timeout=PROBE_S))}
         except Exception as e:  # noqa: BLE001
             log(f"engine window: {type(e).__name__}: {e}")
             raise Refusal(ENGINE_ERROR, "Thunderbird's window could not be moved.") from None
@@ -1661,17 +1913,22 @@ class Service:
     def _on_state(self, up: bool) -> None:
         if not up:
             self._cut = time.monotonic()
+            if self.engine_state == "up":   # an answer that needs Thunderbird must not say it is running
+                self._set_engine("starting", "Thunderbird's connection dropped. Waiting for it to come back.")
         self._poke.set()
         if up:
             self._spawn(self._engine_up())
 
     async def _engine_up(self) -> None:
+        self._upping += 1
         try:
             info = await self._ask("info")
             log(f"Thunderbird {info.get('app_version', '?') if isinstance(info, dict) else '?'} connected")
             await self._refresh(fresh=True, push=True)
         except Refusal as e:
             log(f"after connecting: {e}")
+        finally:
+            self._upping -= 1
         if self.engine.connected:
             self._set_engine("up", "Mail is running.")
         self._changed("accounts", "list")
@@ -1701,7 +1958,7 @@ class Service:
             self._changed("accounts", "list")
 
     async def _synced(self, event: dict) -> None:
-        eid, state = event.get("account"), ENGINE_STATES.get(event.get("state"))
+        eid, state = event.get("account"), _state_of(event.get("state"))
         if not isinstance(eid, str) or state is None:
             return
         detail = _clean(event.get("detail"), 300) if state != "ok" else ""
@@ -1750,13 +2007,20 @@ class Service:
     async def _supervise(self) -> None:
         """Keep Thunderbird running while there is an account. It never raises: what goes wrong is a state."""
         while not self._stopping.is_set():
+            self._poke.clear()   # before the tick, so that what pokes during it (a link lost, an account) is kept
             try:
                 await self._tick()
+            except ProcessTimeout as e:
+                log(f"supervising Thunderbird: {e}")
+                self._set_engine("down", "Thunderbird cannot be controlled just now. Trying again shortly.")
             except Exception as e:  # noqa: BLE001
                 log(f"supervising Thunderbird: {type(e).__name__}: {e}")
-            self._poke.clear()
+            wait = SUPERVISE_S
+            left = self._next_try - time.monotonic()
+            if 0 < left < wait:
+                wait = left   # a start that is only waiting for its time is made when the time comes
             try:
-                await asyncio.wait_for(self._poke.wait(), SUPERVISE_S)
+                await asyncio.wait_for(self._poke.wait(), wait)
             except TimeoutError:
                 pass
 
@@ -1768,14 +2032,14 @@ class Service:
         if self._restarting:
             return
         accounts = await self.job(lambda: self.store.accounts())
-        running = await self._process(self.process.running)
+        running = await self._process(self.process.running, timeout=PROBE_S)
         if not accounts:
             if running:
                 await self._process(self.process.stop)
             self._running_since = None
             self._set_engine("off", "Mail is off until an account is added.")
             return
-        ok, why = await self._process(self.process.available)
+        ok, why = await self._process(self.process.available, timeout=PROBE_S)
         if not ok:
             self._set_engine("blocked", _clean(why, 300) or "Thunderbird is not available here.")
             return
@@ -1786,6 +2050,11 @@ class Service:
             if self.engine.connected:
                 if now - self._running_since > STABLE_S:
                     self._fails = 0
+                if self.engine_state in ("starting", "restarting", "down") and not self._upping:
+                    # it connected while this was deciding to start it, or its controls hung for a while and no
+                    # longer do: Thunderbird that is running and connected is up, whatever was last said of it
+                    self._spawn(self._engine_up())
+                await self._listen_for_it()
                 return   # _engine_up says "up" once the add-on has answered
             if self.engine_state == "up":
                 self._set_engine("starting", "Thunderbird's connection dropped. Waiting for it to come back.")
@@ -1795,21 +2064,45 @@ class Service:
             return
         if self._running_since is not None:   # it was running and is not: it stopped by itself
             self._fails = self._fails + 1 if now - self._running_since < STABLE_S else 0
-            self._next_try = now + min(BACKOFF_MAX, BACKOFF_MIN * 2 ** max(0, self._fails - 1))
+            self._next_try = now + _backoff(self._fails)
             self._running_since = None
             log(f"Thunderbird stopped; starting it again in {self._next_try - now:.0f} s")
         if now < self._next_try:
-            self._set_engine("down" if self._fails >= 6 else "restarting", self._waiting(self._next_try - now))
+            self._set_engine("down" if self._fails >= 6 else "restarting", self._waiting())
             return
         await self._start(accounts)
 
-    def _waiting(self, left: float) -> str:
+    async def _listen_for_it(self) -> None:
+        """A Thunderbird that is running and connected may still be hung: its add-on stops answering and nothing
+        else says so. One that has been silent a while is asked if it is there, and one that misses a few asks in
+        a row is started again (its link is dropped with it, so what waits on it fails at once)."""
+        if time.monotonic() - self.engine.heard < QUIET_S:
+            self._silent = 0
+            return
+        try:
+            await self.engine.request("info", PING_S)
+        except bridge.EngineTimeout:
+            self._silent += 1
+        except (bridge.EngineGone, bridge.EngineError):
+            return   # a link that went has its own handler, and an error is an answer
+        else:
+            self._silent = 0
+            return
+        if self._silent >= PING_MISSES:
+            self._silent = 0
+            log("the add-on has stopped answering; starting Thunderbird again")
+            self.engine.drop("Thunderbird stopped answering.")
+            await self._restart("its add-on stopped answering")
+
+    def _waiting(self) -> str:
+        # no countdown in it: a sentence that changes every few seconds is pushed to every window every time
         if self._fails >= 6:
             return "Thunderbird keeps stopping. Trying again every minute."
-        return f"Thunderbird stopped. Starting it again in {max(1, round(left))} s."
+        return "Thunderbird stopped. Starting it again shortly."
 
     async def _start(self, accounts: list[dict]) -> None:
-        self._set_engine("starting", "Starting Thunderbird.")
+        if not self.engine.connected:   # one that is already there is not "starting"
+            self._set_engine("starting", "Starting Thunderbird.")
         try:
             await self._process(self.process.prepare)
             for a in accounts:
@@ -1817,12 +2110,11 @@ class Service:
             await self._process(self.process.start)
         except Exception as e:  # noqa: BLE001 - a failed start is a pause and another try
             self._fails += 1
-            self._next_try = time.monotonic() + min(BACKOFF_MAX, BACKOFF_MIN * 2 ** (self._fails - 1))
+            self._next_try = time.monotonic() + _backoff(self._fails)
             detail = _clean(e, 200)
             log(f"starting Thunderbird failed: {type(e).__name__}: {detail}")
             self._set_engine("down" if self._fails >= 6 else "restarting",
-                             f"Thunderbird could not start{': ' + detail if detail else ''}. "
-                             + self._waiting(self._next_try - time.monotonic()))
+                             f"Thunderbird could not start{': ' + detail if detail else ''}. " + self._waiting())
             return
         self._running_since = time.monotonic()
 
@@ -1835,12 +2127,17 @@ class Service:
             self._running_since = time.monotonic()
         except Exception as e:  # noqa: BLE001
             self._fails += 1
-            self._next_try = time.monotonic() + min(BACKOFF_MAX, BACKOFF_MIN * 2 ** (self._fails - 1))
+            self._next_try = time.monotonic() + _backoff(self._fails)
             self._running_since = None
             log(f"restarting Thunderbird failed: {type(e).__name__}: {e}")
         finally:
             self._restarting = False
             self._poke.set()
+
+
+def _backoff(fails: int) -> float:
+    """How long before Thunderbird is started again after this many stops in a row: 2 s, doubling, to a minute."""
+    return min(BACKOFF_MAX, BACKOFF_MIN * 2 ** max(0, fails - 1))
 
 
 _STATE_SENTENCE = {"sent": "That draft was already sent.", "discarded": "That draft was discarded.",

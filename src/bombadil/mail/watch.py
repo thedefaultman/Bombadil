@@ -11,7 +11,8 @@ Why it is shaped this way:
   anything, because every wait in it is a wait on a socket in agentd's own loop.
 - A connection that stays open says nothing for hours, so silence is tested: after IDLE_SECONDS
   it asks the service to ping, and a service that does not answer in time is dropped and
-  reconnected to (a hung service must not look like no new mail).
+  reconnected to (a hung service must not look like no new mail). Nothing that goes wrong in a
+  session ends the task, and nothing a push does can hold the reading for long.
 - One receipt per send. The press that started a send and the service's "sent" push both
   carry it, in either order; `Says` keeps the drafts it has already said and skips the second.
   A send that reaches the service without a press from here has no press to show for it: it
@@ -34,11 +35,15 @@ RETRY_SECONDS = 5.0
 IDLE_SECONDS = 45.0
 PONG_SECONDS = 10.0
 ANSWER_SECONDS = 5.0      # the subscribe answer
+PUSH_SECONDS = 30.0       # what saying one push may take (a window to open) before the next is read
 LINE_LIMIT = 4 << 20      # one push is a message or a receipt, never this
 REMEMBER = 256            # message and draft ids said, so a repeated push is not said twice
 NEW_MAIL_TTL = 300.0
 RECEIPT_TTL = 120.0
 DOWN = "Mail is not running yet."
+SILENT = ("Mail did not answer in time. It may still have done that, so look in the Mail view before "
+          "trying again.")
+SLOW = "Mail did not answer in time. Try again in a moment."
 
 
 class Watch:
@@ -58,6 +63,8 @@ class Watch:
                 await self._session()
             except (OSError, ValueError, asyncio.IncompleteReadError):
                 pass   # not there, or it went away: the next attempt is in a few seconds
+            except Exception as e:  # noqa: BLE001 - mail is optional: whatever it was, try again, never end
+                print(f"agentd: mail watch: {type(e).__name__}", file=sys.stderr)   # the type, never the push
             self.connected = False
             await asyncio.sleep(self.retry)
 
@@ -99,7 +106,9 @@ class Watch:
 
     async def _deliver(self, push: dict) -> None:
         try:
-            await self.handle(push)
+            await asyncio.wait_for(self.handle(push), PUSH_SECONDS)
+        except TimeoutError:
+            print(f"agentd: mail push {push.get('push')!r}: not handled in {PUSH_SECONDS:g} s", file=sys.stderr)
         except Exception as e:  # noqa: BLE001 - one push that cannot be handled never ends the watching
             print(f"agentd: mail push {push.get('push')!r}: {type(e).__name__}: {e}", file=sys.stderr)
 
@@ -112,14 +121,35 @@ def _json(line: bytes) -> dict:
     return msg if isinstance(msg, dict) else {}
 
 
+class NoAnswer(mail_client.MailUnavailable):
+    """The service was there and was asked, and then said nothing: what was asked may have been done."""
+
+
+def _request(op: str, timeout: float, **args):
+    conn = mail_client.Connection(timeout=timeout)   # MailUnavailable here: never reached, nothing was asked
+    with conn:
+        try:
+            return conn.request(op, timeout, **args)
+        except NoAnswer:
+            raise
+        except mail_client.MailUnavailable as e:
+            raise NoAnswer(e.detail) from None
+
+
 async def ask(op: str, timeout: float, **args):
-    """One request to the service, off the loop: the client blocks."""
-    return await asyncio.to_thread(mail_client.request, op, timeout=timeout, **args)
+    """One request to the service, off the loop: the client blocks. `NoAnswer` (a `MailUnavailable`) when it
+    was reached and did not answer, so a caller can tell that from a service that is not there."""
+    return await asyncio.to_thread(_request, op, timeout, **args)
 
 
-def said(e: Exception) -> str:
-    """What to tell a person when the service did not do it: its own sentence, or that it is not there."""
-    return str(e) if isinstance(e, mail_client.MailError) else DOWN
+def said(e: Exception, wrote: bool = False) -> str:
+    """What to tell a person when the service did not do it: its own sentence, that it is not there, or, for a
+    service that took the request and never answered, that it may have been done (`wrote`: a draft, a mark)."""
+    if isinstance(e, mail_client.MailError):
+        return str(e)
+    if isinstance(e, NoAnswer):
+        return SILENT if wrote else SLOW
+    return DOWN
 
 
 def short_name(addr) -> str:
@@ -182,7 +212,7 @@ class Says:
             try:
                 draft = await self.request("draft", 8, reply_to=mail_id, created_by="person")
             except (mail_client.MailUnavailable, mail_client.MailError) as e:
-                self.notices.replace(notice, line=said(e), tone="error", actions=[], ttl=20)
+                self.notices.replace(notice, line=said(e, wrote=True), tone="error", actions=[], ttl=20)
                 return False
             await self.show(**_where(draft if isinstance(draft, dict) else {"reply_to": mail_id}))
             return True

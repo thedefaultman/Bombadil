@@ -5,6 +5,14 @@ from mail_stub import mail_service  # noqa: F401 - the `mail` fixture
 
 from bombadil import apps, desk, launcher, snapshots
 
+def _drop_app_called_mail():
+    """An app of the person's own called mail, put in ~/Apps by hand: apps.create refuses the name."""
+    d = apps.own_dir("mail")
+    d.mkdir(parents=True)
+    (d / "main.qml").write_text("import QtQuick\nItem {}\n")
+    (d / "app.toml").write_text('title = "Mail"\n')
+
+
 
 def _apps(home):
     apps.create("Passwords", "import QtQuick\nItem {}\n")
@@ -653,13 +661,16 @@ def test_a_sentence_about_mail_is_the_agents(home, text):
     assert launcher.match(text, _apps(home)) is None
 
 
-@pytest.mark.parametrize("text", ["send", "Send it", "send it.", "SEND THAT!", "yes send", "yes, send it", " send this "])
+@pytest.mark.parametrize("text", ["send", "Send it", "send it.", "SEND THAT!", "yes send", "yes, send it", " send this ",
+                                  "send it now", "send it please", "ok send it", "okay, send it", "please send",
+                                  "go ahead and send it", "yes please send it now"])
 def test_a_bare_send_is_a_send_word(text):
     assert launcher.is_send_word(text)
 
 
-@pytest.mark.parametrize("text", ["send it?", "send it to priya", "please send", "!send it", "send me the file",
-                                  "", "sendit", "send it now", "don't send it", "senden", "send it please"])
+@pytest.mark.parametrize("text", ["send it?", "send it to priya", "please send it to priya", "!send it",
+                                  "send me the file", "", "sendit", "don't send it", "senden", "please", "now",
+                                  "send it now?", "ok", "send it and then archive it", "do send it"])
 def test_anything_more_than_send_is_not(text):
     assert not launcher.is_send_word(text)
 
@@ -668,9 +679,10 @@ def test_mail_is_in_the_entries_once_with_or_without_the_kit_app(home):
     def mails(app_list):
         return [e for e in launcher.entries(app_list) if e["name"] == "mail"]
     [e] = mails([])
-    assert e == {"name": "mail", "title": "Mail", "kind": "app", "words": ["mail", "email", "inbox"]}
-    apps.create("Mail", "import QtQuick\nItem {}\n")         # an app of yours with the same name
-    assert len(mails(launcher.known_apps())) == 1
+    assert e == {"name": "mail", "title": "Mail", "kind": "app", "words": launcher.MAIL_WORDS["mail"]}
+    assert {"mail", "email", "inbox", "my mail"} <= set(e["words"])       # every word the launcher takes
+    _drop_app_called_mail()         # an app of yours with the same name
+    assert len(mails(launcher.known_apps())) == 1 == len(mails(None)) and mails(None)[0] == e
 
 
 def test_the_line_says_what_mail_is_doing_and_what_went_wrong(home):
@@ -715,11 +727,24 @@ def test_a_service_that_hangs_holds_the_open_for_a_second_at_most(home, mail, mo
     assert time.monotonic() - t < 2
 
 
-def test_a_service_that_says_no_does_not_stop_the_window(home, mail, monkeypatch):
+def test_a_service_that_says_no_does_not_stop_the_window_and_the_no_is_not_lost(home, mail, monkeypatch, capsys):
     asked = _placing(monkeypatch, "mail shown")
     mail.fail("show", "The views are all, needs_reply, drafts and acct:<id>.", "bad_request")
     assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.match("mail", []))[0] is True
     assert asked == [("show", "mail")]
+    assert "The views are all, needs_reply, drafts" in capsys.readouterr().err
+
+
+def test_a_view_is_asked_for_without_the_clients_own_counter_in_the_mails_id_field(home, mail, monkeypatch):
+    """The client numbers a request in `id` unless the op names a mail in it; show's `id` is a mail's, so a
+    show with only a view says "id": null, which the service takes for none (the real one refused a number)."""
+    _placing(monkeypatch, "mail shown")
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    lx.open_mail(view="needs_reply")
+    lx.open_mail()
+    lx.open_mail(id="a1/k1")
+    assert [(r["id"], r.get("view")) for r in mail.asked("show")] == [(None, "needs_reply"), (None, "all"),
+                                                                      ("a1/k1", None)]
 
 
 def test_mail_without_the_app_kit_starts_its_window_once_and_then_brings_it_forward(home, monkeypatch):
@@ -747,16 +772,55 @@ def test_putting_mail_away_or_closing_it_is_the_kit_apps_own_doing(home, monkeyp
     assert asked == [(verb, "mail")]
 
 
-def test_an_app_of_yours_called_mail_does_not_stand_in_for_the_window_that_sends(home, mail, monkeypatch):
+@pytest.mark.parametrize("word", ["mail", "Mail", "open mail", "email", "inbox", "show the inbox", "my mail", "e-mail"])
+def test_an_app_of_yours_called_mail_does_not_stand_in_for_the_window_that_sends(home, mail, monkeypatch, word):
     # app_dir would run the app of yours instead of the real one, and whatever Send it draws would be a press.
-    apps.create("Mail", "import QtQuick\nItem {}\n")
+    # The words are matched the way agentd does it, against the apps that are there (not a list made for the test).
+    _drop_app_called_mail()
     asked = _placing(monkeypatch, "mail shown")
-    ok, text = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.match("mail", []))
-    assert not ok and text.startswith("Could not open Mail: an app of yours called mail stands in front of Mail")
+    action = launcher.match(word)
+    assert (action.kind, action.target) == ("mail", "mail")
+    ok, text = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(action)
+    assert not ok and text == f"Could not open Mail: {launcher.MAIL_SHADOWED}"
     assert asked == []
 
 
-def test_send_is_answered_with_where_the_button_is_and_nothing_is_sent(home, mail):
+def test_an_app_that_is_titled_mail_or_inbox_but_named_otherwise_does_not_take_the_words_either(home, monkeypatch):
+    apps.create("Inbox", "import QtQuick\nItem {}\n")                      # the folder is inbox
+    apps.create("Postbox", "import QtQuick\nItem {}\n")
+    (apps.own_dir("postbox") / "app.toml").write_text('title = "Mail"\n')    # the folder is postbox, the title says Mail
+    assert [a.title for a in launcher.known_apps() if a.name == "postbox"] == ["Mail"]
+    for word in ("mail", "inbox", "open mail", "email"):
+        assert launcher.match(word).kind == "mail", word
+    assert launcher.match("postbox").kind == "app" and launcher.match("open postbox").target == "postbox"
+    asked = _placing(monkeypatch, "mail shown")
+    assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.match("mail"))[0] is True
+    assert asked == [("show", "mail")]
+
+
+def test_an_app_of_yours_called_mail_can_still_be_put_away_by_the_word_and_the_kit_never_runs_it(home, monkeypatch):
+    _drop_app_called_mail()
+    asked = _placing(monkeypatch, "mail closed")
     lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    assert lx.run(launcher.match("close mail"))[0] is True and asked == [("close", "mail")]
+    # Nothing that reaches the launcher as an app of that name opens it either.
+    assert lx.run(launcher.Action("app", "mail", "open", "Mail"))[1] == f"Could not open Mail: {launcher.MAIL_SHADOWED}"
+    assert launcher.entries(launcher.known_apps()).count(
+        {"name": "mail", "title": "Mail", "kind": "app", "words": launcher.MAIL_WORDS["mail"]}) == 1
+
+
+def test_send_is_answered_with_where_the_button_is_and_brings_the_window_in_on_the_draft(home, mail, monkeypatch):
+    asked = _placing(monkeypatch, "mail shown")
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    assert lx.run(launcher.Action("send", "d1")) == (True, "Sending is yours. It's under the pointer.")
+    assert [(r["op"], r["view"], r["id"]) for r in mail.requests] == [("show", "drafts", "d1")]     # and nothing sent
+    assert asked == [("show", "mail")]
     assert lx.run(launcher.Action("send")) == (True, "Sending is yours. It's under the pointer.")
-    assert mail.requests == [] and mail.connections == 0
+    assert [(r["op"], r["id"], r["view"]) for r in mail.requests[1:]] == [("show", None, "drafts")]
+
+
+def test_send_still_answers_when_the_window_will_not_open(home, monkeypatch, capsys):
+    monkeypatch.setattr(launcher, "_placement", lambda: (_ for _ in ()).throw(RuntimeError("no screen")))
+    assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.Action("send", "d1")) == \
+        (True, "Sending is yours. It's under the pointer.")
+    assert "no screen" in capsys.readouterr().err

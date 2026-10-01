@@ -18,6 +18,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -64,9 +65,13 @@ UTILITY_COMMANDS = {
 MAIL_APP = "mail"
 MAIL_WORDS = {"mail": ["mail", "email", "e-mail", "inbox", "my mail", "my email", "my inbox"]}
 MAIL_SHOW_SECONDS = 1.0   # the service is asked to show a view and never waited for longer than this
-# Typed alone while a draft waits, these are not for the model: sending is the person's press.
-SEND_WORDS = ("send", "send it", "send that", "send this", "yes send", "yes send it", "yes send that")
+# Typed alone while a draft waits, these are not for the model: sending is the person's press. The
+# words themselves, with the little words people put before and after them ("ok send it now").
+SEND_WORDS = ("send", "send it", "send that", "send this")
+SEND_BEFORE = ("yes", "yeah", "ok", "okay", "please", "go ahead and")
+SEND_AFTER = ("now", "please")
 SEND_LINE = "Sending is yours. It's under the pointer."
+MAIL_SHADOWED = "an app of yours called mail stands in front of Mail; rename it to open Mail"
 # Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
 # ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
 # longer or different goes to the agent, which has system_map for the same pictures.
@@ -218,6 +223,10 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
             continue
+        if plain and _lookup(word, MAIL_WORDS) is not None:
+            # Before the person's own apps, unlike every other word: the window that opens for "mail" is the
+            # one whose Send is a press, so an app that is called Mail (or Inbox) must not stand in for it.
+            return Action("mail", MAIL_APP, verb, "Mail")
         app = _find_app(word, app_list)
         if app is not None:
             return Action("app", app.name, verb, app.title)
@@ -226,8 +235,6 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         panel = _lookup(word, PANEL_WORDS)
         if panel is not None:
             return Action("panel", panel, verb, PANEL_TITLES[panel])
-        if _lookup(word, MAIL_WORDS) is not None:
-            return Action("mail", MAIL_APP, verb, "Mail")
         if verb == "open":
             util = _lookup(word, UTILITY_COMMANDS)
             if util and (verbs or word == t):
@@ -241,7 +248,15 @@ def is_send_word(text: str) -> bool:
     "restart?"."""
     raw = str(text).strip()
     t = normalize(raw).replace(",", "")
-    return t.isascii() and not raw.endswith("?") and not raw.startswith("!") and t in SEND_WORDS
+    if not t.isascii() or raw.endswith("?") or raw.startswith("!"):
+        return False
+    for _ in range(4):   # as many little words as anyone puts there
+        before = next((w for w in SEND_BEFORE if t.startswith(w + " ")), None)
+        after = next((w for w in SEND_AFTER if t.endswith(" " + w)), None)
+        if before is None and after is None:
+            break
+        t = t[len(before) + 1:] if before else t[:-len(after) - 1]
+    return t in SEND_WORDS
 
 
 def _widget_action(t: str, app_list: list) -> Action | None:
@@ -264,9 +279,8 @@ def entries(app_list: list | None = None) -> list[dict]:
     """What the pill can complete with Tab: apps first, then panels, widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
-           for a in app_list]
-    if not any(a.name == MAIL_APP for a in app_list):
-        out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": ["mail", "email", "inbox"]})
+           for a in app_list if a.name != MAIL_APP]
+    out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": list(MAIL_WORDS["mail"])})
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
@@ -358,6 +372,8 @@ class Launcher:
         return True, f"Put {a.title} away."
 
     def _app(self, a: Action) -> tuple[bool, str]:
+        if a.target == MAIL_APP and a.verb == "open" and (apps.own_dir(MAIL_APP) / "main.qml").exists():
+            raise RuntimeError(MAIL_SHADOWED)   # app_dir would run it in place of the real window
         placement = _placement()
         if placement is not None:
             # The app kit's drawers: each app slides in from its own special workspace.
@@ -393,8 +409,13 @@ class Launcher:
         self.open_mail()
         return True, "Opened Mail."
 
-    def _send(self, _a: Action) -> tuple[bool, str]:
-        # agentd says this only when a draft waits (is_send_word); the press itself is not here.
+    def _send(self, a: Action) -> tuple[bool, str]:
+        # agentd says this only when a draft waits (is_send_word); the press itself is not here. The window
+        # comes in on the draft, so that what the line points at is there to be pointed at.
+        try:
+            self.open_mail(**({"view": "drafts", "id": a.target} if a.target else {"view": "drafts"}))
+        except Exception as e:  # noqa: BLE001 - the line is still true of the window the person has
+            print(f"launcher: the Mail window: {_reason(e)}", file=sys.stderr)
         return True, SEND_LINE
 
     def open_mail(self, **show) -> None:
@@ -402,16 +423,18 @@ class Launcher:
         finds the request waiting when it opens, or, already open, is pushed to it; a service that
         is not there costs a moment at most, and the window says so itself."""
         try:
-            mail_client.request("show", timeout=MAIL_SHOW_SECONDS, **(show or {"view": "all"}))
-        except (mail_client.MailUnavailable, mail_client.MailError):
-            pass
+            ask_mail_to_show(**show)
+        except mail_client.MailUnavailable:
+            pass   # the window says so itself
+        except mail_client.MailError as e:
+            print(f"launcher: mail would not show that: {e}", file=sys.stderr)   # the window still opens
         self.open_mail_window()
 
     def open_mail_window(self) -> None:
         """Slide the Mail window in (the app kit's drawer when there is one), or bring it forward."""
         if (apps.own_dir(MAIL_APP) / "main.qml").exists():
             # app_dir would run it instead of the real one, and its Send would be a press.
-            raise RuntimeError("an app of yours called mail stands in front of Mail; rename it to open Mail")
+            raise RuntimeError(MAIL_SHADOWED)
         placement = _placement()
         if placement is not None:
             placement.show(MAIL_APP)
@@ -707,6 +730,13 @@ def _boot_id() -> str:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     except OSError:
         return ""
+
+
+def ask_mail_to_show(**show) -> None:
+    """Ask the service to show a view ("all" unless told) or a mail, and so any Mail window that is listening.
+    Raises what the client raises. `"id": null` says there is no mail to show: without it the client numbers
+    the request in the same field, which on this op is a mail's id, and the service refuses a number."""
+    mail_client.request("show", timeout=MAIL_SHOW_SECONDS, **{"id": None, **(show or {"view": "all"})})
 
 
 def _reason(e: Exception) -> str:

@@ -171,6 +171,47 @@ async def test_a_second_host_replaces_the_first_and_what_waited_on_the_first_fai
     new_host.hang_up()
 
 
+async def test_drop_hangs_up_on_the_host_and_fails_what_waits_on_it(link):
+    task = asyncio.create_task(link.request("send", 5.0))
+    await link.host.request()
+    link.drop("Thunderbird stopped answering.")
+    with pytest.raises(EngineGone) as e:
+        await task
+    assert e.value.sent is True and "stopped answering" in str(e.value)
+    assert link.connected is False
+    assert await asyncio.wait_for(link.host.reader.readline(), 2.0) == b""
+    await link.task
+    assert link.states == [True, False]
+    link.drop()   # with no link there is nothing to do
+
+
+async def test_a_host_replaced_during_a_fetch_fails_the_fetch_at_once_and_not_after_the_idle_wait(link, files):
+    waiter = asyncio.create_task(link.receive_blob("t20", 1 << 20, 30.0))
+    await settle()
+    link.host.say(blob("t20", 0, b"abc"))
+    await settle()
+    reader, writer, new_host = await pair()
+    link.attach(reader, writer)
+    with pytest.raises(EngineGone):
+        await asyncio.wait_for(waiter, 2.0)   # it used to wait out BLOB_IDLE_S
+    assert link._incoming == {} and list((files / "inflight").glob("*")) == []
+    new_host.hang_up()
+
+
+async def test_what_a_replaced_host_says_after_that_is_not_believed(link):
+    old = link._conn
+    reader, writer, new_host = await pair()
+    link.attach(reader, writer)
+    await link._event(old, {"event": "hello", "version": 99})
+    await link._event(old, {"event": "new_mail", "account": "e1", "messages": []})
+    await link._event(old, blob("t21", 0, b"abc"))
+    assert link.hello is None and link.events == [] and link._incoming == {}
+    new_host.say({"event": "hello", "version": 1})
+    await settle()
+    assert link.hello == {"event": "hello", "version": 1}
+    new_host.hang_up()
+
+
 async def test_too_many_requests_at_once_is_said_not_queued_forever(link, monkeypatch):
     monkeypatch.setattr(bridge, "MAX_PENDING", 3)
     tasks = [asyncio.create_task(link.request("x", 5.0)) for _ in range(3)]
@@ -592,6 +633,20 @@ async def test_more_pieces_after_the_end_or_after_an_error_change_nothing(link):
     link.host.say(blob("t15", 1, b"def", last=True))
     await settle()
     assert (await link.receive_blob("t15", 1 << 20, 2.0)).read_bytes() == b"abc"
+
+
+async def test_a_whole_file_over_what_the_caller_allows_is_an_error_and_not_a_path_to_nothing(link, files):
+    link.host.say(blob("t23", 0, b"x" * 100, last=True))
+    await settle()
+    with pytest.raises(EngineError) as e:
+        await link.receive_blob("t23", 10, 2.0)   # it had arrived whole before it was asked for
+    assert e.value.code == protocol.TOO_BIG
+    assert link._incoming == {} and list((files / "inflight").glob("*")) == []
+
+
+async def test_a_fetch_with_no_link_is_gone_at_once(files):
+    with pytest.raises(EngineGone):
+        await EngineLink().receive_blob("t24", 1 << 20, 30.0)
 
 
 async def test_fetching_a_file_nobody_is_sending_times_out_and_leaves_nothing(link):

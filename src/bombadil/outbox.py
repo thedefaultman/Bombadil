@@ -11,14 +11,17 @@ Why it is shaped this way:
 - A press from inside an agent's turn is refused. The turn's CLI and everything it started share
   one systemd scope (procs.cgroup_of), and without a scope the turn's own process tree is what
   marks it, so a press from either is not the person's. A press whose sender cannot be told is
-  refused too: the check must fail toward not sending.
+  refused too: the check must fail toward not sending. That includes a sender that is gone: the
+  kernel names the process that connected, not whoever holds the socket now, so a process of the
+  turn can hand its connection to a child and exit, and what is left to look at is nothing.
 - One press, at most one act. The performer is called once and its answer is final: nothing
   here retries, and a second press of the same thing while the first still runs is turned away
   instead of queued. A send that may or may not have happened is said as that, in words, with
   where to look, never guessed at.
 - Every press leaves one row in presses.jsonl (when, what, which fingerprint, who, how it ended)
-  and never a word of the mail. The file is rotated at a size, so a process that presses in a loop
-  cannot fill the disk with refusals.
+  and never a word of the mail. The file is private (0600) and rotated at a size; a refusal that is
+  only the same one again is not written again for a few seconds, so a process that presses in a
+  loop can neither fill the disk nor push the rows of real presses out of the file.
 - "I never press Send for you" is said once in a person's life with the machine, so it is kept in
   told.json beside the other state.
 
@@ -45,6 +48,12 @@ PERFORM_SECONDS = 90.0      # no performer is waited for longer than this
 MAIL_SEND_SECONDS = 70.0    # the service gives up on the engine at 60; this is its time to say so
 LOG_ROTATE_BYTES = 1 << 20
 REMEMBER = 256              # presses remembered for the "went without a press" check
+REFUSAL_REPEAT_SECONDS = 5.0   # the same refusal is written to the log once per this
+# What a press that did not end in a plain yes or no leaves behind: a send may have gone, so one the
+# service reports afterwards is not a send nobody pressed.
+UNSURE = ("unknown_outcome", "error")
+# Refusals that say something about who pressed and not about the draft; a process can make a lot of them.
+REPEATS = ("agent", "no_peer", "bad_request", "unknown_kind", "busy")
 TOLD_MAIL = "mail-press"
 TOLD_MAIL_LINE = "I never press Send for you. Change anything in it first if you like."
 
@@ -115,24 +124,30 @@ class Outbox:
         self.in_turn = in_turn
         self._busy: set[tuple[str, str]] = set()
         self._pressed: OrderedDict[tuple[str, str], None] = OrderedDict()
+        self._refused_at: dict[tuple, float] = {}    # when a refusal of this kind was last written
 
     def register(self, kind: str, performer: Performer) -> None:
         self.performers[kind] = performer
 
     def was_pressed(self, kind: str, id: str) -> bool:
-        """Did a press of this start here? A send the service reports that none started was not
-        the person's press."""
-        return (kind, id) in self._pressed
+        """Did a press of this go, or may it have? A send the service reports that none started, or that
+        every press was refused for, was not the person's press. (A refusal is not remembered: a draft
+        whose press was turned away once and which then goes by another way must not look pressed.)"""
+        return (kind, id) in self._busy or (kind, id) in self._pressed
 
-    async def press(self, kind, id, fingerprint, peer_pid: int | None, again: bool = False) -> PressResult:
-        result = await self._press(kind, id, fingerprint, peer_pid, again)
+    async def press(self, kind, id, fingerprint, peer_pid: int | None, again: bool = False,
+                    was_agent: bool = False) -> PressResult:
+        """`was_agent`: the connection this came on was already known to belong to an agent's turn (or to
+        nobody who could be told) when it was made, which no later look can undo."""
+        result = await self._press(kind, id, fingerprint, peer_pid, again, was_agent)
         self._log(kind, id, fingerprint, result.ok, result.code, peer_pid)
         return result
 
-    async def _press(self, kind, id, fingerprint, peer_pid, again: bool = False) -> PressResult:
+    async def _press(self, kind, id, fingerprint, peer_pid, again: bool = False,
+                     was_agent: bool = False) -> PressResult:
         if not isinstance(peer_pid, int) or isinstance(peer_pid, bool) or peer_pid <= 0:
             return PressResult(False, "I could not tell who pressed. " + NOT_SENT, code="no_peer")
-        if await asyncio.to_thread(self.from_agent, peer_pid):
+        if was_agent or await asyncio.to_thread(self.from_agent, peer_pid):
             # A window the agent itself opened lives in that turn's scope for as long as it runs, so this is
             # also what the person sees from one: the way out is a window opened from the pill.
             return PressResult(False, "That press came from inside an agent's turn, and sending is yours. "
@@ -140,7 +155,7 @@ class Outbox:
                                       + NOT_SENT, code="agent")
         performer = self.performers.get(kind) if isinstance(kind, str) else None
         if performer is None:
-            return PressResult(False, "Nothing here sends that. " + NOT_SENT, code="unknown_kind")
+            return PressResult(False, "That is not something I send. " + NOT_SENT, code="unknown_kind")
         if not (isinstance(id, str) and isinstance(fingerprint, str) and 0 < len(id) <= 128
                 and 0 < len(fingerprint) <= 128):
             return PressResult(False, "That press did not say what it was for. " + NOT_SENT,
@@ -149,27 +164,35 @@ class Outbox:
         if key in self._busy:
             return PressResult(False, "That is already being sent.", code="busy")
         self._busy.add(key)
-        self._pressed[key] = None
-        while len(self._pressed) > REMEMBER:
-            self._pressed.popitem(last=False)
+        result = None
         try:
-            return await asyncio.wait_for(performer(id, fingerprint, again=True) if again
-                                          else performer(id, fingerprint), PERFORM_SECONDS)
+            result = await asyncio.wait_for(performer(id, fingerprint, again=True) if again
+                                            else performer(id, fingerprint), PERFORM_SECONDS)
         except TimeoutError:
-            return PressResult(False, UNKNOWN_LINE, code="unknown_outcome")
+            result = PressResult(False, UNKNOWN_LINE, code="unknown_outcome")
         except Exception as e:  # noqa: BLE001 - a press ends in a sentence, whatever the performer did
             print(f"agentd: press {kind}: {type(e).__name__}: {e}", file=sys.stderr)
-            return PressResult(False, "That did not go through, and I can't say why. Look where it would "
-                                      "have gone before you press again.", code="error")
+            result = PressResult(False, "That did not go through, and I can't say why. Look where it would "
+                                        "have gone before you press again.", code="error")
         finally:
             self._busy.discard(key)
+            if result is None or result.ok or result.code in UNSURE:   # (None: cancelled, so not known)
+                self._pressed[key] = None
+                while len(self._pressed) > REMEMBER:
+                    self._pressed.popitem(last=False)
+        return result
 
     def from_agent(self, pid: int) -> bool:
-        """Is this process inside an agent's turn? What only the person does (a press, a chip on a notice)
-        is refused to it. Blocking: it reads /proc."""
-        if procs.cgroup_of(pid) is not None:
+        """Is this process inside an agent's turn, or not one that can be told? What only the person does (a
+        press, a chip on a notice) is refused to it. Blocking: it reads /proc.
+
+        The process has to be there at the end of the looking, not only the start: one that is gone has no
+        scope to read, which would pass for "not in a turn", and a process of the turn that connects, hands
+        the socket to a child and exits is exactly that. So what is read comes first and being alive is
+        checked last."""
+        if procs.cgroup_of(pid) is not None or bool(self.in_turn and self.in_turn(pid)):
             return True
-        return bool(self.in_turn and self.in_turn(pid))
+        return _gone(pid)
 
     def saw_send(self, kind: str, id: str) -> None:
         """The service reported a send that no press here started: written down as that."""
@@ -179,6 +202,15 @@ class Outbox:
         """One row: when, what, which fingerprint, from which process, how it ended. Never mail text:
         the fields are what the sender said they were, so each is cut and held to printable characters."""
         who = pid if isinstance(pid, int) and not isinstance(pid, bool) else 0
+        now = time.monotonic()
+        if code in REPEATS:
+            # The same refusal from the same process again is the same news: a loop of them must not
+            # rotate the rows of real presses out of the file.
+            if now - self._refused_at.get((who, code), -REFUSAL_REPEAT_SECONDS) < REFUSAL_REPEAT_SECONDS:
+                return
+            if len(self._refused_at) >= REMEMBER:
+                self._refused_at.clear()
+            self._refused_at[(who, code)] = now
         # The service writes its own rows in the same file, with src "mail".
         row = {"t": round(time.time(), 3), "kind": _field(kind, 24), "id": _field(id),
                "fingerprint": _field(fingerprint), "ok": bool(ok), "code": code, "pid": who, "src": "agentd"}
@@ -187,10 +219,30 @@ class Outbox:
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists() and path.stat().st_size > LOG_ROTATE_BYTES:
                 path.replace(path.with_name(path.name + ".1"))
-            with path.open("a") as f:
+            with _private(path, os.O_APPEND) as f:
                 f.write(json.dumps(row) + "\n")
         except OSError as e:
             print(f"agentd: press log: {e}", file=sys.stderr)   # a log that fails never stops a press
+
+
+def _gone(pid: int) -> bool:
+    """Has this process ended, or is it only waiting to be reaped? What cannot be read is gone."""
+    try:
+        stat = (procs.PROC / str(pid) / "stat").read_text()
+        return stat[stat.rindex(")") + 2] in "ZX"
+    except (OSError, ValueError, IndexError):
+        return True
+
+
+def _private(path: Path, flags: int = os.O_TRUNC):
+    """`path` opened for writing as text and readable by the person alone, whatever it was before."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_CLOEXEC | flags, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "w")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 _said: set[tuple[Path, str]] = set()   # what this process has said, for a told.json that cannot be written
@@ -212,7 +264,8 @@ def tell_once(key: str, line: str) -> str:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f".{path.name}.tmp")
-        tmp.write_text(json.dumps(told))
+        with _private(tmp) as f:
+            f.write(json.dumps(told))
         os.replace(tmp, path)
     except OSError as e:
         print(f"agentd: told.json: {e}", file=sys.stderr)

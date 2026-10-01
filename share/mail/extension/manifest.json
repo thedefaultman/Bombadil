@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "name": "Bombadil Mail",
+  "version": "1.0.0",
+  "description": "Answers Bombadil's mail service from inside Thunderbird. It talks to one local program and to nothing else.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bombadil-mail@bombadil.local",
+      "strict_min_version": "153.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module",
+    "persistent": true
+  },
+  "permissions": [
+    "accountsRead",
+    "messagesRead",
+    "messagesUpdate",
+    "messagesMove",
+    "addressBooks",
+    "compose",
+    "compose.send",
+    "nativeMessaging"
+  ],
+  "optional_permissions": ["messages.send"],
+  "content_security_policy": "default-src 'none'; script-src 'self'; connect-src 'none'; object-src 'none'"
+}

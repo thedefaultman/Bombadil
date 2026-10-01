@@ -192,9 +192,11 @@ class Connection:
 
 
 def request(op: str, timeout: float = CONNECT_SECONDS, **args):
-    """One call on a connection of its own. `timeout` is for connecting and for the whole call."""
+    """One call on a connection of its own. `timeout` is for connecting and for the whole call together: what
+    connecting used is not given again to the wait for the answer."""
+    deadline = time.monotonic() + timeout
     with Connection(timeout=timeout) as conn:
-        return conn.request(op, timeout, **args)
+        return conn.request(op, max(0.001, deadline - time.monotonic()), **args)
 
 
 def notify(op: str, **args) -> bool:

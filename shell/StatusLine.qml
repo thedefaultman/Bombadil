@@ -7,7 +7,8 @@ import Bombadil as Kit
 // system gets an amber edge with the exact command under it, one no restore point can undo a
 // red one; neither pauses anything. Clicking a finished line shows every command and its output.
 // When no turn or setup line has it, the newest notice (new mail, a draft that is ready) does, with
-// its chips on the right (under the words when the line is narrow, a window shares the stage).
+// its chips on the right (under the words when the line is narrow, a window shares the stage). A warning
+// notice does not wait for a finished line or the setup line to go: only a turn that runs comes before it.
 Rectangle {
     id: bar
     required property var pill       // a PillState
@@ -48,14 +49,18 @@ Rectangle {
     }
 
     Timer {
-        // The seconds counter, and fading a finished line nobody is looking at.
-        interval: 250; repeat: true; running: bar.shown && bar.notice === null   // a notice has nothing to count
+        // The seconds counter, and fading a finished line nobody is looking at. A notice by itself has
+        // nothing to count; one over a finished line leaves that line to fade under it.
+        interval: 250; repeat: true; running: bar.shown && (bar.notice === null || bar.pill.mode !== "idle")
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
-            // The line shows on every screen; hovering it on any of them keeps it.
+            // The line shows on every screen; hovering it on any of them keeps it. A line that stays until
+            // the next prompt (a turn that changed something, with Undo) gives way when a notice waits:
+            // that is the one place the news and the warnings can be seen, and typing "undo" still works.
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
-            if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
+            if (done && (!bar.pill.sticky || bar.pill.notices.length > 0) && bar.pill.hovers === 0
+                    && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
         }
     }
@@ -67,7 +72,7 @@ Rectangle {
     Component.onDestruction: if (hover.hovered) bar.pill.hovers = Math.max(0, bar.pill.hovers - 1)
     TapHandler {
         // A finished turn opens its details; anything else just stays while you read it.
-        enabled: bar.pill.mode === "closing"
+        enabled: bar.pill.mode === "closing" && bar.notice === null
         onTapped: bar.pill.details()
     }
 
@@ -177,7 +182,7 @@ Rectangle {
         // A turn that changed something: take it back, or see exactly what ran.
         RowLayout {
             Layout.fillWidth: true
-            visible: bar.pill.mode === "closing" && (bar.pill.changed || bar.pill.irreversible)
+            visible: bar.pill.mode === "closing" && bar.notice === null && (bar.pill.changed || bar.pill.irreversible)
             spacing: 8
 
             Text {

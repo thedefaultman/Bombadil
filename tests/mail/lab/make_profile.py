@@ -56,7 +56,10 @@ PREFS_QUIET = [
     ("app.update.checkInstallTime", False, "No 'this build is N days old' nag (MailGlue)."),
     ("extensions.update.enabled", False, "No add-on update checks (lab add-on has no update_url)."),
     ("extensions.update.autoUpdateDefault", False, "Same."),
-    ("extensions.blocklist.enabled", False, "No blocklist fetch from remote settings."),
+    ("extensions.blocklist.enabled", False,
+     "No blocklist fetch from remote settings. Side effect (measured, harmless): one 'JavaScript error: ExtensionUtilities.sys.mjs "
+     "line 164: lazy.Blocklist.ExtensionBlocklist._client is undefined' at startup, from the suppressed-experiments check "
+     "(Experiment APIs only; the add-on uses none). Drop this pref to get rid of the line at the price of a blocklist fetch."),
     ("datareporting.policy.dataSubmissionEnabled", False, "Telemetry upload policy off (also stops the data-choices notice)."),
     ("datareporting.healthreport.uploadEnabled", False, "Health report upload off."),
     ("toolkit.telemetry.enabled", False, "Telemetry off."),

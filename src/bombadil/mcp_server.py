@@ -297,6 +297,16 @@ def _job(a: dict) -> str:
     return str(reply.get("text") or "Done.")
 
 
+def _line(msg: dict) -> bytes:
+    """One line for agentd. Text goes as it is and not as \\u escapes, which would make a long mail in a language
+    that is not English six times as long as agentd expects; a lone surrogate cannot be written as text, so that
+    one message goes escaped."""
+    try:
+        return (json.dumps(msg, ensure_ascii=False) + "\n").encode()
+    except UnicodeEncodeError:
+        return (json.dumps(msg) + "\n").encode()
+
+
 def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk",
                 recheck: str = "the `state` op says what it is now.") -> dict:
     """Send one line to agentd and wait for the reply of type `answer` with this message's id.
@@ -308,7 +318,7 @@ def _ask_agentd(msg: dict, answer: str, timeout: float, subject: str = "the desk
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
             s.settimeout(timeout)
             s.connect(str(path))
-            s.sendall((json.dumps(msg) + "\n").encode())
+            s.sendall(_line(msg))
             buf = b""
             while True:
                 s.settimeout(max(deadline - time.monotonic(), 0.001))

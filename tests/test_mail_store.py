@@ -296,6 +296,20 @@ def test_drafts_list_newest_first_and_by_state_and_account(db):
     assert db.count_drafts() == 3
 
 
+def test_drafts_and_their_copies_are_counted_for_whoever_made_them_and_only_while_they_are_wanted(db):
+    big = [{"name": "a.pdf", "size": 1000, "sha256": "ab" * 32, "sensitive": False},
+           {"name": "b.pdf", "size": 24, "sha256": "cd" * 32, "sensitive": False}]
+    db.put_draft(draft("d1", created_by="agent", attachments=big))
+    db.put_draft(draft("d2", created_by="person", attachments=big[:1]))
+    db.put_draft(draft("d3", created_by="agent", state="unknown", attachments=big[1:]))
+    db.put_draft(draft("d4", created_by="agent", state="sending"))
+    db.put_draft(draft("d5", created_by="agent", state="sent", attachments=big))          # done with: not counted
+    db.put_draft(draft("d6", created_by="agent", state="discarded", attachments=big))
+    assert (db.count_drafts(), db.count_drafts("agent"), db.count_drafts("person")) == (4, 3, 1)
+    assert (db.copy_bytes(), db.copy_bytes("agent"), db.copy_bytes("person")) == (2048, 1048, 1000)
+    assert db.count_drafts("nobody") == 0 and db.copy_bytes("nobody") == 0
+
+
 def test_draft_numbers_are_never_used_twice(db):
     assert [db.new_draft_id() for _ in range(3)] == ["d1", "d2", "d3"]
     db.put_draft(draft("d3"))

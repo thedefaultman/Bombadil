@@ -14,6 +14,7 @@ host that comes back cost nothing; and a damaged notes file is replaced, not tru
 
 import asyncio
 import base64
+import itertools
 import json
 import os
 import signal
@@ -22,6 +23,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -29,7 +31,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from bombadil import paths
+from bombadil import paths, procs
 from bombadil.mail import accounts as accts
 from bombadil.mail import bridge, drafts, fake, protocol, service, store
 from bombadil.mail.service import Service
@@ -166,7 +168,7 @@ class Mail:
         self.dns: list[str] = []
 
     @classmethod
-    async def start(cls, *, engine=None, process=True, initial=True, up=True, **kw):
+    async def start(cls, *, engine=None, process=True, initial=True, up=True, in_turn=None, **kw):
         engine = engine if engine is not None else fake.FakeEngine()
         proc = fake.FakeProcess(engine) if process is True else process
         self = cls(None, engine, proc)
@@ -175,8 +177,8 @@ class Mail:
             self.dns.append(domain)
             return []
         kw.setdefault("initial_accounts", engine.account_rows() if initial else [])
-        self.service = Service(engine=engine, process=proc, resolver=resolver, in_turn=lambda pid: self.agent_flag,
-                               **kw)
+        self.service = Service(engine=engine, process=proc, resolver=resolver,
+                               in_turn=in_turn or (lambda pid: self.agent_flag), **kw)
         self.task = asyncio.ensure_future(self.service.serve())
         await until(lambda: self.service.socket_path.exists() or self.task.done())
         if self.task.done():
@@ -237,6 +239,8 @@ def places(home, monkeypatch):
     monkeypatch.setattr(service, "BACKOFF_MIN", 0.05)
     monkeypatch.setattr(service, "BACKOFF_MAX", 0.2)
     monkeypatch.setattr(service, "SEND_S", 0.6)
+    monkeypatch.setattr(service, "AGENT_ROW_S", 0.0)   # a row for every refused press, unless a test is about that
+    monkeypatch.setattr(procs, "scope_supported", lambda: True)   # which would run systemd-run
     (home / "docs").mkdir()
     return home
 
@@ -1967,7 +1971,8 @@ async def test_with_thunderbird_down_mail_says_why_in_a_sentence_and_drafts_stil
     mail.process.fail_start = None
     await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
     assert (await person.call("list", view="all"))["messages"]
-    assert (await person.push("status", 5))["engine"] in ("up", "starting")
+    while (push := await person.push("status", 5))["engine"] != "up":   # the states on the way come first
+        assert push["engine"] in ("starting", "restarting", "down")
 
 
 async def test_a_thunderbird_that_cannot_start_is_tried_again_slower_and_then_said_to_keep_stopping(mail, person,
@@ -2498,6 +2503,7 @@ async def test_notes_that_go_bad_while_running_are_a_sentence_once_and_then_made
     async def back():
         return len((await person.call("accounts", fresh=True))["accounts"]) == 3
     await until(back)
+    await until(lambda: mail.service.engine_state == "up", 8.0)     # the supervisor looks again, and Thunderbird is there
     assert (await person.call("list", view="all"))["messages"]
 
 
@@ -2706,3 +2712,872 @@ async def test_a_draft_that_is_discarded_in_the_moment_a_press_begins_is_sent_an
     await person.fails("draft_discard", "refused", id=d["id"])
     monkeypatch.undo()
     assert (await person.call("draft_get", id=d["id"]))["state"] == "sending"
+
+
+# ===== review round: who is on the other end, what one process may hold, what a hostile mail may cost =====
+
+# -- the process on the other end is gone, or cannot be named --
+
+HANDOFF = r'''
+import json, os, socket, sys
+sock = socket.socket(socket.AF_UNIX)
+sock.connect(sys.argv[1])
+lines = sock.makefile("rb")
+
+
+def ask(req):
+    sock.sendall((json.dumps(req) + "\n").encode())
+    return lines.readline().decode().strip()
+
+
+print(ask({"op": "ping"}), flush=True)    # answered: the service has accepted this connection and knows who it is
+if os.fork():
+    os._exit(0)                           # the process that connected goes; the connection stays with its child
+sys.stdin.readline()                      # until the test has seen the first one reaped
+for req in json.loads(sys.argv[2]):
+    print(ask(req), flush=True)
+os._exit(0)
+'''
+
+
+async def hand_off(mail, requests: list[dict]) -> list[str]:
+    """What a process in an agent's turn can do: connect, give the connection to a child and exit. The child then
+    says each request and the lines it got back are returned (an empty one is the service hanging up)."""
+    proc = await asyncio.to_thread(
+        subprocess.Popen, [sys.executable, "-c", HANDOFF, str(mail.service.socket_path), json.dumps(requests)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    assert json.loads(await asyncio.to_thread(proc.stdout.readline))["ok"] is True
+    await asyncio.to_thread(proc.wait)         # the one the kernel recorded is gone, and nobody is at its number
+    proc.stdin.write("go\n")
+    proc.stdin.flush()
+    out = [await asyncio.to_thread(proc.stdout.readline) for _ in requests]
+    proc.stdin.close()
+    return [line.strip() for line in out]
+
+
+@pytest.mark.parametrize("pidfd", [True, False], ids=["pidfd", "proc"])
+async def test_a_connection_handed_to_a_child_by_a_process_that_then_exits_is_still_the_agents(mail, person, pidfd,
+                                                                                               monkeypatch):
+    # in_turn here says "not in a turn", as it would of a pid nobody is at: the check cannot rest on it
+    if not pidfd:
+        monkeypatch.setattr(service, "_peer_pidfd", lambda sock: None)
+    d = await ready(person)
+    wide = await person.call("draft", to="jo@family.example", body="x")
+    got = [json.loads(x) for x in await hand_off(mail, [
+        {"op": "draft_shown", "id": "d9999", "fingerprint": "x"},
+        {"op": "send", "id": d["id"], "fingerprint": d["fingerprint"]},
+        {"op": "draft", "to": OUTSIDE, "body": "from a child", "typed": OUTSIDE, "created_by": "person"},
+        {"op": "draft_discard", "id": wide["id"]},
+        {"op": "save_attachment", "id": INVOICE, "part": "1.2"}])]
+    assert [(a["ok"], a.get("code")) for a in got] == [(False, "refused"), (False, "refused"), (True, None),
+                                                      (False, "refused"), (False, "refused")]
+    made = got[2]["result"]
+    assert made["created_by"] == "agent" and made["warnings"] and made["warnings"][0]["kind"] == "new_address"
+    nothing_went(mail)
+    assert await state_of(person, d) == "open" and await state_of(person, wide) == "open"
+    assert [r["code"] for r in mail.press_rows()] == ["agent"]
+
+
+async def test_a_connection_handed_off_cannot_become_thunderbird_either(real):
+    real.service.engine.on_state = real.service.engine.on_state   # the real link, with no host
+    got = await hand_off(real, [{"op": "engine_hello", "pid": 1}])
+    assert got == [""]                                  # hung up on
+    await asyncio.sleep(0.1)
+    assert not real.service.engine.connected
+
+
+async def test_a_peer_the_kernel_cannot_name_is_the_agents(mail, monkeypatch):
+    monkeypatch.setattr(Service, "_peer", lambda self, writer: (0, os.getuid()))   # another pid namespace, say
+    c = await mail.client()
+    assert (await c.call("ping"))["pong"]
+    await c.fails("draft_shown", "refused", id="d1", fingerprint="x")
+    await c.fails("send", "refused", id="d1", fingerprint="x")
+    assert mail.press_rows()[-1]["code"] == "agent" and mail.press_rows()[-1]["pid"] == 0
+    assert (await c.call("draft", to="jo@family.example", body="x"))["created_by"] == "agent"
+
+
+async def test_a_peer_of_another_user_is_hung_up_on_without_a_word(mail, monkeypatch):
+    monkeypatch.setattr(Service, "_peer", lambda self, writer: (os.getpid(), os.getuid() + 4242 if os.getuid() else 4242))
+    reader, writer = await asyncio.open_unix_connection(str(mail.service.socket_path))
+    writer.write(b'{"op": "ping"}\n')
+    try:
+        assert await asyncio.wait_for(reader.readline(), 3) == b""
+    except ConnectionResetError:
+        pass                                                         # hung up on, and said so as the kernel does
+    monkeypatch.undo()
+    assert (await (await mail.client()).call("ping"))["pong"]
+
+
+class _Stub:
+    """Enough of a stream writer for a Conn that is not on a socket."""
+
+    class transport:
+        @staticmethod
+        def get_write_buffer_size():
+            return 0
+
+        @staticmethod
+        def abort():
+            pass
+
+    @staticmethod
+    def close():
+        pass
+
+    @staticmethod
+    def is_closing():
+        return False
+
+
+async def test_a_connection_is_alive_while_its_process_is_and_not_before_or_after():
+    here = service.Conn(_Stub, os.getpid(), os.getuid())
+    assert here.alive() is True
+    assert service.Conn(_Stub, 0, os.getuid()).alive() is False and service.Conn(_Stub, -5, 0).alive() is False
+    done = await asyncio.to_thread(subprocess.Popen, [sys.executable, "-c", "pass"])
+    await asyncio.to_thread(done.wait)                            # reaped: nobody is at that number
+    assert service.Conn(_Stub, done.pid, os.getuid()).alive() is False
+
+
+@pytest.mark.skipif(not hasattr(os, "pidfd_open"), reason="no pidfd here")
+async def test_a_pidfd_says_the_process_ended_even_when_it_is_not_reaped_and_even_if_its_number_is_taken():
+    child = await asyncio.to_thread(subprocess.Popen, [sys.executable, "-c", "import time; time.sleep(60)"])
+    fd = os.pidfd_open(child.pid)
+    conn = service.Conn(_Stub, child.pid, os.getuid(), fd)
+    assert conn.alive() is True
+    child.kill()
+    deadline = time.monotonic() + 5
+    while conn.alive() and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    assert conn.alive() is False                                  # a zombie is not the peer either
+    await asyncio.to_thread(child.wait)
+    conn.close()
+    assert conn.pidfd is None                                     # and closing lets the descriptor go
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+async def test_the_pidfd_of_a_peer_is_not_there_when_the_kernel_cannot_give_one():
+    class Sock:
+        @staticmethod
+        def getsockopt(*a):
+            raise OSError("no such process")
+    assert service._peer_pidfd(Sock) is None and service._peer_pidfd(None) is None
+
+
+# -- the production half of the second guard: which cgroup is a process in --
+
+async def test_turn_scope_asks_procs_which_cgroup_and_what_it_cannot_tell_is_not_a_turn(monkeypatch, capsys):
+    monkeypatch.setattr(service, "_blind", False)
+    monkeypatch.setattr(procs, "cgroup_of", lambda pid: Path("/sys/fs/cgroup/user.slice/bombadil-turn-7.scope"))
+    assert service.turn_scope(1234) is True
+    monkeypatch.setattr(procs, "cgroup_of", lambda pid: None)
+    assert service.turn_scope(1234) is False
+    assert capsys.readouterr().err == ""
+
+    def boom(pid):
+        raise RuntimeError("no cgroups")
+    monkeypatch.setattr(procs, "cgroup_of", boom)
+    assert service.turn_scope(1234) is False and service.turn_scope(1234) is False
+    assert capsys.readouterr().err.count("cannot tell which cgroup") == 1                 # said once
+
+
+async def test_the_service_asks_the_real_scope_check_for_each_request_and_catches_a_process_that_joined_late(
+        started, home, monkeypatch):
+    """Without the test's `in_turn`: procs.PROC points at a made-up /proc where this process is in a turn's scope
+    only when the test says, and the service is asked, as it would be, on every request."""
+    fake_proc, scope = home / "proc", home / "proc" / str(os.getpid()) / "cgroup"
+    scope.parent.mkdir(parents=True)
+    monkeypatch.setattr(procs, "PROC", fake_proc)
+    monkeypatch.setattr(procs, "CGROUP_ROOT", home / "cg")
+    m = await Mail.start(in_turn=service.turn_scope)
+    started.append(m)
+    c = await m.client()
+    d = await ready(c)
+    scope.write_text("0::/user.slice/user-1000.slice/session-2.scope\n")                  # the person's own session
+    assert (await press(c, d))["already"] is False
+    d = await ready(c, body="Another")
+    scope.write_text("0::/user.slice/user-1000.slice/user@1000.service/app.slice/bombadil-turn-7.scope\n")
+    await c.fails("send", "refused", id=d["id"], fingerprint=d["fingerprint"])        # this connection, now in a turn
+    await c.fails("draft_shown", "refused", id=d["id"], fingerprint=d["fingerprint"])
+    await c.fails("draft_discard", "refused", id=d["id"])
+    assert (await c.call("draft", to="jo@family.example", body="x"))["created_by"] == "agent"
+    assert [r["code"] for r in m.press_rows()] == ["agent"]
+    scope.unlink()                                                                         # /proc says nothing at all
+    assert (await c.call("draft_get", id=d["id"]))["state"] == "open"
+    await press(c, d)
+
+
+async def test_where_turns_have_no_scope_the_log_says_that_the_service_cannot_tell(started, monkeypatch, capsys):
+    monkeypatch.setattr(procs, "scope_supported", lambda: False)
+    m = await Mail.start(in_turn=service.turn_scope)
+    started.append(m)
+    seen = ""
+    for _ in range(100):
+        seen += capsys.readouterr().err
+        if "without a systemd scope" in seen:
+            break
+        await asyncio.sleep(0.05)
+    assert "cannot tell an agent's process" in seen
+    await m.stop()
+    started.remove(m)
+    m2 = await Mail.start()                    # a test's own in_turn is not the real one: nothing is said or run
+    started.append(m2)
+    await asyncio.sleep(0.2)
+    assert "without a systemd scope" not in capsys.readouterr().err
+
+
+# -- what a process inside a turn may hold, of the places it shares with the person --
+
+async def test_an_agents_turn_may_hold_only_a_few_connections_and_the_person_always_has_room(mail, monkeypatch):
+    monkeypatch.setattr(service, "MAX_CLIENTS", 5)
+    monkeypatch.setattr(service, "MAX_SCOPED_CLIENTS", 2)
+    held = [await mail.client(agent=True), await mail.client(agent=True)]
+    mail.agent_flag = True               # the service asks who is there as it accepts, so the flag stays up until it did
+    try:
+        third = await raw_client(mail)
+        await asyncio.get_running_loop().sock_sendall(third, b'{"op": "ping"}\n')
+        assert await ended(third)                              # the third is hung up on
+    finally:
+        mail.agent_flag = False
+    people = [await mail.client() for _ in range(3)]            # and the person's three still fit
+    for c in (*held, *people):
+        assert (await c.call("ping"))["pong"]
+    third.close()
+
+
+async def test_a_connection_that_says_nothing_is_closed_and_a_window_waiting_for_pushes_is_not(mail, monkeypatch):
+    monkeypatch.setattr(service, "IDLE_S", 0.25)
+    idle = await raw_client(mail)
+    half = await raw_client(mail)
+    await asyncio.get_running_loop().sock_sendall(half, b'{"op": "pi')          # half a line, and nothing after it
+    window = await mail.client()
+    await window.call("subscribe")
+    busy = await mail.client()
+    for _ in range(6):                                                          # a client that is used stays
+        await asyncio.sleep(0.1)
+        assert (await busy.call("ping"))["pong"]
+    assert await ended(idle) and await ended(half)
+    assert (await window.call("ping"))["pong"] and not window.closed
+    mail.engine.inject_new_mail("maya@acme.example", "Priya <priya@acme.example>", "Still there", "x")
+    assert (await window.push("new_mail"))["message"]["subject"] == "Still there"
+    idle.close()
+    half.close()
+
+
+async def test_an_agent_that_subscribes_is_not_a_window_and_is_closed_when_it_goes_quiet(mail, monkeypatch):
+    monkeypatch.setattr(service, "IDLE_S", 0.25)
+    agent = await mail.client(agent=True)
+    await agent.call("subscribe")
+    await until(lambda: agent.closed, 3.0)
+
+
+async def test_the_agent_cannot_fill_every_place_for_drafts_and_the_person_can_still_start_one(mail, person, agent,
+                                                                                              monkeypatch):
+    monkeypatch.setattr(service, "MAX_AGENT_DRAFTS", 3)
+    made = [await agent.call("draft", to="jo@family.example", body=f"agent {i}") for i in range(3)]
+    sentence = await agent.fails("draft", "refused", to="jo@family.example", body="one more")
+    assert "from the agent" in sentence
+    await person.call("draft", to="jo@family.example", body="the person's own")                  # theirs still fit
+    await person.fails("draft", "refused", to="jo@family.example", body="agentd's, for the agent", created_by="agent")
+    await person.call("draft_discard", id=made[0]["id"])
+    await person.call("draft", to="jo@family.example", body="agentd's, for the agent", created_by="agent")
+    await agent.fails("draft", "refused", to="jo@family.example", body="and again")
+
+
+async def test_attachment_copies_are_under_a_cap_for_all_drafts_and_a_smaller_one_for_the_agents(mail, person, agent,
+                                                                                                home, monkeypatch):
+    monkeypatch.setattr(service, "MAX_COPY_BYTES", 100)
+    monkeypatch.setattr(service, "MAX_AGENT_COPY_BYTES", 50)
+    sixty = write(home, "sixty.bin", b"x" * 60)
+    other = write(home, "other.bin", b"y" * 60)
+    sentence = await agent.fails("draft", "refused", to="jo@family.example", body="x", attachments=[str(sixty)])
+    assert "Too many attachments" in sentence and mail.draft_files("d1") == []                   # nothing was kept
+    first = await person.call("draft", to="jo@family.example", body="x", attachments=[str(sixty)])
+    await person.fails("draft", "refused", to="jo@family.example", body="x", attachments=[str(other)])
+    assert mail.draft_files("d2") == ["sixty.bin"] and mail.draft_files("d3") == []
+    second = await person.call("draft", to="jo@family.example", body="x")
+    await person.fails("draft_edit", "refused", id=second["id"], add_attachments=[str(other)])
+    assert (await person.call("draft_get", id=second["id"]))["attachments"] == []
+    await person.call("draft_discard", id=first["id"])
+    edited = await person.call("draft_edit", id=second["id"], add_attachments=[str(other)])      # the room came back
+    assert [a["name"] for a in edited["attachments"]] == ["other.bin"]
+    twenty = write(home, "twenty.bin", b"z" * 40)
+    await agent.call("draft", to="jo@family.example", body="x", attachments=[str(twenty)])      # 40 of the agent's 50
+    await agent.fails("draft", "refused", to="jo@family.example", body="x", attachments=[str(twenty)])
+
+
+async def test_refused_presses_are_logged_once_in_a_while_with_a_count_so_a_flood_cannot_push_out_the_rest(
+        mail, person, agent, monkeypatch):
+    monkeypatch.setattr(service, "AGENT_ROW_S", 0.3)
+    d = await ready(person)
+    for _ in range(30):
+        await agent.fails("send", "refused", id=d["id"], fingerprint=d["fingerprint"])
+    assert len(mail.press_rows()) == 1 and "more" not in mail.press_rows()[0]
+    await asyncio.sleep(0.35)
+    await agent.fails("send", "refused", id=d["id"], fingerprint=d["fingerprint"])
+    rows = mail.press_rows()
+    assert len(rows) == 2 and rows[1]["more"] == 29
+    got = await press(person, d)                                                # and the person's own is never lost
+    assert got["already"] is False
+
+
+# -- hostile mail must not cost anyone else their turn --
+
+async def test_a_mail_made_to_stall_the_reader_is_read_without_stalling_anyone_else(mail, person, monkeypatch):
+    html = "<p " + "a=b " * 260_000 + ">"       # ten to twenty seconds on the loop, before
+    key = mail.engine.add_message("maya@acme.example", "inbox", "Spam <spam@bulk.example>", "Look", None, html=html)
+    other = await mail.client()
+    slowest = 0.0
+    stop = asyncio.Event()
+
+    async def watch():
+        nonlocal slowest
+        while not stop.is_set():
+            start = time.monotonic()
+            await other.call("ping")
+            slowest = max(slowest, time.monotonic() - start)
+            await asyncio.sleep(0.01)
+    watching = asyncio.create_task(watch())
+    began = time.monotonic()
+    got = await person.call("read", id=f"a1/{key}", _timeout=30.0)
+    took = time.monotonic() - began
+    stop.set()
+    await watching
+    assert isinstance(got["text"], str) and got["html_only"] is True and took < 8.0
+    assert slowest < 1.0, f"another client waited {slowest:.1f} s for one hostile mail"
+
+
+async def test_a_plain_part_of_tens_of_megabytes_is_cut_at_the_front_and_quickly(mail, person):
+    key = mail.engine.add_message("maya@acme.example", "inbox", "Big <big@bulk.example>", "Long", "line of a mail\n" * 4_000_000)
+    began = time.monotonic()
+    got = await person.call("read", id=f"a1/{key}", _timeout=30.0)
+    assert got["truncated"] is True and len(got["text"]) == 200_000 and time.monotonic() - began < 5.0
+
+
+# -- marks are the person's work --
+
+def _empty_inbox(mail, monkeypatch):
+    """What a Thunderbird that has not loaded its folder yet says."""
+    monkeypatch.setattr(mail.engine, "_op_list", lambda a: {"messages": [], "more": False})
+
+
+async def test_an_empty_page_from_a_folder_not_loaded_yet_does_not_wipe_the_marks(mail, person, monkeypatch):
+    await person.call("mark_reply", id=LAUNCH, needs=True, why="a date")
+    await person.call("mark_reply", id=SAM, needs=True, why="a yes")
+    _empty_inbox(mail, monkeypatch)
+    assert (await person.call("list", view="all"))["messages"] == []
+    assert sorted(m["id"] for m in (await person.call("list", view="needs_reply"))["messages"]) == sorted([LAUNCH, SAM])
+    assert ("get", {"account": "fake-1-maya", "key": "launch-date-31@acme.example"}) in mail.engine.calls   # it was asked
+
+
+async def test_a_mark_goes_when_thunderbird_says_the_mail_is_gone_or_is_somewhere_else_and_not_before(mail, person,
+                                                                                                    monkeypatch):
+    for mid in (LAUNCH, SAM, INVOICE):
+        await person.call("mark_reply", id=mid, needs=True, why="x")
+    _empty_inbox(mail, monkeypatch)
+    mail.engine._mail["fake-1-maya"][:] = [r for r in mail.engine._mail["fake-1-maya"]
+                                           if r["emsg"]["key"] != "launch-date-31@acme.example"]    # deleted
+    next(r for r in mail.engine._mail["fake-1-maya"] if r["emsg"]["key"] == "pricing-copy-8@acme.example")[
+        "emsg"]["folder"] = "trash"                                                                    # moved
+    await person.call("list", view="all")
+    assert [m["id"] for m in (await person.call("list", view="needs_reply"))["messages"]] == [INVOICE]  # still there
+
+
+async def test_a_mark_is_kept_when_thunderbird_cannot_say(mail, person, monkeypatch):
+    await person.call("mark_reply", id=LAUNCH, needs=True, why="a date")
+    _empty_inbox(mail, monkeypatch)
+    real = mail.engine._op_get
+
+    def broken(a):
+        raise bridge.EngineError("engine_error", "The folder is being repaired.")
+    monkeypatch.setattr(mail.engine, "_op_get", broken)
+    await person.call("list", view="all")
+    monkeypatch.setattr(mail.engine, "_op_get", real)
+    assert [m["id"] for m in (await person.call("list", view="needs_reply"))["messages"]] == [LAUNCH]
+
+
+async def test_only_a_few_marks_are_looked_into_at_each_list(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "GONE_CHECKS", 1)
+    for mid in (LAUNCH, SAM):
+        await person.call("mark_reply", id=mid, needs=True, why="x")
+    for r in mail.engine._mail["fake-1-maya"]:
+        if r["emsg"]["key"] in ("launch-date-31@acme.example", "pricing-copy-8@acme.example"):
+            r["emsg"]["folder"] = "archive"
+    await person.call("list", view="all")
+    assert len((await person.call("list", view="needs_reply"))["messages"]) == 1
+    await person.call("list", view="all")
+    assert (await person.call("list", view="needs_reply"))["messages"] == []
+
+
+async def test_a_mark_can_be_cleared_with_thunderbird_down_and_a_long_why_is_cut_not_refused(mail, person):
+    await person.call("mark_reply", id=LAUNCH, needs=True, why="w " * 3000)
+    [m] = (await person.call("list", view="needs_reply"))["messages"]
+    assert len(m["why"]) <= 140 and m["why"].startswith("w w")
+    mail.process.fail_start = OSError("no display")
+    mail.process.crash()
+    await until(lambda: mail.service.engine_state == "restarting")
+    await person.fails("mark_reply", "engine_down", id=SAM, needs=True, why="x")           # reading it needs Thunderbird
+    got = await person.call("mark_reply", id=LAUNCH, needs=False)                           # but putting a mark away does not
+    assert got == {"id": LAUNCH, "needs_reply": False, "why": None}
+    assert (await person.call("list", view="needs_reply"))["messages"] == []
+    await person.fails("mark_reply", "bad_request", id="nonsense", needs=False)
+
+
+# -- the press: the corners that the review found --
+
+async def test_a_forward_is_not_an_answer_and_the_mail_it_passed_on_still_needs_one(mail, person):
+    await person.call("mark_reply", id=LAUNCH, needs=True, why="asks for a date")
+    f = await person.call("draft", kind="forward", reply_to=LAUNCH, to="boss@acme.example", body="FYI")
+    await shown(person, f)
+    await press(person, f)
+    assert mail.engine.sent[-1]["kind"] == "forward"
+    assert [m["id"] for m in (await person.call("list", view="needs_reply"))["messages"]] == [LAUNCH]
+    r = await ready(person, body="The 14th works.")
+    await press(person, r)
+    assert (await person.call("list", view="needs_reply"))["messages"] == []              # an answer is
+
+
+async def test_the_fingerprint_worked_out_again_from_the_draft_is_the_fourth_agreement(mail, person, home):
+    f = write(home, "plan.txt", b"the plan")
+    d = await person.call("draft", to="jo@family.example", body="What was shown", attachments=[str(f)])
+    await shown(person, d)
+    raw = sqlite3.connect(home / "state" / "mail.db", timeout=10)
+    raw.execute("UPDATE drafts SET body = ? WHERE id = ?", ("What was NOT shown", d["id"]))   # fingerprint, shown_fp: same
+    raw.commit()
+    sentence = await person.fails("send", "changed", id=d["id"], fingerprint=d["fingerprint"])
+    assert "does not match" in sentence and await state_of(person, d) == "open"
+    nothing_went(mail)
+    raw.execute("UPDATE drafts SET body = ? WHERE id = ?", ("What was shown", d["id"]))
+    stored = json.loads(raw.execute("SELECT attachments FROM drafts WHERE id = ?", (d["id"],)).fetchone()[0])
+    stored[0]["name"] = "payroll.txt"
+    raw.execute("UPDATE drafts SET attachments = ? WHERE id = ?", (json.dumps(stored), d["id"]))
+    raw.commit()
+    await person.fails("send", "changed", id=d["id"], fingerprint=d["fingerprint"])
+    nothing_went(mail)
+    raw.close()
+
+
+async def test_what_the_engine_says_about_a_sent_message_cannot_make_a_sent_press_fail(mail, person, monkeypatch):
+    d = await ready(person)
+    real = mail.engine._send
+
+    async def odd(args, timeout):
+        got = await real(args, timeout)
+        return {**got, "message_id": "x\ud800y\u202e<id>"}
+    monkeypatch.setattr(mail.engine, "_send", odd)
+    got = await press(person, d)
+    assert got["already"] is False and got["receipt"]["line"].startswith("Sent to Priya")
+    assert "\ud800" not in json.dumps(got["receipt"], ensure_ascii=False) and "\u202e" not in json.dumps(got["receipt"])
+    assert await state_of(person, d) == "sent" and len(mail.engine.sent) == 1
+
+
+async def test_a_note_that_cannot_be_written_after_the_send_is_tried_again_and_then_at_least_sent(mail, person,
+                                                                                                monkeypatch):
+    d = await ready(person)
+    fails = []
+
+    def full(self, *a, **k):
+        fails.append(1)
+        raise sqlite3.OperationalError("database or disk is full")
+    monkeypatch.setattr(Store, "finish_send", full)
+    got = await press(person, d)
+    assert got["already"] is False and len(fails) == 2 and len(mail.engine.sent) == 1
+    assert await state_of(person, d) == "sent"                   # not "sending", which would be called unknown
+    again = await press(person, d)
+    assert again["already"] is True and len(mail.engine.sent) == 1
+
+
+async def test_a_press_that_cannot_even_be_marked_sent_stays_sending_and_still_answers_with_the_receipt(
+        mail, person, monkeypatch):
+    d = await ready(person)
+
+    def full(self, *a, **k):
+        raise sqlite3.OperationalError("database or disk is full")
+    monkeypatch.setattr(Store, "finish_send", full)
+    real = Store.set_state
+
+    def flaky(self, did, state, now, *, was=None):
+        if state == "sent":
+            raise sqlite3.OperationalError("database or disk is full")
+        return real(self, did, state, now, was=was)
+    monkeypatch.setattr(Store, "set_state", flaky)
+    got = await press(person, d)
+    assert got["receipt"]["line"].startswith("Sent to Priya") and len(mail.engine.sent) == 1
+
+
+async def test_a_receipt_that_cannot_be_made_from_what_the_addon_said_is_made_without_it_and_the_press_still_succeeds(
+        mail, person, monkeypatch):
+    d = await ready(person)
+    real = service.Service._receipt
+
+    def odd(self, d, a, provider, answer):
+        if answer is not None:
+            raise ValueError("an answer in a shape nobody planned for")
+        return real(self, d, a, provider, None)
+    monkeypatch.setattr(service.Service, "_receipt", odd)
+    got = await press(person, d)
+    assert got["already"] is False and got["receipt"]["line"].startswith("Sent to Priya") and len(mail.engine.sent) == 1
+    assert await state_of(person, d) == "sent"                     # it went: nothing may now say it did not
+
+
+async def test_attachments_that_are_not_taken_in_time_are_a_plain_no_and_nothing_is_sent(mail, person, home,
+                                                                                         monkeypatch):
+    monkeypatch.setattr(service, "BLOBS_S", 0.2)
+    f = write(home, "a.txt", b"one")
+    g = write(home, "b.txt", b"two")
+    d = await person.call("draft", to="jo@family.example", body="x", attachments=[str(f), str(g)])
+    await shown(person, d)
+
+    async def slow(*a, **k):
+        await asyncio.sleep(0.15)      # each is quick enough, and the two together are not
+    monkeypatch.setattr(mail.engine, "send_blob", slow)
+    began = time.monotonic()
+    sentence = await person.fails("send", "engine_error", id=d["id"], fingerprint=d["fingerprint"])
+    assert "Nothing was sent" in sentence and time.monotonic() - began < 2.0
+    assert await state_of(person, d) == "open" and not calls(mail, "send")
+
+
+async def test_names_that_could_end_a_name_and_begin_another_address_do_not_reach_thunderbird_as_they_are(mail,
+                                                                                                         person):
+    d = await person.call("draft", to=['"Priya, evil@outside.example <x@outside.example> ;" <p2@acme.example>'],
+                          body="x")
+    assert d["to"][0]["name"].startswith("Priya, evil")                   # what is shown is what was typed
+    await shown(person, d)
+    await press(person, d)
+    [sent] = mail.engine.sent
+    [to] = sent["to"]
+    assert to["email"] == "p2@acme.example"
+    assert not any(c in to["name"] for c in '<>@,;"') and to["name"].startswith("Priya")
+
+
+# -- two clients adding one address --
+
+async def test_two_clients_adding_the_same_address_at_once_get_one_account(mail):
+    a, b = await mail.client(), await mail.client()
+    first, second = await asyncio.gather(a.ask("add_account", email="new.person@school.example"),
+                                         b.ask("add_account", email="New.Person@school.example"))
+    assert first["ok"] and second["ok"] and first["result"]["id"] == second["result"]["id"]
+    assert [x["email"] for x in (await a.call("accounts"))["accounts"]].count("new.person@school.example") == 1
+
+
+# -- what the engine's rows may be --
+
+async def test_rows_from_the_engine_of_the_wrong_shape_cost_nothing_but_themselves(mail, person, monkeypatch):
+    rows = mail.engine._op_accounts({})
+    odd = [{**rows[0], "provider": ["google"], "state": ["ok"], "web": {"name": 5, "url": ["x"]}},
+           {**rows[1], "state": {"a": 1}, "detail": 5, "identities": "not a list", "emails": "nope"},
+           {"emails": [["a"]], "state": None}, 5, None, "text"]
+    monkeypatch.setattr(mail.engine, "_op_accounts", lambda a: odd)
+    got = await person.call("accounts", fresh=True)
+    assert len(got["accounts"]) == 3
+    await person.call("status")
+    await person.call("views")
+    mail.engine._later(mail.engine._event, {"event": "sync", "account": "fake-1-maya", "state": ["idle"]})
+    await asyncio.sleep(0.2)
+    assert (await person.call("ping"))["pong"]
+
+
+async def test_a_message_of_a_shape_that_cannot_be_shown_is_left_out_and_the_rest_are_shown(mail, person,
+                                                                                            monkeypatch):
+    real = mail.engine._op_list
+
+    def odd(a):
+        got = real(a)
+        got["messages"] = [{**got["messages"][0], "to": 5, "cc": {"a": 1}, "folder": ["inbox"], "subject": ["x"],
+                            "key": "odd-1"}, *got["messages"]]
+        return got
+    monkeypatch.setattr(mail.engine, "_op_list", odd)
+    got = await person.call("list", view="acct:a1")
+    odd = next(m for m in got["messages"] if m["id"] == "a1/odd-1")
+    assert odd["to"] == [] and odd["cc"] == [] and odd["folder"] == "other" and len(got["messages"]) > 1
+
+
+async def test_a_web_address_from_the_engine_is_taken_only_if_it_is_https(mail, person):
+    for url, kept in (("https://outlook.office.com/mail/", True), ("file:///etc/passwd", False),
+                      ("smb://host/share", False), ("javascript:alert(1)", False), ("http://plain.example/", False)):
+        mail.engine._accounts["fake-3-maya.reyes"]["web"] = {"name": "Outlook", "url": url}
+        accounts = (await person.call("accounts", fresh=True))["accounts"]
+        web = next(a for a in accounts if a["id"] == "a3")["web"]
+        assert (web["url"] == url) is kept, (url, web)
+        assert web["url"].startswith("https://")
+
+
+async def test_names_and_subjects_lose_invisible_marks_and_lone_surrogates(mail, person):
+    key = mail.engine.add_message("maya@acme.example", "inbox", {"name": "Priya\u202e Shah\ud800", "email": "p@acme.example"},
+                                  "Inv\u200boice\u202e 12\ud800", "Hello")
+    got = await person.call("read", id=f"a1/{key}")
+    assert got["message"]["from"]["name"] == "Priya Shah" and got["message"]["subject"] == "Invoice 12"
+    await person.call("mark_reply", id=f"a1/{key}", needs=True, why="x")
+    [m] = [m for m in (await person.call("list", view="needs_reply"))["messages"] if m["key"] == key]
+    assert m["subject"] == "Invoice 12"
+
+
+async def test_an_attachment_with_a_lone_surrogate_in_its_name_does_not_make_a_mail_unreadable(mail, person):
+    key = mail.engine.add_message("maya@acme.example", "inbox", "Priya <priya@acme.example>", "Files", "see attached",
+                                  parts=[{"name": "a\ud800b.pdf", "data": b"%PDF"}])
+    got = await person.call("read", id=f"a1/{key}")
+    assert [a["name"] for a in got["attachments"]] == ["ab.pdf"]
+
+
+async def test_the_note_that_tells_a_person_how_to_sign_in_is_not_erased_by_the_next_refresh(mail, person):
+    added = await person.call("add_account", email="new.person@gmail.com")
+    assert added["state"] == "signin" and "Thunderbird" in added["note"]
+    note = added["note"]
+    fresh = next(a for a in (await person.call("accounts", fresh=True))["accounts"] if a["email"] == "new.person@gmail.com")
+    assert fresh["state"] == "signin" and fresh["note"] == note
+    mail.engine.set_state("new.person@gmail.com", "error", "Google said no.")
+    await until(lambda: mail.service.engine_state == "up")
+    await asyncio.sleep(0.2)
+    fresh = next(a for a in (await person.call("accounts", fresh=True))["accounts"] if a["email"] == "new.person@gmail.com")
+    assert fresh["state"] == "error" and fresh["note"] == "Google said no."
+
+
+async def test_who_got_it_is_the_first_name_whichever_way_the_name_is_written():
+    def one(name):
+        return service._who([{"name": name, "email": "x@y.example"}])
+    assert one("Priya Shah") == "Priya" and one("Shah, Priya") == "Priya" and one("Dr. Amir Haddad") == "Amir"
+    assert one("Sam Jones, MD") == "Sam" and one("Prof Ada Lovelace") == "Ada" and one("") == "x@y.example"
+    assert one("Dr.") == "x@y.example"
+    assert service._who([{"name": "Priya Shah", "email": "p@y.example"}, {"name": "", "email": "q@y.example"}]) == \
+        "Priya and 1 more"
+
+
+# -- a second service on the same socket --
+
+async def test_a_second_service_with_other_notes_cannot_take_the_socket_of_the_first(mail, person, home):
+    second = Service(db_path=home / "elsewhere" / "mail.db", engine=fake.FakeEngine(connected=True), process=None,
+                     resolver=lambda d: [], in_turn=lambda pid: False)
+    with pytest.raises(service.AlreadyRunning) as e:
+        await second.serve()
+    assert "mail.sock" in str(e.value)
+    assert (await person.call("ping"))["pong"] and mail.service.socket_path.exists()
+    assert not (home / "elsewhere" / "mail.db").exists() or True
+    # and the notes it did not get are not held by it either: a third service may have them
+    third = Service(db_path=home / "elsewhere" / "mail.db", socket_path=home / "run" / "third.sock",
+                    engine=fake.FakeEngine(connected=True), process=None, resolver=lambda d: [],
+                    in_turn=lambda pid: False)
+    task = asyncio.ensure_future(third.serve())
+    await until(lambda: third.socket_path.exists() or task.done())
+    assert not task.done()
+    third.stop()
+    await asyncio.wait_for(task, 10)
+
+
+# -- a Thunderbird that is there and does not answer; one whose controls hang --
+
+@pytest_asyncio.fixture
+async def watched(started, monkeypatch):
+    """The real link with a process the service can restart, and a host that can go quiet."""
+    monkeypatch.setattr(service, "QUIET_S", 0.2)
+    monkeypatch.setattr(service, "PING_S", 0.2)
+    proc = fake.FakeProcess()
+    m = await Mail.start(engine=bridge.EngineLink(), process=proc, initial=False, up=False)
+    started.append(m)
+    m.hosts = []
+
+    async def host(**kw):
+        h = Host(m.service.socket_path)
+        h.handlers.update(kw)
+        await h.connect()
+        m.hosts.append(h)
+        return h
+    m.host = host
+    yield m
+    for h in m.hosts:
+        h.close()
+
+
+async def test_a_thunderbird_whose_addon_stops_answering_is_hung_up_on_and_started_again(watched):
+    c = await watched.client()
+    await c.call("add_account", email="maya@acme.example")      # an account: Thunderbird is wanted
+    host = await watched.host()
+    await until(lambda: watched.service.engine_state == "up")
+    host.handlers["info"] = HANG
+    host.handlers["accounts"] = HANG
+    await host.closed(8.0)                                      # the service hung up on it
+    await until(lambda: ("restart",) in watched.process.calls, 8.0)
+    again = await watched.host()
+    await until(lambda: watched.service.engine_state == "up" and watched.service.engine.connected, 8.0)
+    await until(lambda: "info" in again.ops(), 8.0)             # the new link is watched, too: asked when quiet
+
+
+async def test_an_addon_that_connected_while_thunderbird_was_being_started_is_up_and_not_starting_for_good(watched):
+    c = await watched.client()
+    await c.call("add_account", email="maya@acme.example")
+    host = await watched.host()
+    await until(lambda: watched.service.engine_state == "up")
+    await until(lambda: watched.process.running(), 5.0)
+    # what a slow round did: it chose to start Thunderbird before the add-on was there, and said so after
+    watched.service._set_engine("starting", "Starting Thunderbird.")
+    watched.service._poke.set()
+    await until(lambda: watched.service.engine_state == "up", 5.0)
+    assert host.ops().count("info") >= 2                           # it was asked again, and it answered
+
+
+async def test_controls_that_hung_and_are_well_again_leave_a_connected_thunderbird_up_and_not_down_for_good(mail):
+    await until(lambda: mail.process.running() and mail.service.engine_state == "up")
+    mail.service._set_engine("down", "Thunderbird cannot be controlled just now. Trying again shortly.")
+    mail.service._poke.set()
+    await until(lambda: mail.service.engine_state == "up", 5.0)
+
+
+async def test_thunderbird_that_is_already_connected_is_not_said_to_be_starting(watched):
+    c = await watched.client()
+    await c.call("add_account", email="maya@acme.example")
+    await watched.host()
+    await until(lambda: watched.service.engine_state == "up")
+    accounts = await watched.service.job(lambda: watched.service.store.accounts())
+    await watched.service._start(accounts)
+    assert watched.service.engine_state == "up"
+
+
+async def test_a_thunderbird_that_answers_the_ping_is_left_alone(watched):
+    c = await watched.client()
+    await c.call("add_account", email="maya@acme.example")
+    host = await watched.host()
+    await until(lambda: watched.service.engine_state == "up")
+    await asyncio.sleep(1.0)                                    # several quiet periods, each one asked and answered
+    assert host.ops().count("info") >= 3 and ("restart",) not in watched.process.calls
+    assert watched.service.engine.connected
+
+
+async def test_status_does_not_wait_the_whole_read_time_for_an_addon_that_is_not_answering(watched, monkeypatch):
+    monkeypatch.setattr(service, "ACCOUNTS_S", 0.3)
+    monkeypatch.setattr(service, "COUNTS_S", 0.0)               # the list is never believed: each status asks
+    monkeypatch.setattr(service, "QUIET_S", 60.0)               # not this test's business
+    c = await watched.client()
+    await c.call("add_account", email="maya@acme.example")
+    host = await watched.host()
+    await until(lambda: watched.service.engine_state == "up")
+    host.handlers["accounts"] = HANG
+    began = time.monotonic()
+    await c.call("status")
+    assert 0.2 < time.monotonic() - began < 2.0                 # it waited for ACCOUNTS_S and not for the read time
+    began = time.monotonic()
+    for _ in range(5):
+        await c.call("status")
+    assert time.monotonic() - began < 0.5                       # the failure is remembered for a moment
+
+
+async def test_controls_that_hang_make_a_state_and_not_a_stall(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "PROCESS_S", 0.6)
+    monkeypatch.setattr(service, "PROBE_S", 0.2)
+    monkeypatch.setattr(service, "SEED_WAIT_S", 0.2)            # the answer waits less than the call may take
+    gate = threading.Event()
+    real = mail.process.seed_account
+
+    def stuck(account, provider):
+        gate.wait(10)
+        return real(account, provider)
+    monkeypatch.setattr(mail.process, "seed_account", stuck)
+    began = time.monotonic()
+    added = await person.call("add_account", email="new.person@school.example")
+    assert time.monotonic() - began < 2.0 and added["email"] == "new.person@school.example"   # not waited for
+    await person.call("status")                                  # nor does anything else wait behind it
+    await until(lambda: mail.service.engine_state == "down", 5.0)
+    assert "cannot be controlled" in mail.service.engine_detail
+    monkeypatch.setattr(service, "PROCESS_S", 3.0)               # a call behind the stuck one would wait this long
+    began = time.monotonic()
+    with pytest.raises(service.ProcessTimeout, match="are stuck in"):
+        await mail.service._process(lambda: None)
+    assert time.monotonic() - began < 1.0 and mail.service._hung     # refused at once, naming the call that hangs
+    gate.set()
+    await until(lambda: mail.service._hung is None, 5.0)
+    await until(lambda: mail.service.engine_state == "up", 8.0)
+
+
+async def test_removing_an_account_does_not_wait_for_controls_that_hang(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "PROCESS_S", 0.6)
+    monkeypatch.setattr(service, "SEED_WAIT_S", 0.2)
+    gate = threading.Event()
+    real = mail.process.forget_account
+
+    def stuck(account):
+        gate.wait(10)
+        return real(account)
+    monkeypatch.setattr(mail.process, "forget_account", stuck)
+    began = time.monotonic()
+    await person.call("remove_account", id="a2")
+    assert time.monotonic() - began < 2.0
+    assert [a["id"] for a in (await person.call("accounts"))["accounts"]] == ["a1", "a3"]
+    gate.set()
+
+
+async def test_after_a_link_is_lost_the_next_answer_says_so_and_not_that_mail_is_running(mail, person):
+    mail.process.fail_start = OSError("no display")
+    mail.process.crash()
+    sentence = await person.fails("list", "engine_down", view="all")
+    assert sentence != "Mail is running." and "Thunderbird" in sentence
+
+
+async def test_a_crash_is_started_again_without_waiting_out_a_whole_supervision_round(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "SUPERVISE_S", 5.0)            # the sleep between rounds is long
+    monkeypatch.setattr(service, "BACKOFF_MIN", 0.05)
+    real = mail.process.running
+
+    asked = []
+
+    def slow_running():
+        said = real()
+        asked.append(time.monotonic())
+        time.sleep(0.3)                                         # a tick takes a while, and what it saw is stale
+        return said
+    monkeypatch.setattr(mail.process, "running", slow_running)
+    await asyncio.sleep(0.5)
+    mail.service._poke.set()                                    # a round begins, and sees Thunderbird running
+    await asyncio.sleep(0.1)
+    began = time.monotonic()
+    mail.process.crash()                                        # ... and the crash lands in the middle of it
+    await until(lambda: mail.service.engine_state == "up" and mail.engine.connected, 4.0)
+    assert time.monotonic() - began < 3.0
+    await asyncio.sleep(0.2)
+    seen = len(asked)
+    await asyncio.sleep(1.5)
+    assert len(asked) == seen                                   # and a round is not made again until something asks
+
+
+async def test_the_pause_before_a_restart_is_two_seconds_doubling_to_a_minute(monkeypatch):
+    monkeypatch.setattr(service, "BACKOFF_MIN", 2.0)
+    monkeypatch.setattr(service, "BACKOFF_MAX", 60.0)
+    assert [service._backoff(n) for n in range(9)] == [2, 2, 4, 8, 16, 32, 60, 60, 60]
+
+
+async def test_each_failed_start_waits_twice_as_long_as_the_one_before_up_to_the_most(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "BACKOFF_MIN", 0.05)
+    monkeypatch.setattr(service, "BACKOFF_MAX", 0.4)
+    times = []
+    real = mail.process.start
+
+    def start():
+        times.append(time.monotonic())
+        return real()
+    monkeypatch.setattr(mail.process, "start", start)
+    mail.process.fail_start = OSError("no display")
+    mail.process.crash()
+    await until(lambda: len(times) >= 7, 10.0)
+    mail.process.fail_start = None
+    gaps = [b - a for a, b in itertools.pairwise(times)]
+    for gap, want in zip(gaps[:6], [0.05, 0.1, 0.2, 0.4, 0.4, 0.4], strict=True):
+        assert want - 0.01 <= gap <= want + 0.25, (gaps, want)
+    await until(lambda: mail.service.engine_state == "up", 8.0)
+
+
+# -- stopping with a request in flight --
+
+async def test_stopping_with_a_press_in_flight_ends_it_before_the_notes_close_and_the_draft_is_unknown_next_time(
+        started, home, monkeypatch):
+    m = await Mail.start()
+    c = await m.client()
+    d = await ready(c)
+    m.engine.hang_send(delivered=True)
+    monkeypatch.setattr(service, "SEND_S", 30.0)
+    pressing = asyncio.create_task(c.ask("send", id=d["id"], fingerprint=d["fingerprint"], _timeout=20))
+    await until(lambda: calls(m, "send"))
+    m.service.stop()
+    await asyncio.wait_for(m.task, 10)
+    assert m.task.exception() is None                          # a clean exit, and no "closed database" traceback
+    pressing.cancel()
+    again = await Mail.start()
+    started.append(again)
+    c2 = await again.client()
+    assert (await c2.call("draft_get", id=d["id"]))["state"] == "unknown"

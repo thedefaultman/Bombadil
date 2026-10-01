@@ -580,9 +580,9 @@ warns about nothing.
 `activity` `alert-triangle` `archive` `arrow-down` `arrow-left` `arrow-right` `arrow-up`
 `bell` `bot` `calendar` `check` `chevron-down` `chevron-left` `chevron-right`
 `chevron-up` `circle` `clipboard` `clock` `code` `copy` `cpu` `database` `download`
-`edit` `external-link` `eye` `eye-off` `file` `file-text` `filter` `folder` `gauge`
-`globe` `hard-drive` `heart` `info` `key` `layers` `link` `list` `lock` `log-out`
-`memory-stick` `menu` `minus` `moon` `more-horizontal` `more-vertical` `music` `network`
-`pause` `pencil` `play` `plus` `refresh` `rotate-ccw` `save` `search` `send` `settings`
+`edit` `external-link` `eye` `eye-off` `file` `file-text` `filter` `flag` `folder` `forward` `gauge`
+`globe` `hard-drive` `heart` `inbox` `info` `key` `layers` `link` `list` `lock` `log-out`
+`mail` `mail-open` `memory-stick` `menu` `minus` `moon` `more-horizontal` `more-vertical` `music` `network`
+`paperclip` `pause` `pencil` `play` `plus` `refresh` `reply` `reply-all` `rotate-ccw` `save` `search` `send` `settings`
 `shield` `sliders` `sort-asc` `sort-desc` `sparkles` `square` `star` `sun` `terminal`
 `trash` `unlock` `upload` `user` `wand` `wifi` `x` `zap`

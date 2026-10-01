@@ -1,7 +1,7 @@
 """A mail engine that is not Thunderbird: sample mailboxes in memory, for tests and for anyone without an account.
 
-`FakeEngine` has the same public surface as `bridge.EngineLink` (`connected`, `hello`, `on_event`,
-`on_state`, `request`, `send_blob`, `receive_blob`, `start`, `close`) and answers every engine op in
+`FakeEngine` has the same public surface as `bridge.EngineLink` (`connected`, `hello`, `heard`,
+`on_event`, `on_state`, `request`, `send_blob`, `receive_blob`, `drop`, `start`, `close`) and answers every engine op in
 docs/MAIL.md, so the service cannot tell which one it has. `FakeProcess` is the same for
 `engine.ThunderbirdProcess`: it starts nothing, and "running" is whether the fake engine answers.
 `BOMBADIL_MAIL_ENGINE=fake` runs the service on the pair, which is what the window, the desktop test and
@@ -52,7 +52,7 @@ class FakeEngine:
         self.on_event = None
         self.on_state = None
         self.hello: dict | None = None
-        self.heard = 0.0
+        self.heard = time.monotonic()
         self.sent: list[dict] = []          # everything that went out, in full
         self.calls: list[tuple] = []        # (op, args) of every request, for tests
         self.clock = clock
@@ -91,6 +91,10 @@ class FakeEngine:
             t.cancel()
         self._tasks.clear()
 
+    def drop(self, why: str = "") -> None:
+        """The service hangs up on a host that has stopped answering (EngineLink.drop)."""
+        self.set_up(False)
+
     def set_up(self, up: bool) -> None:
         """The process started or stopped: the link is there, or it is not."""
         if up == self._connected:
@@ -124,6 +128,7 @@ class FakeEngine:
         if not self._connected:
             raise EngineGone("Thunderbird is not connected.")
         self.calls.append((op, args))
+        self.heard = time.monotonic()
         handler = getattr(self, f"_op_{op}", None)
         if handler is None and op != "send":
             raise EngineError(ENGINE_ERROR, f"Thunderbird cannot {op}.")

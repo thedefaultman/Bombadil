@@ -29,6 +29,8 @@
 #   LAB_ADDON_PREFS=0|1         force extensions.autoDisableScopes=0 etc. on/off (default: on for profile-*)
 #   LAB_SIGNATURES_REQUIRED=1   set xpinstall.signatures.required=true (proves the pref is honoured)
 #   LAB_EXTRA_PREFS=file.js     extra user_pref lines         LAB_KIND=lab|gmail|outlook|icloud|none  account template
+#   LAB_PASSWORD=lab            password stored in the profile's login manager (the server accepts "lab"; anything else shows
+#                               what Thunderbird does on a failed login, see q3_unseen.py authfail)
 #   LAB_NO_QUIET=1              omit the "quiet" prefs (shows what pops up on first run)   LAB_ABLATE=pref1,pref2  omit just these
 #   LAB_NO_DISPLAY=1            no Xvfb and DISPLAY unset (use with LAB_HEADLESS=1)
 #   LAB_HEADLESS=1              pass --headless               LAB_MARIONETTE=1  pass --marionette (port 2828)
@@ -196,7 +198,7 @@ EOS
   [ "${LAB_SIGNATURES_REQUIRED:-0}" = 1 ] && echo 'user_pref("xpinstall.signatures.required", true);' >> "$extra"
   (cd "$HERE" && python3 - <<PYEOF
 import make_profile
-make_profile.write_profile("$LAB/profile", kind="${LAB_KIND:-lab}", load="$pl_load", xpi="$XPI",
+make_profile.write_profile("$LAB/profile", kind="${LAB_KIND:-lab}", password="${LAB_PASSWORD:-lab}", load="$pl_load", xpi="$XPI",
                            imap_port=${LAB_IMAP_PORT:-1143}, smtp_port=${LAB_SMTP_PORT:-1025},
                            nss_dir="$APP", extra_user_js="$extra", addon_prefs=bool(int("$addon_prefs")),
                            quiet=not bool(int("${LAB_NO_QUIET:-0}")), ablate=tuple(x for x in "${LAB_ABLATE:-}".split(",") if x))

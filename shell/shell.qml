@@ -74,8 +74,17 @@ ShellRoot {
             const v = JSON.parse(windows)
             deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
         }
-        // A message as agentd would send it, for demos and the VM smoke check.
-        function inject(message: string): void { root.handle(message) }
+        // A message as agentd would send it, for demos and the desktop test. A notice, or its end, only on a
+        // bar started for a test (BOMBADIL_BAR_INJECT=1, which no session of the image sets): the line above the
+        // pill is where agentd's warnings about mail show, and any process of the person's, an agent's shell
+        // included, that could say what it likes there could take one down. The other kinds are as open as
+        // they were (docs/MAIL.md says so).
+        function inject(message: string): void {
+            let ev
+            try { ev = JSON.parse(message) } catch (e) { return }
+            if (ev && String(ev.type).startsWith("notice") && Quickshell.env("BOMBADIL_BAR_INJECT") !== "1") return
+            root.handle(message)
+        }
     }
     IpcHandler {
         target: "line"

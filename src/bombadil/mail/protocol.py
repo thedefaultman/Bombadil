@@ -40,6 +40,9 @@ MAX_KEY = 512
 
 _ACCOUNT = re.compile(r"a[0-9]{1,9}")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")   # the last are lone surrogates
+# Invisible padding, and the marks that reorder text on screen: a name or a subject that has them can read as
+# another address's name, or sit differently next to the address a person is asked to approve.
+INVISIBLE = re.compile("[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 # One mailbox: no quotes, brackets, commas or spaces, and a dot in the domain. Not RFC 5322 (quoted
 # local parts and domain literals are refused on purpose): whatever this accepts is safe to put in a header.
 _EMAIL = re.compile(r"[^\s@<>(),;:\\\"\[\]]{1,64}@[^\s@<>(),;:\\\"\[\]]{1,255}\.[^\s@<>(),;:\\\"\[\]]{2,63}")
@@ -105,8 +108,14 @@ def valid_email(text) -> bool:
     return all(label and label[0] != "-" and label[-1] != "-" for label in text.rpartition("@")[2].split("."))
 
 
+def one_line(value, limit: int = MAX_NAME) -> str:
+    """Somebody else's words as one plain line: no control, invisible or direction-changing characters and no
+    lone surrogates (which cannot be stored or written), white space collapsed, at most `limit` characters."""
+    return " ".join(INVISIBLE.sub("", _CONTROL.sub(" ", str(value or ""))).split())[:limit]
+
+
 def _name(text: str) -> str:
-    return " ".join(_CONTROL.sub(" ", text).split())[:MAX_NAME]
+    return one_line(text, MAX_NAME)
 
 
 def parse_addr(text) -> Addr | None:

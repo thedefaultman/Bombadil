@@ -72,6 +72,15 @@ def test_a_name_with_a_lone_surrogate_cannot_make_a_frame_that_will_not_encode()
     json.dumps(got.as_dict(), ensure_ascii=False).encode()   # would raise on a lone surrogate
 
 
+def test_one_line_is_plain_text_on_one_line_without_what_hides_or_reorders_it():
+    assert protocol.one_line("  a \t b\r\nc\u2028d\x00e  ") == "a b c d e"
+    assert protocol.one_line("Pri\u200bya \u202eSah\u2066") == "Priya Sah"      # zero-width and direction marks go
+    assert protocol.one_line("a\ud800b") == "a b"                            # no lone surrogate
+    assert protocol.one_line(None) == "" and protocol.one_line(12) == "12"
+    assert protocol.one_line("x" * 500, 40) == "x" * 40
+    assert len(protocol.one_line("y" * 5000)) == protocol.MAX_NAME
+
+
 def test_parse_addrs_takes_header_style_strings_and_lists():
     got = protocol.parse_addrs('"Shah, Priya" <priya@acme.example>, sam@acme.example')
     assert got == [Addr("Shah, Priya", "priya@acme.example"), Addr("", "sam@acme.example")]

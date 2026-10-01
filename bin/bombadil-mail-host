@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""The native-messaging host Thunderbird starts for Mail's add-on: it relays frames between the two.
+
+Thunderbird runs this program when the add-on opens its native port, and talks to it on stdin and stdout in
+frames (a 4-byte native-endian length, then a JSON object). On the other side is the mail service's socket,
+`mail.sock`, where the same objects travel one to a line. The host is nothing but the join between them:
+
+    add-on  --frame-->  stdin   --line-->  mail.sock  (the service)
+    add-on  <--frame--  stdout  <--line--  mail.sock
+
+What it promises, and how:
+
+- It says `{"op": "engine_hello", "pid": <its pid>}` first, as the service's contract says, and then relays.
+  The service may not be up yet (both start at login), so the connection is tried for a few seconds; after
+  that it exits non-zero and Thunderbird starts a new host about 2.4 s later, which is the add-on's retry.
+- It exits 0 when Thunderbird goes (stdin ends, or stdout is closed), when the service goes (the socket ends)
+  and on SIGTERM; one and only one thing makes it exit non-zero: a frame that cannot be a frame (a length
+  over the limit, a body that is cut short, one that is not a JSON object), because after one of those the
+  stream cannot be told from noise, and Thunderbird starts a clean one.
+- Nothing piles up here. Each direction is one blocking loop: when Thunderbird does not read, the loop that
+  writes to it waits, the socket fills, and the service (which caps what it queues) drops the link; when the
+  service does not read, the add-on's frames wait in the pipe. A line from the service over the limit is read
+  and thrown away without being kept.
+- A frame to Thunderbird is at most 999 999 bytes: Thunderbird refuses more than 1 MiB from a host and
+  kills the port. The service never sends more, so a longer line is a fault, said on stderr and to the
+  add-on as `{"event": "host_error", "id": <the line's id if it has one>, "error": "..."}`.
+- stdout carries frames and nothing else: it is a private copy of the pipe, and fd 1 itself is pointed at
+  stderr, so a stray print cannot corrupt the stream. What is worth saying is said on stderr, which
+  Thunderbird logs; no mail text is ever written there.
+- A line goes through as the bytes the service wrote (no JSON round trip, which would change its size);
+  what the add-on sends is parsed, since the line it becomes must not contain a line break.
+"""
+
+import json
+import os
+import re
+import signal
+import socket
+import struct
+import sys
+import threading
+import time
+from pathlib import Path
+
+# The path is set before the package import on purpose: from a checkout `bombadil` is not installed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from bombadil import paths
+from bombadil.mail import protocol
+
+FRAME_LIMIT = 1_000_000      # a frame to the add-on is shorter than this many bytes
+LINE_KEEP = 8 << 20          # a longer line from the service is not even kept to look for its id
+CONNECT_S = 5.0              # how long to wait for the service to be there
+CHUNK = 1 << 16
+
+_ID = re.compile(rb'"id"\s*:\s*(-?[0-9]{1,18}|"[^"\\]{0,200}")')
+
+
+def say(text: str) -> None:
+    print(f"bombadil-mail-host[{os.getpid()}]: {' '.join(text.split())}"[:400], file=sys.stderr, flush=True)
+
+
+def leave(code: int) -> None:
+    """Out, now: a thread blocked in a read cannot be asked to stop, and nothing here needs unwinding."""
+    try:
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(code)
+
+
+def connect(path, window: float = CONNECT_S) -> socket.socket:
+    deadline = time.monotonic() + window
+    while True:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.connect(str(path))
+            return s
+        except OSError as e:
+            s.close()
+            if time.monotonic() >= deadline:
+                say(f"cannot reach the mail service at {path}: {e.strerror or e}")
+                leave(2)
+            time.sleep(0.2)
+
+
+def write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        view = view[os.write(fd, view):]
+
+
+def to_addon(out: int, body: bytes) -> None:
+    """One frame to Thunderbird. A closed pipe means Thunderbird is gone, which is how a host ends."""
+    try:
+        write_all(out, struct.pack("=I", len(body)) + body)
+    except BrokenPipeError:
+        leave(0)
+
+
+def refuse(out: int, why: str, line_id=None) -> None:
+    say(why)
+    event = {"event": "host_error", "error": why}
+    if line_id is not None:
+        event["id"] = line_id
+    body = json.dumps(event, separators=(",", ":")).encode()
+    if len(body) < FRAME_LIMIT:
+        to_addon(out, body)
+
+
+def found_id(line: bytes):
+    """The id of a request line, for the host_error that answers it; None when it has none that can be told."""
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        obj = None
+    if isinstance(obj, dict):
+        value = obj.get("id")
+        return value if isinstance(value, (int, str)) and not isinstance(value, bool) else None
+    m = _ID.search(line[:4096])   # not JSON that parses (cut short?): the first "id" near the front, if any
+    return json.loads(m.group(1)) if m else None
+
+
+def lines_to_addon(sock: socket.socket, out: int) -> None:
+    """Service to add-on: one frame per line, until the service hangs up. A line is held up to LINE_KEEP bytes
+    (the most the service has any reason to send is a little over FRAME_LIMIT); beyond that it is skipped as
+    it arrives, so a service that never ends a line costs this host nothing but time."""
+    pending = bytearray()
+    skipping = False
+    skipped = 0
+    while True:
+        try:
+            chunk = sock.recv(CHUNK)
+        except OSError as e:   # a service that died with something unread resets the connection
+            say(f"the mail service went away ({e.strerror or e})")
+            leave(0)
+        if not chunk:
+            say("the mail service closed the connection")
+            leave(0)
+        while chunk:
+            end = chunk.find(b"\n")
+            piece, chunk = (chunk, b"") if end < 0 else (chunk[:end], chunk[end + 1:])
+            if skipping:
+                skipped += len(piece)
+            elif len(pending) + len(piece) > LINE_KEEP:
+                pending.clear()
+                skipping, skipped = True, len(piece)
+            else:
+                pending += piece
+            if end < 0:
+                break
+            if skipping:
+                refuse(out, f"a line of at least {skipped} bytes from the service is over the {FRAME_LIMIT} limit")
+                skipping, skipped = False, 0
+            else:
+                relay(out, bytes(pending).strip())
+            pending.clear()
+
+
+def relay(out: int, line: bytes) -> None:
+    if not line:
+        return
+    if len(line) >= FRAME_LIMIT:
+        refuse(out, f"a line of {len(line)} bytes from the service is over the {FRAME_LIMIT} limit", found_id(line))
+    elif not (line.startswith(b"{") and line.endswith(b"}")):
+        refuse(out, "a line from the service that is not a JSON object")
+    else:
+        to_addon(out, line)
+
+
+def encode(obj: dict) -> bytes:
+    """A frame as one line, text as text (a line of `\\u` escapes is six times as long for Chinese or Japanese)
+    unless it holds a lone surrogate, which UTF-8 cannot carry: then it is escaped, as the add-on sent it."""
+    try:
+        return json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
+    except UnicodeEncodeError:
+        return json.dumps(obj, separators=(",", ":")).encode()
+
+
+def frames_to_service(stdin, sock: socket.socket) -> None:
+    """Add-on to service: one line per frame, until Thunderbird hangs up."""
+    while True:
+        try:
+            obj = protocol.nm_read(stdin)
+        except protocol.FrameError as e:
+            say(f"a bad frame from the add-on ({e}); ending so Thunderbird starts a clean host")
+            leave(1)
+        if obj is None:
+            say("Thunderbird closed the port")
+            leave(0)
+        try:
+            sock.sendall(encode(obj) + b"\n")
+        except OSError as e:
+            say(f"the mail service went away ({e.strerror or e})")
+            leave(0)
+
+
+def service_to_addon(sock: socket.socket, out: int) -> None:
+    """The reader's thread. Whatever ends it ends the host: a host that only listens one way is worse than none,
+    because Thunderbird would keep it and the add-on would never hear the service again."""
+    try:
+        lines_to_addon(sock, out)
+    except BaseException as e:   # noqa: BLE001 - the reader must never end quietly
+        say(f"the reader failed ({type(e).__name__}); ending so Thunderbird starts a clean host")
+        leave(1)
+
+
+def greet(sock: socket.socket) -> None:
+    """The first line the service gets: who this is. A service that is gone already is the host's end, as later."""
+    try:
+        sock.sendall(json.dumps({"op": "engine_hello", "pid": os.getpid()}).encode() + b"\n")
+    except OSError as e:
+        say(f"the mail service went away ({e.strerror or e})")
+        leave(0)
+
+
+def main() -> int:
+    out = os.dup(1)          # the frames' own descriptor; whatever writes to fd 1 from here on lands on stderr
+    os.dup2(2, 1)
+    stdin = sys.stdin.buffer
+    signal.signal(signal.SIGTERM, lambda *_: leave(0))
+    sock = connect(paths.mail_socket())
+    greet(sock)
+    threading.Thread(target=service_to_addon, args=(sock, out), daemon=True, name="service-to-addon").start()
+    frames_to_service(stdin, sock)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

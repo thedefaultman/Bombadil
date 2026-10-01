@@ -147,7 +147,7 @@ from .jobs import JobError, Jobs, ending, started_text
 from .mail import client as mail_client
 from .mail import tools as mail_tools
 from .mail import watch as mail_watch
-from .notices import Notices
+from .notices import Notices, one_line
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
@@ -184,6 +184,11 @@ NOTICE_POLL = 1.0
 MAIL_WINDOW_DEBOUNCE = 2.0
 DRAFT_CHECK_SECONDS = 1.0   # how long "send it" waits to learn whether a draft is waiting
 MAIL_ANSWER_CHARS = 60_000  # the most text one mail tool answers with
+# The longest line a client may send. A mail draft is a few hundred kilobytes at most (100 000 characters,
+# up to six bytes each when a language is written as \u escapes), so a line over this is not one.
+LINE_LIMIT = 4 << 20
+MAIL_NOT_KEPT = "[mail text not kept]"   # what stands in the turn's log for what mail_read and mail_search said
+MAIL_TEXT_TOOLS = ("mail_read", "mail_search")
 
 
 class AgentD:
@@ -262,6 +267,10 @@ class AgentD:
         self._mail_watch = mail_watch.Watch(self.says.push)
         self._mail_opened = -MAIL_WINDOW_DEBOUNCE   # when the Mail window was last brought in
         self._notices_task: asyncio.Task | None = None  # looks at the clock while a notice has a ttl
+        # Who is on the other end of each connection: True once it is known to have been inside an agent's
+        # turn when it connected (or could not be told), which is final. See _persons.
+        self._peers: dict[asyncio.StreamWriter, asyncio.Future] = {}
+        self._mail_reads: dict[str, None] = {}      # ids of this turn's mail_read and mail_search calls
 
     # -- socket --
 
@@ -272,7 +281,7 @@ class AgentD:
         # Probe for systemd scopes now, not on the first Enter.
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
-        server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
+        server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
         worker = asyncio.create_task(self._worker())
         self._background(self.check_access(start=self.auto_signin))
         watcher = asyncio.create_task(self._watch_apps())
@@ -290,6 +299,7 @@ class AgentD:
         queue: asyncio.Queue = asyncio.Queue(CLIENT_BACKLOG)
         self.clients[writer] = queue
         sender = asyncio.create_task(self._sender(writer, queue))
+        self._peers[writer] = self._look_at(writer)
         try:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
@@ -312,6 +322,7 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            self._peers.pop(writer, None)
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
                 try:
@@ -330,8 +341,10 @@ class AgentD:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
             action = await self._match(text)
-            if action is None and launcher.is_send_word(text) and await self._draft_waiting():
-                action = launcher.Action("send")   # "send it" is not a send: the press is the person's
+            if action is None and launcher.is_send_word(text):
+                draft = await self._draft_waiting()
+                if draft is not None:   # "send it" is not a send: the press is the person's
+                    action = launcher.Action("send", draft["id"] if isinstance(draft.get("id"), str) else "")
             if action is None and self.access == "choose":
                 # First boot asks which AI: typing its name answers too.
                 name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
@@ -340,9 +353,16 @@ class AgentD:
                 await self._send(writer, {"type": "local", "action": action.kind})
                 self._background(self.local(action, text))
                 return
-            self.next_id += 1
             who = msg.get("asked_by")
-            if isinstance(who, str) and _WHO.fullmatch(who):
+            who = who if isinstance(who, str) and _WHO.fullmatch(who) else None
+            if who is None and not await self._persons(writer):
+                # A process of an agent's turn can write to this socket as well as anyone. What it asks is
+                # not what the person typed, and the turn it starts must not take it for that: the desk's
+                # gate and the new-address check on a draft both trust the typed words. (Asked before the
+                # turn is numbered: nothing may wait between numbering it and queueing it.)
+                who = "agent"
+            self.next_id += 1
+            if who:
                 self.asked_by[self.next_id] = who
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
@@ -463,8 +483,7 @@ class AgentD:
         if self.clients.pop(writer, None) is not None:
             writer.close()   # its reader then sees the end, and _client cleans up
 
-    async def _send(self, writer: asyncio.StreamWriter, msg: dict):
-        """Queue a message for one client; never waits for it to be read."""
+    def _enqueue(self, writer: asyncio.StreamWriter, msg: dict):
         queue = self.clients.get(writer)
         if queue is None:
             return
@@ -474,9 +493,16 @@ class AgentD:
             print("agentd: dropping a client that stopped reading", file=sys.stderr)
             self._drop(writer)
 
-    async def broadcast(self, msg: dict):
+    def _enqueue_all(self, msg: dict):
         for w in list(self.clients):
-            await self._send(w, msg)
+            self._enqueue(w, msg)
+
+    async def _send(self, writer: asyncio.StreamWriter, msg: dict):
+        """Queue a message for one client; never waits for it to be read."""
+        self._enqueue(writer, msg)
+
+    async def broadcast(self, msg: dict):
+        self._enqueue_all(msg)
 
     def _background(self, coro) -> asyncio.Task:
         """Run a slow action beside the client's reader, so a stop or an unqueue sent right
@@ -686,8 +712,10 @@ class AgentD:
     # -- notices, mail and the press --
 
     def _notice_emit(self, msg: dict):
-        """Notices.emit: every change goes to every client, in the order it was made."""
-        self._background(self.broadcast(msg))
+        """Notices.emit: every change goes to every client, in the order it was made. Queued here and now, not
+        by a task of its own, so that a line said just before an answer (a receipt before its press_result)
+        is heard before it, and an end is never heard before the notice it ends."""
+        self._enqueue_all(msg)
         if msg["type"] == "notice":
             self._notices_kick()
 
@@ -701,12 +729,29 @@ class AgentD:
             await asyncio.sleep(min(left, NOTICE_POLL))
             self.notices.expire()
 
+    def _look_at(self, writer: asyncio.StreamWriter) -> asyncio.Future:
+        """Who just connected: looked at now, while the process that did is surely still there to be looked at."""
+        return asyncio.ensure_future(asyncio.to_thread(self._was_agent, _peer_pid(writer)))
+
+    def _was_agent(self, pid: int | None) -> bool:
+        """Was the process that connected inside an agent's turn, or one that cannot be told? Blocking."""
+        try:
+            return pid is None or self.outbox.from_agent(pid)
+        except Exception as e:  # noqa: BLE001 - what cannot be told is not the person's
+            print(f"agentd: who connected: {type(e).__name__}: {e}", file=sys.stderr)
+            return True
+
     async def _persons(self, writer: asyncio.StreamWriter) -> bool:
-        """Is this client somebody other than the agent? A chip makes a draft as the person's and a dismissal
-        hides what agentd said, so neither is for a process inside a turn (as a press is not); a client
-        that cannot be named is not taken for the person."""
+        """Is this client somebody other than the agent? A chip makes a draft as the person's, a dismissal
+        hides what agentd said and a typed prompt is the person's own words, so none of them is for a
+        process inside a turn (as a press is not); a client that cannot be named is not taken for the
+        person. Two looks, either of which can refuse: the one made when it connected (a process that was
+        in a turn then is, for good, even after it has handed the socket on and gone) and the one made now."""
+        peer = self._peers.get(writer)
         pid = _peer_pid(writer)
-        return pid is not None and not await asyncio.to_thread(self.outbox.from_agent, pid)
+        if peer is None or pid is None or await peer:
+            return False
+        return not await asyncio.to_thread(self._was_agent, pid)
 
     async def _notice_dismiss(self, notice_id, writer: asyncio.StreamWriter):
         if _is_int(notice_id) and await self._persons(writer):
@@ -731,8 +776,9 @@ class AgentD:
         if self.current is None or isinstance(turn, bool) or turn != self.current or self.stopping:
             return result(False, "That turn is over, so mail stays as it is.")
         # The raw prompt, as in the desk's gate: the turn's own has notes in front. A coding session's
-        # turn has no typed words, so every address in its drafts is one nobody typed.
-        typed = self.turn_prompt or ""
+        # turn has no typed words, so every address in its drafts is one nobody typed; and what was put in
+        # front of the person's own words (the screen, a session's request) is not theirs either.
+        typed = mail_tools.typed_words(self.turn_prompt or "")
 
         def alive() -> bool:
             return self.current == turn and not self.stopping
@@ -749,12 +795,15 @@ class AgentD:
         kind, id_ = msg.get("kind"), msg.get("id")
         # `again` is the person's own second press on a send that might have gone (the service refuses it
         # otherwise); nothing but an explicit true counts.
+        peer = self._peers.get(writer)
         result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer),
-                                         again=msg.get("again") is True)
+                                         again=msg.get("again") is True,
+                                         was_agent=peer is None or await peer)   # (no look made: not the person)
         self.says.pressed(result)
         if result.ok:
             # Not said again on the line (the receipt is), but the agent should know what happened to its draft.
-            self.notes = [*self.notes, f"the person pressed Send: {result.line}"][-10:]
+            # The line names a recipient as the mail gave it, and notes reach the model as the user's own word.
+            self.notes = [*self.notes, f"the person pressed Send: {one_line(result.line, 160)}"][-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": "pressed Send", "action": "press",
                         "target": (id_ if isinstance(id_, str) else "")[:128], "result": result.line,
                         "ok": result.ok})
@@ -770,15 +819,16 @@ class AgentD:
             return False
         return pid == proc.pid or pid in procs.descendants(proc.pid, procs.all_procs())
 
-    async def _draft_waiting(self) -> bool:
-        """Does a draft wait for the person's press? Asked of the service, since the person may have
-        started it in the window themselves. No service, no draft."""
+    async def _draft_waiting(self) -> dict | None:
+        """The newest draft that waits for the person's press, if any. Asked of the service, since the person
+        may have started it in the window themselves. No service, no draft. (The drafts view is a bare list,
+        newest first: docs/MAIL.md.)"""
         try:
             got = await mail_watch.ask("list", DRAFT_CHECK_SECONDS, view="drafts", limit=50)
         except (mail_client.MailUnavailable, mail_client.MailError):
-            return False
-        rows = got if isinstance(got, list) else (got or {}).get("drafts", []) if isinstance(got, dict) else []
-        return any(isinstance(d, dict) and d.get("state", "open") == "open" for d in rows)
+            return None
+        return next((d for d in got if isinstance(d, dict) and d.get("state") == "open"), None) \
+            if isinstance(got, list) else None
 
     async def _mail_show(self, **view):
         """Ask the service to show a view and bring the Mail window in (Launcher.open_mail). Raises when
@@ -841,6 +891,8 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
+        if action.kind in ("mail", "send"):
+            self._mail_opened = time.monotonic()   # the service's echo of the show must not open the window again
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="start", text=doing)
         ok, text = await asyncio.to_thread(self.launcher.run, action)
         await self.event("local", turn=None, action=action.kind, target=action.target, phase="done", ok=ok,
@@ -1360,6 +1412,7 @@ class AgentD:
             self._signed_out = False
             self._turn_provider = self.provider
             self._turn_notes = []
+            self.mail.begin(turn_id, self.session_id)   # a conversation that has read mail still holds it
             stopped = False
             try:
                 await self.turn(prompt)
@@ -1597,6 +1650,7 @@ class AgentD:
                     except ProcessLookupError:
                         pass
             return pending_session, reported_error
+        ev = self._without_mail_text(ev)
         try:
             line = self.narrator.on_event(ev) if self.narrator else None
         except Exception as e:  # noqa: BLE001 - odd input costs a line, never the turn
@@ -1654,6 +1708,23 @@ class AgentD:
             ev = {**ev, **self.narrator.last_notes}
         await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
         return pending_session, reported_error
+
+    def _without_mail_text(self, ev: dict) -> dict:
+        """What mail_read and mail_search said is other people's words, and Bombadil writes none of it down:
+        events are logged to the turn's file and sent to every client, so the answer is replaced by a
+        placeholder before it is either (the model has had it, which is all it is for). An error stays: its
+        words are ours."""
+        kind = ev.get("kind")
+        if kind == "tool" and ev.get("id") and str(ev.get("name") or "").startswith("mcp__") \
+                and str(ev["name"]).rsplit("__", 1)[-1] in MAIL_TEXT_TOOLS:
+            self._mail_reads[str(ev["id"])] = None
+            while len(self._mail_reads) > 256:
+                self._mail_reads.pop(next(iter(self._mail_reads)))
+        elif kind == "tool_result" and ev.get("id") is not None and str(ev["id"]) in self._mail_reads:
+            del self._mail_reads[str(ev["id"])]
+            if not ev.get("error"):
+                return {**ev, "output": MAIL_NOT_KEPT}
+        return ev
 
     def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None):
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],

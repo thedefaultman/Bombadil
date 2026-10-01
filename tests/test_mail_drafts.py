@@ -354,6 +354,50 @@ def test_a_file_over_the_limit_is_refused_before_anything_is_copied(files, monke
     assert drafts.copy_attachment("d1", put(files, "ok.bin", b"x" * 10), None, "person")["size"] == 10
 
 
+def test_a_file_that_does_not_fit_the_room_left_for_copies_is_refused_before_anything_is_copied(files):
+    with pytest.raises(Refusal) as e:
+        drafts.copy_attachment("d1", put(files, "big.bin", b"x" * 11), None, "agent", room=10)
+    assert e.value.code == REFUSED and "Too many attachments" in str(e.value)
+    assert not (paths.mail_files() / "drafts" / "d1").exists()       # not even the folder for it was made
+    assert drafts.copy_attachment("d1", put(files, "ok.bin", b"x" * 10), None, "agent", room=10)["size"] == 10
+    assert drafts.copy_attachment("d1", put(files, "free.bin", b"x" * 99), None, "agent")["size"] == 99   # no limit
+
+
+def test_a_file_that_grows_past_the_room_while_it_is_copied_is_cut_off_and_leaves_nothing(files, monkeypatch):
+    monkeypatch.setattr(drafts, "CHUNK", 1000)
+    src = put(files, "grow.bin", b"x" * 5000)
+    real = os.fstat
+
+    def lying(fd):
+        st = real(fd)
+        return os.stat_result((st.st_mode, st.st_ino, st.st_dev, st.st_nlink, st.st_uid, st.st_gid, 10,
+                               int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+    monkeypatch.setattr(os, "fstat", lying)
+    with pytest.raises(Refusal) as e:
+        drafts.copy_attachment("d1", src, None, "agent", room=2000)
+    assert e.value.code == REFUSED
+    monkeypatch.undo()
+    assert not list((paths.mail_files() / "drafts").rglob("grow.bin"))
+
+
+def test_a_file_that_is_a_secret_by_where_it_really_was_opened_is_refused_though_the_path_looked_fine(files, home,
+                                                                                                   monkeypatch):
+    src = put(files, "holiday.jpg", b"fixture")
+    secret = str(home / ".ssh" / "id_rsa")          # a folder on the way was made a link after the path was looked at
+    monkeypatch.setattr(drafts, "_opened", lambda fd: secret)
+    with pytest.raises(Refusal) as e:
+        drafts.copy_attachment("d1", src, None, "agent")
+    assert e.value.code == REFUSED and not list((paths.mail_files() / "drafts").rglob("holiday.jpg"))
+    assert drafts.copy_attachment("d1", src, None, "person")["sensitive"] is True
+
+
+def test_a_copy_goes_on_when_the_kernel_will_not_say_where_the_file_was_opened(files, monkeypatch):
+    def refused(path):
+        raise OSError("no /proc")
+    monkeypatch.setattr(drafts.os, "readlink", refused)
+    assert drafts.copy_attachment("d1", put(files, "a.txt", b"one"), None, "agent")["size"] == 3
+
+
 def test_a_file_that_grows_while_it_is_copied_is_cut_off_at_the_limit_and_leaves_nothing(files, monkeypatch):
     monkeypatch.setattr(drafts, "ATTACHMENT_MAX", 2000)
     monkeypatch.setattr(drafts, "CHUNK", 1000)

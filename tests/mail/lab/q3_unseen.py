@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Q3/Q5: can Thunderbird run "unseen"?  --headless, unmapped/minimised windows, footprint, first-run windows.
 
-    python3 q3_unseen.py headless|hidden|footprint|firstrun|compose|modal|all [--json out.json]
+    python3 q3_unseen.py headless|hidden|footprint|firstrun|compose|modal|authfail|all [--json out.json]
 
   headless   --headless with NO X display at all: starts? syncs IMAP? runs the add-on? new-mail events? compose+send?
   hidden     normal window on Xvfb, then xdotool windowunmap / openbox minimise: still syncing / running the add-on?
@@ -9,6 +9,7 @@
   firstrun   what pops up when the quiet prefs are missing (and with no account), and which single pref suppresses what
   compose    Q5: compose.sendMessage with the compose window never shown / minimised / unfocused / unmapped
   modal      Q5: blocking dialogs on the send path (message > mailnews.message_warning_size, SMTP refused)
+  authfail   what Thunderbird shows when the stored IMAP/SMTP password is wrong
 """
 import argparse
 import base64
@@ -311,13 +312,40 @@ def t_modal(lab):
     lab.stop()
 
 
+def t_authfail(lab):
+    """Q5/Q3: what does Thunderbird show when the stored password is wrong (changed password, revoked app password)?"""
+    lab.start(LAB_WM="openbox", LAB_PASSWORD="wrong-password")
+    b = lab.bridge()
+    time.sleep(20)
+    before = lab.windows()
+    lab.screenshot("/tmp/q3-authfail-1.png")
+    inbox = b.call("folders.query", {"specialUse": ["inbox"]})
+    info = b.call("folders.getFolderInfo", inbox[0]["id"]) if inbox else None
+    say("authfail", "20 s after start (wrong password): X windows", before)
+    say("authfail", "API still answers; Inbox info (0 = never synced)", info)
+    n0 = len(lab.ms.sent())
+    try:
+        b.call("messages.sendMessage", {"to": ["alice@example.org"], "subject": "auth", "body": "x"}, {"mode": "sendNow"}, timeout=25)
+        say("authfail", "messages.sendMessage with wrong SMTP password", "returned")
+    except Exception as e:  # noqa: BLE001
+        say("authfail", "messages.sendMessage with wrong SMTP password", "%s after 25 s; SMTP received=%d; new windows=%s" % (
+            type(e).__name__, len(lab.ms.sent()) - n0, _new_windows(lab, before)))
+    lab.screenshot("/tmp/q3-authfail-2.png")
+    xdo(lab, "key", "Escape")
+    time.sleep(2)
+    after_escape = lab.windows()
+    time.sleep(100)
+    say("authfail", "after Escape + 100 s (does it prompt again?)", {"windows_after_escape": after_escape, "windows_100s_later": lab.windows()})
+    lab.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", nargs="?", default="all")
     ap.add_argument("--json")
     a = ap.parse_args()
     lab = Lab()
-    todo = ["headless", "hidden", "compose", "modal", "firstrun", "footprint"] if a.what == "all" else [a.what]
+    todo = ["headless", "hidden", "compose", "modal", "authfail", "firstrun", "footprint"] if a.what == "all" else [a.what]
     for w in todo:
         print("=== %s" % w, flush=True)
         globals()["t_" + w](lab)

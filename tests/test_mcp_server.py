@@ -418,6 +418,14 @@ def test_the_mail_tools_are_listed_and_there_is_no_way_to_send():
     assert not [n for n in tools if n.startswith("mail_") and "path" in tools[n]["inputSchema"]["properties"]]
 
 
+def test_a_line_to_agentd_carries_text_as_it_is_and_only_a_lone_surrogate_escaped():
+    """A mail in another language as \\u escapes is six times as long as agentd and the service allow for."""
+    from bombadil import mcp_server
+    line = mcp_server._line({"type": "mail-tool", "body": "Привет, 😀 ok"})
+    assert line.endswith(b"\n") and "Привет, 😀 ok".encode() in line and b"\\u" not in line
+    assert json.loads(mcp_server._line({"body": "\ud800 lone"}))["body"] == "\ud800 lone"       # escaped, and still sent
+
+
 def test_a_mail_tool_asks_agentd_for_its_turn_and_carries_the_mails_id_as_mail(home, monkeypatch):
     monkeypatch.setenv("BOMBADIL_TURN", "4")
     srv, got = _agentd(lambda m: [{"type": "mail-result", "id": m["id"], "ok": True, "text": "Marked for a reply: x"}])

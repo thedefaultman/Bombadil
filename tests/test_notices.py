@@ -45,14 +45,14 @@ def test_the_stack_holds_four_and_the_oldest_makes_room():
 
 
 def test_an_error_is_not_pushed_off_by_news_but_a_stack_of_errors_still_makes_room():
-    n, sent, _ = make()
+    n, _sent, _ = make()
     bad = n.post("mail", "I can't tell whether that went.", "error")
     news = [n.post("mail", f"mail {i}", "ask") for i in range(1, 4)]
     for i in range(4, 9):
         n.post("mail", f"mail {i}", "ask")
     assert bad in [x["id"] for x in n.live()] and news[0] not in [x["id"] for x in n.live()] and len(n) == 4
     errors = [n.post("mail", f"error {i}", "error") for i in range(3)]
-    assert [x["tone"] for x in n.live()] == ["error"] * 4 and [x["id"] for x in n.live()][0] == bad
+    assert [x["tone"] for x in n.live()] == ["error"] * 4 and next(x["id"] for x in n.live()) == bad
     last = n.post("mail", "one more", "error")             # nothing but errors: the oldest of them goes
     assert [x["id"] for x in n.live()] == [*errors, last] and bad not in [x["id"] for x in n.live()]
 

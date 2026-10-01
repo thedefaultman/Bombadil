@@ -917,3 +917,23 @@ def test_a_notice_does_not_move_the_turn_line_or_the_setup_chips_around_it(bar):
     bar.send(type="setup", state="ready", tone="done", actions=[], line="")
     assert bar.text() == "Priya Shah: Launch date" and bar.chips() == []
     assert len(bar.items("noticeChip")) == 1
+
+
+def test_a_notice_that_ends_while_one_screen_reads_it_stays_on_all_until_the_pointer_leaves(bar):
+    bar.win.setProperty("screens", 2)
+    bar.pump(0.2)
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=300, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.pump(0.3)
+    first = min(bar.items("statusLine"), key=lambda it: it.mapToScene(QtCore.QPointF(0, 0)).y())
+    QtTest.QTest.mouseMove(bar.win, first.mapToScene(QtCore.QPointF(first.width() / 2, first.height() / 2)).toPoint())
+    bar.pump(0.2)
+    assert bar.pill.property("hovers") == 1
+    feed(bar, type="notice_end", id=1)
+    bar.pump(0.3)
+    # agentd let go of it; the one being read stays, on both screens, without chips that would do nothing.
+    assert [it.property("text") for it in bar.items("line")] == ["Priya Shah: Launch date"] * 2
+    assert bar.items("noticeChip") == []
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
+    bar.pump(0.8)
+    assert not any(it.isVisible() for it in bar.items("statusLine", visible_only=False))

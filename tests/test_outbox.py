@@ -1,5 +1,10 @@
 import asyncio
 import json
+import os
+import stat
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -12,6 +17,23 @@ RECEIPT = {"draft": "d1", "to": [{"name": "Priya Shah", "email": "priya@example.
            "from": {"name": "Maya", "email": "maya@example.test"}, "ts": 1_790_000_000.0, "message_id": "m1",
            "web": {"name": "Gmail", "url": "https://mail.example.test/m1"},
            "line": "Sent to Priya from maya@example.test · 09:08"}
+
+
+@pytest.fixture(autouse=True)
+def nothing_of_the_real_home(home):
+    """Every test here runs with its paths (state, runtime, press log, apps) under its own temporary directory:
+    one that forgot to ask for `home` would write a press log in the real ~/.local/state."""
+    return home
+
+
+_really_gone = outbox._gone
+
+
+@pytest.fixture(autouse=True)
+def the_pids_are_there(monkeypatch):
+    """The pids most of these tests press from are made up. A process that is not there counts as an agent's
+    (see "a process that has gone" below, with real ones), so the made-up ones are said to be."""
+    monkeypatch.setattr(outbox, "_gone", lambda pid: False)
 
 
 def rows():
@@ -157,6 +179,97 @@ async def test_the_registry_is_open_to_other_kinds(home):
     assert (await box.press("slack", "c1", "f1", 10)).ok and doing.calls == [("c1", "f1")]
 
 
+# -- a process that has gone --
+
+def _reaped_pid() -> int:
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+def test_a_process_that_is_gone_or_only_waiting_to_be_reaped_is_not_there():
+    assert _really_gone(_reaped_pid()) is True
+    assert _really_gone(os.getpid()) is False
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    try:
+        deadline = time.monotonic() + 5
+        while not _really_gone(child.pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        # Not waited for, so /proc still has it: the state it is in (zombie) is what says it is over.
+        assert _really_gone(child.pid) is True and Path(f"/proc/{child.pid}/stat").exists()
+    finally:
+        child.wait()
+
+
+@pytest.mark.asyncio
+async def test_a_press_from_a_process_that_has_gone_is_refused_since_nothing_can_be_told_of_it(home, monkeypatch):
+    # The kernel names the process that connected, not whoever holds the socket now: a process of a turn can
+    # connect, give the socket to a child and exit, and then there is no scope left to read for it.
+    monkeypatch.setattr(outbox, "_gone", _really_gone)
+    box = Outbox({"note": Doing()}, in_turn=lambda pid: False)
+    r = await box.press("note", "n1", "f1", _reaped_pid())
+    assert not r.ok and r.code == "agent" and "Nothing was sent" in r.line
+    assert box.performers["note"].calls == []
+    assert [x["code"] for x in rows()] == ["agent"]
+    assert (await box.press("note", "n1", "f1", os.getpid())).ok      # one that is there is judged as it was
+    assert box.from_agent(_reaped_pid()) is True
+
+
+def test_what_is_read_of_a_process_comes_before_whether_it_is_still_there(monkeypatch):
+    """A process that ends while it is looked at must not be taken for the person's: it is read first, and being
+    there is asked last, so that a gone process cannot pass for one with nothing to read."""
+    seen = []
+    monkeypatch.setattr(procs, "cgroup_of", lambda pid: seen.append("cgroup") or None)
+    monkeypatch.setattr(outbox, "_gone", lambda pid: seen.append("gone") or True)
+    assert Outbox(in_turn=lambda pid: seen.append("tree") or False).from_agent(10) is True
+    assert seen == ["cgroup", "tree", "gone"]
+
+
+# -- what counts as pressed --
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result, pressed", [
+    (PressResult(True, "Done.", {"line": "Done."}), True),
+    (PressResult(False, "x", code="unknown_outcome"), True),     # it may have gone
+    (PressResult(False, "x", code="error"), True),                # nobody can say
+    (PressResult(False, "x", code="changed"), False),            # turned away: nothing went
+    (PressResult(False, "x", code="refused"), False),
+    (PressResult(False, "x", code="engine_down"), False),
+    (PressResult(False, "x", code="too_big"), False),
+])
+async def test_only_a_press_that_went_or_may_have_is_remembered_as_pressed(home, result, pressed):
+    box = Outbox({"note": Doing(result)})
+    await box.press("note", "n1", "f1", 10)
+    assert box.was_pressed("note", "n1") is pressed
+
+
+@pytest.mark.asyncio
+async def test_a_press_that_is_going_counts_and_a_turned_away_second_press_does_not_undo_it(home):
+    gate = asyncio.Event()
+    box = Outbox({"note": Doing(gate=gate)})
+    first = asyncio.create_task(box.press("note", "n1", "f1", 10))
+    await asyncio.sleep(0.01)
+    assert box.was_pressed("note", "n1")                                  # the service may report it already
+    assert (await box.press("note", "n1", "f1", 10)).code == "busy"
+    assert box.was_pressed("note", "n1")
+    gate.set()
+    assert (await first).ok and box.was_pressed("note", "n1")
+
+
+@pytest.mark.asyncio
+async def test_a_refused_press_does_not_make_a_send_by_another_way_look_pressed(home):
+    from bombadil.mail.watch import Says
+    from bombadil.notices import Notices
+    box = Outbox({"mail": Doing(PressResult(False, "That is not what the view showed.", code="changed"))})
+    await box.press("mail", "d1", "f1", 10)
+    heard = []
+    notices = Notices(heard.append)
+    Says(notices, box, None, None, None).sent({**RECEIPT, "draft": "d1"})
+    [said] = [m for m in heard if m["type"] == "notice"]
+    assert said["tone"] == "error" and "That was not your press on Send." in said["line"]
+    assert [x["code"] for x in rows()] == ["changed", "no_press"]
+
+
 # -- the log --
 
 @pytest.mark.asyncio
@@ -178,6 +291,51 @@ async def test_the_log_is_rotated_so_a_loop_of_presses_cannot_fill_the_disk(home
     assert len(list(log.parent.glob("presses.jsonl*"))) == 2     # one file kept behind, never more
 
 
+def _mode(path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+@pytest.mark.asyncio
+async def test_the_log_is_the_persons_alone_new_or_already_there(box):
+    await box.press("note", "n1", "f1", 10)
+    assert _mode(paths.press_log()) == 0o600
+    os.chmod(paths.press_log(), 0o644)         # a file an older agentd made
+    await box.press("note", "n2", "f1", 10)
+    assert _mode(paths.press_log()) == 0o600 and len(rows()) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_loop_of_refusals_is_written_once_and_cannot_push_real_presses_out(home, monkeypatch):
+    monkeypatch.setattr(outbox, "LOG_ROTATE_BYTES", 2000)
+    box = Outbox({"note": Doing()})
+    assert (await box.press("note", "n1", "f" * 64, 10)).ok
+    for _ in range(300):
+        assert (await box.press("note", "n1", "f" * 64, None)).code == "no_peer"
+        assert (await box.press("slack", "n1", "f" * 64, 10)).code == "unknown_kind"
+    log = paths.press_log()
+    assert not log.with_name(log.name + ".1").exists()                  # nothing rotated
+    assert [(x["code"], x["pid"]) for x in rows()] == [("", 10), ("no_peer", 0), ("unknown_kind", 10)]
+
+
+@pytest.mark.asyncio
+async def test_the_same_refusal_is_written_again_for_another_process_or_after_a_while(home, monkeypatch):
+    box = Outbox({"note": Doing()})
+    await box.press("note", "n1", "f1", None)
+    await box.press("note", "n1", "f1", None)
+    await box.press("slack", "n1", "f1", 10)
+    await box.press("slack", "n1", "f1", 11)         # another process
+    await box.press("slack", "n1", "f1", 10)
+    assert [(x["code"], x["pid"]) for x in rows()] == [("no_peer", 0), ("unknown_kind", 10), ("unknown_kind", 11)]
+    monkeypatch.setattr(outbox, "REFUSAL_REPEAT_SECONDS", 0.0)
+    await box.press("slack", "n1", "f1", 10)
+    assert len(rows()) == 4
+    # What the service refused is not a loop of the same process's: every one of those stays.
+    refused = Outbox({"note": Doing(PressResult(False, "no", code="changed"))})
+    for _ in range(3):
+        await refused.press("note", "n1", "f1", 10)
+    assert [x["code"] for x in rows()].count("changed") == 3
+
+
 @pytest.mark.asyncio
 async def test_a_log_that_cannot_be_written_never_stops_a_press(home, monkeypatch, capsys):
     monkeypatch.setenv("BOMBADIL_PRESS_LOG", str(home / "a-file" / "presses.jsonl"))
@@ -188,7 +346,7 @@ async def test_a_log_that_cannot_be_written_never_stops_a_press(home, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_press_that_started_here_is_known_and_a_send_nobody_pressed_is_written_down(box):
+async def test_a_press_that_went_is_known_and_a_send_nobody_pressed_is_written_down(box):
     assert not box.was_pressed("note", "n1")
     await box.press("note", "n1", "f1", 10)
     assert box.was_pressed("note", "n1") and not box.was_pressed("note", "n2")
@@ -273,6 +431,11 @@ def test_the_sentence_about_the_press_is_said_once_and_kept(home):
     assert json.loads((paths.state_dir() / "told.json").read_text()).keys() == {"mail-press"}
     outbox._said.clear()             # a new process: only the file remembers
     assert outbox.told_mail_press() == ""
+
+
+def test_what_was_told_is_kept_for_the_person_alone(home):
+    outbox.told_mail_press()
+    assert _mode(paths.state_dir() / "told.json") == 0o600 and not list(paths.state_dir().glob(".told*"))
 
 
 def test_what_is_told_is_kept_beside_what_else_was_told(home):

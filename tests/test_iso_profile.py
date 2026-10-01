@@ -130,6 +130,52 @@ def test_the_mail_skill_reaches_both_clis():
         assert link.is_symlink() and os.readlink(link) == "/usr/share/bombadil/share/skills/bombadil-mail"
 
 
+def _persons_only_ops() -> set[str]:
+    """The ops the mail service refuses to a process inside an agent's turn: those it lists in PERSONS_ONLY and
+    those whose own code asks `_yours` (sending, looking at a draft, adding and removing an account)."""
+    import ast
+    import inspect
+
+    from bombadil.mail import service
+    ops = set(service.PERSONS_ONLY)
+    for node in ast.walk(ast.parse(inspect.getsource(service))):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name.startswith("_op_") and any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and c.func.attr in ("_yours", "_yours_press") for c in ast.walk(node)):
+            ops.add(node.name[4:])
+    return ops
+
+
+def test_the_mail_skill_never_tells_the_agent_to_do_what_only_the_person_may():
+    skill = (ROOT / "share/skills/bombadil-mail/SKILL.md").read_text()
+    persons = _persons_only_ops()
+    assert {"add_account", "remove_account", "send", "set_flags", "draft_discard"} <= persons
+    # The command line's words for the ops that are not their own names.
+    cli = {"add": "add_account", "remove": "remove_account"}
+    for paragraph in skill.split("\n\n"):
+        for sub in re.findall(r"`bombadil mail (\w+)", paragraph):
+            if cli.get(sub, sub) in persons:
+                # Said only as something the person types, never as something to run.
+                assert "themselves" in paragraph or "their own" in paragraph, paragraph
+    # Nor an op by its own name, as a thing to call.
+    assert [op for op in persons if re.search(rf"`{op}\b", skill)] == []
+
+
+def test_the_mail_skill_is_in_the_users_home_on_the_built_image():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert ("check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md "
+            "-a -f /home/user/.agents/skills/bombadil-mail/SKILL.md") in smoke
+
+
+def test_a_dev_session_keeps_all_of_its_mail_in_its_scratch_folder_the_socket_too():
+    # Left at the runtime directory, agentd and the CLI would reach the real service when one runs there (the unit
+    # on an installed Bombadil), and the fake could not start beside it.
+    script = (ROOT / "scripts/dev-session.sh").read_text()
+    for var in ("BOMBADIL_MAIL_DB", "BOMBADIL_MAIL_FILES", "BOMBADIL_PRESS_LOG", "BOMBADIL_MAIL_SOCKET"):
+        assert re.search(rf'{var}="\$mail/[\w.]+"', script), var
+    assert script.index('BOMBADIL_MAIL_SOCKET="$mail') < script.index('"$root/bin/agentd" &')
+
+
 def _lua_string(source: str) -> str:
     return source.encode().decode("unicode_escape")
 
@@ -144,11 +190,19 @@ def test_thunderbirds_windows_go_silently_to_a_workspace_nobody_opens():
     assert workspace == "special:mail-engine silent"
     from bombadil import hypr
     assert "mail-engine" not in hypr.PANELS
-    # Hyprland matches with RE2, where a leading (?i) means "without case".
+    # Hyprland matches with RE2, where a leading (?i) means "without case". `Hyprland --verify-config` only
+    # reads the Lua and does not compile the pattern, so nothing but this checks that RE2 takes it: real RE2 when
+    # it is installed (google-re2), else Python's `re` after refusing what RE2 does not have (look-around, back
+    # references, atomic groups, possessive quantifiers), since `re` would take those and Hyprland would not.
     assert pattern.startswith("(?i)")
-    window = re.compile(pattern[4:], re.IGNORECASE)
-    for cls in ("thunderbird", "Thunderbird", "org.mozilla.thunderbird", "net.thunderbird.Thunderbird",
-                "thunderbird-esr"):
+    try:
+        import re2
+        window = re2.compile(pattern)
+    except ImportError:
+        assert not re.search(r"\(\?<?[=!]|\\[1-9]|\(\?P=|\(\?>|[*+?}]\+", pattern), pattern
+        window = re.compile(pattern[4:], re.IGNORECASE)
+    for cls in ("thunderbird", "Thunderbird", "org.mozilla.thunderbird", "org.mozilla.Thunderbird",
+                "net.thunderbird.Thunderbird", "thunderbird-esr"):
         assert window.fullmatch(cls), cls
     for cls in ("bombadil-browser", "bombadil-app-mail", "foot", "Mail", "my-thunderbird"):
         assert not window.fullmatch(cls), cls
@@ -168,6 +222,7 @@ def test_the_smoke_test_covers_mail_and_parses():
     subprocess.run(["bash", "-n", str(smoke)], check=True)
     text = smoke.read_text()
     for name in ("mail-tools-installed", "mail-unit-enabled", "mail-unit-answers", "mail-engine-window-hidden",
+                 "mail-engine-window-keeps-the-keyboard", "mail-skill-installed",
                  "mail-status", "mail-new-mail-is-a-notice", "mail-notice-on-the-line", "mail-word-opens-window",
                  "mail-window", "mail-unit-restored"):
         assert f"check {name} " in text, name

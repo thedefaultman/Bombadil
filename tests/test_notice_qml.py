@@ -8,10 +8,12 @@ parsed line does. Set BOMBADIL_SCREENS=<dir> to save a picture of each state.
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 
 import pytest
+from qml_theme import THEME
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
@@ -256,7 +258,7 @@ def test_a_warning_stays_ahead_of_news(bar):
     bar.notice(2, "Priya Shah: Launch date", actions=REPLY)
     bar.notice(3, "Leo Park: Quick question", actions=REPLY)
     assert bar.text().startswith("I can't tell") and bar.text("noticeMore") == "+2"
-    assert bar.item("statusLine").property("markEdge").name() == "#c04a4a"
+    assert bar.item("statusLine").property("markEdge").name() == THEME["bad"]
     assert bar.item("statusLine").property("errored") is True
     bar.snap("notice-3-warning")
     bar.notice(4, "That was not your press on Send.", tone="error")
@@ -294,7 +296,7 @@ def test_a_notice_that_comes_while_a_turn_runs_waits_for_it(bar):
     bar.send(kind="status", turn=1, text="Installing ffmpeg", source="step", risk="system", command="sudo pacman -S ffmpeg")
     bar.notice(1, "Priya Shah: Launch date", actions=REPLY)
     assert bar.text() == "Installing ffmpeg" and bar.chips() == []
-    assert bar.item("statusLine").property("edge").name() == "#e8a33d"
+    assert bar.item("statusLine").property("edge").name() == THEME["warn"]
     bar.send(kind="turn_end", turn=1, seconds=3, changed=False, summary="Installed ffmpeg.")
     bar.pill.setProperty("fadeAfter", 200)
     bar.pump(0.8)
@@ -326,7 +328,7 @@ def test_a_notice_does_not_wear_the_last_turns_error_and_its_edge_is_its_own(bar
     bar.send(kind="error", turn=9, text="claude is not logged in.")
     bar.send(kind="result", turn=9, ok=False, text="")
     bar.send(kind="turn_end", turn=9, seconds=1, changed=False)
-    assert bar.item("statusLine").property("markEdge").name() == "#c04a4a"
+    assert bar.item("statusLine").property("markEdge").name() == THEME["bad"]
     bar.call("dismiss")
     bar.notice(1, "Priya Shah: Launch date", actions=REPLY)
     assert bar.pill.property("source") == "error"   # stale, and none of the notice's business
@@ -464,6 +466,157 @@ def test_on_a_narrow_line_the_chips_go_under_the_words_and_still_answer(bar):
     bar.notice(9, "Priya Shah: Launch date", actions=REPLY)
     assert line.property("narrow") is False and bar.items("noticeRow") == []
     assert bar.labels() == ["Reply", "Open"]
+
+
+UNSURE = "I can't tell whether that went. Look in Sent before you press Send again."
+RECEIPT = "Sent to Priya from maya@acme.example · 09:08"
+
+
+def changed_turn(bar):
+    """A turn that changed something: its closing line stays, with Undo, until the next prompt."""
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    assert bar.pill.property("sticky") and bar.text() == "Installed ffmpeg."
+
+
+def test_a_warning_is_read_over_a_closing_line_that_would_stay_for_good(bar):
+    changed_turn(bar)
+    bar.pill.setProperty("fadeAfter", 100)
+    bar.notice(1, UNSURE, tone="error", ttl=0)
+    bar.notice(2, RECEIPT, tone="done", ttl=120)
+    # Not after the line's 12 s: at once, since a sticky line never fades by itself.
+    assert shown(bar) and bar.text() == UNSURE and bar.text("noticeMore") == "+1"
+    assert bar.items("undoButton") == [] and bar.items("detailsButton") == []   # the notice has the line
+    bar.click_item(bar.item("line"))
+    assert not any(m["type"] == "details" for m in bar.sent)   # a tap on a warning is not a tap on the turn
+    bar.away()   # a line under the pointer is kept; once it is gone, the finished line under the warning ages
+    bar.pump(0.6)
+    assert bar.pill.property("mode") == "idle" and shown(bar) and bar.text() == UNSURE
+    bar.click_item(bar.item("noticeDismiss"))
+    assert bar.text() == RECEIPT   # the receipt is next, not the Installed line that already went
+
+
+def test_news_waits_behind_a_sticky_line_and_comes_when_it_gives_way(bar):
+    changed_turn(bar)
+    bar.notice(1, "Priya Shah: Launch date", actions=REPLY)
+    assert not shown(bar) and bar.text() == "Installed ffmpeg." and bar.chips() == []
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(0.8)   # a sticky line with nothing waiting would stay; this one has something waiting
+    assert bar.pill.property("mode") == "idle" and not bar.pill.property("sticky")
+    assert shown(bar) and bar.text() == "Priya Shah: Launch date" and bar.labels() == ["Reply", "Open"]
+
+
+def test_a_sticky_line_with_no_notice_waiting_stays_with_its_undo(bar):
+    changed_turn(bar)
+    bar.pill.setProperty("fadeAfter", 100)
+    bar.pump(0.8)
+    assert bar.pill.property("mode") == "closing" and bar.pill.property("sticky")
+    assert len(bar.items("undoButton")) == 1
+
+
+def test_a_warning_waits_for_a_running_turn_and_is_there_when_it_ends(bar):
+    bar.call("submit", "install ffmpeg")
+    bar.send(kind="turn_start", turn=1, prompt="install ffmpeg")
+    bar.send(kind="status", turn=1, text="Installing ffmpeg", source="step", risk="system", command="sudo pacman -S ffmpeg")
+    bar.notice(1, "That was not your press on Send.", tone="error")
+    assert bar.text() == "Installing ffmpeg" and not shown(bar)   # the step with its command is not covered
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=True, summary="Installed ffmpeg.")
+    assert shown(bar) and bar.text() == "That was not your press on Send."   # no wait for the line to fade
+
+
+def test_a_warning_is_read_over_an_answer_and_over_the_setup_line_and_news_is_not(bar):
+    bar.feed(type="setup", state="signed_out", line="Claude signed you out.", tone="error",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    bar.notice(1, "Priya Shah: Launch date", actions=REPLY)
+    assert not shown(bar) and bar.text() == "Claude signed you out."   # news waits for the machine to be ready
+    bar.notice(2, UNSURE, tone="error")
+    assert bar.text() == UNSURE and bar.pill.property("mode") == "setup"
+    bar.click_item(bar.item("noticeDismiss"))
+    assert bar.text() == "Claude signed you out." and not shown(bar)
+    bar.feed(type="setup", state="ready", line="", tone="done", actions=[])
+    assert bar.text() == "Priya Shah: Launch date"
+    bar.call("submit", "browser")
+    bar.send(kind="local", action="panel", phase="done", ok=True, text="Opened the browser.")
+    assert bar.pill.property("mode") == "local" and not shown(bar)
+    bar.notice(3, UNSURE, tone="error")
+    assert bar.text() == UNSURE and shown(bar)
+
+
+def test_a_chip_the_person_pressed_is_gone_when_agentd_ends_it_though_the_pointer_is_on_it(bar):
+    bar.notice(1, "Leo Park: Quick question", actions=REPLY)
+    bar.notice(2, "Priya Shah: Launch date", actions=REPLY)
+    reply = bar.chips()[0][1]
+    bar.hover(reply)
+    assert bar.pill.property("hovers") == 1
+    bar.click_item(reply)
+    assert bar.sent[-1] == {"type": "notice_action", "id": 2, "action": "reply"}
+    bar.feed(type="notice_end", id=2)   # agentd answered the press and ended it
+    assert bar.lines() == ["Leo Park: Quick question"] and bar.labels() == ["Reply", "Open"]
+    assert bar.pill.property("hovers") == 1   # still over the line, now the next one's
+    # Only a press counts: the one nobody pressed is still kept while it is read.
+    bar.feed(type="notice_end", id=1)
+    assert [n["ended"] for n in bar.notices] == [True] and bar.labels() == []
+    bar.away()
+    assert bar.notices == []
+
+
+def test_a_chip_pressed_before_a_change_is_not_remembered_for_the_changed_notice(bar):
+    bar.notice(1, "Reply to Priya is ready. Sending is yours.", actions=REPLY)
+    bar.hover(bar.chips()[0][1])
+    bar.click_item(bar.chips()[0][1])
+    bar.notice(1, "I could not make that draft.", tone="error", actions=[], at=2000.0)   # the press failed
+    bar.feed(type="notice_end", id=1)   # later, by itself
+    assert [n["ended"] for n in bar.notices] == [True]   # read until the pointer leaves, as any other
+    bar.away()
+    assert bar.notices == []
+
+
+def test_the_pointer_over_anything_else_on_the_stage_keeps_an_ended_notice_too(bar):
+    bar.notice(1, "Priya Shah: Launch date", actions=REPLY)
+    bar.pill.setProperty("hovers", 1)   # what a picture above the line adds: the count is the stage's, not the line's
+    bar.feed(type="notice_end", id=1)
+    assert bar.lines() == ["Priya Shah: Launch date"] and bar.labels() == []
+    bar.pill.setProperty("hovers", 0)
+    bar.pump()
+    assert bar.notices == []
+
+
+def test_a_line_with_nothing_to_say_is_no_notice(bar):
+    bar.feed(type="notice", id=1, line="  \u202e \n\t\u2066 ", tone="ask", actions=REPLY)
+    bar.feed(type="notice", id=2, line="", tone="ask", actions=REPLY)
+    bar.feed(type="notice", id=3, line=None, tone="ask", actions=REPLY)
+    assert bar.notices == [] and not shown(bar)
+    bar.notice(4, "Priya Shah: Launch date", actions=REPLY)
+    bar.feed(type="notice", id=4, line="\u202e", tone="error", actions=[])   # a change that says nothing
+    assert bar.lines() == ["Priya Shah: Launch date"]   # leaves what was said
+
+
+def test_an_id_is_a_number_whichever_way_it_comes(bar):
+    bar.feed(type="notice", id="5", line="Priya Shah: Launch date", tone="ask", actions=REPLY)
+    assert [n["id"] for n in bar.notices] == [5]
+    bar.feed(type="notice_end", id="5")
+    assert bar.notices == []
+    bar.notice(6, "Leo Park: Quick question")
+    bar.feed(type="notice_end", id="not a number")
+    bar.feed(type="notice_end")
+    assert [n["id"] for n in bar.notices] == [6]
+
+
+def test_the_shell_serves_the_line_to_the_smoke_and_takes_a_notice_by_ipc_only_for_a_test():
+    shell = (SHELL / "shell.qml").read_text()
+    # The VM smoke and the desktop test read the line through this; the offscreen harness has no Quickshell.
+    assert re.search(r'target: "line"[^}]*function state\(\): string \{ return JSON.stringify\(pillState.snapshot\(\)\) \}', shell)
+    # Anything of the person's, an agent's shell included, can call `desk inject`: it may not forge or end a notice.
+    inject = shell[shell.index("function inject("):]
+    inject = inject[:inject.index("\n        }\n") + 1]
+    assert 'startsWith("notice")' in inject and 'Quickshell.env("BOMBADIL_BAR_INJECT") !== "1"' in inject
+    assert inject.index("return") < inject.index("root.handle(message)")
+    assert 'BOMBADIL_BAR_INJECT="1"' in (Path(__file__).parent / "desktop/driver.py").read_text()
+    # And nothing on the image sets it.
+    iso = SHELL.parent / "iso"
+    assert [str(f) for f in iso.rglob("*") if f.is_file() and not f.is_symlink() and f.stat().st_size < 1 << 20
+            and "BOMBADIL_BAR_INJECT" in f.read_text(errors="ignore")] == []
 
 
 def test_the_bar_loads_without_qml_warnings(bar):

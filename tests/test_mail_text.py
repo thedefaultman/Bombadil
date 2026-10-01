@@ -1,6 +1,7 @@
 """mail/text.py: HTML that hides things, file names that escape, and paths that must never go out."""
 
 import os
+import time
 
 import pytest
 
@@ -155,6 +156,71 @@ def test_a_huge_mail_is_cut_at_the_limit_and_does_not_take_long():
     html = "<p>" + "word " * 2_000_000 + "</p>"
     got = text.html_to_text(html, limit=1000)
     assert 900 < len(got) <= 1000
+
+
+# Markup that never closes is quadratic in html.parser, and a mail may be nothing else: each of these took
+# 8 to 27 s on the loop before the conversion had a budget.
+HOSTILE_HTML = {
+    "open attribute": lambda n: "<a href=" * (n // 8),
+    "attributes": lambda n: "<div " + 'a="b" ' * (n // 6) + ">",
+    "angle brackets": lambda n: "<" * n,
+    "one long tag": lambda n: "<p " + "a=b " * (n // 4) + ">",
+    "many tags": lambda n: "<b>x</b>" * (n // 8),
+    "many links": lambda n: '<a href="http://x.example/">y</a>' * (n // 34),
+    "a comment": lambda n: "<!--" + "-" * n,
+}
+
+
+@pytest.mark.parametrize("name", list(HOSTILE_HTML))
+@pytest.mark.parametrize("size", [1 << 20, 4 << 20])
+def test_markup_made_to_be_slow_is_given_up_on_in_about_a_second(name, size):
+    html = HOSTILE_HTML[name](size)
+    start = time.perf_counter()
+    got, partial = text.convert(html)
+    took = time.perf_counter() - start
+    assert took < 4.0, f"{name} took {took:.1f} s"
+    assert isinstance(got, str) and len(got) <= text.MAX_TEXT
+    if size > text.MAX_HTML:
+        assert partial is True   # more than a mail can hold: the caller is told it is not all there
+
+
+def test_the_time_a_conversion_may_take_is_the_budget_it_is_given():
+    html = "<b>x</b>" * 100_000
+    start = time.perf_counter()
+    got, partial = text.convert(html, budget=0.05)
+    assert time.perf_counter() - start < 1.0
+    assert partial and 0 < len(got) < 100_000   # what it had by then
+
+
+def test_an_ordinary_mail_is_not_partial_and_is_not_cut():
+    got, partial = text.convert("<p>Hello</p><p>Bye</p>")
+    assert (got, partial) == ("Hello\n\nBye", False)
+    assert text.body_text("", "<p>Hello</p>") == ("Hello", False)
+
+
+def test_text_that_is_all_white_space_is_counted_before_it_is_collapsed():
+    # a million spaces in a thousand pieces would otherwise never add up to a line
+    html = "<p>a" + ("<i> </i>" * 100_000) + "<p>b</p>"           # under the cap on HTML, so only the count can stop it
+    assert len(html) < text.MAX_HTML
+    start = time.perf_counter()
+    got, partial = text.convert(html, limit=100)
+    assert time.perf_counter() - start < 4.0
+    assert got == "a" and partial                                  # "b" was not reached, and that is said
+
+
+def test_html_over_the_cap_is_cut_and_says_so():
+    html = "<p>start</p>" + " " * text.MAX_HTML + "<p>never seen</p>"
+    got, partial = text.convert(html)
+    assert got == "start" and partial is True
+
+
+def test_a_huge_plain_part_is_looked_at_at_the_front_only():
+    plain = "line of a mail\n" * 4_000_000   # 60 MB
+    start = time.perf_counter()
+    got, cut = text.body_text(plain, None)
+    assert time.perf_counter() - start < 1.0
+    assert cut is True and len(got) == text.MAX_TEXT and got.startswith("line of a mail\nline")
+    assert text.body_text("short\r\nmail\x00", None) == ("short\nmail", False)
 
 
 def test_garbage_markup_is_a_string_and_not_an_exception():

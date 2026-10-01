@@ -53,9 +53,12 @@ line, agentd's pokes give up after 0.3 s, and a turn never blocks on Thunderbird
 | `~/.mozilla/native-messaging-hosts/bombadil_mail.json` | - | host manifest, written by the service at start |
 
 All of it is the person's alone: `mail.db` and its `-wal` and `-shm`, `presses.jsonl` and `mail.sock` are
-0600, `drafts/<id>/` is 0700 with 0600 files. `mail.db.lock` is held with `flock` for as long as a service
-runs, so a second `bombadil-mail` on the same `mail.db` says so on stderr and exits 1 and the first is not
-disturbed; the socket of one that died is replaced, and a service that stops removes only its own.
+0600, `drafts/<id>/` is 0700 with 0600 files. `mail.db.lock` and `mail.sock.lock` are held with `flock` for as
+long as a service runs, so a second `bombadil-mail` on the same `mail.db`, or on the same socket with notes of
+its own (a dev session that forgot to say where its socket is), says so on stderr and exits 1 and the first is
+not disturbed and is still reachable; the socket of one that died is replaced, and a service that stops
+removes only its own. Attachment copies are kept under a cap: 1 GiB for all open drafts together and 256 MiB
+for the drafts the agent made (a file that would go over is refused, `refused`, and nothing is kept).
 
 `mail.db` is a cache, and the one thing in it that cannot be made again is the person's work, so it is
 looked after: a file that is not a database, fails SQLite's check at start, or turns out damaged while
@@ -88,8 +91,12 @@ in the service's log).
 - **A connection is served in order**, one request at a time. A `send` holds its connection until it is
   answered (up to 60 s, so give it a timeout of at least 70 s), and what must not wait for it, such as
   the window's lists while a press is going, goes over another connection. At most 64 connections are
-  served, and one from another user (root apart) is closed at once. A client that stops reading is dropped: more than
-  4 MiB queued for it, or an answer it did not take in 10 s, closes its socket, and nobody else waits.
+  served, of which at most 8 may be a process inside an agent's turn (the rest are the person's windows and
+  agentd's, which a turn cannot crowd out), and one from another user (root apart) is closed at once. A
+  connection that says nothing for 10 minutes, or stops half way through a line, is closed, unless it is a
+  window that has subscribed and waits for pushes (an agent's subscription is not one). A client that stops
+  reading is dropped: more than 4 MiB queued for it, or an answer it did not take in 10 s, closes its socket,
+  and nobody else waits.
 - **Text goes as text.** A draft's body is at most 500 000 characters and 600 000 bytes, and a request line
   at most 1 MiB, so a client writes UTF-8 as it is (`client.py` does) and not as `\u` escapes, which would
   make a long draft in another script six times as long. A line that is not JSON, not an object, or has no
@@ -97,7 +104,12 @@ in the service's log).
   `bad_request` and closed.
 - **Who is asking.** The service asks the kernel which process is on the other end (`SO_PEERCRED`) and
   `procs.cgroup_of` whether it is inside an agent turn's scope, for every request, so a process that joins
-  a turn after it connected is caught. Such a process may `ping`, `status`, `accounts`, `views`, `list`,
+  a turn after it connected is caught. It fails closed: a peer the kernel cannot name (pid 0, another pid
+  namespace) or that has gone since it connected is treated as inside a turn, because a socket outlives the
+  process that made it (a process in a turn can connect, give the socket to a child and exit, and the child
+  is still in the turn). Whether the process is alive is asked of a pidfd (`SO_PEERPIDFD`, Linux 6.5), which
+  is not fooled by a number that was given to someone else, and of `/proc/<pid>` where the kernel has none.
+  Such a process may `ping`, `status`, `accounts`, `views`, `list`,
   `search`, `read`, `mark_reply`, `draft`, `draft_edit`, `draft_get`, `known`, `show`, `recent` and
   `subscribe`, and is refused (`refused`) `send` (a press), `draft_shown`, `add_account`,
   `remove_account`, `set_flags`, `archive`, `trash`, `save_attachment`, `draft_discard`, `engine_window`
@@ -137,12 +149,12 @@ q@acme.example"` or a list of strings and Addr objects, at most 100 after duplic
 | `views` | | `{views: [{id, name, count, state}]}`: `all`, `acct:<id>` for each account, `needs_reply`, `drafts` |
 | `list` | `view?` (`all`, default), `limit?` (50, at most 200), `cursor?` | `drafts`: a **bare list** of Draft, newest first. Any other view: `{view, messages: [Msg], cursor: str\|null, more, skipped: [{account, state, note, web}]}`; `skipped` names the accounts that were not read (signing in, blocked, in error, not set up yet) and says why; `cursor` is opaque, and a page at the same second as the next is not lost or repeated. `engine_down` when Thunderbird is not answering |
 | `search` | `text?, from?, account?, unread?, since? (epoch s or "2026-09-28"), limit?` (20, at most 100) | `{messages: [Msg]}`, inbox, archive, sent and other folders, newest first |
-| `read` | `id` | `{message: Msg, text, truncated, html_only, attachments: [{part, name, content_type, size, inline}], reply_to: [Addr], web_url}`; the text is cut at 20 000 characters, and comes from the HTML (hidden text dropped, links shown with their target) only when there is no plain part; nothing is marked read |
+| `read` | `id` | `{message: Msg, text, truncated, html_only, attachments: [{part, name, content_type, size, inline}], reply_to: [Addr], web_url}`; the text is cut at 200 000 characters here (the agent's tool cuts it again at 20 000), `truncated` says so, and it comes from the HTML (hidden text dropped, links shown with their target) only when there is no plain part; an HTML part is read for at most 1 MiB and about 1 s, so mail made to be slow to read gives what was read, `truncated`; nothing is marked read |
 | `set_flags` | `id, read?, flagged?` | `{}` |
 | `archive`, `trash` | `id` | `{}`; the mail no longer needs a reply |
-| `mark_reply` | `id, needs, why?` (one line, 140 characters) | `{id, needs_reply, why}`; the sender, subject and time are kept, never the text |
+| `mark_reply` | `id, needs, why?` (one line; a longer one is cut to 140 characters, not refused) | `{id, needs_reply, why}`; the sender, subject and time are kept, never the text. `needs: false` only clears the note, so it works with Thunderbird down and without looking at the mail |
 | `save_attachment` | `id, part, dir?` | `{path, name, size, from, subject, ts}`. Into `~/Downloads`, or into `dir` (a whole path to a folder that exists); never over a file that is there (`name (1).pdf`), never through a link, never into a folder that holds keys or Bombadil's own state (`refused`), under a name made safe |
-| `draft` | `kind?: "new"\|"reply"\|"reply_all"\|"forward"`, `reply_to?: Msg id`, `to?, cc?, bcc?, subject?, body?, attachments?: [path \| {path, name}]` (at most 20 files of 25 MB), `account?`, `created_by?`, `typed?`, `tainted?` | Draft. A reply is addressed from the mail (its Reply-To, else its sender; a reply to all adds the others; one to the person's own mail goes to whom it was sent) unless `to`/`cc` are given; a forward has nobody |
+| `draft` | `kind?: "new"\|"reply"\|"reply_all"\|"forward"`, `reply_to?: Msg id`, `to?, cc?, bcc?, subject?, body?, attachments?: [path \| {path, name}]` (at most 20 files of 25 MB), `account?`, `created_by?`, `typed?`, `tainted?` | Draft. At most 200 drafts are open, of which at most 20 may be the agent's, and the copies of attached files kept for open drafts are at most 1 GiB, of which at most 256 MiB the agent's (`refused`, with a sentence, past them: what the agent makes cannot use up the person's room). A reply is addressed from the mail (its Reply-To, else its sender; a reply to all adds the others; one to the person's own mail goes to whom it was sent) unless `to`/`cc` are given; a forward has nobody |
 | `draft_edit` | `id, to?, cc?, bcc?, subject?, body?, add_attachments?, remove_attachments?: [name], typed?, tainted?` | Draft; works on `open` and `unknown` drafts only; an edit that fails changes nothing, copies included |
 | `draft_get` | `id` | Draft |
 | `draft_discard` | `id` | `{}`; refused if a press began in the same moment |
@@ -186,17 +198,26 @@ press on the Send button the view shows, for exactly what the view showed:
 3. The press is `{"type": "press", "kind": "mail", "id": draft, "fingerprint": fp}` to agentd (and
    `"again": true` only for a draft whose send was `unknown`, which the person chose to press again).
    agentd refuses a press from a process inside an agent turn's scope (`procs.cgroup_of`) or in the
-   running turn's process tree (a turn with no scope), and one whose peer it cannot name (`SO_PEERCRED`;
-   it fails closed). It logs the press, calls the service's `send` once, and answers the sender with
+   running turn's process tree (a turn with no scope), one whose peer it cannot name (`SO_PEERCRED`) and
+   one that has gone (exited, a zombie, or no longer in `/proc`): it fails closed, and what it could not
+   look at is the agent's. It looks twice, when the connection is made (the verdict is kept with the
+   connection and handed to `Outbox.press` as `was_agent`) and again at the press, and either one refusing
+   refuses (code `agent`, "That is not something I send. Nothing was sent."), because `SO_PEERCRED` names
+   whoever called `connect()`, not whoever holds the socket now. It logs the press, calls the service's `send` once, and answers the sender with
    `press_result` (below). The service's own `send` (it asks the kernel who is calling, as agentd does,
-   and refuses a process inside an agent turn's scope with `refused` and a row `{"src": "mail", "code":
-   "agent"}` in the press log, whatever else it says) refuses unless the stored fingerprint, the pressed
+   and refuses a process inside an agent turn's scope, or one that cannot be named or has gone since it
+   connected, with `refused` and a row `{"src": "mail", "code": "agent"}` in the press log, whatever else
+   it says; a flood of such presses is one row every 10 s with `"more": n` for the rest, so it cannot push
+   out the rows before it) refuses unless the stored fingerprint, the pressed
    one, the one the window reported shown and one worked out again from the draft all agree, the draft is
    `open` (or `unknown` with `again`, below), there is a recipient, every attachment's copy still has the
    size and SHA-256 it had (the bytes that were checked are the bytes that are sent: they are read once
    into memory, and the person's original file is never looked at again), the size is under the provider's
    limit (`too_big`) and Thunderbird is there (`engine_down`: nothing was written, and the draft stays
-   open). Then one `UPDATE` moves the draft to `sending` only if it is still open, still has the pressed
+   open). The attachments are given to Thunderbird first, all of them within 8 s, or nothing is sent and
+   the draft stays open ("Nothing was sent."): that and the 60 s that Thunderbird has for the send itself
+   are what keep a press inside the 70 s agentd waits for it. Then one `UPDATE` moves the draft to
+   `sending` only if it is still open, still has the pressed
    fingerprint and is still shown with it, so an edit, a discard or a second press in the moments
    between the checks and the write loses; the write is made durable (`synchronous=FULL`) before the
    engine is asked. A press for a draft that was sent is answered with its receipt and `already: true`.
@@ -208,27 +229,47 @@ press on the Send button the view shows, for exactly what the view showed:
    an `unknown` draft is refused (`unknown_outcome`) until the person presses with `again: true`, and an
    edit to it still has to be shown before that press. Pressing twice sends once: a press that finds one
    for the same draft going gets that one's answer, and one with another fingerprint is `changed`. After
-   a send the draft is `sent` with a receipt, the mail it answered no longer needs a reply, the addresses
-   are ones the person has written to, the attachment copies are deleted and a `sent` push goes out.
+   a send the draft is `sent` with a receipt, the mail it answered (a reply or a reply to all: a forward
+   answers nobody) no longer needs a reply, the addresses are ones the person has written to, the attachment
+   copies are deleted and a `sent` push goes out. Once Thunderbird has said the message went, nothing fails
+   the press: a receipt that cannot be made from what the add-on said is made without its message id, notes
+   that cannot be written are tried again and then at least the draft is marked `sent` (else `sending` would
+   be called `unknown` at the next start and `again` could send it twice), and the answer is the receipt.
    The service writes to the press log only the presses it refused for being in an agent's turn and
    the sends it found lost at start; the log of each press is agentd's.
 5. A typed "send it" does nothing but say that sending is yours and where the button is (choice 1a):
-   the launcher's word table answers it, and only when agentd finds an open draft waiting (asked of the
-   service, waiting at most a second); with no draft, or a question ("send it?"), it is the model's
-   like any other words.
+   the launcher's word table answers it ("send", "send it", "send that", "send this", with up to four
+   words of filler around them: "ok send it", "please send it now", "yes, send it."), and only when
+   agentd finds an open draft waiting (the newest `open` one of the service's `list drafts`, a bare list,
+   asked for at most a second); it then brings the Mail window in on that draft (`show {view: "drafts",
+   id}`) so the button is in front of the person. With no draft, or a question ("send it?"), or a send
+   with more in it ("send it to Priya"), it is the model's like any other words.
 
 This is a rule with a check, not yet a wall: the agent runs as the person, with a shell and sudo, and
 could in principle write to `mail.sock` or read Thunderbird's profile. The brief's hardening order
 (bombadil-connect as its own user, agentd accepting presses only from the shell's own process, the sudo
 question) is what turns it into a wall. Bypasses that agentd cannot close from where it stands: a process
 the agent starts with `systemd-run --user` is in no turn scope and no process tree, and so is a write
-straight to `mail.sock` (the service's own check sees the same scope agentd's does, so it closes the
-same ones and no more: such a process can press, and can say `engine_hello` and be "Thunderbird");
-an app of the person's own called `mail` (`~/Apps/mail`) would be run by
-`apps.app_dir` in place of the real window (the launcher refuses to open it, but `apps.py` is not
-agentd's). The press log (`presses.jsonl`) holds both writers' rows: agentd's with `"src": "agentd"`,
+straight to `mail.sock` (the service's own check is the peer's cgroup, and that the peer is still there:
+it closes the same ones and no more, so such a process can press, and can say `engine_hello` and be
+"Thunderbird"). The service has no view of the running turn's process tree, which agentd has, so where turns
+have no systemd scope (`BOMBADIL_NO_SCOPE=1`, no systemd user session, cgroup v1) it refuses nothing, says so
+once in its log at start, and agentd's check is the only one. Closed in agentd (not by the
+service's own check, which should do the same for a peer that has gone): `Outbox.from_agent` names the
+peer by the number `SO_PEERCRED` recorded, and a process in a turn that connects to agentd, gives the socket
+to a child and exits would press with a number that is gone, which is in no scope; a gone number is
+treated as inside a turn, and the connect-time verdict is kept (above). An app of the person's own called
+`mail` (`~/Apps/mail`) would be run by `apps.app_dir` in place of the real window: the launcher answers
+the mail words before the person's own apps and refuses to open that app, but `open_app`, `show_app` and
+`bombadil-app run mail` do not go through the launcher, and `apps.py` (not agentd's) should reserve the
+name. The press log (`presses.jsonl`, and `told.json`, mode 0600) holds both writers' rows: agentd's with `"src": "agentd"`,
 the service's with `"src": "mail"`; a send the service reports that no press of agentd's started is
-written with code `no_press` and said on the pill ("That was not your press on Send.").
+written with code `no_press` and said on the pill ("That was not your press on Send."). "Was this
+pressed" is a press in flight, one the service answered (it went, or it could not say: `unknown_outcome`,
+`error`) or one cut off before it was answered; a refusal (`changed`, `refused`, `engine_down`, `agent`, ...) is not remembered, so a send that
+follows a refused press is still told apart from one nobody pressed. Refusals that only repeat (`agent`,
+`no_peer`, `bad_request`, `unknown_kind`, `busy`) are written once per pid and code in 5 s, so a flood
+of them cannot turn the log over.
 
 ## Agent tools
 
@@ -242,14 +283,17 @@ travels on this line as `mail` (the tool's `id` argument); ops are `search`, `re
   rows between the same marks as a read (the ids are copied from the mail, so they are its words too).
 - `mail_read {id}`: the text between marks that carry a random word per read ("Other people's words
   begin (a1b2c3d4e5f6)"), cut at 20 000 characters inside them and said; control and bidi characters are
-  stripped. The turn is marked as having read mail, and so is a `mail_search` that found some (the
+  stripped, and so are the tag characters (U+E0000-E007F) and variation selectors (U+E0100-E01EF) that
+  spell text no one can see. The turn is marked as having read mail, and so is a `mail_search` that found some (the
   senders and subjects are other people's words too); the mark stays with the conversation the turn
   resumes into, since the model still has the text, and ends with a new conversation. Reading leaves the mail unread.
 - `mail_mark {id, needs_reply, why}`: fills Needs a reply; `why` is one line under 140 characters.
 - `mail_draft {reply_to? | to, subject, body, cc?, attachments?, account?}`: a draft in the view, which
   opens on it, and a notice above the pill ("Reply to Priya is ready. Sending is yours."). agentd adds
-  `created_by: "agent"`, `typed` (the words the person typed for this turn, none for a coding session's
-  turn) and `tainted` (the turn, or the conversation it resumes, has read mail) for the service's address
+  `created_by: "agent"`, `typed` (the words the person typed for this turn, and only those: not the `[Screen]` block of the "this"
+  chip nor a `[asked by ..., untrusted]` request, and none for a turn a coding session asked for or one
+  a process of a running turn asked for; agentd marks that prompt `asked_by: "agent"` when the peer is in
+  a turn's scope or process tree, is gone, or cannot be named) and `tainted` (the turn, or the conversation it resumes, has read mail) for the service's address
   check. The first draft a
   person gets also says, once on this machine (`told.json`), that the agent never presses Send.
   Attachments come from paths; credentials-shaped paths are refused. Recipients the person's words and
@@ -257,9 +301,20 @@ travels on this line as `mail` (the tool's `id` argument); ops are `search`, `re
   (more strongly when the turn had read mail).
 - `mail_show {view?, id?}`: slide the Mail window in on a view.
 
+Mail text is never written by Bombadil. The `tool_result` of `mail_read` and `mail_search` (Claude's
+`mcp__*__mail_read` and `mail_search`, Codex's the same) is replaced by `[mail text not kept]` before it
+reaches a turn log (`turns/*.jsonl`), the narrator or any client; an error is kept, since it is the
+service's own sentence. Not closed: the model's own final text can still quote what it read, and so is in the
+turn log; and mail read through `bombadil mail` or `mail.sock` instead of the tools does not taint the turn
+(it needs a marker from the service: the service cannot tell agentd who read what).
+
 ## agentd: the pill's notices, the press and what it watches
 
-Messages on agentd's own socket (docs in `agentd.py`'s header):
+Messages on agentd's own socket (docs in `agentd.py`'s header). A line is at most 4 MiB (`agentd.LINE_LIMIT`,
+room for a draft body of `DRAFT_BODY_MAX` = 100 000 characters even when every one is escaped, 12 bytes for an
+emoji): a longer one ends that connection and no other. os-mcp writes its requests with the characters as
+they are (`ensure_ascii` off, and an escaped fallback for a lone surrogate), so a long draft in Cyrillic or
+emoji is a third of that.
 
 - `{"type": "notice", "id", "source": "mail", "line", "tone": "step"|"ask"|"done"|"error", "actions":
   [{"id", "label", "style": "primary"|"quiet"}], "ttl", "at"}`: a line above the pill, sent to every client
@@ -267,10 +322,13 @@ Messages on agentd's own socket (docs in `agentd.py`'s header):
   (the oldest that is not an error goes, so news cannot push off a warning); `ttl` 0 waits, else it ends by itself. `{"type": "notice_end", "id"}` says it is gone.
 - Client to agentd: `{"type": "notice_action", "id", "action"}` (a chip; the notice ends unless the action
   failed or changed it, and a failure is said on the notice itself) and `{"type": "notice_dismiss", "id"}`.
-  Both are refused, like a press, to a process inside an agent's turn or one agentd cannot name: Reply
+  Both are refused, like a press, to a process inside an agent's turn, one that has gone or one agentd cannot name
+  (the same two looks): Reply
   makes a draft as the person's, and a dismissal would hide what agentd said.
 - `{"type": "press_result", "kind", "id", "ok", "line", "code", "receipt"}`, to the pressing client only.
-  `code` is `""` when it went, else `agent`, `no_peer`, `busy`, `bad_request`, `unknown_kind`, `error`,
+  When a press went, the note the next turn is given ("the person pressed Send: ...") is one line cut at 160
+  characters: the receipt names a recipient as the mail gave it, and a note reaches the model as the user's
+  own word. `code` is `""` when it went, else `agent`, `no_peer`, `busy`, `bad_request`, `unknown_kind`, `error`,
   `unknown_outcome` (said in words: "I can't tell whether that went. Look in Sent before you press Send
   again."), `engine_down`, or the service's own code (`changed`, `refused`, `too_big`, ...). Nothing
   retries.
@@ -280,14 +338,33 @@ What agentd says, from `mail/watch.py`: new mail from a sender the service says 
 shown) and Open; anyone else waits in the view. A draft from the agent is "Reply to Priya is ready.
 Sending is yours." with Open, and stays until that draft is sent (or the person puts it away). A send is
 one receipt ("Sent to Priya from maya@acme.com · 09:08", with "Open in Gmail" when the provider has a
-link), said once whichever of the press's answer and the service's `sent` push arrives first. A `show`
-push brings the Mail window in, unless agentd just did. Mail is optional: with no service agentd retries
+link), said once whichever of the press's answer and the service's `sent` push arrives first (agentd says
+the receipt before it answers the press, every time: a notice is put on the queue of each client at the
+moment it is made, not from a task of its own). A `show`
+push brings the Mail window in, unless agentd just did. One push is dealt with for at most 30 s before
+the next is read; an unexpected error in the watch is logged (its type, never its text) and the watch starts
+again; a request that got no answer from a service that was there says so in words: "Mail did not
+answer in time. It may still have done that, so look in the Mail view before trying again." when it
+wrote something (a draft, a mark) and "Mail did not answer in time. Try again in a moment." when it only
+read, and "Mail is not running yet." only when there was nobody to ask. Mail is optional: with no service agentd retries
 every 5 s and says nothing, and a service silent for 45 s is pinged and, if it does not answer in 10 s,
 reconnected to.
 
-The launcher answers "mail", "email", "inbox" (with open/show/close/hide) itself; `Launcher.open_mail(**show)`
-asks the service to `show` (waiting at most a second) and slides the window in, and `bombadil mail
-[status|accounts|add|remove|views|list|show]` is the same from a terminal, with no send.
+The launcher answers "mail", "email", "inbox" (with open/show/close/hide) itself, and before the person's own
+apps, so a `~/Apps/mail` (or a Postbox or an Inbox) neither stands in front of Mail nor is run in its
+place (opening that app by name is refused with a sentence; Mail is always in the launcher's list, with
+those words, whatever apps are there). `Launcher.open_mail(**show)` asks the service to `show` (waiting at
+most a second) and slides the window in whatever the service says: a service that is not there or says
+no still leaves the window opened. The request is sent with `"id": null`: `client.Connection` otherwise
+numbers every request in `id`, and `show`'s `id` is a mail's, so the service refused each view-only
+`show` ("not found"); a deviation from the client's own rule above that is to go away when the client
+leaves `id` alone for `show`. `bombadil mail [status|accounts|add|remove|views|list|show]` is the same from
+a terminal, with no send. Everything it prints that came from mail (senders, subjects, ids, notes) is cut and
+folded to one plain line, with escape sequences and control characters gone, so a hostile subject cannot
+move a cursor or forge a row; `list` says what was not read ("Not read: <account> <state> <note>", and that
+the Mail window has the rest), `add` says to finish signing in in the Mail window when the service says
+`signin`, and `show` from inside a turn (`BOMBADIL_TURN` set) only asks the service: the window is then
+agentd's to open, so that the turn does not own it.
 
 ## Thunderbird and the add-on
 
@@ -329,8 +406,10 @@ Thunderbird's own message ids are not.
 | `known` | `emails` | `{email: bool}` from the address books and the Sent folders |
 
 `blob` event `{"event": "blob", "xfer", "seq", "data", "last"}` carries an attachment the add-on was asked
-for, in order. Every request has a timeout in the service (10 s for reads, 60 s for `send`, 120 s for an
-attachment); a timed-out `send` is `unknown_outcome`, never retried.
+for, in order. Every request has a timeout in the service (10 s for reads, 4 s for `accounts`, which is
+quick and is asked for by `status`, 60 s for `send`, 120 s for an attachment); a timed-out `send` is
+`unknown_outcome`, never retried. An `accounts` that did not come back is not asked for again for 3 s, so
+a window polling `status` is not held up each time.
 
 What the service holds the add-on to, and what it does when the add-on does not:
 
@@ -339,7 +418,24 @@ What the service holds the add-on to, and what it does when the add-on does not:
   mail is, when the add-on knows better than the domain does) and may carry a `provider` hint (`google`,
   `microsoft`, `icloud`, `imap`) that the service believes only if it is one of those. The service
   takes up accounts it did not know (when its own notes were lost) unless the person removed them on
-  purpose, and ties its own ids (`a1`) to `engine_id`. A `sync` event's `idle` is `ok`.
+  purpose, and ties its own ids (`a1`) to `engine_id`. A `sync` event's `idle` is `ok`. A `web.url` is
+  believed only if it is an `https://` address (a file, a share or an app's own scheme is dropped), and
+  every text the add-on gives is made one line and cut.
+- **Names in `send` are made safe for a header.** A display name that is somebody else's words (a mail's
+  sender) goes to the add-on without what structures an address header (`< > " @ , ; : \ ( ) [ ]`),
+  so it cannot end the name and begin another address; the person's window
+  still shows the name as it was.
+- **A quiet add-on is asked if it is there.** One that has said nothing for 30 s gets an `info`; two
+  unanswered in 5 s each make it a hung program: the link is dropped and Thunderbird is started again (a
+  frame from the dropped link is ignored, and what waited on it fails as above). An add-on that answers
+  is left alone.
+- **The calls on Thunderbird's process** (start, stop, set up an account) have 20 s, and the ones that only
+  ask it something (running? available?) 5 s. A call that does not come back keeps its thread, and the next
+  ones are refused at once ("Thunderbird's controls are stuck in ...") until it does, so a Thunderbird that
+  cannot be controlled is the state `down`, not a service that stops answering. `add_account` and
+  `remove_account` wait for the setting up for 8 s and answer then: what is not done yet goes on, and is
+  logged if it fails. A Thunderbird that is running and connected is `up` again as soon as its controls
+  answer, and one that connected while the service was deciding to start it is never said to be `starting`.
 - **Frames to the add-on are at most 1 000 000 bytes** (Thunderbird refuses more than 1 MiB from a
   native-messaging host), so an attachment goes in `blob` pieces of 384 KiB before the `send` that
   names it, and a `send` whose own words would not fit is `too_big` before anything is written. Frames
@@ -382,8 +478,10 @@ part of it that lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
 **The image.**
 
 - `iso/packages.x86_64` has `thunderbird`. `scripts/build-iso.sh` links `bombadil-mail` and
-  `bombadil-mail-host` into `/usr/local/bin` with the other commands (the native-messaging manifest the
-  service writes points at the host there).
+  `bombadil-mail-host` into `/usr/local/bin` with the other commands, for the PATH. The native-messaging
+  manifest the service writes names the host beside the package's own `bin/` (`engine.host_path`:
+  `/usr/share/bombadil/bin/bombadil-mail-host` on the image) and only falls back to the PATH, so that is the
+  path an installed package has to keep stable, not the link.
 - `bombadil-mail.service` is a user unit (`iso/airootfs/etc/systemd/user/`), enabled by the symlink in
   `default.target.wants`. `Restart=on-failure`, `RestartSec=2`, `StartLimitIntervalSec=0` (nothing depends
   on mail, so it is never given up on), `Nice=5`, and no `After=`: mail never holds the desktop back.
@@ -399,25 +497,48 @@ part of it that lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
   and `thunderbird-esr`, and not `bombadil-app-mail`. `silent` means a Thunderbird window never takes focus
   or shows anything. Every window Thunderbird opens (the main one, a compose window) is caught, which is
   why it is a class rule and not tied to one window. `mail-engine` is not in `hypr.PANELS`: nothing offers,
-  toggles or lists it. `Hyprland --verify-config` accepts the file (checked with Hyprland 0.56.2).
+  toggles or lists it. `Hyprland --verify-config` (Hyprland 0.56.2) only reads the Lua: it printed "config ok"
+  for a pattern that does not compile too, so it says nothing about the regex. What does is real RE2
+  (google-re2), which took the pattern and matched the classes above, and `tests/test_iso_profile.py`, which
+  uses RE2 where it is installed and else refuses the syntax RE2 lacks before trying Python's `re`. Not seen
+  yet: that `silent` leaves the keyboard with the pill when a Thunderbird window maps while the pill holds it
+  (the team's notes say a silent map "hands focus back to the previous window", and whether a layer counts as
+  that is for a real Hyprland to say). The smoke has a step for it, `mail-engine-window-keeps-the-keyboard`,
+  which has not been run.
 - `share/skills/bombadil-mail/SKILL.md` tells the agent how to use the five tools and what it may not do;
   `/etc/skel/.claude/skills/` and `/etc/skel/.agents/skills/` link it, like `bombadil-apps`.
 - `scripts/dev-session.sh` starts the service beside agentd on the fake engine, with a scratch `mail.db`,
-  files folder and press log (so a Bombadil you also use is not touched). `BOMBADIL_MAIL_ENGINE=thunderbird`
-  runs it for real.
+  files folder, press log and socket (so a Bombadil you also use is not touched, and agentd and the CLI do
+  not reach the real service of one). `BOMBADIL_MAIL_ENGINE=thunderbird` runs it for real.
 
 **The notice line** (`shell/PillState.qml`, `StatusLine.qml`, `NoticeChips.qml`).
 
-- `PillState` keeps `notices`, sorted as agentd keeps them (an error first, then the newest), at most eight
-  (agentd's four plus slack), each line cut to 400 characters and made plain text: control and
-  bidirectional characters become a space, and `StatusLine` draws it as `Text.PlainText`. At most three
-  actions per notice, each with a label of at most 40 characters; any style but `primary` is `quiet`.
-- It shows above the pill only while `mode === "idle"` and no `flash`: a turn line, the setup line and an
-  answer to something typed all come first, and the notice returns when they fade. A `notice_end` for the
-  line being hovered keeps it, without its chips, until the pointer leaves (a notice behind it goes at
-  once). A notice has no timer in the bar: `ttl` is agentd's, which ends the notice with `notice_end`, and
-  the line fades out (200 ms). The line timer's own fade (`pill.fade()`, for turn lines) is untouched. A
-  newer notice may take the line under the pointer, which is why a press carries the id it was drawn for.
+- `PillState` keeps `notices`, ordered by the bar itself (errors first, then the newest; agentd keeps them
+  in the order posted), at most eight (agentd's four plus slack), each line cut to 400 characters and made
+  plain text: control and bidirectional characters become a space, and `StatusLine` draws it as
+  `Text.PlainText`. A line with nothing left once that is done is no notice and is ignored. At most three
+  actions per notice, each with a label of at most 40 characters; any style but `primary` is `quiet`. An id
+  is a number, however it comes.
+- News (tone `step`, `ask`, `done`) shows above the pill only while `mode === "idle"` and no `flash`: a turn
+  line, the setup line and an answer to something typed all come first, and the news comes back when they
+  fade. A warning (tone `error`) does not wait for a line that may never go: a finished turn's line stays
+  until the next prompt when it changed something (the sticky line, with Undo) and the setup line stays
+  until the machine can talk, so a warning such as "I can't tell whether that went" would have gone unread
+  and expired. It takes the line from the finished line, an answer and the setup line at once (the setup
+  chips stay under it; the Undo and Details buttons and the tap that opens the details do not show while a
+  notice has the line), and only a turn that is running keeps the line from it, with its step and command in
+  view; the warning is there the moment that turn ends. The line it covered ages under it as it would have.
+  News that waits behind a sticky line ends the stickiness when the line's own time is up (`fadeAfter`), so
+  the line gives way and the news is seen; typing "undo" still undoes. News behind the setup line waits for
+  the machine to be ready, and agentd's `ttl` may end it first (its Mail view has the mail).
+- A `notice_end` for the line being hovered keeps it, without its chips, until the pointer leaves (a notice
+  behind it goes at once), except that agentd ends a notice as it answers a chip: one the person pressed a
+  chip of goes at once, though the pointer is still on it. The count of hovers is the stage's, so the
+  pointer on a picture above the line, or on the same line on another screen, keeps it too. A notice has no
+  timer in the bar: `ttl` is agentd's, which ends the notice with `notice_end`, and the line fades out
+  (200 ms). The line timer's own fade (`pill.fade()`, for turn lines) is untouched, and so is its other
+  condition. A newer notice may take the line under the pointer, which is why a press carries the id it was
+  drawn for.
 - Chips: the primary one has an orange edge, a quiet one a plain edge. Each press sends
   `{"type": "notice_action", "id", "action"}` with its own notice's id (never the id of whichever is on
   the line by then), and hands the keyboard back first (`handOff`), since Reply and Open slide a window
@@ -429,14 +550,26 @@ part of it that lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
   and the cross stay on the first.
 - `quickshell ipc -p shell.qml call line state` prints `{mode, line, flash, noticeShown, notices}` as JSON:
   the VM smoke and the desktop test read the line through it.
+- What the bar's IPC lets a process of the person's do, an agent's shell included (a rule, not a wall, like
+  the press): `line state` gives the senders and subjects of the live notices, which is no wider than
+  `mail.sock`'s `search` and `read` give a process in a turn. `desk inject` feeds the bar a message as agentd
+  would send it, and so could forge the line or send a `notice_end` for a real id, which would take down a
+  warning in the bar while agentd still holds it; it ignores `notice` and `notice_end` unless the bar was
+  started with `BOMBADIL_BAR_INJECT=1` (the desktop test does; nothing on the image sets it). The other kinds
+  it takes (a turn line, the setup line, a card, the desk) are as open as they were before Mail, and so a
+  process can still paint a false line over a real one: the bar's line is not proof of agentd's word. A
+  chip's press is never trusted by the bar's say-so: agentd checks it against its own live notices.
 
 **What checks it.** `tests/test_notice_qml.py` and the additions to `tests/test_pill_qml.py` feed JSON
 through a QML function in an offscreen window; `tests/test_iso_profile.py` reads the package list, the unit,
 the symlinks, the window rule's regex (as RE2 would take it), the build links, the skill links and the
 smoke's check names; `tests/desktop/driver.py` (section 10) runs the real bar in headless sway with notices
-injected, then with the real service on the fake engine and the real agentd; `bombadil-smoke` runs on the
-VM: the unit is enabled, active and answers `bombadil mail status`; a window of class Thunderbird lands on
-`special:mail-engine` and is never active; then the unit is stopped and the service is run on the fake
+injected, then with the real service on the fake engine and the real agentd, then a bar started without
+`BOMBADIL_BAR_INJECT`, which takes no injected notice; `bombadil-smoke` runs on the
+VM: the unit is enabled, active and answers `bombadil mail status`, and the skill is in the home; windows of
+class `Thunderbird` and `org.mozilla.Thunderbird` (any class the rule's pattern takes is held to it) open
+while the pill holds the keyboard, land on `special:mail-engine`, are never active, and the next word
+typed still reaches the pill; then the unit is stopped and the service is run on the fake
 engine (a scratch `mail.db`; no account exists on the image and nothing may reach one) for: accounts listed,
 new mail becomes a notice from agentd and shows on the line, "mail" opens the window without a model, and the
 unit is put back. Not exercised anywhere yet: a real Thunderbird window on a real Hyprland.

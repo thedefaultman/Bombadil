@@ -13,7 +13,8 @@ Why it is shaped the way it is:
 - A request that may have been acted on is told apart from one that never left. A send that the link lost
   after it was written is an `EngineGone` with `sent` true, and the service calls that an unknown outcome,
   where one that never left is simply not done.
-- A host that reconnects replaces the old link, and whatever was waiting on the old one fails at once.
+- A host that reconnects replaces the old link, and whatever was waiting on the old one fails at once: its
+  requests, and the files that were coming over it. Nothing the old connection says after that is believed.
 - Files move in chunks of 384 KiB, one at a time, because a native-messaging frame is limited and one
   huge line would hold everything else up. A file coming in is written to disk as it arrives (never
   held whole), under a size cap and an idle timeout, and its name on disk is made from a hash, because
@@ -108,10 +109,11 @@ class _Conn:
 
 
 class _Incoming:
-    """A file arriving as `blob` events."""
+    """A file arriving as `blob` events, over the connection that was the link when it was asked for."""
 
-    def __init__(self, xfer: str):
+    def __init__(self, xfer: str, conn: _Conn | None):
         self.xfer = xfer
+        self.conn = conn
         digest = hashlib.sha256(xfer.encode("utf-8", "replace")).hexdigest()[:32]
         self.path = paths.mail_files() / "inflight" / f"{digest}.part"
         self.file = None
@@ -126,7 +128,8 @@ class _Incoming:
 
 class EngineLink:
     """The service's side of the engine connection. Public surface, which `fake.FakeEngine` shares:
-    `connected`, `hello`, `on_event`, `on_state`, `request`, `send_blob`, `receive_blob`, `start`, `close`."""
+    `connected`, `hello`, `heard`, `on_event`, `on_state`, `request`, `send_blob`, `receive_blob`, `drop`, `start`,
+    `close`."""
 
     def __init__(self):
         self.on_event = None        # called with each engine event, on the loop: it must not block
@@ -165,6 +168,11 @@ class EngineLink:
         self._state(True)
         return conn.task
 
+    def drop(self, why: str = "The link was dropped.") -> None:
+        """Hang up on the host: what waits on it fails at once. For a Thunderbird that has stopped answering."""
+        if self._conn is not None:
+            self._drop(self._conn, why)
+
     def _drop(self, conn: _Conn, why: str, replaced: bool = False) -> None:
         for fut in conn.pending.values():
             if not fut.done():
@@ -174,10 +182,11 @@ class EngineLink:
             conn.writer.close()
         except (OSError, RuntimeError):
             pass
+        for inc in list(self._incoming.values()):
+            if inc.conn is conn:   # a file that was coming over a link that is gone is not coming
+                self._discard(inc, EngineGone(why, sent=True))
         if self._conn is conn:
             self._conn = None
-            for inc in list(self._incoming.values()):
-                self._discard(inc, EngineGone(why, sent=True))
             if not replaced:
                 self._state(False)
 
@@ -192,7 +201,7 @@ class EngineLink:
         try:
             while True:
                 line = await conn.line()
-                if not line:
+                if not line or self._conn is not conn:   # the end, or a host that was replaced: what it says is moot
                     break
                 try:
                     frame = json.loads(line)
@@ -213,8 +222,10 @@ class EngineLink:
             self._drop(conn, "Thunderbird went away.")
 
     async def _event(self, conn: _Conn, frame: dict) -> None:
+        if self._conn is not conn:
+            return   # a host that has been replaced no longer speaks for Thunderbird
         if frame["event"] == "blob":
-            await self._blob(frame)
+            await self._blob(conn, frame)
             return
         if frame["event"] == "hello":
             self.hello = frame
@@ -295,7 +306,9 @@ class EngineLink:
 
     # -- files in --
 
-    async def _blob(self, frame: dict) -> None:
+    async def _blob(self, conn: _Conn, frame: dict) -> None:
+        if self._conn is not conn:
+            return
         xfer = frame.get("xfer")
         if not isinstance(xfer, str) or not 0 < len(xfer) <= 128:
             return
@@ -305,8 +318,8 @@ class EngineLink:
             if len(self._incoming) >= MAX_XFERS:
                 log("too many files arriving at once; dropping a piece")
                 return
-            inc = self._incoming[xfer] = _Incoming(xfer)
-        if inc.done.is_set():
+            inc = self._incoming[xfer] = _Incoming(xfer, conn)
+        if inc.done.is_set() or inc.conn is not conn:
             return
         try:
             data = frame.get("data")
@@ -337,12 +350,14 @@ class EngineLink:
         mail_files()/inflight; it is the caller's now). Raises EngineError, EngineGone or EngineTimeout."""
         if not isinstance(xfer, str) or not 0 < len(xfer) <= 128:
             raise EngineError(ENGINE_ERROR, "Thunderbird named that file in a way that cannot be used.")
+        if self._conn is None:
+            raise EngineGone("Thunderbird is not connected.")
         self._gc()
         inc = self._incoming.get(xfer)
         if inc is None:
             if len(self._incoming) >= MAX_XFERS:
                 raise EngineError(ENGINE_ERROR, "Too many files are being fetched at once.")
-            inc = self._incoming[xfer] = _Incoming(xfer)
+            inc = self._incoming[xfer] = _Incoming(xfer, self._conn)
         inc.claimed = True
         inc.limit = max_bytes
         if inc.size > inc.limit:
@@ -370,8 +385,8 @@ class EngineLink:
 
     def _discard(self, inc: _Incoming, error: Exception) -> None:
         """End a transfer that will not finish: the partial file goes, and whoever waits is told."""
-        if inc.error is None and not inc.done.is_set():
-            inc.error = error
+        if inc.error is None:
+            inc.error = error   # even for a file that had arrived whole: its path is about to be gone
         if inc.file is not None:
             try:
                 inc.file.close()

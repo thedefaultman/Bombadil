@@ -83,6 +83,19 @@ def test_a_built_in_app_runs_unless_you_have_one_of_that_name(home, tmp_path, mo
     assert (built / "brain" / "main.qml").read_text() == "import QtQuick\nItem {}\n"
 
 
+def test_the_mail_window_cannot_be_replaced_by_an_app_of_the_same_name(home, tmp_path, monkeypatch):
+    built = tmp_path / "builtin"
+    (built / "mail").mkdir(parents=True)
+    (built / "mail" / "main.qml").write_text("import QtQuick\nItem {}\n")
+    monkeypatch.setattr(apps, "builtin_dir", lambda: built)
+    with pytest.raises(ValueError, match="Bombadil's own apps"):
+        apps.create("Mail", "import QtQuick\nRectangle {}\n")
+    # An app dropped into ~/Apps by other means is never the one that runs.
+    (home / "Apps" / "mail").mkdir(parents=True)
+    (home / "Apps" / "mail" / "main.qml").write_text("import QtQuick\nRectangle {}\n")
+    assert apps.app_dir("mail") == built / "mail"
+
+
 def test_a_built_in_apps_saved_state_lives_with_the_other_apps_state(home, tmp_path, monkeypatch):
     from bombadil.appkit import context
     built = tmp_path / "builtin"

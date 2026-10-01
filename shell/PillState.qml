@@ -30,10 +30,14 @@ QtObject {
     // Notices: lines another service says (new mail, a draft that is ready, a receipt), kept by
     // agentd and sent here as "notice" and "notice_end". The newest takes the line while nothing
     // else has it (no turn, no setup, no answer to something typed); a warning stays ahead of news,
-    // as agentd keeps it, so a run of new mail never hides "That was not your press on Send".
+    // so a run of new mail never hides "That was not your press on Send".
+    // A warning also takes the line from a finished turn, an answer and the setup line, which can last
+    // for good (a sticky Undo, a signed-out AI) and so would keep a warning from ever being read; only a
+    // turn that is running keeps the line from it, and the warning is there when it ends. News waits.
     property var notices: []         // [{id, source, line, tone, actions: [{id, label, style, notice}], ttl, at, ended}]
     readonly property var notice: notices.length > 0 ? notices[0] : null
-    readonly property bool noticeShown: notice !== null && mode === "idle" && flash === ""
+    readonly property bool noticeShown: notice !== null && flash === ""
+                                        && (mode === "idle" || (notice.tone === "error" && mode !== "working"))
     readonly property int maxNotices: 8   // agentd keeps four; a number here only guards against a runaway
 
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
@@ -290,6 +294,7 @@ QtObject {
     }
 
     property int _seq: 0
+    property var _acted: ({})        // ids the person pressed a chip of: agentd's end of them is not to be read
 
     // Errors first, then the newest. (`at` is agentd's clock, and a replaced notice carries a new one;
     // `seq` settles a tie by arrival.)
@@ -303,7 +308,10 @@ QtObject {
 
     function _notice(ev) {
         const id = Number(ev.id)
-        if (!isFinite(id) || ev.line === undefined || ev.line === null) return
+        const words = _plain(ev.line, 400)
+        // Nothing to say once the control characters are gone (a mail made of them): not a line.
+        if (!isFinite(id) || words === "") return
+        delete _acted[id]   // changed by agentd, so what was pressed is not this
         const raw = ev.actions || [], actions = []
         for (let i = 0; i < raw.length && actions.length < 3; i++) {
             const a = raw[i]
@@ -311,7 +319,7 @@ QtObject {
             actions.push({ id: a.id, label: _plain(a.label, 40), style: a.style === "primary" ? "primary" : "quiet",
                            notice: id })   // a chip knows whose it is
         }
-        const n = { id: id, source: _plain(ev.source, 40), line: _plain(ev.line, 400),
+        const n = { id: id, source: _plain(ev.source, 40), line: words,
                     tone: ["step", "ask", "done", "error"].indexOf(ev.tone) >= 0 ? ev.tone : "step",
                     actions: actions, ttl: Number(ev.ttl) || 0, at: Number(ev.at) || _now() / 1000,
                     seq: ++_seq, ended: false }
@@ -319,11 +327,15 @@ QtObject {
     }
 
     function _noticeEnd(id) {
+        id = Number(id)   // as _notice took it
         const i = notices.findIndex(n => n.id === id)
+        const acted = _acted[id] === true
+        delete _acted[id]
         if (i < 0) return
-        if (i === 0 && noticeShown && hovers > 0) {
+        if (!acted && i === 0 && noticeShown && hovers > 0) {
             // Being read: it stays until the pointer leaves, as the other lines do, but without its chips,
-            // since agentd has let go of it.
+            // since agentd has let go of it. (Not when the press that ended it was this person's: the pointer
+            // is on the chip they pressed, and nothing is left to read.)
             const kept = notices.slice()
             kept[0] = Object.assign({}, kept[0], { actions: [], ended: true })
             notices = kept
@@ -339,6 +351,10 @@ QtObject {
     function noticeAction(id, action) {
         if (_offline()) return
         handOff()   // Reply and Open slide a window in, and it must be able to take the keyboard
+        // agentd ends the notice as it answers: a notice the pointer is still on goes then, not when it leaves.
+        const acted = {}
+        for (const n of notices) if (n.id === id || _acted[n.id] === true) acted[n.id] = true   // none for a gone one
+        _acted = acted
         outgoing({ type: "notice_action", id: id, action: action })
     }
 
@@ -386,6 +402,7 @@ QtObject {
     // The socket dropped: agentd restarted or died. Its status says what runs when it is back.
     function lost() {
         notices = []   // agentd's own stack died with it; the new one sends what is live
+        _acted = ({})
         connected = false
         busy = false
         optimistic = false

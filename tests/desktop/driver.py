@@ -29,6 +29,7 @@ env = dict(
     WLR_HEADLESS_OUTPUTS="1",
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
+    BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -91,7 +92,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
+bar = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -610,17 +611,20 @@ for nid in (901, 902, 903):
 st = until_state(lambda st: not st.get("notices"))
 check("agentd ending them clears the line", not st.get("notices") and not st.get("noticeShown"), st.get("notices"))
 
+# The fake's drip says Leo, Priya, then two senders nobody knows (no notice), and agentd's watch starts a few
+# seconds after the service: whichever of the two known senders comes first is the first notice.
+KNOWN_SENDERS = ("Leo Park: ", "Priya Shah: ")
 env.update(BOMBADIL_MAIL_ENGINE="fake", BOMBADIL_MAIL_FAKE_DRIP="2")
 mail_proc = start("mail", [str(REPO / "bin" / "bombadil-mail")])
 n = mark()
 got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "mail" and m["id"] != 901, 60, n)
 check("new mail from the fake service reaches the bar's socket as a notice with Reply and Open",
-      got and [a["id"] for a in got["actions"]] == ["reply", "open"] and got["line"].startswith("Leo Park: "), got)
+      got and [a["id"] for a in got["actions"]] == ["reply", "open"] and got["line"].startswith(KNOWN_SENDERS), got)
 st = until_state(lambda st: st.get("noticeShown"), 20)
 time.sleep(0.6)
 shot("29-notice-from-the-mail-service")
 check("and the bar shows that line", st.get("noticeShown") and any(
-    n["line"].startswith("Leo Park: ") for n in st.get("notices", [])), st.get("notices"))
+    n["line"].startswith(KNOWN_SENDERS) for n in st.get("notices", [])), st.get("notices"))
 mail_proc.terminate()   # no more mail; what is live is put away the way the cross does
 live = [n["id"] for n in st.get("notices", [])]
 for nid in live:
@@ -628,6 +632,24 @@ for nid in live:
 ended = wait(lambda m: m.get("type") == "notice_end" and m.get("id") in live, 10, n)
 st = until_state(lambda st: not st.get("notices"))
 check("a dismissal reaches agentd and the line goes", ended and not st.get("notices"), (ended, st.get("notices")))
+
+# `desk inject` is open to any process of the person's, an agent's shell included, so a bar that was not started for
+# a test takes no notice and no end of one from it (the other kinds still go in, as they always did).
+bar.terminate()
+bar.wait(10)
+plain = {k: v for k, v in env.items() if k != "BOMBADIL_BAR_INJECT"}
+with open(OUT / "quickshell-plain.log", "w") as log:
+    plain_bar = subprocess.Popen([str(REPO / "bin" / "bombadil-shell")], env=plain, stdout=log,
+                                 stderr=subprocess.STDOUT)
+procs.append(plain_bar)
+until_state(lambda st: "mode" in st, 30)
+inject({"type": "notice", "id": 950, "source": "mail", "line": "Sent to Priya from maya@acme.example · 09:08",
+        "tone": "done", "actions": [], "ttl": 0, "at": time.time()})
+inject({"type": "notice_end", "id": 950})
+inject({"type": "event", "kind": "local", "action": "panel", "phase": "done", "ok": True, "text": "Opened the browser."})
+st = until_state(lambda st: st.get("line") == "Opened the browser.", 10)
+check("a bar not started for a test takes no injected notice, and still takes the other kinds",
+      st.get("line") == "Opened the browser." and st.get("notices") == [] and not st.get("noticeShown"), st)
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.

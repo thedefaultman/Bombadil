@@ -150,9 +150,18 @@ def _open_regular(path, what: str) -> tuple[int, os.stat_result]:
     return fd, st
 
 
-def copy_attachment(draft_id: str, source, name: str | None, created_by: str) -> dict:
+def _opened(fd: int) -> str | None:
+    """Where the kernel says an open file really is, which no link on the way can change."""
+    try:
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        return None
+
+
+def copy_attachment(draft_id: str, source, name: str | None, created_by: str, room: int | None = None) -> dict:
     """Copy a file into the draft's folder, hashing it as it goes. Returns {name, size, sha256, sensitive}.
-    An agent is refused a file that looks like a secret; a person gets it marked so the draft warns."""
+    An agent is refused a file that looks like a secret; a person gets it marked so the draft warns. `room` is
+    how many bytes of copies the disk may still be given over to, when that is limited."""
     path = Path(os.fspath(source)).expanduser()
     if not path.is_absolute():
         raise Refusal(protocol.BAD_REQUEST, "Give the whole path of the file to attach.")
@@ -164,6 +173,16 @@ def copy_attachment(draft_id: str, source, name: str | None, created_by: str) ->
     shown = target.name or "That"
     src, st = _open_regular(target, f"“{shown}”")
     try:
+        actual = _opened(src)
+        if actual is not None and not sensitive and text.is_sensitive_path(actual):
+            # what was opened is not what was looked at: a folder on the way was made a link after that
+            if created_by != "person":
+                raise Refusal(protocol.REFUSED, f"“{shown}” looks like a key, a password or a sign-in file, "
+                                                "so it is not attached.")
+            sensitive = True
+        if room is not None and st.st_size > room:
+            raise Refusal(protocol.REFUSED, "Too many attachments are waiting in drafts already. Send or put some "
+                                            "away first.")
         if st.st_size > ATTACHMENT_MAX:
             raise Refusal(protocol.TOO_BIG, f"“{shown}” is over {ATTACHMENT_MAX >> 20} MB, the most one "
                                             "attachment can be.")
@@ -181,6 +200,9 @@ def copy_attachment(draft_id: str, source, name: str | None, created_by: str) ->
                             raise Refusal(protocol.REFUSED, f"“{shown}” holds a private key, so it is not attached.")
                         sensitive = True   # a key in a file with an innocent name: the person is told
                     size += len(chunk)
+                    if room is not None and size > room:   # it grew while it was copied
+                        raise Refusal(protocol.REFUSED, "Too many attachments are waiting in drafts already. Send "
+                                                        "or put some away first.")
                     if size > ATTACHMENT_MAX:
                         raise Refusal(protocol.TOO_BIG, f"“{shown}” is over {ATTACHMENT_MAX >> 20} MB, the most "
                                                         "one attachment can be.")

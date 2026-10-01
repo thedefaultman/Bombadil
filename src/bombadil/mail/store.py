@@ -358,8 +358,16 @@ class Store:
             rows = self.db.execute(f"SELECT * FROM drafts WHERE {where} ORDER BY updated DESC, id", args).fetchall()
             return [_draft(r) for r in rows]
 
-    def count_drafts(self) -> int:
-        return self.one("SELECT COUNT(*) AS n FROM drafts WHERE state IN ('open', 'sending', 'unknown')")["n"]
+    def count_drafts(self, created_by: str | None = None) -> int:
+        where, args = (" AND created_by = ?", (created_by,)) if created_by else ("", ())
+        return self.one(f"SELECT COUNT(*) AS n FROM drafts WHERE state IN ('open', 'sending', 'unknown'){where}",
+                        args)["n"]
+
+    def copy_bytes(self, created_by: str | None = None) -> int:
+        """Bytes of attachment copies that drafts still to be sent are holding on disk."""
+        where, args = (" AND created_by = ?", (created_by,)) if created_by else ("", ())
+        rows = self.q(f"SELECT attachments FROM drafts WHERE state IN ('open', 'sending', 'unknown'){where}", args)
+        return sum(int(a["size"]) for r in rows for a in json.loads(r["attachments"]))
 
     def set_state(self, draft_id: str, state: str, now: float, *, was: tuple[str, ...] | None = None) -> bool:
         """Move a draft to a state, only from one of `was` when that is given. False when it was not there."""

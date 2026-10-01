@@ -78,7 +78,10 @@ class StubMail:
     def _run(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._server = self._loop.run_until_complete(asyncio.start_unix_server(self._serve, path=str(self.path)))
+        # A request line is up to a megabyte, as the service takes it (docs/MAIL.md): the default 64 KiB would
+        # hang up on a long draft, which the real service does not.
+        self._server = self._loop.run_until_complete(
+            asyncio.start_unix_server(self._serve, path=str(self.path), limit=1 << 20))
         self._ready.set()
         try:
             self._loop.run_forever()

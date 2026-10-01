@@ -404,6 +404,24 @@ def test_notify_gives_up_on_a_silent_service_in_a_third_of_a_second(serve):
     assert time.monotonic() - started < 1.0
 
 
+def test_connecting_and_waiting_share_one_timeout_in_request_and_so_in_notify(serve, monkeypatch):
+    serve(lambda c, r: None)                     # takes the call and never answers
+    real = socket.socket.connect
+
+    def slow(self, address):
+        time.sleep(0.25)                         # a connect that takes a while
+        return real(self, address)
+    monkeypatch.setattr(socket.socket, "connect", slow)
+    started = time.monotonic()
+    with pytest.raises(MailUnavailable):
+        client.request("ping", 0.4)
+    took = time.monotonic() - started
+    assert 0.35 <= took < 0.55, took             # 0.25 + 0.15, not 0.25 + 0.4
+    started = time.monotonic()
+    assert client.notify("show") is False        # 0.3 s for the poke, connecting included
+    assert time.monotonic() - started < 0.45
+
+
 def test_the_two_failures_are_not_the_same_exception():
     assert not issubclass(MailError, MailUnavailable) and not issubclass(MailUnavailable, MailError)
     assert str(MailUnavailable("x")) == "Mail is not running yet."
