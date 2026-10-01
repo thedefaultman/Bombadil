@@ -39,6 +39,7 @@ flowchart LR
 scripts/build-in-container.sh              # the ISO, in out/
 scripts/test-vm.sh                         # live checks
 MODE=install scripts/test-vm.sh            # live checks, install to a scratch disk, boot it, undo
+MODE=installed scripts/test-vm.sh          # boot the disk the last install run left (the undo's second boot)
 TIMEOUT=5400 MODE=install scripts/test-vm.sh
 ```
 

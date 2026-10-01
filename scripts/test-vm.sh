@@ -4,6 +4,7 @@
 #
 #   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app, sign-in
 #   MODE=install scripts/test-vm.sh   # live checks, install to a scratch disk, boot it, test undo
+#   MODE=installed scripts/test-vm.sh # boot the disk the last install run left (its second boot)
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,6 +77,14 @@ if [[ "$mode" == "install" ]]; then
   # The installed system reboots itself once (the undo applies on boot), so no -no-reboot here.
   MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
   logs=("$out/live-install.serial.log" "$out/installed.serial.log")
+elif [[ "$mode" == "installed" ]]; then
+  # The disk an earlier MODE=install run left: boot it again. For an undo round trip that was cut
+  # short (the emulator died as it rebooted): the system remembers its phase, so this is the
+  # second boot, which checks that the undo took.
+  [[ -f "$disk" ]] || { echo "no $disk: run MODE=install first"; exit 2; }
+  [[ -f "$out/installed.serial.log" ]] && cp "$out/installed.serial.log" "$out/installed-first.serial.log"
+  MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
+  logs=("$out/installed.serial.log")
 else
   MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -boot d -no-reboot
   logs=("$out/live.serial.log")
