@@ -21,6 +21,7 @@ file_permissions=(
   ["/usr/local/bin/bombadil-install"]="0:0:755"
   ["/usr/local/bin/bombadil-smoke"]="0:0:755"
   ["/usr/local/bin/bombadil-rollback"]="0:0:755"
+  ["/usr/local/bin/bombadil-grub-config"]="0:0:755"
   # mkarchiso copies airootfs without modes, so everything we add that runs needs listing here.
   ["/usr/share/bombadil/bin/"]="0:0:755"
   ["/usr/lib/node_modules/@anthropic-ai/"]="0:0:755"

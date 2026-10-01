@@ -74,3 +74,11 @@ def test_the_image_is_built_without_erofs_tail_packing():
 def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
     script = (ISO.parent / "scripts/build-iso.sh").read_text()
     assert "verify_image" in script and "diff -rq" in script
+
+
+def test_every_script_the_image_adds_to_the_path_is_executable():
+    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable.
+    profiledef = (ISO / "profiledef.sh").read_text()
+    listed = set(re.findall(r'\["(/usr/local/bin/[^"]+)"\]="0:0:755"', profiledef))
+    shipped = {f"/usr/local/bin/{p.name}" for p in (ISO / "airootfs/usr/local/bin").iterdir() if p.is_file()}
+    assert shipped <= listed, sorted(shipped - listed)

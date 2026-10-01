@@ -81,6 +81,23 @@ password is not typed a second time), and a **recovery key** (shown once on the 
 in `/var/lib/bombadil/recovery-key`, mode 600, only until it has been shown). The password reaches
 `bombadil-install` only on a file descriptor, never in a file, an argument or the log.
 
+### What GRUB shows
+
+GRUB's screen is the one thing a person sees before Bombadil is up, so it is made like the rest of
+the desk (`docs/design/identity-brief.md`, "Where the mark goes"). The installer puts the theme from
+`share/grub/bombadil/` on the ESP, because `grub.cfg` is read there before the disk is unlocked: the
+ground, the mark, and GRUB's own password line in Inter. It makes the font (`inter-16.pf2`) with
+`grub-mkfont` from the Inter the system has; if that fails, it says so and GRUB keeps its plain
+screen rather than a theme that names a font it does not have. The settings are a drop-in,
+`/etc/default/grub.d/bombadil.cfg`, that switches to the theme only when nothing else chose the
+terminal (the serial line of a test install stays as it is).
+
+`grub.cfg` is written by `bombadil-grub-config`, never by `grub-mkconfig` directly. GRUB's `10_linux`
+echoes "Loading Linux ..." and "Loading initial ramdisk ..." before every kernel and has no switch
+for it, so the script runs `grub-mkconfig` in the C locale (the text the cut looks for is the
+English one) and deletes those two lines from the result. Anything that regenerates `grub.cfg` runs
+the script.
+
 ## The three operations
 
 ```mermaid
@@ -189,9 +206,10 @@ the one place to add a home path that should come along from the stick: add a li
   until the plan has validated it.
 - **Change the layout** only with a new `LAYOUT` number and a migration in the refresh path. An
   installed machine is never reinstalled by an update.
-- **Never** run `btrfs subvolume set-default` or `snapper rollback`, run `grub-mkconfig` from a
-  package script (after an undo before a reboot it would write paths of a root that is no longer
-  there), or format the ESP on a refresh.
+- **Never** run `btrfs subvolume set-default` or `snapper rollback`, run `grub-mkconfig` or
+  `bombadil-grub-config` from a package script (after an undo before a reboot it would write paths
+  of a root that is no longer there), or format the ESP on a refresh. A person who must regenerate
+  `grub.cfg` by hand runs `sudo bombadil-grub-config`.
 
 ## Testing a change
 

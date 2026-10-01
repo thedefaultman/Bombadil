@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BIN = ROOT / "iso/airootfs/usr/local/bin"
 INSTALL = BIN / "bombadil-install"
 ROLLBACK = BIN / "bombadil-rollback"
+GRUB_CONFIG = BIN / "bombadil-grub-config"
 
 
 def sh(script: str, *, env: dict | None = None, path_first: Path | None = None, check: bool = True,
@@ -43,13 +44,13 @@ def shim(directory: Path, name: str, body: str) -> None:
 
 # -- the scripts themselves ------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("script", [INSTALL, ROLLBACK])
+@pytest.mark.parametrize("script", [INSTALL, ROLLBACK, GRUB_CONFIG])
 def test_the_scripts_parse(script):
     subprocess.run(["bash", "-n", str(script)], check=True)
 
 
 @pytest.mark.skipif(not shutil.which("shellcheck"), reason="shellcheck is not installed")
-@pytest.mark.parametrize("script", [INSTALL, ROLLBACK])
+@pytest.mark.parametrize("script", [INSTALL, ROLLBACK, GRUB_CONFIG])
 def test_the_scripts_pass_shellcheck(script):
     subprocess.run(["shellcheck", "-x", str(script)], check=True)
 
@@ -188,6 +189,106 @@ def test_a_test_install_can_show_grub_on_the_serial_line_and_add_kernel_argument
         "BOMBADIL_INSTALL_GRUB_SERIAL": "1", "BOMBADIL_INSTALL_CMDLINE": "bombadil.smoke=layout"})
     assert 'GRUB_TERMINAL_OUTPUT="console serial"' in lines
     assert 'GRUB_CMDLINE_LINUX_DEFAULT="bombadil.smoke=layout loglevel=3 quiet"' in lines
+
+
+# What grub-mkconfig writes for one kernel on Arch (10_linux), trimmed: the two echo lines are the ones cut.
+GENERATED_GRUB_CFG = """\
+menuentry 'Bombadil' --class arch {
+\tload_video
+\tinsmod gzio
+\techo\t'Loading Linux linux ...'
+\tlinux\t/boot/vmlinuz-linux root=UUID=abc rw quiet
+\techo\t'Loading initial ramdisk ...'
+\tinitrd\t/boot/amd-ucode.img /boot/initramfs-linux.img
+}
+if [ "$grub_platform" = "efi" ]; then
+\techo "Loading is not what this line says"
+\tfwsetup --is-supported
+fi
+"""
+
+
+def test_the_loading_lines_are_cut_from_grub_cfg_and_nothing_else(tmp_path):
+    shims = tmp_path / "shims"
+    cfg = tmp_path / "grub.cfg"
+    # The shim stands in for grub-mkconfig: it writes the file named after -o, and notes the locale it ran in.
+    shim(shims, "grub-mkconfig", f'[[ "$1" == -o ]] || exit 3\necho "$LC_ALL" >"{tmp_path}/locale"\n'
+         f'cat >"$2" <<\'EOF\'\n{GENERATED_GRUB_CFG}EOF')
+    r = subprocess.run(["bash", str(GRUB_CONFIG)], capture_output=True, text=True,
+                       env={"PATH": f"{shims}:/usr/bin:/bin", "BOMBADIL_GRUB_CFG": str(cfg), "LC_ALL": "de_DE.UTF-8"})
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "locale").read_text().strip() == "C"   # the text the cut looks for is the English one
+    text = cfg.read_text()
+    assert "Loading Linux" not in text and "Loading initial ramdisk" not in text
+    assert len(text.splitlines()) == len(GENERATED_GRUB_CFG.splitlines()) - 2
+    for kept in ("linux\t/boot/vmlinuz-linux", "initrd\t/boot/amd-ucode.img", "load_video", "Loading is not what",
+                 "fwsetup --is-supported"):
+        assert kept in text, kept
+
+
+def test_a_failed_grub_mkconfig_is_not_covered_up(tmp_path):
+    shims = tmp_path / "shims"
+    shim(shims, "grub-mkconfig", "exit 1")
+    r = subprocess.run(["bash", str(GRUB_CONFIG)], capture_output=True, text=True,
+                       env={"PATH": f"{shims}:/usr/bin:/bin", "BOMBADIL_GRUB_CFG": str(tmp_path / "grub.cfg")})
+    assert r.returncode != 0
+
+
+def test_the_installer_writes_grub_cfg_with_the_script_that_cuts_the_loading_lines():
+    boot = sh("declare -f boot").stdout
+    assert "bombadil-grub-config" in boot and "grub-mkconfig" not in boot
+
+
+def theme_target(tmp_path, *, font_works: bool = True):
+    """A target tree, and the shell that stands in for the chroot: fc-match finds a font file and grub-mkfont
+    writes the .pf2 named after -o inside the target (or fails)."""
+    target = tmp_path / "target"
+    target.mkdir()
+    chroot = (
+        'chroot_run() { local cmd=$1; shift; case $cmd in\n'
+        '  fc-match) echo /usr/share/fonts/inter/Inter-Regular.ttf;;\n'
+        '  grub-mkfont) [[ "$1 $2" == "-s 16" && "$3" == -o ]] || return 2; '
+        + ('printf pf2 >"$target$4";;\n' if font_works else 'return 1;;\n') +
+        '  *) return 9;; esac; }\n')
+    return target, chroot
+
+
+def test_grub_gets_the_mark_and_a_font_for_its_password_screen(tmp_path):
+    target, chroot = theme_target(tmp_path)
+    r = sh(f'{chroot}target="{target}"; grub_theme', env={"BOMBADIL_SHARE": str(ROOT / "share")})
+    assert r.returncode == 0 and "Note:" not in r.stdout
+    theme = target / "efi/grub/themes/bombadil"
+    assert sorted(p.name for p in theme.iterdir()) == ["background.png", "inter-16.pf2", "theme.txt"]
+    dropin = target / "etc/default/grub.d/bombadil.cfg"
+
+    def terminal_after(before: str) -> str:
+        return subprocess.run(["sh", "-c", f'{before}; . {dropin}; echo "$GRUB_TERMINAL_OUTPUT|$GRUB_THEME"'],
+                              capture_output=True, text=True, check=True).stdout.strip()
+    assert terminal_after("GRUB_TERMINAL_OUTPUT=console") == "gfxterm|/efi/grub/themes/bombadil/theme.txt"
+    # A test install that asked for the serial line keeps it, and gets no theme.
+    assert terminal_after('GRUB_TERMINAL_OUTPUT="console serial"') == "console serial|"
+
+
+def test_the_theme_names_a_font_the_installer_makes():
+    # theme.txt asks for "Inter Regular 16"; grub-mkfont -s 16 on Inter Regular is what provides it.
+    assert 'terminal-font: "Inter Regular 16"' in (ROOT / "share/grub/bombadil/theme.txt").read_text()
+    assert "grub-mkfont -s 16" in INSTALL.read_text() and "inter-16.pf2" in INSTALL.read_text()
+
+
+def test_when_the_font_cannot_be_made_grub_keeps_its_plain_screen(tmp_path):
+    target, chroot = theme_target(tmp_path, font_works=False)
+    r = sh(f'{chroot}target="{target}"; grub_theme', env={"BOMBADIL_SHARE": str(ROOT / "share")})
+    assert r.returncode == 0 and "GRUB keeps its plain screen" in r.stdout
+    assert not (target / "efi/grub/themes/bombadil").exists()
+    assert not (target / "etc/default/grub.d/bombadil.cfg").exists()
+
+
+def test_an_image_without_the_theme_installs_without_one(tmp_path):
+    target, chroot = theme_target(tmp_path)
+    empty = tmp_path / "share"
+    empty.mkdir()
+    r = sh(f'{chroot}target="{target}"; grub_theme', env={"BOMBADIL_SHARE": str(empty)})
+    assert r.returncode == 0 and not (target / "efi").exists()
 
 
 # -- fstab, crypttab, initramfs -----------------------------------------------------------------------------

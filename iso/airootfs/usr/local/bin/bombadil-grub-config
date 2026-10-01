@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# (Re)write GRUB's menu file on the EFI partition the way Bombadil wants it: nothing on the screen
+# between the firmware logo and the desk.
+#
+#   bombadil-grub-config            writes /efi/grub/grub.cfg
+#
+# grub-mkconfig puts two echo lines before every kernel ("Loading Linux linux ...", "Loading initial
+# ramdisk ..."), and Arch's GRUB has no switch for them, so they are cut from the file it wrote. It is
+# run in the C locale so that the text is the English one the cut looks for. Run this, not grub-mkconfig,
+# whenever the file is written again (a kernel argument changed, a theme was added); the installer does.
+set -euo pipefail
+cfg="${BOMBADIL_GRUB_CFG:-/efi/grub/grub.cfg}"
+LC_ALL=C grub-mkconfig -o "$cfg"
+sed -i "/^[[:space:]]*echo[[:space:]]*'Loading /d" "$cfg"

@@ -28,6 +28,7 @@ target="${BOMBADIL_TARGET:-/mnt}"
 work=/run/bombadil-install
 LOG="${BOMBADIL_INSTALL_LOG:-/tmp/bombadil-install.log}"
 live_home=/home/user
+SHARE_DIR="${BOMBADIL_SHARE:-/usr/share/bombadil/share}"
 MODULES="${BOMBADIL_MODULES:-/usr/lib/modules}"
 CMDLINE_FILE="${BOMBADIL_CMDLINE_FILE:-/proc/cmdline}"
 EFI_SYSFS="${BOMBADIL_EFI_SYSFS:-/sys/firmware/efi}"
@@ -496,6 +497,33 @@ set_grub_var() {
   fi
 }
 
+# GRUB's screen while it asks for the disk password: the mark on the ground, from share/grub/bombadil. It
+# lives on the EFI partition, which is read before the disk is unlocked. The font is made from Inter here; if
+# it cannot be, GRUB keeps its plain screen rather than a theme that names a font it does not have.
+grub_theme() {
+  local src="$SHARE_DIR/grub/bombadil" dest="$target/efi/grub/themes/bombadil" font
+  [[ -f "$src/theme.txt" && -f "$src/background.png" ]] || return 0
+  install -d "$dest"
+  cp "$src/theme.txt" "$src/background.png" "$dest/"
+  font=$(chroot_run fc-match -f '%{file}' 'Inter:style=Regular' 2>/dev/null) || font=""
+  if [[ -n "$font" ]] && chroot_run grub-mkfont -s 16 -o /efi/grub/themes/bombadil/inter-16.pf2 "$font" >/dev/null 2>&1 \
+     && [[ -s "$dest/inter-16.pf2" ]]; then
+    install -d "$target/etc/default/grub.d"
+    # Not when GRUB_TERMINAL_OUTPUT was set to something else (a serial console for the VM tests).
+    cat >"$target/etc/default/grub.d/bombadil.cfg" <<'CFG'
+# GRUB's screen (the installer wrote this; share/grub/bombadil is the theme).
+if [ "${GRUB_TERMINAL_OUTPUT:-console}" = console ]; then
+  GRUB_TERMINAL_OUTPUT=gfxterm
+  GRUB_GFXMODE=auto
+  GRUB_THEME=/efi/grub/themes/bombadil/theme.txt
+fi
+CFG
+  else
+    warn "the font for the boot screen could not be made; GRUB keeps its plain screen"
+    rm -rf "$dest"
+  fi
+}
+
 grub_defaults() {
   local file=$1
   # Straight into Bombadil: no menu unless Esc is held at power-on.
@@ -711,7 +739,8 @@ boot() {
   # fallback path is written too (a whole disk or a USB drive has no Windows to lose it to).
   chroot_run grub-install "${common[@]}" --bootloader-id=Bombadil || warn "the firmware would not keep a Bombadil entry; the fallback path starts it"
   chroot_run grub-install "${common[@]}" --removable
-  chroot_run grub-mkconfig -o /efi/grub/grub.cfg
+  grub_theme
+  chroot_run bombadil-grub-config
 }
 
 # The things that must be true for the next start, checked before it is claimed.
