@@ -1,6 +1,8 @@
 import asyncio
 import json
 import re
+import socket
+import time
 
 import pytest
 from test_jobs import Systemd
@@ -86,6 +88,39 @@ async def _ready(d, state="ready"):
             break
         await asyncio.sleep(0.02)
     assert d.access == state
+
+
+def _one_shot(path, line):
+    """A client that sends one line, half-closes and leaves after the first thing it hears, as a
+    script or a key bind may (the greeting it never reads fails agentd's writes to it)."""
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(str(path))
+    s.sendall((line + "\n").encode())
+    s.shutdown(socket.SHUT_WR)
+    s.recv(1 << 20)
+    s.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("greeting_seconds", [0.0, 0.3])
+async def test_a_line_from_a_client_that_leaves_at_once_is_still_read(home, monkeypatch, greeting_seconds):
+    real = launcher.entries
+
+    def slow(*a, **k):
+        time.sleep(greeting_seconds)
+        return real(*a, **k)
+
+    monkeypatch.setattr(launcher, "entries", slow)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    await _ready(d)
+    await asyncio.to_thread(_one_shot, d.socket_path, '{"type": "prompt", "text": "tell me a joke"}')
+    for _ in range(100):
+        if d.next_id == 1:
+            break
+        await asyncio.sleep(0.02)
+    assert d.next_id == 1
+    server.cancel()
 
 
 async def _start(d, state="ready"):

@@ -277,11 +277,11 @@ class AgentD:
         queue: asyncio.Queue = asyncio.Queue(CLIENT_BACKLOG)
         self.clients[writer] = queue
         sender = asyncio.create_task(self._sender(writer, queue))
+        # The greeting is written beside the reading. A client that sends its line and leaves (a key
+        # bind, a script) makes a greeting write to its closed socket fail, and a failed write
+        # makes the next read raise even with its line already in the buffer: read first.
+        greeting = asyncio.create_task(self._greet(writer))
         try:
-            await self._send(writer, self._status())
-            await self._send(writer, await self._entries_msg())
-            await self._send(writer, self._setup_msg())
-            await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -289,6 +289,7 @@ class AgentD:
                     continue
                 if not isinstance(msg, dict):
                     continue
+                await greeting   # the greeting goes out before any answer
                 try:
                     await self.handle(msg, writer)
                 except Exception as e:  # noqa: BLE001 - one bad message never costs the connection
@@ -298,6 +299,7 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            greeting.cancel()
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
                 try:
@@ -307,6 +309,18 @@ class AgentD:
                     pass
             sender.cancel()
             writer.close()
+
+    async def _greet(self, writer: asyncio.StreamWriter):
+        """What a client hears on connecting: status, entries, setup, the coding sessions."""
+        try:
+            await self._send(writer, self._status())
+            await self._send(writer, await self._entries_msg())
+            await self._send(writer, self._setup_msg())
+            await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a client missing its greeting still has its connection
+            print(f"agentd: greeting: {type(e).__name__}: {e}", file=sys.stderr)
 
     async def handle(self, msg: dict, writer: asyncio.StreamWriter):
         t = msg.get("type")
