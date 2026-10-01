@@ -179,13 +179,45 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    browser, terminal, files, undo, history, Details, Stop, the picture words, "pause" and "resume"),
    `!commands`, apps and their processes, background jobs, and the browser panel with its own profile
    (pages still need the network). Anything else waits as a chip.
-9. **What is deliberately not done.** No test calls and no retry loops: one refusal is enough, and
+9. **The finder: a kept ask is never a dead end.** A sentence typed in the pill while the AI rests
+   waits as a chip, and agentd also looks, on this computer only, for what the sentence nearly names
+   (`finder.py`: pure, no model, no network, nothing opened or run). It offers up to three things as
+   chips under a line that says when the ask runs:
+
+   | What | Found by | A press |
+   |---|---|---|
+   | An app | its title, and the description its builder wrote | opens it, as its typed word does |
+   | A panel, a widget, or a command that only shows something (history, desk, brain, Wi-Fi, sound, brightness, battery) | the names the launcher knows it by | opens it, as its typed word does |
+   | A past ask of the user's, "You asked: file the March invoice (3 Sep)" | its words and the closing line it was given | shows that turn's steps (Details) |
+
+   Never offered: a command that changes something (undo, hide, restart, sign in), an app's own ask
+   (`[from app notes] ...`), a `!command`, and anything with no match above a floor. Matching is by words: a
+   word of the sentence matches a word of a thing when they are the same, one starts the other, or they
+   are one slip of the fingers apart (words of five letters or more); a thing's score is how much of the
+   sentence it covers, its title counting double; words that carry no meaning in a request ("the", "my",
+   "app", "open", ...) are left out, and a sentence with none left finds nothing.
+
+   The wire: after the `queued` event of such an ask agentd broadcasts one
+   `{"type": "found", "turn", "prompt", "line", "matches": [{"id", "kind", "label", "hint"}]}`. The line is
+   agentd's own ("Kept for 15:00. Found on this computer:", "Kept until you resume Claude. ...", or "... Nothing
+   on this computer matches." with no matches). A press is `{"type": "found_open", "turn", "id"}`: agentd
+   resolves it from what it offered (never from what the client says), opens the thing, answers with the
+   usual `local` events and lets go of the kept ask (`unqueued`). A past ask's log must be one of agentd's
+   own under the state directory. When a press cannot open its thing the ask stays kept and the same
+   `found` is sent again, so the chips come back. The first ask that hit the limit is not looked for: its
+   line is the news.
+
+   In the shell (`FoundChips.qml`, `PillState.found`) the chips are there while that line is: it fades
+   after 12 seconds like the resting line, and they go with it, when the ask is dropped or starts, when the
+   AI is back, and when a newer ask is kept. A line with Undo on it (a turn the limit cut off) is not wiped
+   by it. A press hands the keyboard over to the window it opens.
+10. **What is deliberately not done.** No test calls and no retry loops: one refusal is enough, and
    nothing more is sent until the reset, a press or a word. No ring or counter on the stone. Not a
    "needs you": no amber mark, no red line, no card on the desk, since nothing is the user's to do
    (Raise the limit is a button on the line, not a knock). No automatic move to the other AI and none
    to paid credits: "use codex" is the user's own word, and Raise the limit only opens the provider's
-   page. The rest is kept per provider, so Claude resting leaves Codex alone. Not built yet, and in the
-   design: the finder that answers a sentence from what is on the computer, a warning before the wall,
+   page. The rest is kept per provider, so Claude resting leaves Codex alone. No small local model: the
+   finder is words and nothing else. Not built yet, and in the design: a warning before the wall,
    borrowing the other AI until the reset, and offline and outages in the same shape.
 
 ## Generated apps
