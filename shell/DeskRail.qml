@@ -82,7 +82,8 @@ Item {
             Loader {
                 anchors.bottom: parent.bottom
                 sourceComponent: cell.modelData === "now" ? nowFace
-                               : cell.modelData === "watching" || cell.modelData === "needs" ? rowsFace : null
+                               : cell.modelData === "watching" || cell.modelData === "needs"
+                                 || cell.modelData === "machine" ? rowsFace : null
             }
 
             Component {
@@ -95,9 +96,16 @@ Item {
             Component {
                 id: rowsFace
                 RowsCard {
-                    model: cell.modelData === "watching" ? rail.desk.watchModel : rail.desk.needsModel
+                    readonly property var current: cell.modelData === "watching" ? rail.desk.watchModel
+                        : cell.modelData === "machine" ? rail.desk.machineModel : rail.desk.needsModel
+                    // Machine has no model while it is calm: its card folds away with what it last said.
+                    property var last: null
+                    onCurrentChanged: if (current) last = current
+                    Component.onCompleted: if (current) last = current
+                    model: current || last
                     onRowAction: (key, action) => rail.desk.rowAction(cell.modelData, key, action)
                     onRowRemove: key => rail.desk.rowRemove(cell.modelData, key)
+                    onRowOpen: (key, opens) => rail.desk.rowOpen(cell.modelData, key, opens)
                 }
             }
         }
