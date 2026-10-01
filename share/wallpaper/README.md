@@ -10,16 +10,23 @@ Design and reasoning: `docs/design/boot-and-wallpaper.md`.
 
 ## Use your own picture
 
-Write the path of any image, on one line, into `~/.config/bombadil/wallpaper`:
+Write the path of any image on a line of its own in `~/.config/bombadil/wallpaper` (the file is there
+already, with only comments in it):
 
 ```sh
-echo ~/Pictures/mountains.jpg > ~/.config/bombadil/wallpaper
-systemctl --user restart bombadil-shell     # the first time; after that the bar notices the file change
+echo ~/Pictures/mountains.jpg >> ~/.config/bombadil/wallpaper
 ```
 
-`~/` and `file://` paths work. Delete the file and the standard picture is back. A picture that is
-missing or will not load falls back to the standard one. The picture fills the screen and is cropped to
-its shape, so one with the same 16:9 proportions as the screen shows whole.
+The desk notices the change at once. The last line that is not a `#` comment is the one used, so
+adding a line changes the picture. `~/` and `file://` paths work. It is the path of the picture, not
+the picture itself: an image written into the file is ignored and the log says so. Empty the file or
+delete it and the standard picture is back; a picture that is missing or will not load falls back to
+the standard one too. On a system installed before the file was shipped, create it and start the bar
+again once (log out and in), because a file that was not there when the bar started is not watched.
+
+The picture fills the screen and is cropped to its shape, so one with the same 16:9 proportions as the
+screen shows whole. A picture of your own is dimmed a little, toward the dark ground, so the cards and
+the pill stay easy to read over it; the standard picture is not.
 
 ## Draw it again
 

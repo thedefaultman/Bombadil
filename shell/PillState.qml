@@ -7,8 +7,9 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped).
-    signal summoned()
+    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
+    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
 
@@ -138,7 +139,7 @@ QtObject {
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
-        if (ev.type === "summon") { summoned(); return }
+        if (ev.type === "summon") { summoned(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
             if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }

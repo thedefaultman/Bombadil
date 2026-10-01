@@ -191,3 +191,50 @@ def test_the_users_own_picture_is_named_in_a_file_in_their_config_folder():
     assert "printErrors: false" in text, "no file is no choice, and the log says nothing about it"
     # a picture that will not load falls back to the standard one
     assert "Image.Error" in text and "failed" in text
+
+
+def _luminance(rgb):
+    def lin(c):
+        c /= 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a, b):
+    hi, lo = sorted((_luminance(a), _luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_a_picture_of_the_users_own_is_dimmed_so_muted_text_reads_over_the_brightest_one():
+    # The glass (panel at 85 to 96%) lets a little of the picture through. Over a pure white stripe,
+    # dimmed toward the ground by `dim`, the muted text must keep 4.5:1 on the quietest glass (the chips).
+    text = code(SHELL / "Wallpaper.qml")
+    dim = float(re.search(r"readonly property real dim: ([0-9.]+)", text).group(1))
+    bg, panel, muted = rgb("bg"), rgb("panel"), rgb("muted")
+    alpha = int(THEME["glassChip"][1:3], 16) / 255
+    under = [255 * (1 - dim) + b * dim for b in bg]
+    glass = [alpha * p + (1 - alpha) * u for p, u in zip(panel, under)]
+    assert _contrast(muted, glass) >= 4.5, (dim, _contrast(muted, glass))
+    # ...without dimming it away: a picture at 40% of its light is still a picture.
+    assert dim <= 0.7
+    assert re.search(r"color: Kit\.Theme\.bg\s+opacity: wallpaper\.own && !win\.failed \? wallpaper\.dim : 0", text), \
+        "the dimming is the ground colour over the picture, only for a picture that is the user's own"
+
+
+def test_the_file_new_systems_ship_holds_only_comments_so_the_standard_picture_shows_and_can_be_watched():
+    # A file that does not exist cannot be watched, so a first path would want the bar started again.
+    shipped = ROOT / "iso" / "airootfs" / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
+    lines = [ln for ln in shipped.read_text().splitlines() if ln.strip()]
+    assert lines and all(ln.lstrip().startswith("#") for ln in lines)
+    text = code(SHELL / "Wallpaper.qml")
+    assert 'startsWith("#")' in text, "comment lines are skipped when the picture's path is looked for"
+
+
+def test_a_line_that_is_not_a_path_says_so_in_the_log_without_printing_what_is_in_it():
+    # An image written into the file itself, not its path, used to fall back to the standard picture
+    # without a word.
+    text = code(SHELL / "Wallpaper.qml")
+    warn = re.search(r"console\.warn\((.*?)\)\s*\n\s*return standard", text, re.S).group(1)
+    assert "holds the path of an image" in warn and "not the image itself" in warn
+    assert "line" not in re.sub(r'"[^"]*"', "", warn), "only fixed words and the file's own path are logged"
