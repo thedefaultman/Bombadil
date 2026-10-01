@@ -52,9 +52,9 @@ WHY = {
     "heat": "The processor is hot",
 }
 HOLDS = {
-    "machine": "the machine's work uses most of it",
-    "sessions": "coding sessions use most of it",
-    "you": "your apps use most of it",
+    "machine": "the machine uses most",
+    "sessions": "coding sessions use most",
+    "you": "your apps use most",
 }
 
 # Filesystems that are not disks: kernel views, memory, images, containers.

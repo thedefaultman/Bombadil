@@ -1982,6 +1982,31 @@ def test_the_strip_when_the_desk_folds_or_the_screen_is_narrow(desk):
     assert [s["text"] for s in desk.prop("rightStrips")] == ["memory 91%"]
 
 
+def test_what_vitals_says_is_what_the_desk_draws(desk):
+    """Both ends of the machine message joined: the real Vitals on one side, the real shell on the other."""
+    from test_vitals import GB, rig, rise, run
+    v, fake, clock = rig()
+    msg = rise(v, fake, clock, memory=0.91, disk=0.93, heat=82, held=8 * GB, machine_=2 * GB, net=(1_200_000, 40_000))
+    assert msg["present"] and msg["strip"] == {"text": "memory 91%", "dot": "amber"}
+    desk.send(**json.loads(json.dumps(msg)))
+    desk.pump(0.3)
+    assert desk.faces["machine"] == "full" and desk.slots["machine"]["side"] == "right"
+    model = desk.machine
+    assert model["why"] == msg["why"] and model["strip"]["text"] == msg["strip"]["text"]
+    assert [r["key"] for r in model["rows"]] == [r["key"] for r in msg["rows"]] == ["memory", "disk", "cpu", "net"]
+    assert [r["kind"] for r in model["rows"]] == ["stack", "meter", "meter", "plain"]
+    memory = model["rows"][0]
+    assert [p["tone"] for p in memory["parts"]] == [p["tone"] for p in msg["rows"][0]["parts"]]
+    assert memory["tone"] == "amber" and memory["meterText"] == msg["rows"][0]["meterText"]
+    assert model["rows"][1]["opens"] == "disk" and model["rows"][3]["sub"] == msg["rows"][3]["sub"]
+    assert desk.machine["rows"][1]["meter"] == msg["rows"][1]["meter"]
+    # And when the machine is calm again, the card goes.
+    gone = [m for m in run(v, fake, clock, 12, memory=0.30, disk=0.40, heat=50) if m][-1]
+    assert not gone["present"]
+    desk.send(**json.loads(json.dumps(gone)))
+    assert desk.machine is None and desk.faces["machine"] == "hidden"
+
+
 def test_a_message_with_no_strip_leaves_the_chip_to_say_machine(desk):
     desk.send(**machine_msg(strip=None))
     assert "strip" not in desk.machine

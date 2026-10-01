@@ -851,7 +851,7 @@ def test_the_lines_are_named_worst_first_in_one_line():
     v, fake, clock = rig()
     m = rise(v, fake, clock, memory=0.95, disk=0.92, heat=85.0, sessions=0.95)
     assert m["why"] == ("Coding sessions are near their memory limit · memory is nearly full · "
-                        "your apps use most of it · the disk is nearly full · the processor is hot")
+                        "your apps use most · the disk is nearly full · the processor is hot")
     assert m["strip"]["text"] == "sessions 95%"
     m = rise(*rig(), memory=0.40, disk=0.92, heat=85.0)
     assert m["why"] == "The disk is nearly full · the processor is hot"
@@ -861,10 +861,10 @@ def test_the_lines_are_named_worst_first_in_one_line():
 def test_memory_says_who_holds_half_of_it_or_more():
     full = "Memory is nearly full"
     for held, said in (
-            ({"held": 8 * GB}, f"{full} · coding sessions use most of it"),
-            ({"machine_": 8 * GB}, f"{full} · the machine's work uses most of it"),
-            ({"held": 2 * GB}, f"{full} · your apps use most of it"),             # 12.5 GB of the 14.5 are yours
-            ({"held": 5 * GB, "machine_": 2 * GB}, f"{full} · your apps use most of it"),
+            ({"held": 8 * GB}, f"{full} · coding sessions use most"),
+            ({"machine_": 8 * GB}, f"{full} · the machine uses most"),
+            ({"held": 2 * GB}, f"{full} · your apps use most"),             # 12.5 GB of the 14.5 are yours
+            ({"held": 5 * GB, "machine_": 2 * GB}, f"{full} · your apps use most"),
             ({"held": 4 * GB, "machine_": 4 * GB}, full),                         # 4, 4 and 6.5 of 14.5: none has half
             ({}, full)):                                                          # no cgroups, no one to name
         v, fake, clock = rig()
@@ -874,7 +874,7 @@ def test_memory_says_who_holds_half_of_it_or_more():
 def test_half_exactly_is_enough():
     v, fake, clock = rig()
     # used 14.4 of 16 GB: 7.2 is half
-    assert rise(v, fake, clock, memory=0.9, held=7_200_000_000)["why"].endswith("coding sessions use most of it")
+    assert rise(v, fake, clock, memory=0.9, held=7_200_000_000)["why"].endswith("coding sessions use most")
 
 
 # -- the message --
@@ -888,7 +888,7 @@ def test_the_message_has_the_shape_the_shell_reads():
         clock.t += 1
     assert m == {
         "type": "machine", "present": True, "asked": False,
-        "why": "Memory is nearly full · coding sessions use most of it",
+        "why": "Memory is nearly full · coding sessions use most",
         "strip": {"text": "memory 91%", "dot": "amber"},
         "rows": [
             {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
@@ -1187,7 +1187,7 @@ def test_a_crowded_machine_end_to_end_through_the_real_sampler_on_a_fake_tree():
         m = v.tick()
         clock.t += 1
     assert m["why"] == ("Coding sessions are near their memory limit · memory is nearly full · "
-                        "coding sessions use most of it")
+                        "coding sessions use most")
     assert m["strip"] == {"text": "sessions 92%", "dot": "amber"}
     assert [r["key"] for r in m["rows"]] == ["memory", "disk", "cpu", "net"]
     memory = m["rows"][0]

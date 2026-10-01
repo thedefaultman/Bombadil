@@ -125,6 +125,7 @@ from pathlib import Path
 from . import browser, cards, config, launcher, narrate, paths, procs, providers, signin, snapshots, sysmap, watch
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
+from .vitals import Vitals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
@@ -164,7 +165,7 @@ class AgentD:
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
                  jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
-                 vitals=None):
+                 vitals: Vitals | None = None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
@@ -228,10 +229,8 @@ class AgentD:
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
         # The machine's readings. BOMBADIL_VITALS=0 turns the card off (the tests do, so nothing reads /proc).
-        if vitals is None and os.environ.get("BOMBADIL_VITALS") != "0":
-            from .vitals import Vitals      # (the sampler is stdlib only, and not imported when switched off)
-            vitals = Vitals()
-        self.vitals = vitals
+        self.vitals = vitals if vitals is not None else (Vitals() if os.environ.get("BOMBADIL_VITALS") != "0"
+                                                         else None)
         self._vitals_task: asyncio.Task | None = None
         self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
         self._vitals_last: dict | None = None       # what the shell was last told
