@@ -321,7 +321,8 @@ fi
 if [[ "$mode" == "install-encrypted" ]]; then
   check booted-in-uefi no_uefi_needed
   [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
-  # What the stick's home folder has: the sign-in comes along; Apps is on the carry list but not in this plan.
+  # What the stick's home folder has: the sign-in comes along; Apps is on the carry list but not in this plan
+  # (the installed system's own checks make an app in ~/Apps, so what is looked for is the stick's demo).
   mkdir -p /home/user/.claude /home/user/Apps/demo /home/user/Notes
   echo stick-login >/home/user/.claude/credentials.json; echo x >/home/user/Apps/demo/app.qml; echo x >/home/user/Notes/n.txt
   chown -R user: /home/user/.claude /home/user/Apps /home/user/Notes
@@ -379,7 +380,7 @@ layout_checks() {
     check layout-recovery-key-waits bash -c 'test "$(stat -c %a /var/lib/bombadil/recovery-key)" = 600'
     check layout-record-encrypted python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["encrypted"] and d["recovery_key_pending"] and d["timezone_source"] == "detected" and d["timezone"] == "Europe/Lisbon", d'
     check layout-hostname bash -c '[[ "$(cat /etc/hostname)" == smoke-laptop ]]'
-    check layout-carry-list bash -c 'test "$(cat /home/user/.claude/credentials.json)" = stick-login && test ! -e /home/user/Apps && test ! -e /home/user/Notes'
+    check layout-carry-list bash -c 'test "$(cat /home/user/.claude/credentials.json)" = stick-login && test ! -e /home/user/Apps/demo && test ! -e /home/user/Notes'
   fi
 }
 
