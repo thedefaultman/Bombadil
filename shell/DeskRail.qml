@@ -97,7 +97,6 @@ Item {
             Item {
                 objectName: "deskGrip-" + cell.modelData
                 width: parent.width; height: 50
-                enabled: cell.full
                 DeskDrag {
                     desk: rail.desk
                     widget: cell.modelData

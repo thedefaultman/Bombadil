@@ -474,6 +474,8 @@ def test_the_card_in_hand_is_dimmed_where_it_stands_until_agentd_answers(screen)
     screen.move(screen.left, 600, 600)
     assert now.isVisible() and not watching.isVisible()
     assert now.property("opacity") == 0.55
+    # It stays where it stands: the grab moves nothing.
+    assert screen.screen_at(screen.item("deskGrip-now"), 0, 0) == (s["now"]["x"], s["now"]["y"])
     dimmed = screen.brightest(*title("now"))
     assert 0.4 * plain_now < dimmed < 0.6 * plain_now                    # about 0.45 of what it was
     assert screen.brightest(*title("watching")) == plain_watching
@@ -734,6 +736,16 @@ def test_a_window_that_loses_focus_mid_drag_ends_the_drag_with_no_drop(screen):
     screen.release(screen.bar, 100, 600)
     assert sent_ops(screen) == []
     other.close()
+
+
+def test_only_the_left_button_takes_a_card(screen):
+    a_full_desk(screen)
+    x, y = screen.title("now")
+    screen.press(screen.left, x, y, button=QtCore.Qt.RightButton)
+    screen.move(screen.left, 600, 600)
+    assert screen.prop("dragging") is False
+    screen.release(screen.left, 600, 600, button=QtCore.Qt.RightButton)
+    assert sent_ops(screen) == []
 
 
 def test_a_second_button_pressed_mid_drag_changes_nothing(screen):

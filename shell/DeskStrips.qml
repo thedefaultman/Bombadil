@@ -63,13 +63,13 @@ Item {
                 Behavior on opacity { NumberAnimation { duration: strips.desk.foldMs } }
                 Component.onCompleted: opacity = 1
 
-                // Taken by place, so the widget is read when the drag starts. The "+N" chip is no widget.
+                // Taken by place, so the widget is read when the drag starts. The "+N" chip is no widget's
+                // (its id is "more"), and a drag of what is not there is refused.
                 DeskDrag {
                     desk: strips.desk
                     widget: chip.entry.id || ""
                     from: "strip"
                     origin: strips.origin
-                    enabled: !chip.entry.plus
                 }
                 // The strip in hand, and the one a drop was sent for until agentd answers, are dimmed.
                 Rectangle {
