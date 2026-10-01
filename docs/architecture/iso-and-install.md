@@ -1,17 +1,17 @@
 # ISO and install
 
-> **Status:** Shipped
-> **Code:** `iso/profiledef.sh`, `iso/packages.x86_64`, `iso/pacman.conf`, `iso/airootfs/`, `iso/efiboot/loader/`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`, `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-setup`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/usr/local/bin/bombadil-rollback`, `scripts/build-iso.sh`, `scripts/build-in-container.sh`, `scripts/console-palette.py`, `scripts/run-vm.sh`, `scripts/test-vm.sh`, `scripts/dev-session.sh`, `scripts/wsl-vm.sh`, `scripts/bombadil-vm.cmd`, `tests/test_iso_profile.py`, `tests/test_boot_console.py`
-> **Design:** [Foundation choices, sections 1 to 3](../design/foundation-choices.md#1-base-distro--arch); [Boot and the wallpaper](../design/boot-and-wallpaper.md) (the quiet console files); [Bombadil, installed](../design/installed-os-brief.md) (Designed: the redesign of the installer and the disk, not built)
-> **Verified:** 2026-10-01 against `main` at `6150431`
+> **Status:** Shipped  
+> **Code:** `iso/profiledef.sh`, `iso/packages.x86_64`, `iso/pacman.conf`, `iso/airootfs/`, `iso/efiboot/loader/`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`, `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-setup`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/usr/local/bin/bombadil-rollback`, `scripts/build-iso.sh`, `scripts/build-in-container.sh`, `scripts/console-palette.py`, `scripts/make-wallpaper.py`, `scripts/qmp.py`, `scripts/run-vm.sh`, `scripts/test-vm.sh`, `scripts/dev-session.sh`, `scripts/wsl-vm.sh`, `scripts/bombadil-vm.cmd`, `scripts/vm-tools/update-in-place`, `share/grub/bombadil/`, `tests/test_iso_profile.py`, `tests/test_boot_console.py`  
+> **Design:** [Foundation choices, sections 1 to 3](../design/foundation-choices.md#1-base-distro--arch); [Boot and the wallpaper](../design/boot-and-wallpaper.md) (the reasoning for the quiet console, with before and after pictures); [Bombadil, installed](../design/installed-os-brief.md) (Designed: the redesign of the installer and the disk, not built)  
+> **Verified:** 2026-10-01 against `main` at `a30ebc8`
 
-The ISO is an archiso profile in `iso/`. `scripts/build-iso.sh` fills it with the repository's own tree and the two provider CLIs and hands it to `mkarchiso`. The image boots a live Hyprland session that is also the installer's source: `bombadil-install` copies the running system onto a GPT disk with a btrfs root, so that undo has subvolumes to swap from the first install. A kernel argument turns the same image into a self-test, `bombadil-smoke`, which the VM scripts judge from the serial log.
+The ISO is an archiso profile in `iso/`. `scripts/build-iso.sh` fills it with the repository's own tree and the two provider CLIs and hands it to `mkarchiso`. The image boots a live Hyprland session that is also the installer's source: `bombadil-install` copies the running system onto a GPT disk with a btrfs root, so that undo has subvolumes to swap from the first install. From the boot loader to the desk the console is set to print nothing and to use the design system's ground colour ([Boot and the console](#boot-and-the-console-from-power-on-to-the-desk)). A kernel argument turns the same image into a self-test, `bombadil-smoke`, which the VM scripts judge from the serial log.
 
 [Foundation choices](../design/foundation-choices.md#1-base-distro--arch) gives the reasons for the shape: Arch, because the agent works best with a plain, imperative system (`pacman -S`, edit a file, restart a service); btrfs with snapper as the undo that stands in for a permission wall; Hyprland first; and a VM as the first target with an ISO that also boots real hardware.
 
-Shipped means the build, the live boot, the installer as coded on `main`, the smoke test and the QEMU and Windows launchers, checked by `tests/test_iso_profile.py`, `tests/test_boot_console.py` and by the smoke test in a VM. The redesign of the installed system (encryption, another disk layout, Bombadil as packages) is Designed and lives in the brief; [the last section of How it works](#how-the-installer-on-main-differs-from-the-redesign) lists the differences.
+Shipped means the build, the live boot, the quiet console, the installer as coded on `main`, the smoke test and the QEMU and Windows launchers, checked by `tests/test_iso_profile.py`, `tests/test_boot_console.py` and by the smoke test in a VM. The redesign of the installed system (encryption, another disk layout, Bombadil as packages) is Designed and lives in the brief; [the last section of How it works](#how-the-installer-on-main-differs-from-the-redesign) lists the differences.
 
-On this page a reference such as `bombadil-install:68` or `bombadil-smoke:303` means line 68 of `iso/airootfs/usr/local/bin/bombadil-install` or line 303 of `iso/airootfs/usr/local/bin/bombadil-smoke`; the same holds for `bombadil-setup` and `bombadil-rollback`. Every other path is relative to the repository root, unless a table says otherwise.
+On this page a reference such as `bombadil-install:68` or `bombadil-smoke:305` means line 68 of `iso/airootfs/usr/local/bin/bombadil-install` or line 305 of `iso/airootfs/usr/local/bin/bombadil-smoke`; the same holds for `bombadil-setup` and `bombadil-rollback`. Every other path is relative to the repository root, unless a table says otherwise.
 
 ## How it works
 
@@ -26,7 +26,7 @@ flowchart TB
     end
     subgraph live["Live boot"]
         E["systemd-boot, 3 entries"] --> F["archiso initramfs: erofs plus RAM overlay"]
-        F --> G["pacman-init, bombadil-live, NetworkManager"]
+        F --> G["pacman-init, bombadil-live, NetworkManager, brain watcher"]
         G --> H["greetd autologin: start-hyprland as user, logged to the journal"]
         H --> I["hyprland.start: agentd, bar, mako"]
     end
@@ -41,6 +41,7 @@ flowchart TB
 |---|---|---|
 | Build | The profile is assembled in a work directory and `mkarchiso` writes one ISO to `out/`. | The build |
 | Live boot | UEFI firmware starts systemd-boot, archiso mounts the image with a RAM overlay, systemd creates the session user, greetd logs it in, Hyprland starts `agentd` and the bar. Nothing on the live system survives power-off. | Boot flow |
+| Quiet start | From the boot loader to the desk the console is set to print nothing and to use the desk's ground colour. | Boot and the console |
 | First run | With no provider chosen, `agentd` asks in the pill which AI to use and signs in through the browser panel. | Boot flow |
 | Install | `bombadil-install DISK` wipes the disk, copies the live system and its sign-in onto btrfs, and installs GRUB. | What `bombadil-install` does |
 | Installed boot | GRUB boots straight in, greetd logs `user` in, and the same Hyprland session starts. | Boot flow |
@@ -53,11 +54,11 @@ flowchart TB
 |---|---|---|
 | 1 | Deletes and recreates `$WORK/profile`, then copies `iso/` into it with `cp -a`. | `scripts/build-iso.sh:8-10` |
 | 2 | Copies `bin`, `src`, `shell`, `share` and `iso/packages.x86_64` into `airootfs/usr/share/bombadil/` of the profile: the whole tree, so the live system and the installer both have it. | `scripts/build-iso.sh:11-14` |
-| 3 | Links `agentd`, `bombadil`, `bombadil-app`, `bombadil-browser`, `bombadil-os-mcp` and `bombadil-shell` in `airootfs/usr/local/bin` to `/usr/share/bombadil/bin/<name>`. The four scripts `bombadil-setup`, `-install`, `-smoke` and `-rollback` are real files in `iso/airootfs/usr/local/bin`. | `scripts/build-iso.sh:15-18` |
+| 3 | Links `agentd`, `bombadil`, `bombadil-app`, `bombadil-browser`, `bombadil-os-mcp`, `bombadil-shell`, `bombadil-brain` and `bombadil-brain-watch` in `airootfs/usr/local/bin` to `/usr/share/bombadil/bin/<name>`. The four scripts `bombadil-setup`, `-install`, `-smoke` and `-rollback` are real files in `iso/airootfs/usr/local/bin`. | `scripts/build-iso.sh:15-18` |
 | 4 | Unless `BOMBADIL_NO_CLIS` is set, runs `npm install -g --prefix <profile>/airootfs/usr @anthropic-ai/claude-code @openai/codex`, so both CLIs are in the image and first run only has to sign in. | `scripts/build-iso.sh:19-23` |
 | 5 | Runs `mkarchiso -v -w $WORK/build -o $OUT <profile>`. | `scripts/build-iso.sh:24` |
 
-`scripts/build-in-container.sh` runs that script inside an `archlinux:base` container (`docker`, else `podman`; `CONTAINER_RUNTIME` and `BOMBADIL_BUILD_IMAGE` override). The container is `--privileged`, mounts the repository at `/src`, installs `archiso git nodejs npm`, and builds with `WORK=/tmp/bombadil-work OUT=/src/out`. It passes the proxy variables, an optional CA file (`SSL_CERT_FILE`), host networking when `BOMBADIL_HOST_NET` is set, and a pacman cache when `PACMAN_CACHE` names a directory. `SOURCE_DATE_EPOCH` defaults to the time of the last commit (the current time when git cannot answer), so the ISO's label and version carry the commit's date.
+`scripts/build-in-container.sh` runs that script inside an `archlinux:base` container (`docker`, else `podman`; `CONTAINER_RUNTIME` and `BOMBADIL_BUILD_IMAGE` override). The container is `--privileged`, mounts the repository at `/src`, installs `archiso git nodejs npm`, and builds with `WORK=/tmp/bombadil-work OUT=/src/out`. It passes the proxy variables, host networking when `BOMBADIL_HOST_NET` is set, and a pacman cache when `PACMAN_CACHE` names a directory. An `SSL_CERT_FILE` is mounted into the container and also set there as `CURL_CA_BUNDLE` and `NODE_EXTRA_CA_CERTS`. `SOURCE_DATE_EPOCH` defaults to the time of the last commit (the current time when git cannot answer), so the ISO's label and version carry the commit's date.
 
 `iso/profiledef.sh` is the archiso profile definition.
 
@@ -73,7 +74,7 @@ flowchart TB
 
 ### What the image contains
 
-The 48 packages in `iso/packages.x86_64` (one per line). The file's own `#` comments make four groups: base system, graphics and session, agents, archiso live. The Group column below is this page's grouping, not the file's:
+The 49 packages in `iso/packages.x86_64` (one per line). The file's own `#` comments name four groups (base system, graphics and session, agents, archiso live) and give one reason, for `poppler`. The Group column below is this page's grouping, not the file's:
 
 | Group | Packages | What in the repository uses them |
 |---|---|---|
@@ -82,8 +83,9 @@ The 48 packages in `iso/packages.x86_64` (one per line). The file's own `#` comm
 | Network and access | `networkmanager`, `sudo`, `git`, `openssh` | NetworkManager is enabled; `sudo` carries the passwordless rule. `openssh` is installed and no `sshd` unit is enabled. |
 | Session | `hyprland`, `xdg-desktop-portal-hyprland`, `greetd`, `quickshell`, `qt6-wayland`, `qt6-declarative`, `qt6-5compat` | the compositor, the autologin (`start-hyprland`) and the bar |
 | Runtime | `pyside6`, `python`, `python-pip`, `python-cryptography` | `agentd`, generated apps, the kit's `Vault` (`src/bombadil/appkit/native/vault.py`) |
-| Desktop tools | `grim`, `slurp`, `wl-clipboard`, `mako`, `libnotify`, `foot`, `nautilus` | `grim` (screenshots, `src/bombadil/hypr.py`), `mako` (started by `hyprland.lua`), `libnotify` (`notify-send`), `foot` (the terminal panel and `SUPER + Return`), `nautilus` (the files panel). No repository code calls `slurp` or `wl-clipboard`. |
+| Desktop tools | `grim`, `slurp`, `wl-clipboard`, `mako`, `libnotify`, `foot`, `nautilus` | `grim` (screenshots, `src/bombadil/hypr.py`), `mako` (started by `hyprland.lua`), `libnotify` (`notify-send`), `foot` (the terminal panel, the details drawer's terminal programs and `SUPER + Return`), `nautilus` (the files panel). No repository code calls `slurp` or `wl-clipboard`. |
 | Browser | `chromium` | the browser panel |
+| Documents | `poppler` | `pdftotext` for the brain's text search (`src/bombadil/brain/describe.py`) and `pdftoppm` for the first page of a PDF in the Brain window (`share/apps/brain/app.py`); both are looked up with `shutil.which` ([the brain](brain.md)) |
 | Sound | `pipewire`, `pipewire-audio`, `pipewire-alsa`, `pipewire-pulse`, `wireplumber`, `alsa-utils`, `sof-firmware` | the `audio-output` smoke check |
 | Fonts | `inter-font`, `noto-fonts`, `noto-fonts-emoji` | `Theme.fontFamily` is `Inter` |
 | Agents | `nodejs`, `npm` | the provider CLIs run on node; `bombadil-setup` installs a missing one with `npm` |
@@ -97,7 +99,7 @@ On top of the packages the image holds:
 
 ### Boot flow
 
-Some rows state what an upstream tool does, which no file in this repository shows: the `archiso` hook finding the medium, mounting the erofs image and adding the RAM overlay (live row 2); `start-hyprland` coming with the `hyprland` package (live row 5); systemd matching `ConditionKernelCommandLine=bombadil.smoke` also against `bombadil.smoke=install` and `bombadil.smoke=undo` (live row 8); `grub-install --removable` writing `EFI/BOOT/BOOTX64.EFI` and no firmware entry (installed row 1); the kernel line that `grub-mkconfig` writes, and its reading of the drop-ins in `/etc/default/grub.d/` (installed row 3); and systemd-boot printing `Boot in` on the serial console (the boot menu below).
+Some statements here and below describe what an upstream tool does, which no file in this repository shows: the `archiso` hook finding the medium, mounting the erofs image and adding the RAM overlay (live row 2); `mkarchiso` replacing `%INSTALL_DIR%` and `%ARCHISO_UUID%` in the boot entries (the boot menu below); `start-hyprland` coming with the `hyprland` package (live row 5); the user's systemd manager starting a unit that has a link in `default.target.wants/` (live row 6); systemd matching `ConditionKernelCommandLine=bombadil.smoke` also against `bombadil.smoke=install` and `bombadil.smoke=undo` (live row 8); `grub-install --removable` writing `EFI/BOOT/BOOTX64.EFI` and no firmware entry (installed row 1); the kernel line that `grub-mkconfig` writes, and its reading of the drop-ins in `/etc/default/grub.d/` (installed row 3); systemd-boot drawing a text menu and printing `Boot in` on the serial console (the boot menu below); and what each kernel parameter does in the kernel (the console section).
 
 **The live ISO.**
 
@@ -106,13 +108,13 @@ Some rows state what an upstream tool does, which no file in this repository sho
 | 1 | UEFI firmware starts systemd-boot. `loader.conf` has `timeout 3`, `default 01-bombadil.conf` and `beep off`. | `iso/efiboot/loader/loader.conf` |
 | 2 | The kernel and initramfs come from `/arch/boot/x86_64/` on the medium. The `archiso` hook finds the medium by `archisosearchuuid`, mounts the erofs image and puts a RAM overlay over it, capped by `cow_spacesize=2G`. The initramfs is built with `HOOKS=(base udev microcode modconf kms archiso block filesystems keyboard)` and zstd. | `iso/efiboot/loader/entries/`, `iso/airootfs/etc/mkinitcpio.conf.d/archiso.conf`, `iso/airootfs/etc/mkinitcpio.d/linux.preset` |
 | 3 | systemd starts. `systemd-firstboot.service` is masked (a link to `/dev/null`), so nothing asks for a locale, time zone or host name. The image already holds `/etc/hostname` (`bombadil`), `/etc/locale.conf` (`en_US.UTF-8`), `/etc/locale.gen`, `/etc/vconsole.conf` (`KEYMAP=us`) and `/etc/localtime` (UTC). | `iso/airootfs/etc/` |
-| 4 | `pacman-init.service` runs `pacman-key --init` and `--populate`, ordered `Before=bombadil-live.service`. `bombadil-live.service` creates `user` (`useradd -m -G wheel,video,input,audio`, which copies `/etc/skel`) if it is missing and runs `passwd -d user`, ordered `Before=greetd.service`. `NetworkManager.service` is enabled by a link. | `iso/airootfs/etc/systemd/system/` |
+| 4 | `pacman-init.service` runs `pacman-key --init` and `--populate`, ordered `Before=bombadil-live.service`. `bombadil-live.service` creates `user` (`useradd -m -G wheel,video,input,audio`, which copies `/etc/skel`) if it is missing and runs `passwd -d user`, ordered `Before=greetd.service`. `NetworkManager.service` and `bombadil-brain-watch.service` (the brain's root file watcher, `After=local-fs.target`) are enabled by links. On the live system `/home` is not a btrfs mount, so the watcher logs `not watching` and stays up; the unit's own comment says it is meant to. | `iso/airootfs/etc/systemd/system/`, `src/bombadil/brain/watch.py:1019-1020,1393` |
 | 5 | greetd runs. `display-manager.service` is a link to `greetd.service`. `[initial_session]` (and `[default_session]`) run `sh -c 'exec systemd-cat -t hyprland start-hyprland'` as `user` on vt 1 with no greeter. Hyprland's start-up text therefore goes to the journal (`journalctl -t hyprland`) and the console stays empty. | `iso/airootfs/etc/greetd/config.toml` |
-| 6 | Hyprland reads `~/.config/hypr/hyprland.lua`. Its `hyprland.start` handler runs `agentd`, `bombadil-shell` and `mako`. | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:7-12` |
-| 7 | First run. `agentd` is "chosen" only when `~/.config/bombadil/config.toml` exists or `BOMBADIL_PROVIDER` is set (`src/bombadil/agentd.py:1571`). On a fresh live boot neither is true, so its setup state is `choose` and the pill offers Claude and Codex. The sign-in then opens the provider's page in the browser panel ([browser and sign-in](browser-and-signin.md)). `bombadil-setup` is the terminal fallback. | `src/bombadil/config.py`, `iso/airootfs/usr/local/bin/bombadil-setup` |
+| 6 | Hyprland reads `~/.config/hypr/hyprland.lua`. Its `hyprland.start` handler runs `agentd`, `bombadil-shell` and `mako`. The brain's user service `bombadil-brain.service` is not started from there: a link in `etc/systemd/user/default.target.wants/` enables it for the user's systemd manager ([the brain](brain.md)). | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:7-12`, `iso/airootfs/etc/systemd/user/` |
+| 7 | First run. `agentd` is "chosen" only when `~/.config/bombadil/config.toml` exists or `BOMBADIL_PROVIDER` is set (`src/bombadil/agentd.py:1773`, `src/bombadil/config.py:22-23`). On a fresh live boot neither is true, so its setup state is `choose` and the pill offers Claude and Codex. The sign-in then opens the provider's page in the browser panel ([browser and sign-in](browser-and-signin.md)). `bombadil-setup` is the terminal fallback. | `src/bombadil/config.py`, `iso/airootfs/usr/local/bin/bombadil-setup` |
 | 8 | With `bombadil.smoke` on the kernel line, `bombadil-smoke.service` runs the smoke test: `ConditionKernelCommandLine=bombadil.smoke`, `After=greetd.service`, wanted by `graphical.target`. | `iso/airootfs/etc/systemd/system/bombadil-smoke.service` |
 
-The live image has snapper but no snapper configuration, so `Snapshots.available` is false and the pill answers "Undo starts once Bombadil is installed" ([restore points](restore-points.md)). `iso/airootfs/etc/bombadil/config.toml` sets the system defaults `provider = "claude"` and `snapshots = true`.
+The live image has snapper but no snapper configuration, so `Snapshots.available` is false and the pill answers "Undo starts once Bombadil is installed" (`src/bombadil/launcher.py:494`; [restore points](restore-points.md)). `iso/airootfs/etc/bombadil/config.toml` sets the system defaults `provider = "claude"` and `snapshots = true`.
 
 > **Warning: the live ISO has a root shell with no password on a serial console.** The drop-in <code>iso/airootfs/etc/systemd/system/serial-getty&#64;ttyS0.service.d/autologin.conf</code> logs in `root` on `ttyS0`. It matters on a boot that has a serial console, which the test entries 02 and 03 add with `console=ttyS0,115200`; `scripts/wsl-vm.sh` relies on it to run the installer without a window. The installer removes the drop-in from the installed system.
 
@@ -122,8 +124,8 @@ The live image has snapper but no snapper configuration, so `Snapshots.available
 |---|---|---|
 | 1 | UEFI firmware starts GRUB from the fallback path `EFI/BOOT/BOOTX64.EFI` on the EFI partition: the installer ran `grub-install ... --removable`, which writes that path and creates no firmware boot entry. | `bombadil-install:68` |
 | 2 | GRUB reads `grub.cfg` from the EFI partition. The menu is hidden with a one second timeout, so the machine boots straight in; the installer's comment says the menu appears when Esc is held at power-on. | `bombadil-install:63-67`, `tests/test_iso_profile.py` |
-| 3 | The kernel and initramfs come from the EFI partition (`/boot`). The initramfs was built with the stock `mkinitcpio` hooks, because the `archiso.conf` drop-in is deleted. The fstab mounts `/` by the subvolume name `@`, without a `subvolid`. The kernel line is `grub-mkconfig`'s own output (`root` and `rootflags` are not readable in the repository) plus the parameters of the `zz-bombadil-console.cfg` drop-in, which the installer copied with the rest of `/etc` ([the boot menu](#the-boot-menu)). | `bombadil-install:28-47`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` |
-| 4 | systemd starts with `greetd` and `NetworkManager` enabled. `pacman-init`, `bombadil-live` and the serial autologin are gone. `user` exists with an empty password. | `bombadil-install:28-33,53-56` |
+| 3 | The kernel and initramfs come from the EFI partition (`/boot`). The initramfs was built with the stock `mkinitcpio` hooks, because the `archiso.conf` drop-in is deleted. The fstab mounts `/` by the subvolume name `@`, without a `subvolid`. The kernel line is `grub-mkconfig`'s own output (`root` and `rootflags` are not readable in the repository) plus the parameters of the `zz-bombadil-console.cfg` drop-in, which the installer copied with the rest of `/etc` ([the console](#boot-and-the-console-from-power-on-to-the-desk)). | `bombadil-install:28-47`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` |
+| 4 | systemd starts with `greetd` and `NetworkManager` enabled. `pacman-init`, `bombadil-live` and the serial autologin are gone. `user` exists with an empty password. The copy of `/etc` also holds the brain's two units; `/home` is the btrfs subvolume `@home`, which is what the watcher requires. | `bombadil-install:22,28-33,53-56`, `src/bombadil/brain/watch.py:1019` |
 | 5 | greetd logs `user` in and starts `start-hyprland` through `systemd-cat -t hyprland`, as in the live boot. Hyprland reads the `hyprland.lua` the installer copied from `/etc/skel` and starts `agentd`, the bar and `mako`. | `iso/airootfs/etc/greetd/config.toml` |
 | 6 | First run. If the live session had signed in, `~/.config/bombadil/config.toml` came along, `agentd` is chosen and the pill asks nothing. Otherwise the pill asks, as on the live system. | `bombadil-install:71-78` |
 
@@ -131,28 +133,72 @@ The live image has snapper but no snapper configuration, so `Snapshots.available
 
 ### The boot menu
 
-The ISO's systemd-boot menu has three entries. All three carry `archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% cow_spacesize=2G`; `mkarchiso` replaces the two placeholders.
+The ISO's systemd-boot menu has three entries. All three carry `archisobasedir=%INSTALL_DIR% archisosearchuuid=%ARCHISO_UUID% cow_spacesize=2G`; `mkarchiso` fills in the two placeholders.
 
 | Entry file | Menu title | Extra kernel arguments | What it does |
 |---|---|---|---|
-| `01-bombadil.conf` | `Bombadil` | `quiet loglevel=3 systemd.show_status=error rd.udev.log_level=3 vt.global_cursor_default=0 logo.nologo`, then the `vt.default_red`, `vt.default_grn` and `vt.default_blu` palette that makes the console background the desk ground `#101214` | The normal live boot, selected after three seconds, with a quiet console. |
+| `01-bombadil.conf` | `Bombadil` | the nine quiet-console parameters ([the console](#boot-and-the-console-from-power-on-to-the-desk)) | The normal live boot, selected after three seconds, with a quiet console. |
 | `02-bombadil-serial.conf` | `Bombadil (serial console, smoke test)` | `console=tty0 console=ttyS0,115200 bombadil.smoke` | A live boot with the console on the screen and on the serial port, running the live smoke mode, then powering off. |
 | `03-bombadil-install-test.conf` | `Bombadil (serial console, smoke test and install to /dev/vda)` | `console=tty0 console=ttyS0,115200 bombadil.smoke=install` | The live smoke mode, then `bombadil-install /dev/vda --yes`, then power off. |
 
-> **Warning: entry 03 erases a disk without asking.** After the live checks it runs `bombadil-install /dev/vda --yes` (`iso/airootfs/usr/local/bin/bombadil-smoke:303`). The `--yes` skips the confirmation (`bombadil-install:7`), so the first virtio disk is wiped, partitioned and formatted with no prompt and no check of what is on it. The entry is in every ISO the build produces, and its menu title names `/dev/vda` but does not say it destroys it. Do not pick it in a VM that has a disk you want to keep. `scripts/run-vm.sh --disk` refuses to attach a disk larger than 100 MB to the ISO for this reason (`scripts/run-vm.sh:31-37`, `FORCE=1` overrides). Any call of `bombadil-install DISK --yes` erases the same way.
+> **Warning: entry 03 erases a disk without asking.** After the live checks it runs `bombadil-install /dev/vda --yes` (`iso/airootfs/usr/local/bin/bombadil-smoke:305`). The `--yes` skips the confirmation (`bombadil-install:7`), so the first virtio disk is wiped, partitioned and formatted with no prompt and no check of what is on it. The entry is in every ISO the build produces, and its menu title names `/dev/vda` but does not say it destroys it. Do not pick it in a VM that has a disk you want to keep. `scripts/run-vm.sh --disk` refuses to attach a disk larger than 100 MB to the ISO for this reason (`scripts/run-vm.sh:31-37`, `FORCE=1` overrides). Any call of `bombadil-install DISK --yes` erases the same way.
 
-**The quiet start.** Between the boot loader and the desk the screen is the kernel's console, and the design ([Boot and the wallpaper](../design/boot-and-wallpaper.md)) keeps it empty and in the design system's colours. Four files carry it:
+The VM scripts depend on these files by text. `scripts/test-vm.sh` and `scripts/wsl-vm.sh` wait for systemd-boot's countdown (`Boot in`) in the serial log, then press `Down` once for entry 02 or twice for entry 03 (the order is the `sort-key`). `scripts/wsl-vm.sh` also presses `Backspace` 15 times at the end of entry 02's options line to delete ` bombadil.smoke` (`scripts/wsl-vm.sh:97`), so `bombadil.smoke` must stay the last argument of that entry.
+
+### Boot and the console, from power-on to the desk
+
+The design wants every screen from power-on to the desk in the design system: the ground `#101214`, with nothing printed unless a start fails. [Boot and the wallpaper](../design/boot-and-wallpaper.md) holds the reasoning and the before and after pictures. This section lists what makes each stage as built. The kernel parameters, the greetd line and Hyprland's ground colour are made by files of this piece; the wallpaper is drawn by the bar ([shell](shell.md)).
+
+```mermaid
+flowchart LR
+    A["Firmware: the maker's logo or nothing"] --> B{"Which medium?"}
+    B -->|"live stick"| C["systemd-boot menu, 3 s"]
+    B -->|"installed disk"| D["GRUB, menu hidden"]
+    C --> E["Console: empty, ground colour"]
+    D --> E
+    E --> F["Hyprland first frame: ground colour"]
+    F --> G["Wallpaper, cards and the pill"]
+```
+
+| Stage | What is on the screen | Made by |
+|---|---|---|
+| Firmware | the maker's logo, or nothing | the machine; nothing in the repository changes it |
+| Boot loader, live | systemd-boot's text menu for three seconds, the first entry boots by itself | `iso/efiboot/loader/loader.conf` (`timeout 3`, `default 01-bombadil.conf`) |
+| Boot loader, installed | GRUB, hidden unless Esc is held at power-on | `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1`, `GRUB_TERMINAL_OUTPUT=console` (`bombadil-install:63-67`). The GRUB theme in `share/grub/bombadil/` is not installed by anything (Known gaps). |
+| Kernel and start-up | an empty console in the ground colour | the parameters below, and greetd's line |
+| Hyprland's first frame | the ground colour | `background_color = 0xff101214` in `hyprland.lua:35` |
+| The desk | the wallpaper under the cards and the pill | `shell/Wallpaper.qml` draws `share/wallpaper/bombadil.png` (made by `scripts/make-wallpaper.py` from the colour tokens), or the image named in `~/.config/bombadil/wallpaper` |
+
+**The kernel parameters.** Entry 01 and the GRUB drop-in carry the same nine, in the same order. What each does in the kernel is as the design note describes it; no file here shows it.
+
+| Parameter | What the note says it does |
+|---|---|
+| `quiet` | the kernel prints no start-up messages |
+| `loglevel=3` | only errors |
+| `systemd.show_status=error` | systemd lists a unit on the console only when it fails |
+| `rd.udev.log_level=3` | the same for udev in the initramfs |
+| `vt.global_cursor_default=0` | no blinking cursor on an empty screen |
+| `logo.nologo` | no kernel logo |
+| `vt.default_red`, `vt.default_grn`, `vt.default_blu` | the console's 16 colours, each a list of 16 bytes: the output of `scripts/console-palette.py`. Colour 0, the console's background, is `bg` (`#101214`); colour 7, its text, is `fg` (`#e6e8eb`); colours 1 to 4 are `bad`, `good`, `warn` and `info`, so a failure that does print is in the system's colours |
+
+**Where they are set.**
 
 | File | What it does |
 |---|---|
-| `iso/efiboot/loader/entries/01-bombadil.conf` | the live boot's parameters, above |
-| `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` | the same parameters for an installed system: it appends them to `GRUB_CMDLINE_LINUX_DEFAULT` (`$GRUB_CMDLINE_LINUX_DEFAULT quiet ...`) and never replaces the line. `grub-mkconfig` reads the drop-ins after `/etc/default/grub`, in name order, so the `zz-` keeps it last. `bombadil-install` copies it with the rest of `/etc` (`cp -ax /. /mnt/`, `bombadil-install:27`) and removes nothing under `grub.d` |
-| `iso/airootfs/etc/greetd/config.toml` | runs `start-hyprland` through `systemd-cat`, so Hyprland's text stays off the console |
-| `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` | `background_color = 0xff101214` in `misc`: the format is `0xAARRGGBB`, and without the alpha byte Hyprland draws black |
+| `iso/efiboot/loader/entries/01-bombadil.conf` | the live boot: the parameters follow `cow_spacesize=2G` |
+| `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` | an installed system: `GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT quiet ..."` adds to the line and never replaces it. `grub-mkconfig` reads the drop-ins after `/etc/default/grub`, in name order, so the `zz-` keeps this one last. The live boot does not read the file: systemd-boot uses the entry. |
+| `iso/efiboot/loader/entries/02-bombadil-serial.conf`, `03-bombadil-install-test.conf` | no `quiet` and no palette, because the VM tests read kernel output on the serial console |
+| `iso/airootfs/etc/greetd/config.toml` | `default_session` and `initial_session` run `sh -c 'exec systemd-cat -t hyprland start-hyprland'`. The file's comment gives the reason: Hyprland writes a banner and start-up debugging to its standard output until its config is read, and greetd's standard output is the console on tty1. The text goes to the journal (`journalctl -t hyprland`), so a Hyprland that fails to start shows an empty screen and its text is in the journal. |
+| `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` | `misc.background_color = 0xff101214`. The format is `0xAARRGGBB`: `0x101214` would have alpha `00`, which Hyprland draws as black (the file's comment). |
+| `iso/airootfs/etc/skel/.config/bombadil/wallpaper` | comments only: a file that does not exist when the bar starts is not watched, so the shipped file lets the first picture of the person's own take effect with no restart (`shell/Wallpaper.qml`, header comment). A system installed before the file shipped needs it created and the bar started again. |
 
-`scripts/console-palette.py` prints the three `vt.default_*` parameters from the colour tokens of `share/qml/Bombadil/Theme.qml` (`--table` prints the 16 console colours, one a line). Entries 02 and 03 keep kernel output, with no `quiet` and no palette, because the VM tests read it on the serial console.
+`bombadil-install` copies the drop-in with the rest of `/etc` (`cp -ax /. /mnt/`, `bombadil-install:27`) and removes nothing under `grub.d`. On an installed system the kernel line is, in order: `BOMBADIL_INSTALL_CMDLINE` when set (`bombadil-install:81` puts it first in `/etc/default/grub`), the stock `GRUB_CMDLINE_LINUX_DEFAULT` (Arch's is `loglevel=3 quiet`, copied into `tests/test_iso_profile.py:37`), then the drop-in's nine. `quiet` and `loglevel=3` therefore appear twice on stock defaults, which `tests/test_boot_console.py` expects (one more `quiet` than the base). Because the drop-in is part of `/etc`, the installed boot of a VM test carries the quiet parameters as well, behind the test's own arguments.
 
-The VM scripts depend on these files by text. `scripts/test-vm.sh` and `scripts/wsl-vm.sh` wait for systemd-boot's countdown (`Boot in`) in the serial log, then press `Down` once for entry 02 or twice for entry 03 (the order is the `sort-key`). `scripts/wsl-vm.sh` also presses `Backspace` 15 times at the end of entry 02's options line to delete ` bombadil.smoke` (`scripts/wsl-vm.sh:97`), so `bombadil.smoke` must stay the last argument of that entry.
+`scripts/console-palette.py` reads the colour tokens of `share/qml/Bombadil/Theme.qml`. Its `PALETTE` list names the 16 console colours: a name is a Theme token, a `#hex` is a tone no token names. `--table` prints the 16 colours, one a line.
+
+**Still on the screen.** The firmware's logo, and the live stick's text menu (systemd-boot draws no pictures). On an installed system the design note records GRUB's own `Loading Linux` and `Loading initial ramdisk` lines for a moment after the firmware logo, written into `grub.cfg` by `grub-mkconfig`; `bombadil-install` has no step that deletes them, and the note's `sed` for it is not applied anywhere. There is no Plymouth: nothing in `iso/` or `scripts/` names it, and the note gives the reason.
+
+**What checks it.** `tests/test_boot_console.py` (text checks, no boot; see Tests). In a VM the screen between the loader and the desk is meant to be `#101214` with no text; nothing in the repository checks that automatically, and the note's pictures are from a VM.
 
 ### What `bombadil-install` does
 
@@ -188,36 +234,43 @@ flowchart TB
 | 12 | In `arch-chroot /mnt`: `systemd-machine-id-setup`; `/etc/localtime` to UTC; hostname `bombadil`; `user` created if missing (`wheel,video,input,audio`); the home rebuilt from `/etc/skel` with `cp -aT` and `chown -R`; `passwd -d user`; `systemctl enable greetd NetworkManager`. | 49-56 |
 | 13 | snapper: removes `/.snapshots` if it is an empty directory (`rmdir`), `snapper --no-dbus -c root create-config /`, deletes the subvolume snapper made at `/.snapshots`, and makes an empty `/.snapshots` directory for the `@snapshots` mount. | 57-61 |
 | 14 | `mkinitcpio -P`. | 62 |
-| 15 | GRUB defaults: `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1`, `GRUB_TERMINAL_OUTPUT=console` (replaced if present in `/etc/default/grub`, appended if not). Then `grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable` and `grub-mkconfig -o /boot/grub/grub.cfg`. | 63-69 |
-| 16 | Carries the sign-in: for each of `.claude`, `.claude.json`, `.codex` and `.config/bombadil` that exists in `/home/user` on the live system, `cp -aT` into `/mnt/home/user`, then `chown -R user:`. | 71-78 |
+| 15 | GRUB defaults: `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1`, `GRUB_TERMINAL_OUTPUT=console` (replaced if present in `/etc/default/grub`, appended if not). Then `grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable` and `grub-mkconfig -o /boot/grub/grub.cfg`, which reads the drop-ins of `/etc/default/grub.d/`. | 63-69 |
+| 16 | Carries the sign-in: for each of `.claude`, `.claude.json`, `.codex` and `.config/bombadil` that exists in `/home/user` on the live system, `cp -aT` into `/mnt/home/user`, then `chown -R user:`. The live `~/.config/bombadil` always exists, because the skel ships its `wallpaper` file. | 71-78 |
 | 17 | If `BOMBADIL_INSTALL_CMDLINE` is set, prepends it to `GRUB_CMDLINE_LINUX_DEFAULT`, sets `GRUB_TIMEOUT=1` and regenerates `grub.cfg`. The VM tests use it to boot the installed disk with a serial console and the smoke argument. | 79-84 |
 | 18 | Mounts `@snapshots` on `/mnt/.snapshots` with mode 750 and prints `Installed. Reboot into Bombadil.` The target stays mounted at `/mnt`, which `scripts/wsl-vm.sh` relies on to append a line to the installed home. | 85-87 |
 
-What it does not do: install packages (there is no `pacstrap`: the installed system has exactly the image's packages), set a password, encrypt anything, detect another operating system, choose a time zone or keyboard, make a restore point at install, install a GRUB theme (`share/grub/bombadil` is not referenced by the script), or call `efibootmgr`. The restore-point side of this layout (what `@snapshots` and the name-based mount are for, and `bombadil-rollback`) is in [restore points](restore-points.md).
+What it does not do: install packages (there is no `pacstrap`: the installed system has exactly the image's packages), set a password, encrypt anything, detect another operating system, choose a time zone or keyboard, make a restore point at install, install a GRUB theme (`share/grub/bombadil` is not referenced by the script), delete GRUB's `Loading` lines, or call `efibootmgr`. The restore-point side of this layout (what `@snapshots` and the name-based mount are for, and `bombadil-rollback`) is in [restore points](restore-points.md).
 
 ### The smoke test
 
-`bombadil-smoke` checks a booted machine and prints one `BOMBADIL-SMOKE:` line per event to `/dev/console` (and so to the serial port when the kernel has one). It ends by powering the machine off, so a VM run is judged from its log. The mode comes from the kernel argument (`iso/airootfs/usr/local/bin/bombadil-smoke:14`).
+`bombadil-smoke` checks a booted machine and prints one `BOMBADIL-SMOKE:` line per event to `/dev/console` (and so to the serial port when the kernel has one). It ends by powering the machine off, so a VM run is judged from its log. The mode comes from the kernel argument (`iso/airootfs/usr/local/bin/bombadil-smoke:14`). This page holds the catalogue of checks; [Development](../contributing/development.md#the-iso-smoke) describes the layers of tests around it.
 
 | Kernel argument | Mode | What runs | Ends with |
 |---|---|---|---|
 | `bombadil.smoke` | `live` (printed when the value is empty) | the common checks, then the sign-in checks | `DONE`, power off |
 | `bombadil.smoke=install` | `install` | the same, then `check install`: `bombadil-install /dev/vda --yes` with `BOMBADIL_INSTALL_CMDLINE` set to `console=tty0 console=ttyS0,115200 bombadil.smoke=undo` | `DONE`, power off |
-| `bombadil.smoke=undo` | `undo`, on the installed disk | the common checks without the sign-in checks. First pass: `grub-menu-hidden`, `snapshots-available`, `snapshot-turn`, `change-system`, `undo`, then a phase file and `systemctl reboot`. Second pass: the common checks again and `undo-applied`. | `REBOOT` after the first pass, `DONE` after the second, power off |
+| `bombadil.smoke=undo` | `undo`, on the installed disk | the common checks without the sign-in checks. First pass: the brain checks, then `grub-menu-hidden`, `snapshots-available`, `snapshot-turn`, `change-system`, `undo`, then a phase file and `systemctl reboot`. Second pass: the common checks again and `undo-applied`. | `REBOOT` after the first pass, `DONE` after the second, power off |
 
-Any other value runs like `live`. A count of the script with both example apps present gives 93 checks in `live` mode, 94 in `install` mode, 72 on the first pass of `undo` and 68 on the second. The common checks are:
+Any other value runs like `live`. A count that runs the script with each `check` replaced by a recorder, with both example apps and the Brain app present, gives 94 checks in `live` mode, 95 in `install` mode, 86 on the first pass of `undo` and 69 on the second. The common checks are:
 
 | Group | Checks | What they prove |
 |---|---|---|
-| image | `user-exists`, `tools-installed`, `pyside6-imports`, `pacman-mirror`, `claude-cli`, `codex-cli`, `os-mcp-lists-tools`, `os-mcp-lists-pictures` | the user; at least one of the programs `Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp` on `PATH` (`tools-installed` runs `command -v` with all eight names, which exits 0 when any one is found, so it does not prove that each is there); PySide6's `QtQml` and `QtQuick`, an active `Server =` line in the mirror list, both CLIs answering `--version`, and `show_panel` and `system_map` in the MCP tool list |
+| image | `user-exists`, `tools-installed`, `brain-tools-installed`, `pyside6-imports`, `pacman-mirror`, `claude-cli`, `codex-cli`, `os-mcp-lists-tools`, `os-mcp-lists-pictures` | the user; at least one of the programs `Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp` on `PATH` (`tools-installed` runs `command -v` with all eight names, which exits 0 when any one is found, so it does not prove that each is there); both `bombadil-brain` and `bombadil-brain-watch` on `PATH` (`brain-tools-installed` looks for each in a loop and fails on the first one missing, `bombadil-smoke:20`); PySide6's `QtQml` and `QtQuick`, an active `Server =` line in the mirror list, both CLIs answering `--version`, and `show_panel` and `system_map` in the MCP tool list |
 | session | `greetd-active`, `hyprland-running`, `agentd-socket`, `quickshell-running`, `hypr-config-ok`, `bar-layer`, `virtual-display-size`, `audio-output`, `agentd-status` | autologin reaches Hyprland; the daemon and the bar run; `hyprctl configerrors` is empty; the `bombadil-bar` layer exists; every `Virtual-*` monitor is 1920x1080; a sound sink other than PipeWire's dummy exists |
-| panels | `browser-panel`, `browser-window`, `browser-shown`, `browser-hide`, `screenshot` | `show_panel` brings Chromium into `special:browser`, `hide_panel` takes it out, `grim` writes a picture |
+| panels | `browser-panel`, `browser-window`, `browser-shown`, `browser-hide`, `screenshot` | `show_panel` brings Chromium into `special:browser` (`browser-window` and `browser-shown` read Hyprland), and `grim` writes a picture. `browser-hide`, and `browser-hide-again` and `browser-hide-third` in the pill group, prove only that the `hide_panel` call returns without `"isError": true` (`mcp_call`, `bombadil-smoke:34-38`); no check after them looks at whether the window left `special:browser`. Of the hides, only `app-hide` reads Hyprland afterwards (`app_hidden`, line 97), and `signin-slid-out` waits for agentd's setup state to report the panel hidden (`slid_out`, line 245). |
 | apps | `create-app`, `app-window`, `app-shown`, `app-status`, `app-skill-installed`, `create-second-app`, `second-app-window`, `apps-have-own-drawers`, `second-app-shown`, `app-hide`, `example-<name>`, `-shown`, `-status` for `memory` and `password-manager` | `create_app` opens a native window in its own drawer, a second app gets its own, the skill is linked for both CLIs, the two example apps open |
-| pictures | `picture-network`, `-boot`, `-disks`, `-sound`, `-screens`, `picture-service` | `system_map` captures each kind from this machine and the bar reports drawing it |
+| pictures | `picture-network`, `-boot`, `-disks`, `-sound`, `-screens`, `picture-service` | `system_map` captures each kind from this machine and the bar reports drawing it; the `boot` answer must also hold at least three lines that start with a time (`bombadil-smoke:130`) |
 | the pill | `super-tap-then-launcher`, `launcher-without-model`, `browser-hide-again`, `alt-space-then-launcher`, `browser-hide-third`, `bang-turn-running`, `super-escape-stops`, `stop-in-history` | a Super tap and Alt+Space open the pill, a launcher word opens the browser with no model, `!sleep 300` runs and Super+Escape stops it |
 | details drawer | `details-drawer`, `details-window`, `details-has-keyboard`, `details-esc-closes`, `details-reopen`, `details-reopen-shown`, `details-again`, `details-again-closes`, `details-third`, `details-third-shown`, `pill-esc-closes-details`, `open-unit`, `open-unit-window`, `open-unit-has-keyboard`, `open-unit-esc-closes` | the drawer takes the keyboard and every way out closes it |
 
-The sign-in group (25 `signin-*` checks and `agentd-restored`, `bombadil-smoke:252-298`, inside the block at lines 250 to 300) runs in every mode but `undo`. It restarts `agentd` with stand-in providers, so the `undo` boot of the installed system skips it. The `install` and `undo` checks are named in the modes table above.
+Two groups run only in some modes:
+
+| Group | Checks | What they prove |
+|---|---|---|
+| sign-in, every mode but `undo` | 25 `signin-*` checks and `agentd-restored` (`bombadil-smoke:254-300`, inside the block at lines 252 to 302) | agentd asks which AI, the real Codex and Claude pages open (or the offline line shows) and are called off, and a round trip, a pasted code, a closed panel, a timeout and no internet run against a stand-in login. It restarts `agentd` with stand-in providers, so the `undo` boot of the installed system skips it. |
+| the brain, first pass of `undo` only | `brain-watch-active`, `brain-service-active`, `brain-status`, `brain-watching`, `brain-turn-writes`, `brain-why-turn`, `brain-you-write`, `brain-why-you`, `brain-rename`, `brain-rename-keeps-thing`, and `brain-window`, `brain-window-shown`, `brain-window-status` when `share/apps/brain/main.qml` is on the image (`bombadil-smoke:311-340`) | on the installed disk, where the watcher has btrfs to watch: the root service and the user service are active and the watcher reports `watching`; a file a `!` turn writes is named `Made by the machine in turn N` and a file the person writes `You made it`; a rename keeps the thing's id; the Brain window opens from its drawer and reports ok |
+
+The `install` and `undo` checks are named in the modes table above.
 
 The script talks to the host through its own output. The host side is `scripts/test-vm.sh`; `scripts/vm-tools/vmsmoke` answers the same lines in a running VM.
 
@@ -247,7 +300,7 @@ sequenceDiagram
     L->>L: check install: bombadil-install /dev/vda --yes
     L-->>H: DONE, power off
     H->>I: boot the disk alone
-    I->>I: first pass: restore point, change, undo, REBOOT
+    I->>I: first pass: brain checks, restore point, change, undo, REBOOT
     I->>I: second pass: undo-applied
     I-->>H: DONE with fail=0, power off
 ```
@@ -280,7 +333,7 @@ scripts/run-vm.sh --installed   # boot the installed disk, no ISO
 |---|---|
 | none | Boots the installed disk. When `out/.installed` or the disk is missing, it builds and installs first. It says when the checkout has moved on from what the disk was built from. |
 | `live` | Builds if needed and boots the live ISO. The disk is not touched. |
-| `refresh` | Keeps the disk. Stops the VM, takes a `qemu-img snapshot` named `before-refresh-<time>-<rev>`, boots the disk and runs `scripts/vm-tools/update-in-place --reboot HEAD`. The login, apps and files on the disk stay. The tool moves the Bombadil tree and the system files the profile owns outright (the Chromium policy, `/etc/environment`, the MIME defaults, `bombadil-browser.desktop`, the icon folders `usr/share/icons/hicolor` and `usr/share/pixmaps`, and the four scripts) and adds a `/usr/local/bin` link for each program in `bin/` that has none; packages, GRUB defaults, the pacman mirror list and the person's own files, such as `hyprland.lua`, are not part of it. |
+| `refresh` | Keeps the disk. Stops the VM, takes a `qemu-img snapshot` named `before-refresh-<time>-<rev>`, boots the disk and runs `scripts/vm-tools/update-in-place --reboot HEAD`. The login, apps and files on the disk stay. The tool moves the Bombadil tree and the system files the profile owns outright (the Chromium policy, `/etc/environment`, the MIME defaults, `bombadil-browser.desktop`, the icon folders `usr/share/icons/hicolor` and `usr/share/pixmaps`, and the four scripts) and adds a `/usr/local/bin` link for each program in `bin/` that has none; packages, GRUB defaults, the pacman mirror list, systemd units and the person's own files, such as `hyprland.lua`, are not part of it (`SYSTEM` in `scripts/vm-tools/update-in-place:23-26`). |
 | `reinstall` | Rebuilds if the checkout changed the ISO's inputs, asks (type `wipe`; `--yes` or `BOMBADIL_YES=1` skips the question), renames the old disk to `bombadil.qcow2.before-reinstall` and installs again. |
 | `build` | Builds the ISO only. |
 | `stop` | Presses the ACPI power button over QMP and waits up to 60 seconds, then kills QEMU. |
@@ -305,7 +358,8 @@ Anyone at the keyboard of an installed machine is root: the account has no passw
 
 | Path in the home | What it is |
 |---|---|
-| `.config/hypr/hyprland.lua` | The Hyprland session: monitors (`preferred` and a 1920x1080 rule for `Virtual-1`), the `hyprland.start` handler (`agentd`, `bombadil-shell`, `mako`), the look (gaps 6 and 12, border 1, rounding 12, blur, `dwindle`, `background_color = 0xff101214` for the desk ground, the animation curve and the slide animations), the binds and the window rules. |
+| `.config/hypr/hyprland.lua` | The Hyprland session: monitors (`preferred` and a 1920x1080 rule for `Virtual-1`), the `hyprland.start` handler (`agentd`, `bombadil-shell`, `mako`), the look (gaps 6 and 12, border 1, rounding 12, blur, `dwindle`, `background_color = 0xff101214` for the desk ground), the animation curve and the slide animations (the `layers` animation is off, `hyprland.lua:47`, so the bar changes size when a picture resizes it instead of sliding), the binds and the window rules. |
+| `.config/bombadil/wallpaper` | Comments only. A path of an image on a line of its own replaces the standard picture under the desk ([Boot and the console](#boot-and-the-console-from-power-on-to-the-desk)). |
 | `.config/chromium-flags.conf` | `--no-first-run`, `--no-default-browser-check`, `--password-store=basic`, for a Chromium started any other way than by the browser panel. |
 | `.claude/skills/bombadil-apps` | A link to `/usr/share/bombadil/share/skills/bombadil-apps`, the app skill for Claude. |
 | `.agents/skills/bombadil-apps` | The same link, for Codex. |
@@ -355,10 +409,13 @@ Foundation choices, section 1, says an old snapshot can be booted from the bootl
 | `bombadil-smoke` | kernel argument `bombadil.smoke`, `bombadil.smoke=install`, `bombadil.smoke=undo`; `BOMBADIL_SMOKE_NO_POWEROFF`, `SHOT_WAIT`, `KEYS_WAIT` | the boot-time self-test |
 | `scripts/build-iso.sh` | `WORK`, `OUT`, `BOMBADIL_NO_CLIS`, `SOURCE_DATE_EPOCH` | builds the ISO |
 | `scripts/build-in-container.sh` | `CONTAINER_RUNTIME`, `BOMBADIL_BUILD_IMAGE`, `SOURCE_DATE_EPOCH`, `BOMBADIL_HOST_NET`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and their lowercase forms, `SSL_CERT_FILE`, `PACMAN_CACHE` | builds it in a container |
+| `scripts/console-palette.py` | `[--table]` | prints the three `vt.default_*` parameters from `share/qml/Bombadil/Theme.qml`, or the 16 console colours one a line |
+| `scripts/make-wallpaper.py` | `[--out FILE] [--width N] [--height N] [--no-stone]` | draws `share/wallpaper/bombadil.png` from the colour tokens; needs `pillow`, `numpy` and `cairosvg` (its header) |
 | `scripts/run-vm.sh` | `[--disk\|--installed] [QEMU_ARGUMENT...]`; `MEM`, `SMP`, `RES`, `GL`, `SSH_PORT`, `FORCE` | a QEMU window; every argument after the first goes to `qemu-system-x86_64` |
 | `scripts/qmp.py` | `SOCK send-keys QCODE[+QCODE]...`, `SOCK screenshot FILE.png`, `SOCK powerdown` | a small QMP client that `test-vm.sh` and `wsl-vm.sh` call and that works on the socket `run-vm.sh` leaves at `out/vm/qmp.sock`: `send-keys` presses each argument in turn and a `+` joins keys into a chord (`meta_l+esc`); `screenshot` writes `FILE.png` and leaves `FILE.png.ppm` beside it; `powerdown` presses the ACPI power button |
 | `scripts/test-vm.sh` | `ISO`, `MODE`, `TIMEOUT`, `QEMU_CPU`, `VNC` | the headless smoke run |
 | `scripts/dev-session.sh` | `BOMBADIL_PROVIDER` (default `fake`) | agentd and the bar on an existing desktop |
+| `scripts/vm-tools/update-in-place` | `[--reboot] [--no-system] [--from URL] REF`; `BOMBADIL_TREE` | moves an installed VM to a git ref without reinstalling; carries `bin src shell share`, `bombadil-smoke` and the `SYSTEM` files |
 | `scripts/wsl-vm.sh`, `scripts/bombadil-vm.cmd` | `[live\|refresh\|reinstall\|build\|stop] [--yes]`; `BOMBADIL_TREE`, `MEM` (5G), `SMP`, `GL` (0), `RES`, `BOMBADIL_YES` | the Windows and WSL launcher |
 
 **Units and files the image owns** (paths under `iso/airootfs/`)
@@ -368,12 +425,14 @@ Foundation choices, section 1, says an old snapshot can be booted from the bootl
 | `etc/systemd/system/pacman-init.service` | live only: initialise and populate the pacman keyring |
 | `etc/systemd/system/bombadil-live.service` | live only: create `user` with an empty password, before greetd |
 | `etc/systemd/system/bombadil-smoke.service` | live and installed: runs `bombadil-smoke` when the kernel line has `bombadil.smoke` |
+| `etc/systemd/system/bombadil-brain-watch.service` | live and installed: the brain's root file watcher (`/usr/local/bin/bombadil-brain-watch`), `After=local-fs.target`, `Restart=on-failure`; stays up on a root that is not btrfs and says it is not watching ([the brain](brain.md)) |
+| `etc/systemd/user/bombadil-brain.service` | live and installed: the brain's user service (`/usr/local/bin/bombadil-brain`), `Restart=on-failure`, `WantedBy=default.target` |
 | `etc/systemd/system/display-manager.service` | a link to `greetd.service` |
 | `etc/systemd/system/systemd-firstboot.service` | a link to `/dev/null`: masked |
-| `etc/systemd/system/multi-user.target.wants/`, `graphical.target.wants/` | links that enable `NetworkManager`, `bombadil-live`, `pacman-init` and `bombadil-smoke` |
+| `etc/systemd/system/multi-user.target.wants/`, `graphical.target.wants/`, `etc/systemd/user/default.target.wants/` | links that enable `NetworkManager`, `bombadil-live`, `pacman-init`, `bombadil-brain-watch`, `bombadil-smoke` and (for the user) `bombadil-brain` |
 | <code>etc/systemd/system/serial-getty&#64;ttyS0.service.d/autologin.conf</code> | live only: the drop-in of the `ttyS0` serial getty, root autologin |
-| `etc/greetd/config.toml` | the autologin, through `systemd-cat -t hyprland`; see Boot flow |
-| `etc/default/grub.d/zz-bombadil-console.cfg` | the quiet-console parameters for an installed system's GRUB. The live boot does not read it (systemd-boot uses entry 01); the image carries it so that the installer's copy of `/etc` brings it. See the boot menu |
+| `etc/greetd/config.toml` | the autologin, through `systemd-cat -t hyprland`; see Boot and the console |
+| `etc/default/grub.d/zz-bombadil-console.cfg` | the quiet-console parameters for an installed system's GRUB. The live boot does not read it (systemd-boot uses entry 01); the image carries it so that the installer's copy of `/etc` brings it |
 | `etc/sudoers.d/bombadil` | passwordless sudo |
 | `etc/bombadil/config.toml` | system defaults, `provider = "claude"` and `snapshots = true`; `~/.config/bombadil/config.toml` overrides them ([agentd](agentd.md)) |
 | `etc/environment` | `BROWSER=/usr/local/bin/bombadil-browser` |
@@ -386,7 +445,6 @@ Foundation choices, section 1, says an old snapshot can be booted from the bootl
 | `etc/skel/` | see What is in `/etc/skel` |
 | `usr/local/bin/bombadil-setup`, `-install`, `-smoke`, `-rollback` | the four scripts |
 | `efiboot/loader/loader.conf`, `efiboot/loader/entries/*.conf` (under `iso/`, not `airootfs/`) | the live boot menu |
-| `scripts/console-palette.py` (under `scripts/`, not `iso/`) | prints the `vt.default_red`, `vt.default_grn` and `vt.default_blu` parameters from `share/qml/Bombadil/Theme.qml`; entry 01 and the drop-in carry its output |
 
 ## Where state lives
 
@@ -399,16 +457,19 @@ Foundation choices, section 1, says an old snapshot can be booted from the bootl
 | The snapper config | `/etc/snapper/configs/root` | made at install; its existence is what `Snapshots.available` tests (`src/bombadil/snapshots.py:34`) |
 | The login and the provider choice | `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.config/bombadil` | carried from the live home by the installer |
 | The session config | `~/.config/hypr/hyprland.lua` | copied once from `/etc/skel` |
+| The picture under the desk | `~/.config/bombadil/wallpaper` | copied once from `/etc/skel` with comments only; the installer carries the live copy with `.config/bombadil` |
+| The kernel command line | `/boot/grub/grub.cfg`, made by `grub-mkconfig` from `/etc/default/grub` and `/etc/default/grub.d/` | written at install by `grub-mkconfig -o /boot/grub/grub.cfg` (`bombadil-install:69,83`) |
+| The brain's watcher | `/run/bombadil-brain`, `/var/lib/bombadil-brain` (mode 0700) | the unit's `RuntimeDirectory` and `StateDirectory`; what is in them is [the brain's](brain.md) |
 | Smoke state | `/tmp/smoke.<name>.log`, `/tmp/smoke.png`, `/tmp/smoke.agentd.log`; `~/.bombadil-smoke-phase`; `/etc/bombadil-smoke-marker` | the phase file is in the home because the home is not rolled back; the marker is the system change that undo must take back |
 | Host side of a VM run | `out/vm/` (`qmp.sock`, `serial.sock`, `serial.log`), `out/bombadil.qcow2`, `out/test/` (serial logs, screenshots, `disk.qcow2`) | |
 | Launcher state | `out/.iso-key`, `out/.installed`, `out/bombadil.qcow2.before-reinstall`, `qemu-img` restore points inside the qcow2, a clone of the checkout in `BOMBADIL_TREE` | |
 
 ## Principles it keeps
 
-- [The person is a passenger](../principles.md#the-person-is-a-passenger): the image reaches the pill with nothing in the way: `systemd-firstboot` is masked, greetd logs in at once, the installed GRUB menu is hidden, and first run happens in the pill. The trap is a login screen, a boot menu that waits, or a question before the pill.
+- [The person is a passenger](../principles.md#the-person-is-a-passenger) and [quiet at rest](../principles.md#quiet-at-rest): the image reaches the pill with nothing in the way: `systemd-firstboot` is masked, greetd logs in at once, the installed GRUB menu is hidden, the console prints nothing between the loader and the desk, and first run happens in the pill. The trap is a login screen, a boot menu that waits, a question before the pill, or a unit or program that writes to the console (the greetd line and `quiet` are what keep it empty).
 - [Full access, with undo instead of guard rails](../principles.md#full-access-with-undo): `user` has `NOPASSWD: ALL` and an empty password, and the guard is the layout the installer builds (`@`, `@home`, `@snapshots`, a snapper config named `root`, `/` named `@` in the fstab). The trap is adding a prompt where a restore point belongs, or keeping state outside `@` so that undo cannot carry it (the kernel on the EFI partition is such state, see Known gaps).
 - [Recovery never goes through the part that broke](../principles.md#recovery-without-the-broken-part): `bombadil-rollback` is a bash script over btrfs and needs no `agentd`, model or desktop, and the `undo` smoke mode checks the swap across a reboot. The trap is mounting `/` by `subvolid` (undo swaps a snapshot in under the name `@`) or moving the rollback behind the daemon.
-- [Every piece degrades](../principles.md#degrade-and-recover): the live image has snapper but no config, so undo says it starts once Bombadil is installed instead of failing; `bombadil-setup` signs in with no daemon; the installer copies the running system and needs no network. The trap is an install step or boot unit that needs the network, `agentd` or a model.
+- [Every piece degrades](../principles.md#degrade-and-recover): the live image has snapper but no config, so undo says it starts once Bombadil is installed instead of failing; the brain's watcher stays up on the live root and says it is not watching instead of restart-looping; `bombadil-setup` signs in with no daemon; the installer copies the running system and needs no network. The trap is an install step or boot unit that needs the network, `agentd` or a model.
 - [Nothing runs on its own that the person cannot see and stop](../principles.md#nothing-runs-unseen): `bombadil-smoke.service` has `ConditionKernelCommandLine`, so it never runs on an ordinary boot, and the test entries say so in their titles. The trap is a unit that runs a test or a destructive step without the person's own kernel argument; entry 03 already erases a disk without asking and is not a pattern to copy.
 - [Plain files stay the truth](../principles.md#plain-files-stay-the-truth): the overlay is plain files in `iso/airootfs/`, `scripts/build-iso.sh` adds the tree, the links and the CLIs from the repository, and the installer's output is text (`fstab`, GRUB defaults, a preset). The trap is a build step that writes something not derivable from the repository, so that what is in the repository is not what is in the image.
 
@@ -417,19 +478,36 @@ Foundation choices, section 1, says an old snapshot can be booted from the bootl
 **Add a package to the ISO**
 
 1. Add its name on its own line to `iso/packages.x86_64`, under the `#` comment group of `iso/packages.x86_64` it belongs to. The build installs from `core` and `extra` only (`iso/pacman.conf`); a package from another repository needs a section for that repository added there first.
-2. If a service must run, put an enable link in `iso/airootfs/etc/systemd/system/<target>.wants/`, as `NetworkManager.service` is linked in `multi-user.target.wants/`. The installer copies `/etc` from the live system, so the installed system gets the link with no change to `bombadil-install` (which enables only `greetd` and `NetworkManager` itself, line 56). A unit that must exist only on the live system also goes into the removal list at `bombadil-install:30-33`.
+2. If a service must run, put an enable link in `iso/airootfs/etc/systemd/system/<target>.wants/`, as `NetworkManager.service` is linked in `multi-user.target.wants/`. A unit for the user's own session goes in `etc/systemd/user/` with a link in `etc/systemd/user/default.target.wants/`, as `bombadil-brain.service` does. The installer copies `/etc` from the live system, so the installed system gets the link with no change to `bombadil-install` (which enables only `greetd` and `NetworkManager` itself, line 56). A unit that must exist only on the live system also goes into the removal list at `bombadil-install:30-33`.
 3. If a file you add must run or be private, add a `file_permissions` line in `iso/profiledef.sh`. Files a package owns need nothing.
 4. To stop it being dropped, add an assertion like `test_there_is_sound` to `tests/test_iso_profile.py`, which reads the list through `_packages()`. If a program must be on `PATH` after boot, add a check of its own to the always-run block of `bombadil-smoke`, for example `check NAME bash -c 'command -v PROGRAM'`. Adding the name to `tools-installed` (`bombadil-smoke:18`) proves nothing, because `command -v A B C` exits 0 when any one name is found.
 5. Rebuild. A machine that is already installed does not get the package: the installer runs once and nothing updates an installed system. `scripts/wsl-vm.sh` notices the change because `iso_key` hashes `iso/`.
 
+**Add a program to the image**
+
+1. Put the program in `bin/`. `scripts/build-iso.sh:14` copies `bin/` into `/usr/share/bombadil/bin`, and `file_permissions` sets that directory to 0755 (`iso/profiledef.sh:23`).
+2. Add its name to the `for b in ...` list at `scripts/build-iso.sh:16`. Without it there is no link in `/usr/local/bin` and the program is not on `PATH` on a fresh image. `scripts/vm-tools/update-in-place` links every program in `bin/` that has no link (line 73), so an installed VM needs no edit.
+3. For a script that must run as root and live in `iso/airootfs/usr/local/bin` (as the four scripts do), add a `file_permissions` line (`iso/profiledef.sh:18-21` show the pattern) and add its path to `SYSTEM` in `scripts/vm-tools/update-in-place:23-26`, so that a `refresh` carries it ([restore points](restore-points.md) says the same for a root script).
+4. Add a check to `bombadil-smoke` that looks for the name on its own, in the loop style of `brain-tools-installed` (`bombadil-smoke:20`); `tools-installed` proves nothing for one more name.
+
+**Add a provider CLI to the image**
+
+The provider's own side (its class in `src/bombadil/providers.py`, its sign-in, its launcher words) is in [os-mcp](os-mcp.md#change-how-a-cli-is-told-about-the-server-or-add-a-provider) and [browser and sign-in](browser-and-signin.md#extending-it). The edits that belong to this piece:
+
+1. `scripts/build-iso.sh:21-22`: add the npm package to the `npm install -g` line, so the CLI is in the image and first run only has to sign in.
+2. `iso/profiledef.sh:24-25`: when the CLI comes from an npm scope the image does not have yet, add `/usr/lib/node_modules/@<scope>/` with `0:0:755`, because `mkarchiso` copies airootfs without modes.
+3. `iso/airootfs/usr/local/bin/bombadil-setup`: the `select provider in claude codex` list (line 10), the install `case` (lines 11-14) and the login `case` (lines 26-29).
+4. `bombadil-install:73`: add the CLI's credential path, relative to the home, to the `for f in .claude .claude.json .codex .config/bombadil` list. Without it an installed system starts signed out of that CLI.
+5. `bombadil-smoke:82-83`: add a check like `claude-cli` (`as_user NAME --version`).
+
 **Add a smoke check**
 
-1. Open `iso/airootfs/usr/local/bin/bombadil-smoke` and choose the block. Above the `if [[ "$mode" != "undo" ]]` block (line 250) it runs in every mode. Inside it, it runs in `live` and `install` only: that is the sign-in group, the place for a check that restarts `agentd` or changes the provider. The `install` and `undo` blocks follow.
+1. Open `iso/airootfs/usr/local/bin/bombadil-smoke` and choose the block. Above the `if [[ "$mode" != "undo" ]]` block (line 252) it runs in every mode. Inside it, it runs in `live` and `install` only: that is the sign-in group, the place for a check that restarts `agentd` or changes the provider. The `install` and `undo` blocks follow; the first pass of `undo` is where a check that needs the installed btrfs layout belongs, as the brain checks do.
 2. Write `check NAME COMMAND...`. `NAME` is the word in `PASS NAME` and `FAIL NAME` and the log key `/tmp/smoke.NAME.log`; keep it lower case with hyphens and unique. The command passes by exiting 0. Wrap anything slow in `wait_for SECONDS COMMAND...`, which retries once a second. Run anything that must see the session through `as_user COMMAND...`.
-3. Reuse the helpers in the script: `hypr_json KIND`, `has_client 'PYTHON-EXPRESSION'`, `special_shown NAME`, `active_is CLASS`, `has_layer NAME`, `mcp_call TOOL 'JSON'`, `agentd_send 'JSON'`, `history_has TEXT`, `launcher_ran WORD TEXT COUNT`. `has_client` evaluates the Python expression once per Hyprland client, which the expression sees as `c`, and passes when it is true for any of them: `has_client 'c["class"]=="bombadil-browser"'`. `launcher_ran` passes when `launcher_done WORD TEXT` is greater than COUNT, so take `before=$(launcher_done WORD TEXT)` before the action and pass `"$before"` as COUNT.
+3. Reuse the helpers in the script: `hypr_json KIND`, `has_client 'PYTHON-EXPRESSION'`, `special_shown NAME`, `active_is CLASS`, `has_layer NAME`, `mcp_call TOOL 'JSON'`, `agentd_send 'JSON'`, `history_has TEXT`, `launcher_ran WORD TEXT COUNT`. `has_client` evaluates the Python expression once per Hyprland client, which the expression sees as `c`, and passes when it is true for any of them: `has_client 'c["class"]=="bombadil-browser"'`. `launcher_ran` passes when `launcher_done WORD TEXT` is greater than COUNT, so take `before=$(launcher_done WORD TEXT)` before the action and pass `"$before"` as COUNT. `mcp_call` passes when the tool answers without `"isError": true`, so it proves a call returned, not what the call did: follow it with a check that reads the result, as `app-shown` follows `create-app`.
 4. For a screenshot, call `shot NAME`: lower-case letters, digits and hyphens only, because the host matches `SHOT [a-z0-9-]*` (`scripts/test-vm.sh:53`) and cuts the name at the first other character. For key presses, call `keys QCODE...`: lower-case qcodes, digits, `_` and `+`, because the host matches `KEYS [0-9]* [a-z0-9_+ ]*` (`scripts/test-vm.sh:62`).
-5. If the check needs a package or file, put it in the image first (the two recipes here). If the fact is static, add a test to `tests/test_iso_profile.py` as well, which fails sooner.
-6. Run `bash -n iso/airootfs/usr/local/bin/bombadil-smoke`. The script is baked into the image and `scripts/test-vm.sh` boots the newest `out/*.iso` (or `ISO`), so rebuild the ISO first (`scripts/build-in-container.sh`) and then run `scripts/test-vm.sh`; run on the old ISO, it shows none of the new check. On an installed VM, commit the change, run `scripts/vm-tools/update-in-place REF`, which carries `bombadil-smoke` into the guest, and then `scripts/vm-tools/vmsmoke`. `vmsmoke` refuses on a VM that already has a provider chosen (`~/.config/bombadil/config.toml`), because its sign-in checks restart `agentd` with stand-in providers and `codex login` revokes a stored Codex login: run it as `scripts/vm-tools/with-scratch vmsmoke` on a scratch copy (with `FORCE=1` when the copy has a provider) or with `FORCE=1` on a disposable VM. `virtual-display-size` fails on a VM pinned to another size (see [Development](../contributing/development.md)). Every `check` counts in `DONE pass=<n> fail=<m>`, and the run fails on any `FAIL`.
+5. If the check needs a package or file, put it in the image first (the recipes above). If the fact is static, add a test to `tests/test_iso_profile.py` as well, which fails sooner.
+6. Run `bash -n iso/airootfs/usr/local/bin/bombadil-smoke`. The script is baked into the image and `scripts/test-vm.sh` boots the newest `out/*.iso` (or `ISO`), so rebuild the ISO first (`scripts/build-in-container.sh`) and then run `scripts/test-vm.sh`; run on the old ISO, it shows none of the added check. On an installed VM, commit the change, run `scripts/vm-tools/update-in-place REF`, which carries `bombadil-smoke` into the guest, and then `scripts/vm-tools/vmsmoke`. `vmsmoke` refuses on a VM that already has a provider chosen (`~/.config/bombadil/config.toml`), because its sign-in checks restart `agentd` with stand-in providers and `codex login` revokes a stored Codex login: run it as `scripts/vm-tools/with-scratch vmsmoke` on a scratch copy (with `FORCE=1` when the copy has a provider) or with `FORCE=1` on a disposable VM. `virtual-display-size` fails on a VM pinned to another size (see [Development](../contributing/development.md)). Every `check` counts in `DONE pass=<n> fail=<m>`, and the run fails on any `FAIL`.
 
 **Add a first-run step**
 
@@ -441,13 +519,13 @@ There is no registry of first-run steps. The step belongs in one of these places
 4. An action at every login: add `hl.exec_cmd(...)` to the `hyprland.start` handler of `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`. It reaches only homes made after the change (see the next recipe).
 5. Cover it with a `check` in `bombadil-smoke` and, for a file, a path-based test in `tests/test_iso_profile.py`.
 
-**Add a file to every new user's home**
+**Add a file to the home a user starts with**
 
 1. Put the file under `iso/airootfs/etc/skel/` at its path relative to the home: `etc/skel/.config/example/app.conf` becomes `~/.config/example/app.conf`. A symlink stays a symlink (the two skills links are examples). Put nothing personal or secret there: it ships in the public image.
 2. `mkarchiso` copies airootfs without modes. If the file needs another mode, add its image path (`/etc/skel/...`) to `file_permissions` in `iso/profiledef.sh`.
 3. It reaches the live session's home (`useradd -m` in `bombadil-live.service`) and the installed home (`cp -aT /etc/skel /home/user`, `bombadil-install:54`). It reaches no home that already exists: nothing copies skel again, so a changed line in an existing skel file never reaches a machine installed earlier.
 4. To carry something the person made on the live system into the installed one, add its path, relative to the home, to the `for f in ...` list at `bombadil-install:73`. Use that for the person's own data, not for defaults.
-5. Test it by reading the file by path, as `test_the_pill_opens_from_super_and_from_alt_space` does for `hyprland.lua`, or with a booted check like `app-skill-installed` (`bombadil-smoke:99`).
+5. Test it by reading the file by path, as `test_the_pill_opens_from_super_and_from_alt_space` does for `hyprland.lua` and `test_the_file_new_systems_ship_holds_only_comments_so_the_standard_picture_shows_and_can_be_watched` in `tests/test_wallpaper.py` does for the `wallpaper` file, or with a booted check like `app-skill-installed` (`bombadil-smoke:101`).
 
 **Change the quiet console or its colours**
 
@@ -461,9 +539,11 @@ There is no registry of first-run steps. The step belongs in one of these places
 
 | File | What it covers |
 |---|---|
-| `tests/test_iso_profile.py` | six tests: the sound packages are in `packages.x86_64`; the mirror list has only `https` `Server` lines and the agent's system prompt carries the `pacman -Syu --noconfirm --needed` rule; the installer's GRUB lines (cut out of `bombadil-install` between `for kv in GRUB_TIMEOUT_STYLE` and `grub-install` and run on a copy of Arch's defaults) leave one each of `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1` and `GRUB_TERMINAL_OUTPUT=console`, and add them to a file that has none; `hyprland.lua` binds `SUPER + SUPER_L`, `SUPER + SUPER_R` and `ALT + space` to `bombadil pill`; the system prompt tells the agent a replaced kernel needs a restart |
+| `tests/test_iso_profile.py` | seven tests: the sound packages are in `packages.x86_64`; the mirror list has only `https` `Server` lines and the agent's system prompt carries the `pacman -Syu --noconfirm --needed` rule; the installer's GRUB lines (cut out of `bombadil-install` between `for kv in GRUB_TIMEOUT_STYLE` and `grub-install` and run on a copy of Arch's defaults) leave one each of `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1` and `GRUB_TERMINAL_OUTPUT=console`, and add them to a file that has none; `hyprland.lua` binds `SUPER + SUPER_L`, `SUPER + SUPER_R` and `ALT + space` to `bombadil pill`; `hyprland.lua` turns the `layers` animation off; the system prompt tells the agent a replaced kernel needs a restart |
 | `tests/test_boot_console.py` | eight tests, all of them text checks: the palette is the design system's with the ground as colour 0; entry 01 is quiet and carries the palette; entries 02 and 03 have no `quiet` and no palette; the drop-in has the same parameters as entry 01 and adds to the line; the drop-in sorts after every other `grub.d` file and appends when sourced; the installer's copy step leaves `grub.d` alone; greetd's two sessions run `start-hyprland` through `systemd-cat` as `user` on vt 1; `background_color` in `hyprland.lua` is `0xff` plus the ground |
+| `tests/test_wallpaper.py` | the picture against the tokens, the host in the shell, and that the skel `wallpaper` file holds only comments; 7 of its 14 tests need PySide6 or numpy ([shell](shell.md) owns the wallpaper) |
 | `tests/test_brand.py` | the icons in `iso/airootfs/usr/share/` and `pixmaps/` (no SVG mask, same tile) and the GRUB theme in `share/grub/bombadil` |
+| `tests/vm/btrfs-kernel.sh` | not the ISO: boots Arch's own kernel on a btrfs disk laid out as `bombadil-install` lays it out (`@`, `@home`, `@snapshots`, plus a nested subvolume under `@home`) and runs a `run.sh` as root in it, for kernel behaviour such as the brain's fanotify watcher (`tests/vm/samples/brain-watch/`); needs docker or podman and QEMU. A change to the installer's layout needs the same change there |
 | `iso/airootfs/usr/local/bin/bombadil-smoke` | the booted machine, run by `scripts/test-vm.sh` (needs QEMU) |
 
 ```sh
@@ -474,7 +554,7 @@ scripts/test-vm.sh                # live mode
 MODE=install scripts/test-vm.sh   # live, install, installed boot, undo across a reboot
 ```
 
-Not covered by any pytest test: the build, the boot itself, the units, and everything in `bombadil-install` except the GRUB lines and the check that its copy step leaves `grub.d` alone. `tests/test_boot_console.py` reads the boot entries, the drop-in, greetd's config and `hyprland.lua` as text; it boots nothing. Only the VM run covers the rest, and it needs QEMU. On 2026-10-01 the six tests of `tests/test_iso_profile.py` and the eight of `tests/test_boot_console.py` passed. No ISO was built or booted in the check of 2026-10-01. [Development](../contributing/development.md) describes the layers of tests.
+Not covered by any pytest test: the build, the boot itself, the units, and everything in `bombadil-install` except the GRUB lines and the check that its copy step leaves `grub.d` alone. `tests/test_boot_console.py` reads the boot entries, the drop-in, greetd's config and `hyprland.lua` as text; it boots nothing. Only the VM run covers the rest, and it needs QEMU. On 2026-10-01 the seven tests of `tests/test_iso_profile.py`, the eight of `tests/test_boot_console.py` and the five of `tests/test_brand.py` passed. No ISO was built or booted in the check of 2026-10-01. [Development](../contributing/development.md) describes the layers of tests.
 
 ## Known gaps
 
@@ -486,14 +566,18 @@ Not covered by any pytest test: the build, the boot itself, the units, and every
 | Partition names follow one rule (`nvme` and `mmcblk` get a `p`), so other device paths, such as `/dev/disk/by-id/...`, give names that do not exist. | `bombadil-install:14` |
 | No password and no encryption: `user` has an empty password, greetd's `default_session` also opens a session, and sudo asks for nothing. | `bombadil-install:55`; `iso/airootfs/etc/greetd/config.toml:8-10`; `iso/airootfs/etc/sudoers.d/bombadil` |
 | A change to an existing skel file never reaches an installed machine: the home is copied once. | `bombadil-install:54` |
-| `agentd` and the bar are started once by the Hyprland start hook, with no unit to restart them. Supervised units are in progress, not on `main`. | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:7-12`; [known issues](../known-issues.md) |
+| `agentd` and the bar are started once by the Hyprland start hook, with no unit to restart them (the brain's user service is the only user unit on `main`). Supervised units for them are in progress, not on `main`. | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:7-12`; `iso/airootfs/etc/systemd/user/`; [known issues](../known-issues.md) |
 | Restore points are never pruned: the installer enables no snapper cleanup. Settings for it are in progress, not on `main`. | `bombadil-install:56`; [restore points](restore-points.md) |
 | The GRUB theme in `share/grub/bombadil` is not installed by anything; its README says the installer copies it. | `share/grub/bombadil/README.md:13`; no reference in `bombadil-install` |
+| GRUB's own `Loading Linux` and `Loading initial ramdisk` lines are not removed on an installed system; the design note records that they show for a moment, and gives a `sed` for the generated `grub.cfg` that nothing applies. `scripts/vm-tools/update-in-place` looks for `Loading Linux` in the serial log after a reboot and presses Enter when it is absent, so deleting the lines changes what that tool sees. | `bombadil-install:63-69`; `scripts/vm-tools/update-in-place:81`; [Boot and the wallpaper](../design/boot-and-wallpaper.md) |
+| The quiet console is read as text only: no test or check boots the ISO and looks at the screen between the loader and the desk. | `tests/test_boot_console.py`; no console check in `bombadil-smoke` |
+| `scripts/vm-tools/update-in-place` carries no systemd unit (`SYSTEM` has no `etc/systemd`), so a VM installed before the brain's two units existed gets the programs (links) but not the units after a `refresh`. | `scripts/vm-tools/update-in-place:23-26,73` |
 | The provider CLIs are unpinned npm installs that no package owns. | `scripts/build-iso.sh:19-23`; [known issues](../known-issues.md) |
-| `archinstall` is in the package list and no script calls it; `efibootmgr` is installed and not called. | `iso/packages.x86_64:10,50` |
+| `archinstall` is in the package list and no script calls it; `efibootmgr` is installed and not called. | `iso/packages.x86_64:10,52` |
 | No CPU microcode package is in the image: `iso/packages.x86_64` has no `amd-ucode` or `intel-ucode`, although the live initramfs lists the `microcode` hook, and the installer installs no packages. [Bombadil, installed](../design/installed-os-brief.md) plans to add `amd-ucode` and `intel-ucode` to the list. | `iso/packages.x86_64`; `iso/airootfs/etc/mkinitcpio.conf.d/archiso.conf`; `bombadil-install` (no `pacstrap`) |
 | `bombadil-setup --first-run` has no caller. | `iso/airootfs/usr/local/bin/bombadil-setup:7` |
-| The smoke `install` mode and boot entry 03 hard-code `/dev/vda`. | `bombadil-smoke:303`; `iso/efiboot/loader/entries/03-bombadil-install-test.conf` |
+| The smoke `install` mode and boot entry 03 hard-code `/dev/vda`. | `bombadil-smoke:305`; `iso/efiboot/loader/entries/03-bombadil-install-test.conf` |
 | The smoke check `tools-installed` passes when any one of its eight programs is found, so a missing program does not fail it. | `bombadil-smoke:18` |
+| The three `browser-hide*` checks pass when the `hide_panel` call returns without an error, whether or not the panel left the screen. | `bombadil-smoke:34-38,90,154,160` |
 | `scripts/run-vm.sh` says host port 2222 reaches the guest's ssh, and the image enables no `sshd`. | `scripts/run-vm.sh:9,24`; no `sshd` link in the `.wants` directories under `iso/airootfs/etc/systemd/system/`; `bombadil-install:56` |
 | The image is exercised only in QEMU. Nothing in the repository boots it on hardware, and the x86_64 UEFI boot modes rule out BIOS machines. | `scripts/test-vm.sh`, `iso/profiledef.sh:10` |
