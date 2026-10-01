@@ -9,6 +9,14 @@ tags every event with its turn id, so the app follows its own turns by id. That 
 catches a turn that fails before it starts (provider missing): error and turn_end, no turn_start.
 A prompt that waits behind another turn is also announced to everyone as a "queued" event, which
 is not the start of that turn; one dropped from the queue gets an "unqueued" event and nothing more.
+
+While the AI rests (out of plan or spending, or paused by hand) every "status" carries "setup":
+"resting" and a "rest" whose "note" ("At 15:00", "Paused") is what `note` holds; `ready` is False then.
+An ask still goes out and waits in the queue like any other. A turn the limit stopped partway ends
+with turn_end "requeued": it is not over, goes back to the queue under the same id and runs again
+when the limit lifts, so it keeps its place in the app's turns and its partial reply is cleared for
+the rerun. An ask that a newer ask of the same app replaces gets "unqueued" with "replaced" and goes
+silently. The app never learns of a limit as an error string.
 """
 
 import json
@@ -26,6 +34,8 @@ class Agent(QObject):
     connectedChanged = Signal()
     busyChanged = Signal()
     providerChanged = Signal()
+    noteChanged = Signal()
+    readyChanged = Signal()
     replyChanged = Signal()
     replied = Signal(str, arguments=["text"])
 
@@ -36,6 +46,8 @@ class Agent(QObject):
         self._connected = False
         self._busy = False
         self._provider = ""
+        self._note = ""                 # what an ask button says while the AI rests ("At 15:00", "Paused")
+        self._ready = True              # False while the AI rests
         self._reply = ""
         self._outbox: list[str] = []    # asked before the connection was up
         self._waiting = 0               # prompts sent whose "queued" (with the turn id) has not come
@@ -92,6 +104,7 @@ class Agent(QObject):
         self._waiting, self._turns, self._current = 0, set(), None
         self._set("_connected", False, self.connectedChanged)
         self._set("_busy", False, self.busyChanged)
+        self._set_rest({})                      # agentd says again when it is back
         if self._started and not self._retry.isActive():
             self._retry.start()
 
@@ -110,11 +123,18 @@ class Agent(QObject):
         sep = "\n\n" if self._reply else ""
         self._set("_reply", self._reply + sep + "Error: " + text, self.replyChanged)
 
+    def _set_rest(self, status: dict):
+        """`ready` and `note` from a status message ({} while agentd is away: not resting)."""
+        rest = status.get("rest") if isinstance(status.get("rest"), dict) else {}
+        self._set("_ready", not (rest or status.get("setup") == "resting"), self.readyChanged)
+        self._set("_note", str(rest.get("note") or ""), self.noteChanged)
+
     def handle(self, msg: dict):
         """One message from agentd."""
         if msg.get("type") == "status":
             self._set("_busy", bool(msg.get("busy")), self.busyChanged)
             self._set("_provider", str(msg.get("provider") or ""), self.providerChanged)
+            self._set_rest(msg)
             return
         if msg.get("type") == "queued":       # replies come in the order the prompts went out
             if self._waiting > 0:
@@ -132,6 +152,8 @@ class Agent(QObject):
             return
         if kind == "unqueued":                # dropped from the queue: no turn_start or turn_end follows
             self._turns.discard(turn)
+            if msg.get("replaced"):           # this app's newer ask took its place: nothing to tell
+                return
             text = "Error: dropped from the queue"
             if self._current not in self._turns:    # no running turn of ours owns `reply`
                 self._set("_reply", text, self.replyChanged)
@@ -148,6 +170,10 @@ class Agent(QObject):
         elif kind == "error" and msg.get("text"):
             self._add_error(str(msg["text"]))
         elif kind == "turn_end":
+            if msg.get("requeued"):           # the limit stopped it: it waits and runs again under this id
+                self._current = None
+                self._set("_reply", "", self.replyChanged)
+                return
             self._turns.discard(turn)
             self.replied.emit(self._reply)
 
@@ -167,6 +193,8 @@ class Agent(QObject):
     connected = Property(bool, lambda self: self._connected, notify=connectedChanged)
     busy = Property(bool, lambda self: self._busy, notify=busyChanged)
     provider = Property(str, lambda self: self._provider, notify=providerChanged)
+    note = Property(str, lambda self: self._note, notify=noteChanged)
+    ready = Property(bool, lambda self: self._ready, notify=readyChanged)
     reply = Property(str, lambda self: self._reply, notify=replyChanged)
 
 

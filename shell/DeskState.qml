@@ -462,8 +462,9 @@ QtObject {
 
     function _end(ev) {
         const failed = _error !== "" && (!_resultOk || _result === "")
-        if (ev.stopped || failed || !_qualifies) {
-            // A stopped or failed turn has nothing to tick: the card leaves at once.
+        if (ev.stopped || ev.requeued || failed || !_qualifies) {
+            // A stopped or failed turn has nothing to tick: the card leaves at once. So does one the
+            // limit stopped halfway: no turn runs while the AI rests, and it was not done.
             _clear()
             return
         }
