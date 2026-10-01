@@ -62,6 +62,7 @@ Window {
             onTitleClicked: w.note("titleClicked", parent.spec.name, [])
             onRowAction: (key, action) => w.note("rowAction", parent.spec.name, [key, action])
             onRowRemove: key => w.note("rowRemove", parent.spec.name, [key])
+            onRowOpen: (key, opens) => w.note("rowOpen", parent.spec.name, [key, opens])
         }
     }
     Component {
@@ -240,9 +241,13 @@ def now(**kw):
 
 
 def row(key, kind="dot", title="", sub="", tone="you", button="", remove=False, meter=None, meter_text="",
-        pulse=False):
-    return {"key": key, "kind": kind, "title": title or key, "sub": sub, "meter": meter,
-            "meterText": meter_text, "tone": tone, "pulse": pulse, "button": button, "remove": remove}
+        pulse=False, opens="", parts=None):
+    out = {"key": key, "kind": kind, "title": title or key, "sub": sub, "meter": meter,
+           "meterText": meter_text, "tone": tone, "pulse": pulse, "button": button, "remove": remove,
+           "opens": opens}
+    if parts is not None:
+        out["parts"] = [{"tone": t, "fraction": f} for t, f in parts]
+    return out
 
 
 def rows(*rs, title="Needs you", why="Tab walks these · one alone is just the line"):
@@ -257,6 +262,13 @@ WATCHING = (row("iso", "meter", "Ubuntu 26.04 ISO", tone="machine", meter=0.43, 
             row("build", title="Tell me when the build finishes", sub="VM smoke test · 6 min so far",
                 tone="machine", remove=True),
             row("timer", title="Timer, 10 min", sub="6:40 left", tone="sessions", remove=True, pulse=True))
+# Machine, as agentd sends it when memory crosses its line: who uses the memory, and the rest.
+MEMORY = row("memory", "stack", "Memory", tone="amber", meter=0.91, meter_text="14.5 of 16 GB",
+             parts=[("machine", 0.12), ("sessions", 0.40), ("you", 0.39)])
+DISK = row("disk", "meter", "Disk", tone="amber", meter=0.93, meter_text="214 of 230 GB", opens="disk")
+CPU = row("cpu", "meter", "Processor", tone="you", meter=0.37, meter_text="37% busy · 62°")
+NET = row("net", "plain", "Network", sub="↓ 1.2 MB/s   ↑ 40 kB/s")
+MACHINE = (MEMORY, DISK, CPU, NET)
 
 
 # -- the chrome --
@@ -611,13 +623,25 @@ def test_a_long_meter_label_still_stops_short_of_the_words_beside_the_x(cards):
     assert pct.x() + pct.width() <= 264.01 and meta.x() + meta.width() <= pct.x()
 
 
-@pytest.mark.parametrize("tone", ["machine", "sessions", "you", "ok", "red"])
+@pytest.mark.parametrize("tone", ["machine", "sessions", "you", "ok", "amber", "red"])
 def test_tones_map_to_who(cards, tone):
     (card,) = cards.show(("rows", "c", rows(row("m", "meter", meter=0.5, tone=tone),
                                             row("d", tone=tone))))
     r_meter, r_dot = cards.find(card, "rowsRow")
     assert cards.one(r_meter, "rowsMeter").property("fillColor").name() == colour(tone)
     assert cards.one(r_dot, "rowsDot").property("color").name() == colour(tone)
+
+
+@pytest.mark.parametrize("tone, says", [("machine", "muted"), ("sessions", "muted"), ("you", "muted"), ("ok", "muted"),
+                                        ("amber", "amber"), ("red", "red"), ("odd", "muted"), ("", "muted")])
+def test_a_line_crossed_colours_the_percent_and_the_other_tones_leave_it_quiet(cards, tone, says):
+    (card,) = cards.show(("rows", "c", rows(row("m", "meter", meter=0.93, tone=tone),
+                                            row("s", "stack", meter=0.93, tone=tone, parts=[("you", 0.5)]))))
+    for r in cards.find(card, "rowsRow"):
+        assert cards.one(r, "rowsPercent").property("color").name() == colour(says), r.property("kind")
+    # An unknown tone is nobody's colour: the muted grey, as for the dot.
+    assert cards.one(cards.find(card, "rowsRow")[0], "rowsMeter").property("fillColor").name() == colour(
+        tone if tone in THEME else "muted")
 
 
 def test_a_meter_that_is_odd_is_clamped_or_empty(cards):
@@ -630,6 +654,204 @@ def test_a_meter_that_is_odd_is_clamped_or_empty(cards):
     assert cards.one(none, "rowsMeter").property("fillWidth") == 0
     assert not cards.find(none, "rowsPercent")
     assert cards.one(zero, "rowsPercent").property("text") == "0%"
+
+
+# -- stacks and rows that open something (Machine) --
+
+def pieces(cards, r):
+    """The pieces of a stack row, left to right, as (x, width, colour) on its track."""
+    track = cards.one(r, "rowsMeter")
+    return [(round(cards.geometry(p, track)[0], 3), round(p.width(), 3), p.property("color").name())
+            for p in cards.find(track, "rowsPart")]
+
+
+def test_a_stack_row_is_laid_out_exactly_like_a_meter_row(cards):
+    meter = row("a", "meter", "Memory", tone="amber", meter=0.91, meter_text="14.5 of 16 GB")
+    stack = dict(meter, key="b", kind="stack", parts=[{"tone": "you", "fraction": 0.5}])
+    (card,) = cards.show(("rows", "c", rows(meter, stack, title="Machine")))
+    a, b = cards.find(card, "rowsRow")
+    assert a.height() == b.height() == 34 and card.height() == 50 + 34 + 34 + 18
+    for name in ("rowsRowTitle", "rowsMeta", "rowsPercent", "rowsMeter"):
+        assert cards.geometry(cards.one(a, name), a) == cards.geometry(cards.one(b, name), b), name
+    assert cards.one(b, "rowsPercent").property("text") == "91%"
+    assert cards.one(b, "rowsMeta").property("text") == "14.5 of 16 GB"
+    assert cards.one(b, "rowsRowTitle").property("text") == "Memory"
+    assert not cards.find(b, "rowsDot") and not cards.find(b, "rowsRowSub") and not cards.find(b, "rowsButton")
+    # The x of a removable one makes the same room.
+    cards.set(card, model=rows(dict(stack, remove=True), title="Machine")["model"])
+    (r,) = cards.find(card, "rowsRow")
+    pct = cards.one(r, "rowsPercent")
+    assert abs(pct.x() + pct.width() - (286 - 22)) < 0.01 and cards.one(r, "rowsRemove") is not None
+
+
+def test_a_stacks_track_is_cut_into_its_parts_by_their_fractions_in_the_colour_of_who(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    memory = cards.find(card, "rowsRow")[0]
+    track = cards.one(memory, "rowsMeter")
+    assert cards.geometry(track, memory) == (14, 28, 272, 6) and track.property("color").name() == colour("raised")
+    cut = pieces(cards, memory)
+    assert [c for _, _, c in cut] == [colour("machine"), colour("sessions"), colour("you")]
+    assert [w for _, w, _ in cut] == pytest.approx([0.12 * 272, 0.40 * 272, 0.39 * 272], abs=0.001)
+    # From the track's left edge, each where the one before ends: orange, blue, white, then the free rest.
+    assert [x for x, _, _ in cut] == pytest.approx([0, 0.12 * 272, 0.52 * 272], abs=0.001)
+    assert cut[-1][0] + cut[-1][1] < 272 and cut[-1][0] + cut[-1][1] == pytest.approx(0.91 * 272, abs=0.001)
+    # No single fill: the pieces are the bar. The percent is still the fraction used.
+    assert track.property("fillWidth") == 0
+    assert cards.one(memory, "rowsPercent").property("text") == "91%"
+    cards.snap("rows-machine-stack")
+
+
+def test_a_stacks_parts_never_overflow_the_track_and_a_part_under_a_pixel_is_not_drawn(cards):
+    over = row("a", "stack", meter=1.0, parts=[("machine", 0.6), ("sessions", 0.6), ("you", 0.3)])
+    # 0.003 of 272 is 0.8 px: not drawn, but what comes after it starts where it would have.
+    thin = row("b", "stack", meter=0.7, parts=[("machine", 0.5), ("sessions", 0.003), ("you", 0.2)])
+    odd = dict(row("c", "stack", meter=0.5),
+               parts=[{"tone": "machine", "fraction": -0.2}, {"tone": "sessions", "fraction": "lots"}, None,
+                      {"tone": "you", "fraction": float("nan")}, {"tone": "you"}, {"tone": "you", "fraction": 0.5}])
+    (card,) = cards.show(("rows", "c", rows(over, thin, odd)))
+    a, b, c = cards.find(card, "rowsRow")
+    cut = pieces(cards, a)
+    assert [col for _, _, col in cut] == [colour("machine"), colour("sessions")]      # the third has no room
+    assert cut[0][1] == pytest.approx(0.6 * 272, abs=0.001) and cut[1][0] == pytest.approx(0.6 * 272, abs=0.001)
+    assert cut[1][0] + cut[1][1] == pytest.approx(272, abs=0.001)                       # cut short where the track ends
+    assert all(x + w <= 272.001 for x, w, _ in cut)
+    cut = pieces(cards, b)
+    assert [col for _, _, col in cut] == [colour("machine"), colour("you")]
+    assert cut[1][0] == pytest.approx(0.503 * 272, abs=0.001) and cut[1][1] == pytest.approx(0.2 * 272, abs=0.001)
+    # A fraction that is not a positive number is nothing; the next piece starts at the edge.
+    assert pieces(cards, c) == [(0.0, 136.0, colour("you"))]
+    cards.snap("rows-stack-edges")
+
+
+def test_a_stack_with_no_parts_or_odd_ones_draws_an_empty_track_and_only_a_stack_has_parts(cards):
+    none = row("a", "stack", meter=0.5)
+    weird = dict(row("b", "stack", meter=0.5), parts="most of it")
+    meter = dict(row("c", "meter", meter=0.5), parts=[{"tone": "you", "fraction": 0.5}])
+    unknown = row("d", "stack", meter=0.5, parts=[("whoever", 0.3), ("", 0.2)])
+    (card,) = cards.show(("rows", "c", rows(none, weird, meter, unknown)))
+    a, b, c, d = cards.find(card, "rowsRow")
+    assert pieces(cards, a) == [] and pieces(cards, b) == [] and pieces(cards, c) == []
+    assert [col for _, _, col in pieces(cards, d)] == [colour("muted")] * 2          # nobody's colour
+    assert cards.one(a, "rowsPercent").property("text") == "50%"
+    assert cards.one(c, "rowsMeter").property("fillWidth") == 136                      # a meter's fill is its own
+
+
+def test_a_stack_updates_in_place_and_a_message_every_second_builds_nothing_again(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    memory = cards.find(card, "rowsRow")[0]
+    memory.setProperty("marker", 1)
+    first = cards.find(cards.one(memory, "rowsMeter"), "rowsPart")
+    for i, p in enumerate(first):
+        p.setProperty("marker", i)
+    moved = dict(MEMORY, meter=0.92, parts=[{"tone": "machine", "fraction": 0.13}, {"tone": "sessions", "fraction": 0.41},
+                                           {"tone": "you", "fraction": 0.38}])
+    cards.set(card, model=rows(moved, *MACHINE[1:], title="Machine")["model"])
+    assert cards.find(card, "rowsRow")[0].property("marker") == 1
+    again = cards.find(cards.one(memory, "rowsMeter"), "rowsPart")
+    assert [p.property("marker") for p in again] == [0, 1, 2]
+    assert [w for _, w, _ in pieces(cards, memory)] == pytest.approx([0.13 * 272, 0.41 * 272, 0.38 * 272], abs=0.001)
+    assert cards.one(memory, "rowsPercent").property("text") == "92%"
+    assert card.property("washLevel") == 0                                              # nothing new arrived
+    # A piece that comes or goes is a piece, not a new row.
+    cards.set(card, model=rows(dict(moved, parts=moved["parts"][:2]), *MACHINE[1:], title="Machine")["model"])
+    assert len(pieces(cards, memory)) == 2 and cards.find(card, "rowsRow")[0].property("marker") == 1
+    assert card.property("washLevel") == 0
+    cards.set(card, model=rows(dict(moved, parts=moved["parts"][:1]), *MACHINE[1:], title="Machine")["model"])
+    cards.pump(0.2)
+    assert len(pieces(cards, memory)) == 1 and cards.warnings == []     # (a piece taken away has no parent to read)
+
+
+def test_a_stack_draws_nothing_that_moves(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    before = pieces(cards, cards.find(card, "rowsRow")[0])
+    cards.pump(0.5)
+    assert pieces(cards, cards.find(card, "rowsRow")[0]) == before
+    assert not cards.find(card, "rowsRing")                  # the breathing ring is for a live dot row
+    assert {p.property("opacity") for p in cards.find(card, "rowsPart")} == {1}
+
+
+def test_a_machine_card_is_50_plus_34_a_meter_or_stack_plus_44_a_plain_row_plus_18(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine", why="Memory is nearly full")))
+    assert card.height() == 50 + 3 * 34 + 44 + 18 == 214
+    assert [r.height() for r in cards.find(card, "rowsRow")] == [34, 34, 34, 44]
+    assert [cards.geometry(r, card)[1] for r in cards.find(card, "rowsRow")] == [50, 84, 118, 152]
+    net = cards.find(card, "rowsRow")[3]
+    assert not cards.find(net, "rowsDot") and cards.one(net, "rowsRowTitle").x() == 14
+    assert cards.one(net, "rowsRowSub").property("text") == "↓ 1.2 MB/s   ↑ 40 kB/s"
+    assert cards.one(card, "rowsWhy").property("text") == "Memory is nearly full"
+    cards.snap("rows-machine")
+
+
+def test_a_row_that_opens_something_reports_a_tap_anywhere_on_it(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    _memory, disk, _cpu, _net = cards.find(card, "rowsRow")
+    for name in ("rowsRowTitle", "rowsMeta", "rowsPercent", "rowsMeter"):
+        cards.click(cards.one(disk, name))
+    cards.click(disk)
+    assert cards.events == [{"kind": "rowOpen", "card": "machine", "args": ["disk", "disk"]}] * 5
+
+
+def test_a_row_with_nothing_to_open_reports_nothing_and_a_hover_over_it_is_no_pointer(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    memory, _disk, cpu, net = cards.find(card, "rowsRow")
+    for r in (memory, cpu, net):
+        cards.click(r)
+        cards.click(cards.one(r, "rowsRowTitle"))
+    assert cards.events == []
+    # An opens that is empty or not words is no opens either.
+    odd = dict(DISK, key="odd", opens=None)
+    cards.set(card, model=rows(dict(DISK, opens=""), odd, title="Machine")["model"])
+    for r in cards.find(card, "rowsRow"):
+        cards.click(r)
+    assert cards.events == []
+    # The pointing hand is for a row that opens something.
+    cards.set(card, model=rows(*MACHINE, title="Machine")["model"])
+    memory, disk, cpu, net = cards.find(card, "rowsRow")
+    cards.hover(cards.one(disk, "rowsRowTitle"))
+    assert cards.win.cursor().shape() == QtCore.Qt.PointingHandCursor
+    for r in (cpu, net, memory):
+        cards.hover(cards.one(r, "rowsRowTitle"))
+        assert cards.win.cursor().shape() == QtCore.Qt.ArrowCursor, r.property("key")
+    cards.hover(cards.one(disk, "rowsMeter"))
+    assert cards.win.cursor().shape() == QtCore.Qt.PointingHandCursor
+    cards.away()
+    assert cards.win.cursor().shape() == QtCore.Qt.ArrowCursor
+
+
+def test_a_button_or_x_on_a_row_that_opens_something_still_wins(cards):
+    both = row("job", title="pacman -Syu", sub="could not resolve host", tone="red", button="Why?", remove=True,
+               opens="disk")
+    meter = row("m", "meter", "Disk", tone="amber", meter=0.9, remove=True, opens="disk")
+    (card,) = cards.show(("rows", "c", rows(both, meter)))
+    dots, metered = cards.find(card, "rowsRow")
+    cards.click(cards.one(dots, "rowsButton"))
+    cards.click(cards.one(dots, "rowsRemove"))
+    cards.click(cards.one(metered, "rowsRemove"))
+    assert cards.events == [{"kind": "rowAction", "card": "c", "args": ["job", "Why?"]},
+                            {"kind": "rowRemove", "card": "c", "args": ["job"]},
+                            {"kind": "rowRemove", "card": "c", "args": ["m"]}]
+    cards.click(cards.one(dots, "rowsRowTitle"))                       # beside them, the row opens
+    assert cards.events[3:] == [{"kind": "rowOpen", "card": "c", "args": ["job", "disk"]}]
+
+
+def test_a_tap_opens_the_row_that_was_pressed_even_if_the_rows_move_before_the_release(cards):
+    (card,) = cards.show(("rows", "machine", rows(*MACHINE, title="Machine")))
+    disk = cards.find(card, "rowsRow")[1]
+    at = cards.centre(cards.one(disk, "rowsRowTitle"))
+    QtTest.QTest.mousePress(cards.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, at)
+    cards.pump()
+    # The second place now holds another row that opens something else.
+    cards.set(card, model=rows(MEMORY, dict(DISK, key="other", opens="other"), CPU, NET, title="Machine")["model"])
+    QtTest.QTest.mouseRelease(cards.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, at)
+    cards.pump()
+    assert cards.events == [{"kind": "rowOpen", "card": "machine", "args": ["disk", "disk"]}]
+    # A release off the row is no tap, even a few pixels off, as for the buttons.
+    edge = disk.mapToScene(QtCore.QPointF(disk.width() - 1, disk.height() / 2)).toPoint()
+    for off in (edge + QtCore.QPoint(4, 0), QtCore.QPoint(750, 510)):
+        QtTest.QTest.mousePress(cards.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, edge)
+        QtTest.QTest.mouseRelease(cards.win, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, off)
+        cards.pump()
+    assert len(cards.events) == 1
 
 
 def test_a_dot_row_has_its_dot_title_sub_and_button_where_the_page_puts_them(cards):
@@ -877,8 +1099,10 @@ def test_the_gallery_of_states_draws_without_qml_warnings(cards):
                ("now", "c", now(edge="red", command="rm -rf /x", caption="can't be undone · Esc stops it")),
                ("now", "d", now(done=True, edge="ok")), ("rows", "e", rows(*NEEDS)),
                ("rows", "f", rows(*WATCHING)), ("rows", "g", rows()),
+               ("rows", "j", rows(*MACHINE, title="Machine", why="Memory is nearly full · coding sessions use most of it")),
                ("strip", "h", {"text": "step 2 of 4", "dot": THEME["machine"], "ring": True}),
-               ("strip", "i", {"text": "2 need you", "dot": THEME["you"], "mark": True, "outlined": True}))
+               ("strip", "i", {"text": "2 need you", "dot": THEME["you"], "mark": True, "outlined": True}),
+               ("strip", "k", {"text": "memory 91%", "dot": THEME["amber"]}))
     cards.pump(0.3)
     cards.snap("overview")
     cards.show()      # and taking them all away again
@@ -894,6 +1118,14 @@ def test_every_state_can_be_photographed(cards):
         "now-done": ("now", now(done=True, running=False, edge="ok", why="done in 58 s · Undo is above the pill")),
         "rows-watching": ("rows", rows(*WATCHING, title="Watching", why="3 counting · each ends with one line in the pill")),
         "rows-needs": ("rows", rows(*NEEDS)),
+        "rows-machine-memory": ("rows", rows(*MACHINE, title="Machine",
+                                             why="Memory is nearly full · coding sessions use most of it")),
+        "rows-machine-heat": ("rows", rows(
+            row("memory", "stack", "Memory", tone="you", meter=0.52, meter_text="8.3 of 16 GB",
+                parts=[("machine", 0.02), ("sessions", 0.20), ("you", 0.30)]),
+            row("disk", "meter", "Disk", tone="you", meter=0.41, meter_text="94 of 230 GB", opens="disk"),
+            row("cpu", "meter", "Processor", tone="red", meter=0.88, meter_text="88% busy · 84°"),
+            NET, title="Machine", why="The processor is hot")),
     }
     for name, (kind, props) in states.items():
         cards.show((kind, name, props))

@@ -22,7 +22,8 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
 @pytest.mark.parametrize("ops, ok, text", [
     ([("hide", "machine")], True, "Put Machine away."),
     ([("hide", "Machine")], True, "Put Machine away."),
-    ([("hide", "machine"), ("show", "machine")], True, "Put Machine on the desk."),
+    ([("hide", "machine"), ("show", "machine")], True, "Here is the machine. It is back on the desk."),
+    ([("show", "machine")], True, "Here is the machine."),
     ([("hide", "machine"), ("hide", "machine")], True, "Machine is already put away."),
     ([("show", "now")], True, "Now is already on the desk."),
     ([("show", "alive")], True, "Put Alive on the desk."),
@@ -211,6 +212,32 @@ def test_a_change_calls_back_once_and_no_change_does_not(home):
     d.apply("move", "watching", "left", 1)   # already there
     d.apply("show", "machine")
     assert calls == [["alive", "machine"], ["alive"]]
+
+
+def test_showing_the_machine_is_also_asking_for_it(home):
+    d = fresh(home)
+    asked, changed = [], []
+    d.on_ask = asked.append
+    d.on_change = lambda: changed.append(d.snapshot()["hidden"])
+    assert d.apply("show", "machine") == (True, "Here is the machine.")
+    assert d.apply("show", "Machine") == (True, "Here is the machine.")   # asked again, nothing to save
+    d.apply("hide", "machine")
+    d.apply("show", "machine")
+    d.apply("show", "watching")      # no question to answer
+    d.apply("hide", "machine")       # hiding is not asking
+    d.apply("show", "sofa")          # refused
+    assert asked == ["machine", "machine", "machine"]
+    assert changed == [["alive", "machine"], ["alive"], ["alive", "machine"]]
+
+
+def test_a_broken_ask_listener_never_costs_the_answer(home, capsys):
+    d = fresh(home)
+
+    def boom(_wid):
+        raise RuntimeError("no")
+    d.on_ask = boom
+    assert d.apply("show", "machine") == (True, "Here is the machine.")
+    assert "on_ask: RuntimeError: no" in capsys.readouterr().err
 
 
 def test_a_broken_listener_never_costs_the_change(home, capsys):

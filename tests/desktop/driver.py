@@ -29,6 +29,7 @@ env = dict(
     WLR_HEADLESS_OUTPUTS="1",
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
+    BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -626,6 +627,64 @@ shot("27-desk-clear")
 check("and the stone is still: nothing waits, nothing is amber",
       not st.get("needsYou") and st.get("face") != "needs" and stone_pixels("27-desk-clear", colour="#e0a93b") < 20,
       f"face {st.get('face')}")
+
+# 10. Machine: agentd's `machine` message, injected (the checks above are the shell's half; vitals.py and the
+# loop that sends it are tested on a fake machine in pytest).
+def region_pixels(name, box, colour, tol=14):
+    """How many pixels in the box (x, y, w, h) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, w, h = box
+    for y in range(max(0, y0), min(img.height(), y0 + h)):
+        for x in range(max(0, x0), min(img.width(), x0 + w)):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+summon()
+typ("how's the machine?")
+before = api_requests()
+n = mark()
+key("Return")
+asked = wait(ev("local", phase="done"), 10, n)
+check("asking how the machine is answers in a line, with no model", asked and asked.get("ok")
+      and asked.get("text") == "Here is the machine." and api_requests() == before, asked and asked.get("text"))
+key("Escape")
+inject({"type": "machine", "present": True, "asked": False,
+        "why": "Memory is nearly full \u00b7 sessions use most",
+        "strip": {"text": "memory 91%", "dot": "amber"},
+        "rows": [
+            {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
+             "tone": "amber", "parts": [{"tone": "machine", "fraction": 0.12}, {"tone": "sessions", "fraction": 0.40},
+                                        {"tone": "you", "fraction": 0.39}], "opens": ""},
+            {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "214 of 230 GB", "meter": 0.93,
+             "tone": "amber", "opens": "disk"},
+            {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "37% busy \u00b7 62\u00b0", "meter": 0.37,
+             "tone": "you", "opens": ""},
+            {"key": "net", "kind": "plain", "title": "Network", "sub": "\u2193 1.2 MB/s   \u2191 40 kB/s",
+             "tone": "you", "opens": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("28-desk-machine")
+mc = st.get("machine") or {}
+slot = (st.get("slots") or {}).get("machine") or {}
+check("the Machine card is up in full, on the right rail", st["present"]["machine"] and st["faces"]["machine"] == "full"
+      and slot.get("side") == "right", (st.get("faces"), slot))
+check("it has memory, the disk, the processor and the network, memory in three parts",
+      [r["key"] for r in mc.get("rows", [])] == ["memory", "disk", "cpu", "net"]
+      and [p["tone"] for p in mc["rows"][0]["parts"]] == ["machine", "sessions", "you"], mc.get("rows"))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+parts = {name: region_pixels("28-desk-machine", box, colour) for name, colour in
+         (("amber", "#e0a93b"), ("machine", "#d97757"), ("sessions", "#5b9bd5"))}
+check("the card draws amber for the lines crossed and one colour for each who uses the memory",
+      parts["amber"] > 150 and parts["machine"] > 40 and parts["sessions"] > 150, parts)
+check("the card is the face, so no chip beside the pill says memory", not st["strips"]["right"], st.get("strips"))
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("the card leaves when the machine says everything is back under its lines",
+      st["faces"]["machine"] == "hidden" and not st["present"]["machine"], st.get("faces"))
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
