@@ -30,7 +30,9 @@ hl.config({
     misc = {
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
-        background_color = 0x101214,
+        -- The ground, until the bar's wallpaper (shell/Wallpaper.qml) is up and wherever it does not
+        -- reach. 0xAARRGGBB: without the alpha byte the colour is clear and Hyprland draws black.
+        background_color = 0xff101214,
     },
     input = { kb_layout = "us", follow_mouse = 1 },
 })

@@ -34,6 +34,9 @@ ShellRoot {
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
+    // The ground under everything: the wallpaper, on every screen.
+    Wallpaper { reducedMotion: root.reducedMotion }
+
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
         id: deskState
