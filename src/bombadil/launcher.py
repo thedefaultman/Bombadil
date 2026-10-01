@@ -74,7 +74,7 @@ PICTURE_PHRASES = {
 PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
                   "sound": "what's playing where", "screens": "your screens"}
 # A question a widget answers with itself, the same as "show machine" (same rules as the pictures:
-# the whole sentence, exactly). The machine card then stays up until the person has seen it.
+# the whole sentence, exactly). The machine card then stays up for 30 seconds (vitals.ASK_FOR).
 WIDGET_QUESTIONS = {
     "machine": ["how's the machine", "how is the machine", "how's the machine doing", "how is the machine doing",
                 "how's my machine", "how is my machine", "how's my computer", "how is my computer",

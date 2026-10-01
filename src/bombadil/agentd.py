@@ -532,7 +532,7 @@ class AgentD:
 
     def _vitals_wanted(self) -> bool:
         """Sample only while a bar is there to draw it and the person has not put Machine away."""
-        return self.vitals is not None and bool(self.clients) and "machine" not in self.desk.snapshot()["hidden"]
+        return self.vitals is not None and bool(self.clients) and "machine" not in self.desk.hidden
 
     def _vitals_kick(self):
         """Start looking at the machine, or look now: a bar came, the desk changed, or the card was asked for."""

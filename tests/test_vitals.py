@@ -560,7 +560,7 @@ def test_a_rate_is_not_worked_out_across_a_gap():
     assert s.sample().net == (0.0, 0.0)
 
 
-def test_a_calm_sample_does_not_walk_the_cgroups_or_read_the_network():
+def test_a_calm_sample_does_not_walk_the_cgroups():
     fs, clock = machine(), Clock()
     s = sampler(fs, clock)
     s.sample(fast=True)
@@ -568,12 +568,13 @@ def test_a_calm_sample_does_not_walk_the_cgroups_or_read_the_network():
     clock.t += CALM_EVERY
     calm = s.sample(fast=False)
     dev = f"{BASE}/bombadil.slice/bombadil-dev.slice"
-    # the processor, memory, the two thermal zones and the dev slice: no listing, no mounts, no network
+    # the processor, memory, the network, the two thermal zones and the dev slice: no listing, no mounts; the two
+    # disks are asked how full they are each time, so a line that counts samples counts readings
     zones = ["/sys/class/thermal/thermal_zone0/temp", "/sys/class/thermal/thermal_zone1/temp"]
-    assert sorted(fs.reads) == sorted(["/proc/stat", "/proc/meminfo", *zones, f"{dev}/memory.current",
-                                       f"{dev}/memory.stat", f"{dev}/memory.high"])
-    assert fs.listed == [] and fs.statted == []
-    assert calm.net is None and calm.cgroups.sessions == 5 * GB            # carried from the walk
+    assert sorted(fs.reads) == sorted(["/proc/stat", "/proc/meminfo", "/proc/net/dev", *zones,
+                                       f"{dev}/memory.current", f"{dev}/memory.stat", f"{dev}/memory.high"])
+    assert fs.listed == [] and fs.statted == ["/", "/home"]
+    assert calm.net == (0.0, 0.0) and calm.cgroups.sessions == 5 * GB      # a rate over the calm wait; carried walk
     assert calm.cgroups.ceiling == Ceiling(5 * GB, 8 * GB)
 
 
@@ -587,7 +588,7 @@ def test_a_calm_sample_still_sees_the_sessions_come_near_their_ceiling():
     assert s.sample(fast=False).cgroups.ceiling == Ceiling(7 * GB, 8 * GB)
 
 
-def test_the_walk_is_redone_when_calm_every_thirty_seconds_and_the_disk_with_it():
+def test_the_walk_is_redone_when_calm_every_thirty_seconds_but_the_disk_is_read_every_time():
     fs, clock = machine(), Clock()
     s = sampler(fs, clock)
     s.sample(fast=False)
@@ -596,10 +597,11 @@ def test_the_walk_is_redone_when_calm_every_thirty_seconds_and_the_disk_with_it(
     fs.unit(f"{BASE}/app.slice/bombadil-job-ffffff.service", 700_000_000)
     clock.t += vitals.SLOW_EVERY - 1
     r = s.sample(fast=False)
-    assert r.disk == Disk(100 * GB, 200 * GB) and r.cgroups.machine == 1_510_000_000     # not yet
+    assert r.disk == Disk(190 * GB, 200 * GB) and r.cgroups.machine == 1_510_000_000     # the disk now, the walk not yet
+    listed = len(fs.listed)
     clock.t += 1
     r = s.sample(fast=False)
-    assert r.disk == Disk(190 * GB, 200 * GB) and r.cgroups.machine == 2_210_000_000
+    assert r.cgroups.machine == 2_210_000_000 and len(fs.listed) > listed
 
 
 def test_a_fast_sample_walks_every_time():
@@ -929,7 +931,7 @@ def test_rows_for_what_could_not_be_read_are_left_out_but_the_processor_and_netw
     assert m["present"] is True and m["why"] == "The processor is hot"
     assert [r["key"] for r in m["rows"]] == ["cpu", "net"]
     assert m["rows"][0]["meterText"] == "85°"
-    assert m["rows"][1]["sub"] == "↓ 0 B/s   ↑ 0 B/s"                  # no rate yet is none going
+    assert m["rows"][1]["sub"] == "↓ –   ↑ –"                          # no rate yet is a dash, not a zero
 
 
 def test_the_processor_row_has_no_heat_clause_without_a_reading():
@@ -1098,16 +1100,24 @@ def test_the_next_sample_is_five_seconds_off_when_calm_and_one_when_the_card_is_
     assert v.next_delay() == CALM_EVERY
 
 
-def test_a_reading_within_five_points_of_its_line_is_sampled_fast():
+def test_a_reading_within_five_points_of_its_line_is_sampled_sooner():
     for kw, calm, near in (("memory", 0.83, 0.86), ("disk", 0.83, 0.86), ("sessions", 0.83, 0.86),
                            ("heat", 73.0, 76.0)):
         v, fake, clock = rig()
         run(v, fake, clock, 1, **{kw: calm})
         assert v.next_delay() == CALM_EVERY, kw
         run(v, fake, clock, 1, **{kw: near})
-        assert v.next_delay() == FAST_EVERY, kw
+        assert v.next_delay() == vitals.NEAR_EVERY, kw
         run(v, fake, clock, 1, **{kw: calm})
         assert v.next_delay() == CALM_EVERY, kw
+
+
+def test_a_disk_that_sits_near_its_line_does_not_make_every_sample_a_walk():
+    v, fake, clock = rig()
+    for _ in range(30):
+        run(v, fake, clock, 1, disk=0.87, memory=0.87)
+    assert v.next_delay() == vitals.NEAR_EVERY
+    assert fake.fast == [True] + [False] * 29            # the first reads everything; sitting near a line walks nothing
 
 
 def test_the_processor_has_no_line_so_a_busy_one_is_not_a_reason_to_hurry():
@@ -1125,12 +1135,13 @@ def test_the_first_sample_reads_everything_and_calm_ones_after_it_read_less():
     v.ask()
     v.tick()
     assert fake.fast[-1] is True
-    fake.reading = reading(disk=0.86)
+    fake.reading = reading(memory=0.91)
     clock.t += 100
     v.tick()
     v.tick()
-    # the sample that finds a reading near its line was taken calm; the one after it walks and reads the net
-    assert fake.fast[-2:] == [False, True]
+    v.tick()
+    # over the line once: calm; twice, one more away from the card: the sample that raises it walks the tree too
+    assert fake.fast[-3:] == [False, False, True]
 
 
 # -- when nothing works --
@@ -1222,9 +1233,8 @@ def test_vitals_can_be_driven_from_two_threads():
     assert errors == []
 
 
-def test_a_client_that_connects_during_a_sample_gets_the_card_that_sample_made():
+def test_a_client_that_connects_during_a_sample_is_not_made_to_wait_for_it():
     entered, release = threading.Event(), threading.Event()
-    got = []
 
     class Slow(Fake):
         def sample(self, fast):
@@ -1236,14 +1246,44 @@ def test_a_client_that_connects_during_a_sample_gets_the_card_that_sample_made()
     ticking = threading.Thread(target=v.tick)
     ticking.start()
     assert entered.wait(5)
-    asking = threading.Thread(target=lambda: got.append(v.message()))
+    answered = []
+    asking = threading.Thread(target=lambda: answered.append((v.message(), v.next_delay(), v.ask())))
     asking.start()
-    asking.join(0.3)
-    assert asking.is_alive()                                           # it waits for the sample, not reads half of it
+    asking.join(2)
+    assert not asking.is_alive()                                       # it did not wait for the reads
+    assert answered[0][0]["present"] is False                          # nothing has been read yet
     release.set()
     ticking.join(5)
-    asking.join(5)
-    assert got == [v.message()]
+    assert v.message()["present"] and v.message()["asked"]             # and the sample that finished is what it says
+
+
+def test_a_reset_while_a_sample_is_being_taken_throws_that_sample_away():
+    entered, release = threading.Event(), threading.Event()
+
+    class Slow(Fake):
+        def sample(self, fast):
+            entered.set()
+            release.wait(5)
+            return super().sample(fast)
+
+    fake = Slow()
+    fake.reading = reading(memory=0.95)
+    v = Vitals(sampler=fake, clock=Clock(0.0))
+    v.ask()
+    out = []
+    ticking = threading.Thread(target=lambda: out.append(v.tick()))
+    ticking.start()
+    assert entered.wait(5)
+    resetting = threading.Thread(target=v.reset)
+    resetting.start()
+    resetting.join(2)
+    assert not resetting.is_alive()                                    # forgetting does not wait for the reads
+    release.set()
+    ticking.join(5)
+    assert out == [None] and v.message()["present"] is False           # what it read belongs to the world forgotten
+    assert fake.resets == 0
+    v.ask()
+    assert v.tick()["present"] and fake.resets == 1                    # the sampler forgets before its next sample
 
 
 def test_vitals_with_no_sampler_given_reads_this_machine_without_raising():
@@ -1264,3 +1304,81 @@ def test_the_module_needs_nothing_but_the_standard_library():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                          env={**os.environ, "PYTHONPATH": src})
     assert out.stdout.split() == ["bombadil", "bombadil.procs", "bombadil.vitals"]
+
+
+# -- what the review found --
+
+def test_a_processor_sensor_the_zones_do_not_carry_is_seen_too():
+    fs = machine(**{
+        "/sys/class/thermal/thermal_zone0/temp": "41000\n", "/sys/class/thermal/thermal_zone1/temp": "40000\n",
+        "/sys/class/hwmon/hwmon2/name": "k10temp\n", "/sys/class/hwmon/hwmon2/temp1_input": "96000\n",
+        "/sys/class/hwmon/hwmon3/name": "nvme\n", "/sys/class/hwmon/hwmon3/temp1_input": "99000\n"})
+    assert sampler(fs).sample().heat == 96.0                          # the disk's own sensor is not the processor's
+
+
+def test_hwmon_still_stands_in_when_there_is_no_thermal_zone():
+    fs = machine(**{"/sys/class/hwmon/hwmon0/name": "nvme\n", "/sys/class/hwmon/hwmon0/temp1_input": "55000\n"})
+    for z in ("0", "1"):
+        del fs.files[f"/sys/class/thermal/thermal_zone{z}/temp"]
+    assert sampler(fs).sample().heat == 55.0
+
+
+def test_one_reading_over_the_disk_line_is_not_three_samples_of_it():
+    fs, clock = machine(), Clock()
+    v = Vitals(sampler=sampler(fs, clock), clock=clock)
+    out = []
+    for i in range(12):
+        fs.disks["/"] = vfs(186, 14) if i == 3 else vfs(40, 160)      # 93% for one reading only
+        out.append(v.tick())
+        clock.t += CALM_EVERY
+    assert not any(m["present"] for m in out if m)
+
+
+def test_an_asked_card_does_not_call_a_cool_machine_hot():
+    v, fake, clock = rig()
+    fake.reading = reading(memory=0.44, disk=0.50, heat=52.0)
+    v.ask()
+    m = v.tick()
+    assert m["asked"] and m["why"] == "The machine is fine" and m["strip"] == {"text": "heat 52°", "dot": ""}
+
+
+def test_an_asked_card_does_not_say_fine_while_a_reading_is_already_over_its_line():
+    v, fake, clock = rig()
+    fake.reading = reading(memory=0.95, disk=0.50)
+    v.ask()
+    m = v.tick()                                                       # the first sample: no line has held for three yet
+    assert m["asked"] is True and m["why"] == "Memory is nearly full"
+    assert m["strip"] == {"text": "memory 95%", "dot": "amber"} and m["rows"][0]["tone"] == "amber"
+
+
+def test_the_first_card_after_calm_samples_has_the_network_rate_not_a_zero():
+    fs, clock = machine(), Clock()
+    v = Vitals(sampler=sampler(fs, clock), clock=clock)
+    for i in range(3):
+        v.tick()
+        clock.t += CALM_EVERY
+        fs.files["/proc/net/dev"] = net_dev_text(lo=(905623, 905623),
+                                                 eth0=(12_345_678 + 5_000_000 * (i + 1), 2_345_678 + 100_000 * (i + 1)))
+    v.ask()
+    m = v.tick()
+    assert m["rows"][-1]["sub"] == "↓ 1 MB/s   ↑ 20 kB/s"
+
+
+def test_the_card_asked_before_a_rate_exists_says_dashes():
+    fs, clock = machine(), Clock()
+    v = Vitals(sampler=sampler(fs, clock), clock=clock)
+    v.ask()
+    m = v.tick()
+    assert m["rows"][-1]["sub"] == "↓ –   ↑ –"
+
+
+def test_units_that_are_there_with_no_memory_to_read_say_nothing_about_who():
+    fs = machine()
+    for path in [p for p in fs.files if "bombadil-" in p and p.endswith("memory.current")]:
+        del fs.files[path]
+    assert sampler(fs).sample().cgroups is None
+    fs.files["/proc/meminfo"] = meminfo_text(16_000_000, 800_000)         # 95% in use
+    v = Vitals(sampler=sampler(fs), clock=Clock())
+    v.ask()
+    m = v.tick()
+    assert [p["tone"] for p in m["rows"][0]["parts"]] == ["you"] and m["why"] == "Memory is nearly full"

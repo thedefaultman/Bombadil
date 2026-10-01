@@ -600,7 +600,8 @@ def _lx(home, **k):
 
 @pytest.mark.parametrize("words, want", [
     (["hide machine"], [(True, "Put Machine away.")]),
-    (["hide machine", "show machine"], [(True, "Put Machine away."), (True, "Here is the machine.")]),
+    (["hide machine", "show machine"],
+     [(True, "Put Machine away."), (True, "Here is the machine. It is back on the desk.")]),
     (["how's the machine?"], [(True, "Here is the machine.")]),
     (["close the machine"], [(True, "Put Machine away.")]),
     (["put watching away", "put watching away"],

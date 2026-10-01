@@ -195,7 +195,8 @@ class Desk:
             if wid in ASKABLE:
                 was_away = wid in self.hidden
                 self.hidden.discard(wid)
-                return True, ASKABLE[wid], was_away
+                # Asking for what was put away puts it back: the answer says so, as the card would not say it.
+                return True, ASKABLE[wid] + (" It is back on the desk." if was_away else ""), was_away
             if wid not in self.hidden:
                 return True, f"{name} is already on the desk.", False
             self.hidden.discard(wid)

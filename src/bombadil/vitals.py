@@ -23,15 +23,16 @@ from dataclasses import dataclass, replace
 from .procs import CGROUP_ROOT
 
 CALM_EVERY = 5.0         # seconds between samples while nothing is up and nothing is close
-FAST_EVERY = 1.0         # ...while the card is up, asked for, or a reading is near its line
-SLOW_EVERY = 30.0        # the disk, the list of sensors and the cgroup walk, when calm
+NEAR_EVERY = 2.0         # ...while a reading is near its line (the same cheap sample, a little sooner)
+FAST_EVERY = 1.0         # ...while the card is up, asked for, or a line is one sample from being crossed
+SLOW_EVERY = 30.0        # the list of mounts and of sensors, and the cgroup walk, when calm
 ASK_FOR = 30.0           # how long "how's the machine" keeps the card up
 ENTER_SAMPLES = 3        # samples in a row over a line to cross it
 LEAVE_SAMPLES = 10       # ...and in a row under its lower mark to come back
 MIN_UP = 10.0            # seconds a line stays up once it crossed
 NEAR = 0.05              # "near" a line: within five points of it (five degrees for heat)
 NEAR_DEGREES = 5.0
-NET_STALE = 3.0          # a rate is not worked out between two reads this far apart
+NET_STALE = CALM_EVERY + 3.0   # a rate is not worked out between two reads this far apart
 MAX_DEPTH = 4            # directory levels walked under the user's manager
 MAX_SENSORS = 24
 MAX_SANE_C = 150.0       # ACPI zones with no sensor report 255000 and the like
@@ -74,6 +75,8 @@ _NOT_TRAFFIC = re.compile(r"lo$|veth|docker|br-|br\d|virbr|vnet|cni|podman|bond\
 _MACHINE_UNIT = re.compile(r"bombadil-(?:turn|job|timer)-")
 _SESSIONS_UNIT = re.compile(r"bombadil-dev(?:[-.]|$)")
 _TEMP_FILE = re.compile(r"temp\d+_input")
+# The hwmon chips that are the processor's own: where an AMD or Intel laptop keeps the temperature that matters.
+CPU_CHIPS = {"coretemp", "k10temp", "zenpower", "cpu_thermal", "cpu-thermal"}
 
 
 # -- reading text --
@@ -293,16 +296,21 @@ def read_cgroups(read, listdir, manager: str) -> Cgroups | None:
         return None
     machine = sessions = 0
     dev = None
+    units = readable = 0
     for kind, name, path in walk_units(listdir, manager):
+        units += 1
         used = unit_memory(read, path)
         if used is None:
             continue
+        readable += 1
         if kind == "machine":
             machine += used
         else:
             sessions += used
         if name == DEV_SLICE:
             dev = path
+    if units and not readable:
+        return None            # the units are there but the memory controller is off in them: nothing to say
     return Cgroups(machine, sessions, ceiling_of(read, dev) if dev else None, dev)
 
 
@@ -381,9 +389,10 @@ class Reading:
 
 
 class Sampler:
-    """Takes the readings. A calm sample is the processor, memory and the sensors, and the sessions' slice if
-    the last walk found one; a fast one walks the cgroup tree and reads the network too. The disk, the sensor
-    list and (when calm) the walk are redone every SLOW_EVERY seconds and carried between.
+    """Takes the readings. A calm sample is the processor, memory, the network, the disk (one statvfs on each
+    of / and /home) and the sensors, and the sessions' slice if the last walk found one; a fast one walks the
+    cgroup tree too. The mounts, the sensor list and (when calm) the walk are redone every SLOW_EVERY
+    seconds and carried between.
     `sample()` is called one at a time but may be from a different thread each time, so what is kept is
     on the object."""
 
@@ -397,7 +406,7 @@ class Sampler:
         """Forget everything, so the next sample does not stretch a rate over the time nobody was looking."""
         self._cpu_before: tuple[int, int] | None = None
         self._net_before: tuple[float, dict[str, tuple[int, int]]] | None = None
-        self._disk: tuple[float, Disk | None] | None = None
+        self._mounts: tuple[float, list[Mount]] | None = None
         self._sensors: tuple[float, list[str]] | None = None
         self._walk: tuple[float, Cgroups | None] | None = None
         self._manager: str | None = None
@@ -406,7 +415,7 @@ class Sampler:
         now = self._clock()
         return Reading(cpu=self._cpu(), memory=memory_in_use(parse_meminfo(self._read("/proc/meminfo"))),
                        cgroups=self._cgroups(now, fast), disk=self._disk_now(now), heat=self._heat(now),
-                       net=self._net(now) if fast else None)
+                       net=self._net(now))
 
     def _cpu(self) -> float | None:
         now = parse_cpu(self._read("/proc/stat"))
@@ -425,22 +434,28 @@ class Sampler:
         return down / (now - before[0]), up / (now - before[0])
 
     def _disk_now(self, now: float) -> Disk | None:
-        if self._disk is None or now - self._disk[0] >= SLOW_EVERY:
-            self._disk = (now, fullest_disk(parse_mounts(self._read("/proc/self/mounts")), self._statvfs))
-        return self._disk[1]
+        # The mounts are the slow part to change; how full they are is read each time, so a line that counts
+        # samples is counting readings.
+        if self._mounts is None or now - self._mounts[0] >= SLOW_EVERY:
+            self._mounts = (now, parse_mounts(self._read("/proc/self/mounts")))
+        return fullest_disk(self._mounts[1], self._statvfs)
 
     def _heat(self, now: float) -> float | None:
         if self._sensors is None or now - self._sensors[0] >= SLOW_EVERY:
             zones = [f"/sys/class/thermal/{n}/temp" for n in self._listdir("/sys/class/thermal") or ()
                      if n.startswith("thermal_zone")]
-            # hwmon only when the zones have nothing to say
-            self._sensors = (now, zones if self._hottest(zones) is not None else self._hwmon())
+            # The processor's own chips beside the zones (an AMD laptop's acpitz says 41 while k10temp says 96);
+            # any chip at all only when neither has anything to say.
+            found = zones + self._hwmon(CPU_CHIPS)
+            self._sensors = (now, found if self._hottest(found) is not None else self._hwmon())
         return self._hottest(self._sensors[1])
 
-    def _hwmon(self) -> list[str]:
+    def _hwmon(self, only: set[str] | None = None) -> list[str]:
         out: list[str] = []
         for chip in self._listdir("/sys/class/hwmon") or ():
             if chip.startswith("hwmon"):
+                if only is not None and (self._read(f"/sys/class/hwmon/{chip}/name") or "").strip() not in only:
+                    continue
                 names = self._listdir(f"/sys/class/hwmon/{chip}") or ()
                 out += [f"/sys/class/hwmon/{chip}/{n}" for n in names if _TEMP_FILE.fullmatch(n)]
         return out[:MAX_SENSORS]
@@ -569,8 +584,10 @@ class _Line:
         return value is not None and value >= self.enter - self.near
 
 
-def _strip_text(key: str, value: float) -> str:
-    return f"hot · {_deg(value)}°" if key == "heat" else f"{key} {_pct(value)}%"
+def _strip_text(key: str, value: float, crossed: bool = True) -> str:
+    if key == "heat":
+        return f"hot · {_deg(value)}°" if crossed else f"heat {_deg(value)}°"
+    return f"{key} {_pct(value)}%"
 
 
 def _absent() -> dict:
@@ -580,28 +597,31 @@ def _absent() -> dict:
 
 class Vitals:
     """The lines and the card. One `tick()` is one sample; the caller waits `next_delay()` between them.
-    The methods take a lock, so `ask()` and `message()` can come from the launcher's and the socket's
-    threads while the loop's is sampling. `wall` is accepted for callers that hold both clocks: every
-    interval here is on `clock`."""
+    `ask()`, `message()`, `next_delay()` and `reset()` may come from the launcher's and the socket's threads,
+    even from the event loop, while a worker is in the middle of a sample: they wait only for the short
+    stretches that touch the state, never for a read. `wall` is accepted for callers that hold both clocks:
+    every interval here is on `clock`."""
 
     def __init__(self, sampler=None, clock=time.monotonic, wall=time.time):
         self._clock = clock
         self._sampler = sampler if sampler is not None else Sampler(clock=clock)
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()       # the state, held briefly
+        self._tick_lock = threading.Lock()   # one sample at a time, held across its reads
         self._lines = [_Line(*r) for r in RULES]
         self._reading: Reading | None = None
         self._asked_until = 0.0
         self._near = False
         self._sent: str | None = None
+        self._generation = 0                 # reset() moves it, and a sample that began before is thrown away
+        self._sampler_stale = False          # the sampler is told to forget before its next sample
 
     def reset(self) -> None:
         """Forget everything: no shell is listening, so nothing that was true is any more."""
         with self._lock:
             self._lines = [_Line(*r) for r in RULES]
             self._reading, self._asked_until, self._near, self._sent = None, 0.0, False, None
-            reset = getattr(self._sampler, "reset", None)
-            if reset is not None:
-                reset()
+            self._generation += 1
+            self._sampler_stale = True       # told at the next sample, which cannot be one in flight
 
     def ask(self, seconds: float = ASK_FOR) -> None:
         """"How's the machine": the card is up for `seconds` even with no line crossed."""
@@ -610,7 +630,8 @@ class Vitals:
 
     def next_delay(self) -> float:
         with self._lock:
-            return FAST_EVERY if self._fast(self._clock()) else CALM_EVERY
+            now = self._clock()
+            return FAST_EVERY if self._fast(now) else NEAR_EVERY if self._near else CALM_EVERY
 
     def message(self) -> dict:
         """The card as it is now, for a shell that has just connected."""
@@ -620,22 +641,36 @@ class Vitals:
     def tick(self) -> dict | None:
         """Take one sample. The message when it is not the one the last tick returned (the first after a
         reset always is), else None: a calm machine says nothing."""
-        with self._lock:
-            now = self._clock()
-            # The first sample reads everything, so what a client connecting sees is not half-known.
-            self._reading = self._sampler.sample(self._reading is None or self._fast(now))
-            self._advance(self._reading, now)
-            message = self._build(now)
-            sent = json.dumps(message, sort_keys=True)
-            if sent == self._sent:
-                return None
-            self._sent = sent
-            return message
+        with self._tick_lock:
+            with self._lock:
+                now = self._clock()
+                # The first sample reads everything, so what a client connecting sees is not half-known.
+                fast = self._reading is None or self._fast(now)
+                generation = self._generation
+                if self._sampler_stale:
+                    reset = getattr(self._sampler, "reset", None)
+                    if reset is not None:
+                        reset()
+                    self._sampler_stale = False
+            reading = self._sampler.sample(fast)      # the reads, with no lock the loop could wait on
+            with self._lock:
+                if generation != self._generation:
+                    return None                       # reset() came while it was reading: that was another world
+                self._reading = reading
+                self._advance(reading, now)
+                message = self._build(now)
+                sent = json.dumps(message, sort_keys=True)
+                if sent == self._sent:
+                    return None
+                self._sent = sent
+                return message
 
     # -- the state --
 
     def _fast(self, now: float) -> bool:
-        return self._near or now < self._asked_until or any(line.up for line in self._lines)
+        """Is the card up or asked for, or one more sample over a line away from it? Then the next sample walks
+        the cgroup tree too, and the one after comes a second later."""
+        return now < self._asked_until or any(line.up or line.over >= ENTER_SAMPLES - 1 for line in self._lines)
 
     @staticmethod
     def _values(r: Reading) -> dict[str, float | None]:
@@ -660,10 +695,13 @@ class Vitals:
         asked = now < self._asked_until
         if r is None or not (ups or asked):
             return _absent()
-        rows = [row for row in (self._memory_row(r, ups), self._disk_row(r, ups)) if row]
+        # A card that was asked for does not say the machine is fine while a reading is already over its line,
+        # even when that line has not held for its three samples yet.
+        shown = ups if ups or not asked else [line for line in self._lines if line.value >= line.enter]
+        rows = [row for row in (self._memory_row(r, shown), self._disk_row(r, shown)) if row]
         rows += [self._cpu_row(r), self._net_row(r)]
-        return {"type": "machine", "present": True, "asked": not ups, "why": self._why(ups, r),
-                "strip": self._strip(ups, r), "rows": rows}
+        return {"type": "machine", "present": True, "asked": not ups, "why": self._why(shown, r),
+                "strip": self._strip(shown, r), "rows": rows}
 
     def _strip(self, ups: list[_Line], r: Reading) -> dict:
         if ups:
@@ -674,7 +712,7 @@ class Vitals:
         values = self._values(r)
         read = [line for line in self._lines if values[line.key] is not None]
         near = max(read, key=lambda line: values[line.key] / line.enter, default=None)
-        return {"text": _strip_text(near.key, values[near.key]) if near else "machine", "dot": ""}
+        return {"text": _strip_text(near.key, values[near.key], crossed=False) if near else "machine", "dot": ""}
 
     @staticmethod
     def _why(ups: list[_Line], r: Reading) -> str:
@@ -718,6 +756,7 @@ class Vitals:
 
     @staticmethod
     def _net_row(r: Reading) -> dict:
-        down, up = r.net or (0.0, 0.0)
+        # No rate yet (the first sample after nobody was looking) is said as a dash, not as a zero.
+        down, up = (rate_text(r.net[0]), rate_text(r.net[1])) if r.net else ("–", "–")
         return {"key": "net", "kind": "plain", "title": "Network", "tone": "you", "opens": "",
-                "sub": f"↓ {rate_text(down)}   ↑ {rate_text(up)}"}
+                "sub": f"↓ {down}   ↑ {up}"}

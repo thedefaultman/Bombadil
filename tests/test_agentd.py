@@ -821,7 +821,7 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "unfold"}, True, "Unfolded the desk."),
         ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True,
          "Moved Watching to the right rail."),
-        ({"op": "show", "widget": "Machine"}, True, "Here is the machine."),
+        ({"op": "show", "widget": "Machine"}, True, "Here is the machine. It is back on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
                                                     "Watching, Alive, Needs you, Away and Machine.")),

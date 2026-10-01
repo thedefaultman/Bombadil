@@ -13,7 +13,7 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskState.qml` | The one object that decides what the desk shows: which widgets are present, each one's face (`full`, `strip`, `hidden`), where its slot is, and what the cards read. Plain Qt Quick with no Quickshell types, so tests drive it offscreen the way they drive `PillState`. |
 | `shell/DeskRails.qml`, `shell/DeskRail.qml` | The two rails: one Quickshell `PanelWindow` per side on the Bottom layer (above the wallpaper, under every window), reserving nothing, with an input mask that covers only the cards. |
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
-| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you). |
+| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Machine; a row is a dot, a meter, a stacked meter or plain text). |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
 | `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
@@ -45,7 +45,7 @@ flowchart LR
     DS --> R
     DS --> T
     DS -- needsYou --> P --> ST
-    DS -- outgoing: jobs, dev, desk --> agentd
+    DS -- outgoing: jobs, dev, desk, vitals --> agentd
 ```
 
 ## What agentd and the shell say to each other
@@ -140,7 +140,7 @@ defaults chosen here and kept as constants at the top of `vitals.py`:
 A line has to hold for three samples in a row to raise the card and ten in a row to let it go, and no
 sooner than ten seconds after it rose, so a spike never flickers it. The lines are listed worst first. The
 sentence names them in that order (`Memory is nearly full · sessions use most`), the chip shows the
-worst one, and the card's dot is amber, or red when the disk is past 97% (the number the disks picture
+worst one, and the chip's dot is amber, or red when the disk is past 97% (the number the disks picture
 uses). Memory's meter turns amber with the memory line; the disk's turns amber with the disk line and red
 from 97%.
 
@@ -153,20 +153,25 @@ used memory or more. Each unit's memory is its cgroup's `memory.current` less th
 dropped. Where the cgroup tree is not readable the stack shows one part, *you*, and the sentence leaves out
 the "who".
 
-**Cost.** Nothing runs while no shell is connected or while Machine is put away. A calm machine is sampled
-every 5 seconds: `/proc/stat`, `/proc/meminfo`, the thermal files, and the sessions' slice, which is
-re-read from where the last walk found it. The disk, the list of sensors and the walk of the cgroup tree
-(at most four levels, only `.slice` directories) run every 30 seconds. While the card is up, asked for, or
-any reading is within five points of its line (five degrees for heat), it is sampled every second, with the
-network counters (loopback, containers' and virtual machines' interfaces, bridges, bonds and VLANs are not
-counted twice). `agentd` runs each sample in a worker thread, so the loop never waits on a read;
-`BOMBADIL_VITALS=0` turns it off (the tests set it). The message is sent only when it differs from the last,
-and its numbers are rounded for that, so a calm machine sends nothing.
+**Cost.** Nothing runs while no shell is connected or while Machine is put away. A calm sample is a handful of
+small reads: `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`, the thermal files, how full `/` and `/home` are
+(one `statvfs` each, so a line that counts samples counts readings), and the sessions' slice, re-read from
+where the last walk found it. The list of mounts, the list of sensors and the walk of the cgroup tree (at most
+four levels, only `.slice` directories) are redone every 30 seconds. A calm machine is sampled every 5
+seconds; with a reading within five points of its line (five degrees for heat) every 2 seconds, still
+the calm sample. The sample that can raise the card, the card while it is up, and an asked card are taken
+every second and walk the cgroup tree each time, so the card's meters are live when it appears. Sensors are
+the thermal zones and the processor's own chips (`coretemp`, `k10temp`, ...), and any other chip only
+when neither has anything to say. `agentd` runs each sample in a worker thread and Vitals holds its lock
+only to read or change its state, never across a read, so a bar connecting during a slow sample is
+answered at once. `BOMBADIL_VITALS=0` turns the loop off (the tests set it). The message is sent only
+when it differs from the last, and its numbers are rounded for that, so a calm machine sends nothing.
 
 **Asking.** `show machine`, or the whole sentence "how's the machine" (also "how is my computer"), raises
-the card for 30 seconds even when nothing is wrong, answers "Here is the machine.", and sends it with
-`asked: true`: the sentence on the card is "The machine is fine" and the chip is the reading nearest its
-line. The agent's `desk` tool does the same when the person asked for the desk in that turn. A longer
+the card for 30 seconds even when nothing is wrong, answers "Here is the machine." (adding "It is back on
+the desk." when Machine had been put away, which asking undoes), and sends it with `asked: true`: the
+sentence on the card is "The machine is fine" and the chip the reading nearest its line (`heat 52°`,
+`disk 36%`), or, when a reading is already over its line, what a raised card would say. The agent's `desk` tool does the same when the person asked for the desk in that turn. A longer
 question about the machine goes to the agent as before.
 
 **Rows that open something.** A row with an `opens` value is a button. The Disk row asks `agentd` to draw the
@@ -187,12 +192,14 @@ the last changes nothing.
   user service may read the units' `memory.current`, and which thermal zones a laptop exposes, is what the
   first run on a real machine shows; a reading that cannot be read is left out of the card rather than
   guessed.
-- *Sizes are decimal* (as in the disks picture), so a 16 GiB machine reads about 16.9 GB, and the disk
-  row counts used against used plus available, so it can differ by a few percent from `df` on a disk with
-  space reserved for root.
+- *Sizes are decimal* (as in the disks picture), so a 16 GiB machine reads about 16.9 GB. The disk row
+  counts used against used plus available, as `df`'s Use% does; the disks picture the row opens counts used
+  against the whole size, so on a disk with space kept back for root it reads a few points lower.
 - *The disk row opens the disks picture,* because there is no space map yet to open.
 - *The card's sentence is cut at the card's width,* so with several lines crossed only the first ones are
   readable; the chip and the meters carry the rest.
+- *The first frame after nobody was looking can be a second old.* After Machine is put away and asked for
+  again, the processor reads 0% and the network shows dashes until the next sample, a second later.
 
 ## Adding a widget
 

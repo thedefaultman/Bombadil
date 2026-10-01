@@ -22,7 +22,7 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
 @pytest.mark.parametrize("ops, ok, text", [
     ([("hide", "machine")], True, "Put Machine away."),
     ([("hide", "Machine")], True, "Put Machine away."),
-    ([("hide", "machine"), ("show", "machine")], True, "Here is the machine."),
+    ([("hide", "machine"), ("show", "machine")], True, "Here is the machine. It is back on the desk."),
     ([("show", "machine")], True, "Here is the machine."),
     ([("hide", "machine"), ("hide", "machine")], True, "Machine is already put away."),
     ([("show", "now")], True, "Now is already on the desk."),
