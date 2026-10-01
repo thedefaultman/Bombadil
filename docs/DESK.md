@@ -16,7 +16,7 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Machine; a row is a dot, a meter, a stacked meter or plain text). |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
-| `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
+| `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away or folded by hand, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
 | `src/bombadil/jobs.py` | Watching's table of background jobs. |
 | `src/bombadil/vitals.py` | The Machine card's readings: memory by who uses it, the disk, the processor and its heat, the network, the lines that raise the card and the sentence that says why. Pure Python on the standard library; every file it reads is a parameter, so the tests hand it text. |
 | `src/bombadil/agentd.py` | Sends the plan, the jobs table, the coding sessions and the desk's state to the shell, and takes the shell's requests back. |
@@ -59,8 +59,8 @@ drops the rest.
 | `{"type":"jobs","jobs":[...]}` | agentd to shell | Watching's table, replaced whole each time. |
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
 | `{"type":"machine","present":...,"asked":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. See [the Machine card](#the-machine-card). |
-| `{"type":"desk","folded":...,"hidden":...,"rails":...,"order":...}` | agentd to shell | The desk's own state. Whatever it leaves out stays as it was. |
-| `{"type":"desk","op":"fold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. |
+| `{"type":"desk","folded":...,"hidden":...,"stripped":...,"rails":...,"order":...}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand. Whatever it leaves out stays as it was. |
+| `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
 
@@ -71,7 +71,8 @@ while anything counts, Needs you when two or more sessions wait). A present widg
 
 - **full**: a card in its rail. Slots stack from the pill outward, nearest first, in the rail's order. A
   card whose full height does not fit the room left, and everything above it, becomes a strip.
-- **strip**: a chip beside the pill. Three per side at most, then one counting `+N`.
+- **strip**: a chip beside the pill. Three per side at most, then one counting `+N`. A card the person
+  folded by hand stays a strip whatever the room, and holds no slot, so the cards above it slide down.
 - **hidden**: nothing (the desk is under a full-screen window, or the widget is not present).
 
 A window over a card's slot, even partly, folds that card to its strip within 150 ms and brings it back
