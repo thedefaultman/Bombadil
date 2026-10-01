@@ -129,6 +129,14 @@ def shown(b) -> bool:
     return b.canSend
 
 
+def settle_engine(lb) -> None:
+    """The service starts Thunderbird again after a send that did not finish (a dialog nobody can click may be
+    open on its hidden workspace); the fake engine is back within a moment, and what a test does next is not
+    meant to meet the restart half way."""
+    spin(200)
+    wait_until(lambda: lb.service.engine_state == "up" and not lb.service._restarting, 8.0, "Thunderbird back")
+
+
 def settle_box(b):
     """What QML does once it has drawn the draft: report it, and wait for the service's yes."""
     wait_until(lambda: not b._pending_edits(), what="the edits to be saved")
@@ -1030,6 +1038,7 @@ def test_a_second_unknown_outcome_asks_for_a_fresh_look_in_sent(lab, window):
     settle_box(b)
     b.press()
     wait_until(lambda: b.unknownOutcome, 8.0, "the first unknown outcome")
+    settle_engine(lb)                                # a send that did not finish starts Thunderbird again
     b.reportShown(d["id"], b.draft["fingerprint"])
     wait_until(lambda: b._shown == b.draft["fingerprint"])
     b.setLooked(True)
@@ -1037,6 +1046,7 @@ def test_a_second_unknown_outcome_asks_for_a_fresh_look_in_sent(lab, window):
     b.press()                                        # again: the person looked, and pressed
     assert b.looked is False and b.sendLabel == "Sending"
     wait_until(lambda: b.pressState == "" and b.unknownOutcome, 8.0, "the second unknown outcome")
+    settle_engine(lb)
     b.reportShown(d["id"], b.draft["fingerprint"])
     wait_until(lambda: b._shown == b.draft["fingerprint"])
     assert b.looked is False and b.sendLabel == "Send" and b.canSend is False
@@ -1046,7 +1056,7 @@ def test_a_second_unknown_outcome_asks_for_a_fresh_look_in_sent(lab, window):
     first, second = lb.agentd.presses()
     assert "again" not in first and second["again"] is True      # and no third press without a new look
     b.setLooked(True)
-    assert b.canSend is True and b.ticking is False
+    assert b.canSend is True and b.ticking is False, b.sendNote
 
 
 def test_nothing_was_sent_is_said_only_when_the_service_says_so(lab, window):
