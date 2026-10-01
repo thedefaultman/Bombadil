@@ -156,6 +156,27 @@ def test_a_chain_is_one_row_when_it_fits_and_wraps_to_rows_when_it_does_not(app,
     assert narrow.warnings == []
 
 
+def test_a_note_under_a_box_at_the_edge_of_a_row_stays_inside_the_picture(app, tmp_path):
+    # The first box of a row is at the picture's left edge, and its note is wider than the box: it
+    # was centred under the box, so its first letters were cut off (at 360 px, "ames are looked up").
+    (tmp_path / "n").mkdir()
+    narrow = Picture(app, tmp_path / "n", width=360)
+    narrow.show(card(nodes=[{"label": n, "note": f"{n.lower()} is looked up at 10.0.2.3"} for n in
+                            ("This laptop", "Cable", "Router", "Internet", "Claude")]))
+    canvas = narrow.find("diagramCanvas")
+    notes = [i for i in narrow.find_all() if i.objectName() == "boxNote" and i.isVisible()]
+    assert len(notes) == 5 and len({narrow.rect(f"n{i}")[1] for i in range(1, 6)}) >= 2     # it did wrap
+    for note in notes:
+        left = note.mapToItem(canvas, QtCore.QPointF(0, 0)).x()
+        assert left >= 0 and left + note.property("width") <= canvas.property("width") + 0.5
+    wide = Picture(app, tmp_path / "w", width=900) if (tmp_path / "w").mkdir() is None else None
+    wide.show(card(nodes=[{"label": "Router", "note": "names are looked up at 10.0.2.3"}, {"label": "Internet"}]))
+    note = wide.find("boxNote")
+    box = wide.box("n1")
+    assert abs((note.property("x") + note.property("width") / 2) - box.property("width") / 2) < 1   # still centred
+    assert narrow.warnings == [] and wide.warnings == []
+
+
 def test_the_picture_grows_to_hold_its_rows_title_and_sentence(pic):
     pic.show(card(say="Everything goes through the tunnel first."))
     h1 = pic.d.property("implicitHeight")
