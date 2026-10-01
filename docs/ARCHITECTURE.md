@@ -166,6 +166,15 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    that is dimmed when it cannot be flipped. Flipping Claude's off sends
    `{"type":"ai","op":"pause","provider":"claude"}`, the same as typing "pause claude"; on is "resume
    claude". While a turn runs, the stone is still Stop.
+   What it looks like in the headless desktop test (`tests/desktop`, which refuses a turn with a real 429
+   from the scripted API): the line, one waiting ask labelled with the time it runs, and the empty field.
+
+   ![The resting line, a waiting ask labelled with its time, and the empty field that says when asks run](screens/resting/at-its-limit.png)
+
+   Two asks wait in the order they were typed, and a pause by hand has its one button and says "paused".
+
+   ![Two waiting asks](screens/resting/two-asks-waiting.png)
+   ![Paused by hand, with its Resume button](screens/resting/paused-by-hand.png)
 8. **What keeps working.** Nothing that is not a model ask looks at the state: launcher words (apps,
    browser, terminal, files, undo, history, Details, Stop, the picture words, "pause" and "resume"),
    `!commands`, apps and their processes, background jobs, and the browser panel with its own profile
