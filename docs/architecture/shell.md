@@ -46,25 +46,27 @@ flowchart LR
 | Exclusive zone | `64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)`: the pill's 52 plus 12 below it, plus the app chips row | 221 |
 | Input mask | a `Region` of `cardHost`, `statusLine`, `foundChips` (only while visible), `setupChips` (only while visible), `chips`, `appChips`, `aiCard` (only while visible), `pillBox`, `stripsLeft` and `stripsRight` | 223-234 |
 
-The window is as wide as the screen and transparent, so the mask is what lets clicks beside and above the pill reach the windows behind it. A control that is not listed in `mask` receives no clicks. `setupChips` is the one entry guarded by `visible`; the comment gives the reason (a hidden item keeps its last place). `cardHost`, `statusLine`, `chips` and `appChips` also hide themselves and have no guard (see [Known gaps](#known-gaps)). `DeskStrips` is zero wide and high when it has nothing to show, so that the mask takes no room for it (its own comment).
+The window is as wide as the screen and transparent, so the mask is what lets clicks beside and above the pill reach the windows behind it. A control that is not listed in `mask` receives no clicks. `foundChips`, `setupChips` and `aiCard` are the entries guarded by `visible`; the comment on `setupChips` gives the reason (a hidden item keeps its last place). `cardHost`, `statusLine`, `chips` and `appChips` also hide themselves and have no guard (see [Known gaps](#known-gaps)). `NoticeChips` sit inside `statusLine`, so its entry covers them. `DeskStrips` is zero wide and high when it has nothing to show, so that the mask takes no room for it (its own comment).
 
 The `ColumnLayout` (`id: column`, 12 px margins, 8 px spacing) stacks these, top to bottom:
 
 | Item | Is | Width limit |
 |---|---|---|
 | `cardHost` | a `Loader` for `CardHost.qml`, set up with `setSource`, so a picture that will not load or draw (a failure in `CardHost.qml` or in the kit's `Diagram`) costs the pictures and not the bar; the `Bombadil` module itself is not isolated this way (see [Theme](#theme-and-why-the-shell-starts-through-binbombadil-shell)); `maxHeight` is 60% of the screen; its `suppressed` follows `win.capsule` | `max(360, win.pillMax)` |
-| `statusLine` | `StatusLine.qml` | `max(360, win.pillMax)` |
-| `setupChips` | `SetupChips.qml`, shown while the setup line shows | `Kit.Theme.pillMaxWidth` |
+| `statusLine` | `StatusLine.qml`, which also draws a notice and its `NoticeChips` | `max(360, win.pillMax)` |
+| `foundChips` | `FoundChips.qml`, shown while the found line shows ([While the AI rests](#while-the-ai-rests)) | `min(max(360, win.pillMax), column.width)` |
+| `setupChips` | `SetupChips.qml`, shown while the setup line or the resting line shows and no notice covers it | `Kit.Theme.pillMaxWidth` |
 | `chips` | `QueueChips.qml` | `max(360, win.pillMax)` |
 | `appChips` | one chip per running app | `Kit.Theme.pillMaxWidth` |
+| `aiCard` | `AiCard.qml`, 360 wide, opened by a click on the stone ([The AI card](#the-ai-card)) | its own 360 |
 | `pillBox` | the pill: stone, text field, hint, clock | `win.pillMax` |
 
 `win.pillMax` is `deskState.pillWidth` on the screen the desk lives on and `Kit.Theme.pillMaxWidth` (900) on the others. On the desk's screen a window sharing the stage narrows the pill to 360, and a full-screen window turns it into a capsule of 100 px with the stone and the clock only: the field is hidden and disabled, "nothing can be typed blind" (`shell.qml:432`), and the picture is put away ([the picture host](#the-picture-host)). The widths come from `DeskState` ([desk.md](desk.md)). The desk's strips (`stripsLeft`, `stripsRight`) are children of this window, placed beside the pill. The desk's rails are separate windows (`DeskRails`, namespaces `bombadil-desk-left` and `bombadil-desk-right`, on `WlrLayer.Bottom`).
 
 The pill (`pillBox`, `Kit.Theme.pillHeight` high, `glassPill`) holds, left to right:
 
-- the stone slot, 24 px wide. While a turn can be stopped (`pillState.stoppable`) and the pointer is over it (not in the capsule), the stone gives way to a `Stop` button (a 9 px accent square and the word) and the slot widens to the button's width plus 16 px, on an `accentSoft` wash; a tap calls `pillState.stop()`.
-- the text field. Its placeholder is "Starting" while the face is `starting`, else "Ask anything" when connected, else "Waiting for agentd…". A ghost row draws the rest of a name that Tab would complete, in `faint`.
+- the stone slot, 24 px wide. While a turn can be stopped (`pillState.stoppable`) and the pointer is over it (not in the capsule), the stone gives way to a `Stop` button (a 9 px accent square and the word) and the slot widens to the button's width plus 16 px, on an `accentSoft` wash. A tap on the slot calls `pillState.stop()` while `stoppable`, else `pillState.toggleAi()` (`shell.qml:460`), which opens the AI card; the pointer is a hand over it at all times.
+- the text field. Its placeholder is "Starting" while the face is `starting`, else, when connected, `pillState.restHint` (agentd's `rest.hint`, such as "Open or find anything. Asks wait for 15:00.", only while the AI rests) or "Ask anything", else "Waiting for agentd…" (`shell.qml:474`). A ghost row draws the rest of a name that Tab would complete, in `faint`.
 - a hint `↵ <name>` when the typed words exactly name something the launcher opens ([the launcher mirror](#the-launcher-mirror-in-pillstate)).
 - the clock, `HH:mm`, refreshed every 30 s.
 

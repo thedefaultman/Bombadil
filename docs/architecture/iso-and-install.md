@@ -158,7 +158,7 @@ The ISO's systemd-boot menu has three entries. All three carry `archisobasedir=%
 | `02-bombadil-serial.conf` | `Bombadil (serial console, smoke test)` | `console=tty0 console=ttyS0,115200 bombadil.smoke` | A live boot with the console on the screen and on the serial port, running the live smoke mode, then powering off. |
 | `03-bombadil-install-test.conf` | `Bombadil (serial console, smoke test and install to /dev/vda)` | `console=tty0 console=ttyS0,115200 bombadil.smoke=install` | The live smoke mode, then `bombadil-install /dev/vda --yes`, then power off. |
 
-> **Warning: entry 03 erases a disk without asking.** After the live checks it runs `bombadil-install /dev/vda --yes` (`iso/airootfs/usr/local/bin/bombadil-smoke:305`). The `--yes` skips the confirmation (`bombadil-install:7`), so the first virtio disk is wiped, partitioned and formatted with no prompt and no check of what is on it. The entry is in every ISO the build produces, and its menu title names `/dev/vda` but does not say it destroys it. Do not pick it in a VM that has a disk you want to keep. `scripts/run-vm.sh --disk` refuses to attach a disk larger than 100 MB to the ISO for this reason (`scripts/run-vm.sh:31-37`, `FORCE=1` overrides). Any call of `bombadil-install DISK --yes` erases the same way.
+> **Warning: entry 03 erases a disk without asking.** After the live checks it runs `bombadil-install /dev/vda --yes` (`iso/airootfs/usr/local/bin/bombadil-smoke:397`). The `--yes` skips the confirmation (`bombadil-install:7`), so the first virtio disk is wiped, partitioned and formatted with no prompt and no check of what is on it. The entry is in every ISO the build produces, and its menu title names `/dev/vda` but does not say it destroys it. Do not pick it in a VM that has a disk you want to keep. `scripts/run-vm.sh --disk` refuses to attach a disk larger than 100 MB to the ISO for this reason (`scripts/run-vm.sh:31-37`, `FORCE=1` overrides). Any call of `bombadil-install DISK --yes` erases the same way.
 
 The VM scripts depend on these files by text. `scripts/test-vm.sh` and `scripts/wsl-vm.sh` wait for systemd-boot's countdown (`Boot in`) in the serial log, then press `Down` once for entry 02 or twice for entry 03 (the order is the `sort-key`). `scripts/wsl-vm.sh` also presses `Backspace` 15 times at the end of entry 02's options line to delete ` bombadil.smoke` (`scripts/wsl-vm.sh:97`), so `bombadil.smoke` must stay the last argument of that entry.
 
@@ -183,7 +183,7 @@ flowchart LR
 | Boot loader, live | systemd-boot's text menu for three seconds, the first entry boots by itself | `iso/efiboot/loader/loader.conf` (`timeout 3`, `default 01-bombadil.conf`) |
 | Boot loader, installed | GRUB, hidden unless Esc is held at power-on | `GRUB_TIMEOUT_STYLE=hidden`, `GRUB_TIMEOUT=1`, `GRUB_TERMINAL_OUTPUT=console` (`bombadil-install:63-67`). The GRUB theme in `share/grub/bombadil/` is not installed by anything (Known gaps). |
 | Kernel and start-up | an empty console in the ground colour | the parameters below, and greetd's line |
-| Hyprland's first frame | the ground colour | `background_color = 0xff101214` in `hyprland.lua:35` |
+| Hyprland's first frame | the ground colour | `background_color = 0xff101214` in `hyprland.lua:39` |
 | The desk | the wallpaper under the cards and the pill | `shell/Wallpaper.qml` draws `share/wallpaper/bombadil.png` (made by `scripts/make-wallpaper.py` from the colour tokens), or the image named in `~/.config/bombadil/wallpaper` |
 
 **The kernel parameters.** Entry 01 and the GRUB drop-in carry the same nine, in the same order. What each does in the kernel is as the design note describes it; no file here shows it.
@@ -593,7 +593,7 @@ Not covered by any pytest test: the build, the boot itself, the units, and every
 | `archinstall` is in the package list and no script calls it; `efibootmgr` is installed and not called. | `iso/packages.x86_64:10,52` |
 | No CPU microcode package is in the image: `iso/packages.x86_64` has no `amd-ucode` or `intel-ucode`, although the live initramfs lists the `microcode` hook, and the installer installs no packages. [Bombadil, installed](../design/installed-os-brief.md) plans to add `amd-ucode` and `intel-ucode` to the list. | `iso/packages.x86_64`; `iso/airootfs/etc/mkinitcpio.conf.d/archiso.conf`; `bombadil-install` (no `pacstrap`) |
 | `bombadil-setup --first-run` has no caller. | `iso/airootfs/usr/local/bin/bombadil-setup:7` |
-| The smoke `install` mode and boot entry 03 hard-code `/dev/vda`. | `bombadil-smoke:305`; `iso/efiboot/loader/entries/03-bombadil-install-test.conf` |
+| The smoke `install` mode and boot entry 03 hard-code `/dev/vda`. | `bombadil-smoke:397`; `iso/efiboot/loader/entries/03-bombadil-install-test.conf` |
 | The smoke check `tools-installed` passes when any one of its eight programs is found, so a missing program does not fail it. | `bombadil-smoke:18` |
 | The three `browser-hide*` checks pass when the `hide_panel` call returns without an error, whether or not the panel left the screen. | `bombadil-smoke:34-38,90,154,160` |
 | `scripts/run-vm.sh` says host port 2222 reaches the guest's ssh, and the image enables no `sshd`. | `scripts/run-vm.sh:9,24`; no `sshd` link in the `.wants` directories under `iso/airootfs/etc/systemd/system/`; `bombadil-install:56` |
