@@ -21,8 +21,12 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         by a "local" event with action "open"
                    {"type": "card", "card": {...}}      a picture to draw (os-mcp's show_card and system_map);
                                                         answered with {"type": "card_ack", "shown": bool}
-                   {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"}
-                                                        a chip under the setup line (see below)
+                   {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"|"resume"|
+                    "raise"|"retry"}                    a chip under the setup line (see below)
+                   {"type": "found_open", "turn": n, "id": "1"}   open that found thing, drop the kept ask
+                   {"type": "ai", "op": "get"}          the AI card: one row per AI, answered with "ai"
+                   {"type": "ai", "op": "pause"|"resume", "provider": "claude"}
+                                                        the card's switch, the same as "pause claude" typed
                    {"type": "signin", "provider": "codex"?}  sign in (again), after switching provider
                    {"type": "open_url", "url": "...", "signin": id?}  a link for the browser panel
                                                         (bombadil-browser: $BROWSER and xdg-open)
@@ -38,6 +42,14 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "job-tool", "id": s, "turn": n, "op": "start"|"list"|"stop", "title": ...,
                     "command": ..., "kind": "job"|"watch", "seconds": n, "job": id}
                                                         the os-mcp `job` tool; answered with job-result
+                   {"type": "mail-tool", "id": s, "turn": n, "op": "search"|"read"|"draft"|"mark"|"show",
+                    ...}                                the os-mcp mail tools; answered with mail-result
+                   {"type": "press", "kind": "mail", "id": draft, "fingerprint": fp, "again"?: true}
+                                                        the person's press on a Send button; answered
+                                                        with press_result (outbox.py). "again" is for a
+                                                        send whose outcome was unknown, pressed on purpose
+                   {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
+                   {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
@@ -45,6 +57,14 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "status", "busy": bool, "provider": "...", "turns": n, "queue": [...], ...}
                    {"type": "entries", "entries": [...]}  names the pill can complete and open
                    {"type": "setup", "state": ..., "line": ..., "actions": [...]}  see below
+                   {"type": "ai", "rows": [{"name", "title", "state": "ready"|"limit"|"paused"|"signed_out"|
+                    "missing", "text": "ready", "on": bool, "enabled": bool, "current": bool}]}
+                                                        the AI card, to whoever asked and on every change
+                   {"type": "found", "turn": n, "prompt": "...", "line": "Kept for 15:00. Found on this computer:",
+                    "matches": [{"id": "1", "kind": "app"|"word"|"ask", "label", "hint"}]}
+                                                        while resting, for an ask typed in the pill that has to wait:
+                                                        up to three things on this computer it nearly names (none:
+                                                        the line says so); only offered, a press opens one
                    {"type": "summon", "text"?: "..."}
                    {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
                     "screen": ""}                       the desk's state: to whoever asks, and on every change
@@ -55,6 +75,16 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         the jobs table: to whoever asks, and on change
                    {"type": "job-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a job-tool, to its sender only
+                   {"type": "mail-result", "id": s, "ok": bool, "text": "..."}
+                                                        the answer to a mail-tool, to its sender only
+                   {"type": "press_result", "kind", "id", "ok": bool, "line": "...", "code": "",
+                    "receipt": {...}|null}              the answer to a press, to its sender only
+                   {"type": "notice", "id": n, "source": "mail", "line": "...", "tone": "step"|"ask"|
+                    "done"|"error", "actions": [{"id", "label", "style": "primary"|"quiet"}], "ttl": s,
+                    "at": epoch}                        a line another service says above the pill
+                                                        (notices.py); again with the same id when it
+                                                        changes, to every client and to one that joins
+                   {"type": "notice_end", "id": n}      it is gone (handled, dismissed, or out of time)
 
 "status" events are the live line above the pill: {"text": "Installing ffmpeg", "risk": null |
 "system" | "irreversible", "command": "sudo pacman -S ffmpeg" | null, "source": "step" | "agent"}.
@@ -85,12 +115,29 @@ one back. Partial cards are not logged.
 
 "setup" is whether the machine can talk to its AI: state "choose" (no provider picked yet: the
 pill offers Claude and Codex), "checking", "signed_out", "offline" (no way to reach the sign-in
-page), "signing_in" (the CLI's login runs and its page is in the browser panel, signin.py) or
-"ready". Prompts wait in the queue until it is ready, and a turn that finds the login gone
-signs in again and then runs once more. `line` is what the pill says about it, `tone` is
-step, ask, error or done, and `actions` are its chips: [{"id", "label", "style"}].
+page), "signing_in" (the CLI's login runs and its page is in the browser panel, signin.py),
+"resting" (the AI is out of plan or spending, or paused by hand: rest.py) or "ready". Prompts wait
+in the queue until it is ready, and a turn that finds the login gone signs in again and then runs
+once more. `line` is what the pill says about it, `tone` is step, ask, error or done, and `actions`
+are its chips: [{"id", "label", "style"}]. While resting the message (and "status") also carries
+"rest": {"provider", "why": "limit"|"spend"|"hand", "kind", "until" (epoch seconds or null), "when"
+("15:00", "Thursday 09:00" or null), "hint" (what the empty field says), "note" (what an app's
+button shows), "wait" (a waiting chip's label: "15:00", "Thu 09:00", "paused")}; every prompt that
+waits then has that "wait" in the status queue. A turn the limit stopped is not an error: it has no
+"result" or "error" event, a "rest" event in its log ({"provider", "why", "window", "until", "text"}),
+and ends with turn_end "requeued": true and a "line" (what it changed so far, and when it carries on),
+goes back to the front of the queue under the same id ("queued" again) and runs again when the limit
+lifts ("Resting", below). An app's waiting ask is replaced by the same app's newer one: "unqueued"
+with "replaced": true.
 The desk-tool changes the desk only in the turn that is running, and only when that turn's own
 typed words asked for the desk (desk.asked_for_desk); otherwise it is refused.
+
+Mail is another service (docs/MAIL.md). The mail-tool reads, searches, marks and drafts in the turn
+that is running and can never send: only a press, which agentd takes from a window that is not
+part of any agent's turn (outbox.py), lets a draft go. A typed "send it" while a draft waits is
+answered at once with where the button is. agentd also listens to the mail service (mail/watch.py) and
+says new mail, drafts and receipts as notices; with no mail service that costs one failed connect
+every few seconds.
 
 Jobs are background commands, watchers and timers the agent starts with the `job` tool (jobs.py):
 transient systemd user units that outlive the turn. The job-tool's `start` needs the turn that is
@@ -98,6 +145,23 @@ running (a stale process cannot start jobs) but not the person's words; `list` a
 neither. While the table has anything in it agentd looks at it every JOBS_POLL seconds, broadcasts
 the table when it changes, and when a job ends says one line in the pill (a "local" event with no
 turn) and tells the next turn's prompt.
+
+The Machine card is one message, {"type": "machine", "present", "asked", "why", "strip", "rows"}
+(vitals.py has the whole shape). agentd samples the machine (vitals.py) only while a bar is connected and the
+desk has not put Machine away: every few seconds when calm, every second while the card is up or something
+is close to its line. It broadcasts the message when it differs from the last one, and the answer to
+{"type": "desk", "op": "get"} carries it when the card is up. {"type": "vitals", "op": "get"} asks for it
+again; {"type": "vitals", "op": "open", "row": "disk"} draws the disks picture (a click on that row), with
+no model. "show machine" and "how's the machine" raise the card on request (desk.on_ask).
+
+Resting. A provider that refuses an ask because the account is out (a plan window used up, a spending
+cap hit: providers.limit(), never a busy moment) puts the machine in the state "resting": the turn goes
+back to the front of the queue with a note of what it had already changed, nothing more is sent until
+the time the provider gave plus a minute (the wall clock, checked every REST_POLL seconds, so a laptop
+that slept through it wakes right) or until the user presses Raise the limit / Try again, and the first
+waiting ask is then the check, with no test calls. "pause claude" or the AI card's switch rests a
+provider by hand the same way, until resumed. Launcher words, "!" commands, apps and the browser never
+look at the state. It is kept per provider in rest.json (state directory), which other processes read.
 
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
@@ -116,16 +180,24 @@ import json
 import os
 import re
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import time
 import urllib.parse
 from pathlib import Path
 
-from . import browser, cards, config, launcher, narrate, paths, procs, providers, signin, snapshots, sysmap, watch
+from . import (browser, cards, config, finder, launcher, narrate, outbox, paths, procs, providers, rest, signin, snapshots,
+               sysmap, watch)
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
+from .mail import client as mail_client
+from .mail import tools as mail_tools
+from .mail import watch as mail_watch
+from .notices import Notices, one_line
+from .vitals import Vitals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
 LINE_ONLY = {"tool_start", "tool_input", "text_delta", "thinking", "message_start"}
@@ -155,24 +227,44 @@ WATCHDOG_TICK = 5.0
 # What a failed result says when the account, not the request, is the problem (then the provider's
 # own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
 # Anything else is passed through as it came.
-LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit")
+LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit", "session limit",
+               "weekly limit", "opus limit", "sonnet limit", "shared budget", "out of usage credits", "spend cap",
+               "out of credits", "quota exceeded")
 LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
-RATE_WORDS = ("rate limit", "rate_limit", "too many requests")
+# Checked first: the throttle notice says "not your usage limit", which a limit word would also catch.
+RATE_WORDS = ("rate limit", "rate_limit", "too many requests", "not your usage limit")
 RATE_TEXT = "The provider is rate limiting requests; try again in a minute."
 OFFLINE_POLL = 5.0   # while there is no way to the sign-in page, look again this often
+REST_POLL = 60.0     # while a limit lasts, compare the wall clock with its time this often
+AI_SIGNED_TTL = 30.0   # how long the AI card trusts "is the other AI signed in" (it asks the CLI)
+_FROM_APP = re.compile(r"\[from app ([^\]\s]+)\]")
 READY_LINE_SECONDS = 120.0   # how long "Signed in to Claude" is worth saying
 # Changes to the desk that come close together go out as the state they end in.
 DESK_DEBOUNCE = 0.03
 # The same for the jobs table, which is also looked at this often (seconds) while it has anything in it.
 JOBS_DEBOUNCE = 0.03
 JOBS_POLL = 2.0
+# A notice with a time to live is looked at this often (seconds), and only while one exists.
+NOTICE_POLL = 1.0
+# The service's "show" push that follows our own request for the Mail window must not open it twice.
+MAIL_WINDOW_DEBOUNCE = 2.0
+DRAFT_CHECK_SECONDS = 1.0   # how long "send it" waits to learn whether a draft is waiting
+MAIL_ANSWER_CHARS = 60_000  # the most text one mail tool answers with
+# The longest line a client may send. A mail draft is a few hundred kilobytes at most (100 000 characters,
+# up to six bytes each when a language is written as \u escapes), so a line over this is not one.
+LINE_LIMIT = 4 << 20
+MAIL_NOT_KEPT = "[mail text not kept]"   # what stands in the turn's log for what mail_read and mail_search said
+MAIL_TEXT_TOOLS = ("mail_read", "mail_search")
+# What a click on a Machine row opens (vitals.py names the rows that open anything).
+VITALS_OPENS = {"disk": "disks"}
 
 
 class AgentD:
     def __init__(self, provider: providers.Provider, snaps: snapshots.Snapshots | None = None,
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
-                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None):
+                 jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
+                 vitals: Vitals | None = None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
@@ -226,6 +318,22 @@ class AgentD:
         self._turn_provider = None                   # the provider the running turn belongs to
         self._retried: set[int] = set()              # turns already run again after a sign-in
         self._turn_notes: list[str] = []             # what the running turn was told the user did without it
+        # Resting (see the module docstring): what the running turn's refusal found, what its events carried
+        # for providers.limit(), what a rerun is told, and what the turn changed before it was refused.
+        self._limit: rest.Limit | None = None        # what the running turn's refusal found
+        self._limit_rest: rest.Rest | None = None    # ... and what it made of the provider's rest
+        self._requeued = False                       # the turn ends to run again when the limit lifts
+        self._seen: dict = {}
+        self._resume_notes: dict[int, list[str]] = {}   # waiting turn -> what its cut-off tries had done
+        self._cut: list[str] = []
+        self._turn_asked_by: str | None = None
+        self._rest_cur: rest.Rest | None = None     # why the provider rests, while access is "resting"
+        self._found: dict[int, list[finder.Match]] = {}   # what the finder offered for a waiting ask, by turn
+        self._found_said: dict[int, dict] = {}            # and the message that said so, to say again
+        self._rest_task: asyncio.Task | None = None  # wakes the machine when the limit's time has come
+        self._raised: set[str] = set()               # providers whose Raise the limit was pressed (now Try again)
+        self._limit_urls: dict[str, str] = {}        # where each provider's own message said to raise it
+        self._ai_signed: dict[str, tuple[float, bool | None]] = {}   # the other AI's login, as the card last asked
         self.panel = panel or browser.Panel()
         self._loop: asyncio.AbstractEventLoop | None = None
         self.turn_prompt: str | None = None         # what the person typed for the running turn, as typed
@@ -238,6 +346,26 @@ class AgentD:
         self._jobs_again = False                    # a job started while that task was deciding to stop
         self._jobs_dirty = False
         self._jobs_last = self.jobs.snapshot()      # what the shell was last told
+        # Mail: the notices above the pill, the outbox that turns a press into one send, what the
+        # person's words and the service's pushes say, and the agent's tools.
+        self.notices = Notices(self._notice_emit)
+        self.outbox = outbox.Outbox(in_turn=self._in_turn)
+        self.says = mail_watch.Says(self.notices, self.outbox, self._mail_show, self._mail_window, self.open_url)
+        self.mail = mail_tools.Broker(self.says)
+        self._mail_watch = mail_watch.Watch(self.says.push)
+        self._mail_opened = -MAIL_WINDOW_DEBOUNCE   # when the Mail window was last brought in
+        self._notices_task: asyncio.Task | None = None  # looks at the clock while a notice has a ttl
+        # Who is on the other end of each connection: True once it is known to have been inside an agent's
+        # turn when it connected (or could not be told), which is final. See _persons.
+        self._peers: dict[asyncio.StreamWriter, asyncio.Future] = {}
+        self._mail_reads: dict[str, None] = {}      # ids of this turn's mail_read and mail_search calls
+        # The machine's readings. BOMBADIL_VITALS=0 turns the card off (the tests do, so nothing reads /proc).
+        self.vitals = vitals if vitals is not None else (Vitals() if os.environ.get("BOMBADIL_VITALS") != "0"
+                                                         else None)
+        self._vitals_task: asyncio.Task | None = None
+        self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
+        self._vitals_last: dict | None = None       # what the shell was last told
+        self.desk.on_ask = self._vitals_asked
 
     # -- socket --
 
@@ -248,16 +376,18 @@ class AgentD:
         # Probe for systemd scopes now, not on the first Enter.
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
-        server = await asyncio.start_unix_server(self._client, path=str(self.socket_path))
+        server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
         worker = asyncio.create_task(self._worker())
         self._background(self.check_access(start=self.auto_signin))
         watcher = asyncio.create_task(self._watch_apps())
+        mail = asyncio.create_task(self._mail_watch.run())
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
             try:
                 await server.serve_forever()
             finally:
-                for task in (worker, watcher, self._jobs_task):
+                for task in (worker, watcher, mail, self._jobs_task, self._notices_task, self._rest_task,
+                             self._vitals_task):
                     if task is not None:
                         task.cancel()
 
@@ -265,10 +395,14 @@ class AgentD:
         queue: asyncio.Queue = asyncio.Queue(CLIENT_BACKLOG)
         self.clients[writer] = queue
         sender = asyncio.create_task(self._sender(writer, queue))
+        self._peers[writer] = self._look_at(writer)
         try:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
             await self._send(writer, self._setup_msg())
+            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
+                await self._send(writer, notice)
+            self._vitals_kick()
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -285,6 +419,7 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            self._peers.pop(writer, None)
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
                 try:
@@ -303,6 +438,10 @@ class AgentD:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
             action = await self._match(text)
+            if action is None and launcher.is_send_word(text):
+                draft = await self._draft_waiting()
+                if draft is not None:   # "send it" is not a send: the press is the person's
+                    action = launcher.Action("send", draft["id"] if isinstance(draft.get("id"), str) else "")
             if action is None and self.access == "choose":
                 # First boot asks which AI: typing its name answers too.
                 name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
@@ -311,13 +450,24 @@ class AgentD:
                 await self._send(writer, {"type": "local", "action": action.kind})
                 self._background(self.local(action, text))
                 return
-            self.next_id += 1
             who = msg.get("asked_by")
-            if isinstance(who, str) and _WHO.fullmatch(who):
+            who = who if isinstance(who, str) and _WHO.fullmatch(who) else None
+            if who is None and not await self._persons(writer):
+                # A process of an agent's turn can write to this socket as well as anyone. What it asks is
+                # not what the person typed, and the turn it starts must not take it for that: the desk's
+                # gate and the new-address check on a draft both trust the typed words. (Asked before the
+                # turn is numbered: nothing may wait between numbering it and queueing it.)
+                who = "agent"
+            self.next_id += 1
+            if who:
                 self.asked_by[self.next_id] = who
             # The id lets a client (bombadil ask) follow its own turn among everyone's events.
             await self._send(writer, {"type": "queued", "turn": self.next_id})
             waits = not self._runnable(text)
+            if waits and self.access == "resting":
+                await self._replace_app_ask(text)
+                if who is None and _app_of(text) is None and not text.startswith("!"):
+                    self._background(self._find_for(self.next_id, text))
             if self.current is not None or self.pending or waits:
                 await self.broadcast({"type": "event", "kind": "queued", "turn": self.next_id, "prompt": text})
             self.pending.append((self.next_id, text))
@@ -329,11 +479,9 @@ class AgentD:
         elif t in ("stop", "cancel"):
             await self.stop()
         elif t == "unqueue":
-            before = len(self.pending)
-            self.pending = [(i, p) for i, p in self.pending if i != msg.get("turn")]
-            if len(self.pending) != before:
-                await self.broadcast({"type": "event", "kind": "unqueued", "turn": msg.get("turn")})
-                await self.broadcast(self._status())
+            await self._unqueue(msg.get("turn"))
+        elif t == "found_open":
+            self._background(self._open_found(msg.get("turn"), msg.get("id")))
         elif t == "local":
             action = _action(msg)
             if action is not None:
@@ -355,12 +503,24 @@ class AgentD:
             await self._send(writer, await self._desk_tool(msg))
         elif t == "jobs":
             await self._jobs_op(msg, writer)
+        elif t == "vitals":
+            await self._vitals_op(msg, writer)
         elif t == "job-tool":
             await self._send(writer, await self._job_tool(msg))
+        elif t == "mail-tool":
+            await self._send(writer, await self._mail_tool(msg))
+        elif t == "press":
+            self._background(self._press(msg, writer))
+        elif t == "notice_action":
+            self._background(self._notice_action(msg.get("id"), msg.get("action"), writer))
+        elif t == "notice_dismiss":
+            self._background(self._notice_dismiss(msg.get("id"), writer))
         elif t == "status":
             await self._send(writer, self._status())
         elif t == "setup_action":
             self._background(self.setup_action(str(msg.get("id", ""))))
+        elif t == "ai":
+            self._background(self._ai_op(msg, writer))
         elif t == "signin":
             name = msg.get("provider")
             self._background(self.choose(str(name)) if name and (name != self.provider.name or not self.chosen)
@@ -378,11 +538,30 @@ class AgentD:
 
     def _status(self) -> dict:
         # Busy from the moment a prompt is accepted, so Esc stops it even before its turn starts.
-        return {"type": "status",
-                "busy": self.current is not None or any(self._runnable(p) for _, p in self.pending),
-                "provider": self.provider.name, "setup": self.access, "turns": self.turns,
-                "snapshots": self.snaps.available, "queued": len(self.pending),
-                "turn": self.current, "queue": [{"turn": i, "prompt": p} for i, p in self.pending]}
+        resting = self._rest_msg()
+        queue = []
+        for i, p in self.pending:
+            entry = {"turn": i, "prompt": p}
+            if resting is not None and not self._runnable(p):
+                entry["wait"] = resting["wait"]   # the chip says when it will run, not "next"
+            queue.append(entry)
+        status = {"type": "status",
+                  "busy": self.current is not None or any(self._runnable(p) for _, p in self.pending),
+                  "provider": self.provider.name, "setup": self.access, "turns": self.turns,
+                  "snapshots": self.snaps.available, "queued": len(self.pending),
+                  "turn": self.current, "queue": queue}
+        if resting is not None:
+            status["rest"] = resting
+        return status
+
+    def _rest_msg(self) -> dict | None:
+        """Why the machine rests, in the words every client shows (None when it does not)."""
+        r = self._rest_cur if self.access == "resting" else None
+        if r is None:
+            return None
+        w = rest.words(r, self._title())
+        return {"provider": r.provider, "why": r.why, "kind": r.kind, "until": r.until, "when": w["when"],
+                "hint": w["hint"], "note": w["note"], "wait": w["wait"]}
 
     async def _entries_msg(self) -> dict:
         try:
@@ -427,8 +606,7 @@ class AgentD:
         if self.clients.pop(writer, None) is not None:
             writer.close()   # its reader then sees the end, and _client cleans up
 
-    async def _send(self, writer: asyncio.StreamWriter, msg: dict):
-        """Queue a message for one client; never waits for it to be read."""
+    def _enqueue(self, writer: asyncio.StreamWriter, msg: dict):
         queue = self.clients.get(writer)
         if queue is None:
             return
@@ -438,9 +616,16 @@ class AgentD:
             print("agentd: dropping a client that stopped reading", file=sys.stderr)
             self._drop(writer)
 
-    async def broadcast(self, msg: dict):
+    def _enqueue_all(self, msg: dict):
         for w in list(self.clients):
-            await self._send(w, msg)
+            self._enqueue(w, msg)
+
+    async def _send(self, writer: asyncio.StreamWriter, msg: dict):
+        """Queue a message for one client; never waits for it to be read."""
+        self._enqueue(writer, msg)
+
+    async def broadcast(self, msg: dict):
+        self._enqueue_all(msg)
 
     def _background(self, coro) -> asyncio.Task:
         """Run a slow action beside the client's reader, so a stop or an unqueue sent right
@@ -478,6 +663,7 @@ class AgentD:
         if state != self._desk_last:
             self._desk_last = state
             await self.broadcast(state)
+            self._vitals_kick()   # Machine put away stops the sampling; shown again starts it
 
     async def _desk_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the desk, or changes it (a click on a strip, a drag later)."""
@@ -489,6 +675,8 @@ class AgentD:
                 await self._send(writer, self.plan_msg)
             # And what is counting, which the desk's card and strip are made from.
             await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
+            if self.vitals is not None and self.vitals.message()["present"]:
+                await self._send(writer, self.vitals.message())
             return
         if op not in ("fold", "hide", "show", "move"):
             return
@@ -525,6 +713,77 @@ class AgentD:
         ok, text = await asyncio.to_thread(self.desk.apply, op, msg.get("widget"), msg.get("rail"),
                                            msg.get("rank"))
         return result(ok, text)
+
+    # -- the machine --
+
+    def _vitals_wanted(self) -> bool:
+        """Sample only while a bar is there to draw it and the person has not put Machine away."""
+        return self.vitals is not None and bool(self.clients) and "machine" not in self.desk.hidden
+
+    def _vitals_kick(self):
+        """Start looking at the machine, or look now: a bar came, the desk changed, or the card was asked for."""
+        if not self._vitals_wanted():
+            self._vitals_wake.set()      # a loop that is asleep wakes, finds nothing wanted and ends
+            return
+        self._vitals_wake.set()
+        if self._vitals_task is None or self._vitals_task.done():
+            self._vitals_task = asyncio.create_task(self._vitals_loop())
+
+    def _vitals_asked(self, widget: str):
+        """Desk.on_ask, from a worker thread: "show machine" raises the card even when nothing is wrong."""
+        if widget != "machine" or self.vitals is None:
+            return
+        self.vitals.ask()
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._vitals_kick)
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
+    async def _vitals_loop(self):
+        """One sample, the message when it is not what the shell was told, then sleep for as long as the
+        readings allow (long when calm, a second when close to a line or when the card is up). A wake
+        cuts the sleep short. The loop ends with the last bar or when Machine is put away."""
+        try:
+            while self._vitals_wanted():
+                self._vitals_wake.clear()
+                try:
+                    msg = await asyncio.to_thread(self.vitals.tick)
+                    if msg is not None:
+                        await self._vitals_send(msg)
+                except Exception as e:  # noqa: BLE001 - keep looking whatever one look found
+                    print(f"agentd: looking at the machine: {type(e).__name__}: {e}", file=sys.stderr)
+                try:
+                    await asyncio.wait_for(self._vitals_wake.wait(), self.vitals.next_delay())
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            # Nobody is looking any more: forget the streaks, and take a card that is up away.
+            self.vitals.reset()
+            if self._vitals_last is not None and self._vitals_last.get("present"):
+                await self._vitals_send(self.vitals.message())
+
+    async def _vitals_send(self, msg: dict):
+        """Tell the bars the card when it is not what they were last told. A bar that has been told
+        nothing has no card, so "no card" as the first thing to say is not worth a message."""
+        if msg == self._vitals_last or (self._vitals_last is None and not msg.get("present")):
+            self._vitals_last = msg
+            return
+        self._vitals_last = msg
+        await self.broadcast(msg)
+
+    async def _vitals_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the card again, or clicks a row that opens something (the disk)."""
+        op = str(msg.get("op", ""))
+        if self.vitals is None:
+            return
+        if op == "get":
+            await self._send(writer, self.vitals.message())
+        elif op == "open":
+            kind = VITALS_OPENS.get(str(msg.get("row", "")))
+            if kind is not None:
+                action = launcher.Action("picture", kind, "open", launcher.PICTURE_TITLES[kind])
+                self._background(self.picture(action, "the machine card"))
 
     # -- jobs --
 
@@ -647,6 +906,144 @@ class AgentD:
             return result(False, str(e))
         return result(False, f"Jobs cannot {op or 'do that'}. They can start, list and stop.")
 
+    # -- notices, mail and the press --
+
+    def _notice_emit(self, msg: dict):
+        """Notices.emit: every change goes to every client, in the order it was made. Queued here and now, not
+        by a task of its own, so that a line said just before an answer (a receipt before its press_result)
+        is heard before it, and an end is never heard before the notice it ends."""
+        self._enqueue_all(msg)
+        if msg["type"] == "notice":
+            self._notices_kick()
+
+    def _notices_kick(self):
+        if self.notices.next_expiry() is not None and (self._notices_task is None or self._notices_task.done()):
+            self._notices_task = asyncio.create_task(self._notices_loop())
+
+    async def _notices_loop(self):
+        """Look at the clock while some notice has a time to live, and not otherwise."""
+        while (left := self.notices.next_expiry()) is not None:
+            await asyncio.sleep(min(left, NOTICE_POLL))
+            self.notices.expire()
+
+    def _look_at(self, writer: asyncio.StreamWriter) -> asyncio.Future:
+        """Who just connected: looked at now, while the process that did is surely still there to be looked at."""
+        return asyncio.ensure_future(asyncio.to_thread(self._was_agent, _peer_pid(writer)))
+
+    def _was_agent(self, pid: int | None) -> bool:
+        """Was the process that connected inside an agent's turn, or one that cannot be told? Blocking."""
+        try:
+            return pid is None or self.outbox.from_agent(pid)
+        except Exception as e:  # noqa: BLE001 - what cannot be told is not the person's
+            print(f"agentd: who connected: {type(e).__name__}: {e}", file=sys.stderr)
+            return True
+
+    async def _persons(self, writer: asyncio.StreamWriter) -> bool:
+        """Is this client somebody other than the agent? A chip makes a draft as the person's, a dismissal
+        hides what agentd said and a typed prompt is the person's own words, so none of them is for a
+        process inside a turn (as a press is not); a client that cannot be named is not taken for the
+        person. Two looks, either of which can refuse: the one made when it connected (a process that was
+        in a turn then is, for good, even after it has handed the socket on and gone) and the one made now."""
+        peer = self._peers.get(writer)
+        pid = _peer_pid(writer)
+        if peer is None or pid is None or await peer:
+            return False
+        return not await asyncio.to_thread(self._was_agent, pid)
+
+    async def _notice_dismiss(self, notice_id, writer: asyncio.StreamWriter):
+        if _is_int(notice_id) and await self._persons(writer):
+            self.notices.dismiss(notice_id)
+
+    async def _notice_action(self, notice_id, action, writer: asyncio.StreamWriter):
+        """A chip on a notice. What it does is its notice's own; when that fails the notice says so."""
+        if not _is_int(notice_id) or not isinstance(action, str) or not await self._persons(writer):
+            return
+        try:
+            await self.notices.action(notice_id, action)
+        except Exception as e:  # noqa: BLE001 - the person pressed it: they are told why nothing happened
+            self.notices.replace(notice_id, line=f"Could not do that: {launcher._reason(e)}", tone="error",
+                                 actions=[], ttl=30)
+
+    async def _mail_tool(self, msg: dict) -> dict:
+        """The os-mcp mail tools. They work in the turn that is running, like the desk's, and are answered
+        to the one client that asked. Nothing here sends: see outbox.py for the only way a draft leaves."""
+        def result(ok: bool, text: str) -> dict:
+            return {"type": "mail-result", "id": msg.get("id"), "ok": ok, "text": text}
+        turn = msg.get("turn")
+        if self.current is None or isinstance(turn, bool) or turn != self.current or self.stopping:
+            return result(False, "That turn is over, so mail stays as it is.")
+        # The raw prompt, as in the desk's gate: the turn's own has notes in front. A coding session's
+        # turn has no typed words, so every address in its drafts is one nobody typed; and what was put in
+        # front of the person's own words (the screen, a session's request) is not theirs either.
+        typed = mail_tools.typed_words(self.turn_prompt or "")
+
+        def alive() -> bool:
+            return self.current == turn and not self.stopping
+        try:
+            ok, text = await self.mail.call(turn, str(msg.get("op", "")), msg, typed, alive, self.session_id)
+        except Exception as e:  # noqa: BLE001 - a tool call is always answered
+            print(f"agentd: mail-tool: {type(e).__name__}: {e}", file=sys.stderr)
+            return result(False, f"Mail failed: {launcher._reason(e)}")
+        return result(ok, text[:MAIL_ANSWER_CHARS])
+
+    async def _press(self, msg: dict, writer: asyncio.StreamWriter):
+        """The person's press on a Send button, from whatever process drew it: the outbox decides whether
+        it counts, does the act once, and what came of it goes back to the sender and onto the line."""
+        kind, id_ = msg.get("kind"), msg.get("id")
+        # `again` is the person's own second press on a send that might have gone (the service refuses it
+        # otherwise); nothing but an explicit true counts.
+        peer = self._peers.get(writer)
+        result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer),
+                                         again=msg.get("again") is True,
+                                         was_agent=peer is None or await peer)   # (no look made: not the person)
+        self.says.pressed(result)
+        if result.ok:
+            # Not said again on the line (the receipt is), but the agent should know what happened to its draft.
+            # The line names a recipient as the mail gave it, and notes reach the model as the user's own word.
+            self.notes = [*self.notes, f"the person pressed Send: {one_line(result.line, 160)}"][-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": "pressed Send", "action": "press",
+                        "target": (id_ if isinstance(id_, str) else "")[:128], "result": result.line,
+                        "ok": result.ok})
+        await self._send(writer, {"type": "press_result", "kind": kind if isinstance(kind, str) else "",
+                                  "id": id_ if isinstance(id_, str) else "", "ok": result.ok,
+                                  "line": result.line, "code": result.code, "receipt": result.receipt})
+
+    def _in_turn(self, pid: int) -> bool:
+        """Is this process the running turn's own CLI or one it started? (A turn without a systemd
+        scope is only its process tree.) Blocking: the outbox asks from a thread."""
+        proc = self.proc
+        if proc is None or proc.returncode is not None:
+            return False
+        return pid == proc.pid or pid in procs.descendants(proc.pid, procs.all_procs())
+
+    async def _draft_waiting(self) -> dict | None:
+        """The newest draft that waits for the person's press, if any. Asked of the service, since the person
+        may have started it in the window themselves. No service, no draft. (The drafts view is a bare list,
+        newest first: docs/MAIL.md.)"""
+        try:
+            got = await mail_watch.ask("list", DRAFT_CHECK_SECONDS, view="drafts", limit=50)
+        except (mail_client.MailUnavailable, mail_client.MailError):
+            return None
+        return next((d for d in got if isinstance(d, dict) and d.get("state") == "open"), None) \
+            if isinstance(got, list) else None
+
+    async def _mail_show(self, **view):
+        """Ask the service to show a view and bring the Mail window in (Launcher.open_mail). Raises when
+        the window will not open, for the caller to say."""
+        self._mail_opened = time.monotonic()
+        await asyncio.to_thread(self.launcher.open_mail, **view)
+
+    async def _mail_window(self):
+        """The service says somebody wants a view shown: make sure the window is there to draw it. Not
+        again just after we opened it ourselves, which is what this push usually is."""
+        if time.monotonic() - self._mail_opened < MAIL_WINDOW_DEBOUNCE:
+            return
+        self._mail_opened = time.monotonic()
+        try:
+            await asyncio.to_thread(self.launcher.open_mail_window)
+        except Exception as e:  # noqa: BLE001 - nobody asked agentd for this one: it is a line, not an error
+            print(f"agentd: the Mail window: {type(e).__name__}: {e}", file=sys.stderr)
+
     # -- things that never wait for the model --
 
     async def local(self, action: launcher.Action, typed: str):
@@ -666,6 +1063,12 @@ class AgentD:
             line, _, _ = self._describe()
             await self.event("local", turn=None, action=action.kind, target=action.target, phase="done",
                              ok=self.access not in ("offline",), text=line or "Done.")
+            return
+        if action.kind == "rest":
+            text = await self.rest_word(action)
+            await self.event("local", turn=None, action="rest", target=action.target, phase="done", ok=True, text=text)
+            self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "rest",
+                            "target": action.target, "result": text, "ok": True})
             return
         if action.kind == "stop":
             stopping = await self.stop()
@@ -691,6 +1094,8 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
+        if action.kind in ("mail", "send"):
+            self._mail_opened = time.monotonic()   # the service's echo of the show must not open the window again
         await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
                          phase="start", text=doing)
         ok, text = await asyncio.to_thread(self.launcher.run, action)
@@ -895,9 +1300,13 @@ class AgentD:
         if self.access == "ready" and time.monotonic() - self._access_at > READY_LINE_SECONDS:
             line = ""   # "Signed in" is news for a moment, not for a bar that restarts hours later
         s = self.signin
-        return {"type": "setup", "state": self.access, "provider": self.provider.name, "title": self._title(),
-                "line": line, "tone": tone, "actions": actions,
-                "phase": s.phase if s is not None else None, "view": s.view if s is not None and s.running else None}
+        msg = {"type": "setup", "state": self.access, "provider": self.provider.name, "title": self._title(),
+               "line": line, "tone": tone, "actions": actions,
+               "phase": s.phase if s is not None else None, "view": s.view if s is not None and s.running else None}
+        resting = self._rest_msg()
+        if resting is not None:
+            msg["rest"] = resting
+        return msg
 
     def _describe(self) -> tuple[str, str, list[dict]]:
         """What the pill says about the setup, and the chips under it."""
@@ -931,6 +1340,17 @@ class AgentD:
                 return (f"The {t} sign-in page was closed", "step",
                         [{"id": "show", "label": "Open it again", "style": "primary"}, cancel])
             return f"Sign in to {t} in the browser", "step", [cancel]
+        if self.access == "resting" and self._rest_cur is not None:
+            r = self._rest_cur
+            line = rest.words(r, t)["line"]
+            # One button per case. A limit with a time needs none: it lifts by itself.
+            if r.why == "hand":
+                return line, "step", [{"id": "resume", "label": f"Resume {t}", "style": "primary"}]
+            if r.provider in self._raised:
+                return line, "step", [{"id": "retry", "label": "Try again", "style": "primary"}]
+            if r.why == "spend" or r.until is None:
+                return line, "step", [{"id": "raise", "label": "Raise the limit", "style": "quiet"}]
+            return line, "step", []
         line, tone = self._access_line
         if self.access == "signed_out":
             return (line or f"Sign in to {t} to start.", tone,
@@ -952,7 +1372,7 @@ class AgentD:
             await self._set_access("choose")
             return
         if not self.provider.installed:
-            await self._set_access("ready")   # its turns say it is missing
+            await self._settle()   # its turns say it is missing
             return
         asked = self.provider
         try:
@@ -968,16 +1388,15 @@ class AgentD:
             else:
                 await self._set_access("signed_out")
         else:
-            await self._set_access("ready", f"{self._title()} is ready. Ask me for anything." if announce else "",
-                                   "done")
+            await self._settle(f"{self._title()} is ready. Ask me for anything." if announce else "", "done")
 
     async def signin_asked(self):
         """The user asked to sign in ("sign in" typed, `bombadil signin`, a chip).
 
         Not when the login is fine and starting one would end it: a `codex login` signs the stored
         login out as it starts, even if the new one is then called off."""
-        if self.access == "ready" and self.provider.login_replaces and await self._still_signed_in():
-            await self._set_access("ready", f"You are already signed in to {self._title()}.", "done")
+        if self.access in ("ready", "resting") and self.provider.login_replaces and await self._still_signed_in():
+            await self._settle(f"You are already signed in to {self._title()}.", "done")
             return
         await self.start_signin()
 
@@ -1038,12 +1457,15 @@ class AgentD:
         t = self._title()
         if phase == "done":
             self._login_gone = False
-            await self._set_access("ready", f"Signed in to {t}. Ask me for anything.", "done")
+            # A new login may be another account, which has its own limit: ask it and see. A pause
+            # made by hand stays.
+            await asyncio.to_thread(rest.clear_limit, s.provider.name)
+            await self._settle(f"Signed in to {t}. Ask me for anything.", "done")
             return
         if not self._login_gone and await self._still_signed_in():
             # Called off, but the login it was for is fine (a `sign in` typed while signed in,
             # which signin_asked lets through only for a login that a new one does not replace).
-            await self._set_access("ready")
+            await self._settle()
             return
         if phase == "timeout":
             await self._set_access("signed_out", f"The {t} sign-in timed out.", "error")
@@ -1094,6 +1516,8 @@ class AgentD:
             return
         await self._end_signin()
         self._login_gone = False
+        # "use claude" says it wants Claude: that ends a pause made by hand.
+        await asyncio.to_thread(rest.clear_hand, name)
         model = self.provider.model if name == self.provider.name else None
         await asyncio.to_thread(config.save_user, name, model)
         if name != self.provider.name:
@@ -1113,6 +1537,8 @@ class AgentD:
             await self.stop()
         elif action == "wifi":
             await self._local(launcher.Action("wifi"), "wifi")
+        elif action in ("resume", "raise", "retry"):
+            await self.rest_action(action)
 
     async def open_url(self, url: str, signin_id=None):
         """A link for the browser panel, from bombadil-browser ($BROWSER, xdg-open)."""
@@ -1157,7 +1583,8 @@ class AgentD:
                 if ok and fresh and self._external and not self._signin_live():
                     self._login_gone = False
                     await asyncio.to_thread(self.panel.hide)
-                    await self._set_access("ready", f"Signed in to {self._title()}. Ask me for anything.", "done")
+                    await asyncio.to_thread(rest.clear_limit, provider.name)
+                    await self._settle(f"Signed in to {self._title()}. Ask me for anything.", "done")
                     return
             if self._external and not self._signin_live():
                 await self._set_access("signed_out")
@@ -1185,6 +1612,317 @@ class AgentD:
             await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
         await self._set_access("signed_out", f"{self._title()} signed you out.", "error")
         await self.start_signin()
+
+    # -- resting: out of plan or spending, or paused by hand (rest.py) --
+
+    def _waiting(self) -> int:
+        """Asks that wait for the AI (a "!" command never does)."""
+        return sum(1 for _, p in self.pending if not p.startswith("!"))
+
+    async def _settle(self, line: str = "", tone: str = "step"):
+        """The provider can be asked, or it rests (out of its limit, or paused by hand)."""
+        r = await asyncio.to_thread(rest.current, self.provider.name)
+        if r is None:
+            self._rest_cur = None
+            await self._set_access("ready", line, tone)
+        else:
+            await self._enter(r)
+
+    async def _enter(self, r: rest.Rest):
+        """The machine rests. Nothing is sent to the provider until it lifts: the asks wait where they are."""
+        self._rest_cur = r
+        await self._set_access("resting")
+        if self._rest_task is not asyncio.current_task():
+            if self._rest_task is not None:
+                self._rest_task.cancel()   # the time may be a new one
+            self._rest_task = asyncio.create_task(self._rest_watch())
+
+    async def _rest_changed(self, back: str | None = None):
+        """The provider's rest is not what it was (a pause, a resume, a limit that lapsed or was lifted):
+        rest again, or come back saying `back` (by default that it is back, and what runs now)."""
+        if self.access in ("ready", "resting"):
+            r = await asyncio.to_thread(rest.current, self.provider.name)
+            if r is not None:
+                if r != self._rest_cur or self.access != "resting":
+                    await self._enter(r)
+            elif self.access == "resting":
+                self._rest_cur = None
+                await self._set_access("ready", back or rest.back(self._title(), self._waiting()), "done")
+        await self._ai_changed()
+
+    async def _rest_watch(self):
+        """Wake the machine when the limit's time has come, on the wall clock (a laptop that slept
+        through it wakes right). No call to the provider: the first waiting ask is the check."""
+        try:
+            while True:
+                r = self._rest_cur
+                if self.access != "resting" or r is None or r.why == "hand" or r.until is None:
+                    return
+                left = r.until + rest.RESET_GRACE - rest.now()
+                if left > 0:
+                    await asyncio.sleep(min(REST_POLL, left + 0.01))
+                    continue
+                try:
+                    await asyncio.to_thread(rest.clear_limit, r.provider)
+                except OSError:
+                    pass   # a lapsed limit is not read anyway
+                await self._rest_changed()
+        finally:
+            if self._rest_task is asyncio.current_task():
+                self._rest_task = None
+
+    def _refusal(self, turn: providers.Turn, ev: dict) -> rest.Limit | None:
+        """Did the account refuse this turn for its limit? (Never a typed command: its failure is its own.)"""
+        if turn.prompt.startswith("!") or self._turn_provider is None:
+            return None
+        try:
+            return self._turn_provider.limit(ev, self._seen)
+        except Exception as e:  # noqa: BLE001 - an odd result is an error line, never a lost turn
+            print(f"agentd: limit check: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+
+    def _limit_wait(self, turn: providers.Turn, ev: dict) -> rest.Limit | None:
+        if turn.prompt.startswith("!") or self._turn_provider is None:
+            return None
+        try:
+            return self._turn_provider.waiting(ev, self._seen)
+        except Exception as e:  # noqa: BLE001
+            print(f"agentd: limit wait check: {type(e).__name__}: {e}", file=sys.stderr)
+            return None
+
+    async def _refused(self, found: rest.Limit):
+        """The running turn was refused for the account's limit: remember it (the file first, so a
+        restart finds it), and let turn() end the turn for it."""
+        tp = self._turn_provider
+        self._limit = found
+        r = self._limit_rest = await asyncio.to_thread(rest.set_limit, tp.name, found)
+        if found.url:
+            self._limit_urls[tp.name] = found.url
+        self._raised.discard(tp.name)
+        await self.event("rest", provider=tp.name, why=r.why, window=r.kind, until=r.until, text=found.text[:200])
+
+    async def _rest_turn(self, turn_id: int, prompt: str):
+        """After a turn the limit stopped: the ask goes back to the front of the queue, to run again in the
+        same conversation when the limit lifts, told what it had changed. The machine rests."""
+        again, tp = self._requeued, self._turn_provider
+        cut, self._cut = self._cut, []
+        self._limit = self._limit_rest = None
+        self._requeued = False
+        if again:
+            before = self._resume_notes.get(turn_id, [])
+            notes = [*before, *(c for c in cut if c not in before)][-6:]
+            if notes:
+                self._resume_notes[turn_id] = notes
+            if self._turn_asked_by:
+                self.asked_by[turn_id] = self._turn_asked_by
+            # Not heard by the model, if it refused at once: the rerun is told what happened without it.
+            self.notes = (self._turn_notes + self.notes)[-10:]
+            self.pending.insert(0, (turn_id, prompt))
+            await self.broadcast({"type": "event", "kind": "queued", "turn": turn_id, "prompt": prompt})
+        if tp is self.provider and self.access in ("ready", "resting"):
+            await self._settle()   # says it (the setup line and the queue) to every client
+        else:
+            await self.broadcast(self._status())
+        await self._ai_changed()
+
+    async def _unqueue(self, turn) -> bool:
+        """Drop a prompt still waiting its turn. False when it was not waiting (it ran, or was dropped)."""
+        before = len(self.pending)
+        self.pending = [(i, p) for i, p in self.pending if i != turn]
+        self._found.pop(turn, None)
+        self._found_said.pop(turn, None)
+        if len(self.pending) == before:
+            return False
+        self._resume_notes.pop(turn, None)
+        await self.broadcast({"type": "event", "kind": "unqueued", "turn": turn})
+        await self.broadcast(self._status())
+        return True
+
+    async def _find_for(self, turn: int, text: str):
+        """The finder, for an ask that has to wait while the AI rests: up to three things on this computer
+        the sentence nearly names, sent with the line that says when the ask runs. It only offers; a press
+        opens (`found_open`). Never a model, never the network."""
+        try:
+            matches = await asyncio.to_thread(finder.find, text)
+        except Exception as e:  # noqa: BLE001 - the ask is kept either way
+            print(f"agentd: finder: {type(e).__name__}: {e}", file=sys.stderr)
+            matches = []
+        r = self._rest_cur
+        if self.access != "resting" or r is None or not any(i == turn for i, _ in self.pending):
+            return   # it ran, or was dropped, while the finder looked
+        self._found = {t: m for t, m in self._found.items() if any(i == t for i, _ in self.pending)}
+        self._found[turn] = matches
+        self._found_said = {t: m for t, m in self._found_said.items() if t in self._found}
+        said = self._found_said[turn] = {
+            "type": "found", "turn": turn, "prompt": text, "line": rest.kept(r, self._title(), bool(matches)),
+            "matches": [{"id": str(n), "kind": m.kind, "label": m.label, "hint": m.hint}
+                        for n, m in enumerate(matches, 1)]}
+        await self.broadcast(said)
+
+    async def _open_found(self, turn, ident):
+        """A press on a found chip: open the thing as if its word was typed (an app, a panel, a command) or
+        show the steps of that past ask, then let go of the kept ask it came from. When the thing cannot be
+        opened the ask stays kept."""
+        waiting = isinstance(turn, int) and not isinstance(turn, bool) and any(i == turn for i, _ in self.pending)
+        offered = self._found.get(turn) if waiting else None
+        pick = next((m for n, m in enumerate(offered or [], 1) if str(n) == str(ident)), None)
+        if pick is None:
+            return   # not offered (any more): nothing opens that was not shown
+        if pick.kind == "ask":
+            log = _own_turn_log(pick.path)
+            if log is None:
+                await self.event("local", turn=None, action="details", phase="done", ok=False,
+                                 text="That turn's steps are not on this computer any more.")
+                await self._found_again(turn)
+                return
+            await self._unqueue(turn)
+            await self._details_file(log)
+            return
+        action = await self._match(pick.say)
+        if action is None:
+            await self.event("local", turn=None, action="found", phase="done", ok=False,
+                             text=f"Could not open {pick.label}.")
+            await self._found_again(turn)
+            return
+        await self._unqueue(turn)
+        await self.local(action, pick.say)
+
+    async def _found_again(self, turn: int):
+        """A press that could not open its thing: the ask stays kept, and so do its chips (the bar took them
+        down when it was pressed)."""
+        said = self._found_said.get(turn)
+        if said is not None and any(i == turn for i, _ in self.pending):
+            await self.broadcast(said)
+
+    async def _details_file(self, log: Path):
+        argv = [launcher._bombadil(), "watch", "--file", str(log)]
+        try:
+            await asyncio.to_thread(self.launcher.details, argv, True)
+        except Exception as e:  # noqa: BLE001
+            await self.event("local", turn=None, action="details", phase="done", ok=False,
+                             text=f"Could not show the details: {e}")
+
+    async def _replace_app_ask(self, text: str):
+        """An app's ask that has to wait replaces that app's older one (at most one chip per app), so
+        an app on a timer cannot fill the queue. The older one is dropped with no error."""
+        app = _app_of(text)
+        if app is None:
+            return
+        older = [i for i, p in self.pending if _app_of(p) == app]
+        if not older:
+            return
+        self.pending = [(i, p) for i, p in self.pending if i not in older]
+        for i in older:
+            self._resume_notes.pop(i, None)
+            await self.broadcast({"type": "event", "kind": "unqueued", "turn": i, "replaced": True})
+
+    async def pause(self, name: str, on: bool) -> str:
+        """Rest a provider by hand, or end that. Returns what the pill says."""
+        title = providers.PROVIDERS[name].title or name
+        if on:
+            if await asyncio.to_thread(rest.hand, name) is None:
+                await asyncio.to_thread(rest.set_hand, name)
+            await self._rest_changed()
+            return rest.words(rest.Rest(name, "hand"), title)["line"]
+        had = await asyncio.to_thread(rest.clear_hand, name)
+        waiting = self._waiting() if name == self.provider.name else 0
+        await self._rest_changed(rest.back(title, waiting))
+        left = await asyncio.to_thread(rest.limit, name)
+        if left is not None:   # its limit is still on: pressing the switch shows what is left
+            return rest.words(left, title)["line"]
+        return rest.back(title, waiting) if had else f"{title} was not paused."
+
+    async def rest_word(self, action: launcher.Action) -> str:
+        """"pause claude", "resume the ai" and the rest of them, typed."""
+        name = self.provider.name if action.target == "ai" else action.target
+        if name not in providers.PROVIDERS:
+            return "That AI is not here."
+        return await self.pause(name, action.verb == "pause")
+
+    async def rest_action(self, action: str):
+        """The one button under the resting line: Resume Claude, Raise the limit, Try again."""
+        r = self._rest_cur
+        if self.access != "resting" or r is None:
+            return
+        if action == "resume" and r.why == "hand":
+            await self.pause(r.provider, False)
+        elif action == "raise" and r.why != "hand" and (r.why == "spend" or r.until is None):
+            url = self._limit_urls.get(r.provider) or rest.RAISE_PAGES.get(r.provider)
+            if url:
+                try:
+                    await asyncio.to_thread(self.panel.open, url)   # the provider's own page; nothing is bought here
+                except Exception as e:  # noqa: BLE001
+                    await self.event("error", turn=None, text=f"Could not open the link: {e}")
+                    return
+            self._raised.add(r.provider)   # the button now says Try again
+            await self.broadcast(self._setup_msg())
+        elif action == "retry" and r.provider in self._raised:
+            await asyncio.to_thread(rest.clear_limit, r.provider)
+            self._raised.discard(r.provider)
+            await self._rest_changed(rest.trying(self._title(), self._waiting()))
+
+    # -- the AI card: one row per AI, with its switch --
+
+    async def _signed(self, name: str) -> bool | None:
+        """Is the other AI signed in? Asks its CLI, at most once in AI_SIGNED_TTL seconds."""
+        at, known = self._ai_signed.get(name, (None, None))
+        if at is not None and time.monotonic() - at < AI_SIGNED_TTL:
+            return known
+        try:
+            p = providers.get(name)
+            ok = await asyncio.to_thread(p.signed_in) if p.installed else False
+        except Exception:  # noqa: BLE001 - cannot tell
+            ok = None
+        self._ai_signed[name] = (time.monotonic(), ok)
+        return ok
+
+    async def _ai_rows(self) -> list[dict]:
+        names = list(config.PROVIDERS)
+        if self.provider.name not in names:
+            names.insert(0, self.provider.name)
+        rows = []
+        for name in names:
+            title = providers.PROVIDERS[name].title or name
+            current = name == self.provider.name
+            held = await asyncio.to_thread(rest.current, name)
+            installed = self.provider.installed if current else providers.get(name).installed
+            if held is not None:
+                w = rest.words(held, title)
+                state, text = ("paused" if held.why == "hand" else "limit"), w["row"]
+                on, enabled = held.why != "hand", True
+            elif not installed:
+                state, text, on, enabled = "missing", "not installed", False, False
+            else:
+                if current and self.access != "choose":
+                    signed = self.access not in ("signed_out", "offline", "signing_in")
+                else:
+                    signed = await self._signed(name) is not False
+                if signed:
+                    state, text, on, enabled = "ready", "ready", True, True
+                else:
+                    word = {"offline": "offline", "signing_in": "signing in"}.get(self.access if current else "")
+                    state, text, on, enabled = "signed_out", word or "not signed in", False, False
+            rows.append({"name": name, "title": title, "state": state, "text": text, "on": on,
+                         "enabled": enabled, "current": current})
+        return rows
+
+    async def _ai_msg(self) -> dict:
+        return {"type": "ai", "rows": await self._ai_rows()}
+
+    async def _ai_changed(self):
+        if self.clients:
+            await self.broadcast(await self._ai_msg())
+
+    async def _ai_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The AI card asks for its rows, or flips a switch."""
+        op, name = str(msg.get("op", "")), msg.get("provider")
+        if op == "get":
+            await self._send(writer, await self._ai_msg())
+        elif op in ("pause", "resume") and isinstance(name, str) and name in providers.PROVIDERS:
+            text = await self.pause(name, op == "pause")
+            title = providers.PROVIDERS[name].title or name
+            self._log_line({"t": time.time(), "kind": "local", "prompt": f"{op} {title}", "action": "rest",
+                            "target": name, "result": text, "ok": True})
 
     # -- turns --
 
@@ -1214,6 +1952,10 @@ class AgentD:
             self._signed_out = False
             self._turn_provider = self.provider
             self._turn_notes = []
+            self.mail.begin(turn_id, self.session_id)   # a conversation that has read mail still holds it
+            self._limit = self._limit_rest = None
+            self._requeued = False
+            self._seen, self._cut = {}, []
             stopped = False
             try:
                 await self.turn(prompt)
@@ -1223,12 +1965,15 @@ class AgentD:
             finally:
                 stopped = self.stopping
                 self.current = None
+                self.mail.end(turn_id, self.session_id)   # what it read stays with the conversation it resumes into
                 self.narrator = None
                 self._files = None
                 self.plan_msg = None
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
+            if self._limit is not None:
+                await self._rest_turn(turn_id, prompt)
             if self._signed_out and self._turn_provider is self.provider:
                 # (Not when "use codex" came mid-turn: that login was not the one that failed.)
                 await self._signed_out_turn(turn_id, prompt, stopped)
@@ -1243,7 +1988,7 @@ class AgentD:
 
     async def turn(self, prompt: str):
         shell = prompt.startswith("!")
-        asked_by = self.asked_by.pop(self.current, None)
+        asked_by = self._turn_asked_by = self.asked_by.pop(self.current, None)
         # What the person typed. A turn a coding session asked for has none: the desk stays as it is.
         self.turn_prompt = None if asked_by else prompt
         started = time.time()
@@ -1277,6 +2022,9 @@ class AgentD:
         self._befores = {}
         if not shell and self.explain != "brief":
             before = asyncio.ensure_future(asyncio.to_thread(sysmap.snapshot, sysmap.BEFORE_KINDS, self.provider.name))
+        # Kept for a turn the limit refuses before it changes anything: its empty restore point must not
+        # be what Undo takes back (skip_restore_point).
+        undo_before = await asyncio.to_thread(self.launcher.undo_marker)
         await asyncio.to_thread(self.launcher.clear_undo)
         snap = None
         if self.snaps.available:
@@ -1308,6 +2056,11 @@ class AgentD:
                 turn.prompt = ("[Done by the user without you since your last turn: "
                                + "; ".join(self.notes) + "]\n\n" + prompt)
                 self._turn_notes, self.notes = self.notes, []
+            cut = self._resume_notes.pop(self.current, None)
+            if cut:
+                # A try the limit stopped halfway: the CLI may or may not have kept it in the conversation.
+                turn.prompt = ("[The last try stopped at a usage limit after: " + "; ".join(cut)
+                               + ". Check what is done before redoing it.]\n\n" + turn.prompt)
             cmd = self.provider.command(turn, self.workdir)
             source = self.provider
         env = {**os.environ, **source.env()}
@@ -1356,7 +2109,8 @@ class AgentD:
                                  turn, result, None, False)
         # "last": when the provider last sent an event; "tools": the tool calls still running (a long
         # install says nothing until it is done); "quiet": the line says the provider went quiet.
-        state = {"session": None, "error": False, "last": time.monotonic(), "tools": set(), "quiet": False}
+        state = {"session": None, "error": False, "last": time.monotonic(), "tools": set(), "quiet": False,
+                 "busy": False}
 
         async def pump():
             async for raw in proc.stdout:
@@ -1365,12 +2119,15 @@ class AgentD:
                 # is not a dead connection. Only the CLI's own notices about retrying do not.
                 if source.is_progress(line):
                     state["last"] = time.monotonic()
+                    state["busy"] = False
                     if state["quiet"]:
                         state["quiet"] = False
                         if not self.stopping:
                             await self._step_line("Thinking")
                 for ev in source.parse(line):
                     # Running from the tool call to its result; the turn's result ends all of it.
+                    if ev["kind"] == "retry":
+                        state["busy"] = True   # the CLI is waiting out a busy API: connected, not stuck
                     if ev["kind"] == "tool" and ev.get("id"):
                         state["tools"].add(ev["id"])
                     elif ev["kind"] == "tool_result":
@@ -1386,7 +2143,9 @@ class AgentD:
                 if (not state["quiet"] and not state["tools"] and not self.stopping
                         and time.monotonic() - state["last"] > NO_PROGRESS_SECS * self.provider.quiet_factor):
                     state["quiet"] = True
-                    await self._step_line(f"{self.provider.name.capitalize()} is not answering; check the connection")
+                    name = self.provider.name.capitalize()
+                    await self._step_line(f"{name} is busy, trying again" if state["busy"]
+                                          else f"{name} is not answering; check the connection")
 
         reading = asyncio.create_task(pump())
         exited = asyncio.create_task(_exited(proc))
@@ -1434,24 +2193,54 @@ class AgentD:
                 quiet_watch.cancel()
             stopped = self.stopping
             summary = narrator.summary()
+            ends = {}
             if stopped:
                 line = self._stopped_line or narrator.stopped_line()
             else:
                 line = summary
+            if self._limit is not None:
+                # The account said no (providers.limit): not a failure of this ask. It waits for the limit
+                # to lift and runs again, and what it changed before that stays (Undo and Details too).
+                again = self._requeued = not stopped and self._turn_provider is self.provider
+                if again:
+                    ends = {"requeued": True}
+                    line = self._cut_off_line(narrator)
+                    self._cut = list(narrator.done)
+                if not narrator.done and snap is not None:
+                    await asyncio.to_thread(self.launcher.skip_restore_point, snap.number, undo_before)
             await self._clear_streams()
             await self.event("turn_end", seconds=round(time.time() - started, 1), summary=summary,
                              changed=bool(narrator.done), irreversible=narrator.irreversible,
-                             stopped=stopped, line=line, read=narrator.read_list())
-            self._log(prompt, result, snap, cmd, stopped, summary, narrator.read_list(), n=n,
-                      unit=self._unit, started=started, files=files)
+                             stopped=stopped, line=line, read=narrator.read_list(), **ends)
+            self._log(prompt, result, snap, cmd, stopped, line if ends else summary, narrator.read_list(), n=n,
+                      unit=self._unit, started=started, files=files, requeued=bool(ends))
             self._poke(kind="turn_end", n=n)   # after the row: the brain reads it from the log
             self._closed_turn = self.current
-            self._background(self._receipt(self.current, narrator, before, self._befores))
+            if not ends:
+                self._background(self._receipt(self.current, narrator, before, self._befores))
 
     async def _on_event(self, ev, turn, result, pending_session, reported_error):
         kind = ev["kind"]
+        if self._limit is not None and kind in ("error", "result"):
+            # The turn was ended for the account's limit (a CLI that waits it out was put away): what the
+            # CLI says on its way out ("cancelled") is not how the turn ended.
+            return pending_session, True
         if kind == "session":
             return ev.get("session_id") or pending_session, reported_error
+        if kind in ("meta", "limit", "retry"):
+            # What the provider says about its limit: kept for the result (providers.limit() decides
+            # whether this turn was refused for it), never shown by itself.
+            if kind == "meta":
+                self._seen["rate_limit"] = ev.get("rate_limit")
+            elif kind == "limit":
+                self._seen["notice"] = {k: v for k, v in ev.items() if k != "kind"}
+            elif (found := self._limit_wait(turn, ev)) is not None and self._limit is None:
+                # The CLI is waiting out the account's limit instead of ending the turn: end it for it.
+                await self._refused(found)
+                if self.proc is not None and self.proc.returncode is None:
+                    self._background(self._stop_proc(self.proc, self._unit))
+                return pending_session, True
+            return pending_session, reported_error
         if kind == "signed_out":   # the CLI's own sign that the login is gone
             if not turn.prompt.startswith("!"):
                 self._signed_out = True
@@ -1462,6 +2251,7 @@ class AgentD:
                     except ProcessLookupError:
                         pass
             return pending_session, reported_error
+        ev = self._without_mail_text(ev)
         try:
             line = self.narrator.on_event(ev) if self.narrator else None
         except Exception as e:  # noqa: BLE001 - odd input costs a line, never the turn
@@ -1501,6 +2291,10 @@ class AgentD:
                 # Adopt a session id only from a turn that worked, so a dead one is not kept.
                 if self._turn_provider in (None, self.provider):   # (not after "use codex" mid-turn)
                     self.session_id = ev.get("session_id") or pending_session or self.session_id
+            elif found := self._refusal(turn, ev):
+                # The account is out, not this ask: the turn ends to wait for it (turn()), with no error.
+                await self._refused(found)
+                return pending_session, True
             else:
                 reason = ev.get("terminal_reason") or ""
                 text = "cancelled" if reason.startswith("aborted") else (ev.get("text") or "the turn failed")
@@ -1525,8 +2319,25 @@ class AgentD:
         await self.event(kind, **{k: v for k, v in ev.items() if k != "kind"})
         return pending_session, reported_error
 
+    def _without_mail_text(self, ev: dict) -> dict:
+        """What mail_read and mail_search said is other people's words, and Bombadil writes none of it down:
+        events are logged to the turn's file and sent to every client, so the answer is replaced by a
+        placeholder before it is either (the model has had it, which is all it is for). An error stays: its
+        words are ours."""
+        kind = ev.get("kind")
+        if kind == "tool" and ev.get("id") and str(ev.get("name") or "").startswith("mcp__") \
+                and str(ev["name"]).rsplit("__", 1)[-1] in MAIL_TEXT_TOOLS:
+            self._mail_reads[str(ev["id"])] = None
+            while len(self._mail_reads) > 256:
+                self._mail_reads.pop(next(iter(self._mail_reads)))
+        elif kind == "tool_result" and ev.get("id") is not None and str(ev["id"]) in self._mail_reads:
+            del self._mail_reads[str(ev["id"])]
+            if not ev.get("error"):
+                return {**ev, "output": MAIL_NOT_KEPT}
+        return ev
+
     def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None, n=None, unit=None,
-             started=None, files=None):
+             started=None, files=None, requeued=False):
         self._log_line({"t": time.time(), "prompt": prompt, "result": result["text"], "ok": result["ok"],
                         "snapshot": snap.number if snap else None,
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
@@ -1536,7 +2347,18 @@ class AgentD:
                         "details": str(self.turn_logs.get(self.current, "")),
                         "n": n, "unit": unit, "started": started,
                         "files": (files.row(settled=result["ok"] is True and not stopped) if files is not None
-                                  else {"wrote": [], "read": []})})
+                                  else {"wrote": [], "read": []}),
+                        # The limit stopped it: it runs again later, so this is not how it ended.
+                        **({"requeued": True} if requeued else {})})
+
+    def _cut_off_line(self, narrator: narrate.Narrator) -> str:
+        """A turn the limit stopped, closing: what it had changed and when it carries on. Nothing changed:
+        the resting line itself."""
+        tp, r = self._turn_provider, self._limit_rest
+        title = tp.title or tp.name
+        if not narrator.done:
+            return rest.words(r, title)["line"]
+        return rest.cut_off(title, r, narrator.touched_text().removesuffix(" so far"))
 
     def _log_line(self, entry: dict):
         log = paths.turns_log()
@@ -1625,6 +2447,8 @@ def _limit_text(text: str) -> str:
     """A failed result that names the account's limit says so plainly, then the provider's first
     line (it holds the reset time); a bare rate limit is a busy moment, not the account."""
     low = text.lower()
+    if "not your usage limit" in low:   # the throttle notice names the limit to say it is not that
+        return RATE_TEXT
     if any(w in low for w in LIMIT_WORDS):
         first = next((line.strip() for line in text.splitlines() if line.strip()), "")
         return LIMIT_TEXT + (f"\n{first[:200]}" if first else "")
@@ -1636,6 +2460,38 @@ def _limit_text(text: str) -> str:
 def _bombadil_browser() -> str:
     local = Path(__file__).resolve().parents[2] / "bin" / "bombadil-browser"
     return str(local) if local.exists() else "bombadil-browser"
+
+
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _peer_pid(writer: asyncio.StreamWriter) -> int | None:
+    """The process on the other end of a client's socket, as the kernel recorded it when that client
+    connected; None when it cannot be told (which the outbox treats as a press from nobody)."""
+    sock = writer.get_extra_info("socket")
+    try:
+        pid, _uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                              struct.calcsize("3i")))
+    except (AttributeError, OSError, struct.error):
+        return None
+    return pid or None
+
+
+def _own_turn_log(path: str) -> Path | None:
+    """A past turn's log, when it is one of agentd's own (under the state directory's turns) and still there."""
+    try:
+        log = Path(path).resolve(strict=True)
+        log.relative_to((paths.state_dir() / "turns").resolve())
+    except (OSError, ValueError):
+        return None
+    return log
+
+
+def _app_of(prompt: str) -> str | None:
+    """The app an ask came from ("[from app notes] summarise this"), else None."""
+    m = _FROM_APP.match(prompt)
+    return m.group(1) if m else None
 
 
 def _action(msg: dict) -> launcher.Action | None:

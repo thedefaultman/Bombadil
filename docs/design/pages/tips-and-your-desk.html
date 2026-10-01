@@ -1,0 +1,1720 @@
+<title>Tips and Your Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* One reading column, the drawn screens on dark stages, the same tokens as the earlier Bombadil pages. */
+:root {
+  color-scheme: light;
+  --bg: #f1f2f3; --surface: #ffffff; --line: #d7dbe0; --fg: #15181b; --soft: #3a4047; --muted: #5f6873;
+  --accent: #b4532f; --accent-soft: #f6e4dc; --ok: #2f7d3d; --amber: #9a6a0c; --red: #b23a3a; --ui-bg: #e6e8eb; --blue: #2f6aa8;
+  --os-bg: #101214; --os-panel: #1a1d21; --os-raised: #22262b; --os-edge: #2a2f36; --os-fg: #e6e8eb; --os-soft: #c3c8ce; --os-muted: #8b939c; --os-faint: #5c636b;
+  --os-accent: #d97757; --os-ok: #5fb36b; --os-amber: #e0a93b; --os-red: #d05555; --os-blue: #5b9bd5; --os-on-accent: #ffffff;
+  --sans: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --os: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+    --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark; --bg: #0d0f11; --surface: #16191c; --line: #2a2f36; --fg: #e6e8eb; --soft: #c3c8ce; --muted: #8b939c;
+  --accent: #e08462; --accent-soft: #2c1f1a; --ok: #6cc07a; --amber: #e0a84a; --red: #e06a6a; --ui-bg: #22262b; --blue: #7fb2e3;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16.5px; line-height: 1.6; padding-inline: 18px; padding-block: 0 72px; }
+.wrap { max-width: 1000px; margin: 0 auto; }
+h1, h2, h3 { text-wrap: balance; line-height: 1.2; margin: 0; }
+p { margin: 0; }
+code { font-family: var(--mono); font-size: .86em; background: var(--ui-bg); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+strong, b { font-weight: 650; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+.hero { display: grid; gap: 22px; padding-block: 48px 30px; }
+.hero h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; letter-spacing: -.025em; }
+.hero .lede { font-size: 19px; color: var(--soft); max-width: 68ch; }
+.hero .note { font-size: 15px; color: var(--muted); max-width: 72ch; }
+.hero-meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 14.5px; color: var(--muted); }
+.hero-meta b { color: var(--fg); font-variant-numeric: tabular-nums; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 8px; padding-block: 4px 8px; }
+nav.toc a { font-size: 14px; color: var(--soft); text-decoration: none; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+nav.toc a:hover { border-color: var(--accent); color: var(--accent); }
+section { padding-block: 44px 8px; scroll-margin-top: 12px; }
+section > h2 { font-size: 28px; font-weight: 750; letter-spacing: -.015em; margin-bottom: 8px; }
+section > .intro { color: var(--soft); max-width: 70ch; margin-bottom: 22px; }
+h3.sub { font-size: 19px; font-weight: 700; margin: 30px 0 10px; }
+
+/* Three choices */
+.decide { background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 16px; padding: 20px 22px; display: grid; gap: 16px; }
+.decide h2 { font-size: 22px; font-weight: 750; }
+.decide > p { color: var(--soft); font-size: 15.5px; max-width: 72ch; }
+.qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 12px; }
+.qcard { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.qcard h3 { font-size: 16.5px; font-weight: 700; }
+.qcard h3 span { font-family: var(--mono); font-size: 13px; color: var(--accent); font-weight: 500; margin-right: 6px; }
+.qcard ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.qcard li { font-size: 14.5px; color: var(--soft); display: grid; grid-template-columns: 22px 1fr; gap: 0 4px; }
+.qcard li i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 1px; }
+.qcard li.rec { color: var(--fg); }
+.qcard li.rec i { color: var(--accent); font-weight: 600; }
+.qcard .rtag { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 0 7px; margin-left: 6px; vertical-align: 1px; }
+.qcard .why { font-size: 13.5px; color: var(--muted); }
+
+/* Drawn screens */
+.mock-svg { display: block; width: 100%; height: auto; }
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+figure .frame { border-radius: 14px; overflow: hidden; border: 1px solid var(--os-edge); background: var(--os-bg); box-shadow: 0 14px 40px rgba(0,0,0,.18); }
+figcaption { font-size: 14.5px; color: var(--muted); max-width: 80ch; }
+figcaption b { color: var(--fg); }
+.pfigs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 18px; align-items: start; }
+
+/* The machine's own bits, drawn live */
+.os { font-family: var(--os); color: var(--os-fg); }
+.stage { background:
+    radial-gradient(70% 90% at 18% 0%, #1e2a34 0%, transparent 70%),
+    radial-gradient(55% 80% at 92% 100%, #34241d 0%, transparent 70%), var(--os-bg);
+  border: 1px solid var(--os-edge); border-radius: 16px; padding: 22px 16px 16px; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; align-content: end; gap: 10px; min-width: 0; }
+.stage .cap { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--os-faint); justify-self: start; }
+.os-line { background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 11px; padding: 9px 15px; font-size: 14.5px; line-height: 1.45; color: var(--os-fg); max-width: 100%; position: relative; }
+.os-line small { display: block; font-size: 12.5px; color: var(--os-muted); }
+.os-line.ok, .os-line.work, .os-line.warn { padding-left: 20px; }
+.os-line.ok::before, .os-line.work::before, .os-line.warn::before { content: ""; position: absolute; left: 8px; top: 9px; bottom: 9px; width: 3px; border-radius: 2px; background: var(--os-ok); }
+.os-line.work::before { background: var(--os-accent); }
+.os-line.warn::before { background: var(--os-amber); }
+.os-btn { display: inline-block; font-size: 12.5px; font-weight: 600; line-height: 1.6; color: var(--os-fg); background: var(--os-raised); border: 1px solid var(--os-edge); border-radius: 7px; padding: 0 9px; margin-left: 6px; white-space: nowrap; }
+.os-btn.p { background: var(--os-accent); border-color: var(--os-accent); color: var(--os-on-accent); }
+.os-card { width: 100%; max-width: 420px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 12px 14px; display: grid; gap: 7px; }
+.os-card .lab { font-size: 12.5px; color: var(--os-muted); }
+.os-card .field { font-size: 15px; font-weight: 500; color: var(--os-fg); background: var(--os-bg); border: 1.5px solid var(--os-accent); border-radius: 9px; padding: 7px 12px; }
+.os-card .hint { font-size: 11.5px; color: var(--os-faint); }
+.os-pill { width: 100%; max-width: 460px; height: 42px; border-radius: 21px; background: var(--os-panel); border: 1.5px solid var(--os-edge); display: flex; align-items: center; gap: 12px; padding: 0 16px; font-size: 14.5px; color: var(--os-muted); }
+.os-pill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--os-ok); flex: none; }
+.os-pill .ph { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-pill .clock { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ap { width: 100%; max-width: 520px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 10px 14px 4px; }
+.ap .h { font-size: 13.5px; font-weight: 650; color: var(--os-fg); padding-bottom: 6px; }
+.ap .r { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--os-edge); font-size: 13.5px; color: var(--os-fg); }
+.ap .r > span:first-child { flex: 1; min-width: 0; }
+.ap .r i { font-style: normal; color: var(--os-muted); font-size: 12.5px; display: block; }
+.yours { font-family: var(--os); font-size: .84em; font-weight: 600; color: var(--os-on-accent); background: var(--os-accent); border-radius: 6px; padding: .05em .45em; white-space: nowrap; }
+
+/* Rules */
+.rules { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px; counter-reset: rule; }
+.rules li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; counter-increment: rule; }
+.rules li strong { display: block; font-size: 16px; margin-bottom: 4px; line-height: 1.35; }
+.rules li strong::before { content: counter(rule) ". "; color: var(--accent); font-family: var(--mono); font-size: 14px; font-weight: 500; }
+.rules li span { color: var(--soft); font-size: 14.5px; }
+.carry { font-size: 15px; color: var(--muted); margin-top: 14px; max-width: 76ch; }
+
+/* Tables */
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table.t { width: 100%; border-collapse: collapse; font-size: 14.5px; line-height: 1.45; }
+table.t th { text-align: left; font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; padding: 11px 14px 9px; }
+table.t td { padding: 9px 14px; border-top: 1px solid var(--line); vertical-align: top; color: var(--soft); }
+table.t td:first-child { color: var(--fg); font-weight: 550; }
+table.t td.you { color: var(--fg); font-weight: 600; white-space: nowrap; }
+table.t td .gap { color: var(--red); font-weight: 600; }
+.tnote { font-size: 14.5px; color: var(--muted); margin-top: 12px; max-width: 80ch; }
+
+/* Pieces */
+.pieces { display: grid; gap: 22px; }
+.piece { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; min-width: 0; display: grid; gap: 12px; }
+.piece-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.piece-num { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+.piece-head h3 { font-size: 21px; font-weight: 700; letter-spacing: -.01em; flex: 1 1 240px; }
+.effort { font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 10px; }
+.piece p { font-size: 15.5px; color: var(--soft); max-width: 80ch; }
+.piece p b { color: var(--fg); }
+.piece ul { margin: 0; padding-left: 1.15em; display: grid; gap: 6px; font-size: 15px; color: var(--soft); max-width: 82ch; }
+.piece ul b { color: var(--fg); }
+.k { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+.later { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; max-width: 80ch; }
+.later li { color: var(--soft); font-size: 15.5px; }
+.later li b { color: var(--fg); }
+.later li::marker { font-family: var(--mono); color: var(--accent); }
+
+/* Days */
+.tabs { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); padding: 3px; gap: 2px; margin-bottom: 18px; }
+.tabs button { font: inherit; font-size: 14.5px; font-weight: 600; color: var(--soft); background: transparent; border: 0; border-radius: 999px; padding: 5px 16px; cursor: pointer; }
+.tabs button[aria-selected="true"] { background: var(--fg); color: var(--bg); }
+.who { font-size: 15.5px; color: var(--soft); max-width: 76ch; margin-bottom: 16px; }
+.hours { list-style: none; margin: 0 0 0 6px; padding: 0; border-left: 2px solid var(--line); }
+.hours li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 2px 12px; padding: 9px 0 9px 16px; position: relative; }
+.hours li::before { content: ""; position: absolute; left: -7px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--line); }
+.hours li.out::before { border-color: var(--accent); }
+.hours .t { font-family: var(--mono); font-size: 13px; color: var(--accent); padding-top: 3px; font-variant-numeric: tabular-nums; }
+.hours p { font-size: 15.5px; color: var(--soft); }
+.hours .needs { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.hours li.fig { grid-template-columns: minmax(0, 1fr); padding-block: 10px 16px; }
+.hours li.fig::before { display: none; }
+
+/* Boxes, defaults, lists */
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr)); gap: 12px; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 15px; color: var(--soft); min-width: 0; display: grid; gap: 6px; align-content: start; }
+.box h3 { font-size: 16.5px; font-weight: 700; color: var(--fg); }
+.box ul { margin: 0; padding-left: 1.15em; display: grid; gap: 7px; }
+.box li b { color: var(--fg); }
+.box.cut li b { color: var(--soft); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.decisions { display: grid; gap: 8px; }
+details.dec { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details.dec summary { list-style: none; cursor: pointer; padding: 12px 16px; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; }
+details.dec summary::-webkit-details-marker { display: none; }
+details.dec summary .q { font-weight: 650; }
+details.dec summary .chev { grid-column: 2; grid-row: 1; align-self: center; color: var(--muted); transition: transform .15s; }
+details.dec[open] summary .chev { transform: rotate(90deg); }
+details.dec .more { padding: 0 16px 14px; font-size: 15px; color: var(--soft); display: grid; gap: 8px; max-width: 76ch; }
+details.dec .more .alt { color: var(--muted); }
+details.dec .more b.l { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 500; color: var(--accent); margin-right: 4px; }
+ol.risks { margin: 0; padding-left: 1.4em; display: grid; gap: 10px; max-width: 80ch; }
+ol.risks li { color: var(--soft); font-size: 15.5px; }
+ol.risks li b { color: var(--fg); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted); display: grid; gap: 4px; }
+
+@media (prefers-reduced-motion: reduce) { details.dec summary .chev { transition: none; } }
+@media (max-width: 760px) {
+  body { font-size: 16px; padding-inline: 16px; }
+  .hero { padding-block: 32px 24px; }
+  .piece { padding: 16px; }
+  table.stack thead { display: none; }
+  table.stack, table.stack tbody, table.stack tr, table.stack td { display: block; }
+  table.stack tr { border-top: 1px solid var(--line); padding: 10px 14px; display: grid; gap: 5px; }
+  table.stack tr:first-child { border-top: 0; }
+  table.stack td { border: 0; padding: 0; white-space: normal; }
+  table.stack td::before { content: attr(data-label); display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  .hours li { grid-template-columns: minmax(0, 1fr); }
+}
+.defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+svg.st { width: 22px; height: 22px; flex: none; display: block; }
+/* Questions you can tap */
+.qcard .opt { display: grid; grid-template-columns: 22px 1fr; gap: 0 4px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; font-size: 14.5px; color: var(--muted); }
+.qcard .opt i { font-style: normal; font-family: var(--mono); font-size: 13px; color: var(--muted); padding-top: 1px; }
+.qcard .opt.picked { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--fg); }
+.qcard .opt.picked i { color: var(--accent); font-weight: 600; }
+.decided { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; display: grid; gap: 6px; font-size: 14.5px; color: var(--soft); }
+.decided ul { margin: 0; padding-left: 1.15em; display: grid; gap: 4px; }
+.decided b { color: var(--fg); }
+.qcard li { display: block; }
+.answer { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 15px; color: var(--soft); }
+.answer output { font-family: var(--mono); font-size: 16px; font-weight: 500; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px 10px; user-select: all; }
+
+/* The mini screen a tip plays in: a close-up of the real screen, drawn at 320 x 180 and scaled to fit. */
+.sc { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: var(--os-bg); border: 1px solid var(--os-edge); container-type: inline-size; }
+.sc-in { position: absolute; left: 0; top: 0; width: 320px; height: 180px; transform-origin: 0 0; font-family: var(--os); color: var(--os-fg); line-height: 1.25; }
+.sc-ground { position: absolute; inset: 0; background:
+    radial-gradient(70% 90% at 18% 0%, #1b252e 0%, transparent 70%),
+    radial-gradient(55% 80% at 92% 100%, #2c211b 0%, transparent 70%), var(--os-bg); }
+.sc * { box-sizing: border-box; }
+.sc .t { transition: opacity 200ms ease, transform 300ms cubic-bezier(.16, 1, .3, 1); }
+.sc.instant *, .sc.instant *::before, .sc.instant *::after { transition: none !important; animation: none !important; }
+
+/* the pill */
+.sc-pill { position: absolute; left: 34px; right: 34px; bottom: 8px; height: 26px; border-radius: 13px; background: rgba(26, 29, 33, .94); border: 1.2px solid var(--os-edge); display: flex; align-items: center; gap: 6px; padding: 0 10px 0 6px; transition: border-color 300ms ease; }
+.sc-pill.listen { border-color: #4a525c; }
+.sc-pill.busy { border-color: var(--os-accent); }
+.sc-pill .ph { flex: 1; min-width: 0; font-size: 11px; color: var(--os-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-pill .ph.typed { color: var(--os-fg); }
+.sc-pill .ph.typed::after { content: ""; display: inline-block; width: 1px; height: 11px; background: var(--os-fg); margin-left: 1px; vertical-align: -2px; animation: sc-caret 1s steps(1) infinite; }
+.sc-pill .ph.typed.nocaret::after { display: none; }
+.sc-pill .clock { font-size: 9.5px; color: var(--os-muted); font-variant-numeric: tabular-nums; }
+@keyframes sc-caret { 50% { opacity: 0; } }
+
+/* the stone (shared defs on the page: #st-full, #st-cut) */
+.sc-stone { width: 16px; height: 16px; flex: none; overflow: visible; }
+.sc-stone .shape { fill: var(--os-ok); transform-box: view-box; transform-origin: 12px 12.975px; transition: fill 200ms ease; }
+.sc-stone.work .shape { fill: var(--os-accent); animation: sc-roll 1s infinite; }
+.sc-stone.needs .shape { fill: var(--os-amber); }
+.sc-stone.needs { animation: sc-knock 1.6s infinite; transform-origin: 50% 90%; }
+.sc-stone.hop { animation: sc-hop 700ms 1; transform-origin: 50% 100%; }
+.sc-stone.lean { transform: rotate(6deg); transform-origin: 50% 90%; transition: transform 240ms cubic-bezier(.16, 1, .3, 1); }
+@keyframes sc-roll { 0%, 30% { transform: rotate(0deg); } 85%, 100% { transform: rotate(120deg); } }
+@keyframes sc-knock { 0%, 58% { transform: rotate(0); } 64% { transform: rotate(-8deg); } 70% { transform: rotate(0); } 76% { transform: rotate(-8deg); } 82%, 100% { transform: rotate(0); } }
+@keyframes sc-hop { 0% { transform: none; } 20% { transform: scale(1.06, .9); } 50% { transform: translateY(-3px); } 75% { transform: scale(1.1, .84); } 100% { transform: none; } }
+
+/* the line above the pill */
+.sc-line { position: absolute; left: 50%; bottom: 40px; max-width: 262px; transform: translate(-50%, 4px); opacity: 0; background: rgba(26, 29, 33, .9); border: 1px solid var(--os-edge); border-radius: 11px; padding: 4px 10px 4px 13px; font-size: 10.5px; line-height: 1.35; display: flex; align-items: center; gap: 6px; width: max-content; }
+.sc-line.on { opacity: 1; transform: translate(-50%, 0); }
+.sc-line::before { content: ""; position: absolute; left: 5px; top: 5px; bottom: 5px; width: 2px; border-radius: 1px; background: transparent; }
+.sc-line.work::before { background: var(--os-accent); }
+.sc-line.warn::before { background: var(--os-amber); }
+.sc-line.ok::before { background: var(--os-ok); }
+.sc-line .txt { min-width: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.sc-line .lb, .sc-line .secs, .sc-line .cmd { flex: none; white-space: nowrap; }
+.sc-line.mono .txt { font-family: var(--mono); font-size: 9.5px; }
+.sc-in.haschip .sc-line { bottom: 60px; }
+.sc-in.haschip .sc-pic { bottom: 86px; }
+.sc-line .secs { color: var(--os-muted); font-variant-numeric: tabular-nums; font-size: 9.5px; }
+.sc-line .lb { font-size: 8.5px; color: var(--os-fg); background: var(--os-raised); border: 1px solid #3a414a; border-radius: 6px; padding: 0 5px; line-height: 13px; }
+.sc-line .cmd { font-family: var(--mono); font-size: 8.5px; color: #e8c38d; }
+
+/* the app window, sliding in from its drawer */
+.sc-app { position: absolute; left: 50%; top: 10px; width: 176px; height: 100px; transform: translate(-50%, 16px); opacity: 0; background: var(--os-bg); border: 1px solid #3a414a; border-radius: 8px; padding: 7px 8px; display: grid; grid-template-rows: auto 1fr; gap: 5px; box-shadow: 0 8px 20px rgba(0, 0, 0, .45); }
+.sc-app.on { opacity: 1; transform: translate(-50%, 0); }
+.sc-app .ttl { font-size: 10.5px; font-weight: 650; display: flex; align-items: center; gap: 5px; }
+.sc-app .ttl i { font-style: normal; font-weight: 400; color: var(--os-muted); font-size: 8.5px; margin-left: auto; }
+.sc-app .rows { display: grid; gap: 3px; align-content: start; }
+.sc-app .r { display: flex; align-items: center; gap: 5px; font-size: 8.5px; color: var(--os-soft); background: var(--os-panel); border-radius: 4px; padding: 2px 5px; opacity: 0; transform: translateY(3px); transition: opacity 200ms ease, transform 200ms ease; }
+.sc-app .r.on { opacity: 1; transform: none; }
+.sc-app .r span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-app .r b { font-weight: 500; font-size: 7.5px; padding: 0 4px; border-radius: 6px; background: var(--os-raised); color: var(--os-muted); }
+.sc-app .r b.hi { color: #f0a0a0; }
+.sc-app .r b.ok { color: var(--os-ok); }
+.sc-app.lock .rows { place-content: center; justify-items: center; gap: 5px; }
+.sc-app .field { width: 110px; height: 14px; border: 1px solid var(--os-accent); border-radius: 4px; background: var(--os-panel); font-size: 8px; color: var(--os-muted); padding: 0 5px; line-height: 12px; }
+
+/* the browser panel, sliding in from the right */
+.sc-panel { position: absolute; top: 6px; right: 6px; bottom: 40px; width: 150px; transform: translateX(170px); background: #f2f3f4; border-radius: 8px; padding: 0; overflow: hidden; display: grid; grid-template-rows: 16px 1fr; box-shadow: -6px 0 18px rgba(0, 0, 0, .4); }
+.sc-panel.on { transform: none; }
+.sc-panel .bar { background: #dfe2e6; font-size: 7.5px; color: #3a4047; display: flex; align-items: center; padding: 0 6px; }
+.sc-panel .pg { padding: 8px; display: grid; gap: 4px; align-content: start; }
+.sc-panel .pg i { display: block; height: 5px; border-radius: 3px; background: #c9ced5; }
+.sc-panel .pg i.h { height: 8px; width: 70%; background: #8b939c; }
+
+/* a picture card above the line */
+.sc-pic { position: absolute; left: 50%; bottom: 66px; width: 236px; transform: translate(-50%, 8px); opacity: 0; background: rgba(26, 29, 33, .9); border: 1px solid var(--os-edge); border-radius: 11px; padding: 6px 8px 8px; display: grid; gap: 6px; }
+.sc-pic.on { opacity: 1; transform: translate(-50%, 0); }
+.sc-pic .ttl { font-size: 9.5px; font-weight: 650; display: flex; justify-content: space-between; }
+.sc-pic .ttl i { font-style: normal; font-weight: 400; font-size: 7.5px; color: var(--os-muted); }
+.sc-pic .bx { display: flex; align-items: center; gap: 4px; }
+.sc-pic .b { flex: 1; min-width: 0; font-size: 7.5px; text-align: center; border: 1px solid #3a414a; background: var(--os-raised); border-radius: 5px; padding: 4px 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transform: translateX(-4px); transition: opacity 200ms ease, transform 140ms ease; }
+.sc-pic .b.on { opacity: 1; transform: none; }
+.sc-pic .b.lit { border-color: var(--os-amber); color: #e8c38d; }
+.sc-pic .b.bad { border-color: var(--os-red); color: #f0a0a0; }
+.sc-pic .ar { color: var(--os-faint); font-size: 8px; flex: none; }
+.sc-pic .bars { display: grid; gap: 3px; }
+.sc-pic .bars div { display: grid; grid-template-columns: 34px 1fr 22px; gap: 4px; align-items: center; font-size: 7.5px; color: var(--os-soft); }
+.sc-pic .bars s { display: block; height: 5px; border-radius: 3px; background: var(--os-raised); overflow: hidden; text-decoration: none; }
+.sc-pic .bars s u { display: block; height: 100%; width: 0; background: var(--os-soft); transition: width 500ms ease; }
+.sc-pic .bars s u.amber { background: var(--os-amber); }
+
+/* desk cards in the rails */
+.sc-rail { position: absolute; bottom: 72px; width: 104px; display: flex; flex-direction: column-reverse; gap: 5px; }
+.sc-rail.l { left: 6px; }
+.sc-rail.r { right: 6px; }
+.sc-card { background: rgba(26, 29, 33, .96); border: 1px solid var(--os-edge); border-radius: 7px; padding: 4px 6px 5px; display: grid; gap: 2px; opacity: 0; transform: scale(.6); transform-origin: 0 100%; transition: opacity 150ms ease, transform 150ms ease; }
+.sc-rail.r .sc-card { transform-origin: 100% 100%; }
+.sc-card.on { opacity: 1; transform: none; }
+.sc-card .h { font-size: 7.5px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-card .w { font-size: 6.5px; color: var(--os-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-card .st { display: flex; align-items: center; gap: 4px; font-size: 6.5px; color: var(--os-faint); }
+.sc-card .st::before { content: ""; width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--os-faint); flex: none; }
+.sc-card .st.done { color: var(--os-soft); }
+.sc-card .st.done::before { background: var(--os-ok); border-color: var(--os-ok); }
+.sc-card .st.cur { color: var(--os-fg); }
+.sc-card .st.cur::before { background: var(--os-accent); border-color: var(--os-accent); }
+.sc-card .st.cur.sys { color: #e8c38d; }
+.sc-card .m { display: grid; gap: 2px; font-size: 6.5px; color: var(--os-soft); }
+.sc-card .m s { display: block; height: 4px; border-radius: 2px; background: var(--os-raised); overflow: hidden; text-decoration: none; display: flex; }
+.sc-card .m s u { display: block; height: 100%; text-decoration: none; transition: width 600ms ease; }
+.sc-card .big { font-size: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* strips beside the pill */
+.sc-strips { position: absolute; bottom: 13px; display: flex; gap: 4px; }
+.sc-pill.narrow { left: 78px; right: 78px; }
+.sc-strips.l { left: 6px; flex-direction: row-reverse; }
+.sc-strips.r { right: 6px; }
+.sc-strip { font-size: 7.5px; color: var(--os-muted); background: rgba(26, 29, 33, .95); border: 1px solid var(--os-edge); border-radius: 7px; padding: 1px 6px; display: flex; align-items: center; gap: 4px; opacity: 0; transition: opacity 150ms ease; }
+.sc-strip.on { opacity: 1; }
+.sc-strip::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: var(--os-accent); }
+.sc-strip.plain::before { display: none; }
+
+/* more of the machine: keys, chips, a covering window, the widgets card, a restart, the stone's other faces */
+.sc-key { position: absolute; left: 12px; bottom: 42px; min-width: 22px; height: 18px; padding: 0 5px; border-radius: 4px; background: #e6e8eb; color: #15181b; font-size: 9.5px; font-weight: 650; display: grid; place-items: center; box-shadow: 0 2px 0 #8b939c; opacity: 0; transform: translateY(3px); transition: opacity 120ms ease, transform 120ms ease; }
+.sc-key.on { opacity: 1; transform: none; }
+.sc-key.down { transform: translateY(2px); box-shadow: 0 0 0 #8b939c; }
+.sc-pill .ghost { color: var(--os-faint); }
+.sc-chip { position: absolute; left: 50%; bottom: 38px; transform: translate(-50%, 3px); opacity: 0; font-size: 8.5px; color: var(--os-muted); background: rgba(26, 29, 33, .85); border: 1px solid var(--os-edge); border-radius: 8px; padding: 1px 8px; white-space: nowrap; display: flex; gap: 5px; transition: opacity 200ms ease, transform 200ms ease; }
+.sc-chip.on { opacity: 1; transform: translate(-50%, 0); }
+.sc-chip i { font-style: normal; color: var(--os-faint); }
+.sc-cover { position: absolute; left: 6px; top: 8px; width: 186px; height: 120px; background: var(--os-bg); border: 1px solid #3a414a; border-radius: 8px; padding: 7px 8px; transform: translateX(-200px); box-shadow: 8px 0 20px rgba(0, 0, 0, .45); display: grid; gap: 4px; align-content: start; }
+.sc-cover.on { transform: none; }
+.sc-cover .ttl { font-size: 10px; font-weight: 650; }
+.sc-cover i { display: block; height: 5px; border-radius: 3px; background: var(--os-raised); }
+.sc-wid { position: absolute; left: 50%; bottom: 40px; width: 210px; transform: translate(-50%, 8px); opacity: 0; background: rgba(26, 29, 33, .9); border: 1px solid var(--os-edge); border-radius: 11px; padding: 6px 8px; display: grid; gap: 4px; }
+.sc-wid.on { opacity: 1; transform: translate(-50%, 0); }
+.sc-wid .ttl { font-size: 9.5px; font-weight: 650; }
+.sc-wid .wr { display: flex; align-items: center; gap: 6px; font-size: 8.5px; }
+.sc-wid .wr span { flex: 1; }
+.sc-wid .seg { display: flex; border: 1px solid var(--os-edge); border-radius: 5px; overflow: hidden; }
+.sc-wid .seg b { font-weight: 500; font-size: 7px; color: var(--os-muted); padding: 1px 4px; transition: background 200ms ease, color 200ms ease; }
+.sc-wid .seg b.sel { background: var(--os-raised); color: var(--os-fg); }
+.sc-black { position: absolute; inset: 0; background: var(--os-bg); opacity: 0; pointer-events: none; transition: opacity 300ms ease; }
+.sc-black.on { opacity: 1; }
+.sc-app.doc .rows i { display: block; height: 5px; border-radius: 3px; background: var(--os-raised); }
+.sc-app.doc .rows i.h { height: 7px; width: 60%; background: #3a414a; }
+.sc-stone .sq { display: none; fill: var(--os-muted); }
+.sc-stone.stopped .shape { display: none; }
+.sc-stone.stopped .sq { display: block; }
+.sc-stone.resting .shape { fill: rgba(139, 147, 156, .3); stroke: var(--os-muted); stroke-width: 1.5; }
+.sc-pill.narrow2 { left: 112px; right: 112px; }
+
+/* ink: the desk card's poster draws no state colour and no labelled buttons */
+.sc.ink .sc-stone .shape { fill: var(--os-fg); }
+.sc.ink .sc-stone.stopped .sq { fill: var(--os-fg); }
+.sc.ink .sc-pill.busy { border-color: #4a525c; }
+.sc.ink .sc-line.work::before, .sc.ink .sc-line.warn::before, .sc.ink .sc-line.ok::before { background: var(--os-muted); }
+.sc.ink .sc-line .lb { color: transparent; }
+.sc.ink .sc-line .cmd, .sc.ink .sc-card .st.cur.sys { color: var(--os-soft); }
+.sc.ink .sc-card .st.cur::before { background: var(--os-fg); border-color: var(--os-fg); }
+.sc.ink .sc-card .st.done::before { background: var(--os-muted); border-color: var(--os-muted); }
+.sc.ink .sc-pic .b.lit { border-color: var(--os-fg); color: var(--os-fg); }
+.sc.ink .sc-pic .bars s u.amber { background: var(--os-fg); }
+.sc.ink .sc-card .m s u { background: var(--os-muted) !important; }
+.sc.ink .sc-strip::before { background: var(--os-muted); }
+.sc.ink .sc-app .r b.hi, .sc.ink .sc-app .r b.ok { color: var(--os-muted); }
+.sc.ink .sc-app .field { border-color: var(--os-muted); }
+.sc.ink .sc-key { display: none; }
+
+.answer button { font: inherit; font-size: 14px; font-weight: 600; color: var(--surface); background: var(--accent); border: 0; border-radius: 8px; padding: 5px 14px; cursor: pointer; }
+.answer .said { font-size: 13.5px; color: var(--muted); }
+
+/* This page: the desk with its Tips card, the Tips app, the Widgets card and the seed gallery. */
+.qcard .opt { cursor: pointer; text-align: left; font: inherit; font-size: 14.5px; background: transparent; width: 100%; }
+.qcard .opt:hover { border-color: var(--line); }
+.qcard .opt .rtag { margin-left: 4px; }
+.qs4 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); }
+.pagebtn { font: inherit; font-size: 14px; font-weight: 600; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+.pagebtn:hover { border-color: var(--accent); color: var(--accent); }
+.hint { font-size: 14.5px; color: var(--muted); max-width: 80ch; }
+.hint b { color: var(--fg); }
+
+/* The desk */
+.desk { position: relative; border-radius: 16px; border: 1px solid var(--os-edge); background:
+    radial-gradient(70% 90% at 18% 0%, #1b252e 0%, transparent 70%),
+    radial-gradient(55% 80% at 92% 100%, #2c211b 0%, transparent 70%), var(--os-bg);
+  padding: 14px 18px 14px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr) auto auto; gap: 10px 18px; min-height: 470px; font-family: var(--os); color: var(--os-fg); overflow: hidden; }
+.desk > .cap { grid-column: 1 / -1; grid-row: 1; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--os-faint); }
+.desk > .tcard { grid-column: 2; grid-row: 2; align-self: end; }
+.desk > .say { grid-column: 1 / -1; grid-row: 3; justify-self: center; min-height: 40px; display: grid; place-items: center; max-width: 100%; }
+.desk > .pillrow { grid-column: 1 / -1; grid-row: 4; justify-self: center; width: 100%; max-width: 620px; }
+.faint { font-size: 12.5px; color: var(--os-faint); text-align: center; }
+.say .os-line { max-width: 560px; }
+.dpill { max-width: none; width: 100%; transition: border-color .2s; }
+.dpill:focus-within { border-color: #4a525c; }
+.dpill input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--os-fg); font: 14.5px var(--os); padding: 0; caret-color: var(--os-fg); }
+.dpill input::placeholder { color: var(--os-muted); opacity: 1; }
+.dpill .st { transition: transform 240ms cubic-bezier(.16, 1, .3, 1); transform-origin: 50% 90%; }
+.dpill.lean .st { transform: rotate(6deg); }
+.dpill.busy { border-color: var(--os-accent); }
+.dpill.busy .st use { fill: var(--os-accent); }
+.desk-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+
+/* The Tips card, at its real size */
+.tcard { width: 300px; max-width: 100%; height: 290px; background: rgba(26, 29, 33, .94); border: 1px solid var(--os-edge); border-radius: 12px; padding: 11px 14px 12px; display: grid; grid-template-rows: 20px 17px 153px 18px 28px; row-gap: 8px; align-content: start; position: relative; font-family: var(--os); color: var(--os-fg); transform-origin: 100% 100%; transition: opacity 150ms ease, transform 150ms ease; }
+.tcard.gone { opacity: 0; transform: scale(.6); pointer-events: none; }
+.tc-top { display: flex; align-items: center; gap: 8px; }
+.tc-title { font: 600 14px var(--os); color: var(--os-fg); background: none; border: 0; padding: 0; cursor: pointer; }
+.tc-nav { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity 120ms ease; }
+.tcard:hover .tc-nav, .tcard:focus-within .tc-nav, .tcard.shownav .tc-nav { opacity: 1; }
+@media (hover: none) { .tc-nav { opacity: 1; } }
+.ib { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; border: 0; background: transparent; color: var(--os-muted); font: 500 16px/1 var(--os); cursor: pointer; padding: 0; }
+.ib:hover { background: var(--os-raised); color: var(--os-fg); }
+.tc-why { font-size: 12px; color: var(--os-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-pic { cursor: pointer; border-radius: 8px; }
+.tc-pic .sc { border-radius: 8px; }
+.tc-line { font-size: 13px; color: var(--os-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tc-btn { height: 28px; border-radius: 14px; padding: 0 12px; background: var(--os-raised); border: 1px solid #3a414a; color: var(--os-fg); font: 500 13px var(--os); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 196px; cursor: pointer; }
+.tc-btn:hover { border-color: #4a525c; background: #2a2f36; }
+.tc-all { margin-left: auto; flex: none; font-size: 12px; color: var(--os-muted); text-decoration: none; background: none; border: 0; padding: 0; font-family: var(--os); cursor: pointer; }
+.tc-all:hover { color: var(--os-fg); }
+.kmark { display: inline-block; font: 600 12px var(--os); color: var(--os-fg); background: var(--os-raised); border: 1px solid #3a414a; border-radius: 6px; padding: 2px 8px; box-shadow: 0 2px 0 #0b0c0e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 196px; }
+.kmark.w { font-weight: 500; }
+.tc-swap { transition: opacity 100ms ease; }
+.tcard.fading .tc-swap { opacity: 0; }
+.tstrip { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 14px; background: rgba(26, 29, 33, .95); border: 1px solid var(--os-edge); font: 13px var(--os); color: var(--os-muted); }
+
+/* Card anatomy */
+.anat { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 22px 28px; align-items: start; }
+.anat .stage { justify-items: center; align-content: center; padding: 26px 22px; }
+.callouts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: c; }
+.callouts li { counter-increment: c; display: grid; grid-template-columns: 26px minmax(0, 1fr); font-size: 15.5px; color: var(--soft); }
+.callouts li::before { content: counter(c); font-family: var(--mono); color: var(--accent); font-size: 13px; padding-top: 3px; }
+.callouts li b { color: var(--fg); }
+
+/* The Tips app */
+.tapp { background: var(--os-bg); border: 1px solid #3a414a; border-radius: 14px; overflow: hidden; box-shadow: 0 14px 40px rgba(0, 0, 0, .22); font-family: var(--os); color: var(--os-fg); }
+.tapp-bar { display: flex; align-items: center; gap: 10px; padding: 9px 16px; border-bottom: 1px solid var(--os-edge); font-size: 14px; font-weight: 650; background: var(--os-panel); }
+.tapp-bar small { margin-left: auto; font-weight: 400; font-size: 12px; color: var(--os-muted); }
+.tapp-body { display: grid; grid-template-columns: minmax(0, 600fr) minmax(0, 360fr); }
+.tapp-left { padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tapp-left > .sc { cursor: pointer; }
+.tapp-caps { display: flex; flex-wrap: wrap; gap: 4px 8px; font-size: 12px; color: var(--os-faint); }
+.tapp-caps span { transition: color 200ms ease; }
+.tapp-caps span.on { color: var(--os-fg); }
+.tapp-caps i { font-style: normal; color: var(--os-faint); }
+.tapp-line { font-size: 17px; font-weight: 600; line-height: 1.3; }
+.tapp-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.tbtn { height: 36px; border-radius: 18px; padding: 0 16px; background: var(--os-raised); border: 1px solid #3a414a; color: var(--os-fg); font: 500 14px var(--os); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.tbtn:hover { border-color: #4a525c; background: #2a2f36; }
+.rbtn { height: 36px; border-radius: 18px; padding: 0 14px; background: transparent; border: 1px solid var(--os-edge); color: var(--os-soft); font: 500 13px var(--os); cursor: pointer; }
+.rbtn:hover { color: var(--os-fg); border-color: #4a525c; }
+.tapp-needs { font-size: 12px; color: var(--os-faint); margin-left: auto; }
+.stills { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stills figure { gap: 5px; }
+.stills figcaption { font-size: 12px; color: var(--os-soft); font-family: var(--os); }
+.tapp-list { border-left: 1px solid var(--os-edge); padding: 6px 8px 10px; max-height: 470px; overflow-y: auto; display: grid; align-content: start; gap: 1px; background: #121417; }
+.tapp-list .sec { font-size: 11.5px; color: var(--os-muted); padding: 10px 10px 4px; }
+.trow { text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 8px; background: transparent; border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; color: var(--os-fg); font-family: var(--os); }
+.trow .l { font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow .w { font-size: 12px; color: var(--os-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow .tk { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-size: 11.5px; color: var(--os-ok); }
+.trow:hover { background: var(--os-panel); }
+.trow[aria-selected="true"] { background: var(--os-raised); }
+.apill { margin-top: 12px; }
+.apill .stage { padding: 14px 16px; align-content: center; }
+.apill .os-pill { max-width: 620px; }
+
+/* The Widgets card */
+.wcard { width: 100%; max-width: 360px; background: var(--os-panel); border: 1px solid var(--os-edge); border-radius: 14px; padding: 10px 14px 8px; display: grid; font-family: var(--os); color: var(--os-fg); }
+.wcard .h { font-size: 13.5px; font-weight: 650; padding-bottom: 6px; }
+.wrow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--os-edge); }
+.wrow > div { flex: 1; min-width: 0; font-size: 13px; }
+.wrow small { display: block; font-size: 12px; color: var(--os-muted); }
+.seg { display: inline-flex; border: 1px solid var(--os-edge); border-radius: 7px; overflow: hidden; flex: none; }
+.seg button { font: 500 11.5px var(--os); color: var(--os-muted); background: transparent; border: 0; padding: 3px 7px; cursor: pointer; white-space: nowrap; }
+.seg button + button { border-left: 1px solid var(--os-edge); }
+.seg button[aria-pressed="true"] { background: var(--os-raised); color: var(--os-fg); }
+.wcard .reset { border: 0; border-top: 1px solid var(--os-edge); padding: 8px 0 2px; font: 12.5px var(--os); color: var(--os-muted); background: none; text-align: left; cursor: pointer; }
+.wcard .reset:hover { color: var(--os-fg); }
+.shape-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.shape-grid .stage { justify-items: center; }
+
+/* Mini desks and the seed gallery */
+.minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; }
+.minis figure .sc { box-shadow: 0 10px 30px rgba(0, 0, 0, .16); }
+.sc-card .pp { height: 34px; border-radius: 4px; border: 1px solid var(--os-edge); background: radial-gradient(70% 90% at 18% 0%, #1b252e 0%, transparent 70%), #0c0e10; }
+.sc-card .bt { justify-self: start; font-size: 6px; color: var(--os-fg); border: 1px solid #3a414a; border-radius: 6px; padding: 0 4px; line-height: 9px; background: var(--os-raised); }
+.sc-card .ln { font-size: 6.5px; color: var(--os-fg); }
+.gal { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; cursor: pointer; min-width: 0; }
+.tile:hover, .tile:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.tile .sc { border-radius: 0; border: 0; border-bottom: 1px solid var(--os-edge); }
+.tile .meta { padding: 10px 12px 12px; display: grid; gap: 5px; align-content: start; min-width: 0; }
+.tile .sec { font-family: var(--mono); font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; }
+.tile .sec .tr { color: var(--ok); margin-left: auto; text-transform: none; letter-spacing: 0; }
+.tile .ln { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--fg); }
+.tile .wd { font-family: var(--os); font-size: 12.5px; color: var(--soft); background: var(--ui-bg); border-radius: 999px; padding: 1px 9px; justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .nd { font-size: 12.5px; color: var(--muted); }
+pre.toml { margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; color: var(--soft); }
+pre.toml .c { color: var(--muted); }
+pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-transform: none; margin: 0; color: var(--accent); font-family: inherit; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .desk { grid-template-columns: minmax(0, 1fr); min-height: 0; padding: 12px 12px 12px; }
+  .desk > .tcard { grid-column: 1; justify-self: center; }
+  .tapp-body { grid-template-columns: minmax(0, 1fr); }
+  .tapp-list { border-left: 0; border-top: 1px solid var(--os-edge); max-height: 380px; }
+  .anat, .shape-grid { grid-template-columns: minmax(0, 1fr); }
+  .anat .stage { padding: 18px 12px; }
+}
+@media (max-width: 380px) {
+  .tcard { height: auto; grid-template-rows: auto; }
+  .tc-pic { aspect-ratio: 16 / 9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tcard, .tc-swap, .tc-nav, .dpill .st, .tapp-caps span { transition: none !important; }
+}
+.pfigs3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 18px; align-items: start; }
+.ladder { list-style: none; counter-reset: l; padding: 0; margin: 0; display: grid; gap: 8px; max-width: 78ch; }
+.ladder li { counter-increment: l; display: grid; grid-template-columns: 26px minmax(0, 1fr); font-size: 15.5px; color: var(--soft); }
+.ladder li::before { content: counter(l); font-family: var(--mono); color: var(--accent); font-size: 13px; padding-top: 3px; }
+.ladder li b { color: var(--fg); }
+@media (min-width: 761px) { .hours li { grid-template-columns: 84px minmax(0, 1fr); } }
+</style>
+
+<svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <path id="st-full" d="M10.65 3.362A2.7 2.7 0 0 1 13.35 3.362A15.3 15.3 0 0 1 21 16.612A2.7 2.7 0 0 1 19.65 18.95A15.3 15.3 0 0 1 4.35 18.95A2.7 2.7 0 0 1 3 16.612A15.3 15.3 0 0 1 10.65 3.362Z"/>
+    <path id="st-b" d="M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86"/>
+    <mask id="st-cut" maskUnits="userSpaceOnUse" x="-4" y="-4" width="32" height="32">
+      <rect x="-4" y="-4" width="32" height="32" fill="#fff"/>
+      <use href="#st-b" fill="none" stroke="#000" stroke-width="1.6"/>
+    </mask>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header class="hero">
+  <span class="eyebrow">Bombadil · design pass · 1 October 2026</span>
+  <h1>Tips, and your desk</h1>
+  <p class="lede">After boot the desk is wallpaper and a pill, on purpose. This adds one thing for a new person: a still Tips card for their first week, one line and a picture per tip, whose button puts the exact words in the pill. Clicking the picture opens the Tips app, where the tip plays in a few seconds on a small copy of the real screen. And it lets anyone choose which widgets stay on their desk after every boot.</p>
+  <div class="hero-meta">
+    <span>Build first: <b>Tips</b>, then <b>Your desk</b></span>
+    <span>Questions: <b>4, recommended 1a 2a 3b 4a</b></span>
+    <span>Seed: <b>20 tips</b>, all backed by main</span>
+    <span>Brief: <b>tips-and-desk-defaults-brief.md</b></span>
+  </div>
+</header>
+
+<figure id="desk">
+  <div class="desk" id="d">
+    <span class="cap">First boot, eight seconds after sign-in</span>
+    <div class="tcard" id="tcard" aria-label="The Tips card">
+      <div class="tc-top">
+        <button class="tc-title" id="tc-title" title="Open the Tips app on this tip">Tips</button>
+        <span class="tc-nav">
+          <button class="ib" id="tc-prev" aria-label="Previous tip">‹</button>
+          <button class="ib" id="tc-next" aria-label="Next tip">›</button>
+          <button class="ib" id="tc-x" aria-label="Put Tips away">×</button>
+        </span>
+      </div>
+      <div class="tc-why tc-swap" id="tc-why">Start here · 1 of 6</div>
+      <div class="tc-pic tc-swap" id="tc-pic" role="button" tabindex="0" aria-label="Watch this tip in the Tips app"><div id="tc-scene"></div></div>
+      <div class="tc-line tc-swap" id="tc-line">Say what you need. It gets made.</div>
+      <div class="tc-row tc-swap"><span id="tc-act"></span><button class="tc-all" id="tc-all">All tips ›</button></div>
+    </div>
+    <div class="say">
+      <div class="faint" id="d-faint">Super to talk. Esc to stop. Say undo to go back.</div>
+      <div class="os-line" id="d-line" hidden></div>
+    </div>
+    <div class="pillrow">
+      <div class="os-pill dpill" id="d-pill"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><input id="d-in" placeholder="Ask anything" aria-label="The pill" autocomplete="off" spellcheck="false"><span class="clock">09:41</span></div>
+    </div>
+  </div>
+  <figcaption class="desk-note"><span><b>Try it.</b> Hover the card and turn tips with ‹ ›. Press the button: the words wait in the pill, Enter sends them as your own ask and Esc drops them. Click the picture or “All tips” to watch the tip play in the app below. Nothing on the card moves by itself.</span><span id="d-note" aria-live="polite"></span><button class="pagebtn" id="d-back" hidden>Bring the card back</button></figcaption>
+</figure>
+
+<div class="decide" id="questions" style="margin-top:34px">
+  <h2>Four questions</h2>
+  <p>Answer with one letter each. The recommendation is marked and already picked below; tap another option to change it, then copy the answer.</p>
+  <div class="qs qs4">
+    <div class="qcard" data-q="1">
+      <h3><span>1</span>After the first sign-in, what should a new user see of Tips on the desk?</h3>
+      <button class="opt" data-o="a"><i>a</i><span>A still Tips card in the bottom-right corner for their first week: one tip at a time, a picture, one line and a button with the exact words. It turns on its arrows or after a tip is tried, and leaves after seven days of use, once the six first tips are tried, or when closed.<span class="rtag">recommended</span></span></button>
+      <button class="opt" data-o="b"><i>b</i><span>A small “tips” label beside the pill for the first week that opens the same card on hover or click, the way the “noticed” chip works.</span></button>
+      <button class="opt" data-o="c"><i>c</i><span>Nothing on the desk: Tips is only an app they open by typing “tips”, “help” or “what can you do”.</span></button>
+      <p class="why"><b>Why a:</b> the card is the first thing a new person sees and shows what to ask without being asked; after the first week the desk is quiet again. A label is easy to miss on day one, and an app nobody knows about is never opened.</p>
+    </div>
+    <div class="qcard" data-q="2">
+      <h3><span>2</span>When someone presses a tip’s button, such as “Make me a ticketing app”, what should happen?</h3>
+      <button class="opt" data-o="a"><i>a</i><span>The sentence appears in the pill with the cursor at the end and waits: Enter runs it, Esc drops it, and they can add their own details first.<span class="rtag">recommended</span></span></button>
+      <button class="opt" data-o="b"><i>b</i><span>It runs at once.</span></button>
+      <button class="opt" data-o="c"><i>c</i><span>Quick ones that need no AI run at once; ones that build or install something wait in the pill.</span></button>
+      <p class="why"><b>Why a:</b> pressing Enter themselves teaches where to type, lets them make the words theirs (“…for a team of four”), and never starts a minute-long build by accident. The voice thread’s empty-place buttons should then behave the same.</p>
+    </div>
+    <div class="qcard" data-q="3">
+      <h3><span>3</span>How should someone choose which widgets are on their desk after every boot?</h3>
+      <button class="opt" data-o="a"><i>a</i><span>With words only: “keep machine on the desk” keeps it after every boot; “hide machine” stops keeping it. A tip teaches it.</span></button>
+      <button class="opt" data-o="b"><i>b</i><span>The same words, plus one small Widgets card (type “widgets”) that lists every widget with Keep, When needed and Off.<span class="rtag">recommended</span></span></button>
+      <button class="opt" data-o="c"><i>c</i><span>They don’t: widgets keep appearing only when they have something to say, and Tips in the first week is the one exception.</span></button>
+      <p class="why"><b>Why b:</b> the owner asked that users can change widgets and set their defaults after boot; a card listing what exists is the visual way, the same shape as the AI card the stone opens. Nothing changes for anyone who never opens it.</p>
+    </div>
+    <div class="qcard" data-q="4">
+      <h3><span>4</span>Should Tips replace the first-minute pieces that were designed but never built: the three example buttons above the empty pill and the ten-second tour?</h3>
+      <button class="opt" data-o="a"><i>a</i><span>Yes: the Tips card becomes the one place a new user sees what to ask. The faint first-day line, the one-time “Changed your mind? Say undo.” and the USB stick’s Install button stay.<span class="rtag">recommended</span></span></button>
+      <button class="opt" data-o="b"><i>b</i><span>Replace only the tour; the three example buttons still appear above the empty pill on a Super tap, taken from the same list as Tips.</span></button>
+      <button class="opt" data-o="c"><i>c</i><span>Keep both as designed, and have the Tips card wait until the tour has played.</span></button>
+      <p class="why"><b>Why a:</b> none of those pieces exists yet, and two places suggesting things in the same first minute compete for the same glance. The faint line stays: it is the only place the Super key is written down.</p>
+    </div>
+  </div>
+  <div class="answer"><span>Your answer:</span><output id="ans">1a 2a 3b 4a</output><button id="ans-copy">Copy</button><span class="said" id="ans-said"></span></div>
+</div>
+
+<p class="note" style="margin-top:22px;font-size:15px;color:var(--muted);max-width:76ch">This answers the owner’s ask of 1 October: whether the desk has widgets by default after boot, with users able to change them and set their own defaults, and a Tips widget that turns into a full app, one line next to a short animation per tip, seeded with coding and productivity workflows and growing as Bombadil grows. It sits on the desk, UX, voice, self-improvement and identity briefs and the design system, whose decisions stay in force except where “Changes” names one. It was made from six research sweeps of the code and the open branches, three independent drafts, a merge, and three adversarial checks (the rules, buildability, a new user’s eyes). Code read on main at dbe6e8a.</p>
+
+<nav class="toc" aria-label="Sections" style="margin-top:26px">
+  <a href="#short">Today</a><a href="#first">Build first</a><a href="#app">The Tips app</a><a href="#card">The card</a><a href="#after">After boot</a><a href="#shape">Your desk</a><a href="#try">Trying a tip</a><a href="#move">How a tip moves</a><a href="#boot">First boot</a><a href="#seed">The seed</a><a href="#grow">Growth</a><a href="#rules">Rules</a><a href="#defaults">Decisions</a><a href="#changes">Changes</a><a href="#cut">Cut</a><a href="#risks">Risks</a><a href="#owners">Owners</a>
+</nav>
+
+<section id="short">
+  <h2>The short answer: the desk after boot today</h2>
+  <p class="intro"><b>There are no widgets on the desk after boot, on purpose.</b> The widgets brief, confirmed on 28 September, says a widget is present only while it has something to say, so a machine at rest is wallpaper and the pill. The code holds to it: the presence rules in <code>shell/DeskState.qml</code>, a test that a resting desk has no cards and no strips, and rail windows that are not even mapped.</p>
+  <div class="tbl"><table class="t stack">
+    <thead><tr><th>Widget</th><th>When it shows today</th><th>Built?</th></tr></thead>
+    <tbody>
+      <tr><td data-label="Widget">Now</td><td data-label="When">during a turn with a plan of two or more steps, or a step that touches the system</td><td data-label="Built">yes</td></tr>
+      <tr><td data-label="Widget">Watching</td><td data-label="When">while a job, download or timer counts; a job that failed in the last 30 minutes can show at boot</td><td data-label="Built">yes</td></tr>
+      <tr><td data-label="Widget">Machine</td><td data-label="When">when memory, disk, heat or the sessions’ ceiling crosses its line, or for 30 s after “how’s the machine”</td><td data-label="Built">yes</td></tr>
+      <tr><td data-label="Widget">Needs you</td><td data-label="When">when two or more coding sessions wait</td><td data-label="Built">drawn, fed only by the coding-sessions branch</td></tr>
+      <tr><td data-label="Widget">Away, Alive</td><td data-label="When">never: no feed and no face yet</td><td data-label="Built">designed only</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="box"><h3>What a user can change today</h3><ul>
+      <li>The word <b>“desk”</b> folds every card to a chip beside the pill, and back.</li>
+      <li><b>“show machine”</b>, <b>“hide watching”</b> and the like show or put away one widget.</li>
+      <li>A sentence like <b>“put watching on the right”</b> goes to the agent’s <code>desk</code> tool, which works only when your own words asked for the desk.</li>
+      <li>All of it is kept in <code>desk.toml</code>, outside the restore points, so it survives a reboot and an undo never moves it. Needs you cannot be put away.</li>
+    </ul></div>
+    <div class="box"><h3>What a user cannot do today</h3><ul>
+      <li>Keep a widget up at rest, or see a list of the widgets there are.</li>
+      <li>Make a widget of their own (designed, not built).</li>
+      <li>Change anything with a click or a drag: the strips’ click and hover are not wired, and the desk thread is building dragging now.</li>
+      <li>Learn what to ask: there is no tips word, “what can you do” gets at most four plain lines from the model, and the example chips and ten-second tour exist on no branch.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="first">
+  <h2>Build first</h2>
+  <p class="intro">Two pieces, each its own PR with its docs page.</p>
+  <div class="pieces">
+    <div class="piece">
+      <div class="piece-head"><span class="piece-num">01</span><h3>Tips</h3><span class="effort">large · five steps, each tested before the next</span></div>
+      <ol class="later">
+        <li><b>Reduced motion everywhere (S).</b> <code>Theme.qml</code> gains a writable <code>reducedMotion</code>, set by the shell and the app runtime from <code>BOMBADIL_REDUCE_MOTION</code>, which today reaches only the stone and the wallpaper. The desk’s fold, wash, ring and pill width honour it too.</li>
+        <li><b>The tips table and <code>tips.py</code> (M).</b> <code>share/tips/tips.toml</code> holds a row per tip. <code>tips.py</code> in agentd decides which tips this machine can back, keeps <code>tips.json</code> (first-ready date, days of use, tried and known ids), marks tips tried from agentd’s own live events with no model, and tells the shell only when something changes. The installer copies <code>tips.json</code> and <code>desk.toml</code> to the disk.</li>
+        <li><b><code>Kit.Stone</code> and <code>Kit.TipScene</code> (L).</b> The stone moves into the kit with <code>animate</code> and <code>ink</code>. <code>TipScene</code> is pure QtQuick, plays a list of beats at app density and draws a still poster at card density, the way <code>Kit.Diagram</code> already serves both the shell and apps. Both stay internal: <code>check_app</code> refuses them in apps the agent writes.</li>
+        <li><b>The Tips app and its words (M).</b> A built-in kit app in <code>share/apps/tips</code>, opened by local words. <code>Agent.draft(text)</code> joins the kit: a one-shot summon that fills the pill, the Brain’s “Ask about this” made general.</li>
+        <li><b>The Tips card on the desk (M).</b> A <code>tips</code> entry in <code>desk.py</code>’s widgets at the top of the right rail and a <code>TipsCard</code> face, by the DESK.md recipe for a new widget. Its button sends <code>summon</code> with <code>tip: true</code>.</li>
+      </ol>
+    </div>
+    <div class="piece">
+      <div class="piece-head"><span class="piece-num">02</span><h3>Your desk</h3><span class="effort">medium · with the desk thread’s drag work</span></div>
+      <p><b>Keep</b> for widgets with a calm face, the <b>Widgets card</b>, and a <b>calm Machine</b>: a <code>keep</code> op in <code>desk.py</code> and on the agent’s <code>desk</code> tool, <code>kept = [...]</code> in <code>desk.toml</code>, the words “keep machine” and “widgets”, a <code>WidgetsCard.qml</code> above the pill in the AI card’s shape, and a calm vitals mode for a kept Machine.</p>
+    </div>
+  </div>
+  <p class="carry"><b>Later:</b> strip click and hover-peek and drag by the title (desk thread); tips per app from the apps’ <code>[[does]]</code> rows; “Watch again” for a real turn with the same player; scenes recorded by the headless desktop test if hand-written storyboards drift.</p>
+</section>
+
+<section id="app">
+  <h2>The Tips app</h2>
+  <p class="intro">A built-in kit app, 960 × 516, sliding in from its drawer. It opens on “tips”, “open tips”, “show tips”, “what can you do”, “what can I ask” and “help”, and from the card. Selecting a tip plays it once and holds the last frame. Nothing loops, nothing advances by itself, and there is no sound.</p>
+  <div class="tapp" id="tapp">
+    <div class="tapp-bar"><span>Tips</span><small>Space replays · ↑ ↓ choose · Esc hides</small></div>
+    <div class="tapp-body">
+      <div class="tapp-left">
+        <div id="app-scene" role="button" tabindex="0" aria-label="Replay this tip"></div>
+        <div class="stills" id="app-stills" hidden></div>
+        <div class="tapp-caps" id="app-caps"></div>
+        <div class="tapp-line" id="app-line"></div>
+        <div class="tapp-acts"><span id="app-act"></span><button class="rbtn" id="app-replay">Replay</button><span class="tapp-needs" id="app-needs"></span></div>
+      </div>
+      <div class="tapp-list" id="app-list" role="listbox" aria-label="Tips"></div>
+    </div>
+  </div>
+  <div class="apill">
+    <div class="stage">
+      <div class="os-line" id="a-line" hidden></div>
+      <div class="os-pill dpill" id="a-pill"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><input id="a-in" placeholder="Ask anything" aria-label="The pill, under the app" autocomplete="off" spellcheck="false"><span class="clock">09:42</span></div>
+    </div>
+  </div>
+  <p class="hint" style="margin-top:12px"><b>On the machine</b> the button hides the app first, then fills the pill, so the real thing happens on a clear screen. Here the pill sits under the app. <label><input type="checkbox" id="rm"> Show as stills, as under reduced motion</label></p>
+  <p class="hint" id="a-note" aria-live="polite"></p>
+</section>
+
+<section id="card">
+  <h2>The Tips card</h2>
+  <p class="intro">A standard desk card, 300 × 290, the same height for every tip so the cards above it never jump. No edge bar, no dot and no orange: colour says who on this desk, and a tip is nobody’s.</p>
+  <div class="anat">
+    <div class="stage">
+      <div class="tcard shownav" id="tcard2" aria-hidden="true">
+        <div class="tc-top"><span class="tc-title">Tips</span><span class="tc-nav"><span class="ib">‹</span><span class="ib">›</span><span class="ib">×</span></span></div>
+        <div class="tc-why">Start here · 2 of 6</div>
+        <div class="tc-pic"><div id="tc2-scene"></div></div>
+        <div class="tc-line">Ask for a picture, not a paragraph.</div>
+        <div class="tc-row"><span class="tc-btn" style="display:inline-flex;align-items:center">How am I connected?</span><span class="tc-all">All tips ›</span></div>
+      </div>
+      <span class="tstrip">tips</span>
+    </div>
+    <ol class="callouts">
+      <li><span><b>Title</b> “Tips”, 14/600. A click opens the app on this tip.</span></li>
+      <li><span><b>Why line</b>, 12 muted with tabular figures: “Start here · 2 of 6”.</span></li>
+      <li><span><b>Picture</b>, 272 × 153: a still poster of the tip’s last frame, drawn in ink. The stone has no colour, line buttons are unlabelled outlines, and machine pictures are generic shapes with no real figures. A click opens the app on this tip, playing.</span></li>
+      <li><span><b>One line</b>, 13 fg, tested to fit 272 px.</span></li>
+      <li><span><b>The button</b> with the exact sentence, or for a tip that only makes sense mid-turn (Esc, why, undo) those keys or words drawn as marks with no button. Then “All tips ›”.</span></li>
+      <li><span><b>On hover</b>, ‹ › and × fade in over 120 ms, and the wheel turns tips. No page dots: on this desk a dot means who.</span></li>
+      <li><span><b>Folded</b> under a window it is the strip “tips”, 28 high, no dot. A click on it opens the Tips app.</span></li>
+    </ol>
+  </div>
+  <div class="grid2" style="margin-top:18px">
+    <div class="box"><h3>What moves, and only this</h3><ul>
+      <li>The arrival, with the desk’s own fade and scale over 150 ms, once.</li>
+      <li>A 200 ms crossfade when you turn a tip, or 12 s after a tried tip’s turn ends.</li>
+      <li>The standard fold to its strip under windows.</li>
+      <li>No timer, no loop, no auto-advance and no scene on the desk. Under reduced motion every change is instant.</li>
+    </ul></div>
+    <div class="box"><h3>Where and when</h3><ul>
+      <li>The right rail’s top slot, the least urgent. Alone, it sits nearest the pill.</li>
+      <li>It appears only after setup, the persona card and the welcome line are done, and never first during a turn.</li>
+      <li>On screens under 1016 px it is only ever a strip.</li>
+      <li>Like every card it narrows the pill: to 710 px on a 1366 px screen for the first week.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="after">
+  <h2>The desk after boot</h2>
+  <p class="intro">The rule stays, with one reading added: the desk shows only what has something to say. In your first week an untried Start-here tip is something to say, and a widget you keep always has something to say. Nothing is kept by default.</p>
+  <div class="minis">
+    <figure><div id="mini-today"></div><figcaption><b>Today, every boot.</b> Wallpaper and the pill.</figcaption></figure>
+    <figure><div id="mini-week"></div><figcaption><b>Your first week.</b> The Tips card alone, nearest the pill, on the first tip you have not tried.</figcaption></figure>
+    <figure><div id="mini-kept"></div><figcaption><b>After that, if you kept Machine.</b> Its calm face, “The machine is fine”. Without a keep: wallpaper and the pill again.</figcaption></figure>
+  </div>
+  <div class="grid2" style="margin-top:18px">
+    <div class="box"><h3>Tips leaves</h3><ul>
+      <li>when all six Start-here tips are tried,</li>
+      <li>after seven days on which you typed in the pill,</li>
+      <li>or at once on its × or “hide tips”, which answers “Put Tips away. Say tips to see them again.” That choice survives the install.</li>
+    </ul></div>
+    <div class="box"><h3>Unchanged</h3><ul>
+      <li>Machine still rises past a line; Watching still shows a recent failure; Needs you appears once the coding sessions land.</li>
+      <li>The desk you leave (put away, folded, rails, order) is the desk you boot to.</li>
+      <li>On the live USB every boot is a first boot, because nothing survives a restart.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="shape">
+  <h2>Shaping your desk</h2>
+  <p class="intro">Three states per widget: <b>Keep</b> (on the desk at rest, after every boot), <b>When needed</b> (today’s rule) and <b>Off</b> (put away). Only a widget with a calm face can be kept: today that is Tips and Machine. Now, Watching and Needs you have nothing to show when nothing happens.</p>
+  <div class="shape-grid">
+    <div class="stage">
+      <span class="cap">Type “widgets”: the card rises above the pill (3b)</span>
+      <div class="wcard" id="wcard"></div>
+      <div class="os-line ok" id="w-line" hidden></div>
+      <div class="os-pill" style="max-width:420px"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><span class="ph">Ask anything</span><span class="clock">09:44</span></div>
+    </div>
+    <div class="box">
+      <h3>The words, with no model</h3>
+      <ul>
+        <li><b>“keep machine”</b> and <b>“keep machine on the desk”</b> keep it.</li>
+        <li>While Machine is kept, <b>“hide machine”</b> only stops keeping it: “Machine is no longer kept. It still comes up when something needs a look.” A second “hide machine” puts it away, as today.</li>
+        <li><b>“keep watching”</b> answers “Watching shows only while something counts.” and changes nothing.</li>
+        <li><b>“widgets”</b> opens the card. Each press changes <code>desk.toml</code> through the same path the words use, and the line says what changed. Nothing on the card is orange, because orange is the machine acting.</li>
+        <li><b>A kept Machine</b> samples every 5 s, rounds its figures, and changes rows in place without motion. It reads “The machine is fine” until a line is crossed.</li>
+        <li><b>Moving</b> is by sentence today, and by dragging a card by its title once the desk thread’s drag is proven.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="try">
+  <h2>Trying a tip</h2>
+  <div class="pfigs3">
+    <figure><div class="stage" style="min-height:150px;align-content:center"><span class="cap">1 · You press the button</span><span class="tc-btn" style="display:inline-flex;align-items:center;border-color:#5c636b">Make me a ticketing app</span></div><figcaption>On the card or in the app. Nothing is sent.</figcaption></figure>
+    <figure><div class="stage" style="min-height:150px;align-content:center"><span class="cap">2 · The words wait in the pill</span><div class="os-pill dpill lean" style="border-color:#4a525c"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#5fb36b"/></g></svg><span class="ph" style="color:var(--os-fg)">Make me a ticketing app<span style="display:inline-block;width:1px;height:15px;background:var(--os-fg);vertical-align:-2px;margin-left:1px"></span></span><span class="clock">09:41</span></div></div><figcaption>Through agentd’s existing <code>summon</code>. The stone leans. Your own unsent words are never replaced.</figcaption></figure>
+    <figure><div class="stage" style="min-height:150px;align-content:center"><span class="cap">3 · Your Enter runs it</span><div class="os-line work">Building Tickets, 140 lines <span style="color:var(--os-muted);font-size:12.5px">9s</span></div><div class="os-pill dpill busy"><svg class="st" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use href="#st-full" fill="#d97757"/></g></svg><span class="ph"></span><span class="clock">09:41</span></div></div><figcaption>The stone rolls orange and the line counts, as the scene showed.</figcaption></figure>
+  </div>
+  <ol class="ladder" style="margin-top:18px">
+    <li><span><b>Enter sends it as your own ask</b>, with its restore point; Esc drops it; you can edit it first. A button ending in “…” leaves the cursor for your detail: “In Tickets, add…”.</span></li>
+    <li><span><b>While the AI rests,</b> model tips still fill the pill and Enter queues them as the waiting chip. Tips that need no AI (“How am I connected?”, “!uname -r”) run at once, offline.</span></li>
+    <li><span><b>Tried</b> comes from agentd’s live events with no model: the words sent equal the tip’s words, or the turn’s evidence matches the tip (a <code>create_app</code>, a local picture, a <code>!</code> command, a stop, a job). A tip is never tried just because it was shown.</span></li>
+    <li><span><b>12 s after the turn ends</b> the card crossfades to the next untried tip, and the app ticks the row.</span></li>
+  </ol>
+</section>
+
+<section id="move">
+  <h2>How a tip moves</h2>
+  <p class="intro"><b>Storyboards, not video.</b> <code>Kit.TipScene</code> draws each tip from a short list of beats with the real stone and faces redrawn from the theme tokens, so a tip is always in the current look, crisp at any size, and a few lines to add. Recorded clips are true by construction, but heavy, blurry at 300 px, stale whenever the look changes, and need a video player in the shell. Every scene on this page is drawn the same way.</p>
+  <div class="tbl"><table class="t stack">
+    <thead><tr><th>Beat</th><th>What it draws</th></tr></thead>
+    <tbody>
+      <tr><td data-label="Beat"><code>key</code></td><td data-label="Draws">a keycap pressed: ⊞, ↵, Esc, Tab or !</td></tr>
+      <tr><td data-label="Beat"><code>type</code></td><td data-label="Draws">words typing into the mini pill at 25 characters a second</td></tr>
+      <tr><td data-label="Beat"><code>stone</code></td><td data-label="Draws">the stone’s face: rest, listening, working, needs you, done, stopped, resting</td></tr>
+      <tr><td data-label="Beat"><code>line</code></td><td data-label="Draws">the line above the pill: text, tone, the amber or red edge, the command in mono, the seconds</td></tr>
+      <tr><td data-label="Beat"><code>window</code></td><td data-label="Draws">an app window sliding in from its drawer, its rows, or a change to them</td></tr>
+      <tr><td data-label="Beat"><code>card</code></td><td data-label="Draws">a desk card: Watching, Now or Machine</td></tr>
+      <tr><td data-label="Beat"><code>picture</code></td><td data-label="Draws">a picture card above the line, boxes streaming in</td></tr>
+      <tr><td data-label="Beat"><code>fold</code></td><td data-label="Draws">the desk’s cards folding to strips, or back</td></tr>
+      <tr><td data-label="Beat"><code>hold</code></td><td data-label="Draws">a pause</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid2" style="margin-top:14px">
+    <div class="box"><h3>Timing</h3><ul>
+      <li>6 to 8 s, never over 10. Keys 300 to 400 ms; slides 300 ms on the system’s curve; fades 200 ms; the stone uses its own roll and hop.</li>
+      <li>Every scene ends on its payoff frame and holds it. That frame is the reduced-motion still and, in ink, the card’s poster.</li>
+      <li>Three phase captions per tip, at most three words each.</li>
+    </ul></div>
+    <div class="box"><h3>Truth</h3><ul>
+      <li>The mini stone rolls while the mini machine works, hops once when done and knocks when something waits, so a tip also teaches what the stone means.</li>
+      <li>Every string a scene shows is tagged <b>template</b> (checked against the real sentence in the code, so “Building Tickets, 140 lines” fails the test the day that line changes), <b>typed</b>, <b>model</b>, <b>output</b> or <b>caption</b>.</li>
+      <li>At rest the card has no timer and no running animation; measured with <code>pidstat</code> before shipping.</li>
+    </ul></div>
+  </div>
+  <h3 class="sub">A row in <code>share/tips/tips.toml</code></h3>
+<pre class="toml">[[tip]]
+id = "make-an-app"
+section = "start"            <span class="c"># start, work, code, machine</span>
+order = 1
+line = "Say what you need. It gets made."
+words = "Make me a ticketing app"
+needs = ["model"]            <span class="c"># model, installed, app, project, sessions, mail, noticed, keep, desk-seen</span>
+tried_when = ["tool:create_app", "words"]
+captions = ["You ask", "It builds", "You have it"]
+beats = [
+  { key = "super" },
+  { type = "Make me a ticketing app" },
+  { key = "enter" },
+  { stone = "working", line = "On it", counter = true },
+  { line = "Building Tickets, 140 lines", tag = "template" },
+  { window = "Tickets", rows = ["Printer jams on floor 3", "VPN drops every hour", "Order a new laptop"] },
+  { line = "Made Tickets. It is open now.", tag = "model", buttons = ["Undo", "Details"], stone = "done" },
+]</pre>
+</section>
+
+<section id="boot">
+  <h2>The first boot, minute by minute</h2>
+  <p class="intro">On the live USB, on main plus this design. S is the moment sign-in completes.</p>
+  <ol class="hours">
+    <li><span class="t">0:00</span><p>The ground colour. The wallpaper fades in once. The stone rolls orange beside “Starting”.</p></li>
+    <li><span class="t">0:03</span><p>“Which AI should run this computer?” with the Claude and Codex buttons; the stone knocks amber. No Tips card: setup owns the screen.</p></li>
+    <li><span class="t">sign-in</span><p>The browser panel slides in and back out, 30 to 90 s.</p></li>
+    <li class="out"><span class="t">S</span><p>“Signed in to Claude. Ask me for anything.” with a still green stone. The voice branch’s name card and hello, and the USB’s Install button, come here once built. Tips waits for all of them.</p></li>
+    <li class="out"><span class="t">S + 8 s</span><p>The line fades. The faint first-day line sits just above the pill until the first Super or Esc. The Tips card arrives with the desk’s own motion, on “Say what you need. It gets made.” [Make me a ticketing app]. From here nothing moves.</p></li>
+    <li><span class="t">click</span><p>A click on the picture slides the Tips app in and plays the tip once, about 7 s, then holds.</p></li>
+    <li><span class="t">press</span><p>A press on the button fills the real pill. Enter runs the real thing at real speed.</p></li>
+    <li><span class="t">after</span><p>Tickets probably covers the right rail, so the card folds to its “tips” strip. 12 s after the turn ends it turns to tip 2, “Ask for a picture, not a paragraph.”, which answers offline in under a second.</p></li>
+    <li><span class="t">installed</span><p>The installed first boot is already signed in. The welcome-home line and the recovery key card come first; then the card, on the first tip not tried on the stick, and the undo tip appears in the app.</p></li>
+  </ol>
+</section>
+
+<section id="seed">
+  <h2>The seed: twenty tips</h2>
+  <p class="intro">All backed by main today, each with its gate: a tip the machine cannot back is shown nowhere. Each picture is the scene’s last frame. Click one to play it in the app. Lines are proposals for the voice thread, in the teaching register: one line, no name, no “!”, no em-dash. <code>{app}</code>, <code>{project}</code> and <code>{ai}</code> are filled from the machine.</p>
+  <div class="gal" id="gal"></div>
+  <p class="carry"><b>Waiting for their pieces:</b> a coding session by name and the amber stone’s your-turn knock come with the coding-sessions branch; “What needs me in mail?” with the mail work; “noticed” with the self-improvement branch. Their rows ship with those PRs, gated until the code is on main.</p>
+</section>
+
+<section id="grow">
+  <h2>How tips grow</h2>
+  <ul class="later" style="list-style:disc">
+    <li><b>Tips are rows, not code.</b> The voice thread words them; <code>tips.toml</code> moves beside <code>share/voice/lines.toml</code> once the voice PR merges.</li>
+    <li><b>A PR that adds something a person can ask ships its tip row and beats in the same PR</b>, the way it ships its docs, gated by a <code>needs</code> flag until its code is on main.</li>
+    <li><b>The tests fail a tip</b> when its gate is unknown, its line breaks the rules or overflows 272 px at 13 px, its words reach nothing, its scene runs over 10 s, its poster fails to render, or a template string is not backed by the code.</li>
+    <li><b>A new kind of beat</b> is a small piece of <code>TipScene</code>: session dots and the knock when the coding sessions land, the Mail window when Mail lands.</li>
+    <li><b>Order is fixed, never random:</b> Start here, then the sections in order, untried first.</li>
+    <li><b>After an update</b>, tips with new ids appear in the app’s New section only: no strip, no card, nothing unasked.</li>
+    <li><b>Later:</b> tips per app from the apps’ <code>[[does]]</code> rows; search past about 40 tips; “Watch again” for real turns.</li>
+  </ul>
+</section>
+
+<section id="rules">
+  <h2>Tips’ own rules</h2>
+  <ol class="rules">
+    <li><strong>A tip is one line, one picture and the exact words.</strong><span>No paragraph anywhere. The line says what you get; the picture shows it; the button is the sentence you would type.</span></li>
+    <li><strong>A tip is true on this machine.</strong><span>It shows only what this machine can do now, as it really looks. A tip it cannot back is not shown, not even greyed.</span></li>
+    <li><strong>Nothing runs on a click.</strong><span>A tip’s button fills the pill; your Enter runs it, as your own ask with its restore point.</span></li>
+    <li><strong>Only the app moves.</strong><span>The desk card is a still picture. Scenes play inside the app you opened, once, and hold their last frame; every scene has a still version.</span></li>
+    <li><strong>It never speaks.</strong><span>No line above the pill, no mark on the stone, no sound, and never during a turn or over setup.</span></li>
+    <li><strong>It steps aside.</strong><span>After the first week it is gone from the desk unless you keep it; new tips after an update wait inside the app.</span></li>
+    <li><strong>Tips teaches what you have not asked; Noticed handles what you repeat.</strong><span>Tips never offers to make a word, an app or a widget from what you do. The agent never writes tips.</span></li>
+  </ol>
+</section>
+
+<section id="defaults">
+  <h2>Decisions I picked a default for</h2>
+  <div class="decisions">
+    <details class="dec"><summary><span class="q">Is anything on the desk at rest after boot?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Nothing, as confirmed, except Tips in a new user’s first week and whatever the user keeps.</p><p class="alt"><b class="l">Others</b>Tips always until put away; Machine kept by default; nothing ever.</p></div></details>
+    <details class="dec"><summary><span class="q">Where does the Tips card sit?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>The right rail’s top slot, the least urgent, which compacts next to the pill on a first boot. The right rail is yours, and a tip is for you.</p><p class="alt"><b class="l">Others</b>The left rail (the machine’s); above the pill (the conversation’s column, never a widget’s).</p></div></details>
+    <details class="dec"><summary><span class="q">Does the card animate?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>No. It is a still poster that turns on its arrows or after a tried tip; the app plays. Motion on this desk means the machine is working.</p><p class="alt"><b class="l">Others</b>Play on hover; play once on arrival; rotate every few seconds.</p></div></details>
+    <details class="dec"><summary><span class="q">How are scenes made?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Storyboards drawn live by a kit component in the current look.</p><p class="alt"><b class="l">Others</b>Clips recorded from the headless desktop test; still pictures only.</p></div></details>
+    <details class="dec"><summary><span class="q">Where do scenes play?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Only in the Tips app, once, holding the last frame.</p><p class="alt"><b class="l">Others</b>In the card on hover; looping in the app.</p></div></details>
+    <details class="dec"><summary><span class="q">How long does Tips stay?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>The first week of use, or six Start-here tips tried, or until closed.</p><p class="alt"><b class="l">Others</b>Until every tip is tried; until closed.</p></div></details>
+    <details class="dec"><summary><span class="q">What counts as tried?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>agentd’s live events, with no model: the summoned words sent, or the tip’s evidence.</p><p class="alt"><b class="l">Others</b>A click; reading the turn log after the fact.</p></div></details>
+    <details class="dec"><summary><span class="q">Which tips show?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Only those this machine can back now; the rest are not listed.</p><p class="alt"><b class="l">Others</b>Greyed with “works once…”, which the voice brief already turned down for chips.</p></div></details>
+    <details class="dec"><summary><span class="q">What can be kept?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Only widgets with a calm face: Tips and Machine today.</p><p class="alt"><b class="l">Others</b>Every widget, with an empty face when idle.</p></div></details>
+    <details class="dec"><summary><span class="q">What do new tips after an update do?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>Wait in the app’s New section, with nothing on the desk.</p><p class="alt"><b class="l">Others</b>A “2 new” strip for a few days.</p></div></details>
+    <details class="dec"><summary><span class="q">What opens the app?</span><span class="chev">›</span></summary><div class="more"><p><b class="l">Default</b>“tips”, “what can you do”, “what can I ask”, “help”, the card and its strip.</p><p class="alt"><b class="l">Others</b>“tips” only.</p></div></details>
+  </div>
+</section>
+
+<section id="changes">
+  <h2>Changes to confirmed decisions</h2>
+  <p class="intro">Each is named so the answers confirm it knowingly.</p>
+  <ul class="later" style="list-style:disc">
+    <li><b>The rest state</b> (widgets rule 4, identity rule 5, the voice brief’s cut of a standing welcome): Tips stands at rest during a new user’s first seven days of use, then leaves by itself. A widget the user keeps stands at rest only because they asked.</li>
+    <li><b>The voice brief’s cut of “tips of the day”:</b> Tips never speaks on the line and never rotates. It is still a teaching surface shown unasked in the first week, which is what was asked for.</li>
+    <li><b>Strip-first for things raised unasked</b> (self-improvement rule 2): Tips raises a full card in the first week. A new person’s first look is not a mid-task interruption. Question 1b keeps strip-first.</li>
+    <li><b>Desk rule 1</b> gains a ninth question, “What can I ask it to do?”, and Tips takes the right rail’s top slot until Noticed becomes a rail widget.</li>
+    <li><b>“Nothing else moves”</b> (identity rule 7): scenes move only inside the Tips app you opened, once, with a still version. The card never animates.</li>
+    <li><b>Colour and the stone:</b> the app stage shows the mini machine in its real colours, because it teaches what they mean; the card draws the stone in ink.</li>
+    <li><b>“No new words for the desk”:</b> adds “tips”, “what can you do”, “what can I ask”, “help”, “widgets” and the verb “keep”, which gets one meaning, “stays on the desk at rest”.</li>
+    <li><b>Voice rule 5</b> (a chip sends its sentence): every tip button fills the pill and waits, and the empty-place chips follow the same rule, whichever is chosen.</li>
+    <li><b>The UX brief’s first minute:</b> Tips replaces the unbuilt example chips and the ten-second tour (question 4); the habit chips are left to Noticed.</li>
+    <li><b>“A switch per widget”</b>, turned down on 28 September: the Widgets card brings a per-widget choice back, because it has now been asked for; the shipped default stays the quiet desk.</li>
+  </ul>
+</section>
+
+<section id="cut">
+  <h2>Cut, and why</h2>
+  <div class="grid2">
+    <div class="box cut"><ul>
+      <li><b>A carousel that turns by itself.</b> It would be the one thing moving at rest, and motion here means the machine is working.</li>
+      <li><b>Animation on the desk card</b>, even on hover. A poster says enough at a glance.</li>
+      <li><b>Page dots.</b> Dots mean who on the desk.</li>
+      <li><b>A “2 new tips” strip after updates.</b> New tips wait in the app.</li>
+      <li><b>Greyed “works once…” tips.</b> A tip the machine cannot back is not shown.</li>
+    </ul></div>
+    <div class="box cut"><ul>
+      <li><b>Paragraphs, step lists and “learn more” pages.</b> One line per tip.</li>
+      <li><b>Progress, streaks and “3 of 20 done”.</b> The tick on a tried row is enough.</li>
+      <li><b>Tips spoken on the line, a mark on the stone, a sound.</b> Tips never speaks.</li>
+      <li><b>The agent writing tips, or Tips offering to build from repeats.</b> That is Noticed’s job.</li>
+      <li><b>Random order, and real figures in posters.</b></li>
+    </ul></div>
+  </div>
+</section>
+
+<section id="risks">
+  <h2>Risks, and what to check before building</h2>
+  <ol class="risks">
+    <li><b>Three confirmed cuts are reversed</b> (the rest state, tips of the day, strip-first). The fallback is question 1c, the app alone.</li>
+    <li><b>The first tip is the slowest ask:</b> a build takes about a minute, and a weak first app is the worst first impression. Tip 2 answers in a second. Test tip 1 on both providers.</li>
+    <li><b>Focus handover:</b> a press on the Bottom-layer rail window must hand the keyboard to the Overlay pill through <code>summon</code>, on one and two monitors.</li>
+    <li><b>The pill narrows</b> to 710 px at 1366 and 624 px at 1280 for the first week.</li>
+    <li><b>Scene drift:</b> the truth test catches changed wording, not changed window behaviour; model replies are only plausible.</li>
+    <li><b>Tried detection misses paraphrases</b> until the self-improvement ledger lands.</li>
+    <li><b>Unmerged neighbours:</b> the voice branch’s name card and hello come first; Tab and Enter on the empty pill stay reserved for the coding sessions’ walk.</li>
+    <li><b>Measure</b> the render cost of a still, mapped rail window on the VM’s software renderer and on real hardware, and the Tips app at 960 × 516 on a 1280 × 720 screen.</li>
+  </ol>
+</section>
+
+<section id="owners">
+  <h2>Who owns what</h2>
+  <div class="grid2">
+    <div class="box"><h3>The desk thread</h3><p>The desk’s code: the Tips card’s face and widget entry, and all of piece 2.</p></div>
+    <div class="box"><h3>The voice thread</h3><p>The wording: every tip line and the new local answers are proposals until it words them.</p></div>
+    <div class="box"><h3>The app kit</h3><p>How the Tips app is made (<code>share/apps/tips</code>); <code>Kit.Stone</code> and <code>Kit.TipScene</code> are internal kit components.</p></div>
+    <div class="box"><h3>A Tips build</h3><p>Started on the owner’s answer: piece 1, steps 1 to 4. Every later piece that adds something a person can ask ships its tip row.</p></div>
+  </div>
+</section>
+
+<footer>
+  <span>Bombadil · Tips, and your desk · design pass of 1 October 2026</span>
+  <span>The full brief, with code references, is tips-and-desk-defaults-brief.md. Code read on main at dbe6e8a.</span>
+</footer>
+
+</div>
+
+<script>
+/* The seed: twenty tips, each one line, the exact words, its gate and its storyboard. */
+var TICKETS = [["Printer jams on floor 3", "High", "hi"], ["VPN drops every hour", "Open"], ["Order a new laptop", "Done", "ok"]];
+var SECTIONS = { start: "Start here", work: "Work", code: "Code", machine: "This machine" };
+var TIPS = [
+  { id: "make-an-app", sec: "start", line: "Say what you need. It gets made.", words: "Make me a ticketing app", needs: "the AI", caps: ["You ask", "It builds", "You have it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Make me a ticketing app" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "line", t: "Building Tickets, 140 lines", tone: "work", secs: "9s", ms: 1100 },
+    { k: "app", title: "Tickets", sub: "3 open", rows: TICKETS },
+    { k: "cap", i: 2 }, { k: "done", t: "Made Tickets. It is open now.", undo: true }] },
+  { id: "picture", sec: "start", line: "Ask for a picture, not a paragraph.", words: "How am I connected?", needs: "nothing", caps: ["You ask", "It draws", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "How am I connected?" }, { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 1 },
+    { k: "line", t: "Drawing how you're connected", ms: 500 },
+    { k: "picture", title: "How you're connected", boxes: ["Computer", "Wi-Fi", "Router", "Internet"] },
+    { k: "cap", i: 2 }, { k: "line", t: "Showing how you're connected.", tone: "ok", ms: 1200 }] },
+  { id: "esc", sec: "start", line: "Esc stops anything it is doing.", keys: "Esc", needs: "the AI", caps: ["It works", "You press Esc", "It stops"], beats: [
+    { k: "type", t: "install docker and set it up" }, { k: "key", t: "↵" }, { k: "send" },
+    { k: "line", t: "Installing docker", tone: "warn", cmd: "pacman -S docker", ms: 1100 }, { k: "cap", i: 1 },
+    { k: "key", t: "Esc" }, { k: "line", t: "Stopping", tone: "work", ms: 500 }, { k: "cap", i: 2 },
+    { k: "stop", t: "Stopped while installing docker." }] },
+  { id: "timer", sec: "start", line: "Set a timer. It counts on the desk.", words: "Set a 25 minute timer", needs: "the AI", caps: ["You ask", "It counts", "It steps aside"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Set a 25 minute timer" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "watch", label: "Timer, 25 min", from: "25:00", to: ["24:59", "24:58"] },
+    { k: "done", t: "Set a 25 minute timer.", ms: 900 }, { k: "cap", i: 2 },
+    { k: "cover", ms: 300 }, { k: "fold", strips: [["l", "1 counting"]], ms: 1100 }] },
+  { id: "machine", sec: "start", line: "Ask how the machine is doing.", words: "How's the machine?", needs: "nothing", caps: ["You ask", "It answers", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "How's the machine?" }, { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 1 },
+    { k: "line", t: "Here is the machine.", tone: "ok", ms: 300 }, { k: "cap", i: 2 }, { k: "machine" }, { k: "hold", ms: 900 }] },
+  { id: "bang", sec: "start", line: "Run a command without the AI.", words: "!uname -r", needs: "nothing", caps: ["You type !", "It runs", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "!uname -r" }, { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 1 }, { k: "hold", ms: 300 },
+    { k: "cap", i: 2 }, { k: "line", t: "6.17.2-arch1-1", mono: true, btn: "Details", ms: 1400 }] },
+
+  { id: "change-app", sec: "work", line: "Change an app by saying what to add.", words: "In Tickets, add…", needs: "the AI and an app", caps: ["You ask", "It changes", "Same place"], beats: [
+    { k: "app", title: "Tickets", sub: "3 open", rows: TICKETS, ms: 200 },
+    { k: "key", t: "⊞" }, { k: "type", t: "In Tickets, add a due date column" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "line", t: "Changing Tickets, 180 lines", tone: "work", secs: "7s", ms: 1000 },
+    { k: "addcol", vals: ["Oct 3", "Oct 6", "Oct 9"] },
+    { k: "cap", i: 2 }, { k: "done", t: "Changed Tickets. It has a Due column now.", undo: true }] },
+  { id: "open-app", sec: "work", line: "Type an app's name to open it.", words: "Tickets", needs: "an app", caps: ["You type", "It finishes", "It opens"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "tic", ghost: "kets" }, { k: "cap", i: 1 }, { k: "key", t: "Tab" }, { k: "type", t: "tickets", instant: true },
+    { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 2 },
+    { k: "line", t: "Opened Tickets.", tone: "ok", ms: 200 }, { k: "app", title: "Tickets", sub: "3 open", rows: TICKETS }, { k: "hold", ms: 800 }] },
+  { id: "passwords", sec: "work", line: "A password manager that locks itself.", words: "Make me a password manager", needs: "the AI", caps: ["You ask", "It builds", "It locks"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Make me a password manager" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "line", t: "Building Passwords, 210 lines", tone: "work", secs: "12s", ms: 1100 },
+    { k: "app", title: "Passwords", sub: "locked", lock: "Locked after 5 minutes idle" }, { k: "cap", i: 2 },
+    { k: "done", t: "Made Passwords. It is open now.", undo: true }] },
+  { id: "whyhere", sec: "work", line: "Open a file, then ask where it came from.", say: "where did this come from?", needs: "a file in front", caps: ["A file is open", "You ask", "It knows"], beats: [
+    { k: "app", title: "lease-renewal.pdf", doc: true, ms: 200 }, { k: "key", t: "⊞" }, { k: "type", t: "where did this come from?" }, { k: "key", t: "↵" },
+    { k: "send", local: true }, { k: "cap", i: 1 }, { k: "cap", i: 2 },
+    { k: "line", t: "Downloaded on Tuesday while you read “Lease renewal 2026”.", ms: 1600 }] },
+  { id: "draw", sec: "work", appOnly: true, line: "Ask it to draw how something works.", words: "How does a VPN work? Draw it", needs: "the AI", caps: ["You ask", "It draws", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "How does a VPN work? Draw it" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "line", t: "Drawing how a VPN works", tone: "work", ms: 500 },
+    { k: "picture", title: "How a VPN works", src: "drawn by the agent", boxes: ["Laptop", "Tunnel", "VPN server", "Website"], lit: 1 },
+    { k: "cap", i: 2 }, { k: "done", t: "A locked tunnel carries your traffic." }] },
+
+  { id: "toolchain", sec: "code", line: "Install a toolchain, watch each step.", words: "Install rust and set it up", needs: "the AI", caps: ["You ask", "Each step shows", "It is ready"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Install rust and set it up" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "route", title: "Install rust and set it up", steps: ["Install rustup", "Get stable Rust", "Check cargo"], cur: 0, sys: 0 },
+    { k: "line", t: "Installing rustup", tone: "warn", cmd: "pacman -S rustup", ms: 1000 }, { k: "step" },
+    { k: "line", t: "Getting stable Rust", tone: "work", ms: 700 }, { k: "step" }, { k: "step", ms: 300 },
+    { k: "cap", i: 2 }, { k: "done", t: "Installed Rust and cargo.", undo: true }] },
+  { id: "tests", sec: "code", appOnly: true, line: "Run tests in the background, keep going.", words: "Run the tests in ~/Projects/myapp in the background", needs: "the AI and a project", caps: ["You ask", "It runs aside", "It tells you"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Run the tests in ~/Projects/myapp in the background" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "watch", label: "Myapp tests", from: "0:04", to: ["0:05", "0:06"] }, { k: "done", t: "The tests run in the background.", ms: 900 },
+    { k: "cap", i: 2 }, { k: "line", t: "Myapp tests is done in 3 min.", tone: "ok", ms: 1400 }] },
+  { id: "code-picture", sec: "code", appOnly: true, line: "Ask it to draw how your code fits.", words: "Draw how the modules in ~/Projects/myapp depend on each other", needs: "the AI and a project", caps: ["You ask", "It draws", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Draw how the modules in ~/Projects/myapp depend on each other" }, { k: "key", t: "↵" }, { k: "send" }, { k: "cap", i: 1 },
+    { k: "line", t: "Drawing how Myapp fits together", tone: "work", ms: 500 },
+    { k: "picture", title: "How Myapp fits together", src: "drawn by the agent", boxes: ["cli", "api", "store", "db"], lit: 2 },
+    { k: "cap", i: 2 }, { k: "done", t: "Everything leans on the store." }] },
+
+  { id: "disk", sec: "machine", line: "Ask where your disk space went.", words: "Where did my disk go?", needs: "nothing", caps: ["You ask", "It draws", "You see it"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "Where did my disk go?" }, { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 1 },
+    { k: "line", t: "Drawing your disks", ms: 400 },
+    { k: "picture", title: "Your disks", bars: [["/", 62], ["/home", 91, "amber"], ["USB", 12]] },
+    { k: "cap", i: 2 }, { k: "line", t: "Showing your disks.", tone: "ok", ms: 1200 }] },
+  { id: "pause", sec: "machine", line: "Out of Claude? Your apps still work.", words: "pause claude", needs: "nothing", caps: ["It rests", "Asks wait", "It comes back"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "pause claude" }, { k: "key", t: "↵" }, { k: "send", local: true },
+    { k: "stone", face: "resting" }, { k: "line", t: "Claude is paused. Your apps and files still work.", btn: "Resume Claude", ms: 1300 }, { k: "cap", i: 1 },
+    { k: "type", t: "make me a habit tracker" }, { k: "key", t: "↵" }, { k: "chip", t: "make me a habit tracker", lab: "paused", ms: 1000 }, { k: "cap", i: 2 },
+    { k: "type", t: "resume claude" }, { k: "key", t: "↵" }, { k: "unchip" }, { k: "send" },
+    { k: "line", t: "Claude is back. Running your waiting ask.", tone: "work", ms: 1300 }] },
+  { id: "desk", sec: "machine", line: "Say desk to fold the cards, desk to unfold.", words: "desk", needs: "a card seen", caps: ["Cards are up", "You say desk", "They fold"], beats: [
+    { k: "route", title: "Install docker", steps: ["Install docker", "Start it"], cur: 1, ms: 200 },
+    { k: "watch", label: "Timer, 25 min", from: "18:20", ms: 300 },
+    { k: "key", t: "⊞" }, { k: "type", t: "desk" }, { k: "key", t: "↵" }, { k: "send", local: true }, { k: "cap", i: 1 },
+    { k: "fold", strips: [["l", "step 2 of 2"], ["l", "1 counting"]], say: "Folded the desk.", ms: 1300 }, { k: "cap", i: 2 },
+    { k: "type", t: "desk" }, { k: "key", t: "↵" }, { k: "send", local: true },
+    { k: "unfold", say: "Unfolded the desk.", ms: 1200 }] },
+  { id: "keep", sec: "machine", line: "Keep a widget on your desk.", words: "widgets", needs: "piece 2", caps: ["You choose", "It restarts", "It is there"], beats: [
+    { k: "key", t: "⊞" }, { k: "type", t: "widgets" }, { k: "key", t: "↵" }, { k: "send", local: true },
+    { k: "widgets", ms: 700 }, { k: "line", t: "Machine stays on the desk.", tone: "ok", ms: 400 }, { k: "hide", ms: 200 }, { k: "machine", ms: 700 }, { k: "cap", i: 1 },
+    { k: "restart" }, { k: "cap", i: 2 }, { k: "machine" }, { k: "hold", ms: 700 }] },
+  { id: "why", sec: "machine", line: "Type why while it works.", say: "why", needs: "the AI, mid-turn", caps: ["It works", "You ask why", "It says"], beats: [
+    { k: "type", t: "install docker and set it up" }, { k: "key", t: "↵" }, { k: "send" },
+    { k: "line", t: "Installing docker", tone: "warn", cmd: "pacman -S docker", ms: 900 }, { k: "cap", i: 1 },
+    { k: "key", t: "⊞" }, { k: "type", t: "why" }, { k: "key", t: "↵" }, { k: "cap", i: 2 },
+    { k: "flash", t: "Your projects run in containers, and Docker is not installed yet.", ms: 1900, keep: true }] },
+  { id: "undo", sec: "machine", line: "Say undo to go back a step.", say: "undo", needs: "an installed disk", caps: ["It changed", "You say undo", "It goes back"], beats: [
+    { k: "done", t: "Installed htop.", undo: true, ms: 700 }, { k: "cap", i: 1 },
+    { k: "key", t: "⊞" }, { k: "type", t: "undo" }, { k: "key", t: "↵" }, { k: "send", local: true },
+    { k: "line", t: "Undoing the last change", ms: 600 }, { k: "cap", i: 2 },
+    { k: "line", t: "Undone. System files go back to before “install htop” when you restart.", tone: "ok", ms: 1600 }] }
+];
+
+/* A tip's mini screen: plays a storyboard of beats in the real look, or shows its last frame at once. */
+var Scene = (function () {
+  var REDUCED = false;
+  try { REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+  function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  var STONE = '<svg class="sc-stone" viewBox="0 0 24 24" aria-hidden="true"><g mask="url(#st-cut)"><use class="shape" href="#st-full"/></g><rect class="sq" x="6" y="6" width="12" height="12" rx="2.4"/></svg>';
+
+  function S(host, opts) {
+    opts = opts || {};
+    this.host = host;
+    this.onCap = opts.onCap || null;
+    host.classList.add("sc");
+    if (opts.ink) host.classList.add("ink");
+    host.innerHTML = "";
+    var inn = this.inn = el("div", "sc-in");
+    inn.appendChild(el("div", "sc-ground"));
+    this.railL = inn.appendChild(el("div", "sc-rail l"));
+    this.railR = inn.appendChild(el("div", "sc-rail r"));
+    this.app = inn.appendChild(el("div", "sc-app"));
+    this.cover = inn.appendChild(el("div", "sc-cover", '<div class="ttl">Notes</div><i style="width:70%"></i><i></i><i style="width:85%"></i><i></i><i style="width:50%"></i>'));
+    this.panel = inn.appendChild(el("div", "sc-panel", '<div class="bar">archlinux.org</div><div class="pg"><i class="h"></i><i></i><i></i><i style="width:80%"></i><i></i><i style="width:60%"></i></div>'));
+    this.pic = inn.appendChild(el("div", "sc-pic"));
+    this.wid = inn.appendChild(el("div", "sc-wid"));
+    this.stripsL = inn.appendChild(el("div", "sc-strips l"));
+    this.stripsR = inn.appendChild(el("div", "sc-strips r"));
+    this.chip = inn.appendChild(el("div", "sc-chip"));
+    this.line = inn.appendChild(el("div", "sc-line"));
+    this.pill = inn.appendChild(el("div", "sc-pill", STONE + '<span class="ph">Ask anything</span><span class="clock">09:41</span>'));
+    this.key = inn.appendChild(el("div", "sc-key"));
+    this.black = inn.appendChild(el("div", "sc-black"));
+    host.appendChild(inn);
+    this.stone = this.pill.querySelector(".sc-stone");
+    this.ph = this.pill.querySelector(".ph");
+    this.gen = 0;
+    this.fast = false;
+    var fit = function () { var w = host.clientWidth || 320; inn.style.transform = "scale(" + (w / 320) + ")"; };
+    fit();
+    if (window.ResizeObserver) new ResizeObserver(fit).observe(host);
+  }
+
+  S.prototype.reset = function () {
+    this.gen++;
+    this.host.classList.add("instant");
+    this.app.className = "sc-app"; this.app.innerHTML = "";
+    this.cover.classList.remove("on");
+    this.panel.classList.remove("on");
+    this.pic.className = "sc-pic"; this.pic.innerHTML = "";
+    this.wid.className = "sc-wid"; this.wid.innerHTML = "";
+    this.railL.innerHTML = ""; this.railR.innerHTML = "";
+    this.stripsL.innerHTML = ""; this.stripsR.innerHTML = "";
+    this.chip.className = "sc-chip"; this.chip.innerHTML = "";
+    this.inn.classList.remove("haschip");
+    this.line.className = "sc-line"; this.line.innerHTML = "";
+    this.pill.className = "sc-pill";
+    this.stone.setAttribute("class", "sc-stone");
+    this.ph.className = "ph"; this.ph.textContent = "Ask anything";
+    this.key.className = "sc-key";
+    this.black.className = "sc-black";
+    this.cards = {};
+    this._route = null; this._cur = 0;
+    void this.host.offsetWidth;
+    this.host.classList.remove("instant");
+  };
+
+  S.prototype.wait = function (ms, g) {
+    var self = this;
+    if (self.fast) return Promise.resolve(g === self.gen);
+    return new Promise(function (res) { setTimeout(function () { res(g === self.gen); }, ms); });
+  };
+
+  S.prototype.pillState = function (s) {
+    var pill = this.pill;
+    var keep = ["narrow", "narrow2"].filter(function (c) { return pill.classList.contains(c); });
+    pill.className = "sc-pill" + (keep.length ? " " + keep.join(" ") : "") + (s ? " " + s : "");
+  };
+
+  S.prototype.setStone = function (cls) {
+    var s = this.stone;
+    s.setAttribute("class", "sc-stone");
+    if (cls) { void s.getBoundingClientRect(); s.setAttribute("class", "sc-stone " + cls); }
+  };
+
+  S.prototype.setLine = function (b) {
+    var l = this.line;
+    var html = '<span class="txt">' + esc(b.t) + "</span>";
+    if (b.secs) html += '<span class="secs">' + esc(b.secs) + "</span>";
+    if (b.cmd) html += '<span class="cmd">' + esc(b.cmd) + "</span>";
+    if (b.undo) html += '<span class="lb">Undo</span><span class="lb">Details</span>';
+    if (b.btn) html += '<span class="lb">' + esc(b.btn) + "</span>";
+    l.innerHTML = html;
+    l.className = "sc-line on" + (b.tone ? " " + b.tone : "") + (b.mono ? " mono" : "");
+  };
+
+  S.prototype.card = function (side, key, html) {
+    var rail = side === "l" ? this.railL : this.railR;
+    var c = this.cards[key];
+    if (!c) { c = this.cards[key] = el("div", "sc-card"); rail.appendChild(c); }
+    c.innerHTML = html;
+    void c.offsetWidth;
+    c.classList.add("on");
+    return c;
+  };
+
+  S.prototype.route = function (b, cur) {
+    var why = cur >= b.steps.length ? (b.end || "done in 58 s") : ("step " + (cur + 1) + " of " + b.steps.length);
+    var h = '<div class="h">' + esc(b.title) + '</div><div class="w">' + esc(why) + "</div>";
+    b.steps.forEach(function (s, i) {
+      var c = i < cur ? "done" : i === cur ? ("cur" + (b.sys === i ? " sys" : "")) : "";
+      h += '<div class="st ' + c + '">' + esc(s) + "</div>";
+    });
+    return h;
+  };
+
+  S.prototype.rowsHtml = function (rows) {
+    return (rows || []).map(function (r) { return '<div class="r"><span>' + esc(r[0]) + "</span>" + (r[1] ? '<b class="' + (r[2] || "") + '">' + esc(r[1]) + "</b>" : "") + "</div>"; }).join("");
+  };
+
+  // One beat. Resolves to whether the play is still current.
+  S.prototype.beat = async function (b, g) {
+    var self = this, k = b.k;
+    if (k === "cap") { if (self.onCap) self.onCap(b.i); return true; }
+    if (k === "key") {
+      var key = self.key;
+      if (b.t === "⊞") { self.pillState("listen"); self.setStone("lean"); }
+      if (self.fast) return true;
+      key.textContent = b.t;
+      key.className = "sc-key on";
+      if (!(await self.wait(150, g))) return false;
+      key.className = "sc-key on down";
+      if (!(await self.wait(160, g))) return false;
+      key.className = "sc-key on";
+      if (!(await self.wait(150, g))) return false;
+      key.className = "sc-key";
+      return true;
+    }
+    if (k === "type") {
+      self.pillState("listen"); self.setStone("lean");
+      self.ph.className = "ph typed";
+      var ghost = b.ghost ? '<span class="ghost">' + esc(b.ghost) + "</span>" : "";
+      if (self.fast || b.instant) { self.ph.innerHTML = esc(b.t) + ghost; return true; }
+      for (var i = 1; i <= b.t.length; i++) {
+        self.ph.innerHTML = esc(b.t.slice(0, i)) + (i === b.t.length ? ghost : "");
+        if (!(await self.wait(i === b.t.length ? 320 : 40, g))) return false;
+      }
+      return true;
+    }
+    if (k === "send") {
+      self.ph.className = "ph"; self.ph.textContent = b.local ? "Ask anything" : "";
+      if (b.local) { self.pillState(""); self.setStone(""); return self.wait(160, g); }
+      self.pillState("busy"); self.setStone("work");
+      self.setLine({ t: "On it", secs: "1s", tone: "work" });
+      return self.wait(b.ms || 700, g);
+    }
+    if (k === "stone") { self.setStone(b.face || ""); return self.wait(b.ms || 200, g); }
+    if (k === "line") { self.setLine(b); return self.wait(b.ms || 900, g); }
+    if (k === "flash") {
+      var before = self.line.innerHTML, cls = self.line.className;
+      self.setLine({ t: b.t, tone: "" });
+      if (!(await self.wait(b.ms || 1600, g))) return false;
+      if (b.keep) return true;
+      self.line.innerHTML = before; self.line.className = cls;
+      return self.wait(500, g);
+    }
+    if (k === "app") {
+      var a = self.app;
+      a.className = "sc-app" + (b.lock ? " lock" : "") + (b.doc ? " doc" : "");
+      var rows;
+      if (b.lock) rows = '<div class="r on" style="background:none;justify-content:center"><span style="text-align:center">' + esc(b.lock) + '</span></div><div class="field">Master password</div>';
+      else if (b.doc) rows = '<i class="h"></i><i></i><i style="width:90%"></i><i></i><i style="width:70%"></i><i></i>';
+      else rows = self.rowsHtml(b.rows);
+      a.innerHTML = '<div class="ttl">' + esc(b.title) + (b.sub ? "<i>" + esc(b.sub) + "</i>" : "") + '</div><div class="rows">' + rows + "</div>";
+      void a.offsetWidth; a.classList.add("on");
+      var rs = a.querySelectorAll(".r");
+      if (self.fast) { for (var q = 0; q < rs.length; q++) rs[q].classList.add("on"); return true; }
+      if (!(await self.wait(400, g))) return false;
+      for (var j = 0; j < rs.length; j++) { rs[j].classList.add("on"); if (!(await self.wait(200, g))) return false; }
+      return self.wait(b.ms || 300, g);
+    }
+    if (k === "addcol") {
+      var rr = self.app.querySelectorAll(".r");
+      for (var p = 0; p < rr.length; p++) {
+        var tag = document.createElement("b"); tag.textContent = (b.vals || [])[p] || ""; tag.className = "ok";
+        rr[p].appendChild(tag);
+        if (!(await self.wait(220, g))) return false;
+      }
+      return self.wait(b.ms || 300, g);
+    }
+    if (k === "cover") { self.cover.classList.add("on"); return self.wait(b.ms || 600, g); }
+    if (k === "panel") { self.panel.classList.add("on"); return self.wait(b.ms || 900, g); }
+    if (k === "unpanel") { self.panel.classList.remove("on"); return self.wait(b.ms || 500, g); }
+    if (k === "picture") {
+      var pc = self.pic, inner;
+      if (b.bars) {
+        inner = '<div class="bars">' + b.bars.map(function (x) { return "<div><span>" + esc(x[0]) + '</span><s><u class="' + (x[2] || "") + '" data-w="' + x[1] + '"></u></s><span></span></div>'; }).join("") + "</div>";
+      } else {
+        inner = '<div class="bx">' + b.boxes.map(function (x, i) { return (i ? '<span class="ar">›</span>' : "") + '<span class="b' + (b.lit === i ? " lit" : "") + '">' + esc(x) + "</span>"; }).join("") + "</div>";
+      }
+      pc.innerHTML = '<div class="ttl">' + esc(b.title) + "<i>" + esc(b.src || "from this machine") + "</i></div>" + inner;
+      void pc.offsetWidth; pc.classList.add("on");
+      var bs = pc.querySelectorAll(".b");
+      var us = pc.querySelectorAll("u[data-w]");
+      if (self.fast) {
+        for (var n = 0; n < bs.length; n++) bs[n].classList.add("on");
+        for (var m = 0; m < us.length; m++) us[m].style.width = us[m].getAttribute("data-w") + "%";
+        return true;
+      }
+      if (!(await self.wait(300, g))) return false;
+      for (var n2 = 0; n2 < bs.length; n2++) { bs[n2].classList.add("on"); if (!(await self.wait(320, g))) return false; }
+      for (var m2 = 0; m2 < us.length; m2++) us[m2].style.width = us[m2].getAttribute("data-w") + "%";
+      return self.wait(b.ms || 600, g);
+    }
+    if (k === "route") { self._route = b; self._cur = b.cur || 0; self.card("l", "now", self.route(b, self._cur)); return self.wait(b.ms || 800, g); }
+    if (k === "step") {
+      self._cur = Math.min(self._cur + 1, self._route.steps.length);
+      self.card("l", "now", self.route(self._route, self._cur));
+      return self.wait(b.ms || 700, g);
+    }
+    if (k === "watch") {
+      var w = self.card("l", "watch", '<div class="h">Watching</div><div class="w">' + esc(b.label) + '</div><div class="big">' + esc(b.from) + "</div>");
+      var big = w.querySelector(".big");
+      if (b.to && self.fast) big.textContent = b.to[b.to.length - 1];
+      else if (b.to) for (var s = 0; s < b.to.length; s++) { if (!(await self.wait(500, g))) return false; big.textContent = b.to[s]; }
+      return self.wait(b.ms || 400, g);
+    }
+    if (k === "machine") {
+      self.card("r", "machine", '<div class="h">Machine</div><div class="w">' + esc(b.why || "The machine is fine") + '</div><div class="m">memory<s><u style="width:18%;background:#d97757"></u><u style="width:9%;background:#5b9bd5"></u><u style="width:24%;background:#e6e8eb"></u></s></div><div class="m">disk<s><u style="width:41%;background:#8b939c"></u></s></div><div class="m">network<s><u style="width:12%;background:#8b939c"></u></s></div>');
+      return self.wait(b.ms || 900, g);
+    }
+    if (k === "widgets") {
+      var rowsW = [["Tips", 1], ["Machine", 1], ["Watching", 1]];
+      var seg = function (sel, two) { return '<span class="seg">' + (two ? "" : '<b class="' + (sel === 0 ? "sel" : "") + '">Keep</b>') + '<b class="' + (sel === 1 ? "sel" : "") + '">When needed</b><b class="' + (sel === 2 ? "sel" : "") + '">Off</b></span>'; };
+      self.wid.innerHTML = '<div class="ttl">Widgets</div>' + rowsW.map(function (r) { return '<div class="wr"><span>' + r[0] + "</span>" + seg(r[1], r[0] === "Watching") + "</div>"; }).join("");
+      void self.wid.offsetWidth; self.wid.classList.add("on");
+      if (!(await self.wait(900, g))) return false;
+      var mrow = self.wid.querySelectorAll(".wr")[1].querySelectorAll(".seg b");
+      for (var z = 0; z < mrow.length; z++) mrow[z].classList.toggle("sel", z === 0);
+      return self.wait(b.ms || 900, g);
+    }
+    if (k === "chip") {
+      self.chip.innerHTML = "<span>" + esc(b.t) + "</span><i>" + esc(b.lab || "next") + "</i>";
+      self.inn.classList.add("haschip");
+      self.ph.className = "ph"; self.ph.textContent = b.ph || "Ask anything";
+      void self.chip.offsetWidth; self.chip.classList.add("on");
+      return self.wait(b.ms || 900, g);
+    }
+    if (k === "unchip") { self.chip.classList.remove("on"); self.inn.classList.remove("haschip"); return self.wait(b.ms || 200, g); }
+    if (k === "fold") {
+      var cs = self.inn.querySelectorAll(".sc-card");
+      for (var f = 0; f < cs.length; f++) cs[f].classList.remove("on");
+      var left = (b.strips || []).filter(function (x) { return x[0] === "l"; }).length;
+      if (b.strips && b.strips.length) self.pill.classList.add(left > 1 ? "narrow2" : "narrow");
+      (b.strips || []).forEach(function (x) { var hh = x[0] === "r" ? self.stripsR : self.stripsL; var st2 = el("span", "sc-strip", esc(x[1])); hh.appendChild(st2); void st2.offsetWidth; st2.classList.add("on"); });
+      if (b.say) self.setLine({ t: b.say, tone: "" });
+      return self.wait(b.ms || 1000, g);
+    }
+    if (k === "unfold") {
+      self.stripsL.innerHTML = ""; self.stripsR.innerHTML = "";
+      self.pill.classList.remove("narrow"); self.pill.classList.remove("narrow2");
+      var cs2 = self.inn.querySelectorAll(".sc-card");
+      for (var u = 0; u < cs2.length; u++) cs2[u].classList.add("on");
+      if (b.say) self.setLine({ t: b.say, tone: "" });
+      return self.wait(b.ms || 1000, g);
+    }
+    if (k === "restart") {
+      self.black.classList.add("on");
+      if (!(await self.wait(500, g))) return false;
+      self.line.className = "sc-line"; self.wid.classList.remove("on");
+      var mc = self.cards.machine; if (mc) mc.classList.remove("on");
+      self.pillState(""); self.setStone("");
+      if (!(await self.wait(400, g))) return false;
+      self.black.classList.remove("on");
+      return self.wait(b.ms || 500, g);
+    }
+    if (k === "done") {
+      self.pillState(""); self.setStone("hop");
+      self.setLine({ t: b.t, tone: "ok", undo: !!b.undo, btn: b.btn });
+      return self.wait(b.ms || 1400, g);
+    }
+    if (k === "stop") { self.pillState(""); self.setStone("stopped"); self.setLine({ t: b.t || "Stopped.", tone: "" }); return self.wait(b.ms || 1200, g); }
+    if (k === "knock") { self.pillState(""); self.setStone("needs"); self.ph.className = "ph typed nocaret"; self.ph.textContent = b.t; return self.wait(b.ms || 1600, g); }
+    if (k === "hide") { self.app.classList.remove("on"); self.pic.classList.remove("on"); self.wid.classList.remove("on"); return self.wait(b.ms || 400, g); }
+    if (k === "hold") return self.wait(b.ms || 600, g);
+    return true;
+  };
+
+  S.prototype.play = async function (beats, opts) {
+    opts = opts || {};
+    this.reset();
+    var g = this.gen;
+    this.fast = !!opts.instant || REDUCED;
+    if (this.fast) this.host.classList.add("instant");
+    for (var i = 0; i < beats.length; i++) {
+      var ok = await this.beat(beats[i], g);
+      if (!ok || g !== this.gen) { this.fast = false; return false; }
+    }
+    // A still keeps "instant" until the next play, so its last frame never starts moving.
+    this.fast = false;
+    return true;
+  };
+
+  S.prototype.still = function (beats) { return this.play(beats, { instant: true }); };
+  S.prototype.stop = function () { this.gen++; };
+  S.reduced = function () { return REDUCED; };
+  return S;
+})();
+
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  var RM = Scene.reduced();
+  var START = TIPS.filter(function (t) { return t.sec === "start"; });
+  var byId = {};
+  TIPS.forEach(function (t, i) { t.n = i; byId[t.id] = t; });
+  var tried = {};
+  var pending = { d: null, a: null };
+
+  // The words a button puts in the pill: an ending "…" leaves the cursor for your detail.
+  function fillText(t) { var w = t.words || ""; return w.slice(-1) === "…" ? w.slice(0, -1) + " " : w; }
+  function needsText(t) { return (t.needs === "nothing" ? "Works with no AI" : "Needs " + t.needs) + (t.appOnly ? " · app only" : ""); }
+  function actHtml(t, cls) {
+    if (t.words) return '<button class="' + cls + '" data-fill="' + t.id + '">' + esc(t.words) + "</button>";
+    if (t.keys) return '<span class="kmark" title="A key, not a button">' + esc(t.keys) + "</span>";
+    return '<span class="kmark w" title="Words to type mid-turn">' + esc(t.say) + "</span>";
+  }
+
+  /* ---------- the four questions ---------- */
+  var answers = { 1: "a", 2: "a", 3: "b", 4: "a" };
+  function paintAnswers() {
+    document.querySelectorAll(".qcard[data-q]").forEach(function (q) {
+      var n = q.getAttribute("data-q");
+      q.querySelectorAll(".opt").forEach(function (o) {
+        var on = o.getAttribute("data-o") === answers[n];
+        o.classList.toggle("picked", on);
+        o.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    });
+    $("ans").textContent = [1, 2, 3, 4].map(function (n) { return n + answers[n]; }).join(" ");
+    $("ans-said").textContent = "";
+  }
+  document.querySelectorAll(".qcard[data-q] .opt").forEach(function (o) {
+    o.addEventListener("click", function () { answers[o.closest(".qcard").getAttribute("data-q")] = o.getAttribute("data-o"); paintAnswers(); });
+  });
+  $("ans-copy").addEventListener("click", function () {
+    var text = $("ans").textContent;
+    function selectIt() {
+      try { var r = document.createRange(); r.selectNodeContents($("ans")); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); } catch (e) {}
+      $("ans-said").textContent = "Selected. Copy it with your keyboard.";
+    }
+    try {
+      navigator.clipboard.writeText(text).then(function () { $("ans-said").textContent = "Copied."; }, selectIt);
+    } catch (e) { selectIt(); }
+  });
+  paintAnswers();
+
+  /* ---------- the pill, on the desk and under the app ---------- */
+  var lineTimers = {};
+  function showLine(p, text, tone, ms) {
+    var l = $(p + "-line");
+    l.className = "os-line" + (tone ? " " + tone : "");
+    l.textContent = text;
+    l.hidden = false;
+    if (p === "d") $("d-faint").hidden = true;
+    clearTimeout(lineTimers[p]);
+    if (ms) lineTimers[p] = setTimeout(function () { l.hidden = true; }, ms);
+  }
+  function fillPill(p, t) {
+    var input = $(p + "-in"), pill = $(p + "-pill"), text = fillText(t);
+    input.value = text;
+    pending[p] = t;
+    pill.classList.add("lean");
+    if (p === "d") $("d-faint").hidden = true;
+    try { input.focus({ preventScroll: true }); input.setSelectionRange(text.length, text.length); } catch (e) {}
+    note(p, "The words wait in the pill. Enter sends them as your own ask; Esc drops them; you can add your own details first.");
+  }
+  function note(p, text) { $(p + "-note").textContent = text; }
+  function send(p) {
+    var input = $(p + "-in"), v = input.value.trim();
+    if (!v) return;
+    var t = pending[p], match = false;
+    if (t && t.words) {
+      var f = fillText(t).trim();
+      match = t.words.slice(-1) === "…" ? v.indexOf(f) === 0 : v.toLowerCase() === f.toLowerCase();
+    }
+    if (!match) {
+      t = TIPS.filter(function (x) { return x.words && x.words.slice(-1) !== "…" && x.words.toLowerCase() === v.toLowerCase(); })[0];
+      match = !!t;
+    }
+    input.value = ""; pending[p] = null;
+    var pill = $(p + "-pill");
+    pill.classList.remove("lean"); pill.classList.add("busy");
+    showLine(p, "On it", "work");
+    note(p, match ? "Sent. On the machine the turn runs now. The words are the tip’s own, so agentd marks it tried with no model." : "Sent as your own ask. On the machine the turn runs now.");
+    setTimeout(function () {
+      pill.classList.remove("busy");
+      $(p + "-line").hidden = true;
+      if (match) markTried(t.id);
+    }, 1400);
+  }
+  ["d", "a"].forEach(function (p) {
+    var input = $(p + "-in");
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); send(p); }
+      else if (e.key === "Escape") { input.value = ""; pending[p] = null; $(p + "-pill").classList.remove("lean"); if (p === "d") $("d-faint").hidden = true; note(p, "Dropped. Nothing was sent."); }
+    });
+    input.addEventListener("input", function () { $(p + "-pill").classList.toggle("lean", !!input.value); });
+  });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest("[data-fill]");
+    if (!b) return;
+    var t = byId[b.getAttribute("data-fill")];
+    fillPill(b.closest("#tapp") ? "a" : "d", t);
+  });
+
+  /* ---------- the Tips card on the desk ---------- */
+  var card = $("tcard");
+  var cardScene = new Scene($("tc-scene"), { ink: true });
+  var ci = 0, cardGone = false;
+  function renderCard() {
+    var t = START[ci];
+    $("tc-why").textContent = "Start here · " + (ci + 1) + " of " + START.length + (tried[t.id] ? " · tried" : "");
+    $("tc-line").textContent = t.line;
+    $("tc-act").innerHTML = actHtml(t, "tc-btn");
+    cardScene.still(t.beats);
+  }
+  function turnCard(i) {
+    ci = (i + START.length) % START.length;
+    if (RM) { renderCard(); return; }
+    card.classList.add("fading");
+    setTimeout(function () { renderCard(); card.classList.remove("fading"); }, 110);
+  }
+  function nextUntried(from) {
+    for (var k = 1; k <= START.length; k++) { var j = (from + k) % START.length; if (!tried[START[j].id]) return j; }
+    return -1;
+  }
+  function leaveCard(why) {
+    cardGone = true;
+    card.classList.add("gone");
+    $("d-back").hidden = false;
+    note("d", why);
+  }
+  $("tc-prev").addEventListener("click", function () { turnCard(ci - 1); });
+  $("tc-next").addEventListener("click", function () { turnCard(ci + 1); });
+  $("tc-x").addEventListener("click", function () {
+    leaveCard("Put away. The choice is kept in desk.toml, so it stays away after a reboot.");
+    showLine("d", "Put Tips away. Say tips to see them again.", "", 3600);
+  });
+  $("d-back").addEventListener("click", function () {
+    cardGone = false; card.classList.remove("gone"); $("d-back").hidden = true; note("d", ""); renderCard();
+  });
+  function openFromCard() { openApp(START[ci].n); }
+  $("tc-title").addEventListener("click", openFromCard);
+  $("tc-all").addEventListener("click", openFromCard);
+  $("tc-pic").addEventListener("click", openFromCard);
+  $("tc-pic").addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFromCard(); } });
+
+  function markTried(id) {
+    if (tried[id]) return;
+    tried[id] = true;
+    var tk = document.querySelector('.trow[data-id="' + id + '"] .tk'); if (tk) tk.textContent = "✓ tried";
+    var tr = document.querySelector('.tile[data-id="' + id + '"] .tr'); if (tr) tr.textContent = "✓ tried";
+    var t = byId[id];
+    if (t.sec !== "start" || cardGone) return;
+    var next = nextUntried(ci);
+    if (next < 0) { leaveCard("All six first tips are tried, so the card has left the desk. On the machine, “tips” opens the app any time."); return; }
+    if (START[ci].id === id) {
+      note("d", "On the machine the card turns 12 s after the turn ends, to the next tip you have not tried.");
+      setTimeout(function () { turnCard(next); }, 500);
+    } else renderCard();
+  }
+
+  /* ---------- the Tips app ---------- */
+  var caps = $("app-caps");
+  function setCap(i) { caps.querySelectorAll("span").forEach(function (s, k) { s.classList.toggle("on", k === i); }); }
+  var appScene = new Scene($("app-scene"), { onCap: setCap });
+  var stillHosts = [0, 1, 2].map(function () {
+    var f = document.createElement("figure"), h = document.createElement("div"), c = document.createElement("figcaption");
+    f.appendChild(h); f.appendChild(c); $("app-stills").appendChild(f);
+    return { scene: new Scene(h), cap: c };
+  });
+  var stillsMode = RM;
+  $("rm").checked = RM;
+  var sel = 0, played = false;
+  var list = $("app-list");
+  ["start", "work", "code", "machine"].forEach(function (sec) {
+    var h = document.createElement("div"); h.className = "sec"; h.textContent = SECTIONS[sec]; list.appendChild(h);
+    TIPS.forEach(function (t) {
+      if (t.sec !== sec) return;
+      var b = document.createElement("button");
+      b.className = "trow"; b.setAttribute("role", "option"); b.setAttribute("data-id", t.id); b.setAttribute("aria-selected", "false");
+      b.innerHTML = '<span class="l">' + esc(t.line) + '</span><span class="w">' + esc(t.words || (t.keys ? t.keys + " key" : t.say)) + '</span><span class="tk"></span>';
+      b.addEventListener("click", function () { select(t.n, true); });
+      list.appendChild(b);
+    });
+  });
+  // The frame a still shows for phase k: what you ask, what it does, what you get.
+  function upTo(t, k) {
+    var bs = t.beats;
+    if (k >= 2) return bs;
+    var stop = -1;
+    for (var i = 0; i < bs.length; i++) if (bs[i].k === "cap" && bs[i].i === k + 1) { stop = i; break; }
+    var arr = stop < 0 ? bs : bs.slice(0, stop);
+    if (k === 0 && /^You /.test(t.caps[0])) {
+      for (var j = 0; j < arr.length; j++) if (arr[j].k === "key" && arr[j].t === "↵") { arr = arr.slice(0, j); break; }
+    }
+    return arr;
+  }
+  function select(i, play) {
+    sel = i;
+    var t = TIPS[i];
+    list.querySelectorAll(".trow").forEach(function (r) {
+      var on = r.getAttribute("data-id") === t.id;
+      r.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) {
+        var top = r.offsetTop - list.offsetTop, bottom = top + r.offsetHeight;
+        if (top < list.scrollTop) list.scrollTop = top - 30;
+        else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 8;
+      }
+    });
+    $("app-line").textContent = t.line;
+    $("app-act").innerHTML = actHtml(t, "tbtn");
+    $("app-needs").textContent = needsText(t);
+    caps.innerHTML = t.caps.map(function (c) { return "<span>" + esc(c) + "</span>"; }).join("<i>·</i>");
+    $("app-scene").hidden = stillsMode;
+    $("app-stills").hidden = !stillsMode;
+    caps.hidden = stillsMode;
+    if (stillsMode) {
+      stillHosts.forEach(function (h, k) { h.cap.textContent = t.caps[k]; h.scene.still(upTo(t, k)); });
+    } else if (play) {
+      played = true;
+      setCap(0);
+      appScene.play(t.beats);
+    } else {
+      appScene.still(t.beats);
+    }
+  }
+  function openApp(i) {
+    select(i, true);
+    $("app").scrollIntoView({ behavior: RM ? "auto" : "smooth", block: "start" });
+  }
+  $("app-replay").addEventListener("click", function () { select(sel, true); });
+  $("app-scene").addEventListener("click", function () { select(sel, true); });
+  $("tapp").addEventListener("keydown", function (e) {
+    var tag = e.target.tagName;
+    if (e.key === " " && tag !== "INPUT" && tag !== "BUTTON") { e.preventDefault(); select(sel, true); }
+    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target.closest("#app-list")) {
+      e.preventDefault();
+      var order = Array.prototype.map.call(list.querySelectorAll(".trow"), function (r) { return byId[r.getAttribute("data-id")].n; });
+      var at = order.indexOf(sel), nx = order[Math.max(0, Math.min(order.length - 1, at + (e.key === "ArrowDown" ? 1 : -1)))];
+      select(nx, true);
+      var row = list.querySelector('.trow[data-id="' + TIPS[nx].id + '"]'); if (row) row.focus({ preventScroll: true });
+    }
+  });
+  $("rm").addEventListener("change", function () { stillsMode = $("rm").checked; if (!stillsMode) appScene.stop(); select(sel, !stillsMode); });
+
+  /* ---------- the card's anatomy, the mini desks and the gallery ---------- */
+  new Scene($("tc2-scene"), { ink: true }).still(byId.picture.beats);
+  function mini(id, fill) { var s = new Scene($(id)); s.still([]).then(function () { fill(s); }); }
+  mini("mini-today", function () {});
+  mini("mini-week", function (s) {
+    s.card("r", "tips", '<div class="h">Tips</div><div class="w">Start here · 1 of 6</div><div class="pp"></div><div class="ln">Say what you need. It gets made.</div><div class="bt">Make me a ticketing app</div>');
+  });
+  mini("mini-kept", function (s) {
+    s.card("r", "machine", '<div class="h">Machine</div><div class="w">The machine is fine</div><div class="m">memory<s><u style="width:18%;background:#d97757"></u><u style="width:9%;background:#5b9bd5"></u><u style="width:24%;background:#e6e8eb"></u></s></div><div class="m">disk<s><u style="width:41%;background:#8b939c"></u></s></div><div class="m">network<s><u style="width:12%;background:#8b939c"></u></s></div>');
+  });
+  var gal = $("gal");
+  TIPS.forEach(function (t, i) {
+    var tile = document.createElement("div");
+    tile.className = "tile"; tile.setAttribute("role", "button"); tile.setAttribute("tabindex", "0"); tile.setAttribute("data-id", t.id);
+    tile.setAttribute("aria-label", "Play: " + t.line);
+    var host = document.createElement("div");
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.innerHTML = '<div class="sec"><span>' + String(i + 1).padStart(2, "0") + " · " + esc(SECTIONS[t.sec]) + '</span><span class="tr"></span></div><div class="ln">' + esc(t.line) + '</div><div class="wd">' + esc(t.words || (t.keys ? "the " + t.keys + " key" : "“" + t.say + "”")) + '</div><div class="nd">' + esc(needsText(t)) + "</div>";
+    tile.appendChild(host); tile.appendChild(meta); gal.appendChild(tile);
+    new Scene(host).still(t.beats);
+    tile.addEventListener("click", function () { openApp(i); });
+    tile.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openApp(i); } });
+  });
+
+  /* ---------- the Widgets card ---------- */
+  var WID = [
+    { n: "Tips", q: "What can I ask it to do?", opts: ["Keep", "When needed", "Off"], def: "When needed" },
+    { n: "Machine", q: "Is the machine in trouble?", opts: ["Keep", "When needed", "Off"], def: "When needed" },
+    { n: "Now", q: "What is it doing, and why?", opts: ["When needed", "Off"], def: "When needed" },
+    { n: "Watching", q: "What is it keeping an eye on?", opts: ["When needed", "Off"], def: "When needed" },
+    { n: "Needs you", q: "What is waiting for me?", opts: ["When needed"], def: "When needed" }
+  ];
+  var wcard = $("wcard");
+  function wLine(w, o) {
+    if (o === "Keep") return w.n + " stays on the desk.";
+    if (o === "Off") return w.n === "Tips" ? "Put Tips away. Say tips to see them again." : "Put " + w.n + " away. Say show " + w.n.toLowerCase() + " to see it again.";
+    return w.n + " shows when it has something to say.";
+  }
+  function paintW() {
+    wcard.innerHTML = '<div class="h">Widgets</div>' + WID.map(function (w, i) {
+      return '<div class="wrow"><div>' + esc(w.n) + "<small>" + esc(w.q) + '</small></div><span class="seg">' + w.opts.map(function (o) {
+        return '<button data-w="' + i + '" data-o="' + o + '" aria-pressed="' + (o === (w.cur || w.def) ? "true" : "false") + '">' + o + "</button>";
+      }).join("") + "</span></div>";
+    }).join("") + '<button class="reset" id="w-reset">Reset the desk</button>';
+  }
+  wcard.addEventListener("click", function (e) {
+    var b = e.target.closest("button");
+    if (!b) return;
+    var l = $("w-line");
+    if (b.id === "w-reset") { WID.forEach(function (w) { w.cur = null; }); paintW(); l.textContent = "The desk is back to how it shipped."; l.hidden = false; return; }
+    var w = WID[+b.getAttribute("data-w")], o = b.getAttribute("data-o");
+    if ((w.cur || w.def) === o) return;
+    w.cur = o; paintW();
+    l.textContent = wLine(w, o); l.hidden = false;
+  });
+  paintW();
+
+  /* ---------- start ---------- */
+  renderCard();
+  select(0, false);
+  if (!RM && "IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) { if (en.isIntersecting && !played && !stillsMode) { select(sel, true); io.disconnect(); } });
+    }, { threshold: 0.45 });
+    io.observe($("tapp"));
+  }
+})();
+</script>

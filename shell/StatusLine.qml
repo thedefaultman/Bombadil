@@ -6,18 +6,28 @@ import Bombadil as Kit
 // turn ended. One line while it works; at most four when it is done. A step that touches the
 // system gets an amber edge with the exact command under it, one no restore point can undo a
 // red one; neither pauses anything. Clicking a finished line shows every command and its output.
+// When no turn or setup line has it, the newest notice (new mail, a draft that is ready) does, with
+// its chips on the right (under the words when the line is narrow, a window shares the stage). A warning
+// notice does not wait for a finished line or the setup line to go: only a turn that runs comes before it.
+// The line that says the AI rests (out of plan or paused) is a plain step line: it fades like a
+// finished one, and never turns red.
 Rectangle {
     id: bar
     required property var pill       // a PillState
 
-    readonly property bool shown: pill.mode !== "idle" || pill.flash !== ""
+    readonly property var notice: pill.noticeShown ? pill.notice : null
+    readonly property bool shown: pill.mode !== "idle" || pill.flash !== "" || notice !== null
     readonly property color edge: pill.mode === "working" && pill.risk === "irreversible" ? Kit.Theme.bad
                                  : pill.mode === "working" && pill.risk === "system" ? Kit.Theme.warn
                                  : pill.source === "error" && pill.mode !== "working" ? Kit.Theme.bad
                                  : "transparent"
+    // A notice's own look: a warning is red, news has no edge. (pill.source belongs to the turn line.)
+    readonly property bool errored: notice ? notice.tone === "error" : pill.source === "error"
+    readonly property color markEdge: notice ? (errored ? Kit.Theme.bad : "transparent") : edge
     property double now: Date.now()
     readonly property int seconds: Math.max(0, Math.floor((now - pill.startedAt) / 1000))
     readonly property bool hovered: hover.hovered
+    readonly property bool narrow: width < 520
 
     implicitHeight: shown ? content.implicitHeight + 20 : 0
     radius: Kit.Theme.radiusLine
@@ -36,23 +46,27 @@ Rectangle {
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom; leftMargin: 7; topMargin: 9; bottomMargin: 9 }
         width: 3
         radius: 1.5
-        color: bar.edge
-        visible: bar.edge !== "transparent"
+        color: bar.markEdge
+        visible: bar.markEdge !== "transparent"
     }
 
     Timer {
-        // The seconds counter, and fading a finished line nobody is looking at. A finished line
+        // The seconds counter, and fading a finished line nobody is looking at. A notice by itself has
+        // nothing to count; one over a finished line leaves that line to fade under it. A finished line
         // kept by its picture has nothing for it to do, so it sleeps until the picture goes (and
         // then fades the line, whose time is long past, on its next tick).
         objectName: "lineTimer"
         interval: 250; repeat: true
-        running: bar.shown && !(bar.pill.pictureStays && bar.pill.mode !== "working" && bar.pill.flash === "")
+        running: bar.shown && (bar.notice === null || bar.pill.mode !== "idle")
+                 && !(bar.pill.pictureStays && bar.pill.mode !== "working" && bar.pill.flash === "")
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
-            // The line shows on every screen; hovering it on any of them keeps it.
-            const done = bar.pill.mode === "closing" || bar.pill.mode === "local"
-            if (done && !bar.pill.sticky && !bar.pill.pictureStays && bar.pill.hovers === 0
+            // The line shows on every screen; hovering it on any of them keeps it. A line that stays until
+            // the next prompt (a turn that changed something, with Undo) gives way when a notice waits:
+            // that is the one place the news and the warnings can be seen, and typing "undo" still works.
+            const done = bar.pill.mode === "closing" || bar.pill.mode === "local" || bar.pill.mode === "resting"
+            if (done && (!bar.pill.sticky || bar.pill.notices.length > 0) && !bar.pill.pictureStays && bar.pill.hovers === 0
                     && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
         }
@@ -82,7 +96,7 @@ Rectangle {
     Component.onDestruction: if (hover.hovered) bar.pill.hovers = Math.max(0, bar.pill.hovers - 1)
     TapHandler {
         // A finished turn opens its details; anything else just stays while you read it.
-        enabled: bar.pill.mode === "closing"
+        enabled: bar.pill.mode === "closing" && bar.notice === null
         onTapped: bar.pill.details()
     }
 
@@ -101,9 +115,10 @@ Rectangle {
                 font.family: Kit.Theme.fontFamily
                 Layout.fillWidth: true
                 text: bar.pill.flash !== "" ? bar.pill.flash
+                    : bar.notice ? bar.notice.line
                     : bar.pill.mode === "working" && bar.pill.source === "agent" ? bar.newest(bar.pill.line, lineText.width)
                     : bar.pill.line
-                color: bar.pill.source === "error" && bar.pill.flash === "" ? Kit.Theme.badInk : Kit.Theme.fg
+                color: bar.errored && bar.pill.flash === "" ? Kit.Theme.badInk : Kit.Theme.fg
                 font.pixelSize: Kit.Theme.lineSize
                 textFormat: Text.PlainText
                 // Working: one line. The agent's own words show their newest end.
@@ -122,6 +137,25 @@ Rectangle {
                 font.pixelSize: Kit.Theme.smallSize
                 font.features: { "tnum": 1 }
             }
+
+            NoticeChips {
+                objectName: "noticeTail"
+                visible: bar.notice !== null
+                pill: bar.pill
+                notice: bar.notice
+                withChips: !bar.narrow
+                Layout.alignment: Qt.AlignVCenter
+            }
+        }
+
+        // The same chips under the words, when the line has no room beside them.
+        NoticeChips {
+            objectName: "noticeRow"
+            visible: bar.notice !== null && bar.narrow && bar.notice.actions.length > 0
+            pill: bar.pill
+            notice: bar.notice
+            withTail: false
+            Layout.alignment: Qt.AlignRight
         }
 
         // The exact command of a marked step, while it runs.
@@ -175,7 +209,7 @@ Rectangle {
         // A turn that changed something: take it back, or see exactly what ran.
         RowLayout {
             Layout.fillWidth: true
-            visible: bar.pill.mode === "closing" && (bar.pill.changed || bar.pill.irreversible)
+            visible: bar.pill.mode === "closing" && bar.notice === null && (bar.pill.changed || bar.pill.irreversible)
             spacing: 8
 
             Text {

@@ -1,10 +1,11 @@
 """The line above the pill, and the picture above that, driven by agentd's events in an offscreen window.
 
-PillState, StatusLine, QueueChips and CardHost are plain Qt Quick (Quickshell only wraps them in
-shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save a
-picture of each state.
+PillState, StatusLine, QueueChips, SetupChips, FoundChips, AiCard and CardHost are plain Qt Quick (Quickshell
+only wraps them in shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save
+a picture of each state.
 """
 
+import json
 import os
 import time
 from pathlib import Path
@@ -35,6 +36,8 @@ Window {
     property int screens: 1
     property var summons: []
     property int handOffs: 0
+    // What shell.qml does with a line from agentd (lists arrive as they do from a parsed line).
+    function feed(line) { pillState.handle(JSON.parse(line)) }
     PillState {
         id: pillState
         objectName: "pill"
@@ -59,9 +62,15 @@ Window {
                 Component.onCompleted: setSource("%s/CardHost.qml", { pill: pillState, maxHeight: 520 })
             }
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
+            FoundChips {
+                objectName: "foundChips"; pill: pillState
+                // As in shell.qml: as wide as its chips, and no wider than the bar.
+                Layout.fillWidth: false; Layout.alignment: Qt.AlignHCenter; Layout.maximumWidth: w.width - 24
+            }
             SetupChips { objectName: "setupChips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
-            Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
+            AiCard { objectName: "aiCard"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
+            Rectangle { objectName: "pillBox"; Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
         }
     }
 }
@@ -820,6 +829,29 @@ def test_a_window_the_launcher_opens_puts_the_picture_away_but_hiding_one_does_n
     assert not opened("undo", "open")
 
 
+def test_a_window_that_opens_puts_the_picture_away_unless_it_is_new_or_you_just_clicked_in_it(bar):
+    # Super+Enter with a picture up: the picture would sit over the terminal, at the 360 px a window
+    # narrows the pill to. (DeskState says "a window opened"; the desk tests cover that half.)
+    _card_event(bar, _diagram(nodes=[{"label": "NetworkManager", "opens": {"kind": "unit", "value": "NetworkManager.service"}}]))
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None                  # drawn a moment ago: its own ask's window
+    bar.pill.setProperty("cardAt", 0)
+    bar.pump(0.5)
+    bar.click("box-n1")                                           # a click in the picture opens a window
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None
+    bar.pill.setProperty("clickedAt", 0)
+    bar.call("windowOpened")                                      # a window nobody clicked for
+    assert bar.pill.property("card") is None
+    bar.call("windowOpened")                                      # and with no picture there is nothing to do
+    half = {"type": "diagram", "id": "stream-t1", "partial": True, "shape": "chain", "title": "A VPN", "nodes": [{"id": "n1", "label": "Laptop"}]}
+    _card_event(bar, half, turn=1)
+    bar.pill.setProperty("cardAt", 0)
+    bar.call("windowOpened")
+    assert bar.pill.property("card") is not None                  # a picture still being drawn goes on
+    assert bar.warnings == []
+
+
 def test_hovering_the_picture_keeps_the_line_from_fading(bar):
     _card_event(bar, _diagram())
     it = bar.item("cardHost")
@@ -996,3 +1028,53 @@ def test_a_prompt_before_the_ai_is_ready_brings_the_setup_line_back_over_a_finis
     assert bar.pill.property("mode") == "closing"
     bar.call("submit", "make me an app")
     assert bar.pill.property("mode") == "setup" and [label for label, _ in bar.chips()] == ["Claude", "Codex"]
+
+
+def feed(bar, **msg):
+    QtCore.QMetaObject.invokeMethod(bar.win, "feed", QtCore.Q_ARG("QVariant", json.dumps(msg)))
+    bar.pump()
+
+
+def test_every_screens_line_shows_the_same_notice_and_the_cross_on_one_puts_it_away_on_all(bar):
+    bar.win.setProperty("screens", 2)
+    bar.pump(0.2)
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=300, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.pump(0.3)
+    assert [it.property("text") for it in bar.items("line")] == ["Priya Shah: Launch date"] * 2
+    assert len(bar.items("noticeChip")) == 2
+    bar.click_item(bar.items("noticeDismiss")[0])
+    bar.pump(0.4)
+    assert bar.sent[-1] == {"type": "notice_dismiss", "id": 1}
+    assert bar.items("noticeChip") == [] and not any(it.isVisible() for it in bar.items("statusLine", visible_only=False))
+
+
+def test_a_notice_does_not_move_the_turn_line_or_the_setup_chips_around_it(bar):
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=0, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.send(**CHOOSE)
+    assert bar.text() == "Which AI should run this computer?" and bar.items("noticeChip") == []
+    assert [label for label, _ in bar.chips()] == ["Claude", "Codex"]
+    bar.send(type="setup", state="ready", tone="done", actions=[], line="")
+    assert bar.text() == "Priya Shah: Launch date" and bar.chips() == []
+    assert len(bar.items("noticeChip")) == 1
+
+
+def test_a_notice_that_ends_while_one_screen_reads_it_stays_on_all_until_the_pointer_leaves(bar):
+    bar.win.setProperty("screens", 2)
+    bar.pump(0.2)
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=300, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.pump(0.3)
+    first = min(bar.items("statusLine"), key=lambda it: it.mapToScene(QtCore.QPointF(0, 0)).y())
+    QtTest.QTest.mouseMove(bar.win, first.mapToScene(QtCore.QPointF(first.width() / 2, first.height() / 2)).toPoint())
+    bar.pump(0.2)
+    assert bar.pill.property("hovers") == 1
+    feed(bar, type="notice_end", id=1)
+    bar.pump(0.3)
+    # agentd let go of it; the one being read stays, on both screens, without chips that would do nothing.
+    assert [it.property("text") for it in bar.items("line")] == ["Priya Shah: Launch date"] * 2
+    assert bar.items("noticeChip") == []
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
+    bar.pump(0.8)
+    assert not any(it.isVisible() for it in bar.items("statusLine", visible_only=False))

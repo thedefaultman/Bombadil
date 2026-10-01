@@ -4,7 +4,9 @@ Typing an app's name, a panel's name ("browser", or an alias people already use:
 or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
 only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
-agent. Everything else goes to the agent. The list is deliberately exact (after lowercasing and
+agent. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
+every inbox at once, and the service behind it is asked, never waited for.
+Everything else goes to the agent. The list is deliberately exact (after lowercasing and
 trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
 two brains that sometimes disagree.
 
@@ -18,6 +20,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -26,6 +29,7 @@ from . import apps, browser, hypr, paths, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
 from .desk import WIDGETS, Desk
+from .mail import client as mail_client
 
 PANEL_WORDS = {
     "browser": ["browser", "web browser", "web", "chrome", "chromium", "google", "internet"],
@@ -61,6 +65,11 @@ SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in
 PROVIDER_WORDS = {"claude": ["claude", "claude code", "anthropic"], "codex": ["codex", "openai codex", "chatgpt"]}
 PROVIDER_VERBS = ("use", "switch to", "change to", "sign in to", "log in to", "sign into", "log into",
                   "sign in with", "log in with")
+# Resting the AI by hand and ending it ("pause claude", "resume the ai"; agentd does these itself).
+# "the AI" is whichever one runs the machine. "use claude" ends a pause too (it is in PROVIDER_VERBS).
+REST_VERBS = ("pause", "resume")
+REST_TARGETS = {**PROVIDER_WORDS, "ai": ["the ai", "ai"]}
+REST_TITLES = {"claude": "Claude", "codex": "Codex", "ai": "the AI"}
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
@@ -68,6 +77,17 @@ UTILITY_COMMANDS = {
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
+# The Mail window (a kit app that ships with Bombadil), and what people call it.
+MAIL_APP = "mail"
+MAIL_WORDS = {"mail": ["mail", "email", "e-mail", "inbox", "my mail", "my email", "my inbox"]}
+MAIL_SHOW_SECONDS = 1.0   # the service is asked to show a view and never waited for longer than this
+# Typed alone while a draft waits, these are not for the model: sending is the person's press. The
+# words themselves, with the little words people put before and after them ("ok send it now").
+SEND_WORDS = ("send", "send it", "send that", "send this")
+SEND_BEFORE = ("yes", "yeah", "ok", "okay", "please", "go ahead and")
+SEND_AFTER = ("now", "please")
+SEND_LINE = "Sending is yours. It's under the pointer."
+MAIL_SHADOWED = "an app of yours called mail stands in front of Mail; rename it to open Mail"
 # Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
 # ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
 # longer or different goes to the agent, which has system_map for the same pictures.
@@ -84,6 +104,13 @@ PICTURE_PHRASES = {
 }
 PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
                   "sound": "what's playing where", "screens": "your screens"}
+# A question a widget answers with itself, the same as "show machine" (same rules as the pictures:
+# the whole sentence, exactly). The machine card then stays up for 30 seconds (vitals.ASK_FOR).
+WIDGET_QUESTIONS = {
+    "machine": ["how's the machine", "how is the machine", "how's the machine doing", "how is the machine doing",
+                "how's my machine", "how is my machine", "how's my computer", "how is my computer",
+                "how's my computer doing", "how is my computer doing", "hows the machine", "hows my computer"],
+}
 # (Matched on the text as typed: unit names have capitals, NetworkManager.service.)
 _NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$", re.I | re.A)
 # Only while a turn runs: the reason for the step in front of you, answered from what the agent
@@ -207,6 +234,9 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     picture = _picture(apostrophe, normalize(raw, keep_case=True)) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
+    for widget, questions in WIDGET_QUESTIONS.items():
+        if apostrophe in questions and _find_app(t, app_list) is None:
+            return Action("widget", widget, "open", WIDGET_TITLES[widget])
     if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
         return Action("signin")
     if plain:
@@ -215,6 +245,12 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
             name = _lookup(word, PROVIDER_WORDS) if word else None
             if name:
                 return Action("provider", name, title=name.capitalize())
+    if plain:
+        for verb in REST_VERBS:
+            word = _strip_verb(t, (verb,))
+            target = _lookup(word, REST_TARGETS) if word else None
+            if target:
+                return Action("rest", target, verb, REST_TITLES[target])
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
@@ -227,6 +263,10 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
             continue
+        if plain and _lookup(word, MAIL_WORDS) is not None:
+            # Before the person's own apps, unlike every other word: the window that opens for "mail" is the
+            # one whose Send is a press, so an app that is called Mail (or Inbox) must not stand in for it.
+            return Action("mail", MAIL_APP, verb, "Mail")
         app = _find_app(word, app_list)
         if app is not None:
             return Action("app", app.name, verb, app.title)
@@ -240,6 +280,23 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
             if util and (verbs or word == t):
                 return Action(util)
     return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
+
+
+def is_send_word(text: str) -> bool:
+    """Is this only "send" (send it, yes send, ...)? Whether it is answered here depends on whether a
+    draft waits, which only agentd can tell; a question ("send it?") is left to the agent, like
+    "restart?"."""
+    raw = str(text).strip()
+    t = normalize(raw).replace(",", "")
+    if not t.isascii() or raw.endswith("?") or raw.startswith("!"):
+        return False
+    for _ in range(4):   # as many little words as anyone puts there
+        before = next((w for w in SEND_BEFORE if t.startswith(w + " ")), None)
+        after = next((w for w in SEND_AFTER if t.endswith(" " + w)), None)
+        if before is None and after is None:
+            break
+        t = t[len(before) + 1:] if before else t[:-len(after) - 1]
+    return t in SEND_WORDS
 
 
 def _widget_action(t: str, app_list: list) -> Action | None:
@@ -262,7 +319,8 @@ def entries(app_list: list | None = None) -> list[dict]:
     """What the pill can complete with Tab: apps first, then panels, widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
-           for a in app_list]
+           for a in app_list if a.name != MAIL_APP]
+    out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": list(MAIL_WORDS["mail"])})
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
@@ -304,7 +362,7 @@ class Launcher:
 
     @staticmethod
     def doing(action: Action) -> str:
-        if action.kind in ("panel", "app"):
+        if action.kind in ("panel", "app", "mail"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
         if action.kind == "picture":
@@ -317,11 +375,11 @@ class Launcher:
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "provider": f"Switching to {action.title or action.target}",
                 "brain": "Opening the Brain", "whyhere": "Looking it up",
-                "desk": "Changing the desk"}.get(action.kind, "On it")
+                "desk": "Changing the desk", "send": "Sending is yours"}.get(action.kind, "On it")
 
     @staticmethod
     def failed(action: Action) -> str:
-        if action.kind in ("panel", "app"):
+        if action.kind in ("panel", "app", "mail"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
         if action.kind == "picture":
@@ -356,6 +414,8 @@ class Launcher:
         return True, f"Put {a.title} away."
 
     def _app(self, a: Action) -> tuple[bool, str]:
+        if a.target == MAIL_APP and a.verb == "open" and (apps.own_dir(MAIL_APP) / "main.qml").exists():
+            raise RuntimeError(MAIL_SHADOWED)   # app_dir would run it in place of the real window
         placement = _placement()
         if placement is not None:
             # The app kit's drawers: each app slides in from its own special workspace.
@@ -382,6 +442,49 @@ class Launcher:
             return True, f"{a.title} has no drawer to put away yet."
         past = {"open": "Opened", "close": "Closed", "hide": "Put"}[a.verb]
         return True, f"{past} {a.title}" + (" away." if a.verb == "hide" else ".")
+
+    # -- mail --
+
+    def _mail(self, a: Action) -> tuple[bool, str]:
+        if a.verb != "open":
+            return self._app(Action("app", MAIL_APP, a.verb, a.title))
+        self.open_mail()
+        return True, "Opened Mail."
+
+    def _send(self, a: Action) -> tuple[bool, str]:
+        # agentd says this only when a draft waits (is_send_word); the press itself is not here. The window
+        # comes in on the draft, so that what the line points at is there to be pointed at.
+        try:
+            self.open_mail(**({"view": "drafts", "id": a.target} if a.target else {"view": "drafts"}))
+        except Exception as e:  # noqa: BLE001 - the line is still true of the window the person has
+            print(f"launcher: the Mail window: {_reason(e)}", file=sys.stderr)
+        return True, SEND_LINE
+
+    def open_mail(self, **show) -> None:
+        """The Mail window, on a view ("all" unless told). The service is asked first, so the window
+        finds the request waiting when it opens, or, already open, is pushed to it; a service that
+        is not there costs a moment at most, and the window says so itself."""
+        try:
+            ask_mail_to_show(**show)
+        except mail_client.MailUnavailable:
+            pass   # the window says so itself
+        except mail_client.MailError as e:
+            print(f"launcher: mail would not show that: {e}", file=sys.stderr)   # the window still opens
+        self.open_mail_window()
+
+    def open_mail_window(self) -> None:
+        """Slide the Mail window in (the app kit's drawer when there is one), or bring it forward."""
+        if (apps.own_dir(MAIL_APP) / "main.qml").exists():
+            # app_dir would run it instead of the real one, and its Send would be a press.
+            raise RuntimeError(MAIL_SHADOWED)
+        placement = _placement()
+        if placement is not None:
+            placement.show(MAIL_APP)
+        elif _app_running(MAIL_APP):
+            self._focus_class(f"bombadil-app-{MAIL_APP}")
+        else:
+            self.hypr.place_app(MAIL_APP)
+            apps.run(MAIL_APP)
 
     def _focus_class(self, cls: str) -> None:
         if self.hypr.available:
@@ -487,6 +590,23 @@ class Launcher:
             self._undo_marker().unlink()
         except OSError:
             pass
+
+    def undo_marker(self) -> dict | None:
+        """The marker of the last undo as it is now, for skip_restore_point."""
+        return self._marker()
+
+    def skip_restore_point(self, snapshot: int | None, before: dict | None) -> None:
+        """A turn took a restore point and changed nothing (the account's limit stopped it at once).
+        Undo must go past that empty point rather than say "Undone" and change nothing: put back
+        the marker the turn cleared (`before`), or, with none, mark the point itself as already
+        undone, which is how the next undo knows to start below it. An undo still waiting for its
+        restart already covers this point: it has nothing to add, so it is not "newer" (see _undo)."""
+        if before is not None:
+            if self._pending(before) and snapshot is not None:
+                before = {**before, "covered": max(int(before.get("covered") or 0), int(snapshot))}
+            self._write_marker(before)
+        elif snapshot is not None:
+            self._write_marker({"snapshot": int(snapshot), "what": "", "boot": None, "t": time.time()})
 
     def _undo(self, _a: Action) -> tuple[bool, str]:
         if not self.snaps.available:
@@ -731,6 +851,13 @@ def _boot_id() -> str:
         return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     except OSError:
         return ""
+
+
+def ask_mail_to_show(**show) -> None:
+    """Ask the service to show a view ("all" unless told) or a mail, and so any Mail window that is listening.
+    Raises what the client raises. `"id": null` says there is no mail to show: without it the client numbers
+    the request in the same field, which on this op is a mail's id, and the service refuses a number."""
+    mail_client.request("show", timeout=MAIL_SHOW_SECONDS, **{"id": None, **(show or {"view": "all"})})
 
 
 def _reason(e: Exception) -> str:

@@ -3,12 +3,13 @@ import QtQuick.Layouts
 import Bombadil as Kit
 
 // The chips under the setup line: which AI runs the machine (two big chips on first boot),
-// Sign in, Show sign-in, Wi-Fi. A click sends the chip's id to agentd.
+// Sign in, Show sign-in, Wi-Fi, and Resume or Raise the limit under the resting line. A click sends
+// the chip's id to agentd.
 RowLayout {
     id: chips
     required property var pill
 
-    visible: pill.setupActions.length > 0 && pill.mode === "setup"
+    visible: pill.setupActions.length > 0 && (pill.mode === "setup" || pill.mode === "resting") && !pill.noticeShown   // a warning over the line hides its chips
     spacing: 8
 
     Repeater {
