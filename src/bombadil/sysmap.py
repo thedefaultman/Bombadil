@@ -343,7 +343,10 @@ def _read_text(path: str) -> str | None:
 
 # ---------------------------------------------------------------- boot
 
-_CHAIN_RE = re.compile(r"^[\s│└├─]*([\w@.:\\-]+\.(?:target|service|socket|mount|path|timer|device|swap|slice|scope))"
+# The tree's own marks before the unit: box-drawing ones in a UTF-8 locale, "|-", "`-" and "| " in
+# the C locale the captures run under (a "-" counts only right after a "|" or a backtick, so a
+# unit that starts with one, like -.mount, keeps it).
+_CHAIN_RE = re.compile(r"^(?:[\s|`│└├─]|(?<=[|`])-)*([\w@.:\\-]+\.(?:target|service|socket|mount|path|timer|device|swap|slice|scope))"
                        r"\s+@([\d.]+\s*(?:min|ms|us|s)?(?:\s*[\d.]+\s*(?:s|ms))?)(?:\s+\+([\d.]+\s*(?:min|ms|us|s)?"
                        r"(?:\s*[\d.]+\s*(?:s|ms))?))?\s*$")
 _TIME_RE = re.compile(r"Startup finished in (.*?)(?: = ([\d.]+\s*(?:min|ms|s)(?:\s*[\d.]+\s*s)?))?\s*$", re.M)
@@ -425,16 +428,62 @@ def unit_name(name: str) -> str:
     return name if re.search(r"\.(service|socket|timer|target|mount|path|slice|scope)$", name) else name + ".service"
 
 
+def _since(stamp: str) -> str:
+    """`ActiveEnterTimestamp` ("Thu 2026-10-01 00:01:57 UTC") as a time of day, with the date when it is not today's."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})", stamp or "")
+    if not m:
+        return ""
+    return m.group(2) if m.group(1) == time.strftime("%Y-%m-%d") else f"{m.group(1)} {m.group(2)}"
+
+
+def _spelt_like(unit: str, run_: Run = run, budget: float = BUDGET) -> str | None:
+    """The unit named like this but for its capitals, spelt as systemd has it. Unit names are
+    case-sensitive (NetworkManager.service) and people type networkmanager."""
+    got = _gather({"files": lambda: run_(["systemctl", "list-unit-files", "--no-legend", "--no-pager"], budget),
+                   "loaded": lambda: run_(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager"],
+                                          budget)}, budget)
+    low = unit.lower()
+    for text in (got["files"], got["loaded"]):
+        for line in (text if isinstance(text, str) else "").splitlines():
+            words = line.split()
+            if words and words[0] in ("●", "*", "○", "×"):
+                words = words[1:]
+            if words and words[0].lower() == low and not words[0].endswith("@.service"):
+                return words[0]
+    return None
+
+
+def find_unit(name: str, run_: Run = run, budget: float = BUDGET) -> str | None:
+    """The unit a typed name means, spelt as systemd has it ("networkmanager" is
+    "NetworkManager.service"), or None when the machine has no such unit. The picture words ask
+    before "what does bluetooth need" draws."""
+    unit = unit_name(name)
+    if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
+        return None
+    show = parse_show(_within(lambda: run_(["systemctl", "show", "-p", "LoadState", unit], budget), budget))
+    if show and show[0].get("LoadState") == "loaded":
+        return unit
+    return _spelt_like(unit, run_, budget)
+
+
 def capture_service(target: str, run_: Run = run, budget: float = BUDGET) -> dict:
     """One service and what it needs (Requires and Wants), each with its state, and the package
     that owns it."""
     unit = unit_name(target)
     if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
         raise Unavailable(f"“{target}” is not a service name.")
-    props = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,Requires,Wants,FragmentPath"
-    main = parse_show(_within(lambda: run_(["systemctl", "show", "-p", props, unit], budget), budget))
+    props = "Id,Description,LoadState,ActiveState,SubState,UnitFileState,Requires,Wants,FragmentPath,ActiveEnterTimestamp"
+
+    def show(u: str) -> list[dict[str, str]]:
+        return parse_show(_within(lambda: run_(["systemctl", "show", "-p", props, u], budget), budget))
+
+    main = show(unit)
     if not main:
         raise Unavailable("Could not read services: systemctl did not answer.")
+    if main[0].get("LoadState") == "not-found":
+        spelt = _spelt_like(unit, run_, budget)      # "networkmanager" is NetworkManager.service
+        if spelt:
+            unit, main = spelt, show(spelt) or main
     m = main[0]
     if m.get("LoadState") == "not-found":
         raise Unavailable(f"There is no service called {target}.")
@@ -491,6 +540,11 @@ def capture_service(target: str, run_: Run = run, budget: float = BUDGET) -> dic
             "nodes": nodes, "links": links, "highlight": bad or (["unit"] if active == "failed" else []), "say": say}
     facts = [{"key": "state", "label": top["label"], "value": sub},
              {"key": "enabled", "label": "Starts at boot", "value": m.get("UnitFileState", "") or "unknown"}]
+    since = _since(m.get("ActiveEnterTimestamp", "")) if active == "active" else ""
+    if since:
+        # A restart that comes back as it was changes only this, so it counts only when nothing else did.
+        facts.append({"key": "since", "label": top["label"], "value": f"up since {since}", "alone": True,
+                      "say": f"{top['label']} was restarted and is running again."})
     facts += [{"key": f"dep:{d}", "label": d, "value": (states.get(d) or {}).get("ActiveState", "unknown")}
               for d in deps]
     res = _result("service", spec, facts)
@@ -682,10 +736,18 @@ def parse_pw_dump(dump: list | None) -> dict:
 
 
 def _volume(node: dict) -> tuple[int | None, bool]:
+    """The level as wpctl and the sliders say it, and whether it is muted. PipeWire keeps a master
+    `volume` and one level per channel (`channelVolumes`); a hardware speaker holds its level in the
+    channels and leaves the master at 1.0, a software one the other way round, so what plays is
+    the two together. Both are linear: the percent people see is their cube root."""
     for p in (node.get("params") or {}).get("Props") or []:
-        if isinstance(p, dict) and ("volume" in p or "mute" in p):
-            v = p.get("volume")
-            return (round(float(v) ** (1 / 3) * 100) if v is not None else None), bool(p.get("mute"))
+        if isinstance(p, dict) and ("volume" in p or "channelVolumes" in p or "mute" in p):
+            levels = [float(c) for c in p.get("channelVolumes") or [] if isinstance(c, (int, float))]
+            master = p.get("volume")
+            if not levels and master is None:
+                return None, bool(p.get("mute"))
+            linear = (float(master) if master is not None else 1.0) * (max(levels) if levels else 1.0)
+            return round(max(0.0, linear) ** (1 / 3) * 100), bool(p.get("mute"))
     return None, False
 
 
@@ -811,15 +873,6 @@ def apply_overrides(card: dict, highlight=None, say: str | None = None) -> dict:
     return card
 
 
-def service_exists(name: str, run_: Run = run, budget: float = BUDGET) -> bool:
-    """Is there a unit by this name? The picture words ask before "what does bluetooth need" draws."""
-    unit = unit_name(name)
-    if not re.fullmatch(r"[\w@.:-]{1,80}", unit):
-        return False
-    show = parse_show(run_(["systemctl", "show", "-p", "LoadState", unit], budget))
-    return bool(show) and show[0].get("LoadState") == "loaded"
-
-
 # ---------------------------------------------------------------- receipts
 
 # What a turn can change in each part, checked before and after it. Only what a turn's steps
@@ -852,7 +905,15 @@ def receipt(kind: str, before: list[dict], after: list[dict], target: str = "") 
     b = {f["key"]: f for f in before or [] if not f.get("volatile")}
     a = {f["key"]: f for f in after or [] if not f.get("volatile")}
     changed = [k for k in list(b) + [k for k in a if k not in b] if (k in b) != (k in a) or b[k]["value"] != a[k]["value"]]
-    if not changed:
+    # A fact marked `alone` (a service's start time) is a change only when nothing else changed: a
+    # restart that leaves it running as it was. Next to a real change it is just noise.
+    loud = [k for k in changed if not (a.get(k) or b.get(k) or {}).get("alone")]
+    say = ""
+    if loud:
+        changed = loud
+    elif changed:
+        say = next((a[k].get("say", "") for k in changed if k in a), "")
+    else:
         return None
     nodes: list[dict] = []
     for k in changed[:6]:
@@ -867,7 +928,7 @@ def receipt(kind: str, before: list[dict], after: list[dict], target: str = "") 
     title = {"service": f"{unit_name(target).removesuffix('.service')}" if target else "Service"}.get(kind, TITLES.get(kind, kind))
     spec = {"shape": "compare", "title": f"{title}, before and after"[:cards.MAX_TITLE], "nodes": nodes, "links": [],
             "highlight": [n["id"] for n in nodes if n["side"] == "after"],
-            "say": f"{len(changed) - 6} more changed." if len(changed) > 6 else ""}
+            "say": f"{len(changed) - 6} more changed." if len(changed) > 6 else say}
     card, errors = cards.validate_diagram(spec)
     if card is None:
         return None

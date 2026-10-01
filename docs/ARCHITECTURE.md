@@ -91,7 +91,8 @@ a turn that changed a part of the machine it touched ends with a before/after re
 box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
 package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
 closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
-was there. A picture that cannot be drawn takes the last one away.
+was there. A picture that cannot be drawn takes the last one away. (How each picture reads the
+machine, and what a real VM taught us, is in [pictures.md](pictures.md).)
 The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
 the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
 import from outside its own folder any other way.)
