@@ -3,7 +3,7 @@
 Bombadil's checks on itself, and the place what they find is kept. A probe is a pure function over what
 the machine already says; it finds a problem or it does not. The store decides when a sighting counts, and
 writes it down with evidence that holds nothing of his. Format and rules: `docs/LOOP.md` ("From signal to
-finding"). This page says what the code does, how each probe was red on what the laptop VM found, and
+finding"). This page says what the code does, how each probe was red on what a real VM run found, and
 where it can bite.
 
 Files: `src/bombadil/loop/probes.py`, `findings.py`. Fixtures: `tests/fixtures/loop/probes/`.

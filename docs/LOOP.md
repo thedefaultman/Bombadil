@@ -1,8 +1,9 @@
 # The self-improvement loop
 
 Bombadil keeps count of what you ask for more than once, offers to turn a repeat into something
-smaller, and checks itself for bugs it can write up. Design: `/mnt/project-files/design/self-improvement-brief.md`
+smaller, and checks itself for bugs it can write up. Design: [`design/self-improvement-brief.md`](design/self-improvement-brief.md)
 (pieces 1 and 2 are built here; fixing its own bugs, the room, generations and the guard are not).
+This page is the overview and the contract; the pages under [`loop/`](loop/) say how each part is built.
 
 What you see: nothing for a few days. Then a small "noticed 1" chip right of the pill. Hover it and
 your own words appear with one suggestion ("show me my passwords · 4 times on 3 days. Say "my
@@ -22,6 +23,86 @@ on a page that shows exactly what goes.
 4. Probes only read. What they cannot fix they write up.
 5. What he would notice waits for him. Nothing leaves the machine until he presses Submit.
 6. No new words to learn: "noticed" is the widget's name, "hide noticed" and "show noticed" its verbs.
+
+## How the pieces fit
+
+```mermaid
+flowchart LR
+  subgraph disk["on the machine, never leaving it"]
+    T[("turns.jsonl<br/>ledger v2")]
+    DB[("loop.db<br/>counts, offers, findings")]
+    W["words.toml"]
+    AP["~/Apps/&lt;name&gt;"]
+  end
+  subgraph D["agentd, always on"]
+    L["LoopService<br/>one worker thread owns the DB"]
+  end
+  P["bombadil-probe<br/>user unit, idle priority"]
+  S["hyprctl, journal,<br/>coredumps, app status"]
+  B["the bar<br/>chip and card"]
+  N["Noticed window<br/>(a kit app)"]
+  G["issue page in the browser panel<br/>he presses Submit"]
+  D -- "appends a row after each turn" --> T
+  T -- "read from a byte offset" --> L
+  L <--> DB
+  P <--> DB
+  S -- "read only" --> P
+  L -- "noticed, summon" --> B
+  B -- "noticed_do, hello, alive" --> L
+  L <-- "noticed_list, noticed_do" --> N
+  L -- "make a word" --> W
+  L -- "an ordinary turn, origin loop" --> AP
+  L -- "only when he presses Send" --> G
+```
+
+Two programs touch `loop.db`: the service inside agentd (counting, offers, the answers to taps) and the
+prober (findings). Neither is on a turn's path; either can be dead and the machine, the pill and every
+turn carry on. The bar and the window only draw what agentd sends and say what was pressed; every rule
+lives in the service, so a different shell could draw the same thing.
+
+## The UX model, in one page
+
+- **Quiet by default.** Nothing for the first days. Then one small chip beside the pill while something
+  waits: no dot, no colour, no motion, no sound, never during a turn, never while he is typing.
+- **Three levels of attention.** The chip (a count), the card that rises from it on hover (his own words,
+  how often, one line of what would happen, one button), and the Noticed window (everything it counted,
+  changed and found, each with its Undo). Each level is optional.
+- **A tap is the ask.** The button on a row does the thing; there is no second "are you sure". The
+  safety is Undo, which the receipt line carries.
+- **His words, not a model's.** An offer quotes what he typed. Labels are plain full sentences; nothing
+  says "AI", "model" or "pattern" on day one.
+- **Saying no is cheap and respected.** "Not now" returns only when the count has doubled or after 30
+  days; "Never" stops that idea; two silent expiries or two Nevers in a row rest all offers for 30 days;
+  "hide noticed" holds everything. At most one new offer a day and three a week.
+- **Reports are his to send.** A finding becomes a report he can read in full, with what goes and what
+  stays on the machine, and the issue page opens prefilled. Nothing is submitted for him.
+
+The per-surface details are in [`loop/bar.md`](loop/bar.md) (chip and card) and
+[`loop/window.md`](loop/window.md) (the window).
+
+## Building on it
+
+- **A new thing a repeat can become** (a form): add a `Form` to `FORMS` in `loop/forms.py` with the
+  plain sentence the card shows and the name of the builder it `needs`; teach `LoopService` to run it
+  (`service.py` `BUTTONS` and `_op_accept`) and record the change as an `improve` row with an `undo`.
+  A form whose builder is missing is never offered, and says which piece it waits for.
+- **A new check**: write a function over the `Observation` in `loop/probes.py` and register it with
+  `@probe(id, component, kind, title, what)`; return `red()`, `green()` or `unchecked()`. Keep it read only,
+  bounded and free of his words; add a fixture under `tests/fixtures/loop/probes/` that is red on the
+  bug and green on the fix (see [`loop/probes.md`](loop/probes.md)).
+- **A new surface** (another shell, a phone, a CLI): speak the messages under "agentd ↔ clients". The
+  `bombadil loop …` commands are the smallest example.
+- **What to keep**: counting and checking never call a model and never sit on a turn's path; an idea is
+  a strip that can be ignored; a tap is the ask; probes only read; nothing leaves the machine unless he
+  presses a button; the ledger is append only and the derived counts can always be rebuilt from it.
+
+| Read | For |
+|---|---|
+| [`loop/ledger.md`](loop/ledger.md), [`loop/counting.md`](loop/counting.md) | what is written after a turn, what counts as an ask, how asks are grouped |
+| [`loop/words.md`](loop/words.md) | words.toml, the launcher and the optional naming call |
+| [`loop/service.md`](loop/service.md) | the agentd side: threads, ops, cadence |
+| [`loop/bar.md`](loop/bar.md), [`loop/window.md`](loop/window.md) | the chip, the card and the Noticed window |
+| [`loop/probes.md`](loop/probes.md), [`loop/report.md`](loop/report.md), [`loop/cli.md`](loop/cli.md) | self-checks, findings, the scrubbed report, the commands and the prober's unit |
 
 ## Where things are
 
