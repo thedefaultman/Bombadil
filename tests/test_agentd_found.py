@@ -219,3 +219,37 @@ async def test_a_press_after_the_ask_has_started_opens_nothing(home, monkeypatch
     await asyncio.sleep(0.4)
     assert seen == []
     await _stop(server, w)
+
+
+@pytest.mark.asyncio
+async def test_a_press_that_cannot_open_its_thing_keeps_the_ask_and_says_the_chips_again(home, monkeypatch):
+    apps.create("Passwords", "import QtQuick\nItem {}\n")
+    cli, _, d, server, r, w, _ = await _rest_with(home)
+    seen = await _opened(d, monkeypatch)
+
+    async def nothing(text):
+        return None
+    monkeypatch.setattr(d, "_match", nothing)
+    await _ask(w, "my password app")
+    found = (await _until(r, _found))[-1]
+    _send(w, {"type": "found_open", "turn": found["turn"], "id": "1"})
+    msgs = await _until(r, _found)
+    assert [m for m in msgs if m.get("kind") == "local"][-1]["ok"] is False
+    assert msgs[-1] == found                                         # the same chips, again
+    assert seen == [] and [i for i, _p in d.pending] == [1, 2]
+    await _stop(server, w)
+
+
+@pytest.mark.asyncio
+async def test_a_past_ask_whose_steps_are_gone_says_so_and_the_chips_come_back(home, monkeypatch):
+    log = _past_ask("file the march invoice")
+    cli, _, d, server, r, w, _ = await _rest_with(home)
+    await _opened(d, monkeypatch)
+    await _ask(w, "the march invoice")
+    found = (await _until(r, _found))[-1]
+    log.unlink()
+    _send(w, {"type": "found_open", "turn": found["turn"], "id": "1"})
+    msgs = await _until(r, _found)
+    assert "not on this computer" in [m for m in msgs if m.get("kind") == "local"][-1]["text"]
+    assert msgs[-1] == found and [i for i, _p in d.pending] == [1, 2]
+    await _stop(server, w)

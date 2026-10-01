@@ -14,7 +14,7 @@ out of the sentence, and a sentence with none left finds nothing.
     find("the march invoice")    -> [Match(kind="ask", label="You asked: file the March invoice (3 Sep)", ...)]
 
 Where things come from today: the apps (title and the description the agent wrote), the launcher's panels,
-widgets and commands, and the successful asks in turns.jsonl. Later sources (the user's own words, the
+widgets and the commands that only show something, and the successful asks in turns.jsonl. Later sources (the user's own words, the
 Brain's files and pages) join through `things()`.
 """
 
@@ -147,14 +147,37 @@ def _app_things(app_list: list) -> list[Thing]:
             for a in app_list]
 
 
+# Commands that only show something: a chip may open these. The others (undo, hide, sign in, ...) change
+# something, so a sentence that nearly names one is not offered it.
+SHOWS = frozenset({"history", "desk", "brain", "wifi", "sound", "brightness", "battery"})
+
+
+def _opener(words: list, kinds) -> str:
+    """The phrase that opens a panel, widget or shows a command's answer: its word as it stands ("browser")
+    or with "open" in front ("open machine", for a widget, whose bare word is a question's answer). ""
+    when the launcher knows none."""
+    for word in map(str, words):
+        for phrase in (word, f"open {word}"):
+            action = launcher.match(phrase, [])
+            if action is not None and action.kind in kinds:
+                return phrase
+    return ""
+
+
 def _word_things(entries: list[dict]) -> list[Thing]:
-    """Panels, widgets and commands: what the launcher answers to, found by the names it knows them by."""
+    """Panels, widgets and the commands that only show something, found by the names the launcher knows them
+    by. A chip opens things; it never runs a command that changes anything (undo, restart, sign in)."""
     out = []
     for e in entries:
-        if e.get("kind") == "app" or not e.get("words"):
+        kind = e.get("kind")
+        if not e.get("words") or kind not in ("panel", "widget", "command"):
             continue
-        out.append(Thing("word", str(e["title"]), "Opens it" if e.get("kind") != "command" else "Does it",
-                         str(e["title"]), " ".join(map(str, e["words"])), say=str(e["words"][0])))
+        if kind == "command" and e.get("name") not in SHOWS:
+            continue
+        say = _opener(e["words"], {"panel", "widget"} if kind != "command" else {e["name"]})
+        if say:
+            out.append(Thing("word", str(e["title"]), "Opens it", str(e["title"]), " ".join(map(str, e["words"])),
+                             say=say))
     return out
 
 

@@ -185,3 +185,21 @@ def test_finding_reads_this_computer_when_given_nothing_else(home):
     assert [m.label for m in finder.find("my logins")] == ["Passwords"]
     got = finder.find("ffmpeg")
     assert got[0].kind == "ask" and got[0].path == "/d/1-1.jsonl"
+
+
+def test_every_launcher_word_offered_opens_what_it_says_by_a_phrase_the_launcher_accepts():
+    words = [t for t in finder.things(app_list=[], entries=launcher.entries([]), asks=[]) if t.kind == "word"]
+    assert len(words) > 5
+    for t in words:
+        action = launcher.match(t.say, [])
+        assert action is not None and action.kind in {"panel", "widget"} | finder.SHOWS, t
+
+
+def test_a_widget_is_offered_by_the_phrase_that_opens_it_and_a_command_is_never_offered():
+    machine = [m for m in _find("how is the machine doing")]
+    assert machine and machine[0].label == "Machine" and machine[0].say == "open machine"
+    offered = {t.say for t in finder.things(app_list=[], entries=launcher.entries([]), asks=[]) if t.kind == "word"}
+    assert not offered & {"undo", "hide", "sign in", "restart", "shutdown", "shut down"}
+    assert {"battery", "wifi", "history"} <= offered      # a command that only shows something may be offered
+    for sentence in ("undo that", "restart the computer", "sign in again", "shut down"):
+        assert [m for m in _find(sentence) if m.kind == "word"] == []

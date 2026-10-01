@@ -37,7 +37,8 @@ QtObject {
     // asks): {turn, line, matches: [{id, kind, label, hint}]}, else null. The line says when the ask runs
     // and what was found, and the matches are the chips under it, only while that line is on screen.
     property var found: null
-    readonly property var foundChips: mode === "resting" && found !== null && line === found.line ? found.matches : []
+    readonly property bool foundShown: mode === "resting" && found !== null && line === found.line
+    readonly property var foundChips: foundShown ? found.matches : []
 
     // The line: "working" while a turn runs, "closing" for how it ended, "local" for an
     // open/undo/stop answered without the model, "setup" for choosing the AI and signing in,
@@ -174,7 +175,7 @@ QtObject {
             summoned(typeof ev.text === "string" ? ev.text : "")
             // The pill comes up: say why the AI does not answer, unless a line is being read.
             if (resting && setupLine) {
-                if (foundChips.length > 0) return   // the line of what was found is being read: it stays
+                if (foundShown) return   // the line of what was found is being read: it stays
                 if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
             }
             return
@@ -310,10 +311,18 @@ QtObject {
         _restOwed = false; _foundOwed = false
     }
 
-    // An ask's matches are of no use once it left the queue, or when a newer ask of yours waits behind it.
+    // The matches of this ask go, and its line ("Kept for 15:00 ...") with them when that is the line on screen:
+    // the ask is on its way out, so the line is no longer true.
+    function _clearFound(t) {
+        if (found === null || found.turn !== t) return
+        if (foundShown) { mode = "idle"; line = "" }
+        found = null
+    }
+
+    // The ask left the queue (dropped, or started). A found for it that comes late is ignored.
     function _dropFound(t) {
         if (_gone.indexOf(t) < 0) _gone = _gone.concat([t]).slice(-50)
-        if (found !== null && found.turn === t) found = null
+        _clearFound(t)
     }
 
     // A waiting ask of the user's own, not an app's ("[from app notes] ...") nor a shell command.
@@ -357,7 +366,7 @@ QtObject {
         if (resting) {
             if (mode === "working") optimistic = false   // the ask "On it" was for waits instead
             if (!setupLine) return
-            if (!flipped && foundChips.length > 0) return   // the same words again (not news): the found line stays
+            if (!flipped && foundShown) return   // the same words again (not news): the found line stays
             // A turn the limit stopped keeps its closing line (with Undo); so does one that changed something.
             if (mode === "working" || mode === "resting" || (flipped && !(mode === "closing" && (_cutOff || sticky)))) _showRest()
             return
@@ -465,9 +474,8 @@ QtObject {
         if (found === null || !found.matches.some(m => m.id === String(id))) return
         handOff()
         outgoing({ type: "found_open", turn: found.turn, id: String(id) })
-        // The ask is dropped: its line ("Kept for 15:00 ...") no longer says what is true.
-        if (mode === "resting" && line === found.line) { mode = "idle"; line = "" }
-        found = null
+        // agentd lets go of the ask it came from ("unqueued"), unless the thing could not be opened.
+        _clearFound(found.turn)
     }
 
     // When a prompt that has to wait will run ("15:00", "paused"), the label of its chip; "" when it does not wait.

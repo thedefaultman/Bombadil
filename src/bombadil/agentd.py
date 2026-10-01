@@ -287,6 +287,7 @@ class AgentD:
         self._turn_asked_by: str | None = None
         self._rest_cur: rest.Rest | None = None     # why the provider rests, while access is "resting"
         self._found: dict[int, list[finder.Match]] = {}   # what the finder offered for a waiting ask, by turn
+        self._found_said: dict[int, dict] = {}            # and the message that said so, to say again
         self._rest_task: asyncio.Task | None = None  # wakes the machine when the limit's time has come
         self._raised: set[str] = set()               # providers whose Raise the limit was pressed (now Try again)
         self._limit_urls: dict[str, str] = {}        # where each provider's own message said to raise it
@@ -1503,6 +1504,7 @@ class AgentD:
         before = len(self.pending)
         self.pending = [(i, p) for i, p in self.pending if i != turn]
         self._found.pop(turn, None)
+        self._found_said.pop(turn, None)
         if len(self.pending) == before:
             return False
         self._resume_notes.pop(turn, None)
@@ -1524,10 +1526,12 @@ class AgentD:
             return   # it ran, or was dropped, while the finder looked
         self._found = {t: m for t, m in self._found.items() if any(i == t for i, _ in self.pending)}
         self._found[turn] = matches
-        await self.broadcast({"type": "found", "turn": turn, "prompt": text,
-                              "line": rest.kept(r, self._title(), bool(matches)),
-                              "matches": [{"id": str(n), "kind": m.kind, "label": m.label, "hint": m.hint}
-                                          for n, m in enumerate(matches, 1)]})
+        self._found_said = {t: m for t, m in self._found_said.items() if t in self._found}
+        said = self._found_said[turn] = {
+            "type": "found", "turn": turn, "prompt": text, "line": rest.kept(r, self._title(), bool(matches)),
+            "matches": [{"id": str(n), "kind": m.kind, "label": m.label, "hint": m.hint}
+                        for n, m in enumerate(matches, 1)]}
+        await self.broadcast(said)
 
     async def _open_found(self, turn, ident):
         """A press on a found chip: open the thing as if its word was typed (an app, a panel, a command) or
@@ -1543,6 +1547,7 @@ class AgentD:
             if log is None:
                 await self.event("local", turn=None, action="details", phase="done", ok=False,
                                  text="That turn's steps are not on this computer any more.")
+                await self._found_again(turn)
                 return
             await self._unqueue(turn)
             await self._details_file(log)
@@ -1551,9 +1556,17 @@ class AgentD:
         if action is None:
             await self.event("local", turn=None, action="found", phase="done", ok=False,
                              text=f"Could not open {pick.label}.")
+            await self._found_again(turn)
             return
         await self._unqueue(turn)
         await self.local(action, pick.say)
+
+    async def _found_again(self, turn: int):
+        """A press that could not open its thing: the ask stays kept, and so do its chips (the bar took them
+        down when it was pressed)."""
+        said = self._found_said.get(turn)
+        if said is not None and any(i == turn for i, _ in self.pending):
+            await self.broadcast(said)
 
     async def _details_file(self, log: Path):
         argv = [launcher._bombadil(), "watch", "--file", str(log)]
