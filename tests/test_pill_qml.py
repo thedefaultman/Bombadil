@@ -1,7 +1,7 @@
-"""The line above the pill, driven by agentd's events in an offscreen window.
+"""The line above the pill, and the picture above that, driven by agentd's events in an offscreen window.
 
-PillState, StatusLine and QueueChips are plain Qt Quick (Quickshell only wraps them in
-shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save a
+PillState, StatusLine, QueueChips, SetupChips, AiCard and CardHost are plain Qt Quick (Quickshell only
+wraps them in shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save a
 picture of each state.
 """
 
@@ -29,15 +29,17 @@ import "%s"
 
 Window {
     id: w
-    width: 820; height: 260 + (w.screens - 1) * 200; visible: true
+    width: 820; height: 760 + (w.screens - 1) * 200; visible: true
     color: "#3b4a5a"
     property var sent: []
     property int screens: 1
+    property var summons: []
     property int handOffs: 0
     PillState {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onSummoned: text => w.summons = w.summons.concat([text])
         onHandOff: w.handOffs += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
@@ -49,9 +51,17 @@ Window {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 12 }
             anchors.bottomMargin: 12 + index * 200
             spacing: 8
+            // As in shell.qml: loaded on its own, so a kit that will not load costs the pictures only.
+            Loader {
+                id: cardHost
+                visible: status === Loader.Ready && item !== null && item.opacity > 0
+                Layout.fillWidth: true
+                Component.onCompleted: setSource("%s/CardHost.qml", { pill: pillState, maxHeight: 520 })
+            }
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
             SetupChips { objectName: "setupChips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
+            AiCard { objectName: "aiCard"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
         }
     }
@@ -68,7 +78,7 @@ class Bar:
     def __init__(self, app, tmp_path):
         self.app = app
         qml = tmp_path / "harness.qml"
-        qml.write_text(HARNESS % SHELL.as_uri())
+        qml.write_text(HARNESS % (SHELL.as_uri(), SHELL.as_uri()))
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
         self.engine.warnings.connect(lambda ws: self.warnings.extend(w.toString() for w in ws))
@@ -544,6 +554,326 @@ def test_hovering_the_line_on_one_screen_keeps_it_on_all(bar):
     assert bar.pill.property("mode") == "idle"
 
 
+def test_a_summon_can_carry_words_for_the_pill(bar):
+    bar.send(type="summon")
+    bar.send(type="summon", text="About ~/Documents/lease.pdf: ")
+    summons = bar.win.property("summons")
+    summons = summons.toVariant() if hasattr(summons, "toVariant") else summons
+    assert list(summons) == ["", "About ~/Documents/lease.pdf: "]
+
+
+def _hover_line(bar):
+    line = bar.item("statusLine")
+    centre = line.mapToScene(QtCore.QPointF(line.width() / 2, 6)).toPoint()
+    QtTest.QTest.mouseMove(bar.win, centre)
+    bar.pump(0.3)
+
+
+def test_resting_on_the_line_shows_why_and_a_marked_step_always_does(bar):
+    bar.call("submit", "make the tunnel")
+    bar.send(kind="turn_start", turn=3, prompt="make the tunnel")
+    bar.send(kind="status", turn=3, text="Reading wireguard.com", source="step",
+             because="The vendor's page says which port the tunnel needs.")
+    # Quiet until you rest the mouse on it.
+    assert not bar.shown("because")
+    _hover_line(bar)
+    assert bar.shown("because") and bar.text("because") == "The vendor's page says which port the tunnel needs."
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
+    bar.pump(0.3)
+    assert not bar.shown("because")
+    # A step that changes the system shows its reason under the command, and what it followed.
+    bar.send(kind="status", turn=3, text="Writing wg0.conf", source="step", risk="system",
+             command="write /etc/wireguard/wg0.conf", because="Your router hands out 192.168.1.x, so the tunnel uses 10.8.0.x.",
+             after={"label": "wireguard.com/quickstart", "kind": "web", "text": "after reading wireguard.com/quickstart"})
+    assert bar.shown("command") and bar.shown("because") and bar.shown("after")
+    assert bar.text("after") == "after reading wireguard.com/quickstart"
+    bar.snap("4-because-and-after")
+    # The agent's own words replace them, and so does the next step that has no reason.
+    bar.send(kind="status", turn=3, text="Restarting wg-quick", source="step", risk="system", command="systemctl restart wg-quick@wg0")
+    assert not bar.shown("because") and not bar.shown("after")
+    bar.send(kind="turn_end", turn=3, seconds=4, changed=True, summary="Made the tunnel.")
+    assert not bar.shown("because") and bar.pill.property("because") == "" and bar.pill.property("after") == ""
+
+
+def test_why_flashes_the_reason_over_the_running_line_long_enough_to_read_it(bar):
+    bar.call("submit", "install docker")
+    bar.send(kind="turn_start", turn=7, prompt="install docker")
+    bar.send(kind="status", turn=7, text="Installing docker", source="step", risk="system", command="sudo pacman -S docker",
+             because="Docker is not installed yet.")
+    bar.send(kind="local", action="why", phase="done", ok=True, text="Docker is not installed yet.")
+    assert bar.text() == "Docker is not installed yet." and bar.pill.property("flashFor") == 8000
+    assert bar.pill.property("line") == "Installing docker"
+    bar.send(kind="local", action="panel", phase="done", ok=True, text="Opened the browser.")
+    assert bar.pill.property("flashFor") == 3500
+
+
+# -- the picture above the line --
+
+def _diagram(**over):
+    from bombadil import cards
+    spec = {"shape": "chain", "title": "How a VPN works", "nodes": [{"label": "Laptop"}, {"label": "Tunnel", "state": "new"},
+                                                                  {"label": "Internet"}], "say": "Everything goes through the tunnel."}
+    spec.update(over)
+    card, errors = cards.validate_diagram(spec)
+    assert card is not None, errors
+    return {**card, "id": over.get("id", "card-1")}
+
+
+def _card_event(bar, card, turn=None):
+    bar.send(kind="card", turn=turn, card=card)
+
+
+def test_a_card_event_draws_the_picture_above_the_line(bar):
+    _card_event(bar, _diagram())
+    assert bar.shown("cardHost") and bar.text("cardTitle") == "How a VPN works"
+    assert bar.text("cardSource") == "drawn by the agent"
+    assert bar.text("cardSay") == "Everything goes through the tunnel."
+    assert bar.items("box-n1") and bar.items("box-n3")
+    # It sits above the status line, over the pill (once it has finished rising into place).
+    bar.pump(0.3)
+    assert bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y() < bar.item("statusLine").mapToScene(QtCore.QPointF(0, 0)).y() + 1
+    bar.snap("card-agent")
+    assert bar.warnings == []
+
+
+def test_the_card_makes_room_at_once_so_the_bars_window_is_resized_once_not_every_frame(bar):
+    # The bar's window is as tall as its contents. A height that grew over a few frames resized it
+    # every frame, and on the compositor the pill jumped about while it caught up.
+    _card_event(bar, _diagram())
+    host = bar.item("cardHost")
+    first = host.property("implicitHeight")
+    assert first > 100
+    bar.pump(0.5)
+    assert host.property("implicitHeight") == first
+    bar.call("dismissCard")
+    bar.pump(0.06)
+    assert host.property("implicitHeight") == first and host.property("opacity") < 1     # still there, fading out
+    bar.pump(0.4)
+    assert host.property("implicitHeight") == 0 and not bar.shown("cardHost")
+
+
+def test_the_agents_words_on_the_line_start_at_a_word_not_in_the_middle_of_one(bar):
+    said = ("A VPN builds an encrypted tunnel to a server, so your network cannot read your traffic and websites see "
+            "the server's address instead of yours. The catch is that you are trusting the VPN company, which can "
+            "see the traffic that comes out of its server.")
+    bar.call("submit", "how does a vpn work")
+    bar.send(kind="turn_start", turn=1, prompt="how does a vpn work")
+    bar.send(kind="status", turn=1, text="Drawing a picture", source="step")
+    bar.send(kind="status", turn=1, text=said, source="agent")
+    shown = bar.text()
+    line = bar.item("line")
+    assert shown.startswith("…") and said.endswith(shown[1:])
+    assert said[len(said) - len(shown) + 1 - 1] == " " and shown[1] != " "      # a whole word follows the "…"
+    assert line.property("contentWidth") <= line.property("width") and shown.endswith("its server.")
+    # More room shows more words; a line that fits shows all of it.
+    bar.send(kind="status", turn=1, text="and it is ready to use.", source="agent")
+    assert bar.text() == "and it is ready to use."
+    # When the turn is over the whole answer is there, wrapped.
+    bar.send(kind="result", turn=1, ok=True, text=said)
+    bar.send(kind="turn_end", turn=1, seconds=4, changed=False, summary=said)
+    assert bar.text() == said
+    assert bar.warnings == []
+
+
+def test_a_picture_the_machine_drew_says_so(bar):
+    import test_sysmap as fixtures
+    from bombadil import sysmap
+    card = sysmap.capture_boot(fixtures.fake({"systemd-analyze critical-chain": fixtures.CHAIN,
+                                              "systemd-analyze time": fixtures.TIME}))["card"]
+    _card_event(bar, {**card, "id": "card-2"})
+    assert bar.text("cardSource") == "from this machine"
+    assert bar.items("step-u7")
+    bar.snap("card-machine")
+    assert bar.warnings == []
+
+
+def test_a_newer_card_replaces_the_older_and_the_next_turn_clears_it(bar):
+    _card_event(bar, _diagram())
+    _card_event(bar, _diagram(title="What changed", id="card-2"))
+    assert bar.text("cardTitle") == "What changed" and bar.pill.property("card")["id"] == "card-2"
+    bar.send(kind="turn_start", turn=2, prompt="go on")
+    assert bar.pill.property("card") is None
+    bar.pump(0.4)
+    assert not bar.shown("cardHost")
+
+
+def test_a_half_drawn_card_grows_in_place_and_the_finished_one_takes_its_id(bar):
+    from bombadil import cards
+    half = cards.partial_diagram('{"shape": "chain", "title": "How a VPN works", "nodes": [{"label": "Laptop"}, {"label": "Tun')
+    _card_event(bar, {**half, "id": "stream-t1"}, turn=1)
+    assert bar.text("cardSource") == "drawing…" and bar.items("box-n1") and not bar.items("box-n2")
+    _card_event(bar, {**_diagram(), "id": "stream-t1"}, turn=1)
+    assert bar.text("cardSource") == "drawn by the agent" and bar.items("box-n3")
+    # A call that failed takes its half back; one that is not showing stays.
+    _card_event(bar, {**half, "id": "stream-t2"}, turn=1)
+    bar.send(kind="card", turn=1, card={"id": "stream-t1", "gone": True})
+    assert bar.pill.property("card")["id"] == "stream-t2"
+    bar.send(kind="card", turn=1, card={"id": "stream-t2", "gone": True})
+    assert bar.pill.property("card") is None
+
+
+def test_a_connection_lost_mid_drawing_takes_the_half_picture_away(bar):
+    from bombadil import cards
+    half = cards.partial_diagram('{"shape": "chain", "title": "How a VPN works", "nodes": [{"label": "Laptop"}, {"label": "Tun')
+    _card_event(bar, {**half, "id": "stream-t1"}, turn=1)
+    bar.call("lost")
+    assert bar.pill.property("card") is None
+    _card_event(bar, _diagram())
+    bar.call("lost")
+    assert bar.pill.property("card") is not None     # a finished picture is still true
+
+
+def test_the_cross_puts_it_away_and_so_does_esc(bar):
+    _card_event(bar, _diagram())
+    bar.click("cardClose")
+    assert bar.pill.property("card") is None
+    _card_event(bar, _diagram(id="card-2"))
+    bar.call("dismiss")
+    assert bar.pill.property("card") is None
+
+
+def test_a_receipt_fades_with_the_closing_line_but_a_picture_you_asked_for_stays(bar):
+    bar.send(kind="turn_start", turn=1, prompt="start the vpn")
+    bar.send(kind="turn_end", turn=1, seconds=3, changed=False, summary="Started the VPN.")
+    _card_event(bar, {**_diagram(title="Network, before and after"), "receipt": True}, turn=1)
+    assert bar.pill.property("fadeAfter") >= 15000          # read the two together
+    bar.call("fade")
+    assert bar.pill.property("card") is None and bar.pill.property("mode") == "idle"
+    _card_event(bar, _diagram(id="card-2"))
+    bar.send(kind="local", turn=None, action="picture", phase="done", ok=True, text="Here is how you are connected.")
+    assert bar.pill.property("fadeAfter") == 8000
+    bar.call("fade")
+    assert bar.pill.property("card") is not None and bar.pill.property("mode") == "idle"
+
+
+def test_a_picture_you_asked_for_keeps_its_line_so_the_picture_does_not_drop_when_the_line_goes(bar):
+    # The picture sits above the line: when the line faded, the picture (and its ×) dropped by the line's height.
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="done", ok=True, text="Showing what starts when you boot.")
+    _card_event(bar, _diagram())
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("mode") == "local" and bar.shown("line")           # long past its time, still there
+    assert not bar.item("statusLine").findChild(QtCore.QObject, "lineTimer").property("running")   # nothing to tick for while it is held
+    top = bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y()
+    bar.pump(0.5)
+    assert bar.item("cardHost").mapToScene(QtCore.QPointF(0, 0)).y() == top
+    bar.click("cardClose")                                                      # the picture goes; so does its sentence
+    bar.pump(1.0)
+    assert bar.pill.property("card") is None and bar.pill.property("mode") == "idle"
+    # A line with no picture fades as it always did, and a receipt fades with its line.
+    bar.send(kind="local", turn=None, action="app", target="passwords", phase="done", ok=True, text="Opened Passwords.")
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("mode") == "idle"
+
+
+def test_a_receipt_still_goes_with_its_line_by_the_clock(bar):
+    bar.send(kind="turn_start", turn=2, prompt="restart the vpn")
+    bar.send(kind="turn_end", turn=2, seconds=3, changed=False, summary="Restarted the VPN.")
+    _card_event(bar, {**_diagram(title="Network, before and after"), "receipt": True}, turn=2)
+    bar.pump(0.5)
+    assert bar.pill.property("card") is not None and bar.pill.property("mode") == "closing"
+    bar.pill.setProperty("fadeAfter", 200)
+    bar.pump(1.0)
+    assert bar.pill.property("card") is None and bar.pill.property("mode") == "idle"
+
+
+def test_a_full_screen_window_puts_the_picture_away_and_it_comes_back(bar):
+    _card_event(bar, _diagram())
+    bar.pump(0.4)
+    host = bar.item("cardHost")
+    assert bar.shown("cardHost") and host.property("implicitHeight") > 100
+    host.setProperty("suppressed", True)
+    bar.pump(0.5)
+    assert not bar.shown("cardHost") and host.property("implicitHeight") == 0
+    assert bar.pill.property("card") is not None                      # put away, not dismissed
+    host.setProperty("suppressed", False)
+    bar.pump(0.5)
+    assert bar.shown("cardHost") and host.property("implicitHeight") > 100
+    assert bar.warnings == []
+
+
+def test_a_picture_that_fails_puts_the_old_one_away_but_a_failed_click_does_not(bar):
+    _card_event(bar, _diagram())
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="start", text="Drawing your boot")
+    assert bar.pill.property("card") is not None                # still there while the new one is read
+    bar.send(kind="local", turn=None, action="picture", target="boot", phase="done", ok=False,
+             text="Could not read the boot: systemd-analyze took longer than expected.")
+    assert bar.pill.property("card") is None
+    assert bar.pill.property("source") == "error"
+    _card_event(bar, _diagram(id="card-2"))
+    bar.send(kind="local", turn=None, action="open", target="nginx.service", phase="done", ok=False, text="Could not open nginx.service.")
+    assert bar.pill.property("card") is not None                # the picture is still true; only the click failed
+
+
+def test_a_window_the_launcher_opens_puts_the_picture_away_but_hiding_one_does_not(bar):
+    # The picture sits over the middle of the screen, where a window opens: the Brain's list was under it.
+    def opened(action, verb, ok=True, phase="done"):
+        _card_event(bar, _diagram())
+        bar.send(kind="local", turn=None, action=action, target="x", verb=verb, phase=phase, ok=ok, text="Opened.")
+        return bar.pill.property("card") is None
+    for action in ("brain", "app", "panel"):
+        assert opened(action, "open"), action
+    assert not opened("brain", "open", ok=False)                 # nothing opened: the picture is still true
+    assert not opened("brain", "open", phase="start")           # it goes once the window is up
+    assert not opened("panel", "hide") and not opened("app", "close")
+    assert not opened("open", "open")                           # a click on a box in the picture keeps it
+    assert not opened("undo", "open")
+
+
+def test_hovering_the_picture_keeps_the_line_from_fading(bar):
+    _card_event(bar, _diagram())
+    it = bar.item("cardHost")
+    centre = it.mapToScene(QtCore.QPointF(it.width() / 2, it.height() / 2)).toPoint()
+    QtTest.QTest.mouseMove(bar.win, centre)
+    bar.pump(0.2)
+    assert bar.pill.property("hovers") >= 1
+    QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(2, 2))
+    bar.pump(0.2)
+    assert bar.pill.property("hovers") == 0
+
+
+def test_a_box_that_names_a_thing_opens_it_through_agentd(bar):
+    _card_event(bar, _diagram(nodes=[{"label": "NetworkManager", "opens": {"kind": "unit", "value": "NetworkManager.service"}},
+                                     {"label": "Turn 3", "opens": {"kind": "turn", "value": "3"}},
+                                     {"label": "Nothing to open"}]))
+    bar.pump(0.5)       # the card grows and fades in; a click lands on the box only once it has stopped moving
+    before = len(bar.sent)
+    bar.click("box-n1")
+    assert bar.sent[before:] == [{"type": "open", "kind": "unit", "value": "NetworkManager.service"}]
+    bar.click("box-n2")
+    assert bar.sent[-1] == {"type": "details", "turn": 3}
+    n = len(bar.sent)
+    bar.click("box-n3")
+    assert len(bar.sent) == n
+
+
+def test_nothing_is_sent_to_agentd_while_it_is_away(bar):
+    _card_event(bar, _diagram(nodes=[{"label": "NetworkManager", "opens": {"kind": "unit", "value": "NetworkManager.service"}}]))
+    bar.call("lost")
+    n = len(bar.sent)
+    bar.click("box-n1")
+    assert len(bar.sent) == n and bar.pill.property("flash") == "Not connected to the agent yet."
+
+
+@pytest.mark.parametrize("card", [None, 3, "a string", {"type": "list", "id": "x"}, {"gone": True}])
+def test_odd_cards_change_nothing(bar, card):
+    _card_event(bar, _diagram())
+    bar.send(kind="card", turn=None, card=card)
+    assert bar.pill.property("card")["id"] == "card-1" and bar.warnings == []
+
+
+def test_a_tall_picture_scrolls_inside_the_bar_instead_of_running_off_the_screen(bar):
+    nodes = [{"id": f"s{i}", "label": f"Step {i}"} for i in range(1, 13)]
+    links = [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(1, 12)]
+    _card_event(bar, _diagram(shape="layers", nodes=nodes, links=links))
+    bar.pump(0.4)
+    scroll = bar.item("cardScroll")
+    assert scroll.property("contentHeight") > scroll.property("height") >= 100
+    assert bar.item("cardHost").property("height") <= 520 + 40
+    bar.snap("card-tall")
+
+
 CHOOSE = dict(type="setup", state="choose", line="Which AI should run this computer?", tone="ask",
               actions=[{"id": "provider:claude", "label": "Claude", "style": "big"},
                        {"id": "provider:codex", "label": "Codex", "style": "big"}])
@@ -631,6 +961,17 @@ def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
     assert bar.text() == "Apps  Documents"
     bar.call("dismiss")
     assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
+
+
+def test_a_line_that_fades_before_sign_in_brings_the_setup_back_and_leaves_a_picture_you_asked_for(bar):
+    bar.send(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    bar.send(kind="local", turn=None, action="picture", phase="done", ok=True, text="Showing how you're connected.")
+    _card_event(bar, _diagram())
+    bar.call("fade")                 # the line's own timer, not Esc
+    assert bar.text() == "Sign in to Claude to start." and bar.pill.property("card") is not None
+    bar.call("dismiss")
+    assert bar.pill.property("card") is None
 
 
 READY = dict(type="setup", state="ready", tone="done", actions=[])

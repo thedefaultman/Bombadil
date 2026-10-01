@@ -17,7 +17,7 @@
 1. The bar (or `bombadil ask`) writes `{"type":"prompt","text":…}` to the socket.
 2. `agentd` takes a snapper snapshot named `turn:<n>: <prompt>`.
 3. It runs the provider CLI once, in full-access mode, resuming the previous session id,
-   with `bombadil-os-mcp` in its MCP config and `providers.SYSTEM_PROMPT` appended.
+   with `bombadil-os-mcp` in its MCP config and `providers.system_prompt()` appended.
 4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
 5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
 
@@ -32,8 +32,8 @@ agentd never handles a password or a token: it runs the provider CLI's own login
 credentials exactly as it would in a terminal of yours (`signin.py`).
 
 1. Setup states, shown in the pill with chips: `choose` (first boot: Claude or Codex),
-   `checking`, `signed_out`, `offline`, `signing_in`, `ready`. Prompts wait until `ready`
-   and then run; a `!command` runs anyway.
+   `checking`, `signed_out`, `offline`, `signing_in`, `resting` (below), `ready`. Prompts wait
+   until `ready` and then run; a `!command` runs anyway.
 2. The CLI runs with `BROWSER=bombadil-browser`, which hands its page to agentd over the
    socket, tagged with the sign-in's id. The page opens in the browser panel's Chromium
    (own profile under `~/.local/share/bombadil/browser`, no first-run pages, DevTools on
@@ -61,6 +61,133 @@ credentials exactly as it would in a terminal of yours (`signin.py`).
 `fake_signin.py` plays a provider login on localhost for the tests and the VM smoke test
 (`BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto|manual|never|fail`).
 
+## When the AI rests
+
+Out of plan or spending, or paused by hand, the AI "rests". That is a state of the machine, not the
+error of one ask: agentd says it once, with the time the provider gave, holds every ask that needs the
+AI instead of failing it, and leaves everything else alone. In the code it is the setup state `resting`
+beside `ready` (`rest.py` holds the state file, the reading of a reset time and every line of words;
+the design is `design/poor-man-switch-brief.md`). The screen says what is true ("Claude is at its
+limit until 15:00", "Claude is paused"); the design's name for the idea appears nowhere on it.
+
+```
+             refused for a limit (item 2), or paused by hand
+             (the AI card's switch, "pause claude")
+  +-------+ ------------------------------------------------> +---------+
+  | ready |                                                   | resting |
+  +-------+ <------------------------------------------------ +---------+
+             the reset: its time plus a minute, on the wall clock
+             Resume Claude (a pause by hand), or "resume claude"
+             Raise the limit, then Try again
+             a completed sign-in (clears a limit, not a pause)
+
+  resting -> resting: the first waiting ask after the reset is refused again. The
+  provider's new time replaces the old one (5 minutes on, if it is already past).
+```
+
+1. **What is stored.** `rest.json` in the state directory (`paths.state_dir()`, not the runtime one, so
+   a weekly limit and a pause by hand survive a restart or a reboot): per provider, a limit and a hand
+   pause. agentd is the only writer, and any process may read it.
+
+   ```json
+   {"hand": {"claude": {"since": 1759300000.0}},
+    "providers": {"claude": {"why": "limit", "kind": "five_hour",
+                             "until": 1759329600.0, "since": 1759300000.0}}}
+   ```
+
+   `why` is `limit` (a plan window) or `spend` (a spending cap, or credits used up); `kind` is the
+   provider's own window (`five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`) or
+   null; `until` is wall-clock seconds, or null when the provider gave no time. A hand pause has no time
+   and outranks a limit, so switching it off shows what is left. A limit is written before its turn
+   ends, so a restart finds it, and a reader never sees one past its time plus a minute.
+2. **What counts as running out.** After a failed turn that is not a `!command`, agentd asks the turn's
+   provider (`Provider.limit`, `providers.py`). It answers only when both hold: a real refusal, and
+   quota evidence. Never a busy moment.
+   - Claude: the refusal is an HTTP 429 (`api_error_status`), or `terminal_reason` `api_error` under an
+     assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
+     `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
+     the CLI's text ("hit your session limit", "out of usage credits", "spend cap").
+   - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
+     exceeded".
+   - Not a limit: a result that carries `api_error` (an entitlement check such as
+     `model_requires_usage_credits`), the throttle notice ("not your usage limit"), "high load", a
+     529, a short `api_retry`, the context window, a budget cap, Codex's retried "rate limit
+     exceeded:", and anything a `!command` prints. The `rate_limit_event` alone never rests the machine
+     (the CLI re-sends it, and a window can read `rejected` while credits pay): it says which window
+     and when, and the refusal decides.
+   - A CLI that sleeps through the window instead of ending the turn (unattended retries) shows itself
+     by a rejected event and a retry delay of five minutes or more: the turn is refused at once and the
+     CLI stopped (`Provider.waiting`).
+3. **Times.** The provider's own, never a guess: `resetsAt` of the rejected window when it is in the
+   future, else `overageResetsAt`, else the time in its sentence ("resets 3:45pm", "try again at
+   3:45 PM", "Oct 2nd, 2026 3:45 PM"; local time unless it names a zone), else none. They read "15:00"
+   for today, "Thursday 09:00" within six days ("Thu 09:00" on a chip), "1 Nov" beyond; never "tomorrow".
+4. **The refused turn.** It has no `result` and no `error` event, which are a failure's. Its log gets a
+   `rest` event, and `turn_end` carries `requeued: true` and a `line`: "Claude hit its limit partway,
+   after changing 2 files. It carries on at 15:00." when it changed something (with Undo and Details,
+   as after any turn that did), the resting line when it changed nothing. The ask goes back to the
+   front of the queue under its own turn id (`queued` again), in the same conversation: a session id is
+   adopted only from a turn that worked, so a refusal never drops it. What the user did without the
+   model since its last turn is kept to tell it again, and the rerun is told what the cut-off try had
+   changed ("[The last try stopped at a usage limit after: … Check what is done before redoing it.]").
+   The turn took a restore point as it started; when it changed nothing, `skip_restore_point` puts back
+   the undo marker that the start cleared, so the next "undo" goes past the empty point instead of
+   saying "Undone" and changing nothing. A turn stopped by hand is not put back.
+5. **The queue.** The gate that holds asks while signed out holds them here (`_runnable`: only `ready`,
+   or a `!command`); launcher words are matched before anything is queued. Every held ask is a chip in
+   the queue the pill already has, labelled with the entry's `wait` ("15:00", "Thu 09:00", "paused",
+   "limit") instead of "next"; "On it" never shows for it, and x unqueues it as ever. An app's ask
+   arrives as `[from app notes] summarise this`, and while resting a newer ask of the same app replaces
+   its older waiting one (`unqueued` with `replaced: true`, no error), so an app on a timer cannot fill
+   the queue. The kit's `Agent` reads `setup` and `rest` from `status` (`ready`, and `note`: "At 15:00"
+   under a button that asks), keeps a turn whose `turn_end` is `requeued` waiting without a `replied`,
+   and answers the app after the reset. `bombadil ask` prints the resting line on stderr and exits 75,
+   leaving its ask queued.
+6. **Coming back.** `_rest_watch` sleeps at most 60 s at a time and compares the wall clock with `until`
+   plus a minute, so a laptop that slept through the reset wakes right. Nothing asks the provider
+   whether the limit is over: the first waiting ask is the check, and with nothing waiting nothing is
+   sent. The line is "Claude is back. Running your 3 waiting asks." (tone `done`); the cut-off ask runs
+   first, then the rest in the order typed. A spending limit, or a limit with no time (rare), shows
+   "Raise the limit", which opens the page the provider's message names (else its usage page) in the
+   browser panel and buys nothing; the button then reads "Try again", which clears the limit so that
+   the first waiting ask is the check. A hand pause ends with the switch, "resume claude", "use claude"
+   or Resume Claude. `check_access` reads `rest.json` too, so stored credentials do not turn `resting`
+   back into `ready`; "sign in" while resting does not start a `codex login`, which would revoke a
+   working login (`login_replaces`); a completed sign-in clears a limit (the new login may be another
+   account, with its own), never a pause.
+7. **On the screen.** The stone takes a new face, `resting`: hollow and grey, no ring, never red, never
+   the amber mark that means "your turn". The line above the pill is agentd's own (`rest.words`, the
+   same in every voice; the shell holds none of the words). It shows when the state flips, when the
+   pill is summoned and when an ask has to wait; otherwise it fades after 12 s and the empty field
+   carries the state ("Open or find anything. Asks wait for 15:00."). It outranks the greeting. At
+   most one button sits under it (`setup_action`: `resume`, `raise`, `retry`). A click on the stone
+   while no turn runs opens the AI card (`shell/AiCard.qml`): one row per AI from the `ai` message
+   ("Claude · ready", "Claude · at its limit until 15:00", "Codex · not signed in"), each with a switch
+   that is dimmed when it cannot be flipped. Flipping Claude's off sends
+   `{"type":"ai","op":"pause","provider":"claude"}`, the same as typing "pause claude"; on is "resume
+   claude". While a turn runs, the stone is still Stop.
+   What it looks like in the headless desktop test (`tests/desktop`, which refuses a turn with a real 429
+   from the scripted API): the line, one waiting ask labelled with the time it runs, and the empty field.
+
+   ![The resting line, a waiting ask labelled with its time, and the empty field that says when asks run](screens/resting/at-its-limit.png)
+
+   Two asks wait in the order they were typed, and a pause by hand has its one button and says "paused".
+
+   ![Two waiting asks](screens/resting/two-asks-waiting.png)
+   ![Paused by hand, with its Resume button](screens/resting/paused-by-hand.png)
+8. **What keeps working.** Nothing that is not a model ask looks at the state: launcher words (apps,
+   browser, terminal, files, undo, history, Details, Stop, the picture words, "pause" and "resume"),
+   `!commands`, apps and their processes, background jobs, and the browser panel with its own profile
+   (pages still need the network). Anything else waits as a chip.
+9. **What is deliberately not done.** No test calls and no retry loops: one refusal is enough, and
+   nothing more is sent until the reset, a press or a word. No ring or counter on the stone. Not a
+   "needs you": no amber mark, no red line, no card on the desk, since nothing is the user's to do
+   (Raise the limit is a button on the line, not a knock). No automatic move to the other AI and none
+   to paid credits: "use codex" is the user's own word, and Raise the limit only opens the provider's
+   page. The rest is kept per provider, so Claude resting leaves Codex alone. Not built yet, and in the
+   design: the finder that answers a sentence from what is on the computer, a warning before the wall,
+   borrowing the other AI until the reset, and offline and outages in the same shape.
+
 ## Generated apps
 
 `create_app` writes `main.qml`, optional `app.py` (a `Backend(QObject)` exposed as
@@ -74,6 +201,28 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 `src/bombadil/appkit/native`), and the `bombadil-apps` skill in `share/skills` tells the
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
+
+## Why lines and pictures
+
+Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
+step (`because`) and what the turn read from outside (`after`); the status line shows both on
+hover. A bare "why" during a turn is answered from that record.
+
+`show_card` (the agent) and `system_map` (the machine itself) hand `agentd` a `diagram` card
+over its socket (`cards.py` checks and lays it out, `sysmap.py` captures the network, boot, one
+service, disks, sound or screens from the real machine in parallel, under half a second; the boot
+record and the check that the provider answers get longer, since both are slow by nature). `agentd`
+broadcasts it, `shell/CardHost.qml` draws it above the status line with the kit's `Diagram`, and the
+agent gets the same picture back in words. A card still being written streams in a box at a time;
+a turn that changed a part of the machine it touched ends with a before/after receipt. A click on a
+box that names a file, service, package, page or turn comes back as `{"type":"open"}`; a service,
+package, folder or text file opens in the details drawer with `bombadil view` (`pager.py`: Esc
+closes it, the arrows and wheel scroll), and the line says "Showing" only once the drawer's window
+was there. A picture that cannot be drawn takes the last one away. (How each picture reads the
+machine, and what a real VM taught us, is in [pictures.md](pictures.md).)
+The card host is loaded through a `Loader`, so a picture that will not draw costs the pictures, never
+the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
+import from outside its own folder any other way.)
 
 ## Next
 

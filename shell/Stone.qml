@@ -9,6 +9,7 @@ import Bombadil as Kit
 //   working    orange, turns a third of a turn a second around the b, which never moves
 //   needs      amber, knocks twice and waits, with a glow that breathes behind it
 //   done       green, one hop with a squash on landing, then still
+//   resting    the AI is out of plan or paused: the outline whole in grey over a faint fill, the b cut in; still
 //   stopped    the Stop button's own grey square
 //   offline    the outline alone, broken, red; the b stays
 //   starting   the working roll (the pill adds the word "Starting")
@@ -27,8 +28,17 @@ Item {
     implicitHeight: 24
 
     readonly property bool rolling: face === "working" || face === "starting"
-    readonly property bool drawn: face !== "stopped" && face !== "offline"
+    readonly property bool drawn: face !== "stopped" && face !== "offline" && face !== "resting"
     readonly property color fill: rolling ? Kit.Theme.accent : face === "needs" ? Kit.Theme.warn : Kit.Theme.good
+
+    // What the stone is painted with. The scene graph drops a colour change made in the first
+    // frames after the bar starts: on the VM the face went starting, then rest 39 ms later, and the
+    // stone stayed the starting orange until its next change, a hundred seconds on. So for the first
+    // `settle` ms the stone is painted resting green whatever its face says, then follows `fill`
+    // (a face that is still starting or needing you is painted from then on).
+    property int settle: 400
+    property color paint: Kit.Theme.good
+    Timer { interval: stone.settle; running: true; onTriggered: stone.paint = Qt.binding(() => stone.fill) }
 
     // The stone: corner radius 2.7, side radius 15.3, top corner centred on (12, 5.7), centroid at
     // (12, 12.975). It rocks on its bottom arc (radius 15.3 about the top corner's centre) to lean
@@ -53,7 +63,9 @@ Item {
     readonly property real rideX: arcR * rock * toRad - armR * Math.sin(rock * toRad)
     readonly property real rideY: armR * (Math.cos(rock * toRad) - 1)
 
-    // Needs you: the glow, a filled radial fade under the stone (never a ring).
+    // Needs you: the glow, a filled radial fade under the stone (never a ring). It reaches 16 px from
+    // the centroid, 5 px past the stone's edge and past the 24 px slot into the pill's padding: at 11 px
+    // it was a 1 px halo that did not read at 1x.
     Shape {
         anchors.fill: parent
         visible: stone.face === "needs"
@@ -61,13 +73,13 @@ Item {
         ShapePath {
             strokeColor: "transparent"
             fillGradient: RadialGradient {
-                centerX: 12; centerY: 12.975; centerRadius: 11
+                centerX: 12; centerY: 12.975; centerRadius: 16
                 focalX: 12; focalY: 12.975
                 GradientStop { position: 0; color: Kit.Theme.warn }
-                GradientStop { position: 0.45; color: Kit.Theme.alpha(Kit.Theme.warn, 0.85) }
+                GradientStop { position: 0.58; color: Kit.Theme.alpha(Kit.Theme.warn, 0.7) }
                 GradientStop { position: 1; color: Kit.Theme.alpha(Kit.Theme.warn, 0) }
             }
-            PathAngleArc { centerX: 12; centerY: 12.975; radiusX: 11; radiusY: 11; startAngle: 0; sweepAngle: 360 }
+            PathAngleArc { centerX: 12; centerY: 12.975; radiusX: 16; radiusY: 16; startAngle: 0; sweepAngle: 360 }
         }
     }
 
@@ -88,7 +100,7 @@ Item {
                 Rotation { origin.x: 12; origin.y: 12.975; angle: stone.turn }
             ]
             ShapePath {
-                fillColor: stone.fill
+                fillColor: stone.paint
                 strokeColor: "transparent"
                 PathSvg {
                     path: "M10.65 3.362A2.7 2.7 0 0 1 13.35 3.362A15.3 15.3 0 0 1 21 16.612A2.7 2.7 0 0 1 19.65 18.95"
@@ -118,6 +130,34 @@ Item {
         visible: stone.face === "stopped"
         x: 6; y: 6; width: 12; height: 12; radius: 2.4
         color: Kit.Theme.muted
+    }
+
+    // Resting: the stone as a hollow, grey and still. The outline is the offline one, whole, and a
+    // faint grey fill keeps the b legible: it is cut in the ground's colour as on every other face.
+    Shape {
+        anchors.fill: parent
+        visible: stone.face === "resting"
+        ShapePath {
+            fillColor: Kit.Theme.alpha(Kit.Theme.muted, 0.3)
+            strokeColor: Kit.Theme.muted
+            strokeWidth: 1.5
+            joinStyle: ShapePath.MiterJoin
+            PathSvg {
+                path: "M10.763 4.082A2.475 2.475 0 0 1 13.238 4.082A14.025 14.025 0 0 1 20.25 16.228A2.475 2.475 0 0 1 19.013 18.371"
+                    + "A14.025 14.025 0 0 1 4.988 18.371A2.475 2.475 0 0 1 3.75 16.228A14.025 14.025 0 0 1 10.762 4.082Z"
+            }
+        }
+        Shape {
+            anchors.fill: parent
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: stone.ground
+                strokeWidth: 1.6
+                capStyle: ShapePath.FlatCap
+                joinStyle: ShapePath.MiterJoin
+                PathSvg { path: "M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86" }
+            }
+        }
     }
 
     // Offline: the outline alone, 1.5 px, six round-capped dashes (one on each corner and each

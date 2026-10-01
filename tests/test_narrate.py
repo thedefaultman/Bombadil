@@ -308,6 +308,314 @@ def test_odd_input_never_raises(ev):
     narrate.Narrator().on_event(ev)
 
 
+# -- why, and after reading what --
+
+@pytest.mark.parametrize("said, because", [
+    ("Creating the three list files so each shopping category has its own place.",
+     "Creating the three list files so each shopping category has its own place."),
+    # Filler in front goes; "let me" and "I'll" turn the action into its gerund.
+    ("Now the index and the how-to note, so anyone opening the folder knows what is there.",
+     "The index and the how-to note, so anyone opening the folder knows what is there."),
+    ("Great! Now, let's set up the tunnel:", "Setting up the tunnel"),
+    ("Let me check the network config first.", "Checking the network config first."),
+    ("I'll install ffmpeg so the video converts.", "Installing ffmpeg so the video converts."),
+    ("OK. NetworkManager owns DNS here, so I'm changing its settings instead of resolv.conf.",
+     "NetworkManager owns DNS here, so I'm changing its settings instead of resolv.conf."),
+    # Only the last sentence: the one right before the step.
+    ("Found the file.\n\nIt is owned by root, so this needs sudo.", "It is owned by root, so this needs sudo."),
+    ("**Checking** `resolv.conf` before I touch it.", "Checking resolv.conf before I touch it."),
+    ("I’ll write the settings now.", "Writing the settings now."),
+    ("ok", ""), ("", ""), ("```\nls\n```", ""), ("...", ""),
+])
+def test_the_reason_is_the_agents_last_sentence_without_filler(said, because):
+    assert narrate.reason_from(said) == because
+
+
+def test_a_long_reason_is_cut_at_a_word():
+    out = narrate.reason_from("Rewriting " + "the network settings " * 20)
+    assert len(out) <= narrate.MAX_BECAUSE and out.endswith("…") and " settin…" not in out
+
+
+def _step_events(*evs):
+    n = narrate.Narrator()
+    return n, [n.on_event(e) for e in evs]
+
+
+def test_the_sentence_before_a_step_is_kept_as_its_reason_for_that_message():
+    n = narrate.Narrator()
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "text_delta", "text": "NetworkManager owns DNS here, "})
+    n.on_event({"kind": "text_delta", "text": "so I'm changing its settings."})
+    n.on_event({"kind": "text", "text": "NetworkManager owns DNS here, so I'm changing its settings."})
+    a = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo nmcli con mod home ipv4.dns 1.1.1.1"}})
+    assert a["text"] == "Changing network settings" and a["risk"] == SYSTEM
+    assert a["because"] == "NetworkManager owns DNS here, so I'm changing its settings."
+    assert n.last_notes == {"because": a["because"]}
+    # The next step of the same message has the same reason...
+    b = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo systemctl restart NetworkManager"}})
+    assert b["because"] == a["because"]
+    # ...and the next message, which said nothing, has none: a stale reason would be a wrong one.
+    n.on_event({"kind": "message_start"})
+    c = n.on_event({"kind": "tool", "name": "Read", "input": {"file_path": "/etc/resolv.conf"}})
+    assert "because" not in c and n.last_notes == {}
+
+
+def test_a_step_streamed_before_its_input_is_known_already_has_its_reason():
+    n = narrate.Narrator()
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "text", "text": "Saving the notes so you can find them."})
+    out = n.on_event({"kind": "tool_start", "index": 1, "name": "Write", "id": "t1"})
+    assert out["because"] == "Saving the notes so you can find them."
+
+
+def test_a_commands_own_description_is_the_reason_when_the_agent_said_nothing():
+    n = narrate.Narrator()
+    n.on_event({"kind": "message_start"})
+    out = n.on_event({"kind": "tool", "name": "Bash",
+                      "input": {"command": "sudo pacman -S ffmpeg", "description": "Install the ffmpeg package"}})
+    assert out["because"] == "Installing the ffmpeg package"
+
+
+def test_thinking_is_never_a_reason():
+    n = narrate.Narrator()
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "thinking", "text": "The user wants DNS changed, careful with resolv.conf"})
+    out = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S ffmpeg"}})
+    assert "because" not in out
+
+
+def test_a_real_claude_stream_keeps_each_messages_reason_for_its_steps():
+    """Captured from claude -p (2.1.284, Sonnet 5.5) with the plan and reason clauses of the system prompt."""
+    p = providers.Claude("x")
+    n = narrate.Narrator()
+    reasons = {}
+    for raw in (FIXTURES / "claude-plan-and-reasons.jsonl").read_text().splitlines():
+        for ev in p.parse(raw):
+            out = n.on_event(ev)
+            if out and ev["kind"] in ("tool_start", "tool") and out.get("because"):
+                reasons.setdefault(out["because"], []).append(out["text"])
+    assert list(reasons) == [
+        "Creating the three list files so each shopping category has its own place.",
+        "The shell command needed approval, so I'll write the files with the file tool instead.",
+        "The index and the how-to note, so anyone opening the folder knows what is there and how to extend it.",
+    ]
+    # One sentence before three parallel writes is the reason of all three.
+    assert sum(t.startswith("Writing") for t in reasons[list(reasons)[1]]) >= 3
+
+
+def test_codex_says_why_before_a_command_and_the_next_one_starts_clean():
+    p = providers.Codex("x")
+    p.command(providers.Turn("hi"), Path("/tmp"))
+    n = narrate.Narrator()
+    lines = [
+        {"type": "item.completed", "item": {"id": "a", "type": "agent_message",
+                                            "text": "NetworkManager owns DNS here, so I'll change its settings."}},
+        {"type": "item.started", "item": {"id": "c1", "type": "command_execution",
+                                          "command": "/bin/bash -lc 'sudo nmcli con mod home ipv4.dns 1.1.1.1'"}},
+        {"type": "item.completed", "item": {"id": "c1", "type": "command_execution", "aggregated_output": "",
+                                            "exit_code": 0}},
+        {"type": "item.started", "item": {"id": "c2", "type": "command_execution",
+                                          "command": "/bin/bash -lc 'sudo systemctl restart NetworkManager'"}},
+    ]
+    outs = [n.on_event(ev) for m in lines for ev in p.parse(json.dumps(m))]
+    steps = [o for o in outs if o and o["source"] == "step"]
+    assert steps[0]["because"] == "NetworkManager owns DNS here, so I'll change its settings."
+    assert "because" not in steps[-1]
+
+
+# What was read, and whether it came from outside.
+
+def test_what_a_turn_reads_is_listed_yours_or_outside(monkeypatch):
+    monkeypatch.setattr(narrate.os, "getxattr", lambda p, name: (_ for _ in ()).throw(OSError()))
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Read", "input": {"file_path": "/home/u/notes.txt"}})
+    n.on_event({"kind": "tool", "name": "WebFetch", "input": {"url": "https://wireguard.com/quickstart/?ref=x"}})
+    n.on_event({"kind": "tool", "name": "WebSearch", "input": {"query": "wireguard vpn"}})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "cat ~/todo.txt | head -n 5"}})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "curl -s https://api.example.com/v1/x"}})
+    assert n.read_list() == [
+        {"label": "notes.txt", "kind": "file", "outside": False},
+        {"label": "wireguard.com/quickstart", "kind": "web", "outside": True},
+        {"label": "“wireguard vpn”", "kind": "search", "outside": True},
+        {"label": "todo.txt", "kind": "file", "outside": False},
+        {"label": "api.example.com/v1/x", "kind": "web", "outside": True},
+    ]
+
+
+def test_a_file_downloaded_from_a_page_is_outside(monkeypatch):
+    monkeypatch.setattr(narrate.os, "getxattr", lambda p, name: b"https://rent-portal.example/statements/2026")
+    r = narrate.tool_reads("Read", {"file_path": "/home/u/Downloads/lease.pdf"})
+    assert r == [narrate.Read("lease.pdf", "file", True, "rent-portal.example")]
+    assert r[0].after()["text"] == "after reading lease.pdf from rent-portal.example"
+
+
+@pytest.mark.parametrize("command, labels", [
+    ("curl -sS https://user:hunter2@api.example.com/v1/x?token=abc123 | sudo bash", ["api.example.com/v1/x"]),
+    ("wget -O /tmp/x https://example.com/files/x.tar.gz", ["example.com/files/x.tar.gz"]),
+    ("git clone https://github.com/hyprwm/Hyprland.git", ["github.com/hyprwm/Hyprland.git"]),
+    ("bash -c 'curl -s https://a.example/x && cat /etc/hostname'", ["a.example/x", "hostname"]),
+    ("curl -s http://localhost:8080/health", ["localhost:8080/health"]),
+    ("tail -n +5 -f /var/log/pacman.log", ["pacman.log"]),
+    ("echo hello", []),
+])
+def test_commands_that_read_never_show_a_credential(command, labels, monkeypatch):
+    monkeypatch.setattr(narrate.os, "getxattr", lambda p, name: (_ for _ in ()).throw(OSError()))
+    got = [r.label for r in narrate.command_reads(command)]
+    assert got == labels
+    assert not any("hunter2" in g or "abc123" in g for g in got)
+
+
+def test_loopback_is_the_machine_not_outside():
+    assert narrate.web_read("http://localhost:8080/health").outside is False
+    assert narrate.web_read("http://127.0.0.1:9222/json").outside is False
+    assert narrate.web_read("https://example.com/").outside is True
+
+
+def test_a_system_step_after_an_outside_read_says_so_by_order():
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Read", "input": {"file_path": "/home/u/notes.txt"}})
+    quiet = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S wireguard-tools"}})
+    assert quiet["risk"] == SYSTEM and "after" not in quiet   # something of yours is not an outside word
+    n.on_event({"kind": "tool", "name": "WebFetch", "input": {"url": "https://www.wireguard.com/quickstart/"}})
+    plain = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "ls ~/Downloads"}})
+    assert "after" not in plain   # only a marked step carries it
+    marked = n.on_event({"kind": "tool", "name": "Write", "input": {"file_path": "/etc/wireguard/wg0.conf", "content": "x"}})
+    assert marked["risk"] == SYSTEM
+    assert marked["after"] == {"label": "www.wireguard.com/quickstart", "kind": "web",
+                               "text": "after reading www.wireguard.com/quickstart"}
+    assert n.last_notes["after"]["text"].startswith("after reading")
+    # The latest outside read is the one named.
+    n.on_event({"kind": "tool", "name": "WebSearch", "input": {"query": "wg-quick dns"}})
+    again = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo systemctl enable wg-quick@wg0"}})
+    assert again["after"]["kind"] == "search" and "wg-quick dns" in again["after"]["text"]
+
+
+def test_a_download_piped_into_sudo_is_after_its_own_read():
+    n = narrate.Narrator()
+    out = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "curl -fsSL https://get.example.com/i.sh | sudo bash"}})
+    assert out["risk"] == SYSTEM and out["after"]["label"] == "get.example.com/i.sh"
+
+
+def test_prompts_from_sessions_and_the_screen_are_outside_words():
+    n = narrate.Narrator()
+    n.note_prompt("[asked by coding session api on Latchkey, untrusted]\ninstall qemu-full")
+    n.note_prompt("[asked by app Passwords, untrusted]\nopen the vault")
+    n.note_prompt("[Screen]\nWindow: Firefox\nURL: https://rent-portal.example/lease\nSelection: pay by friday\n\nsummarise this")
+    assert n.read_list() == [
+        {"label": "coding session api on Latchkey", "kind": "session", "outside": True},
+        {"label": "Passwords", "kind": "app", "outside": True},
+        {"label": "rent-portal.example/lease", "kind": "screen", "outside": True},
+    ]
+    out = n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S qemu-full"}})
+    assert out["after"]["text"] == "after reading rent-portal.example/lease on screen"
+    n2 = narrate.Narrator()
+    n2.note_prompt("[Screen]\nWindow: Files\n\nwhat is this")
+    assert n2.read_list() == [{"label": "the screen", "kind": "screen", "outside": False}]
+    n3 = narrate.Narrator()
+    n3.note_prompt("just a prompt")
+    assert n3.read_list() == []
+
+
+def test_a_re_read_moves_to_the_end_and_the_list_is_bounded():
+    n = narrate.Narrator()
+    for i in range(narrate.MAX_READS + 10):
+        n.on_event({"kind": "tool", "name": "WebFetch", "input": {"url": f"https://e{i}.example/"}})
+    assert len(n.reads) == narrate.MAX_READS and n.reads[-1].label == f"e{narrate.MAX_READS + 9}.example"
+    n.on_event({"kind": "tool", "name": "WebFetch", "input": {"url": f"https://e{narrate.MAX_READS}.example/"}})
+    assert n.reads[-1].label == f"e{narrate.MAX_READS}.example" and len(n.reads) == narrate.MAX_READS
+
+
+def test_why_answers_from_the_recorded_reason():
+    n = narrate.Narrator()
+    assert n.why_text() == "Nothing has started yet."
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S ffmpeg"}})
+    assert n.why_text() == "It did not say why for this step: installing ffmpeg."
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "tool", "name": "WebFetch", "input": {"url": "https://ffmpeg.org/download.html"}})
+    n.on_event({"kind": "message_start"})
+    n.on_event({"kind": "text", "text": "The site's build needs the shared libraries, so installing them first."})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S x264"}})
+    assert n.why_text() == ("The site's build needs the shared libraries, so installing them first. "
+                            "(after reading ffmpeg.org/download.html)")
+
+
+# -- what a turn touched (for receipts) --
+
+@pytest.mark.parametrize("command, touched", [
+    ("sudo systemctl restart NetworkManager", [("service", "NetworkManager"), ("network", "")]),
+    ("sudo systemctl enable --now wg-quick@wg0", [("service", "wg-quick@wg0"), ("network", "")]),
+    ("systemctl --user restart pipewire", [("service", "pipewire"), ("sound", "")]),
+    ("sudo systemctl restart sshd", [("service", "sshd")]),
+    ("sudo systemctl status sshd", []),
+    ("wg-quick up wg0", [("network", "")]),
+    ("sudo nmcli connection modify Home ipv4.dns 1.1.1.1", [("network", "")]),
+    ("nmcli device wifi list", []),
+    ("nmcli connection show", []),
+    ("sudo ip route add 10.0.0.0/8 via 1.2.3.4", [("network", "")]),
+    ("ip addr show", []),
+    ("echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf", [("network", "")]),
+    ("sudo sed -i 's/a/b/' /etc/NetworkManager/NetworkManager.conf", [("network", "")]),
+    ("cat > /etc/wireguard/wg0.conf <<EOF\nx\nEOF", [("network", "")]),
+    ("cat /etc/resolv.conf", []),
+    ("wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.5", [("sound", "")]),
+    ("wpctl status", []),
+    ("pactl set-default-sink 12", [("sound", "")]),
+    ("hyprctl keyword monitor eDP-1,2560x1600@165,0x0,1.6", [("screens", "")]),
+    ("hyprctl monitors", []),
+    ("sudo mount /dev/sda1 /mnt", [("disks", "")]),
+    ("mount", []),
+    ("lsblk", []),
+    ("fdisk -l", []),
+    ("sudo mkfs.ext4 /dev/sdb1", [("disks", "")]),
+    ("bash -c 'systemctl --user restart pipewire'", [("service", "pipewire"), ("sound", "")]),
+    ("sudo pacman -S wireguard-tools", []),
+    ("wg-quick up wg0 && sudo systemctl enable wg-quick@wg0",
+     [("network", ""), ("service", "wg-quick@wg0")]),
+])
+def test_what_a_shell_command_changes(command, touched):
+    assert narrate.parts_touched("Bash", {"command": command}) == touched
+
+
+def test_what_a_file_write_changes(home):
+    assert narrate.parts_touched("Write", {"file_path": "/etc/systemd/system/backup.service", "content": "x"}) == [
+        ("service", "backup")]
+    assert narrate.parts_touched("Write", {"file_path": "/etc/resolv.conf", "content": "x"}) == [("network", "")]
+    hypr = str(home / ".config" / "hypr" / "hyprland.lua")
+    assert narrate.parts_touched("Write", {"file_path": hypr, "content": "hl.monitor({output = 'eDP-1'})"}) == [("screens", "")]
+    assert narrate.parts_touched("Edit", {"file_path": hypr, "new_string": "hl.monitor({})"}) == [("screens", "")]
+    assert narrate.parts_touched("Edit", {"file_path": hypr, "new_string": "hl.bind({})"}) == []
+    assert narrate.parts_touched("Write", {"file_path": str(home / "notes.txt"), "content": "monitor"}) == []
+    assert narrate.parts_touched("Read", {"file_path": "/etc/resolv.conf"}) == []
+    assert narrate.parts_changes([{"path": "/etc/fstab", "kind": "update"}, "junk", {"path": 3}]) == [("disks", "")]
+    assert narrate.parts_changes(3) == []
+
+
+def test_the_narrator_remembers_what_a_turn_touched_and_whether_it_drew():
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "wg-quick up wg0"}, "id": "a"})
+    n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "wg-quick down wg0; wpctl set-mute @DEFAULT_SINK@ 1"},
+                "id": "b"})
+    n.on_event({"kind": "file_change", "changes": [{"path": "/etc/fstab", "kind": "update"}]})
+    assert n.parts == [("network", ""), ("sound", ""), ("disks", "")] and n.drew is False
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__system_map", "input": {"kind": "network"}, "id": "c"})
+    assert n.drew is True
+
+
+def test_the_picture_tools_have_words_for_the_line():
+    step = lambda tool, a: narrate.tool_step(f"mcp__bombadil-os__{tool}", a).text  # noqa: E731
+    assert step("system_map", {"kind": "network"}) == "Drawing how you're connected"
+    assert step("system_map", {"kind": "service", "target": "bluetooth.service"}) == "Drawing what bluetooth needs"
+    assert step("system_map", {"kind": "disks"}) == "Drawing your disks"
+    assert step("system_map", {}) == "Drawing a picture of the machine"
+    assert step("show_card", {"title": "How a VPN works"}) == "Drawing “How a VPN works”"
+    assert step("show_card", {}) == "Drawing a picture"
+    assert narrate.partial_step("mcp__bombadil-os__show_card", '{"shape": "chain", "title": "How a VP').text == (
+        "Drawing a picture")
+    assert narrate.partial_step("mcp__bombadil-os__show_card", '{"title": "How a VPN", "nodes": [').text == (
+        "Drawing “How a VPN”")
+
+
 # -- the plan --
 
 def _tool(name, call=None, **inp):

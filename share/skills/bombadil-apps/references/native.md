@@ -252,12 +252,31 @@ The app can talk to the OS agent, the same one the user types to in the bar.
 | Member | |
 |---|---|
 | `Agent.connected`, `Agent.busy`, `Agent.provider` | |
-| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable; while the agent is busy it waits its turn in the bar's queue |
-| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`, including a provider that is not installed and a lost connection). An `ask` that waits behind another turn (the user's, or an earlier `ask` of this app) leaves `reply` as it was (the earlier answer, still streaming or done) until its own turn starts, then `reply` starts afresh |
-| `replied(text)` | signal when that answer is complete, also after an error. A prompt the user drops from the bar's queue ends with `replied("Error: dropped from the queue")`, and `reply` is set to that text unless an answer of this app is still streaming. A lost connection ends every sent prompt that is still unanswered with one `replied` |
+| `Agent.note` | `""`, or the few words to show under a button that asks the agent while the AI rests: `"At 15:00"`, `"At Thu 09:00"`, `"At 1 Nov"`, `"At its limit"`, `"At its spending limit"` or `"Paused"` (the user paused it). Show it as it is, do not parse it |
+| `Agent.ready` | false while the AI rests (the user's plan or spending is used up until a time, or the user paused it), true otherwise. It is for saying something, never for disabling a button |
+| `Agent.ask(prompt)` | send a prompt as the user would; the answer also shows in the bar. Sent as soon as agentd is reachable; while the agent is busy or the AI rests it waits its turn in the bar's queue |
+| `Agent.reply` | text of the answer to this app's latest `ask`, growing as it streams (errors appear as `"Error: ..."`, including a provider that is not installed and a lost connection, but never a limit). An `ask` that waits behind another turn (the user's, or an earlier `ask` of this app) leaves `reply` as it was (the earlier answer, still streaming or done) until its own turn starts, then `reply` starts afresh |
+| `replied(text)` | signal when that answer is complete, also after an error. A prompt the user drops from the bar's queue ends with `replied("Error: dropped from the queue")`, and `reply` is set to that text unless an answer of this app is still streaming. A lost connection ends every sent prompt that is still unanswered with one `replied`. A turn the limit stops halfway is not complete: there is no `replied` for it yet |
 
 The prompt is prefixed with `[from app <name>]` so the agent knows where it came from
 and can, for example, edit this app in response. During `check` Agent never connects.
+
+While the AI rests, the app and its buttons keep working, and an `ask` is not refused or
+turned into an error: it waits as a grey chip in the bar ("15:00", "paused") and is answered
+after the reset, which can be hours or days away. The answer arrives through `replied` as
+always, so do not time an `ask` out. If the limit stops a turn halfway, that turn waits too and
+runs again at the reset: `reply` is cleared, no `replied` comes for the first try, and the
+one `replied` that follows carries the answer of the rerun. While the AI rests an app has at
+most one ask waiting: a newer `ask` replaces its older one, which ends with no `replied`. Show
+`Agent.note` under the label of a button that asks the agent whenever it is not empty, and
+leave the button pressable, since pressing it is how the ask waits:
+
+```qml
+ColumnLayout {
+    Button { text: "Summarise"; onClicked: Agent.ask("Summarise my notes") }
+    Caption { text: Agent.note; visible: Agent.note !== "" }    // "At 15:00", "Paused"
+}
+```
 
 ## Highlighter
 

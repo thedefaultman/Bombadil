@@ -1,9 +1,13 @@
 # Boot straight into the agent session; there is no login screen and no separate user.
+# Hyprland writes a banner and a screenful of start-up debugging to its standard output until its
+# config is read, and greetd's standard output is the console (tty1), so the stretch between the
+# kernel and the desk would show that text. systemd-cat sends it to the journal instead
+# (`journalctl -t hyprland`), and the console stays empty in the design system's ground colour.
 [terminal]
 vt = 1
 [default_session]
-command = "start-hyprland"
+command = "sh -c 'exec systemd-cat -t hyprland start-hyprland'"
 user = "user"
 [initial_session]
-command = "start-hyprland"
+command = "sh -c 'exec systemd-cat -t hyprland start-hyprland'"
 user = "user"

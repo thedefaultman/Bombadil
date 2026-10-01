@@ -4,6 +4,7 @@ Runs inside the test container (tests/desktop/run.sh) as an ordinary user with p
 Typing goes through wtype, Super through `bombadil pill`; each check prints PASS or FAIL.
 """
 
+import http.client
 import json
 import os
 import re
@@ -29,6 +30,7 @@ env = dict(
     WLR_HEADLESS_OUTPUTS="1",
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
+    BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -71,6 +73,37 @@ def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
     return n
 
 
+def colour_pixels(name, colour, box, tol=14):
+    """How many pixels of a screenshot's box (x0, y0, x1, y1) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+def pixel(name, x, y):
+    """(r, g, b) of one pixel of a screenshot."""
+    from PySide6.QtGui import QImage
+    c = QImage(str(OUT / f"{name}.png")).pixelColor(x, y)
+    return c.red(), c.green(), c.blue()
+
+
+def mean_pixel(name, x, y, half=3):
+    """(r, g, b) averaged over the (2*half)-pixel square around x, y: a dithered picture's true colour."""
+    from PySide6.QtGui import QImage
+    img, tot, n = QImage(str(OUT / f"{name}.png")), [0, 0, 0], 0
+    for yy in range(y - half, y + half):
+        for xx in range(x - half, x + half):
+            c = img.pixelColor(xx, yy)
+            tot = [tot[0] + c.red(), tot[1] + c.green(), tot[2] + c.blue()]
+            n += 1
+    return tuple(round(v / n, 1) for v in tot)
+
+
 # -- start everything --
 start("fake-api", [sys.executable, str(E2E / "fake_api.py"), "18555", str(OUT / "api-requests.jsonl")])
 (xdg / "sway.conf").write_text(
@@ -91,7 +124,7 @@ for _ in range(100):
     if sock_path.exists():
         break
     time.sleep(0.1)
-start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
+qs_proc = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 
 events, lock = [], threading.Lock()
 
@@ -176,6 +209,21 @@ def api_requests():
         return 0
 
 
+def api_log():
+    try:
+        return [json.loads(ln) for ln in (OUT / "api-requests.jsonl").read_text().splitlines()]
+    except (OSError, ValueError):
+        return []
+
+
+def api_control(limit):
+    """The scripted API's plan: {"reset": epoch seconds} refuses the haiku ask as a used-up plan does, None lets it through."""
+    c = http.client.HTTPConnection("127.0.0.1", 18555, timeout=5)
+    c.request("POST", "/__control", json.dumps({"limit": limit}), {"content-type": "application/json"})
+    c.getresponse().read()
+    c.close()
+
+
 def sleeps():
     r = run("ps", "-eo", "pid,user,args")
     return [line for line in r.stdout.splitlines() if "sleep 120" in line and "ps -eo" not in line]
@@ -183,8 +231,25 @@ def sleeps():
 
 time.sleep(4)
 shot("00-resting")
+for _ in range(25):   # the picture is a 2560x1440 PNG decoded off the main thread: slow on a cold, busy machine
+    if mean_pixel("00-resting", 640, 180) != (16.0, 18.0, 20.0):
+        break
+    time.sleep(1)
+    shot("00-resting")
 check("bar connects to agentd", "Ask anything" and wait(lambda m: m.get("type") == "status", 5) is not None)
 check("the stone rests green in the pill", stone_pixels("00-resting") > 100, stone_pixels("00-resting"))
+
+# 0. the ground: Bombadil's wallpaper is under the desk, not the compositor's own colour (sway's
+# #33404d above). The corners are the ground falling to its darkest, the middle is lit, the stone
+# lies in the middle, and nothing in it is orange or anywhere near as light as the glass.
+corners = [mean_pixel("00-resting", x, y) for x, y in ((6, 6), (1273, 6), (6, 700), (1273, 700))]
+check("the corners of the desk are the wallpaper's ground, not sway's colour",
+      all(11 <= r <= 17 and 13 <= g <= 19 and 15 <= b <= 21 for r, g, b in corners), corners)
+lit, side = mean_pixel("00-resting", 640, 180), mean_pixel("00-resting", 250, 180)
+check("the wallpaper is lit softly in the middle", lit[2] - side[2] >= 3 and lit[2] <= 34, f"{lit} vs {side}")
+body = mean_pixel("00-resting", 640, 260)
+check("the stone lies faintly in the middle, lighter than its ground", body[2] - lit[2] >= 5 and body[2] <= 46, f"{body} vs {lit}")
+check("nothing in the wallpaper is orange", all(r - b <= 3 for r, g, b in corners + [lit, body]), [lit, body])
 
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
@@ -410,6 +475,71 @@ key("Escape")
 check("Esc in the pill closes it", until(lambda: not drawer_open()))
 shot("21-details-closed")
 
+# 7b. a click on a box in a picture that names a file opens it in the same drawer, in the viewer
+# (`bombadil view`: the image has no pager), and one Esc puts it away.
+m = mark()
+send({"type": "open", "kind": "path", "value": "/etc/os-release"})
+done = wait(ev("local", action="open", phase="done"), 15, m)
+check("a clicked file is opened and the line says so", done is not None and done.get("ok") is True, done and done.get("text"))
+check("the viewer opens in the drawer", until(drawer_open, 5) and "bombadil view --file /etc/os-release" in run("pgrep", "-af", "bombadil").stdout,
+      run("pgrep", "-af", "bombadil view").stdout[:200])
+time.sleep(1)
+shot("21-open-file")
+check("the viewer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
+key("Escape")
+check("one Esc puts the viewer away", until(lambda: not drawer_open()))
+
+# 22. a picture: show_card streams into the bar while the model writes it (the kit's Diagram, drawn by
+# the real Quickshell), Esc puts it away, and a picture word draws with no model at all.
+def glass_pixels(x, y, h):
+    """How many pixels of a one-pixel-wide strip are the bar's glass (#e61a1d21 over a dark screen)."""
+    r = subprocess.run(["grim", "-g", f"{x},{y} 1x{h}", "-t", "ppm", "-"], env=env, capture_output=True)
+    data = r.stdout
+    try:
+        head, rest = data.split(b"\n255\n", 1)
+    except ValueError:
+        return -1
+    return sum(1 for i in range(0, len(rest) - 2, 3)
+               if 21 <= rest[i] <= 30 and 24 <= rest[i + 1] <= 34 and 28 <= rest[i + 2] <= 38)
+
+
+m = mark()
+summon()
+typ("explain the vpn")
+key("Return")
+half = wait(ev("card", card=lambda c: bool(c and c.get("partial"))), 60, m)
+check("a picture streams into the bar while the model writes it", half is not None, half and half["card"].get("id"))
+full = wait(ev("card", card=lambda c: bool(c and not c.get("partial") and not c.get("gone"))), 60, m)
+check("the finished picture takes the streamed one's id",
+      full is not None and half is not None and full["card"]["id"] == half["card"]["id"], full and full["card"].get("id"))
+end = wait(ev("turn_end"), 60, m)
+check("the turn that drew it ends plainly", end is not None and not end.get("stopped"), end and end.get("summary"))
+time.sleep(1.0)
+shot("22-picture")
+with_card = glass_pixels(200, 300, 420)
+check("Quickshell draws the picture above the line", with_card > 80, with_card)
+qs_log = (OUT / "quickshell.log").read_text() if (OUT / "quickshell.log").exists() else ""
+bad = [ln for ln in qs_log.splitlines() if re.search(r"CardHost|Diagram|Theme\.qml|ReferenceError|TypeError", ln)]
+check("the bar loads the kit's Diagram without QML errors", not bad, bad[:3])
+summon()
+key("Escape")
+time.sleep(0.8)
+shot("22-picture-away")
+without = glass_pixels(200, 300, 420)
+check("Esc puts the picture away", without < with_card // 2, f"{with_card} -> {without}")
+
+before = api_requests()
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+pic = wait(ev("local", action="picture", phase="done"), 20, m)
+check("a picture word is answered with no model and no turn", pic is not None and api_requests() == before
+      and wait(ev("turn_start"), 1, m) is None, pic and pic.get("text"))
+time.sleep(0.8)
+shot("23-picture-word")
+
+
 # 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
 # `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
@@ -494,11 +624,28 @@ inject({"type": "jobs", "jobs": [
     {"id": "0a0b0c", "title": "Build the image", "kind": "watch", "state": "failed", "started": now_s - 60,
      "deadline": None, "ended": now_s - 5, "pct": None, "last": "pacman: could not resolve host",
      "unit": "bombadil-job-0a0b0c"}]})
+REVIEWER = {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
+            "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
+            "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
+            "lines": []}
+# One session waiting is the line in the pill and no card, and the stone knocks all the same.
+inject({"type": "dev", "sessions": [REVIEWER], "attention": ["rev"], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26a-desk-one-waiting")
+check("one waiting session: no card, and the stone is amber",
+      not st["present"]["needs"] and st["needsYou"] and st["face"] == "needs"
+      and stone_pixels("26a-desk-one-waiting", colour="#e0a93b") > 60,
+      f"present {st['present']['needs']}, face {st.get('face')}")
+inject({"type": "dev", "sessions": [dict(REVIEWER, state="working")], "attention": [], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26b-desk-answered")
+check("answered: the session stays listed and the stone goes still",
+      not st["needsYou"] and st["face"] != "needs" and stone_pixels("26b-desk-answered", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
 inject({"type": "dev", "sessions": [
-    {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
-     "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
-     "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
-     "lines": []},
+    REVIEWER,
     {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
      "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
      "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
@@ -513,17 +660,498 @@ check("the failed row says why in one line, with Why?", w["rows"][2]["button"] =
 check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
 check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
       and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+# The stone knocks while anything waits: amber, not the green of rest or the orange of work.
+amber = stone_pixels("26-desk-watching-needs", colour="#e0a93b")
+check("the stone is amber while two sessions wait for you", st.get("needsYou") and st.get("face") == "needs" and amber > 60,
+      f"face {st.get('face')}, amber pixels {amber}")
+# a picture with both rails up stays between them, as wide as the narrowed pill (328..951 at 1280 wide)
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.0)
+shot("26-desk-picture-between-rails")
+inside = glass_pixels(400, 480, 200)
+beside = glass_pixels(322, 480, 200)
+check("a picture with both rails up sits between them", inside > 60 and beside < 10, f"inside {inside}, beside {beside}")
+summon()
+key("Escape")
+time.sleep(0.8)
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
 inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+shot("27-desk-clear")
+check("and the stone is still: nothing waits, nothing is amber",
+      not st.get("needsYou") and st.get("face") != "needs" and stone_pixels("27-desk-clear", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
+
+# 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
+# claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
+# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
+# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
+# the same conversation: the first time the owner says so, the second time the clock does.
+STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
+LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
+claude_ai = Path.home() / ".e2e-claude-ai"
+claude_ai.touch()
+rest_file = Path.home() / ".local" / "state" / "bombadil" / "rest.json"
+
+
+def ink(shot_name):
+    """What colours the stone is drawn in: grey while the AI rests, green at rest, amber for needs, red for offline."""
+    tokens = {"grey": "#8b939c", "green": "#5fb36b", "amber": "#e0a93b", "red": "#d05555"}
+    return {c: colour_pixels(shot_name, v, STONE) for c, v in tokens.items()}
+
+
+summon()
+typ("tell me a joke")   # a first turn that works, so the haiku has a conversation to come back to
+n = mark()
+key("Return")
+first = wait(ev("result"), 40, n)
+check("the CLI works as a claude.ai login too", first is not None and first.get("ok"), first and first.get("text"))
+time.sleep(1.5)
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+end = wait(ev("turn_end", turn=haiku), 20, n)
+time.sleep(1.0)
+shot("27-resting")
+refusals = [r for r in api_log()[before:] if r["refused"]]
+check(
+    "the API refused the ask once and the CLI did not retry it",
+    len(refusals) == 1 and len(api_log()) == before + 1,
+    len(api_log()) - before,
+)
+r = (resting or {}).get("rest") or {}
+check(
+    "the CLI's own limit notice puts the machine to rest, with the time the plan gave",
+    r.get("provider") == "claude" and r.get("why") == "limit" and r.get("kind") == "five_hour" and r.get("until") == reset,
+    resting,
+)
+check(
+    "the line says when and that the apps still work, and offers no button",
+    resting and resting["line"].startswith("Claude is at its limit until ")
+    and resting["line"].endswith("Your apps and files still work.") and resting["actions"] == [] and resting["tone"] == "step",
+    resting and (resting["line"], resting["actions"]),
+)
+check(
+    "the empty field says what waits and until when",
+    r.get("hint", "").startswith("Open or find anything. Asks wait for ") and r.get("when") and r["when"] in r["hint"],
+    r.get("hint"),
+)
+check(
+    "the turn ends to run again, with no error and no result",
+    end and end.get("requeued") is True and end.get("line") == resting["line"] and not any(
+        m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]
+    ),
+    end and end.get("line"),
+)
+check(
+    "the log of the turn says the limit stopped it",
+    wait(ev("rest", turn=haiku, window="five_hour", until=reset), 1, n) is not None,
+)
+check(
+    "the ask goes back to the front of the queue under the same id",
+    wait(ev("queued", turn=haiku, prompt="write a haiku about rain"), 1, n) is not None,
+)
+with lock:
+    sts = [m for m in events[n:] if m.get("type") == "status" and m.get("setup") == "resting"]
+st = sts[-1] if sts else None
+check(
+    "the ask waits at the front as a chip that says when, and nothing is on it",
+    st and st["queue"] and st["queue"][0]["turn"] == haiku and st["queue"][0].get("wait") == r.get("wait") and not st["busy"],
+    st and st["queue"],
+)
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "limit" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check(
+    "the AI card has a row for Claude that says when it is back",
+    row and row["text"].startswith("at its limit until ") and row["current"] and row["enabled"] and row["on"],
+    row,
+)
+stone = ink("27-resting")
+check(
+    "the stone rests as a grey hollow: no green, no amber, no red",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and ink("00-resting")["grey"] < 10,
+    stone,
+)
+check("the line above the pill says it", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+check(
+    "the line fades by itself and the empty field carries the state",
+    until(lambda: glass_pixels(*LINE) < 5, 30),
+    glass_pixels(*LINE),
+)
+shot("28-resting-field")
+summon()
+time.sleep(0.8)
+shot("29-resting-summoned")
+check("the line comes back when the pill is summoned", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+key("Escape")
+
+# words that never need the AI still work while it rests: an app by name, and a "!" command.
+before = len(api_log())
+m = mark()
+summon()
+typ("passwords")
+key("Return")
+o = wait(ev("local", phase="done"), 10, m)
+time.sleep(0.5)
+shot("30-resting-passwords")
+check("an app opens by name while the AI rests", o is not None and o.get("ok"), o and o.get("text"))
+summon()
+typ("!echo hi")
+m = mark()
+key("Return")
+bang = wait(ev("turn_end"), 20, m)
+time.sleep(0.4)
+shot("31-resting-bang")
+check(
+    "a ! command runs while the AI rests, with no model",
+    bang is not None and not bang.get("requeued") and wait(ev("turn_start", prompt="!echo hi"), 1, m) is not None
+    and len(api_log()) == before,
+    bang,
+)
+
+# the plan comes back: the API lets the ask through, the state file says the time has passed, and the owner says so.
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 20, m)
+check(
+    "the machine says it is back and what runs now",
+    back and back["line"] == "Claude is back. Running your waiting ask." and back["tone"] == "done" and "rest" not in back,
+    back and back["line"],
+)
+again = wait(ev("turn_start", turn=haiku), 20, m)
+done = wait(ev("turn_end", turn=haiku), 60, m)
+res = wait(ev("result", turn=haiku), 1, m)
+check(
+    "the same ask runs again under the same id",
+    again is not None and again["prompt"] == "write a haiku about rain",
+    again and again.get("prompt"),
+)
+check(
+    "it ends well, with the answer, in the same conversation",
+    done and not done.get("requeued") and res and res.get("ok") and "kettle" in res.get("text", "")
+    and res.get("session_id") == first.get("session_id") and api_log()[-1]["prompts"] > 1 and not api_log()[-1]["refused"],
+    res and (res.get("session_id"), first.get("session_id"), api_log()[-1]),
+)
+time.sleep(2.5)
+shot("32-back")
+check("the stone is green again", stone_pixels("32-back") > 100, stone_pixels("32-back"))
+
+# and by itself: the plan says it is back in fifteen seconds, a second ask waits behind the first, and the machine
+# wakes on the clock, a minute after the time (agentd's REST_POLL looks, the wall clock decides).
+reset = int(time.time()) + 15
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+check(
+    "a second refusal rests the machine again, with the new time",
+    resting and resting["rest"]["until"] == reset,
+    resting and resting.get("rest"),
+)
+summon()
+typ("tell me a joke")
+key("Return")
+joke = wait(lambda m: m.get("type") == "status" and len(m.get("queue", [])) == 2, 10, n)
+shot("33-two-waiting")
+check(
+    "a second ask waits behind the first, each with its time",
+    joke and [q["turn"] for q in joke["queue"]][0] == haiku and all(q.get("wait") for q in joke["queue"]),
+    joke and joke["queue"],
+)
+api_control(None)
+woke = wait(lambda m: m.get("type") == "setup" and m.get("state") == "ready", 120, n)
+woke_at = time.time()
+check(
+    "the machine wakes by itself, a minute after the time, and says what runs now",
+    woke and woke["line"] == "Claude is back. Running your 2 waiting asks." and woke["tone"] == "done" and woke_at >= reset + 59,
+    woke and (woke["line"], round(woke_at - reset, 1)),
+)
+with lock:
+    k = events.index(woke) if woke else n
+d1 = wait(ev("turn_end", turn=haiku), 60, k)
+d2 = wait(ev("turn_end", turn=lambda t: t is not None and t > haiku), 60, k)
+check(
+    "both asks run, the first one first",
+    d1 is not None and d2 is not None and d1["_t"] < d2["_t"] and not d1.get("requeued"),
+    (d1 and d1.get("line"), d2 and d2.get("line")),
+)
+time.sleep(2.5)
+shot("34-woke")
+check("the stone is green again after the wake", stone_pixels("34-woke") > 100, stone_pixels("34-woke"))
+
+# a CLI that does not end the turn: in its unattended retry mode it sleeps until the reset and says api_retry, so
+# agentd ends the turn for it (the first long wait), puts the CLI away and rests the same way.
+watchdog = Path.home() / ".e2e-retry-watchdog"
+watchdog.touch()
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 30, n)
+end = wait(ev("turn_end", turn=haiku), 10, n)
+check(
+    "a CLI that waits out the limit instead of ending is ended for it, and the machine rests",
+    resting and resting["rest"]["until"] == reset and resting["rest"]["kind"] == "five_hour" and end and end.get("requeued") is True,
+    resting and resting.get("rest"),
+)
+check(
+    "putting it away is not an error, and says no result",
+    not any(m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]),
+    [(m["kind"], m.get("text")) for m in events[n:] if m.get("kind") in ("error", "result") and m.get("turn") == haiku],
+)
+clis = lambda: [ln for ln in run("ps", "-eo", "pid,args").stdout.splitlines() if "--output-format stream-json" in ln]
+check("and the CLI is not left sleeping", until(lambda: not clis(), 10), clis())
+watchdog.unlink()
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+res = wait(ev("result", turn=haiku), 60, m)
+check(
+    "the same ask runs again once it is back",
+    res is not None and res.get("ok") and "kettle" in res.get("text", ""),
+    res and res.get("text"),
+)
+time.sleep(2.5)
+
+# paused by hand: the same rest with no time and one button; an ask waits as "paused", and the button lets it run.
+summon()
+typ("pause claude")
+n = mark()
+key("Return")
+paused = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 10, n)
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "paused" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check("the AI card's row says paused, with its switch off", row and row["text"] == "paused" and not row["on"] and row["enabled"], row)
+check(
+    "pause claude rests it by hand, with one button to resume",
+    paused and paused["rest"]["why"] == "hand" and paused["rest"]["until"] is None
+    and paused["line"] == "Claude is paused. Your apps and files still work."
+    and [(a["id"], a["label"]) for a in paused["actions"]] == [("resume", "Resume Claude")],
+    paused and (paused["line"], paused["actions"]),
+)
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+queued = wait(lambda m: m.get("type") == "status" and m.get("queue"), 10, n)
+time.sleep(1.0)
+shot("35-paused")
+check(
+    "an ask waits as paused, with nothing sent and the stone resting grey",
+    queued and queued["queue"][0].get("wait") == "paused" and len(api_log()) == before and ink("35-paused")["grey"] > 20
+    and not ink("35-paused")["green"],
+    queued and queued["queue"],
+)
+m = mark()
+send({"type": "setup_action", "id": "resume"})
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 10, m)
+res = wait(ev("result"), 60, m)
+check(
+    "Resume Claude brings it back and the waiting ask runs",
+    back and back["line"] == "Claude is back. Running your waiting ask." and res and res.get("ok") and "kettle" in res.get("text", ""),
+    back and back["line"],
+)
+claude_ai.unlink()
+
+
+# 11. Machine: agentd's `machine` message, injected (the checks above are the shell's half; vitals.py and the
+# loop that sends it are tested on a fake machine in pytest).
+def region_pixels(name, box, colour, tol=14):
+    """How many pixels in the box (x, y, w, h) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, w, h = box
+    for y in range(max(0, y0), min(img.height(), y0 + h)):
+        for x in range(max(0, x0), min(img.width(), x0 + w)):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+summon()
+typ("how's the machine?")
+before = api_requests()
+n = mark()
+key("Return")
+asked = wait(ev("local", phase="done"), 10, n)
+check("asking how the machine is answers in a line, with no model", asked and asked.get("ok")
+      and asked.get("text") == "Here is the machine." and api_requests() == before, asked and asked.get("text"))
+key("Escape")
+inject({"type": "machine", "present": True, "asked": False,
+        "why": "Memory is nearly full \u00b7 sessions use most",
+        "strip": {"text": "memory 91%", "dot": "amber"},
+        "rows": [
+            {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
+             "tone": "amber", "parts": [{"tone": "machine", "fraction": 0.12}, {"tone": "sessions", "fraction": 0.40},
+                                        {"tone": "you", "fraction": 0.39}], "opens": ""},
+            {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "214 of 230 GB", "meter": 0.93,
+             "tone": "amber", "opens": "disk"},
+            {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "37% busy \u00b7 62\u00b0", "meter": 0.37,
+             "tone": "you", "opens": ""},
+            {"key": "net", "kind": "plain", "title": "Network", "sub": "\u2193 1.2 MB/s   \u2191 40 kB/s",
+             "tone": "you", "opens": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("28-desk-machine")
+mc = st.get("machine") or {}
+slot = (st.get("slots") or {}).get("machine") or {}
+check("the Machine card is up in full, on the right rail", st["present"]["machine"] and st["faces"]["machine"] == "full"
+      and slot.get("side") == "right", (st.get("faces"), slot))
+check("it has memory, the disk, the processor and the network, memory in three parts",
+      [r["key"] for r in mc.get("rows", [])] == ["memory", "disk", "cpu", "net"]
+      and [p["tone"] for p in mc["rows"][0]["parts"]] == ["machine", "sessions", "you"], mc.get("rows"))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+parts = {name: region_pixels("28-desk-machine", box, colour) for name, colour in
+         (("amber", "#e0a93b"), ("machine", "#d97757"), ("sessions", "#5b9bd5"))}
+check("the card draws amber for the lines crossed and one colour for each who uses the memory",
+      parts["amber"] > 150 and parts["machine"] > 40 and parts["sessions"] > 150, parts)
+check("the card is the face, so no chip beside the pill says memory", not st["strips"]["right"], st.get("strips"))
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("the card leaves when the machine says everything is back under its lines",
+      st["faces"]["machine"] == "hidden" and not st["present"]["machine"], st.get("faces"))
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
               if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
 check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
+
+# 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image. The file new systems ship
+# holds only comments, so the standard picture shows and a first path is noticed with no restart; the
+# picture is dimmed toward the ground; a picture that will not load, a line that is not a path (an
+# image written into the file) and a missing file all fall back to the standard one.
+def paint(path, colour):
+    from PySide6.QtGui import QColor, QImage
+    img = QImage(2560, 1440, QImage.Format_RGB32)
+    img.fill(QColor(colour))
+    assert img.save(str(path))
+
+
+def desk_colour(name, x=150, y=400):
+    # The Passwords window opened above is still up in the middle; the left side is bare ground.
+    time.sleep(1.5)   # the picture settles in over 300 ms, and a changed file is read a moment after
+    shot(name)
+    return mean_pixel(name, x, y)
+
+
+def near(got, want, tol=8):
+    return all(abs(g - w) <= tol for g, w in zip(got, want))
+
+
+def dimmed(rgb, dim=0.6, ground=(16, 18, 20)):
+    return tuple(c * (1 - dim) + g * dim for c, g in zip(rgb, ground))
+
+
+standard = mean_pixel("00-resting", 150, 400)
+home = Path.home()
+choice = home / ".config" / "bombadil" / "wallpaper"
+choice.parent.mkdir(parents=True, exist_ok=True)
+shipped = REPO / "iso" / "airootfs" / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
+choice.write_text(shipped.read_text())
+paint(home / "first.png", "#336699")
+paint(home / "second.png", "#993366")
+paint(home / "white.png", "#ffffff")
+qs_proc.terminate()
+qs_proc.wait(10)
+start("quickshell-wallpaper", [str(REPO / "bin" / "bombadil-shell")])
+time.sleep(3)
+got = desk_colour("30-own-wallpaper-shipped-file")
+check("the file new systems ship (comments only) shows the standard picture", near(got, standard, 4),
+      (got, standard))
+choice.write_text(shipped.read_text() + "~/first.png\n")
+got = desk_colour("30-own-wallpaper")
+check("a first path is noticed with no restart, and the picture is dimmed toward the ground",
+      near(got, dimmed((51, 102, 153)), 6), (got, dimmed((51, 102, 153))))
+choice.write_text(choice.read_text() + "file://" + str(home / "second.png") + "\n")
+got = desk_colour("30-own-wallpaper-changed")
+check("adding a line changes the picture: the last line that is not a comment is the one used",
+      near(got, dimmed((153, 51, 102)), 6), got)
+choice.write_text("~/white.png\n")
+got = desk_colour("30-own-wallpaper-white")
+check("a white picture is no brighter than 115 on any channel, so the muted text reads over it",
+      max(got) <= 115, got)
+
+
+def paint_worst_case(path):
+    """Saturated bands, a white ellipse and white and yellow stripes across the bottom third, where
+    the pill and the cards sit: the picture the glass and the muted text have the hardest time over."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter
+    img = QImage(2560, 1440, QImage.Format_RGB32)
+    g = QLinearGradient(QPointF(0, 0), QPointF(2560, 960))
+    for i, c in enumerate(("#ff2020", "#20ff40", "#2040ff", "#ff20e0", "#ffee20", "#20ffee", "#ff2020")):
+        g.setColorAt(i / 6, QColor(c))
+    q = QPainter(img)
+    q.fillRect(QRectF(0, 0, 2560, 1440), QBrush(g))
+    q.setBrush(QColor("#ffffff"))
+    q.drawEllipse(QRectF(800, 160, 960, 640))
+    for i, x in enumerate(range(0, 2560, 64)):
+        q.fillRect(QRectF(x, 960, 32, 480), QColor("#ffffff" if i % 2 else "#ffee60"))
+    q.end()
+    assert img.save(str(path))
+
+
+paint_worst_case(home / "worst.png")
+choice.write_text("~/worst.png\n")
+desk_colour("30-own-wallpaper-worst-case")
+tmp = home / ".config" / "bombadil" / "wallpaper.new"
+tmp.write_text("~/first.png\n")
+os.replace(tmp, choice)
+got = desk_colour("30-own-wallpaper-replaced")
+check("a file replaced by renaming another over it is noticed too", near(got, dimmed((51, 102, 153)), 6), got)
+choice.write_text("/nowhere/at/all.png\n")
+got = desk_colour("30-own-wallpaper-missing")
+check("a picture that will not load falls back to the standard one", near(got, standard, 4), (got, standard))
+choice.write_bytes(Path(OUT / "30-own-wallpaper-missing.png").read_bytes())   # an image, not a path
+got = desk_colour("30-own-wallpaper-image-in-file")
+check("an image written into the file falls back to the standard one", near(got, standard, 4), (got, standard))
+choice.write_text("~/first.png\n")
+desk_colour("30-own-wallpaper-again")
+choice.unlink()
+got = desk_colour("30-own-wallpaper-gone")
+check("taking the file away brings the standard picture back", near(got, standard, 4), (got, standard))
+own_log = re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text())
+check("the log says once that the file holds a path, not the image",
+      own_log.count("holds the path of an image, on one line, not the image itself") == 1, own_log[-300:])
+check("the wallpaper's choices raised no QML error but the one for the picture that is not there",
+      not [ln for ln in own_log.splitlines()
+           if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
+           and "Cannot open" not in ln and "wallpaper:" not in ln], own_log[-400:])
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

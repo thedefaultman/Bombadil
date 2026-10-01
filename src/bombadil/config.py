@@ -14,6 +14,7 @@ PROVIDERS = ("claude", "codex")
 DEFAULT_MODELS = {"claude": "claude-sonnet-5-5"}
 # "use opus" / "use sonnet" switch a session between these (see launcher.MODEL_WORDS).
 CLAUDE_MODELS = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5"}
+EXPLAIN = ("brief", "normal", "teach")
 
 
 @dataclass
@@ -22,6 +23,7 @@ class Config:
     model: str | None = None          # the model for `provider`, as older config files wrote it
     models: dict[str, str] = field(default_factory=dict)   # [models] claude = "...", codex = "..."
     snapshots: bool = True
+    explain: str = "normal"     # brief | normal | teach: how much it shows without being asked
 
     def model_for(self, provider: str) -> str | None:
         """What to pass the CLI as --model: the [models] entry, else a bare `model` for the
@@ -48,7 +50,10 @@ def load() -> Config:
         model=merged.get("model"),
         models={k: v for k, v in (merged.get("models") or {}).items() if isinstance(v, str) and v},
         snapshots=bool(merged.get("snapshots", True)),
+        explain=merged.get("explain", "normal"),
     )
+    if cfg.explain not in EXPLAIN:
+        cfg.explain = "normal"
     if cfg.provider not in PROVIDERS:
         raise ValueError(f"unknown provider {cfg.provider!r}, expected one of {PROVIDERS}")
     return cfg
@@ -58,12 +63,15 @@ def save_user(provider: str, model: str | None = None) -> Path:
     path = user_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        kept = tomllib.loads(path.read_text()).get("models") or {}   # switching provider keeps the models
+        before = tomllib.loads(path.read_text())
     except (OSError, ValueError):
-        kept = {}
+        before = {}
+    kept = before.get("models") or {}   # switching provider keeps the models
     lines = [f'provider = "{provider}"']
     if model:
         lines.append(f'model = "{model}"')
+    if before.get("explain") in EXPLAIN:   # a setting people made in words stays when the provider changes
+        lines.append(f'explain = "{before["explain"]}"')
     if kept:
         lines += ["", "[models]"] + [f'{k} = "{v}"' for k, v in kept.items() if isinstance(v, str)]
     path.write_text("\n".join(lines) + "\n")
