@@ -365,3 +365,14 @@ async def test_an_ask_while_paused_by_hand_waits_for_the_resume(home, agent):
     assert agent.property("note") == ""
     s.writer.close()
     server.cancel()
+
+
+def test_what_the_finder_found_for_a_kept_ask_changes_nothing_for_an_app(agent):
+    """The pill shows these chips; an app's own ask is never looked for, and it hears nothing of them."""
+    agent._waiting = 1
+    feed(agent, {"type": "queued", "turn": 3}, event("queued", 3, prompt="[from app notes] summarise this"))
+    before = (agent.property("reply"), set(agent._turns), agent._current, agent.replies[:])
+    feed(agent, {"type": "found", "turn": 3, "prompt": "x", "line": "Kept for 15:00. Found on this computer:",
+                 "matches": [{"id": "1", "kind": "app", "label": "Notes", "hint": "App"}]},
+         {"type": "found_open", "turn": 3, "id": "1"})
+    assert (agent.property("reply"), set(agent._turns), agent._current, agent.replies) == before

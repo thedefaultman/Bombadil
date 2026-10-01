@@ -152,6 +152,30 @@ def test_a_pause_by_hand_has_a_resume_button_and_a_changed_line_says_itself_agai
     assert bar.win.property("handOffs") == before    # it opens nothing: the keyboard stays where it is
 
 
+@pytest.mark.parametrize("answer_first", [False, True])
+def test_the_answer_to_pause_is_the_resting_line_and_keeps_its_button_in_either_order(bar, answer_first):
+    """"pause claude": agentd's setup (the resting state) and its `local` answer carry the same words, and a
+    real machine does not always deliver them in the same order."""
+    answer = dict(type="event", kind="local", turn=None, action="rest", target="claude", phase="done", ok=True,
+                  text=PAUSED_LINE)
+    if answer_first:
+        bar.send(**answer)
+        bar.send(**PAUSED)
+    else:
+        bar.send(**PAUSED)
+        bar.send(**answer)
+    assert bar.text() == PAUSED_LINE and prop(bar, "mode") == "resting"
+    assert [label for label, _ in bar.chips()] == ["Resume Claude"]
+    bar.snap(f"rest-2b-paused-answer-{'first' if answer_first else 'second'}")
+
+
+def test_any_other_answer_while_resting_is_just_that_answer(bar):
+    bar.send(**LIMIT)
+    bar.send(type="event", kind="local", turn=None, action="app", target="passwords", verb="open", phase="done",
+             ok=True, text="Opened Passwords.")
+    assert bar.text() == "Opened Passwords." and prop(bar, "mode") == "local"
+
+
 def test_raise_the_limit_opens_a_page_and_then_offers_try_again(bar):
     bar.send(**SPEND)
     assert [label for label, _ in bar.chips()] == ["Raise the limit"] and not_red(bar)
