@@ -37,6 +37,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .. import browser, hypr, paths
+from . import db
 from .findings import evidence_dir
 from .probes import PATH_REST
 
@@ -495,9 +496,11 @@ def hold(report: Report) -> Path | None:
     What it was made of goes beside the evidence (report.json), so `shown` gives back what he read."""
     path = paths.loop_dir() / "reports" / f"{evidence_dir(report.fp).name}.md"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        db.private_dir(path.parent.parent)
+        db.private_dir(path.parent)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(report.render())
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+            f.write(report.render())
         os.replace(tmp, path)
     except OSError:
         return None

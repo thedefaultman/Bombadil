@@ -13,7 +13,8 @@ turn, a client or agentd.
 ## What it does
 
 - Reads `turns.jsonl` into the counts (`LoopStore.ingest`): when agentd starts, about 2 s after the last
-  of a burst of rows, and at least every 10 minutes.
+  of a burst of rows, and at least every 10 minutes. A long backlog is counted 150 rows at a time (see
+  Threads).
 - Keeps the `noticed` message (count, hidden, resting, lately, at most three rows) and sends it to a client
   when it connects or asks, and to everyone when it changes (compared as JSON, so nothing is said twice).
   While a client is connected it reads the prober's findings from loop.db about every 20 s.
@@ -36,6 +37,13 @@ the database run in other threads (`asyncio.to_thread`): the issue search, openi
 an app's folder, listing the apps, reading a big turns.jsonl for the trail. The one slow thing the worker
 itself does is the optional model step (its own 30 s timeout, holding the other database work behind it),
 so that step runs only at a moment an offer could be made, never while a turn runs.
+
+A look at `turns.jsonl` is not one long job. `_ingest_now` submits one chunk (`LoopStore.ingest(limit=150)`,
+its own transaction, the byte offset saved in it) as one worker job, waits for it, pauses 50 ms, and
+submits the next while the store says there is more. A tap, a poll or the prober's write gets in between
+the chunks; a crash resumes at the last committed chunk; and `stop()` marks the service stopped, so a
+chunk still queued does nothing and agentd waits for at most the one that is running (the worker thread
+is joined when the interpreter exits).
 
 The hooks agentd calls (`on_row`, `on_client`, `on_message`) only schedule work. `on_row` is called from
 inside agentd's ledger writer, so it never blocks.
@@ -87,7 +95,7 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
 | `send` | (after `report`) searches the project's issues for an open one with the fingerprint, opens the prefilled page with the report held at `report` (not one built again), marks it `sent` | "The issue page is open with the report filled in. Press Submit there if it looks right." |
 | `undo` | takes a trail row back: a word out, an app into the trash, a put-away word back | "Took out the word “…”." / "Put the app … away." / "Brought back the word “…”." |
 | `bring_back` | a put-away word, a group he said no to, or an app that went to the trash | "Okay. That can come up again." / "Brought the app … back." |
-| `forget_asks` | empties the counts (and the model step's pinned answers); words stay | "Forgot what you asked. The words made from it stay." |
+| `forget_asks` | empties the counts (and the model step's pinned answers, and the sentences kept with what he said no to); words stay | "Forgot what you asked. The words made from it stay." |
 | `clear_found` | drops findings and held reports he has not said no to | "Cleared what it found. A problem that is still there will be found again." |
 | `hide` `show` | as the words do | "Noticed is hidden. Say “show noticed” to bring it back." / "Noticed is back." |
 
@@ -181,9 +189,16 @@ A failure is one stderr line and the offer is made as counted.
   the issue link are built from findings evidence, which holds none of his words. His own sentences are
   in the offer row he is meant to see, in the window's list of what he asked, in the prompt of the app
   turn (his own turn), and in a change's title for an app ("Made the app X from “…”").
-- `loop.db` that cannot be opened: one line on stderr; the state stays empty, every tap answers "Noticed
-  cannot look at its notes right now, so nothing was changed.", and the open is tried again every 10
-  minutes.
+- `loop.db` that cannot be opened: one line on stderr that names the file; the state stays empty, every
+  tap answers "Noticed cannot look at its notes right now, so nothing was changed.", and the open is tried
+  again every 10 minutes (no restart is needed). A damaged file (not a database, or its pages are broken)
+  is not moved or replaced on its own, because it holds what cannot be made again: what he said no to, what
+  was offered, and the mark that keeps what he forgot from being read in again. To start over, delete
+  `loop.db` with its `-wal` and `-shm` (or move them away); the next try makes a new one and counts
+  `turns.jsonl` again from the top, which brings back the asks he forgot and loses his Nevers. A file that
+  is only busy or on a disk that is full or read-only is not damaged, and opens again by itself.
+- `loop.db` and everything beside it is for its owner: the loop directory is 0700 and the files 0600
+  (including ones an older version made), because the database holds his own sentences.
 - A test that calls the real `report.open_issue_page`, the issue search or `wl-copy` fails at its end (the
   fixture in `test_loop_service.py` records the calls): pass an `opener`, a `fetcher`, or patch `copy_text`.
 
@@ -203,3 +218,15 @@ provider. Not checked anywhere yet:
 - The bar's QML with this service: the tests use a fake client that speaks the same messages.
 - The prober and the service writing loop.db at the same moment in two processes (WAL, the busy timeout
   and a retry for a table the other one just made are in place; only reasoned, and the retry is unit-tested).
+
+## Known gaps
+
+- A poll for an offer still takes a write transaction (to let time pass: expiries, Not now, the 90-day
+  words), so it waits behind a chunk of a backlog; the first poll after a long quiet spell may spend about a
+  second dropping the words of many old groups at once. What it costs afterwards is about 10 ms at 12,000
+  groups, not nothing.
+- After a restart the groups are rebuilt from the stored requests (a second or two for thousands of
+  requests). It happens before the first write transaction, not inside it, but it is still on the worker.
+- "Bring back" of something he said Never to regroups every stored request in one transaction
+  (`LoopStore.regroup`); with thousands of requests that holds the write lock for seconds. It is chunked
+  nowhere yet.

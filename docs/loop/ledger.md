@@ -41,6 +41,14 @@ Files: `src/bombadil/agentd.py`, `providers.py`, `watch.py`, `loop/signals.py`.
 `watch.history_lines` shows local rows as before, `improve` rows as a dim line with the row's `title`,
 skips kinds it does not know and rows that are not objects, and shows `--:--` for a row with no usable `t`.
 
+## Reading it (`loop/ledger.py`)
+
+`read_rows(path, offset=0, inode=None, limit=None) -> Batch` returns the usable rows after a byte offset,
+each with the offset just after it, and where the next read starts (`end`). With `limit` it stops after
+that many rows: `end` is then just after the last of them and `more` says another line follows, so a
+caller can take a long file a chunk at a time (`LoopStore.ingest` does, 150 rows to a database
+transaction). A torn last line is left for next time, as before.
+
 ## Provider `meta` events
 
 `{"kind": "meta", "model"?, "cost"?, "usage"?, "rate_limit"?, "drift"?}`: one event per fact, never

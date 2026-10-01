@@ -36,10 +36,11 @@ from . import db, forms, offers, refine, report, words
 from . import findings as findings_mod
 from .findings import FindingsStore
 from .habits import sentence_of
-from .store import LoopStore
+from .store import CHUNK, LoopStore
 
 DEBOUNCE = 2.0           # after a finished row: a burst of rows is one look at turns.jsonl
 INGEST_EVERY = 600.0     # and a look at least this often
+INGEST_PAUSE = 0.05      # between the chunks of a long backlog: the prober's writes get in, and so do his taps
 FINDINGS_EVERY = 20.0    # the prober is another process: read its findings this often while a client is here
 SWEEP_EVERY = 86400.0    # a word unused for 28 days is put away once a day
 TICK = 5.0
@@ -309,8 +310,12 @@ class LoopService:
     def _w_hidden(self) -> tuple[bool, float]:
         return self._flag("hidden") == "1", float(self._flag("swept", "0") or 0)
 
-    def _w_ingest(self, now: float) -> None:
-        self._store.ingest(now=now)
+    def _w_ingest(self, now: float) -> bool:
+        """One chunk of what turns.jsonl gained, counted in its own transaction. True when more is waiting.
+        A chunk that was queued when agentd began to stop does nothing."""
+        if self._stopped:
+            return False
+        return self._store.ingest(now=now, limit=CHUNK).more
 
     def _w_note_word(self, phrase: str, t: float) -> None:
         self._store.note_word_used(phrase, now=t)
@@ -507,13 +512,17 @@ class LoopService:
     async def _ingest_now(self) -> None:
         now = self.clock()
         self._ingested = now
-        await self._work(self._w_ingest, now, where="count")
+        # A long backlog (the first look at an old turns.jsonl) is counted a chunk to a job: a tap or a
+        # poll waits for one chunk, not for all of them, and stop() for the one that is running.
+        while await self._work(self._w_ingest, now, default=False, where="count") and not self._stopped:
+            await asyncio.sleep(INGEST_PAUSE)
         await self._refresh()
 
     async def _boot(self) -> None:
         """Open the stores, read the trail and catch up: what turns.jsonl gained while agentd was not here."""
         opened = await self._work(self._w_open, default=False,
-                                  where="loop.db cannot be used, so nothing is counted until it can be")
+                                  where=f"{self.dir / 'loop.db'} cannot be used, so nothing is counted until it "
+                                        "can be (a damaged one may be moved away: docs/loop/service.md)")
         self._spawn(self._read_trail())   # the trail is a file: it needs no database
         if not opened:
             self._failed_at = self.clock()

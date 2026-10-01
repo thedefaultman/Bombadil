@@ -719,7 +719,7 @@ def test_forgetting_what_he_asks_erases_the_asks_and_keeps_his_answers(home, tmp
     assert s.conn.execute("SELECT COUNT(*) FROM asks").fetchone()[0] == 0
     assert s.group("gpw1") is None and s.groups() == [] and s.asks_report(now=at(7)) == []
     # what he said no to, and the words he uses, stay; so does the count of offers taken
-    assert len(s.said_no()) == 1
+    assert len(s.said_no()) == 1 and s.said_no()[0]["sentence"] == "" and s.said_no()[0]["label"]
     assert s.conn.execute("SELECT count FROM words_used WHERE phrase='my notes'").fetchone()[0] == 1
     assert s.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 1
     assert s.conn.execute("SELECT label FROM offers").fetchone()[0] == ""      # the words in the offer go
