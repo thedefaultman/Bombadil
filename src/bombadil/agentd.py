@@ -23,6 +23,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         answered with {"type": "card_ack", "shown": bool}
                    {"type": "setup_action", "id": "provider:codex"|"signin"|"show"|"cancel"|"wifi"|"resume"|
                     "raise"|"retry"}                    a chip under the setup line (see below)
+                   {"type": "found_open", "turn": n, "id": "1"}   open that found thing, drop the kept ask
                    {"type": "ai", "op": "get"}          the AI card: one row per AI, answered with "ai"
                    {"type": "ai", "op": "pause"|"resume", "provider": "claude"}
                                                         the card's switch, the same as "pause claude" typed
@@ -53,6 +54,11 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "ai", "rows": [{"name", "title", "state": "ready"|"limit"|"paused"|"signed_out"|
                     "missing", "text": "ready", "on": bool, "enabled": bool, "current": bool}]}
                                                         the AI card, to whoever asked and on every change
+                   {"type": "found", "turn": n, "prompt": "...", "line": "Kept for 15:00. Found on this computer:",
+                    "matches": [{"id": "1", "kind": "app"|"word"|"ask", "label", "hint"}]}
+                                                        while resting, for an ask typed in the pill that has to wait:
+                                                        up to three things on this computer it nearly names (none:
+                                                        the line says so); only offered, a press opens one
                    {"type": "summon", "text"?: "..."}
                    {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "rails": {...},
                     "order": {...}, "screen": ""}       the desk's state: to whoever asks, and on every change
@@ -157,7 +163,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import browser, cards, config, launcher, narrate, paths, procs, providers, rest, signin, snapshots, sysmap, watch
+from . import (browser, cards, config, finder, launcher, narrate, paths, procs, providers, rest, signin, snapshots, sysmap,
+               watch)
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
@@ -281,6 +288,8 @@ class AgentD:
         self._cut: list[str] = []
         self._turn_asked_by: str | None = None
         self._rest_cur: rest.Rest | None = None     # why the provider rests, while access is "resting"
+        self._found: dict[int, list[finder.Match]] = {}   # what the finder offered for a waiting ask, by turn
+        self._found_said: dict[int, dict] = {}            # and the message that said so, to say again
         self._rest_task: asyncio.Task | None = None  # wakes the machine when the limit's time has come
         self._raised: set[str] = set()               # providers whose Raise the limit was pressed (now Try again)
         self._limit_urls: dict[str, str] = {}        # where each provider's own message said to raise it
@@ -387,6 +396,8 @@ class AgentD:
             waits = not self._runnable(text)
             if waits and self.access == "resting":
                 await self._replace_app_ask(text)
+                if who is None and _app_of(text) is None and not text.startswith("!"):
+                    self._background(self._find_for(self.next_id, text))
             if self.current is not None or self.pending or waits:
                 await self.broadcast({"type": "event", "kind": "queued", "turn": self.next_id, "prompt": text})
             self.pending.append((self.next_id, text))
@@ -398,12 +409,9 @@ class AgentD:
         elif t in ("stop", "cancel"):
             await self.stop()
         elif t == "unqueue":
-            before = len(self.pending)
-            self.pending = [(i, p) for i, p in self.pending if i != msg.get("turn")]
-            if len(self.pending) != before:
-                self._resume_notes.pop(msg.get("turn"), None)
-                await self.broadcast({"type": "event", "kind": "unqueued", "turn": msg.get("turn")})
-                await self.broadcast(self._status())
+            await self._unqueue(msg.get("turn"))
+        elif t == "found_open":
+            self._background(self._open_found(msg.get("turn"), msg.get("id")))
         elif t == "local":
             action = _action(msg)
             if action is not None:
@@ -1494,6 +1502,83 @@ class AgentD:
             await self.broadcast(self._status())
         await self._ai_changed()
 
+    async def _unqueue(self, turn) -> bool:
+        """Drop a prompt still waiting its turn. False when it was not waiting (it ran, or was dropped)."""
+        before = len(self.pending)
+        self.pending = [(i, p) for i, p in self.pending if i != turn]
+        self._found.pop(turn, None)
+        self._found_said.pop(turn, None)
+        if len(self.pending) == before:
+            return False
+        self._resume_notes.pop(turn, None)
+        await self.broadcast({"type": "event", "kind": "unqueued", "turn": turn})
+        await self.broadcast(self._status())
+        return True
+
+    async def _find_for(self, turn: int, text: str):
+        """The finder, for an ask that has to wait while the AI rests: up to three things on this computer
+        the sentence nearly names, sent with the line that says when the ask runs. It only offers; a press
+        opens (`found_open`). Never a model, never the network."""
+        try:
+            matches = await asyncio.to_thread(finder.find, text)
+        except Exception as e:  # noqa: BLE001 - the ask is kept either way
+            print(f"agentd: finder: {type(e).__name__}: {e}", file=sys.stderr)
+            matches = []
+        r = self._rest_cur
+        if self.access != "resting" or r is None or not any(i == turn for i, _ in self.pending):
+            return   # it ran, or was dropped, while the finder looked
+        self._found = {t: m for t, m in self._found.items() if any(i == t for i, _ in self.pending)}
+        self._found[turn] = matches
+        self._found_said = {t: m for t, m in self._found_said.items() if t in self._found}
+        said = self._found_said[turn] = {
+            "type": "found", "turn": turn, "prompt": text, "line": rest.kept(r, self._title(), bool(matches)),
+            "matches": [{"id": str(n), "kind": m.kind, "label": m.label, "hint": m.hint}
+                        for n, m in enumerate(matches, 1)]}
+        await self.broadcast(said)
+
+    async def _open_found(self, turn, ident):
+        """A press on a found chip: open the thing as if its word was typed (an app, a panel, a command) or
+        show the steps of that past ask, then let go of the kept ask it came from. When the thing cannot be
+        opened the ask stays kept."""
+        waiting = isinstance(turn, int) and not isinstance(turn, bool) and any(i == turn for i, _ in self.pending)
+        offered = self._found.get(turn) if waiting else None
+        pick = next((m for n, m in enumerate(offered or [], 1) if str(n) == str(ident)), None)
+        if pick is None:
+            return   # not offered (any more): nothing opens that was not shown
+        if pick.kind == "ask":
+            log = _own_turn_log(pick.path)
+            if log is None:
+                await self.event("local", turn=None, action="details", phase="done", ok=False,
+                                 text="That turn's steps are not on this computer any more.")
+                await self._found_again(turn)
+                return
+            await self._unqueue(turn)
+            await self._details_file(log)
+            return
+        action = await self._match(pick.say)
+        if action is None:
+            await self.event("local", turn=None, action="found", phase="done", ok=False,
+                             text=f"Could not open {pick.label}.")
+            await self._found_again(turn)
+            return
+        await self._unqueue(turn)
+        await self.local(action, pick.say)
+
+    async def _found_again(self, turn: int):
+        """A press that could not open its thing: the ask stays kept, and so do its chips (the bar took them
+        down when it was pressed)."""
+        said = self._found_said.get(turn)
+        if said is not None and any(i == turn for i, _ in self.pending):
+            await self.broadcast(said)
+
+    async def _details_file(self, log: Path):
+        argv = [launcher._bombadil(), "watch", "--file", str(log)]
+        try:
+            await asyncio.to_thread(self.launcher.details, argv, True)
+        except Exception as e:  # noqa: BLE001
+            await self.event("local", turn=None, action="details", phase="done", ok=False,
+                             text=f"Could not show the details: {e}")
+
     async def _replace_app_ask(self, text: str):
         """An app's ask that has to wait replaces that app's older one (at most one chip per app), so
         an app on a timer cannot fill the queue. The older one is dropped with no error."""
@@ -2132,6 +2217,16 @@ def _limit_text(text: str) -> str:
 def _bombadil_browser() -> str:
     local = Path(__file__).resolve().parents[2] / "bin" / "bombadil-browser"
     return str(local) if local.exists() else "bombadil-browser"
+
+
+def _own_turn_log(path: str) -> Path | None:
+    """A past turn's log, when it is one of agentd's own (under the state directory's turns) and still there."""
+    try:
+        log = Path(path).resolve(strict=True)
+        log.relative_to((paths.state_dir() / "turns").resolve())
+    except (OSError, ValueError):
+        return None
+    return log
 
 
 def _app_of(prompt: str) -> str | None:

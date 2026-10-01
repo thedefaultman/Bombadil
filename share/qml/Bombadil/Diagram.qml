@@ -456,9 +456,13 @@ Item {
 
                     // What the machine says about this box, under it.
                     Text {
+                        objectName: "boxNote"
                         visible: !!box.modelData.note
                         y: root.boxH + 4
-                        x: -(width - parent.width) / 2
+                        // Centred under the box, but never off the picture: the first box of a row
+                        // (and the last) is at its edge, and a note wider than the box would
+                        // lose its first letters there.
+                        x: Math.max(-box.x, Math.min(-(width - parent.width) / 2, canvas.width - box.x - width))
                         width: Math.max(parent.width, 170)
                         horizontalAlignment: Text.AlignHCenter
                         text: box.modelData.note || ""

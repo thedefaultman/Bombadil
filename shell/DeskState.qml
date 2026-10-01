@@ -14,6 +14,8 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
+    // A window came onto the stage (one more than before). The pill puts a picture away for it.
+    signal windowOpened()
     // A button or a small x on a rows card was pressed, or a row that opens something was tapped.
     // DeskState answers the ones that are its own (Why? and the x on Watching, Open on Needs you, the
     // disk on Machine); the signals stay open for anyone else.
@@ -315,8 +317,10 @@ QtObject {
             kind: w.kind === "panel" ? "panel" : "window", fullscreen: !!w.fullscreen
         })).filter(w => isFinite(w.x + w.y + w.w + w.h) && w.w > 0 && w.h > 0)
         if (JSON.stringify(clean) === JSON.stringify(windows)) return
+        const opened = clean.length > windows.length
         windows = clean
         _updateCover()
+        if (opened) windowOpened()
     }
 
     function setMonitor(width, height) {

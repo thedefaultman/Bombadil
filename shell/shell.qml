@@ -42,6 +42,7 @@ ShellRoot {
         id: deskState
         pill: pillState
         onOutgoing: msg => root.write(msg)
+        onWindowOpened: pillState.windowOpened()
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
@@ -206,6 +207,7 @@ ShellRoot {
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
+                Region { item: foundChips.visible ? foundChips : null }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: appChips }
@@ -296,6 +298,18 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                // While the AI rests: what the sentence you typed nearly names on this computer (an app, a
+                // word, a past ask), under the line that says the ask is kept. A press opens it.
+                FoundChips {
+                    id: foundChips
+                    pill: pillState
+                    // As wide as its chips (the input mask lets clicks beside them through), and no wider
+                    // than the bar: three long labels shrink and cut themselves short.
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: Math.min(Math.max(360, win.pillMax), column.width)
                 }
 
                 // Which AI, Sign in, Show sign-in: the choices under the setup line.

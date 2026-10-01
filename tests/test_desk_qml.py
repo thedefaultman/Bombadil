@@ -72,6 +72,7 @@ Window {
         tickMs: %(tick)d
         screenWidth: w.width; screenHeight: w.height
         onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onWindowOpened: pillState.windowOpened()      // as shell.qml wires it
         onRowAction: (widget, key, action) => w.actions = w.actions.concat([[widget, key, action]])
         onRowOpen: (widget, key, opens) => w.opened = w.opened.concat([[widget, key, opens]])
         onMachineModelChanged: w.machineChanges += 1
@@ -855,6 +856,29 @@ def test_a_window_on_the_stage_shares_the_desk_and_a_fullscreen_one_takes_it(des
     desk.pump(0.6)                                          # the card comes back 400 ms after the window went
     assert desk.faces["now"] == "full"
     assert desk.shown("deskCard-now")
+
+
+PICTURE = {"type": "diagram", "shape": "chain", "id": "card-1", "title": "What starts when you boot",
+           "nodes": [{"id": "a", "label": "Firmware"}, {"id": "b", "label": "Kernel"}],
+           "links": [{"from": "a", "to": "b"}]}
+
+
+def test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not(desk):
+    desk.send(kind="card", turn=None, card=PICTURE)
+    assert desk.pill.property("card") is not None
+    desk.cover((700, 200, 500, 400))                       # the window the same ask opened: the picture stays
+    assert desk.pill.property("card") is not None
+    desk.pill.setProperty("cardAt", 0)                     # it has been up a while
+    desk.cover((710, 210, 500, 400))                       # dragged: the same one window
+    assert desk.pill.property("card") is not None
+    desk.cover((710, 210, 500, 400), (0, 0, 300, 300))     # a second window comes: Super+Enter
+    assert desk.pill.property("card") is None
+    desk.send(kind="card", turn=None, card={**PICTURE, "id": "card-2"})
+    desk.pill.setProperty("cardAt", 0)
+    desk.cover((710, 210, 500, 400))                       # one goes: nothing new on the stage
+    assert desk.pill.property("card") is not None
+    desk.cover()
+    assert desk.pill.property("card") is not None and desk.warnings == []
 
 
 def test_the_pill_takes_the_stage_less_the_strips(laptop):
