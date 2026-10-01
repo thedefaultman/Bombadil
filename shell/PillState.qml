@@ -7,8 +7,9 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped).
-    signal summoned()
+    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
+    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
 
@@ -53,6 +54,10 @@ QtObject {
     // The picture above the line (a diagram card from show_card, system_map or a receipt), or null.
     // One at a time: a newer one replaces it; Esc and its × put it away; the next turn clears it.
     property var card: null
+    // A picture you asked for keeps the line that came with it. The picture sits above the line, so
+    // when the line faded the picture dropped by the line's height, and a click aimed at its × (or at
+    // a box) missed. A receipt is not asked for: it fades with its line. Esc or × puts both away.
+    readonly property bool pictureStays: !!card && !card.receipt && !card.partial
     property double cardAt: 0
     // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
     // while a sign-in is under way (they call it off).
@@ -138,7 +143,7 @@ QtObject {
         }
         if (ev.type === "entries") { entries = ev.entries || []; return }
         if (ev.type === "setup") { _setup(ev); return }
-        if (ev.type === "summon") { summoned(); return }
+        if (ev.type === "summon") { summoned(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
             if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }
@@ -218,6 +223,10 @@ QtObject {
             // A picture that could not be drawn puts the last one away: the error under a picture of
             // something else reads as if it were about that picture.
             if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
+            // A window the launcher just opened (the Brain, an app, a panel) takes the stage: a picture
+            // left over the middle of the screen would sit on top of it.
+            if (ev.phase === "done" && ev.ok === true && ev.verb === "open"
+                    && (ev.action === "brain" || ev.action === "app" || ev.action === "panel")) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
                 flash = ev.text || ""; flashAt = _now(); flashFor = ev.action === "why" ? 8000 : 3500

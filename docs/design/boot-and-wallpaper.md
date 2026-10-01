@@ -101,13 +101,33 @@ folder from QML. `share/` sits beside `shell/` in the repository and in the inst
 
 ### The user's own picture
 
-`~/.config/bombadil/wallpaper` holds the path of any image, on one line (`~/` and `file://` work).
-The bar reads the file when it starts and again whenever it changes, so the first time the file is
-written the bar needs a restart (`systemctl --user restart bombadil-shell`) and after that a change is
-noticed at once. Delete the file and the standard picture is back; a picture that will not load falls back to the standard one. The folder is
-`BOMBADIL_CONFIG` or `$XDG_CONFIG_HOME/bombadil`, the one agentd and the CLI already use, so the
-agent can set it when asked ("use the mountains photo as my wallpaper") by writing that one file and
-restarting the bar, with no new tool. See [`share/wallpaper/README.md`](../../share/wallpaper/README.md).
+`~/.config/bombadil/wallpaper` names the picture: the last line that is not a `#` comment is the path
+of any image (so adding a line changes it) (`~/` and `file://` work). New systems ship the file with only comments in it (from
+`iso/airootfs/etc/skel`), because a file that does not exist cannot be watched; with the comments
+there the bar notices a first path, and every change after it, at once, with no restart. A system installed before the file was shipped needs the file created and the bar started again once,
+because a file that was not there when the bar started is not watched. Emptying the
+file or deleting it brings the standard picture back. A picture that will not load falls back to the
+standard one, and so does a line that is not a path: an image written into the file itself (the usual
+mistake) logs one line, `wallpaper: ... holds the path of an image, on one line, not the image itself`,
+and never what was in the file.
+
+The folder is `BOMBADIL_CONFIG` or `$XDG_CONFIG_HOME/bombadil`, the one agentd and the CLI already
+use, so the agent can set it when asked ("use the mountains photo as my wallpaper") by writing that
+one line, with no new tool and no restart. See
+[`share/wallpaper/README.md`](../../share/wallpaper/README.md).
+
+**A picture of the user's own is dimmed toward the ground** (`dim`, 0.6, in `shell/Wallpaper.qml`; a
+ground-coloured layer over the picture). The standard picture is drawn dark and is not dimmed. The
+reason is the first check on a real VM with the worst picture we could make (saturated bands, a white
+ellipse and white and yellow stripes across the bottom third, where the pill and the cards sit): it
+loaded within seconds and the pill, line and cards read, but the glass lets about 15 to 20 per cent of
+the picture through on the quietest layers, and the muted text (clocks, "from this machine") lost
+contrast over the bright stripes. At `dim` 0.6 the muted text keeps a contrast of 4.5 on the quietest
+glass (the chips, 85%) over a pure white stripe, and a picture still shows at 40% of its light.
+`tests/test_wallpaper.py` works this out from the tokens, so a lighter glass or a lighter muted
+colour fails it.
+
+![The pill over the worst-case picture, dimmed, in the headless desktop test](../screens/boot-and-wallpaper/headless-worst-case-picture-dimmed.png)
 
 ## The quiet console
 
@@ -143,6 +163,13 @@ text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is n
 - **The GRUB theme** (`share/grub/bombadil/`) is the identity work's picture and is wired into the
   installed system by the installed-system build. Its README says how. It shows when GRUB asks for the
   disk password.
+- **GRUB's own two lines** on an installed system, `Loading Linux linux ...` and `Loading initial
+  ramdisk ...`, show for a moment after the firmware logo. They are `echo` lines that `grub-mkconfig`'s
+  `10_linux` writes into `grub.cfg`, and Arch's grub (2.16) has no switch for them, so no kernel or
+  GRUB variable here can hide them. Whoever writes `grub.cfg` (the installed-system build, and the hook
+  that regenerates it after a kernel update) can delete them from the generated file, with
+  `grub-mkconfig` run in the C locale so the text is the English one:
+  `sed -i "/^[[:space:]]*echo[[:space:]]*'Loading /d" /boot/grub/grub.cfg`.
 - **The live stick's loader** is systemd-boot, which draws text only. A graphical menu would mean
   moving the live image to GRUB too; the live menu is three seconds and one entry, so it stays.
 - **The firmware's logo** before any of this. Some machines let the person turn it off.
@@ -154,8 +181,9 @@ text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is n
   greetd line, the Hyprland colour.
 - `tests/desktop/run.sh` samples the rendered desk: the corners are the wallpaper's ground and not
   sway's own colour, the middle is lit, the stone is lighter than its ground, nothing is orange, and
-  it takes the user's picture from the config file, falls back from a broken path to the standard
-  picture, and goes back to the standard picture when the file is removed.
+  it takes the user's picture from the config file with no restart, dims it, falls back from a broken
+  path or an image written into the file to the standard picture, and goes back to the standard
+  picture when the file is removed.
 - The live ISO in a VM: the screen between the loader and the desk is `#101214` with no text, and the
   desk has the wallpaper under the cards. The pictures in
   [`../screens/boot-and-wallpaper/`](../screens/boot-and-wallpaper/) are from that. Under emulation
@@ -164,6 +192,13 @@ text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is n
   the console in seconds: `qemu-system-x86_64 -kernel vmlinuz-linux -initrd initramfs-linux.img
   -append "<the entry's options> break=premount" -cdrom bombadil.iso ...` (with OVMF, `-device
   virtio-vga`, and `scripts/qmp.py` for the screendump).
+- An installed system on a real VM, with these changes applied by hand: from about 22 s the whole
+  screen is flat `#101214` with no text and no cursor, and about 4 s later the wallpaper and the pill
+  come up. Hyprland's start-up output is in the journal (`journalctl -t hyprland`), not on the console.
+  The kernel command line kept its serial console and gained the quiet parameters and the palette.
+  What still showed before the flat colour was the firmware's logo and GRUB's two `Loading ...` lines
+  (see "Not here"). Cards over the standard picture read cleanly; the worst-case picture above is what
+  led to the dimming.
 
 ## Open choice
 
