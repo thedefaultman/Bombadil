@@ -1,5 +1,11 @@
 # Tips, and the desk after boot
 
+> **Status:** Designed. Nothing of it is built, on `main` or on any branch: there is no `share/tips`, no `src/bombadil/tips.py`, no Tips card, no Widgets card, no `keep` for the desk and no `reducedMotion` token in `Theme.qml`. The four questions under "Four questions" are open: the brief records no answer to any of them. The surfaces it leaves in place or replaces (the faint first-day line, the example chips, the ten-second tour, the one-time "Changed your mind? Say undo." and the Install button on the USB stick) are themselves designed in other briefs and are not on `main` either.
+> **Code:** none of it is on `main`. Piece 1 would add `share/tips/tips.toml`, `src/bombadil/tips.py`, `share/apps/tips`, `Kit.Stone` and `Kit.TipScene` (in `share/qml/Bombadil/`) and a Tips card in `shell/`, and would change `share/qml/Bombadil/Theme.qml`, `shell/shell.qml`, `shell/DeskRail.qml`, `src/bombadil/launcher.py`, `src/bombadil/desk.py`, `src/bombadil/agentd.py` and `src/bombadil/appkit/native/agent.py`. Piece 2 would add `shell/WidgetsCard.qml` and change `src/bombadil/desk.py`, `src/bombadil/launcher.py`, `src/bombadil/mcp_server.py`, `src/bombadil/vitals.py` and `shell/DeskState.qml`. What it builds on is on `main`: the desk (`src/bombadil/desk.py`, `shell/DeskState.qml`), the AI card (`shell/AiCard.qml`), the `summon` message (`src/bombadil/agentd.py`, `shell/shell.qml`) and the Brain's words in `src/bombadil/launcher.py`.
+> **Design:** this brief and its page, [Tips, and your desk](pages/tips-and-your-desk.html). It sits on [The desk](widgets-brief.md), [How Bombadil should feel](ux-brief.md), [Bombadil's voice](voice-brief.md), [Bombadil tends itself](self-improvement-brief.md), [The Bombadil mark](identity-brief.md) and [the design system](design-system.md); what exists is described in [Desk](../architecture/desk.md) and [App kit](../architecture/app-kit.md).
+> **Decided by:** nothing yet. The owner's answers to the four questions are the next step; every other fork is a default under "Decisions".
+> **Verified:** 2026-10-01 against `main` at `969b80b`: that no Tips code exists on `main` or on any remote branch (`share/apps` holds only `brain` and `mail`, and no file or test outside the docs concerns tips: the only matches for the word are chart tooltips); and the account of the desk after boot under "The short answer": the widget table in `src/bombadil/desk.py`, the presence rules in `shell/DeskState.qml`, `tests/test_desk_qml.py::test_no_strips_and_no_cards_at_rest`, `hidden` in `desk.toml`, Needs you having no feed on `main` (agentd sends no `dev` message), Away and Alive having no feed and no face, the strips' click and hover signals not being connected in `shell/DeskStrips.qml`, `BOMBADIL_REDUCE_MOTION` reaching only the stone and the wallpaper (`shell/shell.qml`), `summon` with text (`shell/shell.qml`), the pill widths of 710 and 624 px and the 600 px rail on a 1280 × 720 screen (`shell/DeskState.qml`, `tests/test_desk_qml.py`). The research done on 2026-10-01 at `dbe6e8a`, the figures under "Measure" and the vendor facts were not re-checked, and nothing was run beyond reading the code.
+
 You choose Claude, sign in, and the browser panel slides away. The line says "Signed in to Claude. Ask me for anything." and fades. Just above the pill a faint line reads "Super to talk. Esc to stop. Say undo to go back." Then one card settles into the bottom-right corner, the first card you have ever seen on this machine. It says **Tips**, and under that "Start here · 1 of 6". Its picture is a small drawing of this same screen: a pill, a line above it, and a window called Tickets with three rows in it. Under the picture there is one line, "Say what you need. It gets made.", and one button that reads exactly what you would type: **Make me a ticketing app**. Nothing on the card moves. You press the button and the words appear in the real pill with the cursor at the end, waiting. You press Enter, the stone rolls orange, the line counts "Building Tickets, 140 lines", and Tickets slides in, just as the picture showed. A little later the card turns to the next tip: "Ask for a picture, not a paragraph." [How am I connected?]. You click the picture instead of the button, and the Tips app slides in from its drawer and plays that tip once, in seven seconds: the key, the words typing in, the stone, the picture card rising, the closing line. Then it holds. After your first week the card is gone, and the desk is wallpaper and a pill again. "tips" brings the app back any time.
 
 This is the design for two things the owner asked on 1 Oct 2026: whether the desk has widgets by default after boot, with the user able to change them and set their own defaults; and a Tips widget, a carousel on the desk that opens into a full app, where each tip is one line next to a short animation of the workflow in action, seeded with coding and productivity workflows that grow as Bombadil grows. It sits on The Bombadil Desk (widgets brief, 27 Sep), How Bombadil Should Feel (UX brief), Bombadil's Voice, Bombadil Tends Itself (self-improvement), the identity brief and the design system, whose decisions stay in force except where the "Changes" section names one and argues it. It was made from six research sweeps of the code on main (dbe6e8a) and the unmerged branches, three independent drafts, a merge, and three adversarial checks (rules, buildability, a new user's eyes). Nothing is built until the owner answers the four questions below.
@@ -13,12 +19,12 @@ This is the design for two things the owner asked on 1 Oct 2026: whether the des
 | Now | during a turn with a plan of two or more steps, or a step that touches the system | yes |
 | Watching | while a job, download or timer counts; a job that failed in the last 30 minutes can show at boot | yes |
 | Machine | when memory, disk, heat or the sessions' ceiling crosses its line, or for 30 s after "how's the machine" | yes |
-| Needs you | when two or more coding sessions wait | drawn, but fed only by the coding-sessions branch (PR #4) |
+| Needs you | when two or more coding sessions wait | drawn, but fed only by the coding-sessions branch, which is not on `main` |
 | Away, Alive | never: no feed and no face yet | designed only |
 
 **What a user can change today:** the word "desk" folds every card to a chip beside the pill and back; "show machine", "hide watching" and the like show or put away one widget; a sentence such as "put watching on the right" goes to the agent's `desk` tool, which works only when your own words asked for the desk. All of it is kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so it survives a reboot and an undo never moves it. Needs you cannot be put away.
 
-**What a user cannot do today:** keep a widget up at rest; see a list of the widgets there are; make a widget of their own (designed, not built); or change anything with a click or a drag (the strips' click and hover are not wired; the desk thread is building dragging now). And nothing teaches what to ask: there is no tips word, "what can you do" gets at most four plain lines from the model, and the first-minute pieces the UX brief designed (example chips above the empty pill, the ten-second tour) exist on no branch.
+**What a user cannot do today:** keep a widget up at rest; see a list of the widgets there are; make a widget of their own (designed, not built); or change anything with a click or a drag (the strips' click and hover are not wired; dragging a card is in progress on a branch that is not on `main`). And nothing teaches what to ask: there is no tips word, "what can you do" gets at most four plain lines from the model, and the first-minute pieces the UX brief designed (example chips above the empty pill, the ten-second tour) exist on no branch.
 
 ## Four questions
 
@@ -36,7 +42,7 @@ The owner answers with one letter each, for example "1a 2a 3b 4a". The recommend
 - b) It runs at once.
 - c) Quick ones that need no AI ("How am I connected?") run at once; ones that build or install something wait in the pill.
 
-*Why a:* pressing Enter themselves teaches a new person where to type, lets them make the words theirs ("...for a team of four"), and never starts a minute-long build by accident. Whatever is chosen, the voice thread's empty-place buttons should behave the same, so a button never means two things.
+*Why a:* pressing Enter themselves teaches a new person where to type, lets them make the words theirs ("...for a team of four"), and never starts a minute-long build by accident. Whatever is chosen, the voice brief's empty-place buttons should behave the same, so a button never means two things.
 
 **3. How should someone choose which widgets are on their desk after every boot?**
 - a) With words only: "keep machine on the desk" keeps it up after every boot; "hide machine" stops keeping it. A tip teaches it.
@@ -64,13 +70,13 @@ In this order, each step tested before the next:
 2. **The tips table and `tips.py` (M).** `share/tips/tips.toml` holds one row per tip (below). `src/bombadil/tips.py` in agentd decides which tips this machine can back (a tip whose gate is not met is shown nowhere), keeps `~/.local/state/bombadil/tips.json` (the first-ready date, the days of use, the tried ids, the known ids, the tip to open on; agentd is its only writer), marks tips tried from agentd's own live events with no model, and sends one `tips` message to the shell only when something changes. `bombadil-install` copies `tips.json` and `desk.toml` to the installed disk, so what the stick taught is kept.
 3. **`Kit.Stone` and `Kit.TipScene` (L).** The stone moves from `shell/Stone.qml` into the kit as an internal component and gains `animate` (gates every animation and its settle timer), `ink` (draws in fg or muted with no state colour, for use outside the pill) and the identity brief's 16 px drawing; the pill keeps using it with animate on. `TipScene` is pure QtQuick (Theme, Shapes, Kit.Stone, and Kit.Diagram at app size only, with `font.family` on every Text), the same way `Kit.Diagram` already serves both the shell's card host and apps. It has two densities: card (a still poster) and app (plays). Both are internal: not in the skill's components list, and `check_app` refuses them in apps the agent writes.
 4. **The Tips app and its words (M).** A built-in kit app in `share/apps/tips`, opened by local words (a `TIPS` table in `launcher.py` like the Brain's). `Agent.draft(text)` joins the kit's `Agent`: a one-shot summon that fills the pill, the Brain's "Ask about this" slot made general.
-5. **The Tips card on the desk (M).** A `tips` entry in `desk.py`'s `WIDGETS` at the top of the right rail, following the DESK.md recipe for a new widget, and a `TipsCard` face in `DeskRail`'s loader. Its presence comes from the `tips` message. Its button sends `{type: "summon", text, tip: true}` through `DeskState.outgoing`; its title, picture and "All tips ›" ask agentd to open the app on that tip.
+5. **The Tips card on the desk (M).** A `tips` entry in `desk.py`'s `WIDGETS` at the top of the right rail, following [Adding a widget](../DESK.md#adding-a-widget), and a `TipsCard` face in `DeskRail`'s loader. Its presence comes from the `tips` message. Its button sends `{type: "summon", text, tip: true}` through `DeskState.outgoing`; its title, picture and "All tips ›" ask agentd to open the app on that tip.
 
 ### 2. Your desk (M)
 
-`keep` for widgets with a calm face, the Widgets card, and a calm Machine. A `keep` op in `desk.py` and on the agent's `desk` tool (the gate already accepts the verb), `kept = [...]` in `desk.toml` beside the desk thread's `stripped`, the local words "keep <widget>" and "keep <widget> on the desk", the word "widgets", a `WidgetsCard.qml` above the pill (the AI card's shape), and a calm vitals mode for a kept Machine. This touches the desk's code, so it belongs with the desk thread's drag work.
+`keep` for widgets with a calm face, the Widgets card, and a calm Machine. A `keep` op in `desk.py` and on the agent's `desk` tool (the gate already accepts the verb), `kept = [...]` in `desk.toml` beside `hidden` (and beside `stripped`, which the unmerged dragging work on the desk adds), the local words "keep <widget>" and "keep <widget> on the desk", the word "widgets", a `WidgetsCard.qml` above the pill (the AI card's shape), and a calm vitals mode for a kept Machine. This touches the desk's code, so it belongs with the dragging work on the desk.
 
-**Later:** strip click and hover-peek for every strip, and drag by the title (desk thread); tips per app from the apps' `[[does]]` rows; "Watch again" from a turn's event log, using the same player; scenes recorded by the headless desktop test, if hand-written storyboards drift.
+**Later:** strip click and hover-peek for every strip, and drag by the title (the dragging work on the desk); tips per app from the apps' `[[does]]` rows; "Watch again" from a turn's event log, using the same player; scenes recorded by the headless desktop test, if hand-written storyboards drift.
 
 ## Tips' own rules
 
@@ -103,7 +109,7 @@ In this order, each step tested before the next:
 
 **A kept Machine** runs a calm vitals mode: a sample every 5 s, figures rounded so a message goes out only when a shown figure changes, no walk of the memory groups while calm, rows and meters changed in place without motion. Its card reads "The machine is fine" until a line is crossed, when it says why, as it does today.
 
-**Moving:** by sentence today, and by dragging a card by its title once the desk thread's drag is proven in the VM.
+**Moving:** by sentence today, and by dragging a card by its title once the desk's drag is proven in the VM.
 
 ## The Tips card
 
@@ -192,7 +198,7 @@ On the live USB on main plus this design. S is the moment sign-in completes.
 
 ## The seed
 
-Twenty tips, all backed by main today, each with its gate. Lines are proposals for the voice thread, in the teaching register: one line, no name, no "!", no em-dash, no "will", "tomorrow" or "later". `{app}`, `{project}` and `{ai}` are filled from the machine: the newest app in `~/Apps`, the newest folder in `~/Projects`, the AI in use.
+Twenty tips, all backed by main today, each with its gate. Lines are proposals for [the voice](voice-brief.md), in the teaching register: one line, no name, no "!", no em-dash, no "will", "tomorrow" or "later". `{app}`, `{project}` and `{ai}` are filled from the machine: the newest app in `~/Apps`, the newest folder in `~/Projects`, the AI in use.
 
 | # | Section | Line | Button (exact words) | Needs | What the scene shows |
 |---|---|---|---|---|---|
@@ -217,7 +223,7 @@ Twenty tips, all backed by main today, each with its gate. Lines are proposals f
 | 19 | This machine | Type why while it works. | (words: why) | the AI, mid-turn | "Installing docker" running; "why"; the reason flashes in the agent's words; back to the step |
 | 20 | This machine | Say undo to go back a step. | (words: undo) | an installed disk | "install htop" closed with Undo; "undo"; "Undone. System files go back to before “install htop” when you restart. Your home folder and apps stay as they are." |
 
-**Waiting for their pieces:** "claude {project}" (a coding session by name) and the amber stone's your-turn knock come with the coding-sessions branch (PR #4); "What needs me in mail?" with the mail work; "noticed" with the self-improvement branch. Their rows ship with those PRs, gated until the code is on main.
+**Waiting for their pieces:** "claude {project}" (a coding session by name) and the amber stone's your-turn knock come with the coding-sessions branch, which is not on `main`; "What needs me in mail?" with the mail work (that code is on `main`, so that row is no longer gated); "noticed" with the self-improvement branch. Their rows ship with those PRs, gated until the code is on main.
 
 **A row in `share/tips/tips.toml`:**
 
@@ -244,8 +250,8 @@ beats = [
 
 ## How tips grow
 
-- **Tips are rows, not code.** The voice thread words them; `tips.toml` moves beside `share/voice/lines.toml` once the voice PR merges.
-- **A PR that adds something a person can ask ships its tip row and beats in the same PR**, the way it ships its docs, gated by a `needs` flag until its code is on main. `docs/CONTRIBUTING` gains that one line.
+- **Tips are rows, not code.** The voice words them; `tips.toml` moves beside `share/voice/lines.toml` once the voice work merges.
+- **A PR that adds something a person can ask ships its tip row and beats in the same PR**, the way it ships its docs, gated by a `needs` flag until its code is on main. [`CONTRIBUTING.md`](../../CONTRIBUTING.md) gains that one line.
 - **The tests fail a tip** when its `needs` flag is unknown, its line breaks the rules or overflows 272 px at 13 px, its button and "All tips ›" overflow the card row while the card can show it, its words reach nothing (a launcher word, a model ask or a `!` command), its scene runs over 10 s, its poster fails to render, or a template string is not backed by the code.
 - **A new kind of beat** is a small piece of `TipScene`: session dots and the knock when the coding sessions land, the Mail window when Mail lands.
 - **Order is fixed, never random:** Start here, then the sections in order, untried first.
@@ -288,7 +294,7 @@ Each is named so the owner's answers confirm it knowingly.
 - **Voice rule 5** (a chip is a sentence you could have typed, and sends it): every tip button fills the pill and waits (question 2); the empty-place chips follow the same rule, whichever is chosen.
 - **The UX brief's first minute:** Tips replaces the unbuilt example chips and the ten-second tour (question 4). The habit chips after about 20 asks are left to Noticed. "Super brings the chips back" loses its chips. The faint first-day line, the one-time "Changed your mind? Say undo." and the live-USB Install chip stay.
 - **"Who draws widgets"** and widgets rule 5: Tips adds a face drawn by an internal kit component from typed data, never agent QML. The stone moves into the kit. The poster's line buttons are unlabelled outlines.
-- **"Are widgets always on? Other options: a switch per widget"** (turned down on 28 Sep): the Widgets card brings a per-widget choice back, because the owner has now asked for exactly that; the default it ships with is the quiet desk.
+- **"Are widgets always on? Other options: a switch per widget"** (turned down on 28 Sep): the Widgets card brings a per-widget choice back, because the owner asked for exactly that on 1 Oct 2026; the default it ships with is the quiet desk.
 
 ## Cut, and why
 
@@ -312,14 +318,14 @@ Each is named so the owner's answers confirm it knowingly.
 - **The pill narrows** to 710 px at 1366 and 624 px at 1280 for the first week.
 - **Scene drift:** the truth test catches changed wording, not changed window behaviour; model replies are only plausible.
 - **Tried detection misses paraphrases** until the self-improvement ledger lands.
-- **Unmerged neighbours:** the voice branch's name card, hello and welcome-home line come first, and its line rules are duplicated in the tips test until it merges; Tab and Enter on the empty pill stay reserved for the coding sessions' walk; question 1b needs the desk thread's per-widget strip in the shell.
+- **Unmerged neighbours:** the voice branch's name card, hello and welcome-home line come first, and its line rules are duplicated in the tips test until it merges; Tab and Enter on the empty pill stay reserved for the coding sessions' walk; question 1b needs the per-widget strip (`stripped`) that the unmerged desk work adds to the shell.
 - **Measure:** the render cost of a still, mapped rail window on the VM's software renderer and on real hardware; the kept Machine's cadence; the Tips app at 960 × 516 on 1280 × 720 with an app chip showing.
 - **On the live USB** the card shows on every boot, and apps made there vanish at restart, so tips that need an app re-gate; tip 12's download must fit the live USB's writable space.
 
 ## Who owns what
 
-- **The desk thread** owns the desk's code: the Tips card's face and widget entry (piece 1, step 5, or with the Tips build by agreement) and all of piece 2.
-- **The voice thread** owns the wording: every tip line and the new local answers are proposals until it words them; `tips.toml` moves beside `lines.toml`.
+- **The desk's code** takes the Tips card's face and widget entry (piece 1, step 5, or with the Tips build by agreement) and all of piece 2.
+- **The voice** words every tip line and the new local answers, which are proposals until it does; `tips.toml` moves beside `lines.toml`.
 - **The app kit** is how the Tips app is made (`share/apps/tips`, built-in apps under `share/apps/<name>/`); `Kit.Stone` and `Kit.TipScene` are internal kit components.
-- **A Tips build thread** (started on the owner's answer) builds piece 1 steps 1 to 4.
+- **The Tips build**, after the owner's answers, is piece 1 steps 1 to 4.
 - **Every later piece** that adds something a person can ask ships its tip row.

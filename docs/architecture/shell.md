@@ -1,11 +1,11 @@
 # The shell
 
 > **Status:** Partly shipped
-> **Code:** `shell/shell.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/LineButton.qml`, `shell/Stone.qml`, `shell/HyprCover.qml`, `shell/Wallpaper.qml`, `shell/CardHost.qml` (hosting only), `bin/bombadil-shell`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/skel/.config/bombadil/wallpaper`
-> **Design:** [UX brief](../design/ux-brief.md#the-rules), [The Bombadil mark](../design/identity-brief.md#the-stone), [Boot and the wallpaper](../design/boot-and-wallpaper.md), [the pill's states in the design system](../design-system/README.md#the-pills-states)
-> **Verified:** 2026-10-01 against `main` at `a30ebc8`
+> **Code:** `shell/shell.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/FoundChips.qml`, `shell/NoticeChips.qml`, `shell/AiCard.qml`, `shell/LineButton.qml`, `shell/Stone.qml`, `shell/HyprCover.qml`, `shell/Wallpaper.qml`, `shell/CardHost.qml` (hosting only), `bin/bombadil-shell`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/skel/.config/bombadil/wallpaper`
+> **Design:** [UX brief](../design/ux-brief.md#the-rules), [The Bombadil mark](../design/identity-brief.md#the-stone), [The poor man switch](../design/poor-man-switch-brief.md#the-pill-while-the-ai-rests), [Boot and the wallpaper](../design/boot-and-wallpaper.md), [the pill's states in the design system](../design-system/README.md#the-pills-states)
+> **Verified:** 2026-10-01 against `main` at `969b80b`
 
-The shell is the whole visible interface at login: one Quickshell program that draws a pill at the bottom of every screen, with the line and the chips above it, the stone at its left end, the picture host, the windows of the desk and the wallpaper under everything. It keeps no conversation: it turns what agentd says into what is on screen and sends back what the person types or clicks. It exists so that something true is on screen the moment Enter is pressed, and so that stop, undo and the launcher words never wait for a model.
+The shell is the whole visible interface at login: one Quickshell program that draws a pill at the bottom of every screen, with the line and the chips above it (the line also says what other services ask agentd to say, such as new mail), the stone at its left end (a click on it opens the AI card), the picture host, the windows of the desk and the wallpaper under everything. It keeps no conversation: it turns what agentd says into what is on screen and sends back what the person types or clicks. It exists so that something true is on screen the moment Enter is pressed, and so that stop, undo and the launcher words never wait for a model. The states for an AI that is out of plan or paused are described here from the shell's side and in [the poor man switch](poor-man-switch.md) from agentd's; notices are described here and in [mail](mail.md).
 
 ## How it works
 
@@ -13,37 +13,38 @@ The shell is the whole visible interface at login: one Quickshell program that d
 flowchart LR
     agentd["agentd socket"] -->|"one JSON object per line, root.handle"| pill["PillState"]
     agentd --> desk["DeskState"]
-    pill -->|"mode, line, risk, command, flash"| line["StatusLine"]
+    pill -->|"mode, line, notice, risk, command, flash"| line["StatusLine, NoticeChips"]
     pill -->|"face"| stone["Stone"]
-    pill -->|"queue, setupActions"| chips["QueueChips, SetupChips"]
-    pill -->|"card"| cards["CardHost"]
+    pill -->|"queue, setupActions, foundChips"| chips["QueueChips, SetupChips, FoundChips"]
+    pill -->|"card, aiOpen, aiRows"| cards["CardHost, AiCard"]
     pill -->|"summoned(text)"| focus["root.summon, keyboard focus"]
     desk -->|"needsYou"| pill
+    desk -->|"windowOpened"| pill
     desk -->|"capsule, pillWidth, strips"| bar["the pill's width and the desk windows"]
     hypr["Hyprland events"] --> cover["HyprCover"]
     cover -->|"setWindows"| desk
     hypr --> appchips["app chips"]
 ```
 
-**Start.** Hyprland runs `agentd`, `bombadil-shell` and `mako` on `hyprland.start` (`hyprland.lua:7-12`). `bin/bombadil-shell` puts `share/qml` on `QML2_IMPORT_PATH` and runs `quickshell -p <root>/shell/shell.qml`. `shell.qml` makes one `PillState` and one `DeskState` for the whole session and one `PanelWindow` per screen (`Variants { model: Quickshell.screens }`). The line, the chips and the stone read the same state on every screen. What differs per screen is the keyboard, the pill's width and the desk's strips. `shell.qml` also makes a `Wallpaper` ([the wallpaper](#the-wallpaper)).
+**Start.** Hyprland runs `agentd`, `bombadil-shell` and `mako` on `hyprland.start`, then hands Mail's user unit this session's screen and restarts it (`systemctl --user import-environment ... && systemctl --user restart bombadil-mail.service`, `hyprland.lua:7-16`; [mail.md](mail.md)). `bin/bombadil-shell` puts `share/qml` on `QML2_IMPORT_PATH` and runs `quickshell -p <root>/shell/shell.qml`. `shell.qml` makes one `PillState` and one `DeskState` for the whole session and one `PanelWindow` per screen (`Variants { model: Quickshell.screens }`). The line, the chips and the stone read the same state on every screen. What differs per screen is the keyboard, the pill's width and the desk's strips. `shell.qml` also makes a `Wallpaper` ([the wallpaper](#the-wallpaper)).
 
-**Connecting.** The socket path is `$BOMBADIL_SOCKET`, else `$XDG_RUNTIME_DIR/bombadil/agentd.sock`. A comment in `shell.qml` says a Quickshell `Socket` that failed to connect does not retry, so each attempt is a fresh `Socket` made from the `link` component. While `root.connected` is false a 1500 ms `Timer` (running from the start) destroys the last socket and makes the next. When the connection state changes, the shell sets `root.connected` and `deskState.connected`; a connect sets `pillState.connected`, and a drop calls `pillState.lost()` and `deskState.lost()`. agentd greets each client that connects with `status`, `entries` and `setup` ([agentd.md](agentd.md#the-socket)), and `DeskState` asks for `desk get` as soon as it is connected, so a restarted bar is told what is running without any state of its own.
+**Connecting.** The socket path is `$BOMBADIL_SOCKET`, else `$XDG_RUNTIME_DIR/bombadil/agentd.sock`. A comment in `shell.qml` says a Quickshell `Socket` that failed to connect does not retry, so each attempt is a fresh `Socket` made from the `link` component. While `root.connected` is false a 1500 ms `Timer` (running from the start) destroys the last socket and makes the next. When the connection state changes, the shell sets `root.connected` and `deskState.connected`; a connect sets `pillState.connected`, and a drop calls `pillState.lost()` and `deskState.lost()`. agentd greets each client that connects with `status`, `entries`, `setup` and a `notice` for each notice nobody has ended (`src/bombadil/agentd.py:394-404`, [agentd.md](agentd.md#the-socket)), and `DeskState` asks for `desk get` as soon as it is connected, so a restarted bar is told what is running without any state of its own.
 
-**Handling.** `SplitParser` hands each line to `root.handle`, which parses it (a line that is not JSON is dropped) and gives the object to `pillState.handle` and `deskState.handle`. Both objects emit `outgoing(msg)`; `root.write` sends it as one JSON line and does nothing while the socket is down. The pill's methods that send (`stop`, `unqueue`, `undo`, `details`, `setupAction`, `openThing`) check `_offline()` first and flash "Not connected to the agent yet." on the line; `submit` says the same as a `local` line and keeps the typed text; `closeDetails` stays silent. So a click while disconnected is answered, not lost.
+**Handling.** `SplitParser` hands each line to `root.handle`, which parses it (a line that is not JSON is dropped) and gives the object to `pillState.handle` and `deskState.handle`. Both objects emit `outgoing(msg)`; `root.write` sends it as one JSON line and does nothing while the socket is down. The pill's methods that send (`stop`, `unqueue`, `undo`, `details`, `setupAction`, `openThing`, `noticeAction`, `dismissNotice`, `openFound`, `setAi` and the opening half of `toggleAi`) check `_offline()` first and flash "Not connected to the agent yet." on the line; `submit` says the same as a `local` line and keeps the typed text; `closeDetails` stays silent. So a click while disconnected is answered, not lost.
 
-**Hyprland.** Two things come from the compositor and not from agentd. The app chips are built from `Hyprland.toplevels` whose workspace is named `special:app-<name>`, refreshed on the raw events `openwindow`, `closewindow` and `movewindowv2`, with the shown workspace tracked from `activespecial`. What puts an app's window in that workspace is `src/bombadil/appkit/placement.py` (see [app-kit.md](app-kit.md)): before the window first maps, `prepare()` adds a runtime window rule named `bombadil-app-<name>` that floats and centres it at its own size, shrunk to the screen, with `workspace = special:app-<name>`. The static `bombadil-apps` rule in `hyprland.lua` floats and centres every `bombadil-app-*` window at 540 by 660 and names no workspace. `HyprCover` reports where the windows are to `DeskState.setWindows`, which decides whether the desk's cards fold and whether the pill becomes a capsule. The app chips send nothing to the desk.
+**Hyprland.** Two things come from the compositor and not from agentd. The app chips are built from `Hyprland.toplevels` whose workspace is named `special:app-<name>`, refreshed on the raw events `openwindow`, `closewindow` and `movewindowv2`, with the shown workspace tracked from `activespecial`. What puts an app's window in that workspace is `src/bombadil/appkit/placement.py` (see [app-kit.md](app-kit.md)): before the window first maps, `prepare()` adds a runtime window rule named `bombadil-app-<name>` that floats and centres it at its own size, shrunk to the screen, with `workspace = special:app-<name>`. The static `bombadil-apps` rule in `hyprland.lua` floats and centres every `bombadil-app-*` window at 540 by 660 and names no workspace. `HyprCover` reports where the windows are to `DeskState.setWindows`, which decides whether the desk's cards fold and whether the pill becomes a capsule, and emits `windowOpened` when the list grew (`shell.qml:46` connects it to `pillState.windowOpened()`, which puts a picture away: [the picture host](#the-picture-host)). The app chips send nothing to the desk.
 
 ### The bar window
 
 | Property | Value | `shell/shell.qml` |
 |---|---|---|
-| One window per screen | `Variants` over `Quickshell.screens`, each a `PanelWindow` | 175-179 |
-| Edges | anchored left, right and bottom: as wide as the screen | 187 |
-| Layer and name | `WlrLayer.Overlay`, namespace `bombadil-bar` | 190-191 |
-| Background | `"transparent"` | 189 |
-| Height | `column.implicitHeight + 24` (the column has 12 px margins) | 188 |
-| Exclusive zone | `64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)`: the pill's 52 plus 12 below it, plus the app chips row | 204 |
-| Input mask | a `Region` of `cardHost`, `statusLine`, `setupChips` (only while visible), `chips`, `appChips`, `pillBox`, `stripsLeft` and `stripsRight` | 206-215 |
+| One window per screen | `Variants` over `Quickshell.screens`, each a `PanelWindow` | 192-194 |
+| Edges | anchored left, right and bottom: as wide as the screen | 204 |
+| Layer and name | `WlrLayer.Overlay`, namespace `bombadil-bar` | 207-208 |
+| Background | `"transparent"` | 206 |
+| Height | `column.implicitHeight + 24` (the column has 12 px margins) | 205 |
+| Exclusive zone | `64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)`: the pill's 52 plus 12 below it, plus the app chips row | 221 |
+| Input mask | a `Region` of `cardHost`, `statusLine`, `foundChips` (only while visible), `setupChips` (only while visible), `chips`, `appChips`, `aiCard` (only while visible), `pillBox`, `stripsLeft` and `stripsRight` | 223-234 |
 
 The window is as wide as the screen and transparent, so the mask is what lets clicks beside and above the pill reach the windows behind it. A control that is not listed in `mask` receives no clicks. `setupChips` is the one entry guarded by `visible`; the comment gives the reason (a hidden item keeps its last place). `cardHost`, `statusLine`, `chips` and `appChips` also hide themselves and have no guard (see [Known gaps](#known-gaps)). `DeskStrips` is zero wide and high when it has nothing to show, so that the mask takes no room for it (its own comment).
 

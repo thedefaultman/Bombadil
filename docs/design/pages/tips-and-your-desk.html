@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tips and Your Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -529,6 +534,8 @@ pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-trans
 .ladder li b { color: var(--fg); }
 @media (min-width: 761px) { .hours li { grid-template-columns: 84px minmax(0, 1fr); } }
 </style>
+</head>
+<body>
 
 <svg class="defs" width="0" height="0" aria-hidden="true" focusable="false">
   <defs>
@@ -599,7 +606,7 @@ pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-trans
       <button class="opt" data-o="a"><i>a</i><span>The sentence appears in the pill with the cursor at the end and waits: Enter runs it, Esc drops it, and they can add their own details first.<span class="rtag">recommended</span></span></button>
       <button class="opt" data-o="b"><i>b</i><span>It runs at once.</span></button>
       <button class="opt" data-o="c"><i>c</i><span>Quick ones that need no AI run at once; ones that build or install something wait in the pill.</span></button>
-      <p class="why"><b>Why a:</b> pressing Enter themselves teaches where to type, lets them make the words theirs (“…for a team of four”), and never starts a minute-long build by accident. The voice thread’s empty-place buttons should then behave the same.</p>
+      <p class="why"><b>Why a:</b> pressing Enter themselves teaches where to type, lets them make the words theirs (“…for a team of four”), and never starts a minute-long build by accident. The voice brief’s empty-place buttons should then behave the same.</p>
     </div>
     <div class="qcard" data-q="3">
       <h3><span>3</span>How should someone choose which widgets are on their desk after every boot?</h3>
@@ -648,7 +655,7 @@ pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-trans
     <div class="box"><h3>What a user cannot do today</h3><ul>
       <li>Keep a widget up at rest, or see a list of the widgets there are.</li>
       <li>Make a widget of their own (designed, not built).</li>
-      <li>Change anything with a click or a drag: the strips’ click and hover are not wired, and the desk thread is building dragging now.</li>
+      <li>Change anything with a click or a drag: the strips’ click and hover are not wired, and dragging a card is in progress on a branch that is not on main.</li>
       <li>Learn what to ask: there is no tips word, “what can you do” gets at most four plain lines from the model, and the example chips and ten-second tour exist on no branch.</li>
     </ul></div>
   </div>
@@ -669,11 +676,11 @@ pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-trans
       </ol>
     </div>
     <div class="piece">
-      <div class="piece-head"><span class="piece-num">02</span><h3>Your desk</h3><span class="effort">medium · with the desk thread’s drag work</span></div>
+      <div class="piece-head"><span class="piece-num">02</span><h3>Your desk</h3><span class="effort">medium · with the dragging work on the desk</span></div>
       <p><b>Keep</b> for widgets with a calm face, the <b>Widgets card</b>, and a <b>calm Machine</b>: a <code>keep</code> op in <code>desk.py</code> and on the agent’s <code>desk</code> tool, <code>kept = [...]</code> in <code>desk.toml</code>, the words “keep machine” and “widgets”, a <code>WidgetsCard.qml</code> above the pill in the AI card’s shape, and a calm vitals mode for a kept Machine.</p>
     </div>
   </div>
-  <p class="carry"><b>Later:</b> strip click and hover-peek and drag by the title (desk thread); tips per app from the apps’ <code>[[does]]</code> rows; “Watch again” for a real turn with the same player; scenes recorded by the headless desktop test if hand-written storyboards drift.</p>
+  <p class="carry"><b>Later:</b> strip click and hover-peek and drag by the title (the dragging work on the desk); tips per app from the apps’ <code>[[does]]</code> rows; “Watch again” for a real turn with the same player; scenes recorded by the headless desktop test if hand-written storyboards drift.</p>
 </section>
 
 <section id="app">
@@ -782,7 +789,7 @@ pre.toml .k { display: inline; font-size: inherit; letter-spacing: 0; text-trans
         <li><b>“keep watching”</b> answers “Watching shows only while something counts.” and changes nothing.</li>
         <li><b>“widgets”</b> opens the card. Each press changes <code>desk.toml</code> through the same path the words use, and the line says what changed. Nothing on the card is orange, because orange is the machine acting.</li>
         <li><b>A kept Machine</b> samples every 5 s, rounds its figures, and changes rows in place without motion. It reads “The machine is fine” until a line is crossed.</li>
-        <li><b>Moving</b> is by sentence today, and by dragging a card by its title once the desk thread’s drag is proven.</li>
+        <li><b>Moving</b> is by sentence today, and by dragging a card by its title once the desk’s drag is proven.</li>
       </ul>
     </div>
   </div>
@@ -871,15 +878,15 @@ beats = [
 
 <section id="seed">
   <h2>The seed: twenty tips</h2>
-  <p class="intro">All backed by main today, each with its gate: a tip the machine cannot back is shown nowhere. Each picture is the scene’s last frame. Click one to play it in the app. Lines are proposals for the voice thread, in the teaching register: one line, no name, no “!”, no em-dash. <code>{app}</code>, <code>{project}</code> and <code>{ai}</code> are filled from the machine.</p>
+  <p class="intro">All backed by main today, each with its gate: a tip the machine cannot back is shown nowhere. Each picture is the scene’s last frame. Click one to play it in the app. Lines are proposals for the voice, in the teaching register: one line, no name, no “!”, no em-dash. <code>{app}</code>, <code>{project}</code> and <code>{ai}</code> are filled from the machine.</p>
   <div class="gal" id="gal"></div>
-  <p class="carry"><b>Waiting for their pieces:</b> a coding session by name and the amber stone’s your-turn knock come with the coding-sessions branch; “What needs me in mail?” with the mail work; “noticed” with the self-improvement branch. Their rows ship with those PRs, gated until the code is on main.</p>
+  <p class="carry"><b>Waiting for their pieces:</b> a coding session by name and the amber stone’s your-turn knock come with the coding-sessions branch; “What needs me in mail?” with the mail work (that code is on main, so that row is no longer gated); “noticed” with the self-improvement branch. Their rows ship with those PRs, gated until the code is on main.</p>
 </section>
 
 <section id="grow">
   <h2>How tips grow</h2>
   <ul class="later" style="list-style:disc">
-    <li><b>Tips are rows, not code.</b> The voice thread words them; <code>tips.toml</code> moves beside <code>share/voice/lines.toml</code> once the voice PR merges.</li>
+    <li><b>Tips are rows, not code.</b> The voice words them; <code>tips.toml</code> moves beside <code>share/voice/lines.toml</code> once the voice work merges.</li>
     <li><b>A PR that adds something a person can ask ships its tip row and beats in the same PR</b>, the way it ships its docs, gated by a <code>needs</code> flag until its code is on main.</li>
     <li><b>The tests fail a tip</b> when its gate is unknown, its line breaks the rules or overflows 272 px at 13 px, its words reach nothing, its scene runs over 10 s, its poster fails to render, or a template string is not backed by the code.</li>
     <li><b>A new kind of beat</b> is a small piece of <code>TipScene</code>: session dots and the knock when the coding sessions land, the Mail window when Mail lands.</li>
@@ -932,7 +939,7 @@ beats = [
     <li><b>“No new words for the desk”:</b> adds “tips”, “what can you do”, “what can I ask”, “help”, “widgets” and the verb “keep”, which gets one meaning, “stays on the desk at rest”.</li>
     <li><b>Voice rule 5</b> (a chip sends its sentence): every tip button fills the pill and waits, and the empty-place chips follow the same rule, whichever is chosen.</li>
     <li><b>The UX brief’s first minute:</b> Tips replaces the unbuilt example chips and the ten-second tour (question 4); the habit chips are left to Noticed.</li>
-    <li><b>“A switch per widget”</b>, turned down on 28 September: the Widgets card brings a per-widget choice back, because it has now been asked for; the shipped default stays the quiet desk.</li>
+    <li><b>“A switch per widget”</b>, turned down on 28 September: the Widgets card brings a per-widget choice back, because it was asked for on 1 October; the shipped default stays the quiet desk.</li>
   </ul>
 </section>
 
@@ -973,16 +980,16 @@ beats = [
 <section id="owners">
   <h2>Who owns what</h2>
   <div class="grid2">
-    <div class="box"><h3>The desk thread</h3><p>The desk’s code: the Tips card’s face and widget entry, and all of piece 2.</p></div>
-    <div class="box"><h3>The voice thread</h3><p>The wording: every tip line and the new local answers are proposals until it words them.</p></div>
+    <div class="box"><h3>The desk</h3><p>The desk’s code: the Tips card’s face and widget entry, and all of piece 2.</p></div>
+    <div class="box"><h3>The voice</h3><p>The wording: every tip line and the new local answers are proposals until it words them.</p></div>
     <div class="box"><h3>The app kit</h3><p>How the Tips app is made (<code>share/apps/tips</code>); <code>Kit.Stone</code> and <code>Kit.TipScene</code> are internal kit components.</p></div>
-    <div class="box"><h3>A Tips build</h3><p>Started on the owner’s answer: piece 1, steps 1 to 4. Every later piece that adds something a person can ask ships its tip row.</p></div>
+    <div class="box"><h3>A Tips build</h3><p>After the owner’s answers: piece 1, steps 1 to 4. Every later piece that adds something a person can ask ships its tip row.</p></div>
   </div>
 </section>
 
 <footer>
   <span>Bombadil · Tips, and your desk · design pass of 1 October 2026</span>
-  <span>The full brief, with code references, is tips-and-desk-defaults-brief.md. Code read on main at dbe6e8a.</span>
+  <span>The full brief, with code references, is <a href="../tips-and-desk-defaults-brief.md">tips-and-desk-defaults-brief.md</a> in the folder above this one. Code read on main at dbe6e8a.</span>
 </footer>
 
 </div>
@@ -1718,3 +1725,6 @@ var Scene = (function () {
   }
 })();
 </script>
+
+</body>
+</html>

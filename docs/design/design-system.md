@@ -1,5 +1,10 @@
 # The Bombadil design system
 
+> **Status:** Partly shipped. The colours, glass, ink, shape, type and motion values below are in `share/qml/Bombadil/Theme.qml`, and the stone, the pill's states and the reduced-motion fallback of the stone and the wallpaper are drawn by `shell/Stone.qml` and `shell/Wallpaper.qml`. Not in the code: the `hairline` and `shadowPopup` tokens the text names (the hairlines in `share/qml/Bombadil/Style/` are literals and the popup shadow is `Style/Shadow.qml`), a still version of every movement under reduced motion (only the stone and the wallpaper's fade have one), and the separate 16 px colour drawing of the mark.
+> **Code:** `share/qml/Bombadil/Theme.qml`, `share/qml/Bombadil/Style/`, `share/qml/Bombadil/icons/`, `shell/DeskTheme.js`, `shell/Stone.qml`, `shell/Wallpaper.qml`, `shell/PillState.qml`, `shell/shell.qml`, `tests/test_theme.py`
+> **Design:** this note; [The Bombadil mark](identity-brief.md), [Bombadil's voice](voice-brief.md), [Design system](../design-system/README.md) (the token reference), [Brand assets](../brand/README.md)
+> **Verified:** 2026-10-01 against `main` at `969b80b`: every colour, glass opacity, size, radius, type size and duration named below against `Theme.qml`; the stone's states and timings in `shell/Stone.qml`; the pill's border colours in `shell/shell.qml`; the line's 12 s, 5 s and 15 s in `shell/PillState.qml`; the contrast figures (recomputed from the token values; the 2.8:1 given for `accent` on white holds on `groundLight`, and on pure white it is 3.1:1); Hyprland's blur (size 6, 2 passes) in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`; Inter in `iso/packages.x86_64`. Differences from the code that this note does not fix: the code names the type sizes `captionSize`, `smallSize`, `lineSize`, `promptSize`, `headingSize`, `titleSize` and `displaySize`, not the kebab-case names used here (the mapping is in the design-system reference); `Theme.monoFamily` is `monospace`, not `Noto Sans Mono`; under reduced motion the done hop fades in from 0.3 over 600 ms and does not stay still. The pill also has a ninth face, Resting, that the table of states does not list (see below the table).
+
 Bombadil is a Linux desktop whose main interface is an AI agent. The screen at rest is wallpaper and one pill at the bottom; the agent's work appears as a line above the pill, as cards, as panels that slide in, and as native apps it writes. The person using it is a passenger: everything the machine does is shown plainly and can be undone. This system is the look the screen has, written down so the shell (Quickshell QML), the component kit (`Bombadil.Style`, `Theme.qml`) and every design page read one set of values. Nothing here restyles it. The tokens are `share/qml/Bombadil/Theme.qml` (the shell and the app kit read the same file); the mark is in [`identity-brief.md`](identity-brief.md) and [`../brand/README.md`](../brand/README.md).
 
 ## Content fundamentals
@@ -8,7 +13,7 @@ Bombadil is a Linux desktop whose main interface is an AI agent. The screen at r
 - Sentence case everywhere: "Ask anything", "Install on this computer", "Your recovery key". Title Case only for app names ("Passwords").
 - The product is "Bombadil" in prose and `bombadil` as the command and in the lockup.
 - Name what changed and how to take it back: "Made Passwords. It is open now." with Undo and Details. A stopped turn says "Stopped." A missing agent says "Waiting for agentd…".
-- Buttons say exactly what happens, naming the object when it can't be undone: "Erase Samsung 980 and install", not "Continue".
+- Buttons say exactly what happens, naming the object when it can't be undone: "Erase Acme SSD and install", not "Continue".
 - No emoji, no exclamation marks in system text, no "Oops". Greetings, goodbyes and every line a voice may change belong to the voice brief.
 
 ## Colour
@@ -61,7 +66,7 @@ No shadows on the ground. Popups, menus and tooltips get `shadowPopup`. Glass su
 
 ## Iconography
 
-Lucide (ISC licence, lucide-static 0.544.0), the 77 SVGs in the Icons group and in the kit at `share/qml/Bombadil/icons/`. They are drawn at 24 × 24 with a 2 px stroke, round caps and joins, and `currentColor`, so tint them to their text colour (`fg`, `muted`, or a status ink) through the kit's `Icon`; an `<img>` of the file draws black. Use 16 px in buttons and rows, 24 px in toolbars. Don't mix in other icon sets or emoji; if a needed icon is missing, add it from Lucide with its name.
+Lucide (ISC licence, lucide-static 0.544.0), the 77 SVGs in the Icons group; the kit's `share/qml/Bombadil/icons/` holds those and eight more added for Mail (85 files on 2026-10-01). They are drawn at 24 × 24 with a 2 px stroke, round caps and joins, and `currentColor`, so tint them to their text colour (`fg`, `muted`, or a status ink) through the kit's `Icon`; an `<img>` of the file draws black. Use 16 px in buttons and rows, 24 px in toolbars. Don't mix in other icon sets or emoji; if a needed icon is missing, add it from Lucide with its name.
 
 ## The pill's states
 
@@ -75,6 +80,8 @@ Lucide (ISC licence, lucide-static 0.544.0), the 77 SVGs in the Icons group and 
 | Done | `good`, one hop, then still | `border` |
 | Stopped | a `muted` square | `border` |
 | Offline | a broken `bad` outline | `badLine` |
+
+A ninth face, Resting, is not in this table: the stone's outline whole in grey over a faint fill with the b cut in, still, while the AI is out of plan or paused by hand (`shell/Stone.qml`, `shell/PillState.qml`; [the poor man switch](poor-man-switch-brief.md)).
 
 Starting, Listening, Needs you and Stopped came with the mark; before it the pill showed the offline red while the agent started.
 
