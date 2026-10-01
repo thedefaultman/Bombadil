@@ -4,7 +4,7 @@ What agentd runs beside its turns to turn the counts and the findings into "noti
 bar's chip shows, what his taps do, the words it makes, the app turn, and the trail of what changed.
 Contract: `docs/LOOP.md` (messages, "Service rules"). Files: `src/bombadil/loop/service.py`, a small
 wiring in `src/bombadil/agentd.py`, three small additions to `loop/store.py`. Tests:
-`tests/test_loop_service.py`.
+`tests/test_loop_service.py` and `tests/test_loop_fixes_service.py`.
 
 The service is a guest in agentd. Nothing it does is on a turn's path: it never makes a turn wait, never
 touches the pill, and one broken step costs one line on stderr (once per kind of trouble) and never a
@@ -55,8 +55,13 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
   `stop()` (cancels tasks, closes the stores; safe twice, safe after the loop is closed).
 - Hooks: `on_row(entry)`, `async on_client(writer)`, `async on_message(msg, writer)`.
 - `async noticed_word(verb) -> (ok, line)`: the launcher word. `"hide"` holds offers and hides the chip;
-  anything else shows it again, broadcasts `noticed_open` and opens the Noticed app when one is installed
-  (quietly not when it is not).
+  anything else shows it again, broadcasts `noticed_open` and opens the Noticed window. It says "Opened
+  Noticed." only when a window opened; when none could (no such app, or the launcher failed) it answers
+  `ok` false with "The Noticed window would not open."
+
+The window is the Noticed app, which ships with Bombadil (`share/apps/noticed`). The service finds it the
+way an app is run: a copy of his own in `~/Apps` first, then the built-in one (`apps.load`). It does not
+use `launcher.known_apps()`, which lists only his apps, so the app does not need to be copied anywhere.
 - `async tick()`: what is due at `clock()` (the service's own timer calls it every 5 s; tests call it).
 - `debounce` (seconds, default 2.0).
 
@@ -77,16 +82,19 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
 
 | op | does | `text` (ok) |
 |---|---|---|
-| `open` | opens the Noticed app if it is here | "Opened the Noticed window." (or empty) |
+| `open` | opens the Noticed window | "Opened the Noticed window." (`ok` false, "The Noticed window would not open.", when none opened) |
 | `accept` `form:"word"` | a row in words.toml, trail row, receipt to the sender with `undo_msg` | "Made “my passwords” open Passwords." |
 | `accept` `form:"app"` | one ordinary turn (origin `loop`) in his own words; the group is "made" | "Making a small app for it now. It will say what it made when it is done." |
-| `not_now` `never` `got_it` | answers the offer (or dismisses / never a finding) | "Okay. That will not come up again for a while." / "Okay. That will not be offered again." / "Okay, nothing to make." |
+| `not_now` `never` `got_it` | answers the offer | "Okay. That will not come up again for a while." / "Okay. That will not be offered again." / "Okay, nothing to make." |
+| `not_now` `got_it` on a found problem | dismisses it: kept quiet for 30 days, or until it has happened twice as many times | "Okay. That will stay quiet for 30 days, or until it has happened twice as many times." |
+| `never` on a found problem | not raised again, until he brings it back | "Okay. That will not come up again." |
 | `other_ways` | nothing to do (the bar shows the other forms itself) | "Those are the other ways it could be done." |
 | `preview` | `forms.preview` for a group (a string), the report's preview for a finding | "This is what it would do." + `preview` |
-| `report` | builds and holds the report, marks it `reported` | "The report is ready. Nothing is sent until you press Submit on the page." + `preview` `{text, goes, stays}` |
-| `send` | (after `report`) searches the project's issues, opens the prefilled page, marks it `sent` | "The issue page is open with the report filled in. Press Submit there if it looks right." |
+| `report` | builds and holds the report, marks it `reported`, opens the Noticed window | "The report is ready. Nothing is sent until you press Submit on the page." + `preview` `{text, goes, stays}` (when the window would not open, the text says so and how to look at it) |
+| `send` | (after `report`) searches the project's issues, opens the prefilled page, marks it `sent`. A second `send` for the same report while one runs is refused. | "The issue page is open with the report filled in. Press Submit there if it looks right." / "That is already being sent." |
+| `send`, the project has it | marks it `sent`, opens that issue instead and, when there is a clipboard, puts "Seen again: 3 times on 2 days, build …" on it for him to paste there | "Already reported (#42), so nothing new was sent. Its page is open. If you want to add that it happened again, a line for that is on the clipboard: paste it there." |
 | `undo` | takes a trail row back: a word out, an app into the trash, a put-away word back | "Took out the word “…”." / "Put the app … away." / "Brought back the word “…”." |
-| `bring_back` | a put-away word, a group he said no to, or an app that went to the trash | "Okay. That can come up again." / "Brought the app … back." |
+| `bring_back` | a put-away word, a group or a found problem he said no to, an app that went to the trash, or an undone change (a word he took out is made again; a word the sweep put away is put away again) | "Okay. That can come up again." / "Okay. It is back in what Bombadil found." / "Brought the app … back." / "Put the word “…” away again." |
 | `forget_asks` | empties the counts (and the model step's pinned answers); words stay | "Forgot what you asked. The words made from it stay." |
 | `clear_found` | drops findings and held reports he has not said no to | "Cleared what it found. A problem that is still there will be found again." |
 | `hide` `show` | as the words do | "Noticed is hidden. Say “show noticed” to bring it back." / "Noticed is back." |
@@ -98,7 +106,10 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
   everyone. It is not a ledger row; the trail row is.
 - `noticed_full` is as `docs/LOOP.md` says. `changes` come from the trail (each change once, newest first;
   `undone` says whether the latest row that answers it undid it; `can_undo` only for a word, an app, or a
-  put-away word).
+  put-away word). `said_no` lists the groups he said Never to (`form` is the form's id, "word" or "app",
+  which the window words itself) and the found problems he said Not now or Never to (`form` empty,
+  `t` when he said it). A found row that was `sent` because the project already had the problem carries
+  "already reported as #42" in its `meta`.
 
 ### The trail: `improve` rows in turns.jsonl
 
@@ -106,6 +117,9 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
 {"t", "kind": "improve", "id": "i<epoch ms>-<n>", "what": "word"|"app", "title", "group": "gpw1"|null,
  "undo": {"op": "remove_word"|"trash_app"|"bring_back_word", ...}|null, "undone": false, "v": 2}
 ```
+
+An app turn that changed an app of his (and made no new one) writes a row `what: "app"` with `undo: null`: its
+folder is his, and the turn's own Undo has the old files.
 
 A row that answers another carries `of` (its id) and `undone`; an undone app also carries `trash` (where
 the folder went) and `name`. Only agentd's own writer appends to turns.jsonl (`_log_line`, which calls
@@ -125,7 +139,12 @@ back must be inside `loop_dir()/trash`.
 - The button says "Make the word" (form A), "Make an app" (form D), "Got it" (when he already has a way);
   anything else keeps `offers.BUTTONS`.
 - Hidden (`hide noticed`) is kept in loop.db (`service_state`) and survives a restart; counting and
-  checking go on, nothing is offered. A new offer is never fetched while hidden.
+  checking go on, nothing is offered. A new offer is never fetched while hidden. `service_state` also holds
+  when words were last swept, a note `app:<group>` for each app turn waiting for its row, and the number of
+  the issue (`issue:<fp>`) of a problem the project already had.
+- A found problem he said Not now to is not in the chip or the window's Found list, but it is counted, and
+  it is under "You said no to" with Bring back; it returns by itself (see `probes.md`: twice as many times,
+  or 30 days). One he said Never to stays under "You said no to" until he brings it back.
 - `lately` is "N changes this week" from the trail, counting only what still stands.
 - `resting` is `LoopStore.resting(now)`.
 - An offer is fetched only when `_idle()`: no turn, nothing queued, a bar connected. The bar's own `hello`
@@ -137,20 +156,30 @@ back must be inside `loop_dir()/trash`.
 The tap starts an ordinary turn through `agentd.handle` (origin `loop`, so it is never counted as an
 ask): his own sentences (up to three), how often he asked, and "please make me a small Bombadil app for
 it, using the app kit". It is his turn to read and Stop and undo like any other. The group is "made" at
-once; when the turn's row says it did not go well (failed or stopped) the group goes back to "not now".
-When it did, the apps folder is compared with what it was at the tap, and each new app becomes a trail
-row with a Trash undo. Undo closes the app's window (through the launcher) and moves the folder into
-`loop_dir()/trash/<name>-<time>`; Bring back moves it back when its name is free.
+once, with a note in loop.db that its turn is waiting for its row. When the turn's row says it did not go
+well (failed or stopped), or it went well but no app of his was made or changed, the group goes back to
+"not now". When an app was made, or changed, the apps folder is compared with what it was at the tap (each
+app's files: names, sizes and times): each new app becomes a trail row with a Trash undo, and an app
+changed in place a row without one. Undo closes the app's window (through the launcher) and moves the
+folder into `loop_dir()/trash/<name>-<time>`; Bring back moves it back when its name is free. Signed out,
+the tap answers "Bombadil needs you to sign in before it can make an app." and starts nothing.
+
+A turn lost with agentd (it restarted while the turn was queued or running) never gets a row. At the next
+start every group whose note is still there, and that is still "made", goes back to "not now".
 
 ## Words
 
 Making one goes through `words.add` (which refuses what the launcher already means; that answers the
-offer "Got it"), `store.note_word_made`, and a trail row with `remove_word`. Undo takes the word out and
-answers the group "not now". A word's use is noted from its ledger row (`kind: "local"`, `via: "word"`);
+offer "Got it"), `store.note_word_made`, and a trail row with `remove_word`. When the notes in loop.db
+cannot be written after the word was (a locked or full database), the word is taken out again, so the tap
+answers "That did not work." truthfully and a second tap can make it; nothing is left half done. A group
+whose asks have no phrase to say (each longer than four words, or with a path or a number in it) is not
+offered as a word at all (`forms._usable`). Undo takes the word out and answers the group "not now". A word's use is noted from its ledger row (`kind: "local"`, `via: "word"`);
 `LoopStore.note_word_used` counts only a use newer than the last, so the later ingest of the same row
 counts nothing twice. Once a day (and once a day across restarts: the time is in loop.db) every word
 unused for 28 days (`words.words_unused` over `LoopStore.words_last_used`) is put away with a trail row
-whose undo brings it back.
+whose undo brings it back. "Put it back" on such an undone change puts the word away again (the word is
+still there, so it is not made again); on a word he took out it makes the word again.
 
 ## The model step
 
@@ -203,3 +232,10 @@ provider. Not checked anywhere yet:
 - The bar's QML with this service: the tests use a fake client that speaks the same messages.
 - The prober and the service writing loop.db at the same moment in two processes (WAL, the busy timeout
   and a retry for a table the other one just made are in place; only reasoned, and the retry is unit-tested).
+
+## Known gaps
+
+- An app turn he takes out of agentd's queue (the pill's Unqueue) is not told to the service, so its ask stays
+  "made" until agentd starts again; at the next start it goes back to "not now".
+- The line the already-reported answer puts on the clipboard is the totals so far. The count at the time of
+  sending is not kept, so it cannot say how many times the problem happened since it was reported.

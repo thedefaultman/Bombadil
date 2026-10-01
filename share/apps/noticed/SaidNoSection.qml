@@ -3,7 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Bombadil
 
-// What he said no to. Bombadil does not offer these again until he brings one back.
+// What he said no to. Bombadil keeps these quiet: an idea he said Never to until he brings it back, a problem
+// he said Not now to for a month, or until it has happened twice as many times.
 Section {
     id: root
 
@@ -15,7 +16,7 @@ Section {
 
     objectName: "section:said_no"
     title: "You said no to"
-    hint: "Bombadil will not offer these again"
+    hint: "Bombadil keeps these quiet"
     count: rows.length
     emptyText: "You have not said no to anything."
 

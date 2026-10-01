@@ -94,7 +94,8 @@ store.release(probe_id)
 store.open_findings() -> list[Finding]        # open or reported, newest first
 store.all(states=None)  store.pending()       # counted in any state; friction not yet counted
 store.get(fp) -> Finding | None               # counted only
-store.mark(fp, state) -> Finding | None       # open | reported | sent | dismissed | never
+store.mark(fp, state, now=None) -> Finding | None   # open | reported | sent | dismissed | never
+store.said_no() -> [(Finding, when)]          # dismissed and never, newest first
 store.clear_found() -> int                    # "Clear what it found"
 store.add_words(fp, prompts) -> list[str]     # his words of trouble, beside a finding's probe firing
 Finding(fp, component, rule, title, expected, observed, first, last, n, days, state, fixable,
@@ -104,8 +105,8 @@ fingerprint_of(result)  evidence_dir(fp) -> Path  build_bundle(fp, result, now, 
 ```
 
 `record` and `record_retry` return the `Finding` when the sighting was new and counted, else `None`
-(green, not checked, waiting for its retry, quarantined, dismissed, the same episode, friction not often
-enough). `n` and `days` count episodes and days, not runs.
+(green, not checked, waiting for its retry, quarantined, dismissed and not yet over, the same episode,
+friction not often enough). `n` and `days` count episodes and days, not runs.
 
 ### The runner's loop
 
@@ -133,8 +134,12 @@ for r in results:
   after 30 days.
 - **Episodes**: a state with no `at` seen again within 30 minutes of the last sighting is the same sighting,
   so an hour of the same red state is one.
-- **Dismissed or never** findings are not raised again (`mark` brings them back). `clear_found()` drops the
-  rest with their evidence and held report; a problem still there is found again next run, an event or
+- **Never** findings are not counted or raised again (`mark(fp, "open")` brings them back). **Dismissed**
+  (Not now) findings are still counted (`n` and `days` go on) but not raised, until the count is twice what it
+  was when he said Not now, or 30 days have passed (`SNOOZE_DAYS`): the next sighting after that, or a state
+  that is still red then, opens it again and returns it. The count and the time are kept in `finding_nos`
+  (one row per dismissed or never finding; a Not now with no row, from before it existed, starts its rest at
+  the next sighting). `clear_found()` drops the rest with their evidence and held report; a problem still there is found again next run, an event or
   crash already read is not (its sightings stay, marked cleared).
 - **Loop findings** (component `loop`: flaky probe, probe raised) are never `fixable`: the loop cannot edit
   its judges. Today nothing is `fixable`; the mender sets it.

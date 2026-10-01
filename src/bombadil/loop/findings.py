@@ -15,8 +15,10 @@ A finding is one problem as it always reads (its fingerprint), however often it 
 
 The same state seen on every run for an hour is one sighting (runs less than half an hour apart are
 the same episode); a past fact carries its own time (Result.at) and is one sighting however often it
-is read. A finding he dismissed, or said never to, is not raised again. Nothing here raises: a full
-disk or a locked database costs one line on stderr and the call returns as if nothing had been seen.
+is read. A finding he said Not now to (dismissed) is still counted but not raised, until it has happened twice
+as many times as when he said it or 30 days have passed; one he said never to is not raised again.
+Either comes back at once when he brings it back. Nothing here raises: a full disk or a locked database
+costs one line on stderr and the call returns as if nothing had been seen.
 
 Findings about the loop's own checks (component "loop") are never fixable: the loop cannot edit its
 judges, so they are always reports. `fixable` is False for everything today; the mender will set it.
@@ -52,6 +54,7 @@ PROBE_WITHIN = 300.0     # a friction sighting with a probe this close counts at
 FLIPS = 3                # red then green on retry this many times ...
 FLIP_WINDOW = 7 * 86400.0    # ... in this long is a flaky probe
 KEEP_PENDING = 30 * 86400.0  # a friction that never counted is forgotten after this
+SNOOZE_DAYS = 30         # a Not now is over after this long, or when the count has doubled
 LOG_LINES = 40
 
 SCHEMA = ["""
@@ -89,6 +92,12 @@ CREATE TABLE probe_flips(
     t REAL NOT NULL
 );
 CREATE INDEX probe_flips_probe ON probe_flips(probe, t)
+""", """
+CREATE TABLE finding_nos(
+    fp TEXT PRIMARY KEY,
+    n INTEGER NOT NULL,
+    t REAL NOT NULL
+)
 """]
 
 
@@ -344,7 +353,8 @@ class FindingsStore:
         """Write down one probe's Result when it counts. Returns the finding when this sighting was
         new (a new finding, or one more time for a known one), else None: green, not checked, a first
         look at an invariant that still waits for its retry, a probe that is quarantined, a finding
-        he dismissed, the same event again, or a friction that has not happened often enough yet.
+        he said no to (a Not now is counted but raised again only when it is over), the same event
+        again, or a friction that has not happened often enough yet.
 
         `obs`, `log` (the last lines of the relevant log), `turn` (the ledger row), `tools` (that turn's
         tool events) and `versions` only fill the evidence bundle."""
@@ -392,14 +402,16 @@ class FindingsStore:
         secrets = _secrets(context.get("obs"), context.get("turn"))
         with db.transaction(self.conn):
             row = self.conn.execute("SELECT * FROM findings WHERE fp=?", (fp,)).fetchone()
-            if row is not None and row["state"] in ("dismissed", "never"):
+            if row is not None and row["state"] == "never":
                 return None
+            snoozed = row is not None and row["state"] == "dismissed"
             if key and self.conn.execute("SELECT 1 FROM sightings WHERE fp=? AND key=?",
                                          (fp, key)).fetchone():
                 return None     # this very event is already written down
             if not key and row is not None and t - row["last_t"] < SAME_EPISODE:
                 self.conn.execute("UPDATE findings SET last_t=MAX(last_t, ?) WHERE fp=?", (t, fp))
-                return None     # still the same episode of the same state
+                # still the same episode of the same state; one that outlasts his Not now is raised again
+                return self.get(fp) if snoozed and self._snooze_over(fp, row["n"], t) else None
             self.conn.execute("INSERT INTO sightings(fp, t, day, key, kind) VALUES(?, ?, ?, ?, ?)",
                               (fp, t, _day(t), key, r.kind))
             n, days, first, last = self.conn.execute(
@@ -422,8 +434,24 @@ class FindingsStore:
                     "UPDATE findings SET counted=1 WHERE counted=0 AND fp IN (SELECT fp FROM sightings "
                     "WHERE kind='friction' AND cleared=0 AND ABS(t - ?) <= ?)", (t, PROBE_WITHIN))
             self._prune(now)
+            if snoozed and not self._snooze_over(fp, n, t):
+                return None     # counted, not raised: he said Not now
         self._write_bundle(fp, r, now, context)
         return self.get(fp) if counted else None
+
+    def _snooze_over(self, fp: str, n: int, now: float) -> bool:
+        """Is his Not now over: it has happened twice as many times as when he said it, or 30 days have
+        passed. Then the finding is open again. A Not now with no note of when (one from before the notes
+        were kept) starts its rest now."""
+        said = self.conn.execute("SELECT n, t FROM finding_nos WHERE fp=?", (fp,)).fetchone()
+        if said is None:
+            self.conn.execute("INSERT INTO finding_nos(fp, n, t) VALUES(?, ?, ?)", (fp, n, now))
+            return False
+        if n < 2 * max(said["n"], 1) and now - said["t"] < SNOOZE_DAYS * 86400:
+            return False
+        self.conn.execute("UPDATE findings SET state='open' WHERE fp=?", (fp,))
+        self.conn.execute("DELETE FROM finding_nos WHERE fp=?", (fp,))
+        return True
 
     def _counts(self, kind: str, fp: str, n: int, days: int, t: float) -> bool:
         if kind != "friction":
@@ -521,13 +549,34 @@ class FindingsStore:
         return self._finding(row) if row else None
 
     @_guard()
-    def mark(self, fp: str, state: str) -> Finding | None:
+    def mark(self, fp: str, state: str, now: float | None = None) -> Finding | None:
         """What he did with it: reported (the report is held), sent, dismissed (Not now), never, or
-        open again (Bring back). Dismissed and never are not raised again until he brings them back."""
+        open again (Bring back). Dismissed keeps counting but is not raised until it has happened twice
+        as many times or 30 days have passed; never is not raised again until he brings it back. `now`
+        is when he said no (the note kept with it)."""
         if state not in STATES:
             raise ValueError(f"no such state: {state!r}")
-        self.conn.execute("UPDATE findings SET state=? WHERE fp=? AND counted=1", (state, fp))
+        now = _num(now) if _num(now) is not None else time.time()
+        with db.transaction(self.conn):
+            row = self.conn.execute("SELECT n FROM findings WHERE fp=? AND counted=1", (fp,)).fetchone()
+            if row is None:
+                return None
+            self.conn.execute("UPDATE findings SET state=? WHERE fp=?", (state, fp))
+            if state in ("dismissed", "never"):
+                self.conn.execute("INSERT INTO finding_nos(fp, n, t) VALUES(?, ?, ?) ON CONFLICT(fp) "
+                                  "DO UPDATE SET n=excluded.n, t=excluded.t", (fp, row["n"], now))
+            else:
+                self.conn.execute("DELETE FROM finding_nos WHERE fp=?", (fp,))
         return self.get(fp)
+
+    @_guard(list)
+    def said_no(self) -> list[tuple[Finding, float]]:
+        """What he said no to (Not now or never) and when, newest first, for the "You said no to" list."""
+        rows = self.conn.execute(
+            "SELECT f.*, COALESCE(s.t, f.last_t) AS said_t FROM findings f LEFT JOIN finding_nos s "
+            "ON s.fp = f.fp WHERE f.counted=1 AND f.state IN ('dismissed', 'never') "
+            "ORDER BY said_t DESC").fetchall()
+        return [(self._finding(r), r["said_t"]) for r in rows]
 
     @_guard(0)
     def clear_found(self) -> int:

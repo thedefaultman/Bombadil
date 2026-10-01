@@ -993,7 +993,7 @@ def _slow_turn(obs):
     return bad or green()
 
 
-@probe("provider-drift", "providers", "drift", "The AI tool sends messages Bombadil does not know",
+@probe("provider-drift", "providers", "drift", "A tool Bombadil runs sends messages it does not know",
        "no turn's stream had a message type the provider adapter does not know", needs=("ledger",))
 def _provider_drift(obs):
     rows = _rows(obs.ledger)

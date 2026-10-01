@@ -72,7 +72,8 @@ lives in the service, so a different shell could draw the same thing.
 - **His words, not a model's.** An offer quotes what he typed. Labels are plain full sentences; nothing
   says "AI", "model" or "pattern" on day one.
 - **Saying no is cheap and respected.** "Not now" returns only when the count has doubled or after 30
-  days; "Never" stops that idea; two silent expiries or two Nevers in a row rest all offers for 30 days;
+  days (for an idea and for a problem it found alike; both are under "You said no to" in the window, with
+  Bring back); "Never" stops that idea; two silent expiries or two Nevers in a row rest all offers for 30 days;
   "hide noticed" holds everything. At most one new offer a day and three a week.
 - **Reports are his to send.** A finding becomes a report he can read in full, with what goes and what
   stays on the machine, and the issue page opens prefilled. Nothing is submitted for him.
@@ -188,7 +189,8 @@ Existing messages are unchanged. New (client → agentd):
 - `{"type":"ping"}` → `{"type":"pong","t":…,"pid":n}`.
 - `{"type":"noticed_do","op":…,"id":…,"form":…}`; ops: `open` (the Noticed window), `accept`,
   `not_now`, `never`, `got_it`, `other_ways`, `preview`, `report`, `send`, `undo`, `bring_back`,
-  `forget_asks`, `clear_found`, `hide`, `show`. agentd answers the sender with `{"type":"noticed_result","op","id","ok","text","preview"?}`.
+  `forget_asks`, `clear_found`, `hide`, `show`. agentd answers the sender with `{"type":"noticed_result","op","id","ok","text","preview"?}`; `open` answers `ok`
+  false when no window opened.
 - `{"type":"noticed_state"}` → agentd sends `noticed` to that client.
 - `{"type":"noticed_list"}` → agentd sends `noticed_full` to that client, for the Noticed window:
   `{"type":"noticed_full","hidden":bool,"held":bool,"resting":"","asks":[{"id","title","n","days","last","state","sentences":[…],"became":""}],
@@ -198,7 +200,9 @@ Existing messages are unchanged. New (client → agentd):
   asks again after each answer or when it hears a `noticed` message.
   `can_send` is true until it is sent (the window's button says `report` first, then `send` after the card).
   An ask waiting on him also carries `primary`, `what` and `others` like a `noticed` row; `found[].why` holds
-  two plain sentences (what was expected, what was seen).
+  two plain sentences (what was expected, what was seen). `said_no[].form` is the form's id ("word", "app")
+  and empty for a problem it found; `said_no` lists those too (id is the finding's fingerprint, and `bring_back`
+  opens it again). A `sent` found row whose problem the project already had says so in `meta`.
   A found row's `report` op builds and holds the report (state `reported`), adds its `preview` to that row and
   opens the Noticed window on it; `send` (only after `report`) opens the prefilled issue page in the browser
   panel and marks it `sent`. `noticed_result.preview` is a string or `{"text",…}`.
@@ -231,7 +235,8 @@ hidden, offers held) is kept in loop.db.
 matched last in `launcher.match`, after apps, panels, utilities and (when they exist) projects,
 sessions and aliases, so a word never shadows anything. It can only open or show. At most 30; one
 unused for 28 days is put away (`away = true`) with Bring back. The word "noticed" (and "show
-noticed", "open noticed") opens the card and the Noticed window; "hide noticed" hides the widget
+noticed", "open noticed") opens the card and the Noticed window (which ships in `share/apps/noticed`, so it
+is there without being copied; the pill says "Opened Noticed." only when it opened); "hide noticed" hides the widget
 and holds offers; "show noticed" brings it back.
 
 ## What a repeat can become (day one)
