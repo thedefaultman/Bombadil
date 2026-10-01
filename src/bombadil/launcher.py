@@ -89,6 +89,13 @@ PICTURE_PHRASES = {
 }
 PICTURE_TITLES = {"network": "how you're connected", "boot": "what starts when you boot", "disks": "your disks",
                   "sound": "what's playing where", "screens": "your screens"}
+# A question a widget answers with itself, the same as "show machine" (same rules as the pictures:
+# the whole sentence, exactly). The machine card then stays up for 30 seconds (vitals.ASK_FOR).
+WIDGET_QUESTIONS = {
+    "machine": ["how's the machine", "how is the machine", "how's the machine doing", "how is the machine doing",
+                "how's my machine", "how is my machine", "how's my computer", "how is my computer",
+                "how's my computer doing", "how is my computer doing", "hows the machine", "hows my computer"],
+}
 # (Matched on the text as typed: unit names have capitals, NetworkManager.service.)
 _NEEDS_RE = re.compile(r"^what does (?:the )?([a-z0-9@._+-]{1,60}?)(?: service)? (?:need|depend on|require)$", re.I | re.A)
 # Only while a turn runs: the reason for the step in front of you, answered from what the agent
@@ -212,6 +219,9 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
     picture = _picture(apostrophe, normalize(raw, keep_case=True)) if apostrophe.isascii() else None
     if picture is not None and _find_app(t, app_list) is None:
         return picture
+    for widget, questions in WIDGET_QUESTIONS.items():
+        if apostrophe in questions and _find_app(t, app_list) is None:
+            return Action("widget", widget, "open", WIDGET_TITLES[widget])
     if plain and _key(t) in {_key(w) for w in SIGNIN_WORDS}:
         return Action("signin")
     if plain:
