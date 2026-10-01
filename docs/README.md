@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `MAIL.md`: the contract the Mail view is built to: processes and diagrams, the wire protocol, the press, the agent's tools and what the image adds.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
@@ -15,6 +16,7 @@ The project's documents, next to its code.
   - `self-improvement-brief.md`: how Bombadil notices repeated requests and tends to itself.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
   - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
+  - `mail-view.md`: Mail, every account in one list in Bombadil's own view, with Thunderbird unseen as the engine and the person's press on Send as the only way a mail leaves.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
   fonts without a connection. They are copies of what the pages showed on 2026-09-30.

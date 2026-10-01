@@ -107,7 +107,8 @@ Thunderbird through `bombadil-mail-host`. The agent reads, searches, marks and d
 and cannot send: a draft goes only on the person's press on Send, which agentd checks and logs. Whatever
 agentd's `notice` messages say (new mail, a draft that is ready, a receipt) the bar shows as a line
 above the pill when no turn line has it (`shell/NoticeChips.qml`). `docs/MAIL.md` is the contract:
-processes, wire protocol, the press, the tools and what the ISO adds.
+processes (with diagrams), wire protocol, the press, the tools and what the ISO adds;
+`docs/design/mail-view.md` is the design: the line, the rules and what the person sees.
 
 ## Next
 

@@ -1,9 +1,14 @@
 # Mail
 
 Bombadil's own Mail view: every mail account in one list, Needs a reply, Drafts, a reply box whose Send
-is the person's press, and an agent that can read, search, mark and draft but cannot send. Design:
-`design/everyday-work-brief.md` piece 1 ("Bombadil at work"), with Daniel's answers 1a 2b 3a. This file
-is the contract the code is built to; where the two differ, this file says what was built and why.
+is the person's press, and an agent that can read, search, mark and draft but cannot send. The design, the
+rules and what the person sees are in [`design/mail-view.md`](design/mail-view.md); this file is the
+contract the code is built to. Where the two differ, this file says what was built and why. Every person,
+address and company in it is invented.
+
+The person's three choices, which everything below follows: only their own press on the real Send button
+lets a message go (a typed "send it" does not); Bombadil writes whatever it is asked to and keeps a log of
+what it wrote and what was pressed; mail comes from Thunderbird running unseen, every account in one list.
 
 ## The line
 
@@ -22,10 +27,42 @@ is the contract the code is built to; where the two differ, this file says what 
 
 ## Processes
 
+```mermaid
+flowchart LR
+    win["Mail window<br/>(kit app, share/apps/mail)"]
+    agentd["agentd<br/>(mail tools, press, notices)"]
+    cli["bombadil CLI"]
+    svc["bombadil-mail<br/>(mail.sock, mail.db)"]
+    host["bombadil-mail-host<br/>(native messaging)"]
+    tb["Thunderbird + add-on<br/>(unseen)"]
+    srv[("mail servers")]
+    win -->|QLocalSocket| svc
+    agentd -->|unix socket| svc
+    cli -->|unix socket| svc
+    svc <-->|unix socket| host
+    host <-->|stdio frames| tb
+    tb <-->|IMAP, SMTP, Graph| srv
 ```
- Mail window (kit app share/apps/mail)  --QLocalSocket-->  bombadil-mail  <--unix socket-->  bombadil-mail-host
- agentd (mail-tool, press, notices)     --unix socket--->   (mail.sock)                          |  stdio frames
- bombadil CLI                           --unix socket--->                                  Thunderbird + add-on
+
+The press, in time: the window shows a draft, the person presses Send, agentd checks who pressed, and the
+service sends once.
+
+```mermaid
+sequenceDiagram
+    participant W as Mail window
+    participant A as agentd
+    participant S as bombadil-mail
+    participant T as Thunderbird add-on
+    W->>S: draft_shown (id, fingerprint)
+    Note over W: the person reads the draft and presses Send
+    W->>A: press (mail, id, fingerprint)
+    A->>A: refuse if the peer is inside an agent turn or unknown
+    A->>S: send (id, fingerprint)
+    S->>S: four fingerprints agree, draft open, then state = sending
+    S->>T: send (engine request, 60 s)
+    T-->>S: sent (message id) or unknown_outcome
+    S-->>A: receipt (or unknown)
+    A-->>W: press_result, and the receipt as the pill line
 ```
 
 | Part | Where | What |
@@ -237,7 +274,7 @@ press on the Send button the view shows, for exactly what the view showed:
    be called `unknown` at the next start and `again` could send it twice), and the answer is the receipt.
    The service writes to the press log only the presses it refused for being in an agent's turn and
    the sends it found lost at start; the log of each press is agentd's.
-5. A typed "send it" does nothing but say that sending is yours and where the button is (choice 1a):
+5. A typed "send it" does nothing but say that sending is yours and where the button is:
    the launcher's word table answers it ("send", "send it", "send that", "send this", with up to four
    words of filler around them: "ok send it", "please send it now", "yes, send it."), and only when
    agentd finds an open draft waiting (the newest `open` one of the service's `list drafts`, a bare list,
@@ -246,7 +283,7 @@ press on the Send button the view shows, for exactly what the view showed:
    with more in it ("send it to Priya"), it is the model's like any other words.
 
 This is a rule with a check, not yet a wall: the agent runs as the person, with a shell and sudo, and
-could in principle write to `mail.sock` or read Thunderbird's profile. The brief's hardening order
+could in principle write to `mail.sock` or read Thunderbird's profile. The hardening order (see "What is a rule, not yet a wall" in the design page)
 (bombadil-connect as its own user, agentd accepting presses only from the shell's own process, the sudo
 question) is what turns it into a wall. Bypasses that agentd cannot close from where it stands: a process
 the agent starts with `systemd-run --user` is in no turn scope and no process tree, and so is a write
@@ -472,8 +509,8 @@ desktop test and the VM smoke use it, and so can anyone without an account.
 
 ## Hyprland and the ISO
 
-What the shell and the image add around the service (worker D2). Everything above stands; this is the
-part of it that lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
+What the shell and the image add around the service. Everything above stands; this is the part of it that
+lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
 
 **The image.**
 
@@ -502,7 +539,7 @@ part of it that lives in `shell/`, `iso/`, `scripts/` and `share/skills/`.
   (google-re2), which took the pattern and matched the classes above, and `tests/test_iso_profile.py`, which
   uses RE2 where it is installed and else refuses the syntax RE2 lacks before trying Python's `re`. Not seen
   yet: that `silent` leaves the keyboard with the pill when a Thunderbird window maps while the pill holds it
-  (the team's notes say a silent map "hands focus back to the previous window", and whether a layer counts as
+  (Hyprland's documentation says a silent map "hands focus back to the previous window", and whether a layer counts as
   that is for a real Hyprland to say). The smoke has a step for it, `mail-engine-window-keeps-the-keyboard`,
   which has not been run.
 - `share/skills/bombadil-mail/SKILL.md` tells the agent how to use the five tools and what it may not do;
@@ -573,3 +610,30 @@ typed still reaches the pill; then the unit is stopped and the service is run on
 engine (a scratch `mail.db`; no account exists on the image and nothing may reach one) for: accounts listed,
 new mail becomes a notice from agentd and shows on the line, "mail" opens the window without a model, and the
 unit is put back. Not exercised anywhere yet: a real Thunderbird window on a real Hyprland.
+
+## Known limits
+
+What is true of Mail today and is not a bug to be found again.
+
+- **The engine keeps a copy of the mail on this machine.** Thunderbird downloads the bodies of recent mail
+  so a mail reads at once and with no network (the last 180 days; older bodies are fetched from the server
+  when opened). The headers of everything are kept. On the installed system this copy is inside the
+  encrypted disk.
+- **Press is a rule with a check, not yet a wall.** Said in the design page, and in "The press" above: a
+  process of the person's that is outside every turn can write to `mail.sock`. Hardening is the order in
+  the design page.
+- **Password accounts rely on a Thunderbird window.** iCloud and plain IMAP accounts have no browser
+  sign-in; Thunderbird asks for the password in its own window, which the Mail window asks the service to
+  show for that step. With no display, or with a compose window open, the window cannot be shown.
+- **No undo for Archive or Trash** inside the view; the mail is in the provider's Archive or Trash
+  folder and Thunderbird can move it back, but the window has no "unarchive".
+- **One mailbox folder gets new-mail events.** Mail that arrives in the Inbox is a push within seconds;
+  mail a server files elsewhere shows when the list is next fetched.
+- **Needs a reply rows** carry the mark and its reason, not the unread or attachment marks of the main
+  list.
+- **Thunderbird phones home.** Its update check and a Remote Settings poll have no preference that stops
+  them (measured on 157). The image ships a policy file that turns the update check off; the poll remains
+  and sends no mail data. Telemetry, the region lookup and extension updates are off in the profile.
+- **Not exercised on real accounts:** Gmail and Microsoft sign-in, Microsoft Graph, an iCloud app password.
+  The mail-server side is tested against a local IMAP and SMTP server, and Thunderbird 140, 156 and 157
+  from Mozilla's own builds; Arch's package and a real compositor are the VM's checks.
