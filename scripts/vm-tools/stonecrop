@@ -17,7 +17,7 @@ from qmp import qmp
 out, n, interval = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
 x0, y0, w, h = (int(v) for v in sys.argv[4:8]) if len(sys.argv) >= 8 else (628, 850, 24, 24)
 scale = int(sys.argv[8]) if len(sys.argv) >= 9 else 8
-cmd = qmp(os.environ.get("QMP", "/root/Bombadil/out/vm/qmp.sock"))
+cmd = qmp(os.environ.get("QMP") or str(Path(__file__).resolve().parents[2] / "out" / "vm" / "qmp.sock"))
 
 
 def grab(path):

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from qmp import qmp
 
 out, dur, iv = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
-cmd = qmp(os.environ.get("QMP", "/root/Bombadil/out/vm/qmp.sock"))
+cmd = qmp(os.environ.get("QMP") or str(Path(__file__).resolve().parents[2] / "out" / "vm" / "qmp.sock"))
 COL = [(217, 119, 87), (95, 179, 107), (224, 169, 59)]
 rows = []
 t0 = time.time()
