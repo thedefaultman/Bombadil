@@ -47,7 +47,10 @@ def run_node(*files: str) -> subprocess.CompletedProcess:
 
 
 def test_there_are_tests_for_every_part_of_the_add_on():
-    expected = {"changing", "engine", "events", "files", "finding", "link", "reading", "sending", "static"}
+    expected = {
+        "changing", "engine", "events", "files", "finding", "gate", "hostile", "link", "newest", "reading",
+        "sending", "static", "streams",
+    }
     assert expected <= {name.split(".")[0] for name in FILES}
 
 

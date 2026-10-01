@@ -217,3 +217,71 @@ test("a request with no connection to answer on is dropped without a fuss", asyn
   await ask(app, "info");   // and the add-on is still there
   void world;
 });
+
+// -- mail that arrives while there is no host --
+
+const arrive = (world, inbox, id, ageMs = 1000) => {
+  const header = world.message(inbox, { headerMessageId: id, date: new Date(world.clock.now() - ageMs) });
+  world.events.messages.onNewMailReceived.fire(inbox, { id: null, messages: [header] });
+};
+
+test("new mail that arrives while the host is away is told after hello when it is back", async () => {
+  const { world, app, inbox } = await lab();
+  app.port().die();
+  arrive(world, inbox, "gap1@example.org", 2000);
+  arrive(world, inbox, "gap2@example.org", 1000);
+  await settle();
+  await settle();
+  await world.clock.advance(600);
+  const frames = app.port().sent;
+  assert.equal(frames[0].event, "hello", "hello is first, always");
+  const told = frames.filter(f => f.event === "new_mail");
+  assert.deepEqual(told.map(f => f.messages[0].key), ["gap1@example.org", "gap2@example.org"]);
+  assert.equal(told[0].account, "account1");
+  const first = app.port();
+  first.die();
+  await world.clock.advance(10_000);
+  assert.notEqual(app.port(), first);
+  assert.equal(app.port().events("new_mail").length, 0, "and each is told once");
+});
+
+test("only the newest twenty of what was missed are kept, and nothing that is older than ten minutes", async () => {
+  const { world, app } = await lab();
+  const connect = world.messenger.runtime.connectNative;
+  world.messenger.runtime.connectNative = () => {
+    throw new Error("the host is not there");
+  };
+  app.port().die();
+  const message = n => ({ key: `k${n}@example.org` });
+  app.engine.out({ event: "new_mail", account: "account1", messages: [message("old")] });
+  await world.clock.advance(11 * 60_000);
+  for (let i = 0; i < 30; i++) {
+    app.engine.out({ event: "new_mail", account: "account1", messages: [message(i)] });
+  }
+  app.engine.out({ event: "counts_changed" });
+  app.engine.out({ event: "sync", account: "account1", state: "idle", detail: "" });
+  app.engine.out({ event: "new_mail", account: "account1" });
+  assert.equal(app.link.missed.length, 20, "the oldest are let go as the newer come");
+  world.messenger.runtime.connectNative = connect;
+  await world.clock.advance(10_000);
+  const frames = app.port().sent;
+  assert.equal(frames[0].event, "hello");
+  const keys = frames.filter(f => f.event === "new_mail").map(f => f.messages[0].key);
+  assert.deepEqual(keys, Array.from({ length: 20 }, (_, i) => `k${i + 10}@example.org`));
+  assert.equal(frames.filter(f => f.event === "counts_changed" || f.event === "sync").length, 0, "other events are not carried over");
+});
+
+test("what was missed is dropped when it is over ten minutes old by the time the host is back", async () => {
+  const { world, app } = await lab();
+  const connect = world.messenger.runtime.connectNative;
+  world.messenger.runtime.connectNative = () => {
+    throw new Error("the host is not there");
+  };
+  app.port().die();
+  app.engine.out({ event: "new_mail", account: "account1", messages: [{ key: "stale@example.org" }] });
+  await world.clock.advance(11 * 60_000);
+  world.messenger.runtime.connectNative = connect;
+  await world.clock.advance(10_000);
+  assert.equal(app.port().events("new_mail").length, 0);
+  assert.equal(app.link.missed.length, 0);
+});

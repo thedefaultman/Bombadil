@@ -18,13 +18,24 @@ FocusScope {
         search.forceActiveFocus()
         search.field.selectAll()
     }
+    // A letter typed with the keyboard on the list (and no field) is the start of a search, as it is in a file manager.
+    function typeToSearch(ch) {
+        search.forceActiveFocus()
+        search.field.cursorPosition = search.field.length
+        search.field.insert(search.field.length, ch)
+        backend.search(search.text)
+    }
 
     // The list is an array that is handed over whole whenever the service says something changed; the position in it
     // and the row the keyboard is on stay where they were, by the mail's id.
     property string cursorId: ""
+    property string syncedView: ""
     function sync() {
         const y = list.contentY
-        const id = list.currentIndex >= 0 && list.currentIndex < list.count ? root.cursorId : ""
+        const was = list.currentIndex
+        const sameView = root.syncedView === backend.view
+        root.syncedView = backend.view
+        const id = sameView && was >= 0 && was < list.count ? root.cursorId : ""
         list.model = backend.messages
         let at = -1
         for (let i = 0; i < backend.messages.length; i++)
@@ -34,6 +45,9 @@ FocusScope {
             }
         if (at < 0)
             at = indexOfOpen()
+        // a mail put away leaves the keyboard where it was: on whatever moved up into its place
+        if (at < 0 && id !== "" && backend.messages.length > 0)
+            at = Math.min(was, backend.messages.length - 1)
         list.currentIndex = at
         list.contentY = Math.max(0, Math.min(y, list.contentHeight - list.height))
     }
@@ -159,7 +173,7 @@ FocusScope {
                     color: Theme.muted
                     text: backend.listState === "loading" ? "Loading"
                         : backend.listState === "error" ? backend.listError
-                        : Words.emptyLine(backend.view, backend.searchText !== "")
+                        : Words.emptyLine(backend.view, backend.searchText !== "", backend.listWaiting)
                 }
             }
         }
@@ -172,15 +186,15 @@ FocusScope {
             onClicked: backend.loadMore()
         }
 
-        // Accounts the service could not read for this list, each with its reason.
+        // Accounts the service could not read for this list that the left column does not already explain.
         ColumnLayout {
             objectName: "skipped"
-            visible: backend.skipped.length > 0
+            visible: backend.skippedHere.length > 0
             Layout.fillWidth: true
             spacing: 4
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
             Repeater {
-                model: backend.skipped
+                model: backend.skippedHere
                 delegate: ColumnLayout {
                     id: skip
                     required property var modelData

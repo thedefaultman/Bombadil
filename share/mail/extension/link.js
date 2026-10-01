@@ -6,6 +6,11 @@
  * half a second up to ten seconds, and starts again from half a second once a connection has lasted a minute.
  * The first frame on every connection is the `hello` event, before any answer or other event can be sent.
  *
+ * Mail that arrives while there is no connection (between a lost host and the next one, half a second to ten) is
+ * not lost to the service's notices: the newest twenty messages of what `new_mail` would have said are kept, for
+ * ten minutes, and told once `hello` has been. Every other event is dropped then, since the service looks at
+ * the accounts and the mail again when it connects, and nothing else of it is news.
+ *
  * What was in flight on a port that closed is not answered on the next one: the service has numbered those
  * requests on its side of the old connection, and told whoever waited that the engine went away. The calls
  * to Thunderbird that were running go on (they cannot be taken back), and their answers are dropped.
@@ -15,6 +20,8 @@ const NAME = "bombadil_mail";
 const FIRST_MS = 500;
 const LAST_MS = 10_000;
 const STABLE_MS = 60_000;
+const MISSED_MAX = 20;                 // messages
+const MISSED_KEEP_MS = 10 * 60_000;
 
 export class Link {
   constructor({ messenger, clock, engine, log = () => {}, name = NAME }) {
@@ -28,6 +35,7 @@ export class Link {
     this.timer = null;
     this.stopped = false;
     this.connects = 0;
+    this.missed = [];          // [{at, frame}]: `new_mail` events that had nobody to be told to, oldest first
     engine.out = frame => this.emit(frame);
   }
 
@@ -52,13 +60,37 @@ export class Link {
     }
   }
 
-  /** An event for the service: false when there is no connection to tell it on. */
+  /** An event for the service: false when there is no connection to tell it on (new mail is kept for the next). */
   emit(frame) {
     try {
-      return this.session ? this.session.post(frame) : false;
+      if (this.session) {
+        return this.session.post(frame);
+      }
+      this.keep(frame);
+      return false;
     } catch (e) {
       this.log("event", e);
       return false;
+    }
+  }
+
+  keep(frame) {
+    if (frame?.event !== "new_mail" || !Array.isArray(frame.messages)) {
+      return;
+    }
+    this.missed.push({ at: this.clock.now(), frame });
+    let held = this.missed.reduce((sum, item) => sum + item.frame.messages.length, 0);
+    while (held > MISSED_MAX && this.missed.length > 1) {
+      held -= this.missed.shift().frame.messages.length;
+    }
+  }
+
+  /** What arrived while nobody was listening and is still news, told on the connection that has come. */
+  tell(session) {
+    const fresh = this.missed.filter(item => this.clock.now() - item.at < MISSED_KEEP_MS);
+    this.missed = [];
+    for (const { frame } of fresh) {
+      session.post(frame);
     }
   }
 
@@ -98,6 +130,7 @@ export class Link {
     port.onDisconnect.addListener(() => this.lost(session, port));
     try {
       session.post(this.engine.hello());
+      this.tell(session);
     } catch (e) {
       this.log("hello", e);
     }

@@ -18,11 +18,33 @@ function unquote(text) {
   return (quoted ? name.slice(1, -1).replace(/\\(.)/g, "$1") : name).replace(/\s+/g, " ").trim();
 }
 
-/** `Name <a@b.example>`, `a@b.example`, `<a@b.example>` or `a@b.example (Name)` as {name, email}. */
+const RAW_MAX = 1000;                  // a mailbox of more than this is not an address someone wrote
+
+/** `a@b.example (Name)`: the address, then a comment in brackets. Found with `indexOf`, not a regular expression. */
+function commented(raw) {
+  const open = raw.indexOf("(");
+  if (open <= 0 || !raw.endsWith(")")) {
+    return null;
+  }
+  const address = raw.slice(0, open).trim();
+  return address.includes("@") && !/\s/.test(address)
+    ? { name: unquote(raw.slice(open + 1, -1)), email: address.toLowerCase() }
+    : null;
+}
+
+/**
+ * `Name <a@b.example>`, `a@b.example`, `<a@b.example>` or `a@b.example (Name)` as {name, email}. A header can
+ * be made to hold anything, so what is far longer than any address is cut and not read: there is nothing in
+ * a mailbox of a hundred thousand characters that anyone could mean, and a pattern tried against it from every
+ * position would keep Thunderbird's one thread busy for minutes.
+ */
 export function parseMailbox(text) {
   const raw = String(text ?? "").trim();
   if (!raw) {
     return { name: "", email: "" };
+  }
+  if (raw.length > RAW_MAX) {
+    return { name: "", email: raw.slice(0, 320) };
   }
   if (raw.endsWith(">")) {
     const open = raw.lastIndexOf("<");
@@ -33,15 +55,12 @@ export function parseMailbox(text) {
   if (!/\s/.test(raw) && raw.includes("@")) {
     return { name: "", email: raw.toLowerCase() };
   }
-  const commented = /^(\S+@\S+)\s*\((.*)\)$/.exec(raw);
-  if (commented) {
-    return { name: unquote(commented[2]), email: commented[1].toLowerCase() };
-  }
-  return { name: "", email: raw };
+  return commented(raw) ?? { name: "", email: raw };
 }
 
-export const parseMailboxes = list =>
-  (Array.isArray(list) ? list : []).map(parseMailbox).filter(a => a.email || a.name);
+/** The first `max` of a list of mailboxes, as {name, email}. The service keeps no more than fifty of a header's. */
+export const parseMailboxes = (list, max = Infinity) =>
+  (Array.isArray(list) ? list.slice(0, max) : []).map(parseMailbox).filter(a => a.email || a.name);
 
 /** The address of one mailbox, lower case, "" when there is none. */
 export const emailOf = text => parseMailbox(text).email;
@@ -57,8 +76,8 @@ export function recipient(item) {
   const one = typeof item === "string" ? parseMailbox(item) : { name: item?.name ?? "", email: item?.email ?? "" };
   const name = typeof one.name === "string" ? one.name : "";
   const email = typeof one.email === "string" ? one.email.trim().toLowerCase() : "";
-  const bad =
-    !/^[^@]+@[^@]+\.[^@]+$/.test(email) || NOT_AN_ADDRESS.test(email) || CONTROL.test(email) || CONTROL.test(name);
+  // A domain of one label is an address too (root@localhost, someone@intranet): Thunderbird judges the rest.
+  const bad = !/^[^@]+@[^@]+$/.test(email) || NOT_AN_ADDRESS.test(email) || CONTROL.test(email) || CONTROL.test(name);
   if (bad) {
     throw badRequest(`“${oneLine(typeof item === "string" ? item : email, 60)}” is not an email address.`);
   }

@@ -57,6 +57,10 @@ PRESS_S = 100.0              # a press agentd has not answered by now is looked 
 SETTLE_MS = 1500             # between looks at a draft whose press got no answer
 SETTLE_TRIES = 50
 SETTLE_OPEN_TRIES = 5        # a draft still open this many looks later was not sent
+ARM_MS = 350                 # Send waits this long once it can be pressed (SendBar), so a click on its way elsewhere is not a press
+ARM_CHANGED_MS = 1800        # ... and this long when what it would send was changed by somebody else just now
+MAIL_TEXT_MAX = 50_000       # characters of a mail's text that are drawn (the service gives up to 200 000)
+RUN_MAX = 500                # a run of characters with no blank in it is broken at this length: layout of one is slow
 PAGE = 50
 LIST_MAX = 200
 WRITE_LIMIT = (1 << 20) - 1024     # a request line is at most 1 MiB, with its newline
@@ -68,6 +72,10 @@ DOWN = "Mail is not running yet."
 NOT_AGENTD = "Not connected"
 UNKNOWN_LINE = "I can't tell whether that went. Look in Sent before you press Send again."   # outbox.UNKNOWN_LINE
 LOST_LINE = "I lost the connection while that was sending."
+NOTHING_SENT = "Nothing was sent. Press Send again if you still want it to go."
+NOT_ANSWERING = "Mail is not answering. Trying again."
+CHANGED_LINE = "This draft was changed while it was open. Read it again before you send it."
+TICK_NOTE = "Tick the box once you have looked in Sent."
 FIELDS = ("to", "cc", "bcc", "subject", "body")
 RECIPIENTS = ("to", "cc", "bcc")
 KINDS = ("reply", "reply_all", "forward")
@@ -122,9 +130,19 @@ def _line(text) -> str:
     return " ".join(_UNSEEN.sub("", str(text or "")).split())
 
 
+_RUN = re.compile(r"\S{" + str(RUN_MAX + 1) + ",}")
+
+
+def _fold(match) -> str:
+    run = match.group()
+    return "\n".join(run[i:i + RUN_MAX] for i in range(0, len(run), RUN_MAX))
+
+
 def _text(text) -> str:
-    """A mail's text for the page: its line breaks and tabs kept, the characters of _UNSEEN (a carriage return too) not."""
-    return _UNSEEN.sub("", str(text or ""))
+    """A mail's text for the page: its line breaks and tabs kept, the characters of _UNSEEN (a carriage return too)
+    not, and a run with no blank in it (a base64 blob, a hostile mail) broken every RUN_MAX characters, since laying
+    out one such run takes time that grows with the square of its length and would stop the window."""
+    return _RUN.sub(_fold, _UNSEEN.sub("", str(text or "")))
 
 
 # ---- words ---------------------------------------------------------------------------------------------------
@@ -318,7 +336,7 @@ class Line(QObject):
                 return
             try:
                 msg = json.loads(raw)
-            except ValueError:
+            except (ValueError, RecursionError):    # not JSON, or nested so deep that it cannot be read
                 continue
             if isinstance(msg, dict):
                 self.got.emit(msg)
@@ -347,6 +365,7 @@ class Backend(QObject):
     receiptChanged = Signal()
     quietChanged = Signal()
     setupChanged = Signal()
+    waitingChanged = Signal()
     showRequested = Signal()         # somebody asked for the window: slide it in
 
     def __init__(self):
@@ -395,7 +414,12 @@ class Backend(QObject):
         self._press_due = 0.0                # when a press that got no answer is taken for lost
         self._press_line = ""
         self._settle = 0
+        self._change_note = ""               # what the person is told when somebody else changed the draft in the box
+        self._arm_ms = ARM_MS
         self._receipt: dict | None = None
+        self._replying: set[tuple[str, str]] = set()     # (mail, kind) a draft is being asked for: a held key asks once
+        self._removing: set[str] = set()                 # mails being archived or deleted
+        self._load_failed = False
         self._quiet = ""
         self._quiet_tone = ""
         self._staged = False
@@ -426,6 +450,10 @@ class Backend(QObject):
         self._settler.setSingleShot(True)
         self._settler.setInterval(SETTLE_MS)
         self._settler.timeout.connect(self._settle_look)
+        self._status_retry = QTimer(self)
+        self._status_retry.setSingleShot(True)
+        self._status_retry.setInterval(RECONNECT_MS)
+        self._status_retry.timeout.connect(self._ask_status)
 
         self._mail_line = Line(mail_socket, MAIL_LINE_MAX, parent=self)
         self._mail_line.opened.connect(self._on_mail_open)
@@ -444,7 +472,8 @@ class Backend(QObject):
 
     def stop(self) -> None:
         """Let go of every socket and timer: the window is closing, or a test is done."""
-        for timer in (self._expiry, self._edits, self._refresher, self._searcher, self._hush, self._settler):
+        for timer in (self._expiry, self._edits, self._refresher, self._searcher, self._hush, self._settler,
+                      self._status_retry):
             timer.stop()
         for link in list(self._slow):
             self._retire(link)
@@ -478,6 +507,13 @@ class Backend(QObject):
         if self._engine in ("up", "off", ""):
             return ""
         return self._engine_text
+
+    @Property(str, notify=linkChanged)
+    def loadText(self):
+        """What the window says before the first answer of the service: that it is on its way, or that it is not."""
+        if not self._connected:
+            return DOWN + " This fills in as soon as it starts."
+        return NOT_ANSWERING if self._load_failed else "Loading"
 
     @Property("QVariant", notify=accountsChanged)
     def accounts(self):
@@ -539,6 +575,19 @@ class Backend(QObject):
     def skipped(self):
         return self._skipped
 
+    @Property("QVariant", notify=listChanged)
+    def skippedHere(self):
+        """The accounts that were not read and that the left column (or the tabs) does not already explain."""
+        return [s for s in self._skipped if not s["explained"]]
+
+    @Property(bool, notify=waitingChanged)
+    def listWaiting(self):
+        """An empty list of an inbox is not "empty" while none of the accounts it is of can be read yet."""
+        if self._view in ("needs_reply", "drafts") or self._search:
+            return False
+        mine = [a for a in self._accounts if self._view == "all" or self._view == f"acct:{a['id']}"]
+        return bool(mine) and not any(a["state"] == "ok" for a in mine)
+
     @Property("QVariant", notify=selectionChanged)
     def opened(self):
         return self._opened
@@ -573,6 +622,20 @@ class Backend(QObject):
     def draftFrom(self):
         return addr_full(self._draft["from"]) if self._draft else ""
 
+    @Property(str, notify=draftChanged)
+    def draftAuthor(self):
+        """Whose words these are, said when they are not the person's: the agent writes drafts too."""
+        return "Written by Bombadil" if self._draft and self._draft.get("created_by") == "agent" else ""
+
+    @Property("QVariant", notify=draftChanged)
+    def draftWeb(self):
+        """Where the draft's account has its mail on the web ({name, url}), for looking in Sent."""
+        a = next((x for x in self._accounts if self._draft and x["id"] == self._draft.get("account")), None)
+        web = a.get("web") if a else None
+        if isinstance(web, dict) and safe_url(web.get("url")):
+            return {"name": _line(web.get("name")), "url": web["url"]}
+        return None
+
     @Property("QVariant", notify=draftLoaded)
     def draftFields(self):
         return dict(self._want)
@@ -589,6 +652,26 @@ class Backend(QObject):
     def canSend(self):
         return self._gate() == ""
 
+    @Property(bool, notify=gateChanged)
+    def editable(self):
+        """The box takes typing: the draft is open (or may have gone), and no press is out for it."""
+        return self._editable()
+
+    @Property(int, notify=gateChanged)
+    def armDelay(self):
+        """How long Send waits, once it could be pressed, before it takes a click (milliseconds)."""
+        return self._arm_ms
+
+    @Property(str, notify=gateChanged)
+    def changeNote(self):
+        """Said when somebody else changed the draft that is in the box: it is what Send would send now."""
+        return self._change_note
+
+    @Property(bool, notify=gateChanged)
+    def ticking(self):
+        """Send waits for the tick (the line above it and the tick say why: no second sentence)."""
+        return self._gate() == TICK_NOTE
+
     @Property(str, notify=gateChanged)
     def sendNote(self):
         """One quiet line: why Send is not pressable. Empty when it is."""
@@ -596,10 +679,11 @@ class Backend(QObject):
 
     @Property(str, notify=gateChanged)
     def pressLine(self):
-        """What became of the last press, in the words agentd gave (or that a send may have gone), else empty."""
-        if self._press_line:
-            return self._press_line
-        return UNKNOWN_LINE if self._draft is not None and self._draft["state"] == "unknown" else ""
+        """What became of the last press, in the words agentd gave (or that a send may have gone), else empty. A
+        draft the service calls unknown says so whatever else was said, so the screen never says two things."""
+        if self._draft is not None and self._draft["state"] == "unknown":
+            return UNKNOWN_LINE
+        return self._press_line
 
     @Property(str, notify=gateChanged)
     def sendLabel(self):
@@ -675,21 +759,30 @@ class Backend(QObject):
     def dismissReceipt(self) -> None:
         self._set("_receipt", None, self.receiptChanged)
 
+    @staticmethod
+    def _note_of(a: dict) -> str:
+        """The quiet line under an account in the left column, when it has one: why it cannot be read, or what it
+        waits for (an account that is still fetching says what the service said, if it said anything)."""
+        return {"signin": "Signing in", "blocked": a["note"] or "This account cannot be used here.",
+                "error": a["note"] or "Something is wrong with this account.", "syncing": a["note"]}.get(
+                    a["state"], "")
+
     def _sidebar(self) -> list[dict]:
         rows = [{"id": "all", "name": "All inboxes", "kind": "all", "count": self._counts["unread"], "note": "",
-                 "state": "ok", "web": None}]
+                 "state": "ok", "web": None, "engine": False}]
         for a in self._accounts:
             usable = a["state"] in USABLE
-            note = {"signin": "Signing in", "blocked": a["note"] or "This account cannot be used here.",
-                    "error": a["note"] or "Something is wrong with this account."}.get(a["state"], "")
+            note = self._note_of(a)
             web = a.get("web") if a["state"] in ("blocked", "error") else None
             rows.append({"id": f"acct:{a['id']}", "name": a["email"], "kind": "account",
                          "count": a["unread"] if usable else 0, "note": note, "state": a["state"],
-                         "web": web if isinstance(web, dict) and safe_url(web.get("url")) else None})
+                         "web": web if isinstance(web, dict) and safe_url(web.get("url")) else None,
+                         # what the note asks for is done in Thunderbird's own window
+                         "engine": a["state"] == "signin" or (a["state"] == "syncing" and note != "")})
         rows.append({"id": "needs_reply", "name": "Needs a reply", "kind": "view",
-                     "count": self._counts["needs_reply"], "note": "", "state": "ok", "web": None})
+                     "count": self._counts["needs_reply"], "note": "", "state": "ok", "web": None, "engine": False})
         rows.append({"id": "drafts", "name": "Drafts", "kind": "view", "count": self._counts["drafts"],
-                     "note": "", "state": "ok", "web": None})
+                     "note": "", "state": "ok", "web": None, "engine": False})
         return rows
 
     # ---- requests ----------------------------------------------------------------------------------------
@@ -777,15 +870,20 @@ class Backend(QObject):
     def _on_mail_open(self) -> None:
         self._connected = True
         self._request("subscribe")
-        self._request("status", on=self._on_status)
+        self._ask_status()
         if not self._asked:
             self._asked = True   # once, at the start: what a launcher asked for before this window existed
             self._request("requested", on=self._on_requested)
         else:
             self._refresh_soon("list", "drafts", "accounts")
         if self._draft is not None:
+            # What was typed while the line was down was not lost, only not saved: it goes now (a failure that said
+            # "not running" is not kept: it was about the line, and the words are sent again).
+            self._attach_error = ""
+            self._flush()
             self._look_at_draft(reshow=True)
         self.linkChanged.emit()
+        self.gateChanged.emit()
 
     def _on_mail_closed(self) -> None:
         self._connected = False
@@ -794,6 +892,7 @@ class Backend(QObject):
         self._inflight = 0
         self._flying.clear()
         self._shown_asked = ""
+        self._status_retry.stop()
         self.linkChanged.emit()
         self.gateChanged.emit()
 
@@ -834,15 +933,25 @@ class Backend(QObject):
 
     def _refresh_now(self) -> None:
         wants, self._wants = self._wants, set()
-        self._request("status", on=self._on_status)
+        self._ask_status()
         if wants & {"list", "drafts", "accounts"} and self._list_state != "loading":
             self._fetch_list(quiet=True)
         if "drafts" in wants and self._draft is not None and self._press != "sending":
             self._look_at_draft()
 
+    def _ask_status(self) -> None:
+        self._request("status", on=self._on_status)
+
     def _on_status(self, result, failure) -> None:
         if failure is not None or not isinstance(result, dict):
+            if not self._ready and self._connected:
+                # The first answer is what makes the window ready: it is asked for again, one at a time, until
+                # it comes, and the window says meanwhile that Mail is not answering.
+                self._load_failed = True
+                self.linkChanged.emit()
+                self._status_retry.start()
             return
+        self._load_failed = False
         accounts = [a for a in result.get("accounts") or [] if isinstance(a, dict) and a.get("id")]
         for a in accounts:
             a["state"] = str(a.get("state") or "")
@@ -856,31 +965,37 @@ class Backend(QObject):
         self._accounts = accounts
         self._ready = True
         self.accountsChanged.emit()
+        self.waitingChanged.emit()
         self.linkChanged.emit()
         if self._list_state == "error" and self._engine == "up":
             self._fetch_list(quiet=True)    # the engine is back: try the list again
 
     def _on_requested(self, result, failure) -> None:
-        """What the launcher asked the service to show before this window was there, if anything; else the list."""
+        """What the launcher asked the service to show before this window was there, if anything. The list is
+        asked for either way: a request that names a mail and no view still has a list to show beside it."""
+        gen = self._list_gen
         if isinstance(result, dict) and (result.get("view") or result.get("id") or result.get("reply")):
             self._show(result, bring=False)
-        else:
+        if self._list_gen == gen:
             self._fetch_list()
 
     def _show(self, msg: dict, bring: bool = True) -> None:
-        """Somebody asked for a view, a mail or a draft: switch to it, then ask for the window."""
+        """Somebody asked for a view, a mail or a draft: switch to it, then ask for the window. A draft's id has no
+        account in front of it (d7; a mail's is a1/...), and a draft is what agentd names for a typed "send it"."""
         seq = msg.get("seq")
         if isinstance(seq, int):
             if seq <= self._show_seq:
                 return
             self._show_seq = seq
         view, mail_id, reply = msg.get("view"), msg.get("id"), msg.get("reply")
-        if reply and not view:
+        draft = reply if isinstance(reply, str) and reply else (
+            mail_id if isinstance(mail_id, str) and mail_id and "/" not in mail_id else "")
+        if draft and not view:
             view = "drafts"
         if isinstance(view, str) and view:
             self.setView(view)
-        if isinstance(reply, str) and reply:
-            self.openDraft(reply)
+        if draft:
+            self.openDraft(draft)
         elif isinstance(mail_id, str) and mail_id:
             self.openMail(mail_id)
         if bring:
@@ -901,11 +1016,12 @@ class Backend(QObject):
         self._list_state, self._list_error = "loading", ""
         self.viewChanged.emit()
         self.listChanged.emit()
+        self.waitingChanged.emit()
         self._fetch_list()
 
     @Slot()
     def refresh(self) -> None:
-        self._request("status", on=self._on_status)
+        self._ask_status()
         self._fetch_list(quiet=True)
 
     @Slot(str)
@@ -915,6 +1031,7 @@ class Backend(QObject):
             return
         self._search = text
         self.viewChanged.emit()
+        self.waitingChanged.emit()
         if self._view in ("needs_reply", "drafts"):
             self._apply_filter()
         else:
@@ -941,8 +1058,8 @@ class Backend(QObject):
             if failure is not None:
                 self._list_error = str(failure)
                 self._list_state = "error" if not self._rows else "ready"
-                if self._rows:
-                    self._say(failure, "bad")
+                if self._rows and self.engineNote == "":
+                    self._say(failure, "bad")      # (else the engine's own note above the list already says it)
                 self._skipped = []
                 self.listChanged.emit()
                 return
@@ -966,7 +1083,8 @@ class Backend(QObject):
             self._cursor, self._more, self._skipped = None, False, []
         else:
             body = result if isinstance(result, dict) else {}
-            rows = [self._row(m) for m in body.get("messages") or [] if isinstance(m, dict)]
+            rows = [self._row(m, partial=view == "needs_reply") for m in body.get("messages") or []
+                    if isinstance(m, dict)]
             self._cursor = body.get("cursor")
             self._more = bool(body.get("more")) and bool(self._cursor)
             self._skipped = [self._skip(s) for s in body.get("skipped") or [] if isinstance(s, dict)]
@@ -979,6 +1097,7 @@ class Backend(QObject):
         self._list_state, self._list_error = "ready", ""
         self._apply_filter(emit=False)
         self.listChanged.emit()
+        self.waitingChanged.emit()
         self._patch_opened()
 
     def _apply_filter(self, emit: bool = True) -> None:
@@ -991,9 +1110,11 @@ class Backend(QObject):
         if emit:
             self.listChanged.emit()
 
-    def _row(self, m: dict) -> dict:
+    def _row(self, m: dict, partial: bool = False) -> dict:
+        """A mail as the list shows it. `partial` is a row of Needs a reply, which the service keeps without the
+        mail's own state (read, flagged, files): those three are not known from it and must not be taken for no."""
         sender = m.get("from") if isinstance(m.get("from"), dict) else {}
-        return {"id": str(m.get("id") or ""), "account": str(m.get("account") or ""),
+        return {"partial": partial, "id": str(m.get("id") or ""), "account": str(m.get("account") or ""),
                 "sender": addr_label(sender) or "(unknown)", "address": _line(sender.get("email")),
                 "subject": _line(m.get("subject")) or "(no subject)", "ts": m.get("ts") or 0,
                 "when": when_label(m.get("ts")), "unread": bool(m.get("unread")),
@@ -1009,14 +1130,16 @@ class Backend(QObject):
                 "address": " ".join(a.get("email", "") for a in to if isinstance(a, dict)),
                 "subject": _line(d.get("subject")) or "(no subject)", "ts": d.get("updated") or 0,
                 "when": when_label(d.get("updated")), "unread": False, "flagged": False,
-                "attachments": bool(d.get("attachments")), "needsReply": False, "why": why, "draft": True}
+                "attachments": bool(d.get("attachments")), "needsReply": False, "why": why, "draft": True,
+                "partial": False}
 
     def _skip(self, s: dict) -> dict:
-        email = next((a["email"] for a in self._accounts if a["id"] == s.get("account")), str(s.get("account") or ""))
+        acct = next((a for a in self._accounts if a["id"] == s.get("account")), None)
         web = s.get("web") if isinstance(s.get("web"), dict) else None
-        return {"account": str(s.get("account") or ""), "email": email, "state": str(s.get("state") or ""),
-                "note": _line(s.get("note")),
-                "web": web if web and safe_url(web.get("url")) else None}
+        return {"account": str(s.get("account") or ""), "email": acct["email"] if acct else str(s.get("account") or ""),
+                "state": str(s.get("state") or ""), "note": _line(s.get("note")),
+                "web": web if web and safe_url(web.get("url")) else None,
+                "explained": bool(acct and self._note_of(acct))}      # the left column already says it
 
     def _patch_opened(self) -> None:
         """A fresh list may know better whether the open mail is unread, flagged or needs a reply."""
@@ -1026,7 +1149,10 @@ class Backend(QObject):
         if row is None:
             return
         keep = {k: self._opened.get(k) for k in ("sender", "address")}
-        new = {**self._opened, **{k: v for k, v in row.items() if k not in keep or not self._opened.get(k)}}
+        # (a partial row knows nothing of read, flagged and files: what `read` said of them stands)
+        unknown = ("partial", "unread", "flagged", "attachments") if row.get("partial") else ("partial",)
+        new = {**self._opened, **{k: v for k, v in row.items()
+                                  if (k not in keep or not self._opened.get(k)) and k not in unknown}}
         if new != self._opened:
             self._opened = new
             self.selectionChanged.emit()
@@ -1072,7 +1198,9 @@ class Backend(QObject):
         atts = [{"part": str(p.get("part") or ""), "name": _line(p.get("name")) or "attachment",
                  "size": size_label(p.get("size")), "inline": bool(p.get("inline"))}
                 for p in body.get("attachments") or [] if isinstance(p, dict)]
-        self._mail = {"text": _text(body.get("text")), "truncated": bool(body.get("truncated")),
+        raw = str(body.get("text") or "")
+        cut = len(raw) > MAIL_TEXT_MAX     # what is drawn is the start: a very long text is slow to lay out
+        self._mail = {"text": _text(raw[:MAIL_TEXT_MAX]), "truncated": bool(body.get("truncated")) or cut,
                       "htmlOnly": bool(body.get("html_only")), "attachments": atts,
                       "webUrl": body.get("web_url") if safe_url(body.get("web_url")) else "",
                       "webName": self._web_name(self._opened.get("account"))}
@@ -1146,23 +1274,35 @@ class Backend(QObject):
         self._remove("trash", mail_id)
 
     def _remove(self, op: str, mail_id: str) -> None:
+        """Archive or delete. It is said in the quiet line what was put away (there is no undo to offer), and the
+        next mail is not opened by itself: a second press of the same key must not put away a mail that was never
+        looked at. The list keeps its place, so the mail that was under this one is where the keyboard is."""
         mail_id = mail_id or (self._opened["id"] if self._opened else "")
-        if not mail_id or self._view == "drafts":
+        if not mail_id or self._view == "drafts" or mail_id in self._removing:
             return
+        self._removing.add(mail_id)
+        row = next((r for r in self._rows if r["id"] == mail_id), None) or (
+            self._opened if self._opened and self._opened["id"] == mail_id else None)
+        subject = (row or {}).get("subject") or "that mail"
 
         def then(_result):
-            after = self._next_after(mail_id)
             was_open = self._opened is not None and self._opened["id"] == mail_id
             self._rows = [r for r in self._rows if r["id"] != mail_id]
             self._apply_filter(emit=False)
             self.listChanged.emit()
             self._refresh_soon("list")
+            self._say(("Archived: " if op == "archive" else "Moved to Trash: ") + subject)
             if was_open:
                 self.closeMail()
-                if after:
-                    self.openMail(after)
 
-        self._act(op, then, id=mail_id)
+        def done(result, failure):
+            self._removing.discard(mail_id)
+            if failure is not None:
+                self._say(failure, "bad")
+            else:
+                then(result)
+
+        self._request(op, on=done, id=mail_id)
 
     def _next_after(self, gone: str) -> str:
         """The next unread mail after this one (the first unread when none is below): what shows once a mail is put
@@ -1271,8 +1411,9 @@ class Backend(QObject):
     @Slot(str, str)
     def reply(self, kind: str, mail_id: str = "") -> None:
         mail_id = mail_id or (self._opened["id"] if self._opened else "")
-        if kind not in KINDS or not mail_id:
-            return
+        if kind not in KINDS or not mail_id or (mail_id, kind) in self._replying:
+            return      # (a key held down asks once)
+        self._replying.add((mail_id, kind))
         if self._opened is None or self._opened["id"] != mail_id:
             self.openMail(mail_id)
         else:
@@ -1283,18 +1424,21 @@ class Backend(QObject):
                          and d.get("kind") == kind and d.get("state") in ("open", "unknown")), None) \
                 if failure is None and isinstance(result, list) else None
             if same is not None:
+                self._replying.discard((mail_id, kind))
                 self._open_loaded(same)
                 return
             self._request("draft", on=made, kind=kind, reply_to=mail_id)
 
         def made(result, failure):
+            self._replying.discard((mail_id, kind))
             if failure is not None:
                 self._say(failure, "bad")
             else:
                 self._open_loaded(result)
                 self._refresh_soon("drafts")
 
-        # An earlier reply to this mail that was never sent is the one to go on with, not a second one.
+        # An earlier reply to this mail that was never sent is the one to go on with, not a second one (the box
+        # says whose it is when it is the agent's).
         self._request("list", on=listed, view="drafts", limit=LIST_MAX)
 
     @Slot()
@@ -1341,6 +1485,7 @@ class Backend(QObject):
         self._flying.clear()
         self._edit_errors.clear()
         self._attach_error = ""
+        self._change_note, self._arm_ms = "", ARM_MS
         self._press, self._press_for, self._press_line, self._looked = "", None, "", False
         self._edits.stop()
         reply_to = d.get("reply_to")
@@ -1391,6 +1536,7 @@ class Backend(QObject):
         self._draft, self._shown, self._shown_asked = None, "", ""
         self._want, self._sent, self._flying, self._edit_errors = {}, {}, {}, {}
         self._attach_error = ""
+        self._change_note, self._arm_ms = "", ARM_MS
         self._press, self._press_for, self._press_line, self._looked = "", None, "", False
         self.draftChanged.emit()
         self.draftLoaded.emit()
@@ -1422,22 +1568,34 @@ class Backend(QObject):
     def _drop_box(self) -> None:
         self._draft = None
         self._want, self._sent = {}, {}
+        self._change_note, self._arm_ms = "", ARM_MS
         self.draftChanged.emit()
         self.draftLoaded.emit()
         self.gateChanged.emit()
         self.selectionChanged.emit()
 
-    def _adopt(self, d, reshow: bool = False) -> None:
+    def _adopt(self, d, reshow: bool = False, own: bool = False) -> None:
         """The service's answer for the draft in the box becomes the draft the box is held to. A field that the
         person has not touched since and that the answer says differently about is loaded again, so what is shown
-        stays what is there; whatever the person is typing stays."""
+        stays what is there; whatever the person is typing stays. `own` is the answer to the person's own edit."""
         if not isinstance(d, dict) or self._draft is None or d.get("id") != self._draft["id"]:
             return
-        changed_elsewhere = d.get("updated") != self._draft.get("updated") or d.get("fingerprint") != self._draft.get(
-            "fingerprint")
+        was = self._draft
+        changed_elsewhere = d.get("updated") != was.get("updated") or d.get("fingerprint") != was.get("fingerprint")
         self._draft = d
+        if d["state"] == "sent":        # it went while this window was not looking
+            self._finish_sent(d.get("receipt") or {"line": "Sent."})
+            return
+        if d["state"] == "discarded":
+            self._say("That draft was discarded.")
+            self._drop_box()
+            return
         if changed_elsewhere or reshow:
             self._shown = ""
+        if not own and d.get("fingerprint") != was.get("fingerprint"):
+            # Somebody else (the agent, another window) changed what Send would send. It is taken, and said, and
+            # Send waits longer than usual, so that a click that was on its way is not a press of what was not read.
+            self._change_note, self._arm_ms = CHANGED_LINE, ARM_CHANGED_MS
         reload = False
         if not self._pending_edits():
             for f in FIELDS:
@@ -1445,6 +1603,12 @@ class Backend(QObject):
                 if _norm(f, theirs) != _norm(f, self._sent.get(f, "")) and self._want.get(f) == self._sent.get(f):
                     self._want[f] = self._sent[f] = theirs
                     reload = True
+        if self._press_line == UNKNOWN_LINE and d["state"] == "open":
+            self._press_line = NOTHING_SENT     # the service says it is open: now it is known that it was not sent
+        elif d["state"] != was["state"]:
+            self._press_line = ""               # what the last press said was about the state before this one
+        if d["state"] != was["state"]:
+            reload = True                       # the box could not be typed in while it was being sent: it shows what is there
         if d["state"] != "unknown":
             self._looked = False
         self.draftChanged.emit()
@@ -1456,8 +1620,14 @@ class Backend(QObject):
 
     @Slot(str, str)
     def editField(self, field: str, text: str) -> None:
-        if field not in FIELDS or self._draft is None or self._draft["state"] not in ("open", "unknown"):
+        if field not in FIELDS or self._draft is None:
             return
+        if not self._editable():
+            # Typed into a box that cannot take it (the draft is being sent): the box is put back to what the draft
+            # has, so that it never shows words the draft does not hold and Send would not send.
+            QTimer.singleShot(0, self.draftLoaded.emit)
+            return
+        self._change_note, self._arm_ms = "", ARM_MS
         self._want[field] = text
         self._edits.start()
         self.gateChanged.emit()
@@ -1472,7 +1642,10 @@ class Backend(QObject):
         if d is None:
             return
         for f in FIELDS:
-            if self._want.get(f) != self._sent.get(f) and self._flying.get(f) != self._want.get(f):
+            if self._want.get(f) == self._sent.get(f):
+                self._edit_errors.pop(f, None)       # typed back to what the service has: nothing is refused now
+            elif self._flying.get(f) != self._want.get(f):
+                self._edit_errors.pop(f, None)       # (said again if it is refused again)
                 self._edit_field(d["id"], f, self._want[f])
         self.gateChanged.emit()
 
@@ -1492,9 +1665,11 @@ class Backend(QObject):
                 self._sent[field] = value
                 self._edit_errors.pop(field, None)
                 self._shown = ""
-                self._adopt(result)
+                self._adopt(result, own=True)
             else:
                 self._edit_errors[field] = str(failure)
+                if failure.code == "timeout":
+                    self._edits.start()      # the words are still here: they go again after a pause
                 if failure.code in ("refused", "not_found"):
                     self._look_at_draft()
             self.gateChanged.emit()
@@ -1526,7 +1701,7 @@ class Backend(QObject):
                 self._attach_error = str(failure)
             else:
                 self._shown = ""
-                self._adopt(result)
+                self._adopt(result, own=True)
             self.gateChanged.emit()
 
         self._request("draft_edit", on=done, id=d["id"], add_attachments=files)
@@ -1548,7 +1723,7 @@ class Backend(QObject):
                 self._attach_error = str(failure)
             else:
                 self._shown = ""
-                self._adopt(result)
+                self._adopt(result, own=True)
             self.gateChanged.emit()
 
         self._request("draft_edit", on=done, id=d["id"], remove_attachments=[name])
@@ -1631,8 +1806,12 @@ class Backend(QObject):
         if not any(d.get(f) for f in RECIPIENTS):
             return "Add who it is going to."
         if d["state"] == "unknown" and not self._looked:
-            return "Tick the box once you have looked in Sent."
+            return TICK_NOTE
         return ""
+
+    def _editable(self) -> bool:
+        d = self._draft
+        return d is not None and d["state"] in ("open", "unknown") and self._press == ""
 
     @Slot(bool)
     def setLooked(self, looked: bool) -> None:
@@ -1654,6 +1833,7 @@ class Backend(QObject):
             self.gateChanged.emit()
             return
         self._press, self._press_for, self._press_line = "sending", (d["id"], d["fingerprint"]), ""
+        self._looked = False        # a look in Sent is for one press: a second unknown asks for a second look
         self._press_due = time.monotonic() + PRESS_S
         self.gateChanged.emit()
 
@@ -1683,6 +1863,7 @@ class Backend(QObject):
         """agentd went away while a press was out: the answer is lost, and the service knows what became of it."""
         self._press, self._settle = "checking", 0
         self._press_line = LOST_LINE
+        self._looked = False
         self.gateChanged.emit()
         self._settler.start()
 
@@ -1703,10 +1884,13 @@ class Backend(QObject):
                 self._press, self._press_for, self._press_line = "", None, UNKNOWN_LINE
                 self._adopt(result)
             elif state == "open" and self._settle >= SETTLE_OPEN_TRIES or self._settle >= SETTLE_TRIES:
+                # "Nothing was sent" is said only when the service itself says the draft is open. When it has said
+                # nothing that settles it (it is away, or still says sending) the person is told it is not known,
+                # and what the service says next decides.
                 self._press, self._press_for = "", None
-                self._press_line = "Nothing was sent. Press Send again if you still want it to go."
                 if state is not None:
                     self._adopt(result)
+                self._press_line = NOTHING_SENT if state == "open" else UNKNOWN_LINE
                 self.gateChanged.emit()
             else:
                 self._settler.start()
@@ -1722,6 +1906,7 @@ class Backend(QObject):
         self._edits.stop()
         self._settler.stop()
         self._draft, self._want, self._sent, self._flying, self._edit_errors = None, {}, {}, {}, {}
+        self._change_note, self._arm_ms = "", ARM_MS
         self._press, self._press_for, self._press_line, self._looked = "", None, "", False
         self._receipt = {"line": _line(receipt.get("line")) or "Sent.",
                          "webName": _line((receipt.get("web") or {}).get("name")) if isinstance(

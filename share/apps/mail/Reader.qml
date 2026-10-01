@@ -6,10 +6,21 @@ import Bombadil
 // The right pane: the mail that is open and, under it, the reply box with Send pinned at the bottom (so the warnings
 // and the button are always in view however long the mail or the draft is); once a draft is sent, one line with
 // what was sent and a link to it on the web in place of the box.
+//
+// On a pane too short for both, the mail being answered is one line ("Replying to Priya Shah: Launch date by noon?")
+// with a Show beside it, so that the box and what is about to be sent are read whole: the box is what the press is of.
 Item {
     id: root
 
     property bool back: false           // one pane at a time: a way back to the list
+    property int mailChoice: 0          // 0: as the room allows, 1: the person asked for the mail, 2: asked it away
+    readonly property bool collapsed: !!backend.draft && !!backend.opened
+                                      && (mailChoice === 2 || (mailChoice === 0 && area.height < 500))
+
+    Connections {
+        target: backend
+        function onDraftLoaded() { root.mailChoice = 0 }
+    }
 
     signal backRequested()
 
@@ -46,7 +57,7 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
                 text: backend.view === "drafts" ? "Pick a draft to go on with it." : "Pick a mail to read it."
-                color: Theme.faint
+                color: Theme.muted
             }
 
             // The mail on top and, when a draft is open, the box under it: each scrolls by itself, and the mail takes
@@ -55,10 +66,31 @@ Item {
                 anchors.fill: parent
                 spacing: 8
 
+                RowLayout {
+                    objectName: "mailSummary"
+                    visible: root.collapsed || (!!backend.draft && !!backend.opened && root.mailChoice === 1)
+                    Layout.fillWidth: true
+                    spacing: 10
+                    PlainText {
+                        Layout.fillWidth: true
+                        text: backend.opened ? "Replying to " + (backend.opened.sender || "") + ": "
+                                               + (backend.opened.subject || "") : ""
+                        elide: Text.ElideRight
+                        font.pixelSize: Theme.smallSize
+                        color: Theme.muted
+                    }
+                    LinkButton {
+                        objectName: "mailToggle"
+                        text: root.collapsed ? "Show the mail" : "Hide the mail"
+                        icon: ""
+                        onClicked: root.mailChoice = root.collapsed ? 1 : 2
+                    }
+                }
+
                 Flickable {
                     id: mailFlick
                     objectName: "mailFlick"
-                    visible: !!backend.opened
+                    visible: !!backend.opened && !root.collapsed
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumHeight: backend.draft ? 80 : 0
@@ -80,7 +112,7 @@ Item {
                 }
 
                 Rectangle {
-                    visible: !!backend.opened && !!backend.draft
+                    visible: !!backend.opened && !!backend.draft && !root.collapsed
                     Layout.fillWidth: true
                     height: 1
                     color: Theme.border

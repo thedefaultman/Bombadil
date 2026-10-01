@@ -6,6 +6,7 @@ import Bombadil
 // The reply box: who it goes to, the subject, what it says, and its files. What the person types goes to the service a
 // moment after the last key and nowhere else; Send, the warnings and the line about what the provider adds are in
 // SendBar, under it. The box tells the service which draft it has drawn (reportShown), once the window has drawn it.
+// While the draft cannot take an edit (it is being sent) every field is read-only: what is shown is what is there.
 ColumnLayout {
     id: box
     objectName: "replyBox"
@@ -22,7 +23,7 @@ ColumnLayout {
 
     signal opened()                     // a draft that was not in the box is now
 
-    spacing: 8
+    spacing: 6
 
     function load() {
         const f = backend.draftFields
@@ -35,6 +36,12 @@ ColumnLayout {
         loading = false
         for (const row of [to, cc, bcc, subject])
             row.input.field.cursorPosition = 0   // a long field shows its start, not its end
+        body.field.cursorPosition = 0
+    }
+
+    // A long list says how long it is, beside the field that shows only a few lines of it.
+    function count(list) {
+        return list && list.length > 3 ? list.length + " people" : ""
     }
 
     function focusFirst() {
@@ -114,7 +121,7 @@ ColumnLayout {
 
     // ---- what is drawn ----
 
-    RowLayout {
+    Flow {
         Layout.fillWidth: true
         spacing: 8
         PlainText {
@@ -122,14 +129,6 @@ ColumnLayout {
             text: backend.draftKind
             font.weight: Font.DemiBold
             font.pixelSize: Theme.headingSize
-        }
-        PlainText {
-            objectName: "boxFrom"
-            Layout.fillWidth: true
-            text: backend.draftFrom !== "" ? "from " + backend.draftFrom : ""
-            elide: Text.ElideRight
-            color: Theme.muted
-            font.pixelSize: Theme.smallSize
         }
         QuietButton {
             objectName: "ccButton"
@@ -155,6 +154,18 @@ ColumnLayout {
             onClicked: box.attach()
         }
     }
+    // Who it is from and whose words they are, on a line of their own so that neither is cut short: the account that
+    // sends is where the press is, and a draft Bombadil wrote says so.
+    PlainText {
+        objectName: "boxFrom"
+        visible: text !== ""
+        Layout.fillWidth: true
+        text: [backend.draftAuthor, backend.draftFrom !== "" ? "from " + backend.draftFrom : ""]
+            .filter(t => t !== "").join(" \u00b7 ")
+        wrapMode: Text.Wrap
+        color: Theme.muted
+        font.pixelSize: Theme.smallSize
+    }
     PlainText {
         objectName: "attachError"
         visible: backend.attachError !== ""
@@ -171,6 +182,8 @@ ColumnLayout {
         Layout.fillWidth: true
         label: "To"
         error: backend.fieldErrors.to || ""
+        readOnly: !backend.editable
+        note: box.count(box.d.to)
         onEdited: if (!box.loading) backend.editField("to", text)
     }
     FieldRow {
@@ -180,6 +193,8 @@ ColumnLayout {
         Layout.fillWidth: true
         label: "Cc"
         error: backend.fieldErrors.cc || ""
+        readOnly: !backend.editable
+        note: box.count(box.d.cc)
         onEdited: if (!box.loading) backend.editField("cc", text)
     }
     FieldRow {
@@ -189,6 +204,8 @@ ColumnLayout {
         Layout.fillWidth: true
         label: "Bcc"
         error: backend.fieldErrors.bcc || ""
+        readOnly: !backend.editable
+        note: box.count(box.d.bcc)
         onEdited: if (!box.loading) backend.editField("bcc", text)
     }
     FieldRow {
@@ -197,6 +214,7 @@ ColumnLayout {
         Layout.fillWidth: true
         label: "Subject"
         error: backend.fieldErrors.subject || ""
+        readOnly: !backend.editable
         onEdited: if (!box.loading) backend.editField("subject", text)
     }
 
@@ -241,16 +259,17 @@ ColumnLayout {
         }
     }
 
-    Editor {
+    QuietArea {
         id: body
         objectName: "bodyEditor"
         Layout.fillWidth: true
         Layout.fillHeight: true
-        Layout.preferredHeight: 96
-        Layout.minimumHeight: 96
-        lineNumbers: false
-        wrap: true
-        onTextChanged: if (!box.loading) backend.editField("body", text)
+        Layout.preferredHeight: 104     // five lines, even on a short pane; it takes what the pane has beyond that
+        Layout.minimumHeight: 104
+        label: "What you write"
+        placeholder: "Write your reply"
+        readOnly: !backend.editable
+        onEdited: if (!box.loading) backend.editField("body", text)
     }
     PlainText {
         visible: backend.fieldErrors.body !== undefined
@@ -267,7 +286,7 @@ ColumnLayout {
         Layout.fillWidth: true
         label: "File"
         placeholder: "The whole path of the file"
-        input.onAccepted: {
+        onAccepted: {
             if (path.text.trim() !== "") {
                 backend.addFiles([path.text.trim()])
                 path.text = ""

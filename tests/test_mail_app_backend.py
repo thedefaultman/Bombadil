@@ -341,30 +341,44 @@ def test_saving_an_attachment(lab, window, home):
     assert "\n" not in b.quiet
 
 
-def test_archive_and_delete_move_on_to_the_next_unread(lab, window):
+def test_archive_and_delete_say_what_they_did_and_open_nothing_else(lab, window):
+    """The next mail is not opened by itself: a second press of the same key would put away a mail that was never
+    looked at. What was put away is said, and a request that is already out is not made twice."""
     lb = lab()
     b = window(lb)
-    order = rows(b)
     unread = [m["id"] for m in b.messages if m["unread"]]
     assert len(unread) >= 3
     first = unread[0]
+    subject = next(m["subject"] for m in b.messages if m["id"] == first)
     b.openMail(first)
     wait_until(lambda: b.mailState == "ready")
     b.archive()
-    wait_until(lambda: first not in rows(b) and b.selectedId != first, what="the mail to go")
-    # the next unread one is open, and nothing is sent
-    assert b.selectedId in unread[1:] and b.selectedId == next(i for i in order[order.index(first) + 1:] if i in unread)
+    b.archive()                                        # a held key: one request
+    wait_until(lambda: first not in rows(b) and b.selectedId == "", what="the mail to go")
+    assert len(b.calls.ops("archive")) == 1
+    assert b.quiet == f"Archived: {subject}" and b.quietTone == "" and b.opened is None and b.mail is None
     assert lb.ask("read", id=first)["message"]["folder"] == "archive"
-    nxt = b.selectedId
-    wait_until(lambda: b.mailState == "ready")
+    spin(300)
+    assert b.opened is None and b.selectedId == ""     # nothing else was opened for the person
+    nxt = unread[1]
+    b.openMail(nxt)
+    wait_until(lambda: b.mailState == "ready" and b.opened["id"] == nxt)
     b.trash()
     wait_until(lambda: nxt not in rows(b))
     assert lb.ask("read", id=nxt)["message"]["folder"] == "trash"
+    assert b.quiet.startswith("Moved to Trash: ") and b.opened is None
     assert lb.agentd.presses() == []
     # with the keyboard's own id as the argument too
     other = next(i for i in rows(b) if i not in (first, nxt))
     b.archive(other)
     wait_until(lambda: other not in rows(b))
+    # a refusal is said as it is and the mail stays
+    lb.engine.set_up(False)
+    wait_until(lambda: b.engineNote != "")
+    keep = rows(b)[0]
+    b.archive(keep)
+    wait_until(lambda: b.quietTone == "bad")
+    assert keep in rows(b)
 
 
 def test_links_go_to_the_browser_only_when_they_are_web_links(lab, window):
@@ -576,9 +590,13 @@ def test_send_opens_only_when_everything_is_true(lab, window):
     assert lb.agentd.presses() == []
     lb.run(lb._start_service())
     wait_until(lambda: b.connected and b.draft is not None)
-    # a restarted service is asked again what the draft is, and the box has to show it again
-    assert b.calls.ops("draft_get")
+    # a restarted service is asked again what the draft is, and the box has to show it again: until the box says it
+    # has, what the service was last told is not taken for what is on screen now
+    wait_until(lambda: b.sendNote == "Waiting for Mail to confirm what you see.", what="the draft to be shown again")
+    assert b.canSend is False and b.calls.ops("draft_get")
+    shown_before = len(b.calls.ops("draft_shown"))
     settle_box(b)
+    assert len(b.calls.ops("draft_shown")) == shown_before + 1
     assert lb.agentd.presses() == []
 
 
@@ -696,7 +714,10 @@ def test_a_failed_press_says_agentds_words_and_keeps_the_draft(lab, window):
     wait_until(lambda: b.pressLine == "That draft changed. Look at it again.")
     wait_until(lambda: b.canSend is False and b.sendNote == "Waiting for Mail to confirm what you see.")
     b.editField("body", "Now different.")
-    wait_until(lambda: b.pressLine == "" or b.sendNote == "Saving" or True)
+    assert b.canSend is False and b.sendNote == "Saving"
+    wait_until(lambda: b.sendNote == "Waiting for Mail to confirm what you see.", what="the new draft")
+    b.press()                                       # not shown yet: no press
+    spin(200)
     assert len(lb.agentd.presses()) == 2
 
 
@@ -849,6 +870,11 @@ def test_a_list_that_cannot_be_read_is_one_plain_line(lab, window):
     wait_until(lambda: len(b.messages) > 3)
     lb.engine.set_up(False)
     wait_until(lambda: b.engineNote != "")
+    lists = len(b.calls.ops("list"))
+    b.refresh()                                    # the list that is there stays, and the note above it says why:
+    wait_until(lambda: len(b.calls.ops("list")) > lists)
+    spin(300)
+    assert b.quiet == "" and len(b.messages) > 3   # the same sentence is not also said at the foot
     b.setView("acct:a2")
     wait_until(lambda: b.listState == "error", what="the list's error")
     assert b.messages == [] and b.listError and "\n" not in b.listError
@@ -953,6 +979,394 @@ def test_an_address_on_a_domain_with_no_mail_server_still_gets_an_account_to_try
     assert b.accounts[0]["state"] in ("syncing", "ok")
 
 
+# ---- what the box shows is what the draft has --------------------------------------------------------------------------
+
+def test_a_box_that_cannot_take_typing_never_shows_words_the_draft_does_not_hold(lab, window):
+    """The draft is being sent (here by another client), so the box takes no typing; if some still reaches the
+    backend the box is put back to what is there, and when the send fails and the draft is open again Send is for what
+    the box shows."""
+    from bombadil.mail import service
+    lb = lab()
+    lb.engine.send_delay = 1.2
+    lb.engine.fail_send("engine_error", "The provider refused the message.")
+    service.SEND_S = 5.0
+    b = window(lb)
+    d = reply_open(lab, b)
+    b.editField("body", "The 14th works.")
+    settle_box(b)
+    loads: list[int] = []
+    b.draftLoaded.connect(lambda: loads.append(1))
+    assert b.editable is True
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        job = pool.submit(lb.ask, "send", id=d["id"], fingerprint=b.draft["fingerprint"])
+        wait_until(lambda: b.draft["state"] == "sending", what="the draft to be seen sending")
+        assert b.editable is False and b.canSend is False
+        before = len(loads)
+        b.editField("body", "EXTRA WORDS")
+        spin(100)
+        assert b.draftFields["body"] == "The 14th works." and len(loads) > before, "the box is put back"
+        assert not b._pending_edits()
+        assert job.result(10)["code"] == "engine_error"
+    wait_until(lambda: b.draft["state"] == "open" and b.editable, what="the draft to be open again")
+    assert b.draftFields["body"] == "The 14th works." and lb.draft_of(d["id"])["body"] == "The 14th works."
+    settle_box(b)
+    assert b.draft["body"] == b.draftFields["body"] == "The 14th works."
+    b.editField("body", "Fine.")
+    wait_until(lambda: lb.draft_of(d["id"])["body"] == "Fine.")
+    # nor while a press of this window is out
+    b.reportShown(b.draft["id"], b.draft["fingerprint"])
+    wait_until(lambda: b.canSend)
+    b.press()
+    assert b.pressState == "sending" and b.editable is False
+    b.editField("subject", "Not now")
+    assert b._want["subject"] == b.draft["subject"] == lb.draft_of(d["id"])["subject"]
+
+
+def test_a_second_unknown_outcome_asks_for_a_fresh_look_in_sent(lab, window):
+    lb = lab()
+    lb.engine.hang_send()
+    b = window(lb)
+    d = reply_open(lab, b)
+    settle_box(b)
+    b.press()
+    wait_until(lambda: b.unknownOutcome, 8.0, "the first unknown outcome")
+    b.reportShown(d["id"], b.draft["fingerprint"])
+    wait_until(lambda: b._shown == b.draft["fingerprint"])
+    b.setLooked(True)
+    assert b.sendLabel == "Send again" and b.canSend is True
+    b.press()                                        # again: the person looked, and pressed
+    assert b.looked is False and b.sendLabel == "Sending"
+    wait_until(lambda: b.pressState == "" and b.unknownOutcome, 8.0, "the second unknown outcome")
+    b.reportShown(d["id"], b.draft["fingerprint"])
+    wait_until(lambda: b._shown == b.draft["fingerprint"])
+    assert b.looked is False and b.sendLabel == "Send" and b.canSend is False
+    assert b.sendNote == "Tick the box once you have looked in Sent." and b.ticking is True
+    b.press()
+    spin(150)
+    first, second = lb.agentd.presses()
+    assert "again" not in first and second["again"] is True      # and no third press without a new look
+    b.setLooked(True)
+    assert b.canSend is True and b.ticking is False
+
+
+def test_nothing_was_sent_is_said_only_when_the_service_says_so(lab, window):
+    lb = lab()
+    lb.agentd.mode = "hangup"
+    b = window(lb, SETTLE_MS=500, SETTLE_TRIES=3, SETTLE_OPEN_TRIES=50)
+    d = reply_open(lab, b)
+    settle_box(b)
+    b.press()
+    lb.stop_service()                                # the press went nowhere and the service is not there to say so
+    wait_until(lambda: b.pressState == "" and b.pressLine, 8.0, "the window to give up looking")
+    assert b.pressLine == UNKNOWN_LINE and "Nothing was sent" not in b.pressLine
+    assert b.canSend is False
+    lb.run(lb._start_service())
+    wait_until(lambda: b.connected, what="the service")
+    # the service answers that the draft is open: now it is known that nothing went
+    wait_until(lambda: b.pressLine.startswith("Nothing was sent"), 8.0, "the service's word")
+    # the draft then goes out through another window and is not known to have gone: one sentence, not two
+    lb.engine.hang_send()
+    settle_box(b)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        job = pool.submit(lb.ask, "send", id=d["id"], fingerprint=b.draft["fingerprint"])
+        wait_until(lambda: b.draft["state"] == "sending")
+        job.result(10)
+    wait_until(lambda: b.draft["state"] == "unknown", what="the draft to be unknown")
+    assert b.pressLine == UNKNOWN_LINE and b.unknownOutcome is True
+    b._press_line = "Nothing was sent. Press Send again if you still want it to go."    # a stale line is not shown
+    assert b.pressLine == UNKNOWN_LINE
+
+
+def test_a_draft_the_service_calls_sent_or_discarded_ends_the_box(lab, window):
+    lb = lab()
+    b = window(lb)
+    reply_open(lab, b)
+    settle_box(b)
+    gone = dict(b.draft, state="sent", receipt={"line": "Sent to Priya from maya@acme.example · 09:08", "web": None})
+    b._adopt(gone)
+    assert b.draft is None and b.receipt["line"].startswith("Sent to Priya") and b.pressState == ""
+    reply_open(lab, b, SAM)
+    b._adopt(dict(b.draft, state="discarded"))
+    assert b.draft is None and b.quiet == "That draft was discarded."
+
+
+def test_a_draft_somebody_else_changed_is_said_and_send_waits_longer(lab, window):
+    lb = lab()
+    b = window(lb)
+    d = reply_open(lab, b)
+    settle_box(b)
+    assert b.changeNote == "" and b.armDelay == 350
+    b.editField("body", "My own words.")                 # what the person typed is never "somebody else"
+    wait_until(lambda: b.draft["body"] == "My own words.")
+    assert b.changeNote == "" and b.armDelay == 350
+    settle_box(b)
+    lb.ask("draft_edit", agent=True, id=d["id"], body="Agent's words.", tainted=True)
+    wait_until(lambda: b.draft["body"] == "Agent's words.", what="the draft to be taken")
+    assert b.changeNote.startswith("This draft was changed while it was open") and b.armDelay == 1800
+    settle_box(b)
+    assert b.changeNote and b.canSend is True            # it can be sent, once read, and the button is slower
+    b.editField("body", "Mine again.")
+    assert b.changeNote == "" and b.armDelay == 350
+
+
+def test_a_draft_of_the_agent_says_whose_words_they_are(lab, window):
+    lb = lab()
+    b = window(lb)
+    made = lb.ask("draft", agent=True, kind="reply", reply_to=LEO, body="A, I think.", tainted=False)
+    b.openMail(LEO)
+    wait_until(lambda: b.mailState == "ready")
+    b.reply("reply")                                     # goes on with the draft that is there, which is Bombadil's
+    wait_until(lambda: b.draft is not None)
+    assert b.draft["id"] == made["id"] and b.draftAuthor == "Written by Bombadil"
+    assert len(lb.ask("list", view="drafts")) == 1
+    mine = reply_open(lab, b, SAM)
+    assert mine["created_by"] == "person" and b.draftAuthor == ""
+
+
+def test_a_reply_asked_for_twice_at_once_is_one_draft(lab, window):
+    lb = lab()
+    b = window(lb)
+    b.openMail(LAUNCH)
+    wait_until(lambda: b.mailState == "ready")
+    b.reply("reply")
+    b.reply("reply")
+    wait_until(lambda: b.draft is not None)
+    spin(400)
+    assert len(b.calls.ops("draft")) == 1 and len(lb.ask("list", view="drafts")) == 1
+    assert len([a for a in b.calls.ops("list") if a.get("view") == "drafts"]) <= 2
+
+
+# ---- what came while the line was down ---------------------------------------------------------------------------------
+
+def test_what_was_typed_while_mail_was_away_is_saved_when_it_is_back(lab, window):
+    lb = lab()
+    b = window(lb)
+    d = reply_open(lab, b)
+    settle_box(b)
+    b.editField("body", "Typed while it was away.")
+    lb.stop_service()
+    wait_until(lambda: not b.connected, what="the loss to be seen")
+    wait_until(lambda: b.fieldErrors.get("body"), what="the edit to be refused for want of a service")
+    assert b.canSend is False and b.sendNote == "Mail is not running yet."
+    lb.run(lb._start_service())
+    wait_until(lambda: b.connected, 8.0, "the service")
+    wait_until(lambda: lb.draft_of(d["id"])["body"] == "Typed while it was away.", 8.0, "the words to be saved")
+    assert not b.fieldErrors and b.attachError == ""
+    settle_box(b)
+    assert b.canSend is True
+
+
+def test_a_refused_field_typed_back_to_what_the_service_has_is_not_refused_any_more(lab, window):
+    lb = lab()
+    b = window(lb)
+    reply_open(lab, b)
+    settle_box(b)
+    kept = b.draftFields["to"]
+    b.editField("to", "not an address at all <<<")
+    wait_until(lambda: b.fieldErrors.get("to"), what="the refusal")
+    assert b.canSend is False
+    b.editField("to", kept)                              # back to the words the service already has: nothing to send
+    wait_until(lambda: not b.fieldErrors, what="the refusal to be let go")
+    b.reportShown(b.draft["id"], b.draft["fingerprint"])
+    wait_until(lambda: b.canSend, what="Send to be possible again")
+
+
+def test_an_edit_in_flight_when_the_line_drops_is_sent_again(lab, window):
+    lb = lab()
+    b = window(lb)
+    d = reply_open(lab, b)
+    settle_box(b)
+    b.editField("body", "In flight when it went.")
+    b.flush()
+    b._mail_line._sock.abort()                           # the link goes with the edit written (or not) and no answer
+    wait_until(lambda: b.connected and not b._pending_edits(), 8.0, "the edit to be settled after the reconnect")
+    assert lb.draft_of(d["id"])["body"] == "In flight when it went." and not b.fieldErrors
+    settle_box(b)
+    assert b.canSend is True
+
+
+# ---- a show for a draft, and one that came before the window -----------------------------------------------------------
+
+def test_a_show_for_a_draft_opens_the_draft_live_and_before_the_window(lab, window):
+    """agentd's typed "send it" is `show {view: drafts, id: <draft>}`: the window opens the box, not a mail."""
+    lb = lab()
+    d = lb.ask("draft", agent=True, kind="reply", reply_to=LEO, body="A.", tainted=False)
+    lb.push_show(view="drafts", id=d["id"])
+    b = window(lb)
+    wait_until(lambda: b.draft is not None and b.draft["id"] == d["id"], what="the draft to open")
+    assert b.view == "drafts" and b.shows == [] and b.mailError == ""
+    wait_until(lambda: b.opened and b.opened["id"] == LEO and b.mailState == "ready")
+    assert b.draftFields["body"] == "A." and b.canSend is False        # drawn, not yet told to the service
+    # while the window runs, from another view
+    b.setView("acct:a2")
+    wait_until(lambda: b.draft is None and b.view == "acct:a2")
+    lb.push_show(view="drafts", id=d["id"])
+    wait_until(lambda: b.draft is not None and b.draft["id"] == d["id"], what="the draft to open again")
+    assert b.view == "drafts" and len(b.shows) == 1 and b.mailError == ""
+    # a draft's id with no view says where it is
+    b.setView("all")
+    wait_until(lambda: b.draft is None and b.view == "all")
+    lb.push_show(id=d["id"])
+    wait_until(lambda: b.draft is not None and b.view == "drafts")
+    assert len(b.shows) == 2
+
+
+def test_a_show_that_names_a_mail_and_no_view_still_loads_the_list(lab, window):
+    lb = lab()
+    lb.push_show(id=SAM)                                  # what the new-mail notice's Open sends
+    b = window(lb, wait=False)
+    wait_until(lambda: b.opened is not None and b.opened["id"] == SAM and b.mailState == "ready")
+    wait_until(lambda: b.listState == "ready" and len(b.messages) > 3, what="the list beside the mail")
+    assert b.view == "all" and b.shows == []
+
+
+# ---- the first answer, a line that cannot be read, a mail that is made to be slow ---------------------------------------
+
+class FlakyService:
+    """A mail service whose first answer to `status` is an error and whose later ones are well."""
+
+    def __init__(self, lab, path: Path, *, first: str = "error"):
+        self.statuses, self.first = 0, first
+        self.server = lab.run(self._start(path))
+
+    async def _start(self, path):
+        return await asyncio.start_unix_server(self._serve, path=str(path))
+
+    async def _serve(self, reader, writer):
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                break
+            msg = json.loads(raw)
+            rid, op = msg.get("rid"), msg.get("op")
+            if op == "status":
+                self.statuses += 1
+                if self.statuses == 1 and self.first == "error":
+                    answer = {"rid": rid, "ok": False, "error": "Mail could not do that just now.", "code": "internal"}
+                else:
+                    answer = {"rid": rid, "ok": True, "result": {
+                        "engine": "up", "detail": "", "text": "", "accounts": [], "unread": 0, "needs_reply": 0,
+                        "drafts": 0, "fake": True}}
+            elif op == "list":
+                answer = {"rid": rid, "ok": True, "result": {"view": "all", "messages": [], "cursor": None,
+                                                              "more": False, "skipped": []}}
+            else:
+                answer = {"rid": rid, "ok": True, "result": None}
+            writer.write((json.dumps(answer) + "\n").encode())
+            await writer.drain()
+        writer.close()
+
+
+def test_a_first_answer_that_fails_is_asked_for_again(lab, window, home, monkeypatch):
+    lb = lab()
+    sock = home / "run" / "flaky.sock"
+    srv = FlakyService(lb, sock)
+    monkeypatch.setenv("BOMBADIL_MAIL_SOCKET", str(sock))
+    b = window(lb, wait=False)
+    wait_until(lambda: b.connected, what="the connection")
+    wait_until(lambda: b.loadText == "Mail is not answering. Trying again.", what="the sentence")
+    assert b.ready is False
+    wait_until(lambda: b.ready, 8.0, "the answer to the second ask")
+    assert b.loadText == "Loading" and srv.statuses >= 2
+    lb.run(_close(srv))
+
+
+def test_a_line_nested_too_deep_to_read_costs_the_lines_behind_it_nothing(lab, qt, home):
+    lb = lab()
+    app = load_app()
+    got = []
+    deep = b"[" * 300_000 + b"]" * 300_000 + b"\n"
+    srv = LongLines(lb, home / "run" / "deep.sock", [deep + b'{"n": 2}\n'])
+    link = app.Line(lambda: str(home / "run" / "deep.sock"), app.MAIL_LINE_MAX, parent=None)
+    link.got.connect(got.append)
+    link.start()
+    wait_until(lambda: got, what="the line behind the deep one")
+    assert [m.get("n") for m in got] == [2]
+    link.stop()
+    lb.run(_close(srv))
+
+
+def test_a_mail_that_is_one_unbroken_line_is_cut_and_folded(lab, window):
+    """Laying out one run of characters with no blank in it takes time that grows with its square, so what the page
+    is given has none longer than RUN_MAX and is at most MAIL_TEXT_MAX long."""
+    lb = lab()
+    b = window(lb)
+    app = b.mod
+    lb.engine.inject_new_mail("maya@acme.example", "Blob <blob@example.test>", "Blob", "A" * 200_000)
+    wait_until(lambda: any(m["subject"] == "Blob" for m in b.messages), what="the new mail")
+    mid = next(m["id"] for m in b.messages if m["subject"] == "Blob")
+    t0 = time.monotonic()
+    b.openMail(mid)
+    wait_until(lambda: b.mailState == "ready", 8.0, "the mail")
+    text = b.mail["text"]
+    assert time.monotonic() - t0 < 5
+    assert len(text) <= app.MAIL_TEXT_MAX + app.MAIL_TEXT_MAX // app.RUN_MAX and b.mail["truncated"] is True
+    assert max(len(run) for run in text.split()) <= app.RUN_MAX
+    assert text.replace("\n", "") == "A" * len(text.replace("\n", ""))
+    # words and lines with blanks are left as they are, whatever the script
+    plain = "Hi there,\n\nÉté 今日 — see https://example.org/" + "x" * 480 + "\nBye"
+    assert app._text(plain) == plain
+    assert max(len(r) for r in app._text("é" * 100_000).split()) <= app.RUN_MAX
+    t0 = time.monotonic()
+    app._text("a" * 499 + " " + "b" * 501 + " " + ("c" * 400 + " ") * 125)
+    assert time.monotonic() - t0 < 1
+
+
+# ---- what the list says and what it keeps ------------------------------------------------------------------------------
+
+def test_a_refresh_does_not_unflag_or_unread_a_mail_opened_from_needs_a_reply(lab, window):
+    lb = lab()
+    b = window(lb)
+    lb.ask("set_flags", id=SAM, flagged=True)
+    lb.ask("mark_reply", id=SAM, needs=True, why="Asks for a yes on the pricing copy.")
+    b.setView("needs_reply")
+    wait_until(lambda: rows(b) == [SAM], what="Needs a reply")
+    b.openMail(SAM)
+    wait_until(lambda: b.mailState == "ready")
+    assert b.opened["unread"] is True and b.opened["flagged"] is True and b.opened["needsReply"] is True
+    lists = len(b.calls.ops("list"))
+    b.refresh()
+    wait_until(lambda: len(b.calls.ops("list")) > lists, what="the refresh")
+    spin(400)
+    assert b.opened["unread"] is True and b.opened["flagged"] is True and b.opened["needsReply"] is True
+    assert b.opened["why"] == "Asks for a yes on the pricing copy."
+
+
+def test_an_account_still_fetching_says_what_it_waits_for_and_an_inbox_that_cannot_be_read_is_not_empty(lab, window):
+    lb = lab(samples=False)
+    b = window(lb)
+    b.addAccount("someone@icloud.com")
+    wait_until(lambda: b.accounts, 8.0, "the account")
+    acct = b.accounts[0]
+    assert acct["state"] == "syncing" and "app-specific password" in acct["note"]
+    row = b.sidebar[1]
+    assert row["note"] == acct["note"] and row["engine"] is True      # the step is done in Thunderbird's window
+    assert b.listWaiting is True and b.noAccount is False
+    # a blocked one is explained by the left column, so the foot of the list does not say it a second time
+    lb.engine.add_account("someone@school.example", "microsoft", state="blocked",
+                          detail="school.example asks an admin to approve mail apps.")
+    b.refresh()
+    wait_until(lambda: len(b.accounts) == 2 and any(a["state"] == "blocked" for a in b.accounts), 8.0, "the account")
+    b.setView("all")
+    wait_until(lambda: b.listState in ("ready", "error"), 8.0, "the list")
+    blocked = next(a for a in b.accounts if a["state"] == "blocked")
+    assert next(r for r in b.sidebar if r["id"] == f"acct:{blocked['id']}")["note"] == blocked["note"]
+    assert all(s["explained"] for s in b.skipped) and b.skippedHere == []
+
+
+def test_a_sign_in_that_is_given_up_on_is_not_a_dead_end(lab, window):
+    lb = lab(samples=False)
+    b = window(lb)
+    b.addAccount("someone@workspace.example")
+    wait_until(lambda: b.accounts and b.signingIn is not None, 8.0, "the sign-in")
+    assert b.noAccount is True
+    b.removeAccount(b.signingIn["id"])
+    wait_until(lambda: b.accounts == [], 8.0, "the account to go")
+    assert b.signingIn is None and b.noAccount is True and b.addError == ""
+    b.addAccount("other@workspace.example")                # and another can be tried
+    wait_until(lambda: b.signingIn is not None and b.signingIn["email"] == "other@workspace.example", 8.0, "the sign-in")
+
+
 # ---- the limits of a line --------------------------------------------------------------------------------------
 
 def test_a_long_draft_in_another_script_goes_as_text_and_one_too_long_does_not_go_at_all(lab, window):
@@ -973,7 +1387,7 @@ def test_a_long_draft_in_another_script_goes_as_text_and_one_too_long_does_not_g
     assert lb.draft_of(d["id"])["body"] == text and len(b.calls.ops("draft_edit")) == edits + 1
     # the service's own limit (500 000 characters, 600 000 bytes) is its sentence, under the field
     b.editField("body", "é" * 400_000)
-    wait_until(lambda: b.fieldErrors.get("body") != own, 10.0, "the service's answer")
+    wait_until(lambda: b.fieldErrors.get("body") not in (None, own), 10.0, "the service's answer")
     assert "\n" not in b.fieldErrors["body"] and b.canSend is False
     assert lb.draft_of(d["id"])["body"] == text
 

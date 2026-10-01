@@ -12,6 +12,10 @@ ColumnLayout {
     readonly property var m: backend.mail
     // With a reply box open under it the mail takes less room: no buttons, no To and Cc.
     readonly property bool compact: !!backend.draft
+    // A long list of recipients is two lines and a way to the rest, not half the window.
+    property string allFor: ""
+    readonly property bool allShown: allFor !== "" && allFor === (root.o.id || "")
+    readonly property int listLines: allShown ? 1000 : 2
 
     spacing: root.compact ? 8 : Theme.gap
 
@@ -40,20 +44,26 @@ ColumnLayout {
         }
         PlainText { visible: !!root.o.to && !root.compact; text: "To"; color: Theme.muted; font.pixelSize: Theme.smallSize; Layout.alignment: Qt.AlignTop }
         PlainText {
+            id: mailTo
             objectName: "mailTo"
             visible: !!root.o.to && !root.compact
             Layout.fillWidth: true
             text: root.o.to || ""
             wrapMode: Text.Wrap
+            maximumLineCount: root.listLines
+            elide: Text.ElideRight
             font.pixelSize: Theme.smallSize
         }
         PlainText { visible: !!root.o.cc && !root.compact; text: "Cc"; color: Theme.muted; font.pixelSize: Theme.smallSize; Layout.alignment: Qt.AlignTop }
         PlainText {
+            id: mailCc
             objectName: "mailCc"
             visible: !!root.o.cc && !root.compact
             Layout.fillWidth: true
             text: root.o.cc || ""
             wrapMode: Text.Wrap
+            maximumLineCount: root.listLines
+            elide: Text.ElideRight
             font.pixelSize: Theme.smallSize
         }
         PlainText { text: "Time"; color: Theme.muted; font.pixelSize: Theme.smallSize; Layout.alignment: Qt.AlignVCenter }
@@ -73,6 +83,14 @@ ColumnLayout {
                 onClicked: backend.openWeb(root.m.webUrl)
             }
         }
+    }
+
+    LinkButton {
+        objectName: "allRecipients"
+        visible: !root.compact && (root.allShown || mailTo.truncated || mailCc.truncated)
+        text: root.allShown ? "Fewer recipients" : "All recipients"
+        icon: ""
+        onClicked: root.allFor = root.allShown ? "" : (root.o.id || "")
     }
 
     Flow {
@@ -100,30 +118,34 @@ ColumnLayout {
             icon: "forward"
             onClicked: backend.reply("forward")
         }
-        QuietButton {
-            objectName: "archiveButton"
-            icon: "archive"
-            tooltip: "Archive (A)"
-            onClicked: backend.archive()
-        }
-        QuietButton {
-            objectName: "deleteButton"
-            icon: "trash"
-            tooltip: "Delete (#)"
-            onClicked: backend.trash()
-        }
-        QuietButton {
-            objectName: "flagButton"
-            icon: "flag"
-            checked: !!root.o.flagged
-            tooltip: root.o.flagged ? "Take the flag off" : "Flag"
-            onClicked: backend.setFlagged(!root.o.flagged)
-        }
-        QuietButton {
-            objectName: "unreadButton"
-            icon: root.o.unread ? "mail-open" : "mail"
-            tooltip: root.o.unread ? "Mark as read" : "Mark as unread"
-            onClicked: backend.setUnread(!root.o.unread)
+        // the four that are only a picture stay together when the line wraps
+        Row {
+            spacing: 6
+            QuietButton {
+                objectName: "archiveButton"
+                icon: "archive"
+                tooltip: "Archive (A)"
+                onClicked: backend.archive()
+            }
+            QuietButton {
+                objectName: "deleteButton"
+                icon: "trash"
+                tooltip: "Delete (#)"
+                onClicked: backend.trash()
+            }
+            QuietButton {
+                objectName: "flagButton"
+                icon: "flag"
+                checked: !!root.o.flagged
+                tooltip: root.o.flagged ? "Take the flag off" : "Flag"
+                onClicked: backend.setFlagged(!root.o.flagged)
+            }
+            QuietButton {
+                objectName: "unreadButton"
+                icon: root.o.unread ? "mail-open" : "mail"
+                tooltip: root.o.unread ? "Mark as read" : "Mark as unread"
+                onClicked: backend.setUnread(!root.o.unread)
+            }
         }
         QuietButton {
             objectName: "needsReplyButton"

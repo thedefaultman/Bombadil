@@ -80,10 +80,8 @@ def scene_rect(item):
     return (p.x(), p.y(), p.x() + item.width(), p.y() + item.height())
 
 
-def on_screen(item):
-    """Visible, inside the window, and not scrolled or clipped out of sight by an ancestor."""
-    if not item.isVisible() or item.width() <= 0 or item.height() <= 0 or item.opacity() <= 0:
-        return False
+def visible_size(item):
+    """How much of the item can be seen: its width and height inside the window and every clipping ancestor."""
     x0, y0, x1, y1 = scene_rect(item)
     bx0, by0, bx1, by1 = 0, 0, win.width(), win.height()
     a = item.parentItem()
@@ -92,7 +90,15 @@ def on_screen(item):
             ax0, ay0, ax1, ay1 = scene_rect(a)
             bx0, by0, bx1, by1 = max(bx0, ax0), max(by0, ay0), min(bx1, ax1), min(by1, ay1)
         a = a.parentItem()
-    return min(x1, bx1) - max(x0, bx0) > 1 and min(y1, by1) - max(y0, by0) > 1
+    return max(0, min(x1, bx1) - max(x0, bx0)), max(0, min(y1, by1) - max(y0, by0))
+
+
+def on_screen(item):
+    """Visible, inside the window, and not scrolled or clipped out of sight by an ancestor."""
+    if not item.isVisible() or item.width() <= 0 or item.height() <= 0 or item.opacity() <= 0:
+        return False
+    w, h = visible_size(item)
+    return w > 1 and h > 1
 
 
 def kind(item):
@@ -261,6 +267,7 @@ def test_the_list_a_mail_and_what_can_be_done_with_it(home):
         out["unread_in_backend"] = sum(1 for m in backend.messages if m["unread"])
         out["clips_in_backend"] = sum(1 for m in backend.messages if m["attachments"])
         out["new_mail"] = on_screen(find("newMail"))
+        out["hint_colour"] = ev(find("readerHint"), "color")[0].name()
         # open the first mail with a click on its row
         click_text("Launch date by noon?")
         wait_until(lambda: backend.mailState == "ready", 8, "the mail")
@@ -287,10 +294,11 @@ def test_the_list_a_mail_and_what_can_be_done_with_it(home):
                   "Priya Shah", "Launch date by noon?", "Sam Ortiz", "Pricing copy: ok to go?",
                   "Brightline Billing", "Invoice F-0907 for September", "Add an account", "New mail"):
         assert words in t, f"{words!r} is not on the screen: {t}"
-    assert any("admin" in s and "approve" in s for s in t), "the blocked account's note"
+    assert sum(1 for s in t if "admin" in s and "approve" in s) == 1, "the blocked account's note, said once"
     assert "Open" in t
     assert out["dots"] == out["unread_in_backend"] > 0 and out["clips"] == out["clips_in_backend"] > 0
     assert out["new_mail"] is True
+    assert out["hint_colour"] == "#8b939c", "the only instruction in the empty pane is readable (Theme.muted)"
     o = out["opened"]
     for words in ("From", "To", "Time", "Priya Shah <priya@acme.example>", "maya@acme.example", "Reply", "Reply all",
                   "Forward", "Needs a reply", "Open in Gmail"):
@@ -350,6 +358,27 @@ def test_a_strangers_markup_is_only_text(home):
     assert out["drafts"] == [] and out["started"] == [] and out["presses"] == [] and out["folder"] == "inbox"
     assert "This mail came as a web page. Only its words are shown." in out["news"]
     assert not any("<" in s and ("html" in s.lower() or "<div" in s) for s in out["news"])
+
+
+def test_a_mail_that_is_one_unbroken_line_is_laid_out_in_a_blink(home):
+    out = drive(home, """
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        lb.engine.inject_new_mail("maya@acme.example", "Blob <blob@example.test>", "Blob", "A" * 200_000,
+                                  ts=time.time())
+        wait_until(lambda: any(t == "Blob" for t in texts()), 10, "the mail")
+        shot()                                    # (the window has been drawn once)
+        click_text("Blob")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail")
+        t0 = time.monotonic()
+        shot()
+        out["seconds"] = time.monotonic() - t0
+        text = find("mailBody").property("text")
+        out["run"], out["length"] = max(len(r) for r in text.split()), len(text)
+        out["note"] = find("mailNote").property("text")      # (below the text, out of sight)
+    """)
+    assert out["run"] <= 500 and out["length"] <= 50_200
+    assert out["note"] == "This is the start of a long mail. The rest is on the web."
+    assert out["seconds"] < 2.0, f"laying the mail out took {out['seconds']:.1f} s (unfolded it takes about 3)"
 
 
 def test_the_first_run_a_sign_in_and_the_empty_views(home):
@@ -508,6 +537,228 @@ def test_send_follows_the_gate_is_the_one_press_and_a_typed_return_never_sends(h
     assert len(out["sent"]) == 1 and out["sent"][0][0] == "priya@acme.example" and out["sent"][0][1].endswith("Yes.\n\n")
 
 
+def test_a_box_that_is_being_sent_takes_no_typing_and_send_is_for_what_it_shows(home):
+    out = drive(home, """
+        from bombadil.mail import service
+        service.SEND_S = 5.0
+        lb.engine.send_delay = 1.5
+        lb.engine.fail_send("engine_error", "The provider refused the message.")
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        click_text("Launch date by noon?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail")
+        click(find("replyButton"))
+        wait_until(lambda: backend.draft is not None, 8, "the draft")
+        send = find("sendButton")
+        body = find("bodyEditor")
+        click(body)
+        type_text("Yes.")
+        wait_until(lambda: backend.canSend and send.property("armed"), 10, "Send to be live")
+        out["before"] = [body.property("readOnly"), find("toRow").property("readOnly")]
+        click(send)
+        wait_until(lambda: backend.pressState == "sending", 5, "the press")
+        out["during"] = [body.property("readOnly"), find("toRow").property("readOnly"),
+                         find("subjectRow").property("readOnly"), find("sendLabel").property("text")]
+        click(body)
+        type_text("EXTRA WORDS")
+        out["body_during"] = body.property("text")
+        wait_until(lambda: backend.pressLine != "" and backend.pressState == "", 10, "the refusal")
+        spin(400)
+        out["line"] = backend.pressLine
+        out["after"] = [body.property("readOnly"), body.property("text"), backend.draftFields["body"]]
+        lb.engine.send_ok()
+        wait_until(lambda: backend.canSend and send.property("armed"), 10, "Send to be live again")
+        click(send)
+        wait_until(lambda: backend.receipt is not None, 10, "the receipt")
+        out["sent"] = [m["body"] for m in lb.engine.sent]
+    """, timeout=150)
+    assert out["before"] == [False, False] and out["during"] == [True, True, True, "Sending"]
+    assert out["body_during"] == "Yes." and out["line"].startswith("The provider refused the message.")
+    after_readonly, shown_text, held_text = out["after"]
+    assert after_readonly is False and shown_text == held_text == "Yes."
+    assert [b for b in out["sent"]] == ["Yes."]
+
+
+def test_a_sign_in_that_goes_wrong_has_a_way_out_and_never_hides_the_field(home):
+    first = drive(home, """
+        wait_until(lambda: has("Your email address"), 10, "the first-run field")
+        click(find("addressField"))
+        type_text("someone@workspace.example")
+        click(find("addButton"))
+        wait_until(lambda: has("Signing in to someone@workspace.example"), 10, "the sign-in")
+        out["signin"] = {"give_up": shown("giveUp"), "field": shown("addressField")}
+        click(find("giveUp"))
+        wait_until(lambda: shown("addressField") and not shown("signinBlock"), 10, "the field again")
+        out["accounts"] = len(backend.accounts)
+        click(find("addressField"))
+        type_text("other@workspace.example")
+        click(find("addButton"))
+        wait_until(lambda: has("Signing in to other@workspace.example"), 10, "the second sign-in")
+    """, samples=False)
+    assert first["signin"] == {"give_up": True, "field": False} and first["accounts"] == 0
+    out = drive(home, """
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        backend.addAccount("someone@workspace.example")
+        wait_until(lambda: backend.signingIn is not None, 10, "the sign-in")
+        wait_until(lambda: any(t == "Signing in" for t in texts()), 8, "its note in the left column")
+        out["note"] = [t for t in texts() if t == "Signing in"]
+        out["side_engine"] = shown("sideEngine")
+        click(find("addAccount"))
+        wait_until(lambda: shown("addressField"), 8, "the field, beside the sign-in")
+        out["both"] = {"field": shown("addressField"), "block": shown("signinBlock"), "give_up": shown("giveUp"),
+                       "title": has("Add an account"), "texts": has("Signing in to someone@workspace.example")}
+        click(find("giveUp"))
+        wait_until(lambda: backend.signingIn is None and len(backend.accounts) == 3, 10, "the account to go")
+        spin(300)
+        out["after"] = {"block": shown("signinBlock"), "field": shown("addressField"), "texts": has_part("Signing in")}
+    """, env={"HOME": str(home / "again")})       # (a home of its own: the first run left an account in its notes)
+    assert out["note"] == ["Signing in"] and out["side_engine"] is True
+    assert out["both"] == {"field": True, "block": True, "give_up": True, "title": True, "texts": True}
+    assert out["after"] == {"block": False, "field": True, "texts": False}
+
+
+def test_an_account_still_fetching_says_what_it_waits_for_in_the_left_column(home):
+    out = drive(home, """
+        wait_until(lambda: has("Your email address"), 10, "the first-run field")
+        click(find("addressField"))
+        type_text("someone@icloud.com")
+        click(find("addButton"))
+        wait_until(lambda: has("All inboxes"), 10, "the account")
+        wait_until(lambda: any("app-specific password" in t for t in texts()), 10, "the account's note")
+        out["note"] = [t for t in texts() if "app-specific password" in t]
+        out["engine"] = shown("sideEngine")
+        wait_until(lambda: backend.listState != "loading", 10, "the list")
+        out["list"] = [t for t in texts() if t in ("Your inbox is empty.", "Nothing to show yet.")]
+        out["waiting"] = backend.listWaiting
+    """, samples=False)
+    assert len(out["note"]) == 1 and out["engine"] is True
+    assert out["waiting"] is True and out["list"] == ["Nothing to show yet."]
+
+
+def test_a_long_list_of_recipients_wraps_and_says_how_long_it_is(home):
+    out = drive(home, """
+        to = [f"person{i}@example.test" for i in range(13)]
+        cc = [f"copy{i}@example.test" for i in range(6)]
+        d = lb.ask("draft", kind="new", to=to, cc=cc, subject="Everyone", body="Hello.")
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        lb.push_show(reply=d["id"])
+        wait_until(lambda: backend.draft is not None, 10, "the draft")
+        spin(500)
+        row = find("toRow")
+        field_h = ev(row, "input.height")[0]
+        content_h = ev(row, "input.field.contentHeight")[0]
+        out["to"] = {"text": row.property("text"), "height": field_h, "content": content_h,
+                     "visible": visible_size(row)[1]}
+        out["cc"] = {"text": find("ccRow").property("text"), "shown": shown("ccRow")}
+        out["notes"] = [it.property("text") for it in find_all("fieldNote") if on_screen(it)]
+        out["from_truncated"] = ev(find("boxFrom"), "truncated")[0]
+        out["from"] = find("boxFrom").property("text")
+        out["from_visible"] = visible_size(find("boxFrom"))[0] > 100
+    """, size=(900, 700))
+    assert all(f"person{i}@example.test" in out["to"]["text"] for i in range(13))
+    assert out["cc"]["shown"] is True and all(f"copy{i}@example.test" in out["cc"]["text"] for i in range(6))
+    # as tall as its words need (up to four lines), not one line with the rest out of sight
+    assert out["to"]["height"] >= min(out["to"]["content"] + 16, 4 * 17 + 16) - 2 and out["to"]["height"] > 50
+    assert out["notes"] == ["13 people", "6 people"]
+    assert out["from_truncated"] is False and out["from"].startswith("from Maya Reyes <maya@acme.example>")
+
+
+def test_on_a_short_pane_the_mail_is_one_line_and_the_box_is_read_whole(home):
+    out = drive(home, """
+        spin(800)
+        box = find("bodyEditor")
+        out["editor"] = [visible_size(box)[1], box.height()]
+        out["summary"] = [t for t in texts() if t.startswith("Replying to")]
+        out["toggle"] = [t for t in texts() if t.endswith("the mail")]
+        out["mail_text"] = has_part("Legal needs the launch date")
+        out["send"] = shown("sendButton")
+        out["bar_bottom"] = scene_rect(find("sendBar"))[3] <= win.height()
+        click_text("Show the mail")
+        spin(400)
+        out["shown_text"] = has_part("Legal needs the launch date")
+        out["toggle_after"] = [t for t in texts() if t.endswith("the mail")]
+    """, size=(900, 700), sample="reply")
+    assert out["summary"] == ["Replying to Priya Shah: Launch date by noon?"] and out["toggle"] == ["Show the mail"]
+    assert out["mail_text"] is False and out["send"] is True and out["bar_bottom"] is True
+    seen, whole = out["editor"]
+    assert seen >= 100 and seen >= whole - 1, f"the editor is cut off: {seen} of {whole}"
+    assert out["shown_text"] is True and out["toggle_after"] == ["Hide the mail"]
+
+
+def test_a_draft_changed_under_send_is_said_and_send_waits_for_it(home):
+    out = drive(home, """
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        click_text("Launch date by noon?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail")
+        click(find("replyButton"))
+        wait_until(lambda: backend.draft is not None, 8, "the draft")
+        send = find("sendButton")
+        wait_until(lambda: backend.canSend and send.property("armed"), 10, "Send to be live")
+        out["note_before"] = shown("changeNote")
+        lb.ask("draft_edit", agent=True, id=backend.draft["id"], to="legal@acme-partners.example",
+               body="Changed by Bombadil.", tainted=True)
+        t0 = time.monotonic()
+        wait_until(lambda: backend.changeNote != "", 8, "the note")
+        out["note"] = [t for t in texts() if t.startswith("This draft was changed while it was open")]
+        went_dark = None
+        live_at = None
+        while time.monotonic() - t0 < 6:
+            live = bool(send.property("live"))
+            if not live and went_dark is None:
+                went_dark = time.monotonic() - t0
+            if live and went_dark is not None:
+                live_at = time.monotonic() - t0
+                break
+            spin(20)
+        out["dark"], out["live_at"] = went_dark is not None, live_at
+        out["body"] = find("bodyEditor").property("text")
+        click(find("bodyEditor"))
+        type_text("!")
+        out["note_after_typing"] = shown("changeNote")
+    """, timeout=150)
+    assert out["note_before"] is False and len(out["note"]) == 1 and out["dark"] is True
+    assert out["live_at"] is not None and out["live_at"] >= 1.5, f"Send was live again after {out['live_at']} s"
+    assert out["body"] == "Changed by Bombadil." and out["note_after_typing"] is False
+
+
+def test_an_unknown_outcome_asks_for_a_look_in_sent_each_time(home):
+    out = drive(home, """
+        lb.engine.hang_send()
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+        click_text("Launch date by noon?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail")
+        click(find("replyButton"))
+        wait_until(lambda: backend.draft is not None, 8, "the draft")
+        send = find("sendButton")
+        wait_until(lambda: backend.canSend and send.property("armed"), 10, "Send to be live")
+        click(send)
+        wait_until(lambda: backend.unknownOutcome and backend.pressState == "", 10, "the unknown outcome")
+        spin(500)
+        out["first"] = {"texts": [t for t in texts() if t.startswith(("I can't tell", "Tick the box"))],
+                        "tick": shown("lookedTick"), "link": shown("sentLink"), "live": bool(send.property("live")),
+                        "label": find("sendLabel").property("text")}
+        click(find("sentLink"))
+        out["opened"] = started[:]
+        click(find("lookedTick"))
+        wait_until(lambda: backend.looked, 5, "the tick")
+        wait_until(lambda: backend.canSend and send.property("armed"), 10, "Send again to be live")
+        out["ticked"] = find("sendLabel").property("text")
+        click(send)
+        wait_until(lambda: backend.pressState == "" and backend.unknownOutcome and not backend.looked, 10,
+                   "the second unknown outcome")
+        spin(600)
+        out["second"] = {"tick_checked": bool(find("lookedTick").property("checked")),
+                         "label": find("sendLabel").property("text"), "live": bool(send.property("live"))}
+        out["presses"] = lb.agentd.presses()
+    """, timeout=150)
+    first = out["first"]
+    assert first["texts"] == ["I can't tell whether that went. Look in Sent before you press Send again."]
+    assert first["tick"] is True and first["link"] is True and first["live"] is False and first["label"] == "Send"
+    assert out["opened"] and out["opened"][0][1][0] == "open" and out["opened"][0][1][1].startswith("https://")
+    assert out["ticked"] == "Send again"
+    assert out["second"] == {"tick_checked": False, "label": "Send", "live": False}
+    assert len(out["presses"]) == 2 and "again" not in out["presses"][0] and out["presses"][1]["again"] is True
+
+
 def test_esc_leaves_the_reply_box_first_and_then_closes_the_window(home):
     out = drive(home, """
         wait_until(lambda: has("Priya Shah"), 10, "the list")
@@ -562,17 +813,111 @@ def test_the_keys_move_in_the_list_open_reply_archive_and_delete(home):
         key(Qt.Key.Key_A)
         wait_until(lambda: out["opened"] not in [m["id"] for m in backend.messages], 8, "the archive")
         out["archived"] = lb.ask("read", id=out["opened"])["message"]["folder"]
+        spin(300)
+        # it is said, nothing else is opened for the person, and the keyboard is on what moved up into its place
+        out["after_a"] = {"opened": backend.opened is None, "quiet": backend.quiet,
+                          "cursor": list_view.property("currentIndex"),
+                          "shown": [t for t in texts() if t.startswith("Archived: ")]}
+        key(Qt.Key.Key_Return)
         wait_until(lambda: backend.opened is not None and backend.mailState == "ready", 8, "the next mail")
         out["next"] = backend.opened["id"]
+        out["next_is_under"] = out["next"] == ids[2]
         QTest.keyClick(win, "#")
         wait_until(lambda: out["next"] not in [m["id"] for m in backend.messages], 8, "the delete")
         out["trashed"] = lb.ask("read", id=out["next"])["message"]["folder"]
+        spin(200)
+        out["after_hash"] = backend.quiet
         out["presses"] = list(lb.agentd.presses())
     """, timeout=150)
     assert out["cursor"] == 1 and out["opened_by_arrows"] is False    # the first Down lands on the first row
     assert out["opened"] == out["ids"][1] and out["archived"] == "archive"
-    assert out["next"] != out["opened"] and out["trashed"] == "trash"
+    after = out["after_a"]
+    assert after["opened"] is True and after["quiet"].startswith("Archived: ") and after["shown"] == [after["quiet"]]
+    assert after["cursor"] == 1
+    assert out["next_is_under"] is True and out["trashed"] == "trash"
+    assert out["after_hash"].startswith("Moved to Trash: ")
     assert out["presses"] == []
+
+
+def test_a_held_key_acts_once_and_typing_a_word_to_look_for_does_neither(home):
+    out = drive(home, """
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtGui import QKeyEvent
+        wait_until(lambda: has("Priya Shah"), 10, "the list")
+
+        def held(k, text, repeats=5):
+            # the first press and then what a held key sends: auto-repeats, with no release between them
+            for repeat in [False] + [True] * repeats:
+                ev = QKeyEvent(QEvent.Type.KeyPress, k, Qt.KeyboardModifier.NoModifier, text, repeat, 1)
+                QCoreApplication.sendEvent(win, ev)
+                spin(60)
+
+        def folders():
+            found = lb.ask("search", limit=100)["messages"]
+            return sorted(m["folder"] for m in found if m["folder"] in ("archive", "trash"))
+
+        ids = [m["id"] for m in backend.messages]
+        out["start"] = folders()
+        list_view = find("mailList")
+        list_view.forceActiveFocus()
+        click_text("Launch date by noon?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail")
+        list_view.forceActiveFocus()
+        # repeats of a key that was pressed before this mail was open do nothing
+        for _ in range(4):
+            QCoreApplication.sendEvent(win, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A,
+                                                      Qt.KeyboardModifier.NoModifier, "a", True, 1))
+            spin(40)
+        out["after_repeats_only"] = [folders() == out["start"], backend.opened is not None, backend.searchText]
+        held(Qt.Key.Key_A, "a")
+        spin(400)
+        out["after_held_a"] = folders()
+        out["opened_after_a"] = backend.opened is not None
+        # a held # is one delete of the mail that was open (none is open now: nothing is deleted)
+        click_text("Pricing copy: ok to go?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the second mail")
+        list_view.forceActiveFocus()
+        held(Qt.Key.Key_NumberSign, "#")
+        spin(400)
+        out["after_held_hash"] = [folders(), lb.ask("read", id=SAM)["message"]["folder"],
+                                  lb.ask("read", id=LEO)["message"]["folder"]]
+        # held R: one draft
+        click_text("A or B for the empty state?")
+        wait_until(lambda: backend.mailState == "ready", 8, "the third mail")
+        list_view.forceActiveFocus()
+        held(Qt.Key.Key_R, "r")
+        wait_until(lambda: backend.draft is not None, 8, "the draft")
+        spin(400)
+        out["drafts_after_held_r"] = len(lb.ask("list", view="drafts"))
+        key(Qt.Key.Key_Escape)
+        # a word typed to look for, with a mail open and the keyboard on the list: it goes to the search
+        click_text("Brightline Billing")
+        wait_until(lambda: backend.mailState == "ready", 8, "the mail again")
+        list_view.forceActiveFocus()
+        before = folders()
+        drafts_before = len(lb.ask("list", view="drafts"))
+        type_text("invoice")
+        out["search"] = find("searchField").property("text")
+        out["backend_search"] = backend.searchText
+        out["unchanged"] = folders() == before and len(lb.ask("list", view="drafts")) == drafts_before
+        # with no mail open the letters of the shortcuts are letters
+        key(Qt.Key.Key_Escape)
+        backend.closeMail()
+        backend.search("")
+        list_view.forceActiveFocus()
+        spin(100)
+        type_text("ar")
+        out["search_ar"] = find("searchField").property("text")
+        out["unchanged_ar"] = folders() == before
+        out["drafts_end"] = len(lb.ask("list", view="drafts"))
+    """, timeout=150)
+    start = out["start"]
+    assert out["after_repeats_only"] == [True, True, ""]
+    assert out["after_held_a"] == sorted(start + ["archive"]) and out["opened_after_a"] is False
+    assert out["after_held_hash"] == [sorted(start + ["archive"]), "trash", "inbox"]
+    assert out["drafts_after_held_r"] == 1
+    assert out["search"] == "invoice" and out["backend_search"] == "invoice" and out["unchanged"] is True
+    assert out["search_ar"] == "ar" and out["unchanged_ar"] is True and out["drafts_end"] == 1
 
 
 def test_below_900_the_left_column_is_tabs_and_below_640_one_pane_shows(home):
@@ -624,6 +969,11 @@ def test_the_only_orange_is_the_ring_on_send_in_the_tree_the_files_and_the_pixel
         wait_until(lambda: backend.canSend and find("sendButton").property("armed"), 10, "Send")
         click(find("bodyEditor"))
         spin(300)
+        # a selection is a wash of the ink and not of the accent, and the words are in the window's own font
+        key(Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        spin(200)
+        out["selected"] = ev(find("bodyEditor"), "field.selectedText")[0]
+        out["font"] = ev(find("bodyEditor"), "field.font.family")[0]
         bar = find("sendBar")
         out["warning_text"] = [t for t in texts() if "legal@acme-partners.example" in t]
         bx0, by0, bx1, by1 = scene_rect(bar)
@@ -664,6 +1014,7 @@ def test_the_only_orange_is_the_ring_on_send_in_the_tree_the_files_and_the_pixel
         out["bar"] = [bx0, by0, bx1, by1]
     """, timeout=150)
     assert out["warnings"] == ["new_address"] and out["warning_text"]
+    assert out["selected"] == "The 14th works." and out["font"] == "Inter"
     assert out["ring_width"] == 2 and out["ring_orange"] is True
     assert out["stray_items"] == [], out["stray_items"]
     assert out["orange_px"] > 50, "the ring on Send is drawn"
@@ -689,7 +1040,9 @@ def test_nothing_presses_but_the_send_buttons_own_click_and_nothing_is_rich_text
     # activate() is called by the click and by the keys on the button itself, and by nothing else
     callers = [m.start() for m in re.finditer(r"send\.activate\(\)", bar)]
     assert len(callers) >= 4 and all(
-        re.search(r"(onTapped|Keys\.on\w+Pressed|onPressAction)\s*:", bar[max(0, c - 60):c]) for c in callers)
+        re.search(r"(onTapped|Keys\.on\w+Pressed)\s*:", bar[max(0, c - 60):c]) for c in callers)
+    # not by name either: assistive technology that presses buttons without a key or a click is not let press Send
+    assert not re.search(r"onPressAction", code["SendBar.qml"])
     assert not re.search(r"Shortcut\b[^}]*activate|Qt\.callLater\([^)]*activate|Timer[^}]*activate", bar)
     # no other file can say "press" to anything: the word is not in a handler, an action or a shortcut
     for name, src in sources.items():

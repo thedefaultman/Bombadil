@@ -2,10 +2,14 @@
  * `list` and `get`: a folder's messages a page at a time, and one message's words.
  *
  * `list` is newest first and `before` is inclusive (a message at that very second is shown again, and the
- * service drops the ones it has). Thunderbird sorts the folder, this reads pages until the page asked for is
- * full and stops; a folder with a hundred thousand messages costs the same as one with a hundred, except for
- * the messages skipped on the way to `before`. A page that is not full when the time given to it is up is
- * said to have more, which is true, and the next page starts after the last message of this one.
+ * service drops the ones it has). The first page of a folder is read from `messages.list`, which Thunderbird
+ * sorts itself, so a folder with a hundred thousand messages costs about what one with a hundred does. A page
+ * that is not that, one of the unread ones or one that starts at `before`, would mean paging through every
+ * message on the way at a millisecond each, so it is found by time windows that Thunderbird filters itself
+ * (newest.js). A page that is not full when the time given to it is up is said to have more, which is true,
+ * and the next page starts after the last message of this one; when not even one window could be read in
+ * time nothing is said of the folder but that it took too long, since a page of messages that are not the
+ * newest would hide the ones between.
  *
  * `get` reads a message with `messages.getFull` and leaves it unread (nothing here sets a read flag). The
  * words are the text/plain parts, and the HTML only when there is none, so the service never has to carry
@@ -17,50 +21,104 @@ import { limit, optBool, optNumber, text } from "./args.js";
 import { withDeadline } from "./clock.js";
 import { badRequest, engineError } from "./errors.js";
 import { isInline } from "./mailbox.js";
+import { Newest, scan, windowQuery, windows } from "./newest.js";
 import { folderStream, newestFirst } from "./streams.js";
 
 export const KINDS = ["inbox", "sent", "drafts", "archive", "trash", "other"];
 const LIST_MAX = 500;
 const LIST_BUDGET_MS = 5000;           // and then what is listed is looked at for attachments, up to 3 s more
 const READ_BUDGET_MS = 8000;
+const UNREAD_WIDE_MAX = 400;           // this many unread messages or fewer are asked for in one query, not by window
 const TEXT_CAP = 1_000_000;           // characters of a message's words that are handed over
 const HTML_CAP = 2_000_000;
+const ATTACHED_MAX = 4;                // attached messages whose real size is looked up
+const ATTACHED_MS = 2000;
 const RAW_HEAD = 64 * 1024;           // how much of a message is read to find its headers, when it has to be
 const WANTED = ["message-id", "in-reply-to", "references", "reply-to"];
 
-export async function list({ messenger, clock, mailbox }, args) {
+/** The ops are given a context (`ctx.cancelled()` says the request was answered already); a caller may give none. */
+const unasked = { cancelled: () => false };
+
+/** How many unread messages these folders have, or Infinity when Thunderbird does not say. */
+async function unreadIn(messenger, folders) {
+  try {
+    const infos = await Promise.all(folders.map(folder => messenger.folders.getFolderInfo(folder.id)));
+    return infos.reduce((sum, info) => sum + (Number.isFinite(info.unreadMessageCount) ? info.unreadMessageCount : Infinity), 0);
+  } catch {
+    return Infinity;
+  }
+}
+
+/** The first page of the folders as they stand, newest first: what `messages.list` sorts. */
+async function firstPage({ messenger, clock }, folders, count, end, ctx) {
+  const streams = folders.map(folder => folderStream(messenger, folder.id));
+  const stream = streams.length === 1 ? streams[0] : newestFirst(streams);
+  const headers = [];
+  let more = false;
+  for await (const header of stream) {
+    if (headers.length === count) {
+      more = true;
+      break;
+    }
+    headers.push(header);
+    if (ctx.cancelled() || clock.now() > end) {
+      more = true;
+      break;
+    }
+  }
+  return { headers, more };
+}
+
+/** The page of the unread messages, or of those no newer than `top` (ms), found window by window. */
+async function windowed(env, folders, { count, unread, top }, end, ctx) {
+  const { clock, messenger } = env;
+  const ids = folders.map(folder => folder.id);
+  const few = unread && (await unreadIn(messenger, folders)) <= UNREAD_WIDE_MAX;
+  const spans = few ? [{ from: -Infinity, to: top ?? Infinity }] : windows(undefined, top, clock.now());
+  const found = [];
+  let more = false;
+  for (const span of spans) {
+    if (ctx.cancelled()) {
+      break;
+    }
+    const piece = new Newest(count + 1 - found.length);
+    const query = windowQuery(span, ids, unread ? { unread: true } : {});
+    const whole = await scan(env, query, piece, { end, cancelled: ctx.cancelled, accept: header => header.date.getTime() <= (top ?? Infinity) });
+    if (!whole) {
+      if (found.length === 0) {
+        throw engineError("Thunderbird took too long over that.");
+      }
+      more = true;
+      break;
+    }
+    found.push(...piece.items);
+    if (found.length > count) {
+      more = true;
+      break;
+    }
+  }
+  return { headers: found.slice(0, count), more };
+}
+
+export async function list(env, args, ctx = unasked) {
+  const { clock, mailbox } = env;
   const account = text(args, "account");
   const kind = text(args, "folder", 20);
   if (!KINDS.includes(kind)) {
     throw badRequest("That is not a kind of folder.");
   }
-  const unread = optBool(args, "unread");
+  const unread = optBool(args, "unread") === true;
   const before = optNumber(args, "before");
   const count = limit(args, 50, LIST_MAX);
   const folders = await mailbox.foldersOf(account, kind);
   if (folders.length === 0) {
     return { messages: [], more: false };
   }
-  const streams = folders.map(folder => folderStream(messenger, folder.id));
-  const stream = streams.length === 1 ? streams[0] : newestFirst(streams);
-  const newest = before === undefined ? Infinity : Math.round(before * 1000);
   const end = clock.now() + LIST_BUDGET_MS;
-  const headers = [];
-  let more = false;
-  for await (const header of stream) {
-    if (header.date.getTime() > newest || (unread && header.read)) {
-      continue;
-    }
-    if (headers.length === count) {
-      more = true;
-      break;
-    }
-    headers.push(header);
-    if (clock.now() > end) {
-      more = true;
-      break;
-    }
-  }
+  const { headers, more } =
+    unread || before !== undefined
+      ? await windowed(env, folders, { count, unread, top: before === undefined ? undefined : Math.round(before * 1000) }, end, ctx)
+      : await firstPage(env, folders, count, end, ctx);
   return { messages: await mailbox.emsgs(headers), more };
 }
 
@@ -121,6 +179,27 @@ export function threadOf(headers) {
   return ids(headers.references)[0] ?? ids(headers["in-reply-to"])[0] ?? ids(headers["message-id"])[0] ?? null;
 }
 
+/**
+ * The sizes of the attached messages (message/rfc822), by part. Thunderbird lists such a part with the size of its
+ * headers (18 bytes for one of 284), so the file is asked for, a few at most and for a short time; what cannot be
+ * had in that time is listed as Thunderbird gave it.
+ */
+async function wholeSizes(messenger, clock, id, listed) {
+  const sizes = new Map();
+  const attached = listed.filter(a => String(a.contentType).toLowerCase() === "message/rfc822" && a.partName).slice(0, ATTACHED_MAX);
+  await Promise.all(
+    attached.map(async a => {
+      try {
+        const file = await withDeadline(clock, messenger.messages.getAttachmentFile(id, a.partName), ATTACHED_MS, () => new Error("slow"));
+        sizes.set(a.partName, file.size);
+      } catch {
+        // listed as Thunderbird gave it
+      }
+    })
+  );
+  return sizes;
+}
+
 export async function get({ messenger, clock, mailbox }, args) {
   const account = text(args, "account");
   const key = text(args, "key", 600);
@@ -144,11 +223,13 @@ export async function get({ messenger, clock, mailbox }, args) {
   });
   const { plain, html } = bodies(full);
   const words = plain.join("\n\n");
-  const attachments = (Array.isArray(listed) ? listed : []).slice(0, 200).map(a => ({
+  const given = (Array.isArray(listed) ? listed : []).slice(0, 200);
+  const sizes = await wholeSizes(messenger, clock, header.id, given);
+  const attachments = given.map(a => ({
     part: String(a.partName ?? ""),
     name: String(a.name ?? ""),
     content_type: String(a.contentType ?? ""),
-    size: Number.isFinite(a.size) ? a.size : 0,
+    size: sizes.get(a.partName) ?? (Number.isFinite(a.size) ? a.size : 0),
     inline: isInline(a),
   }));
   const headers = wantedHeaders(dictionary);

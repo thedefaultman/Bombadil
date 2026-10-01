@@ -3,8 +3,10 @@
 Everything here runs against `tests/mail/fake_thunderbird.py`, a stand-in that records how it was started, holds the
 profile's lock the way Thunderbird does and quits on SIGTERM; the home, the profile, the state and the runtime
 directories are in the test's temp dir (BOMBADIL_* and HOME), nothing touches the network, and a fixture stops
-every Thunderbird (fake or real) a test left running, whole process group included. The last test needs a real
-Thunderbird and a Dovecot, and skips cleanly without them.
+every Thunderbird (fake or real) a test left running, whole process group included. The last two tests need a real
+Thunderbird (and a Dovecot, or an Xvfb) and skip cleanly without them; in them every HTTP and HTTPS request goes to
+a proxy on this computer that refuses it (what a Thunderbird sends to Mozilla goes nowhere, and what it tried is
+checked), and mail only to the lab's server on 127.0.0.1.
 
 What the tests hold the engine to, in the order of the file: the prefs it writes for an account are exactly what
 Thunderbird's own setup would write (goldens, one per kind of provider), seeding twice changes nothing and
@@ -21,9 +23,11 @@ import inspect
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -225,6 +229,8 @@ user_pref("toolkit.telemetry.server", "");
 user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("datareporting.policy.firstRunURL", "");
 user_pref("browser.crashReports.unsubmittedCheck.enabled", false);
+user_pref("browser.region.network.url", "");
+user_pref("browser.region.update.enabled", false);
 user_pref("network.captive-portal-service.enabled", false);
 user_pref("network.connectivity-service.enabled", false);
 user_pref("browser.safebrowsing.malware.enabled", false);
@@ -237,7 +243,11 @@ user_pref("mail.SpellCheckBeforeSend", false);
 user_pref("mail.compose.warn_public_recipients.aggressive", false);
 user_pref("mail.compose.autosave", false);
 user_pref("offline.send.unsent_messages", 2);
-user_pref("offline.startup_state", 0);
+user_pref("offline.startup_state", 2);
+user_pref("mailnews.database.global.indexer.enabled", false);
+user_pref("mail.server.default.mdn_report_enabled", false);
+user_pref("mail.mdn.report.enabled", false);
+user_pref("intl.locale.requested", "en-US");
 
 // ---- add-on
 user_pref("extensions.autoDisableScopes", 0);
@@ -467,6 +477,14 @@ def test_prepare_makes_a_private_profile_with_everything_a_start_needs(make, wor
     assert stat.S_IMODE(tb.manifest_path().stat().st_mode) == 0o644
 
 
+def test_a_profile_that_exists_with_looser_rights_is_made_private(make, world):
+    """It holds a copy of the person's mail: a directory made by something else, or by an older version, is closed."""
+    (world / "profile").mkdir(mode=0o755)
+    os.chmod(world / "profile", 0o755)
+    make().prepare()
+    assert stat.S_IMODE((world / "profile").stat().st_mode) == 0o700
+
+
 def test_prepare_refuses_what_cannot_start_and_says_why(make, world):
     with pytest.raises(RuntimeError, match="not installed"):
         make(binary=str(world / "none")).prepare()
@@ -506,8 +524,13 @@ QUIET_MUST = {
     # the modal dialogs of a send
     "mailnews.message_warning_size": "0", "mail.compose.attachment_reminder_aggressive": "false",
     "mail.SpellCheckBeforeSend": "false", "mail.compose.autosave": "false",
-    # nothing is sent but by a press, and it starts online
-    "offline.send.unsent_messages": "2", "offline.startup_state": "0",
+    # nothing is sent but by a press, and it starts online (2: Thunderbird's own default; 0 is "as it was left")
+    "offline.send.unsent_messages": "2", "offline.startup_state": "2",
+    "mail.mdn.report.enabled": "false", "mail.server.default.mdn_report_enabled": "false",
+    # nothing is kept twice, and the windows' titles are in the language the engine's code reads them in
+    "mailnews.database.global.indexer.enabled": "false", "intl.locale.requested": '"en-US"',
+    # the first start asks Mozilla which country it is in unless told not to
+    "browser.region.network.url": '""', "browser.region.update.enabled": "false",
     # loading the add-on
     "extensions.autoDisableScopes": "0", "extensions.startupScanScopes": "15", "xpinstall.signatures.required": "false",
 }
@@ -573,7 +596,8 @@ def test_every_account_archives_flat_and_nothing_stores_a_password(make, world):
     tb.seed_account(row(2, "k@icloud.example"), accts.ICLOUD)
     text = user_js(world / "profile")
     assert text.count("archive_granularity\", 0);") == 2
-    assert "password" not in text.lower().replace("password-", "") or "passwordCleartext" not in text
+    assert re.search(r"(?i)passw(or)?d|token|secret|oauth2\.|refresh|\bkey\b", text) is None, \
+        "no pref names or holds a password, a token or a key: Thunderbird's own login store keeps those"
     assert not any((world / "profile").glob("logins*")), "a password is Thunderbird's own to keep"
 
 
@@ -907,6 +931,26 @@ def test_forgetting_while_thunderbird_runs_is_finished_when_it_stops(two_account
     assert login_hosts(profile) == ["imap://imap.mail.me.com", "smtp://smtp.mail.me.com", "https://other.example"]
 
 
+def test_a_forget_while_a_thunderbird_of_an_earlier_run_holds_the_profile_leaves_prefs_alone_until_it_stops(
+        two_accounts, fake_tb, world):
+    """The service that started it is gone, so `_proc` is None, but Thunderbird writes prefs.js back at exit all
+    the same: clearing it now would be undone, and a file written under a running Thunderbird is a torn one."""
+    profile = world / "profile"
+    orphan = start_outside(fake_tb, profile)
+    try:
+        two_accounts.forget_account(row(1))
+        assert (profile / "prefs.js").read_text() == PREFS_JS
+        assert (profile / "ImapMail" / "imap.gmail.com-2" / "INBOX").exists() and "imap://imap.gmail.com" in login_hosts(profile)
+        assert "maya@acme.example" not in user_js(profile), "but the next start does not load it"
+        two_accounts.stop()
+        orphan.wait(5)
+        assert (profile / "prefs.js").read_text() == PREFS_JS_WITHOUT_ACCOUNT_2
+        assert not (profile / "ImapMail" / "imap.gmail.com-2").exists()
+    finally:
+        orphan.kill()
+        orphan.wait()
+
+
 def test_what_comes_back_into_use_before_the_clearing_is_not_cleared(two_accounts, world):
     profile = world / "profile"
     tb = two_accounts
@@ -956,6 +1000,121 @@ def test_the_clearing_cannot_leave_the_mail_folder_it_is_meant_for_nor_touch_a_l
     assert len(login_hosts(profile)) == 6, "a note clears no login that is not mail's, nor one a live account uses"
     assert 'user_pref("mail.server.server1.hostname", "Local Folders");' in (profile / "prefs.js").read_text()
     assert json.loads(path.read_text())["forgotten"] == [], "every note is spent"
+
+
+# Thunderbird's own files that name an account's server or hold what it fetched (see engine._CACHES), as 157 makes them.
+CACHES = ["global-messages-db.sqlite", "global-messages-db.sqlite-wal", "global-messages-db.sqlite-shm",
+          "global-messages-db.sqlite-journal", "folderTree.json", "folderCache.json"]
+
+
+def plant_caches(profile: Path) -> None:
+    for name in CACHES:
+        (profile / name).write_text("imap://maya%40acme.example@imap.gmail.com/INBOX Here is the project plan.\n")
+    (profile / "ImapMail").mkdir(exist_ok=True)
+    (profile / "ImapMail" / "imap.gmail.com-2.msf").write_text("")
+    (profile / "ImapMail" / "imap.mail.me.com-3.msf").write_text("")
+    (profile / "abook.sqlite").write_text("the person's own address book")
+
+
+def test_forgetting_also_removes_the_caches_that_name_the_account_and_the_servers_summary_file(two_accounts, world):
+    """Gloda's database, the folder tree and the folder cache hold an account's address and folder names (and, on a
+    profile from before the indexer was turned off, its mail's text); the server's .msf sits beside its folder."""
+    profile = world / "profile"
+    plant_caches(profile)
+    two_accounts.forget_account(row(1))
+    assert [name for name in CACHES if (profile / name).exists()] == []
+    assert not (profile / "ImapMail" / "imap.gmail.com-2.msf").exists()
+    assert (profile / "ImapMail" / "imap.mail.me.com-3.msf").exists(), "the summary file of an account that is still there"
+    assert (profile / "abook.sqlite").read_text() == "the person's own address book"
+
+
+def test_nothing_is_cleared_from_the_caches_unless_an_account_was_removed(two_accounts, world):
+    profile = world / "profile"
+    plant_caches(profile)
+    two_accounts.prepare()
+    two_accounts.seed_account(row(2, "kim@icloud.example", sender=""), accts.ICLOUD)
+    assert all((profile / name).exists() for name in CACHES), "they are Thunderbird's, and rebuilt only when they must be"
+
+
+def test_a_cache_that_is_a_link_or_a_folder_is_never_followed_or_emptied_and_does_not_stop_the_rest(two_accounts, world):
+    profile = world / "profile"
+    victim = world / "victim.txt"
+    victim.write_text("mine")
+    (profile / "folderTree.json").symlink_to(victim)
+    (profile / "folderCache.json").mkdir()              # not a file: it cannot be removed, and is tried again
+    (profile / "global-messages-db.sqlite").write_text("x")
+    two_accounts.forget_account(row(1))
+    assert victim.read_text() == "mine" and not (profile / "folderTree.json").is_symlink()
+    assert not (profile / "global-messages-db.sqlite").exists()
+    assert (profile / "folderCache.json").is_dir()
+    assert json.loads((profile / "bombadil-engine.json").read_text())["forgotten"] != [], "kept for the next try"
+
+
+def test_the_caches_are_cleared_when_thunderbird_stops_not_while_it_runs(two_accounts, world):
+    profile = world / "profile"
+    tb = two_accounts
+    tb.start()
+    wait_for(lambda: fake_runs(profile), "the fake to start")
+    plant_caches(profile)
+    tb.forget_account(row(1))
+    assert all((profile / name).exists() for name in CACHES), "Thunderbird has them open and would write them again"
+    tb.stop()
+    assert [name for name in CACHES if (profile / name).exists()] == []
+
+
+# -- an account number that comes back for somebody else --
+
+def test_an_account_id_that_comes_back_for_another_address_starts_with_nothing_of_the_first(two_accounts, world):
+    """Ids restart if Mail's own notes were lost: a1 was x, now a1 is y. The number is live, so the usual clearing
+    would leave x's folder (mail y would be shown) and the folder prefs Thunderbird learned for x."""
+    profile = world / "profile"
+    two_accounts.seed_account(row(1, "maya.two@acme.example"), accts.GOOGLE)
+    text = user_js(profile)
+    assert "maya@acme.example" not in text and "maya.two@acme.example" in text
+    assert 'user_pref("mail.accountmanager.accounts", "account1,account2,account3");' in text
+    assert not (profile / "ImapMail" / "imap.gmail.com-2").exists(), "x's mail is not y's"
+    assert (profile / "ImapMail" / "imap.mail.me.com-3" / "INBOX").exists(), "the other account is not touched"
+    assert (profile / "prefs.js").read_text() == PREFS_JS_WITHOUT_ACCOUNT_2, \
+        "what Thunderbird learned under that number (its folders, x's address) goes; user.js says the new account again"
+    assert "imap://imap.gmail.com" in login_hosts(profile), "the new account is at the same server, whose login stays"
+    assert json.loads((profile / "bombadil-engine.json").read_text())["forgotten"] == []
+
+
+def test_an_account_id_that_comes_back_for_another_address_while_thunderbird_runs_is_finished_when_it_stops(
+        two_accounts, world):
+    profile = world / "profile"
+    tb = two_accounts
+    tb.start()
+    wait_for(lambda: fake_runs(profile), "the fake to start")
+    tb.seed_account(row(1, "maya.two@acme.example"), accts.GOOGLE)
+    assert (profile / "ImapMail" / "imap.gmail.com-2" / "INBOX").exists(), "open in Thunderbird until it stops"
+    tb.stop()
+    assert not (profile / "ImapMail" / "imap.gmail.com-2").exists()
+    assert (profile / "prefs.js").read_text() == PREFS_JS_WITHOUT_ACCOUNT_2
+    tb.start()
+    wait_for(lambda: len(fake_runs(profile)) == 2, "the next start")
+    (profile / "ImapMail" / "imap.gmail.com-2").mkdir()      # what the new account's sync makes
+    tb.stop()
+    assert (profile / "ImapMail" / "imap.gmail.com-2").exists(), "and the clearing is spent: it does not run again"
+
+
+def test_seeding_the_same_address_again_with_the_same_server_is_not_a_new_account(two_accounts, world):
+    profile = world / "profile"
+    two_accounts.seed_account({**row(1), "sender": "Maya O.", "name": "Work"}, accts.GOOGLE)
+    assert (profile / "ImapMail" / "imap.gmail.com-2" / "INBOX").exists()
+    assert "maya@acme.example" in (profile / "prefs.js").read_text()
+    assert json.loads((profile / "bombadil-engine.json").read_text())["forgotten"] == []
+
+
+def test_an_account_that_changed_server_also_loses_the_folder_prefs_thunderbird_learned_for_the_old_one(make, world):
+    from dataclasses import replace
+    profile = world / "profile"
+    tb = make()
+    tb.seed_account(row(1, "lee@school.example"), accts.IMAP)
+    (profile / "prefs.js").write_text('user_pref("mail.identity.id2.fcc_folder", "imap://lee%40school.example@imap.school.example/Sent");\n'
+                                      'user_pref("mailnews.tags.version", 2);\n')
+    tb.seed_account(row(1, "lee@school.example"), replace(accts.IMAP, imap_host="mail.school.example"))
+    assert (profile / "prefs.js").read_text() == 'user_pref("mailnews.tags.version", 2);\n'
 
 
 # -- the add-on --
@@ -1331,9 +1490,9 @@ def test_stop_kills_only_the_process_of_an_earlier_run_that_shares_our_group(mak
 
 def test_stopping_what_has_just_gone_or_is_not_ours_to_signal_is_nothing(make, monkeypatch):
     tb = make()
-    tb._terminate(2_000_000_000, None)               # no such process
+    tb._terminate(2_000_000_000, None, 1.0)          # no such process
     monkeypatch.setattr(engine.os, "kill", lambda *_: (_ for _ in ()).throw(PermissionError()))
-    tb._terminate(1, None)                           # somebody else's
+    tb._terminate(1, None, 1.0)                      # somebody else's
 
 
 def test_a_thunderbird_that_cannot_be_executed_is_a_sentence_not_a_traceback(make, world):
@@ -1435,14 +1594,16 @@ CLIENTS = [
     {"address": "0xa2", "mapped": True, "hidden": False, "class": "thunderbird", "initialClass": "thunderbird",
      "title": "Login to account \"maya@acme.example\" failed", "pid": 4242, "focusHistoryID": 1,
      "workspace": {"id": -99, "name": "special:mail-engine"}},
-    {"address": "0xa3", "mapped": True, "hidden": False, "class": "thunderbird", "initialClass": "thunderbird",
-     "title": "Write: Re: the plan - Thunderbird", "pid": 4242, "focusHistoryID": 0,
-     "workspace": {"id": -99, "name": "special:mail-engine"}},
     {"address": "0xb1", "mapped": True, "hidden": False, "class": "bombadil-app-mail", "title": "Mail", "pid": 77,
      "focusHistoryID": 0, "workspace": {"id": 1, "name": "1"}},
     {"address": "0xc1", "mapped": True, "hidden": False, "class": "foot", "title": "thunderbird", "pid": 78,
      "focusHistoryID": 3, "workspace": {"id": 1, "name": "1"}},
 ]
+
+# What the add-on's send leaves open when it fails or is cut off: a window with a Send button of Thunderbird's own.
+COMPOSE = {"address": "0xa3", "mapped": True, "hidden": False, "class": "thunderbird", "initialClass": "thunderbird",
+           "title": "Write: Re: the plan - Thunderbird", "pid": 4242, "focusHistoryID": 0,
+           "workspace": {"id": -99, "name": "special:mail-engine"}}
 
 
 @pytest.mark.parametrize("cls, yes", [
@@ -1463,7 +1624,7 @@ def test_the_pattern_is_the_one_the_window_rule_of_the_image_uses():
 
 
 def test_only_mapped_visible_windows_of_thunderbird_are_candidates():
-    clients = [*CLIENTS, {"address": "0xd1", "mapped": False, "class": "thunderbird"},
+    clients = [*CLIENTS, COMPOSE, {"address": "0xd1", "mapped": False, "class": "thunderbird"},
                {"address": "0xd2", "mapped": True, "hidden": True, "class": "thunderbird"},
                {"address": "0xd3", "mapped": True, "class": "thunderbird", "title": "Thunderbird", "size": [10, 10]}]
     assert [c["address"] for c in engine.engine_windows(clients)] == ["0xa1", "0xa2", "0xa3"]
@@ -1472,26 +1633,44 @@ def test_only_mapped_visible_windows_of_thunderbird_are_candidates():
 
 def test_a_dialog_is_brought_before_the_main_window_and_the_last_focused_before_the_rest():
     assert engine.pick_window(CLIENTS)["address"] == "0xa2", "the login dialog, not the main window"
-    assert engine.pick_window(CLIENTS[:1] + CLIENTS[2:3])["address"] == "0xa1", "never a compose window"
-    assert engine.pick_window(CLIENTS[2:3]) is None, "not even when it is all there is"
+    assert engine.pick_window([*CLIENTS, COMPOSE])["address"] == "0xa2", "never a compose window, though it was focused last"
+    assert engine.pick_window([CLIENTS[0], COMPOSE])["address"] == "0xa1"
+    assert engine.pick_window([COMPOSE]) is None, "not even when it is all there is"
     speck = {"address": "0xd3", "mapped": True, "class": "thunderbird", "title": "Thunderbird", "size": [10, 10],
              "focusHistoryID": 0}
-    assert engine.pick_window([speck, *CLIENTS[:1]])["address"] == "0xa1", "the 10 by 10 window GTK keeps is no dialog"
-    assert engine.pick_window([{**speck, "size": [530, 114]}, *CLIENTS[:1]])["address"] == "0xd3", "a small dialog is"
+    assert engine.pick_window([speck, CLIENTS[0]])["address"] == "0xa1", "the 10 by 10 window GTK keeps is no dialog"
+    assert engine.pick_window([{**speck, "size": [530, 114]}, CLIENTS[0]])["address"] == "0xd3", "a small dialog is"
     assert engine.pick_window([{**speck, "size": "big"}])["address"] == "0xd3", "an odd size is no reason to refuse"
-    main_only = [c for c in CLIENTS if c["address"] == "0xa1"]
-    assert engine.pick_window(main_only)["address"] == "0xa1"
+    assert engine.pick_window(CLIENTS[:1])["address"] == "0xa1"
     two = [{**CLIENTS[1], "address": "0xe1", "focusHistoryID": 5}, {**CLIENTS[1], "address": "0xe2", "focusHistoryID": 3},
            {**CLIENTS[1], "address": "0xe3", "focusHistoryID": -1}]
     assert engine.pick_window(two)["address"] == "0xe2"
-    assert engine.pick_window([]) is None and engine.pick_window(CLIENTS[3:]) is None
+    assert engine.pick_window([]) is None and engine.pick_window(CLIENTS[2:]) is None
     assert engine.pick_window([{"class": "thunderbird", "title": None}])["class"] == "thunderbird"
 
 
-def test_the_selector_is_the_pid_as_the_launcher_does_else_the_class():
-    assert engine.window_selector({"pid": 4242, "class": "thunderbird"}) == "pid:4242"
-    assert engine.window_selector({"class": "net.thunderbird.Thunderbird"}) == "class:^(net\\.thunderbird\\.Thunderbird)$"
-    assert engine.window_selector({"pid": -1, "initialClass": "thunderbird"}) == "class:^(thunderbird)$"
+def test_compose_windows_are_the_ones_titled_as_thunderbird_titles_them_and_only_those_on_screen():
+    assert [c["address"] for c in engine.compose_windows([*CLIENTS, COMPOSE])] == ["0xa3"]
+    assert engine.compose_windows(CLIENTS) == [] and engine.compose_windows([]) == []
+    assert engine.compose_windows([{**COMPOSE, "mapped": False}, {**COMPOSE, "hidden": True}]) == []
+    assert engine.compose_windows([{**COMPOSE, "class": "foot", "initialClass": "foot"}]) == [], "somebody else's window titled Write:"
+    assert engine.compose_windows([{**COMPOSE, "title": "Re: Write: the plan - Mozilla Thunderbird"}]) == [], \
+        "a main window whose mail is about writing is not one"
+    assert engine.compose_windows([{**COMPOSE, "title": None}]) == []
+
+
+def test_the_selectors_of_a_window_are_its_address_then_its_pid_then_its_class():
+    """Every window of Thunderbird has one pid: a pid names whichever Hyprland lists first, not the one picked."""
+    assert engine.window_selectors({"address": "0xa2", "pid": 4242, "class": "thunderbird"}) == ["address:0xa2", "pid:4242"]
+    assert engine.window_selectors({"address": "0x5581ab12cd34", "pid": 4242})[0] == "address:0x5581ab12cd34"
+    for odd in ("", "a2", "0x", "0xzz", "0xa2 ", "0xa2\n", 5, None, "0x12345678901234567"):
+        assert engine.window_selectors({"address": odd, "pid": 4242}) == ["pid:4242"], odd
+    assert engine.window_selectors({"pid": 4242, "class": "thunderbird"}) == ["pid:4242"]
+    assert engine.window_selectors({"address": "0xa2", "pid": True}) == ["address:0xa2"]
+    assert engine.window_selectors({"class": "net.thunderbird.Thunderbird"}) == [
+        "class:^(net\\.thunderbird\\.Thunderbird)$"]
+    assert engine.window_selectors({"pid": -1, "initialClass": "thunderbird"}) == ["class:^(thunderbird)$"]
+    assert engine.window_selectors({"class": "thunderbird"}) == ["class:^(thunderbird)$"]
 
 
 def test_which_monitor_shows_the_engines_workspace():
@@ -1531,12 +1710,33 @@ class FakeHypr:
         return "ok"
 
 
-def test_staging_shows_the_engines_workspace_by_focusing_the_dialog(make, world, windowed):
+def test_staging_shows_the_engines_workspace_by_focusing_the_dialog_by_its_own_address(make, world, windowed):
+    """Three windows, one pid (as in a real Thunderbird): a pid selector would focus the main window."""
+    assert len({c["pid"] for c in CLIENTS[:2]}) == 1
     hypr = FakeHypr()
     tb = make(hyprland=hypr)
     tb.start()
     assert tb.stage(True) is True
-    assert hypr.sent == ['hl.dsp.focus({ window = "pid:4242" })']
+    assert hypr.sent == ['hl.dsp.focus({ window = "address:0xa2" })']
+    hypr.clients_now = CLIENTS[:1]
+    hypr.sent.clear()
+    assert tb.stage(True) is True and hypr.sent == ['hl.dsp.focus({ window = "address:0xa1" })'], "the main window alone"
+
+
+def test_a_compose_window_is_never_shown_by_showing_the_workspace_it_is_on(make, world, windowed):
+    """Showing the engine's workspace shows every window on it, and a compose window has a Send button of
+    Thunderbird's own, which is not Mail's press: while one is open, staging shows nothing."""
+    for clients in ([*CLIENTS, COMPOSE], [CLIENTS[0], COMPOSE], [COMPOSE]):
+        hypr = FakeHypr(clients)
+        tb = make(hyprland=hypr)
+        tb.start()
+        started = time.monotonic()
+        assert tb.stage(True) is False and hypr.sent == [], [c["address"] for c in clients]
+        assert time.monotonic() - started < 1, "refused at once, not waited for"
+        tb.stop()
+    hypr.clients_now = CLIENTS
+    tb.start()
+    assert tb.stage(True) is True, "and once it is closed (or Thunderbird was restarted) the window can be shown"
 
 
 def test_staging_without_hyprland_is_false_not_an_error(make, world):
@@ -1568,7 +1768,88 @@ def test_a_window_that_has_not_mapped_yet_is_waited_for_a_little(make, world, wi
     hypr = FakeHypr(clients)
     tb = make(hyprland=hypr)
     tb.start()
-    assert tb.stage(True) is True and len(seen) >= 3 and hypr.sent == ['hl.dsp.focus({ window = "pid:4242" })']
+    assert tb.stage(True) is True and len(seen) >= 3 and hypr.sent == ['hl.dsp.focus({ window = "address:0xa2" })']
+
+
+def test_a_compositor_that_does_not_know_the_address_selector_is_asked_by_pid_and_a_hang_is_not_retried(make, world,
+                                                                                                    windowed):
+    class NoAddresses(FakeHypr):
+        def dispatch(self, lua):
+            self.sent.append(lua)
+            if "address:" in lua:
+                raise RuntimeError("hyprctl dispatch: no such selector")
+            return "ok"
+
+    hypr = NoAddresses()
+    tb = make(hyprland=hypr)
+    tb.start()
+    assert tb.stage(True) is True
+    assert hypr.sent == ['hl.dsp.focus({ window = "address:0xa2" })', 'hl.dsp.focus({ window = "pid:4242" })']
+
+    class Refuses(FakeHypr):
+        def dispatch(self, lua):
+            self.sent.append(lua)
+            raise RuntimeError("hyprctl dispatch: no")
+
+    refuses = Refuses()
+    tb = make(hyprland=refuses)
+    tb.start()
+    assert tb.stage(True) is False and len(refuses.sent) == 2, "both tried, then a plain False"
+
+    class Hangs(FakeHypr):
+        def dispatch(self, lua):
+            self.sent.append(lua)
+            raise subprocess.TimeoutExpired(["hyprctl", "dispatch"], 15)
+
+    hangs = Hangs()
+    tb = make(hyprland=hangs)
+    tb.start()
+    assert tb.stage(True) is False and len(hangs.sent) == 1, "a hang is not asked a second time"
+
+
+def test_staging_never_takes_more_of_the_service_s_time_than_it_gives_a_call_that_only_asks(make, world, windowed,
+                                                                                             monkeypatch):
+    """The service gives `engine_window` PROBE_S; a call that runs over it is a Thunderbird "whose controls are
+    stuck", and every other call is refused until it comes back. A window that is slow to map is a False the person
+    answers by asking again, not a wait that outlasts the budget."""
+    from bombadil.mail import service
+    assert engine.STAGE_WAIT_S + engine.HYPR_S <= service.PROBE_S - 0.5
+    assert engine.STAGE_QUIT_S < engine.STAGE_WAIT_S, "a restart for a window fits in what the call waits"
+    monkeypatch.setattr(engine, "STAGE_WAIT_S", 0.6)
+    monkeypatch.setattr(engine, "WINDOW_WAIT_S", 60.0)      # a window may take a minute, but one call will not wait for it
+    seen = []
+
+    def clients():
+        seen.append(time.monotonic())
+        return CLIENTS if len(seen) > 50 else []
+
+    hypr = FakeHypr(clients)
+    tb = make(hyprland=hypr)
+    tb.start()
+    started = time.monotonic()
+    assert tb.stage(True) is False and hypr.sent == []
+    assert 0.5 < time.monotonic() - started < 2.0, "it waited for its budget and not for the window's"
+    assert any(request == "j/clients" for request in hypr.asked)
+    calls = 0
+    while not tb.stage(True):                                # the window maps; a later call finds it
+        calls += 1
+        assert calls < 100
+    assert hypr.sent == ['hl.dsp.focus({ window = "address:0xa2" })']
+
+
+def test_every_request_to_the_compositor_has_a_time_of_its_own(make, world, windowed):
+    timeouts = []
+
+    class Timed(FakeHypr):
+        def request(self, command, timeout=10):
+            timeouts.append(timeout)
+            return super().request(command, timeout)
+
+    tb = make(hyprland=Timed(monitors=[{"name": "DP-1", "focused": True,
+                                        "specialWorkspace": {"name": "special:mail-engine"}}]))
+    tb.start()
+    assert tb.stage(True) is True and tb.stage(False) is True
+    assert len(timeouts) >= 2 and all(t == engine.HYPR_S for t in timeouts), "hyprctl's own 10 s is twice the budget"
 
 
 def test_hyprland_that_fails_is_false_and_never_an_exception(make, world, windowed, monkeypatch):
@@ -1627,13 +1908,32 @@ def test_a_headless_thunderbird_is_started_again_with_a_window_when_there_is_a_d
     assert "--headless" in fake_runs_wait(profile, 1)[0]["argv"]
     assert tb.stage(True) is False and len(fake_runs(profile)) == 1, "with no display there is no window to be had"
     monkeypatch.setenv("DISPLAY", "somewhere.example:3")
+    started = time.monotonic()
     assert tb.stage(True) is True
+    assert time.monotonic() - started < engine.STAGE_WAIT_S + 1, "the restart is inside the call's budget"
     runs = fake_runs_wait(profile, 2)
     assert "--headless" not in runs[1]["argv"] and runs[1]["env"]["DISPLAY"] == "somewhere.example:3"
     assert gone(runs[0]["pid"]) and tb.running()
-    assert hypr.sent == ['hl.dsp.focus({ window = "pid:4242" })']
+    assert hypr.sent == ['hl.dsp.focus({ window = "address:0xa2" })']
     tb.restart()                       # a restart keeps the mode: the display is still there
     assert "--headless" not in fake_runs_wait(profile, 3)[2]["argv"]
+
+
+def test_a_headless_thunderbird_that_will_not_quit_for_its_window_is_killed_inside_the_calls_budget(make, world,
+                                                                                                   monkeypatch):
+    """Stopping it for a restart is asked for STAGE_QUIT_S, not the ten seconds `stop` gives: the call has five."""
+    profile = world / "profile"
+    monkeypatch.setenv("BOMBADIL_FAKE_TB", "deaf")
+    monkeypatch.setattr(engine, "STAGE_QUIT_S", 0.4)
+    hypr = FakeHypr(lambda: CLIENTS if len(fake_runs(profile)) >= 2 else [])
+    tb = make(hyprland=hypr, stop_timeout=8.0)
+    tb.start()
+    first = fake_runs_wait(profile, 1)[0]
+    monkeypatch.setenv("DISPLAY", "somewhere.example:3")
+    started = time.monotonic()
+    tb.stage(True)
+    assert time.monotonic() - started < 4, "it waited for the ten seconds it would give a stop of its own"
+    assert gone(first["pid"]) and len(fake_runs_wait(profile, 2)) == 2
 
 
 def fake_runs_wait(profile, count):
@@ -1664,17 +1964,74 @@ def real_thunderbird() -> str | None:
 REAL_THUNDERBIRD = real_thunderbird()    # found now: a test's HOME is not the one the lab's copy is under
 
 
-def processes_on(profile: Path) -> list[int]:
-    """Every process whose command line names the profile (Thunderbird and what it started with it)."""
+def gloda_counts(profile: Path) -> dict[str, int]:
+    """What Thunderbird's global index holds: rows of messages and of folders (whose URIs name the account), by the
+    tables that are there. Nothing when there is no index at all."""
+    path = profile / "global-messages-db.sqlite"
+    if not path.exists():
+        return {"messages": 0, "folderLocations": 0}
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        have = {row[0] for row in con.execute("select name from sqlite_master where type = 'table'")}
+        return {table: con.execute(f"select count(*) from {table}").fetchone()[0] if table in have else 0
+                for table in ("messages", "folderLocations")}
+    finally:
+        con.close()
+
+
+def session_members(sid: int) -> list[int]:
+    """Every live process of one session, zombies apart. Thunderbird starts a session of its own, and what it starts
+    (content and GPU processes, the native-messaging host) is in it though none of their command lines names the
+    profile, so this is what "nothing is left" has to be asked of."""
     found = []
     for entry in os.scandir("/proc"):
         if entry.name.isdigit():
             try:
-                if str(profile).encode() in Path(entry.path, "cmdline").read_bytes():
-                    found.append(int(entry.name))
+                fields = Path(entry.path, "stat").read_text().rpartition(")")[2].split()
             except OSError:
-                pass
+                continue
+            if fields[0] != "Z" and int(fields[3]) == sid:
+                found.append(int(entry.name))
     return found
+
+
+class DeadProxy:
+    """A proxy on this computer that refuses every request and writes down what was asked for. With it as the only
+    way out for HTTP and HTTPS, what a Thunderbird would send to Mozilla (a region lookup, an update check, Remote
+    Settings) goes nowhere, and what it tried is known."""
+
+    PREFS = ('user_pref("network.proxy.type", 1);\n'
+             'user_pref("network.proxy.http", "127.0.0.1");\nuser_pref("network.proxy.http_port", {port});\n'
+             'user_pref("network.proxy.ssl", "127.0.0.1");\nuser_pref("network.proxy.ssl_port", {port});\n'
+             'user_pref("network.proxy.no_proxies_on", "localhost, 127.0.0.1");\n')
+
+    def __init__(self):
+        self.asked: list[str] = []
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(16)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self._serve, daemon=True, name="dead-proxy").start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            with conn:
+                conn.settimeout(2)
+                try:
+                    self.asked.append(conn.recv(4096).split(b"\r\n")[0].decode("latin-1"))
+                    conn.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                except OSError:
+                    pass
+
+    def prefs(self) -> str:
+        return self.PREFS.format(port=self.port)
+
+    def close(self) -> None:
+        self.sock.close()
 
 
 EXTENSION_JS = """\
@@ -1689,8 +2046,9 @@ port.postMessage({{event: "hello", marker: "{marker}", app: "stand-in"}});
 def test_a_real_thunderbird_starts_unseen_with_the_seeded_account_and_leaves_nothing(world, monkeypatch, request):
     """prepare, seed (the lab's local mail server, a password the lab's login store has), start: Thunderbird stays
     up with no window at all, loads the add-on from the .xpi, starts the real host through the native-messaging
-    manifest and syncs the account; a kill leaves a lock that a restart does not mind and a changed add-on is the
-    one that runs; stop leaves no process; forgetting removes the account from the files it really wrote."""
+    manifest and syncs the account (though the profile says it was last quit offline); a kill leaves a lock that a
+    restart does not mind and a changed add-on is the one that runs; stop leaves no process of its session;
+    forgetting removes the account from the files it really wrote; then the add-on that ships, and a restart."""
     sys.path.insert(0, str(LAB))
     import mailserver
     import seed_logins
@@ -1726,6 +2084,8 @@ def test_a_real_thunderbird_starts_unseen_with_the_seeded_account_and_leaves_not
     service = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     service.bind(str(sock_path))
     service.listen(4)
+    proxy = DeadProxy()
+    request.addfinalizer(proxy.close)
 
     ext = write_addon(world / "extension", optional=())
     (ext / "background.js").write_text(EXTENSION_JS.format(marker="one"))
@@ -1738,21 +2098,12 @@ def test_a_real_thunderbird_starts_unseen_with_the_seeded_account_and_leaves_not
     seed_logins.seed(str(tb.profile), [("imap://127.0.0.1", "imap://127.0.0.1", user, mailserver.PASSWORD),
                                        ("smtp://127.0.0.1", "smtp://127.0.0.1", user, mailserver.PASSWORD)],
                      str(Path(binary).parent))
+    # What a Thunderbird that was last quit offline leaves in prefs.js (and the proxy that keeps Mozilla out): its
+    # next start must be online all the same, which is what offline.startup_state is for.
+    (tb.profile / "prefs.js").write_text('user_pref("network.online", false);\n' + proxy.prefs())
 
     def hello_from_addon():
-        """Accept the host's connection and read lines until the add-on's hello: (host's, add-on's)."""
-        service.settimeout(60)
-        conn, _ = service.accept()
-        conn.settimeout(60)
-        buf = b""
-        lines = []
-        while len(lines) < 2:
-            data = conn.recv(65536)
-            assert data, "the host hung up"
-            buf += data
-            *done, buf = buf.split(b"\n")
-            lines += [json.loads(x) for x in done]
-        return lines, conn
+        return accept_hellos(service)
 
     tb.start()
     pid = wait_for(lambda: fake_pid(tb.profile), "Thunderbird's lock", 30)
@@ -1762,6 +2113,7 @@ def test_a_real_thunderbird_starts_unseen_with_the_seeded_account_and_leaves_not
 
     cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
     assert b"--headless" in cmdline and b"--no-remote" in cmdline, "no display: no window"
+    assert len(session_members(pid)) >= 2, "what a stop must leave nothing of is in the session, and is seen there"
     environ = dict(x.partition(b"=")[::2] for x in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0") if x)
     assert b"DISPLAY" not in environ and b"WAYLAND_DISPLAY" not in environ
     mail_store = tb.profile / "ImapMail" / "127.0.0.1-2"
@@ -1789,30 +2141,161 @@ def test_a_real_thunderbird_starts_unseen_with_the_seeded_account_and_leaves_not
     started = time.monotonic()
     tb.stop()
     assert time.monotonic() - started < 12
-    assert tb.running() is False and wait_for(lambda: not processes_on(tb.profile), "no process to be left", 15) is True
+    assert tb.running() is False
+    assert wait_for(lambda: not session_members(pid2) and not session_members(pid), "no process to be left", 15) is True
     assert not (tb.profile / "lock").is_symlink(), "a clean quit takes its lock away"
     assert gone(pid2)
 
+    assert gloda_counts(tb.profile) == {"messages": 0, "folderLocations": 0}, \
+        "Thunderbird's own index of mail is not keeping a second copy of the mail, nor a list of the account's folders"
+    assert not [p for p in tb.profile.glob("global-messages-db.sqlite*") if b"Here is the project plan" in p.read_bytes()]
     tb.forget_account({"id": "a1", "email": user})
     prefs = (tb.profile / "prefs.js").read_text()
     assert user not in prefs and "127.0.0.1-2" not in prefs and "server2." not in prefs
     assert user not in user_js(tb.profile) and not mail_store.exists()
     assert login_hosts(tb.profile) == []
+    leftovers = [p.name for p in tb.profile.iterdir() if p.is_file() and user.encode() in p.read_bytes()
+                 and p.suffix not in (".log", ".1")]
+    assert leftovers == [], "no file Thunderbird made names the account any more"
+    assert not [x for x in proxy.asked if "location.services.mozilla.com" in x], \
+        "Thunderbird asked Mozilla which country it is in"
 
     # and the add-on that ships, on the same profile: it is the .xpi that Thunderbird loads, its optional
     # permission (sending) is granted by the engine alone, and it says so in its hello
     shipped = ThunderbirdProcess(binary=binary, host=REPO / "bin" / "bombadil-mail-host")
-    if not (shipped.addon_dir() / "manifest.json").is_file():
-        return
+    assert (shipped.addon_dir() / "manifest.json").is_file(), "the add-on that ships is not where the engine looks"
     tb = shipped
     tb.prepare()
+    (tb.profile / "prefs.js").write_text((tb.profile / "prefs.js").read_text() + proxy.prefs())
     tb.start()
-    groups.append(wait_for(lambda: fake_pid(tb.profile, not_pid=pid2), "the shipped add-on's Thunderbird", 30))
+    pid3 = wait_for(lambda: fake_pid(tb.profile, not_pid=pid2), "the shipped add-on's Thunderbird", 30)
+    groups.append(pid3)
     (_, addon_hello), conn = hello_from_addon()
     assert addon_hello["event"] == "hello" and "messages_send" in addon_hello["caps"], addon_hello
     conn.close()
+
+    # restart from a running Thunderbird: the old one goes, a new one starts, and its add-on says hello again
+    started = time.monotonic()
+    tb.restart()
+    assert time.monotonic() - started < 12
+    pid4 = wait_for(lambda: fake_pid(tb.profile, not_pid=pid3), "the restarted Thunderbird", 30)
+    groups.append(pid4)
+    (_, addon_hello), conn = hello_from_addon()
+    assert addon_hello["event"] == "hello" and gone(pid3) and tb.running()
+    conn.close()
     tb.stop()
-    assert tb.running() is False and wait_for(lambda: not processes_on(tb.profile), "no process to be left", 15) is True
+    assert tb.running() is False
+    assert wait_for(lambda: not any(session_members(g) for g in groups), "no process to be left", 15) is True
+
+
+def x_windows(display: str) -> list[dict]:
+    """The top-level windows of an X display, in the fields of Hyprland's `j/clients` that the engine reads (from
+    xwininfo: the class is WM_CLASS's second string, as Hyprland's is for an X client)."""
+    tree = subprocess.run(["xwininfo", "-display", display, "-root", "-tree"], capture_output=True, text=True,
+                          timeout=10, check=False).stdout
+    found = []
+    for line in tree.splitlines():
+        m = re.match(r'\s+(0x[0-9a-f]+) "(.*?)": \("(.*?)" "(.*?)"\)\s+(\d+)x(\d+)', line)
+        if m is None:
+            continue
+        info = subprocess.run(["xwininfo", "-display", display, "-id", m.group(1)], capture_output=True, text=True,
+                              timeout=10, check=False).stdout
+        found.append({"address": m.group(1), "title": m.group(2), "class": m.group(4), "initialClass": m.group(4),
+                      "size": [int(m.group(5)), int(m.group(6))], "mapped": "IsViewable" in info, "hidden": False,
+                      "pid": 0, "focusHistoryID": len(found)})
+    return found
+
+
+@pytest.mark.skipif(REAL_THUNDERBIRD is None, reason="no Thunderbird unpacked (BOMBADIL_TEST_THUNDERBIRD)")
+@pytest.mark.skipif(shutil.which("Xvfb") is None or shutil.which("xwininfo") is None, reason="no Xvfb and xwininfo")
+def test_a_real_thunderbird_with_a_display_is_windowed_connects_and_has_the_window_the_engine_looks_for(
+        world, monkeypatch, request):
+    """With a display the engine starts Thunderbird windowed (no --headless, that display and no Wayland switch),
+    its add-on still says hello, and its windows are what `pick_window` is written for: a main window titled
+    "... - Mozilla Thunderbird" in English whatever the language of the machine, and nothing else to bring
+    forward. The window list is read from the X display the way Hyprland would give it."""
+    r, w = os.pipe()
+    xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(w), "-nolisten", "tcp", "-screen", "0", "1280x800x24"],
+                            pass_fds=[w], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    os.close(w)
+    groups = [xvfb.pid]
+    tb = None
+    service = None
+    proxy = DeadProxy()
+
+    def cleanup():
+        if tb is not None:
+            tb.stop()
+        for pgid in groups:
+            with contextlib.suppress(OSError):
+                os.killpg(pgid, signal.SIGKILL)
+        xvfb.wait(10)
+        if service is not None:
+            service.close()
+        proxy.close()
+
+    request.addfinalizer(cleanup)
+    assert select_ready(r, 20), "Xvfb did not say which display it has"
+    display = f":{os.read(r, 16).decode().strip()}"
+    os.close(r)
+    monkeypatch.setenv("DISPLAY", display)
+    monkeypatch.setenv("LANG", "de_DE.UTF-8")          # the machine's language is not the engine's
+
+    sock_path = world / "run" / "mail.sock"
+    sock_path.parent.mkdir()
+    monkeypatch.setenv("BOMBADIL_MAIL_SOCKET", str(sock_path))
+    service = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    service.bind(str(sock_path))
+    service.listen(4)
+    ext = write_addon(world / "extension", optional=())
+    (ext / "background.js").write_text(EXTENSION_JS.format(marker="windowed"))
+    tb = ThunderbirdProcess(binary=REAL_THUNDERBIRD, addon_dir=ext, host=REPO / "bin" / "bombadil-mail-host")
+    tb.prepare()
+    (tb.profile / "prefs.js").write_text(proxy.prefs())
+    tb.start()
+    pid = wait_for(lambda: fake_pid(tb.profile), "Thunderbird's lock", 30)
+    groups.append(pid)
+
+    (host_hello, addon_hello), conn = accept_hellos(service)
+    assert host_hello["op"] == "engine_hello" and addon_hello["marker"] == "windowed"
+    argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    environ = dict(x.partition(b"=")[::2] for x in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0") if x)
+    assert b"--headless" not in argv and environ[b"DISPLAY"] == display.encode()
+    assert b"MOZ_ENABLE_WAYLAND" not in environ and tb.running()
+
+    def windows():
+        return [c for c in x_windows(display) if engine.is_engine_window(c)]
+
+    wait_for(lambda: any(c["title"].endswith("Mozilla Thunderbird") and c["mapped"] for c in windows()),
+             "the main window, titled in English", 30)
+    clients = windows()
+    shown = engine.engine_windows(clients)
+    assert [c["title"] for c in shown if not c["title"].endswith("Mozilla Thunderbird")] == [], \
+        "nothing a person would be shown but the main window: no Account Hub, no default-client question"
+    assert engine.compose_windows(clients) == [] and engine.pick_window(clients)["title"].endswith("Mozilla Thunderbird")
+    conn.close()
+    tb.stop()
+    assert wait_for(lambda: not any(session_members(g) for g in groups[1:]), "no process to be left", 15) is True
+
+
+def select_ready(fd: int, timeout: float) -> bool:
+    return bool(select.select([fd], [], [], timeout)[0])
+
+
+def accept_hellos(service: socket.socket):
+    """Accept the host's connection and read lines until the add-on's hello: ([host's, add-on's], connection)."""
+    service.settimeout(60)
+    conn, _ = service.accept()
+    conn.settimeout(60)
+    buf = b""
+    lines = []
+    while len(lines) < 2:
+        data = conn.recv(65536)
+        assert data, "the host hung up"
+        buf += data
+        *done, buf = buf.split(b"\n")
+        lines += [json.loads(x) for x in done]
+    return lines, conn
 
 
 def free_ports(n: int) -> list[int]:

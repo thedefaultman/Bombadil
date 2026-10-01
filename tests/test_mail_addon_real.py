@@ -180,7 +180,7 @@ def test_hello_is_the_first_frame_and_says_what_thunderbird_is(lab):
     assert first["event"] == "hello"
     assert first["version"] == 1
     assert first["app"] == "Thunderbird"
-    assert first["app_version"].startswith("157.")
+    assert int(first["app_version"].split(".")[0]) >= 153, "the add-on's strict_min_version"
     assert "send" in first["caps"]
     assert lab.engine.hello_frames == 1
     info = request(lab, "info")
@@ -259,6 +259,35 @@ def test_find_by_text_without_regard_to_case_and_in_the_body(lab):
     out = request(lab, "find", text="Bulk mail 07", limit=20)
     assert keys(out) == [f"bulk-{i}@example.org" for i in range(79, 69, -1)]
     assert "partial" not in out
+
+
+def test_find_in_the_body_of_old_mail_in_any_case_it_is_written_and_once_per_message(lab):
+    """A search for words that are only in bodies is made by Thunderbird itself, window by window of time, so a
+    hundred and thirty mails newer than none of it cost nothing; it matches the case the words are typed in, and
+    capitalised, in title case and in capitals, which is how mail is written."""
+    everyone = keys(request(lab, "find", text="hello tester", limit=500))
+    assert "welcome-1@example.org" in everyone and "bulk-0@example.org" in everyone and "bulk-129@example.org" in everyone
+    assert len(everyone) == len(set(everyone)) >= BULK + 1
+    assert keys(request(lab, "find", text="HELLO TESTER", limit=3)) == everyone[:3]
+    assert keys(request(lab, "find", text="ZZ-not-in-any-mail-ZZ", limit=10)) == []
+    assert "partial" not in request(lab, "find", text="hello tester", limit=500)
+
+
+def test_a_mail_in_two_folders_is_found_once_and_as_the_inbox_copy(lab, account):
+    raw = (
+        "From: Dora Double <dora@example.org>\r\nTo: Lab Tester <test@example.test>\r\n"
+        "Subject: Doublemarker in two places\r\n"
+        f"Date: {email.utils.formatdate(localtime=False)}\r\nMessage-ID: <double-1@example.org>\r\n"
+        "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThe same mail twice.\r\n"
+    ).encode()
+    lab.server.deliver(raw, "Archive", seen=True)
+    lab.server.deliver(raw, "INBOX", seen=True)
+    until(lambda: all("double-1@example.org" in keys(request(lab, "list", account=account, folder=folder, limit=20))
+                      for folder in ("inbox", "archive")), what="both copies of the mail")
+    found = request(lab, "find", text="doublemarker", limit=10)
+    assert keys(found) == ["double-1@example.org"], "one result for one message"
+    assert found["messages"][0]["folder"] == "inbox"
+    assert keys(request(lab, "find", text="doublemarker", folders=["archive"], limit=10)) == ["double-1@example.org"]
 
 
 def test_find_by_people_subject_dates_and_flags(lab):
@@ -633,6 +662,64 @@ def test_without_messages_send_a_mail_goes_through_a_compose_window_and_nothing_
     time.sleep(1)
     assert len(plain.server.sent()) == before + 2
     assert request(plain, "info")["version"] == 1     # and Thunderbird is still answering after the windows closed
+
+
+# -- a sender with a signature --
+
+SIGNATURE = "The Lab Signature"
+
+
+@pytest.fixture(scope="module")
+def signed():
+    """An identity with a signature, which is what makes Thunderbird compose a new mail's foot itself."""
+    box = None
+    try:
+        box = started(extra_prefs=(
+            f'user_pref("mail.identity.id1.htmlSigText", "{SIGNATURE}");\n'
+            'user_pref("mail.identity.id1.htmlSigFormat", false);\n'
+            'user_pref("mail.identity.id1.attach_signature", false);\n'))
+        wait_synced(box, inbox=SEEDED)
+        yield box
+    finally:
+        if box is not None:
+            box.stop()
+            box.remove()
+
+
+def test_the_signature_and_what_thunderbird_quotes_stay_under_the_persons_words(signed):
+    """The draft says a reply's quote and the signature are added when it sends: the words go above what
+    Thunderbird composed in its window, and nothing of that is lost or doubled."""
+    account = account_of(signed)
+    before = len(signed.server.sent())
+    to = [{"name": "", "email": "zed@example.net"}]
+    request(signed, "send", timeout=70, account=account, kind="new", reply_to=None, to=to, cc=[], bcc=[],
+            subject="Signed new mail", body="Words for a new mail.\n", attachments=[])
+    _record, new = sink(signed, before + 1)
+    body = text_of(new)
+    assert body.startswith("Words for a new mail.")
+    assert body.count(SIGNATURE) == 1 and body.index(SIGNATURE) > body.index("new mail.")
+
+    request(signed, "send", timeout=70, account=account, kind="reply", reply_to="plan-2@example.org",
+            to=[{"name": "", "email": "dave@example.org"}], cc=[], bcc=[], subject="Re: Project plan",
+            body="My answer.\n", attachments=[])
+    _record, reply = sink(signed, before + 2)
+    body = text_of(reply)
+    assert reply["In-Reply-To"] == "<plan-2@example.org>"
+    assert body.startswith("My answer.")
+    assert body.count("Following up on my own mail") == 1, "the quoted mail is there, once"
+    assert body.count(SIGNATURE) == 1
+    assert body.index("My answer.") < body.index("Following up on my own mail") < body.index(SIGNATURE)
+
+    request(signed, "send", timeout=70, account=account, kind="forward", reply_to="plan-1@example.org", to=to,
+            cc=[], bcc=[], subject="Fwd: Project plan", body="For you.\n", attachments=[])
+    _record, forwarded = sink(signed, before + 3)
+    body = text_of(forwarded)
+    assert body.startswith("For you."), body
+    assert body.count("Here is the project plan.") == 1, f"the forwarded mail is there, once: {body!r}"
+    # Thunderbird 157 composes no signature in an inline forward, whatever sig_on_fwd says (seen in its own window);
+    # what is held to is that the add-on does not add one, nor lose the forwarded mail
+    assert body.count(SIGNATURE) == 0, body
+    assert body.index("For you.") < body.index("Here is the project plan.")
 
 
 # -- when the outgoing server refuses --

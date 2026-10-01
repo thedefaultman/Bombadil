@@ -3,10 +3,17 @@
  *
  * - `new_mail` for mail that arrives in an Inbox (not in any other folder, and Thunderbird only watches the
  *   Inbox of an IMAP account for it anyway), the newest twenty of a burst, each as an EMsg.
- * - `accounts_changed` when an account or a folder is made, removed, renamed or moved. The folder tables
- *   are dropped at the same time, so the next op sees the folders as they are.
+ * - `accounts_changed` when an account, one of its identities or a folder is made, removed, renamed, changed
+ *   or moved (the account events do not cover identities, and the service takes an account's addresses and the
+ *   name it sends under from them). The folder tables are dropped at the same time, so the next op sees the
+ *   folders as they are.
  * - `counts_changed` when messages are read, flagged, moved, copied or deleted, or a folder's counts change.
- * - `sync` when the guess in accounts.js about an account changes.
+ * - `sync` when the guess in accounts.js about an account changes, which includes a send that Thunderbird has
+ *   not answered and the add-on has given up on.
+ *
+ * Every list Thunderbird hands over with an event (the messages that arrived, were moved, copied or deleted: a
+ * first page and, when there are more, an id) is let go (streams.js), whether or not the event is used. Thunderbird
+ * keeps what it prepared for each of them for as long as it runs, and a mass move or an expunge makes two lists.
  *
  * Thunderbird says a great deal while it syncs (a folder's counts change for every message it fetches), so
  * nothing is passed on one for one: each kind is held for a short while and told once for all that came in
@@ -72,11 +79,13 @@ export class Events {
   }
 
   start() {
-    const { messages, folders, accounts } = this.messenger;
+    const { messages, folders, accounts, identities } = this.messenger;
     this.listen(messages?.onNewMailReceived, (folder, list) => this.newMail(folder, list));
-    for (const name of ["onUpdated", "onMoved", "onCopied", "onDeleted"]) {
-      this.listen(messages?.[name], () => this.counts.poke());
+    this.listen(messages?.onUpdated, () => this.counts.poke());
+    for (const name of ["onMoved", "onCopied"]) {
+      this.listen(messages?.[name], (original, other) => this.changedMessages(original, other));
     }
+    this.listen(messages?.onDeleted, list => this.changedMessages(list));
     this.listen(folders?.onFolderInfoChanged, () => {
       this.counts.poke();
       if (this.view.pending) {
@@ -88,6 +97,7 @@ export class Events {
     }
     for (const name of ["onCreated", "onDeleted", "onUpdated"]) {
       this.listen(accounts?.[name], () => this.folderChanged());
+      this.listen(identities?.[name], () => this.folderChanged());
     }
     return this.check();   // the first look: nothing is told, but what is waited on is known from here
   }
@@ -125,6 +135,16 @@ export class Events {
   folderChanged() {
     this.mailbox.invalidate();
     this.accounts.poke();
+  }
+
+  /** Messages were moved, copied or deleted: the counts change, and the lists Thunderbird made for it are let go. */
+  changedMessages(...lists) {
+    for (const list of lists) {
+      if (list?.id) {
+        abort(this.messenger, list.id);
+      }
+    }
+    this.counts.poke();
   }
 
   /** Mail arrived in `folder`: told when it is an Inbox, at most NEW_MAX of it, newest first. */

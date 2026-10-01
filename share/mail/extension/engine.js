@@ -8,6 +8,10 @@
  * what an op has not done by then is answered as a failure (for a send, as `unknown_outcome`: it may be
  * under way); what it says later is dropped.
  *
+ * An answer ends the request: what it is still waiting for (a place in the gate, a page from Thunderbird) is given
+ * up and what it was going to do next is not done (`ctx.cancelled()`, and gate.js), though a call it already made
+ * is Thunderbird's to finish or not.
+ *
  * A request belongs to the connection it came on. Its answer goes to that connection or to nobody: the
  * service that asked is gone when the link is, and the one that replaces it numbers its requests from the
  * start. A frame that repeats the id of a request still being answered on the same connection is ignored,
@@ -19,7 +23,7 @@
 
 import { AccountsView } from "./accounts.js";
 import { systemClock } from "./clock.js";
-import { attachment, Outgoing, Stash } from "./files.js";
+import { attachment, Outgoing, Stash, transfersOf } from "./files.js";
 import { mark, move } from "./changing.js";
 import { badRequest, describe, engineError, EngineError, UNKNOWN_OUTCOME } from "./errors.js";
 import { Events } from "./events.js";
@@ -32,6 +36,7 @@ import { Sending } from "./sending.js";
 export const PROTOCOL = 1;
 const BROWSER_INFO_MS = 3000;
 const READ_MS = 9500;                  // the service gives up on a read at 10 s
+const FILE_MS = 100_000;               // and on an attachment at 120 s, a file that has to come from the mail server
 const SEND_MS = 58_000;                // the send itself is over at 55 s; this is for a send that is not
 const ID_MAX = 64;
 
@@ -44,14 +49,14 @@ const of = args => (typeof args.account === "string" ? [args.account] : []);
 const OPS = new Map([
   ["info", { run: env => env.info(), ms: 5000, gate: "free" }],
   ["accounts", { run: env => env.view.rows(), ms: READ_MS, gate: none }],
-  ["list", { run: (env, a) => list(env, a), ms: READ_MS, gate: of }],
-  ["find", { run: (env, a) => find(env, a), ms: READ_MS, gate: a => (Array.isArray(a.accounts) ? a.accounts.filter(x => typeof x === "string") : all()) }],
+  ["list", { run: (env, a, ctx) => list(env, a, ctx), ms: READ_MS, gate: of }],
+  ["find", { run: (env, a, ctx) => find(env, a, ctx), ms: READ_MS, gate: a => (Array.isArray(a.accounts) ? a.accounts.filter(x => typeof x === "string") : all()) }],
   ["get", { run: (env, a) => get(env, a), ms: READ_MS, gate: of }],
   ["mark", { run: (env, a) => mark(env, a), ms: READ_MS, gate: of }],
   ["move", { run: (env, a) => move(env, a), ms: READ_MS, gate: of }],
-  ["attachment", { run: (env, a, ctx) => attachment(env, a, ctx), ms: READ_MS, gate: of }],
+  ["attachment", { run: (env, a, ctx) => attachment(env, a, ctx), ms: FILE_MS, gate: of }],
   ["blob", { run: (env, a) => (env.stash.put(a), {}), ms: READ_MS, gate: "free" }],
-  ["known", { run: (env, a) => known(env, a), ms: 4500, gate: none }],
+  ["known", { run: (env, a, ctx) => known(env, a, ctx), ms: 4500, gate: none }],
   ["send", { run: (env, a, ctx) => env.sending.send(a, ctx), ms: SEND_MS, gate: "send" }],
 ]);
 
@@ -67,8 +72,14 @@ export class Engine {
     this.mailbox = new Mailbox({ messenger, clock });
     this.stash = new Stash({ clock });
     this.gate = new Gate({ clock });
-    this.view = new AccountsView({ messenger, clock, mailbox: this.mailbox });
-    this.sending = new Sending({ messenger, clock, mailbox: this.mailbox, stash: this.stash });
+    this.view = new AccountsView({ messenger, clock, mailbox: this.mailbox, stuck: id => this.sending.isLost(id) });
+    this.sending = new Sending({
+      messenger,
+      clock,
+      mailbox: this.mailbox,
+      stash: this.stash,
+      changed: () => this.events.sync.poke(),   // a send given up on makes an account an error, and its end ends that
+    });
     this.events = new Events({
       messenger,
       clock,
@@ -168,8 +179,16 @@ export class Engine {
     session.ids.add(id);
     const spec = typeof op === "string" ? OPS.get(op) : undefined;
     const after = [];
+    const over = new AbortController();
+    const receivedAt = this.clock.now();
     const ctx = {
-      receivedAt: this.clock.now(),
+      receivedAt,
+      // aborted when the request has been answered, however: what it waits for is given up
+      signal: over.signal,
+      cancelled: () => over.signal.aborted,
+      // whether the connection the request came on is still there (a send that is begun on a dead one cannot be told)
+      live: () => session.live,
+      left: () => receivedAt + (spec?.ms ?? 0) - this.clock.now(),
       after: fn => after.push(fn),
       // for what an op says after its answer, on this connection only (a file's pieces are no use on another one)
       emit: frame => {
@@ -204,6 +223,7 @@ export class Engine {
       answered = true;
       this.clock.clearTimeout(timer);
       session.ids.delete(id);
+      over.abort();
       const delivered = post(body);
       if (delivered) {
         for (const fn of after) {
@@ -241,8 +261,12 @@ export class Engine {
       return run();
     }
     if (spec.gate === "send") {
-      return this.gate.send(typeof args.account === "string" ? args.account : "", run);
+      // The pieces of the mail's files are for this send and no other, whether it went, failed, or was never begun
+      // because a place could not be had.
+      return this.gate
+        .send(typeof args.account === "string" ? args.account : "", run, ctx.signal)
+        .finally(() => transfersOf(args.attachments).forEach(xfer => this.stash.drop(xfer)));
     }
-    return this.gate.run(spec.gate(args), run);
+    return this.gate.run(spec.gate(args), run, ctx.signal);
   }
 }

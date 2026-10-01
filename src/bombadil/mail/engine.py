@@ -15,12 +15,13 @@ What it writes, and why it is shaped this way:
   (`accounts.Provider`): an IMAP server, an SMTP server and an identity. Bombadil never holds a password:
   OAuth accounts sign in on the provider's page and the others get Thunderbird's own password prompt, whose
   answer Thunderbird keeps in its login store. Both are the person's alone, in a window `stage` shows.
-- **Forgetting is for good.** Because `user.js` lists the accounts (`mail.accountmanager.accounts`), an account
-  that is not in the registry is simply not loaded, however much of it `prefs.js` still has. What `prefs.js`,
-  `logins.json` and the mail folder still hold for it is removed too, but only while Thunderbird is not
-  running (it would write it all back at exit), so a forget while it runs is finished by `stop` or the next
-  start. Nothing here opens a mail or reads Thunderbird's mail files: only prefs, logins.json, lock files and
-  whole folders chosen by name.
+- **Forgetting is for good**, with one limit (see `forget_account`). Because `user.js` lists the accounts
+  (`mail.accountmanager.accounts`), an account that is not in the registry is simply not loaded, however much of
+  it `prefs.js` still has. What `prefs.js`, `logins.json`, the mail folder and Thunderbird's caches that name the
+  account (its global index, folder tree and folder cache) still hold for it is removed too, but only while
+  Thunderbird is not running (it would write it all back at exit), so a forget while it runs is finished by
+  `stop` or the next start. Nothing here opens a mail or reads Thunderbird's mail files: only prefs,
+  logins.json, lock files, and whole folders and files chosen by name.
 - **The add-on is a reproducible `.xpi`** in the profile (`extensions/<id>.xpi`), built from the package's
   `share/mail/extension/` with fixed timestamps and no compression, so the same source is the same bytes on
   any machine, and rebuilt only when the source changed (its digest is the zip's comment).
@@ -68,6 +69,14 @@ ENGINE_WORKSPACE = "special:mail-engine"
 
 STOP_S = 10.0              # how long Thunderbird is given to quit after SIGTERM before its group is killed
 WINDOW_WAIT_S = 6.0        # how long after a start a window may take to appear when someone wants to see it
+# `stage` is called with a budget of its own: the service gives a call that only asks Thunderbird something
+# `PROBE_S` (5 s), and a call that runs over it is a Thunderbird whose controls "are stuck", which refuses every
+# other call until it returns. So one call waits for a window at most STAGE_WAIT_S, asks the compositor for at most
+# HYPR_S each time, and gives a Thunderbird that has to be started again with a window STAGE_QUIT_S to quit; a
+# window that is not there by then is a False, and the person's next click finds it.
+STAGE_WAIT_S = 2.5
+STAGE_QUIT_S = 2.0
+HYPR_S = 1.5
 LOG_CAP = 1 << 20          # bytes of Thunderbird's own output kept in one file; one older file is kept
 REGISTRY = "bombadil-engine.json"
 XPI_COMMENT = b"bombadil-source:"
@@ -76,6 +85,7 @@ MAX_FORGOTTEN = 64         # leftovers of removed accounts waiting for Thunderbi
 
 # Thunderbird's own class names for its windows, matched the way hyprland.lua's "mail-engine" rule does.
 _WINDOW_CLASS = re.compile(r"(?i)^(.*\.)?thunderbird.*$")
+_ADDRESS = re.compile(r"0x[0-9a-fA-F]{1,16}")
 _MAIN_TITLE = re.compile(r"Mozilla Thunderbird\s*$")
 _COMPOSE_TITLE = re.compile(r"Write: ")     # a compose window's title in Thunderbird's (en-US) strings
 _ACCOUNT_ID = re.compile(r"a([0-9]{1,9})")
@@ -84,6 +94,11 @@ _LOOPBACK = ("127.0.0.1", "::1", "localhost")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 _LOCK = re.compile(r".*:\+([0-9]+)")
 _MAIL_DIR = re.compile(r"[A-Za-z0-9.-]+-[0-9]+")
+# Files in the profile that Thunderbird makes again when they are missing and that hold an account's address,
+# its folders' names or what it fetched: Gloda's database (and the files SQLite keeps beside it), the folder
+# tree and the folder cache.
+_CACHES = ("global-messages-db.sqlite", "global-messages-db.sqlite-wal", "global-messages-db.sqlite-shm",
+           "global-messages-db.sqlite-journal", "folderTree.json", "folderCache.json")
 # Thunderbird's login store keys an OAuth sign-in by the provider's page, not by the account.
 _ISSUER = {"google": "accounts.google.com", "microsoft": "login.microsoftonline.com"}
 
@@ -115,7 +130,13 @@ QUIET = (
     ("mail.biff.use_system_alert", False),
     ("mail.biff.show_tray_icon_always", False),
     ("mail.biff.show_badge", False),
-    # Nothing here phones home. Updates are the distribution's, and the add-on has no update address.
+    # What a pref can stop of Thunderbird's calls to Mozilla is stopped here. Measured on 157, an empty profile and
+    # every HTTP request sent to a proxy that refuses it: the region lookup (below), then 30 seconds after the
+    # start an update check and a Remote Settings poll. No pref reaches those two: the update URL is read from the
+    # default branch only, `app.update.disabledForTesting` counts in Mozilla's automation only, and release
+    # builds ignore `services.settings.server`. A policies.json with DisableAppUpdate stops the first (a
+    # distribution's build is usually made without an updater); nothing found stops the second. Updates are the
+    # distribution's, and the add-on has no update address.
     ("app.update.enabled", False),
     ("app.update.auto", False),
     ("app.update.staging.enabled", False),
@@ -133,6 +154,11 @@ QUIET = (
     ("toolkit.telemetry.reportingpolicy.firstRun", False),
     ("datareporting.policy.firstRunURL", ""),
     ("browser.crashReports.unsubmittedCheck.enabled", False),
+    # Thunderbird asks location.services.mozilla.com which country it is in, once, at the first start with no
+    # stored region (an empty URL is no request; the update timer alone is not enough, it only repeats the
+    # question later).
+    ("browser.region.network.url", ""),
+    ("browser.region.update.enabled", False),
     ("network.captive-portal-service.enabled", False),
     ("network.connectivity-service.enabled", False),
     ("browser.safebrowsing.malware.enabled", False),
@@ -157,9 +183,22 @@ QUIET = (
     # online if this is 1, and asked about in a window nobody sees if it is 0. Only a press on Send sends, so:
     # never (2). Measured in Thunderbird's own source: 0 asks, 1 sends, 2 never sends.
     ("offline.send.unsent_messages", 2),
-    # Always start online. The default remembers the last state, and a Thunderbird that was stopped while the
-    # network looked down would come back offline, in a window nobody sees, and fetch nothing.
-    ("offline.startup_state", 0),
+    # Always start online (2). 0 is "remember the last state", which is what a Thunderbird that was stopped
+    # while the network looked down would come back to: offline, in a window nobody sees, fetching nothing, while
+    # its add-on still says hello. 2 is Thunderbird's own default (OfflineStartup.sys.mjs: 0 remember, 1 ask,
+    # 2 online, 3 offline, 4 automatic; all-thunderbird.js sets 2), kept here so that nothing changes it.
+    ("offline.startup_state", 2),
+    # Thunderbird's global index of mail (Gloda) is on by default: a second copy of every message's text, and of
+    # the addresses and folders of an account that was removed, in global-messages-db.sqlite. Nothing of Mail uses
+    # it (the add-on reads folders and headers directly), so it is never made.
+    ("mailnews.database.global.indexer.enabled", False),
+    # A message that asks for a receipt makes Thunderbird ask "send one?" when it is shown (2 is "ask"), and a
+    # receipt is a message that is not Mail's press. Neither the per-account setting nor the global one sends.
+    ("mail.server.default.mdn_report_enabled", False),
+    ("mail.mdn.report.enabled", False),
+    # Window titles are how `pick_window` tells a compose window (never shown) from a dialog, and they come from
+    # the interface language. Thunderbird follows the system's unless told, and a language pack would change them.
+    ("intl.locale.requested", "en-US"),
 )
 
 # Loading an unsigned add-on from the profile. Release builds do not require signatures, but a sideloaded
@@ -201,10 +240,16 @@ def engine_windows(clients) -> list[dict]:
             and not _speck(c)]
 
 
+def compose_windows(clients) -> list[dict]:
+    """Thunderbird's compose windows that are on screen somewhere. One has a Send button of Thunderbird's own,
+    and the only press that sends is Mail's, so such a window is never shown on purpose."""
+    return [c for c in engine_windows(clients) if _COMPOSE_TITLE.match(str(c.get("title") or ""))]
+
+
 def pick_window(clients) -> dict | None:
     """The window to bring forward: what Thunderbird asks a person is asked in a dialog, so a window whose
     title is not the main window's ("... - Mozilla Thunderbird") comes first, then the one focused last. A
-    compose window is never the one: it has a Send button of Thunderbird's own, and only Mail's press sends."""
+    compose window is never the one."""
     found = [c for c in engine_windows(clients) if not _COMPOSE_TITLE.match(str(c.get("title") or ""))]
     if not found:
         return None
@@ -217,12 +262,20 @@ def pick_window(clients) -> dict | None:
     return min(found, key=rank)
 
 
-def window_selector(client: dict) -> str:
-    """Hyprland's own selector for a window: its pid, as the launcher addresses its drawers, else its class."""
-    pid = client.get("pid")
-    if isinstance(pid, int) and pid > 0:
-        return f"pid:{pid}"
-    return f"class:^({re.escape(str(client.get('class') or client.get('initialClass') or ''))})$"
+def window_selectors(client: dict) -> list[str]:
+    """Hyprland's selectors for this window, best first: its address (every window of one program has the same
+    pid, and a pid names whichever of them the compositor lists first, the main window and not the dialog that was
+    picked), then its pid, which the launcher addresses its windows by and so is known to be understood, then its
+    class (for a client with neither)."""
+    out = []
+    address, pid = client.get("address"), client.get("pid")
+    if isinstance(address, str) and _ADDRESS.fullmatch(address):
+        out.append(f"address:{address}")
+    if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0:
+        out.append(f"pid:{pid}")
+    if not out:
+        out.append(f"class:^({re.escape(str(client.get('class') or client.get('initialClass') or ''))})$")
+    return out
 
 
 def staged_monitor(monitors) -> dict | None:
@@ -614,8 +667,10 @@ class ThunderbirdProcess:
 
     def seed_account(self, account: dict, provider: accts.Provider) -> None:
         """Write the account into Thunderbird's settings, effective at its next start. Seeding the same address
-        again changes nothing. The same address under another account id replaces the old one, and an account
-        whose server changed leaves its old folder to be cleared, as a forgotten one does."""
+        again changes nothing. The same address under another account id replaces the old one. An account id that
+        comes back for another address or another server (ids restart if Mail's own notes were lost) is no longer
+        the account Thunderbird knows by that number: what Thunderbird keeps under it, its folder and the folder
+        prefs it learned, is cleared as a forgotten account's is, and the number starts again."""
         with self._lock:
             entry = entry_for(account, provider)
             self._ensure_profile()
@@ -624,8 +679,8 @@ class ThunderbirdProcess:
             for old in [a for a in accounts.values() if a["id"] != entry["id"] and a["email"] == entry["email"]]:
                 self._tombstone(registry, accounts.pop(old["id"]))
             previous = accounts.get(entry["id"])
-            if previous is not None and mail_dir(previous) != mail_dir(entry):
-                self._tombstone(registry, previous)
+            if previous is not None and (previous["email"] != entry["email"] or mail_dir(previous) != mail_dir(entry)):
+                self._tombstone(registry, previous, reused=True)
             accounts[entry["id"]] = entry
             self._save(registry)
             self._render(registry)
@@ -633,9 +688,15 @@ class ThunderbirdProcess:
 
     def forget_account(self, account: dict) -> None:
         """Take the account out of Thunderbird for good. user.js stops listing it at once, so the next start does
-        not load it. What prefs.js, logins.json (a password or token that no other account at that server uses)
-        and ImapMail still hold for it is removed now when Thunderbird is not running, else when it is next
-        stopped or started: it writes what it holds back at exit. Forgetting what is not known is nothing."""
+        not load it. What prefs.js, logins.json and ImapMail still hold for it, and Thunderbird's caches that
+        name it (see `_scrub_caches`), is removed now when Thunderbird is not running, else when it is next
+        stopped or started: it writes what it holds back at exit. Forgetting what is not known is nothing.
+
+        What stays: a saved password or sign-in token whose login another account at the same server or the
+        same provider's sign-in page still uses, until the last of those accounts is forgotten (Thunderbird keys
+        a login by its page and an encrypted user name, which cannot be read here without its crypto library, so
+        a login of the same page cannot be told from the account's own). The person's address book and the
+        addresses it collected from sent mail are the person's and are not account data."""
         with self._lock:
             registry = self._registry()
             email = str(account.get("email") or "").strip().lower()
@@ -679,6 +740,9 @@ class ThunderbirdProcess:
     def stop(self) -> None:
         """Ask Thunderbird to quit and give it `stop_timeout` seconds, then kill its whole process group. A
         no-op when it is not running; it never raises."""
+        self._stop(self.stop_timeout)
+
+    def _stop(self, patience: float) -> None:
         with self._lock:
             proc, pid = self._proc, None
             if proc is not None and proc.poll() is None:
@@ -686,7 +750,7 @@ class ThunderbirdProcess:
             elif proc is None:
                 pid = self._holder()
             if pid is not None:
-                self._terminate(pid, proc)
+                self._terminate(pid, proc, patience)
             self._finish()
             try:
                 self._scrub()
@@ -716,15 +780,22 @@ class ThunderbirdProcess:
 
     def stage(self, on: bool) -> bool:
         """Show Thunderbird's window (for a sign-in, an app password, anything it must ask a person) or put it
-        away. True when it is as asked, False when it cannot be: Hyprland is not there, there is no window.
+        away. True when it is as asked, False when it cannot be: Hyprland is not there, there is no window (yet),
+        or Thunderbird has a message open for sending.
 
         The windows live on the special workspace `special:mail-engine`, which the compositor slides in over the
-        one in use, as it does for the other panels; staging shows that workspace and focuses a window of
-        Thunderbird's, and putting away toggles it out again. Nothing is moved, so nothing can be left
-        stranded on a workspace if the service goes away, and a Thunderbird that opens another window while
-        it is shown gets it in the same place. A Thunderbird that was started headless (no display) has no
-        window to show: with a display now, staging starts it again with one (and waits a few seconds for it);
-        with none, it is False."""
+        one in use, as it does for the other panels; staging focuses the one window worth showing (a dialog
+        before the main window, by its own address) and so shows that workspace, and putting away toggles it out
+        again. Nothing is moved, so nothing can be left stranded on a workspace if the service goes away, and a
+        Thunderbird that opens another window while it is shown gets it in the same place. But showing the
+        workspace shows every window on it, and a compose window has a Send button of Thunderbird's own, which is
+        a send that is not Mail's press: with one open, staging is False and shows nothing. (A restart clears it.)
+
+        It returns within a few seconds whatever happens (STAGE_WAIT_S and HYPR_S), because the service calls it
+        with a budget of five. A Thunderbird that was started headless (no display then) has no window to show:
+        with a display now, staging starts it again with one, waits what is left of the budget for the window and
+        is False if it has not mapped by then; with no display it is False. A False from a window that was still
+        on its way is answered by asking again."""
         h = self._hypr or hypr.Hyprland()
         try:
             if not h.available:
@@ -738,25 +809,47 @@ class ThunderbirdProcess:
     # -- staging --
 
     def _show(self, h) -> bool:
+        entered = time.monotonic()
         with self._lock:
             if not self.running():
                 return False
             if self._headless and self._proc is not None:
                 if display_kind(os.environ) is None:
                     return False
-                self.restart()
-            deadline = self._started + WINDOW_WAIT_S if self._started else time.monotonic()
+                self._stop(STAGE_QUIT_S)
+                self.start()
+            # a window takes a moment to map after a start, but never more of this call than its budget
+            deadline = min(self._started + WINDOW_WAIT_S, entered + STAGE_WAIT_S) if self._started else entered
         while True:
-            window = pick_window(json.loads(h.request("j/clients")))
+            clients = json.loads(h.request("j/clients", timeout=HYPR_S))
+            if compose_windows(clients):
+                log("a message is open for sending in Thunderbird, so its window is not shown")
+                return False
+            window = pick_window(clients)
             if window is not None:
-                h.dispatch(f"hl.dsp.focus({{ window = {lua_str(window_selector(window))} }})")
-                return True
+                return self._focus(h, window)
             if time.monotonic() >= deadline:
                 return False
             time.sleep(0.25)
 
+    @staticmethod
+    def _focus(h, window: dict) -> bool:
+        """Focus the window by its address; where the compositor refuses that, by its pid (understood, as the
+        launcher uses it: the main window then, which is what the dialog is in front of). Only a refusal is
+        retried, never a hang, so the call's time is not spent twice. A compose window is not one of these:
+        `_show` has refused before there is one on screen."""
+        *first, last = window_selectors(window)
+        for selector in first:
+            try:
+                h.dispatch(f"hl.dsp.focus({{ window = {lua_str(selector)} }})")
+                return True
+            except RuntimeError as e:
+                log(f"focusing Thunderbird's window by {selector}: {e}")
+        h.dispatch(f"hl.dsp.focus({{ window = {lua_str(last)} }})")
+        return True
+
     def _hide(self, h) -> bool:
-        shown = staged_monitor(json.loads(h.request("j/monitors")))
+        shown = staged_monitor(json.loads(h.request("j/monitors", timeout=HYPR_S)))
         if shown is None:
             return True
         if not shown.get("focused", True):   # toggle_special acts on the focused monitor
@@ -803,14 +896,14 @@ class ThunderbirdProcess:
                 return pid
         return None
 
-    def _terminate(self, pid: int, proc: subprocess.Popen | None) -> None:
+    def _terminate(self, pid: int, proc: subprocess.Popen | None, patience: float) -> None:
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             return
         except PermissionError:
             return
-        deadline = time.monotonic() + self.stop_timeout
+        deadline = time.monotonic() + patience
         while time.monotonic() < deadline:
             if (proc.poll() is not None) if proc is not None else not _alive(pid):
                 return
@@ -980,19 +1073,25 @@ class ThunderbirdProcess:
         registry = registry if registry is not None else self._registry()
         _write(self.profile / "user.js", render_user_js(registry["accounts"]).encode(), 0o600)
 
-    def _tombstone(self, registry: dict, gone: dict) -> None:
+    def _tombstone(self, registry: dict, gone: dict, reused: bool = False) -> None:
         """Note what an account that is gone from user.js left in Thunderbird, for `_scrub`: its number (its
-        prefs), its folder, and the logins of its servers and its sign-in page."""
+        prefs), its folder, and the logins of its servers and its sign-in page. `reused` says that the number is
+        live again for another address or server, so that the note is for what Thunderbird learned under it
+        (its folder and its prefs.js lines), which user.js does not say again, and not a number that is gone."""
         logins = {f"{side}://{gone[side]['host']}" for side in ("imap", "smtp")}
         if gone["provider"] in _ISSUER:
             logins.add(f"oauth://{_ISSUER[gone['provider']]}")
-        registry["forgotten"] = (registry["forgotten"] + [
-            {"n": gone["n"], "dir": mail_dir(gone), "logins": sorted(logins)}])[-MAX_FORGOTTEN:]
+        note = {"n": gone["n"], "dir": mail_dir(gone), "logins": sorted(logins)}
+        if reused:
+            note["reused"] = True
+        registry["forgotten"] = (registry["forgotten"] + [note])[-MAX_FORGOTTEN:]
 
     def _scrub(self) -> None:
-        """Finish forgetting: remove what removed accounts left in prefs.js, logins.json and ImapMail. Only while
-        Thunderbird is not running (it holds all of it and writes it back), and never what an account that is
-        in the registry now uses: a number, a folder or a login that came back into use is left alone."""
+        """Finish forgetting: remove what removed accounts left in prefs.js, logins.json, ImapMail and the caches.
+        Only while Thunderbird is not running (it holds all of it and writes it back), and never what an account
+        that is in the registry now uses: a number, a folder or a login that came back into use is left alone,
+        except for a number that came back for another address (`reused`), whose old folder and prefs are the
+        old account's and not the new one's."""
         registry = self._registry()
         pending = registry["forgotten"]
         if not pending or self._holder() is not None or self._own_alive():
@@ -1006,12 +1105,14 @@ class ThunderbirdProcess:
         for item in pending:
             try:
                 n = int(item["n"])
-                if n > LOCAL_FOLDERS and n not in numbers:   # Local Folders is no account's to forget
+                reused = item.get("reused") is True
+                if n > LOCAL_FOLDERS and (reused or n not in numbers):   # Local Folders is no account's to forget
                     self._scrub_prefs(n)
                 self._scrub_logins([h for h in item.get("logins", []) if isinstance(h, str) and h not in in_use
                                     and h.startswith(("imap://", "smtp://", "oauth://"))])   # a note names mail's only
-                if item.get("dir") not in folders:
+                if reused or item.get("dir") not in folders:
                     self._scrub_mail(str(item.get("dir")))
+                self._scrub_caches()
             except OSError as e:   # a file that could not be written now may be at the next try
                 log(f"clearing a removed account from the profile: {type(e).__name__}: {e}")
                 failed.append(item)
@@ -1020,6 +1121,17 @@ class ThunderbirdProcess:
         if failed != pending:
             registry["forgotten"] = failed
             self._save(registry)
+
+    def _scrub_caches(self) -> None:
+        """Thunderbird's own files that name an account's server or keep what it fetched, and that it makes again by
+        itself: the global index (made empty now that the indexer is off, but a profile from before may hold
+        mail text in it), the folder tree and the folder cache. They are not the account's alone, so a removed
+        account takes all of them, and what Thunderbird needs of them it learns again."""
+        for name in _CACHES:
+            try:
+                (self.profile / name).unlink()
+            except FileNotFoundError:
+                pass
 
     def _scrub_prefs(self, n: int) -> None:
         path = self.profile / "prefs.js"
@@ -1056,8 +1168,13 @@ class ThunderbirdProcess:
         """The account's copy of its mail: one folder of ImapMail, by a name made here, never through a link."""
         if _MAIL_DIR.fullmatch(name) is None:
             return
-        folder = self.profile / "ImapMail" / name
+        root = self.profile / "ImapMail"
+        folder = root / name
         if folder.is_symlink():
             folder.unlink()
         elif folder.is_dir():
             shutil.rmtree(folder)
+        try:
+            (root / f"{name}.msf").unlink()   # the server's own summary file, which sits beside its folder
+        except FileNotFoundError:
+            pass

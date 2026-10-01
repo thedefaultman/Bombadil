@@ -9,7 +9,8 @@ import Bombadil
 // this window is orange. It can be pressed only when the backend says the draft on screen is the one the service
 // has, and that the service has been told it was drawn; otherwise it is dimmed and one quiet line says why. The
 // press is made in `activate()`, from a click or a key on the button itself: that is the only line in the QML that
-// calls press().
+// calls press(). (Assistive technology that presses buttons by name is not given that one: a screen reader's user
+// reaches Send by Tab and presses it with Space or Return, which are keys on the button like any other.)
 ColumnLayout {
     id: bar
     objectName: "sendBar"
@@ -68,15 +69,39 @@ ColumnLayout {
         color: Theme.muted
     }
 
-    // What became of the last press, in agentd's own words (or the service's, for a draft that may have gone).
+    // Somebody else changed this draft while it was open (Bombadil, another window): what is shown is what Send
+    // would send now, and the person is asked to read it again.
     PlainText {
-        objectName: "pressLine"
-        visible: backend.pressLine !== ""
+        objectName: "changeNote"
+        visible: backend.changeNote !== ""
         Layout.fillWidth: true
-        text: backend.pressLine
+        text: backend.changeNote
         wrapMode: Text.Wrap
         font.pixelSize: Theme.smallSize
-        color: backend.unknownOutcome ? Theme.warnInk : Theme.badInk
+        color: Theme.warnInk
+    }
+
+    // What became of the last press, in agentd's own words (or the service's, for a draft that may have gone). A
+    // draft that may have gone points to where Sent is: the provider's own mail.
+    RowLayout {
+        Layout.fillWidth: true
+        spacing: 10
+        visible: backend.pressLine !== ""
+        PlainText {
+            objectName: "pressLine"
+            Layout.fillWidth: true
+            text: backend.pressLine
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.smallSize
+            color: backend.unknownOutcome ? Theme.warnInk : Theme.badInk
+        }
+        LinkButton {
+            objectName: "sentLink"
+            Layout.alignment: Qt.AlignTop
+            visible: backend.unknownOutcome && !!backend.draftWeb
+            text: backend.draftWeb && backend.draftWeb.name ? "Open " + backend.draftWeb.name : "Open on the web"
+            onClicked: backend.openWeb(backend.draftWeb.url)
+        }
     }
 
     Tick {
@@ -111,11 +136,10 @@ ColumnLayout {
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: backend.sendLabel
-            Accessible.onPressAction: send.activate()
 
             Timer {
                 id: arm
-                interval: 350
+                interval: backend.armDelay      // longer for a draft that somebody else just changed
                 onTriggered: send.armed = backend.canSend
             }
             Connections {
@@ -176,6 +200,7 @@ ColumnLayout {
             font.pixelSize: Theme.captionSize
             font.weight: Font.Medium
             color: Theme.accentInk
+            opacity: bar.live ? 1 : 0.5     // dim with the button: what is not pressable is not "yours" yet
         }
 
         Item { Layout.fillWidth: true }
@@ -220,7 +245,8 @@ ColumnLayout {
         objectName: "sendNote"
         visible: text !== ""
         Layout.fillWidth: true
-        text: bar.live ? "" : backend.sendNote
+        // (not the sentence the tick above it already says)
+        text: bar.live || backend.ticking ? "" : backend.sendNote
         wrapMode: Text.Wrap
         font.pixelSize: Theme.captionSize
         color: Theme.muted

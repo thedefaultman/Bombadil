@@ -3,16 +3,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { World, start, ask, result, settle } from "./fake.js";
-import { SEND_DEADLINE_MS } from "../../../share/mail/extension/sending.js";
+import { composed, SEND_DEADLINE_MS } from "../../../share/mail/extension/sending.js";
 
 const b64 = text => Buffer.from(text).toString("base64");
 
-async function lab({ messagesSend = true, extra = false } = {}) {
+async function lab({ messagesSend = true, extra = false, signature = "", workSignature = "" } = {}) {
   const world = new World({ messagesSend });
   const boxes = world.standard("account1", {
     identities: [
-      { id: "id1", email: "me@example.test", name: "Me Myself" },
-      { id: "id2", email: "work@example.test", name: "Me At Work" },
+      { id: "id1", email: "me@example.test", name: "Me Myself", signature },
+      { id: "id2", email: "work@example.test", name: "Me At Work", signature: workSignature },
     ],
   });
   if (extra) {
@@ -206,7 +206,11 @@ test("a reply goes through a window opened on the mail it answers, filled in, re
   assert.equal(sent.details.relatedMessageId, orig.id, "it is a reply to that mail, so it keeps the thread");
   assert.deepEqual(sent.details.to, ['"Dave" <dave@example.org>']);
   assert.equal(sent.details.subject, "Re: Project plan");
-  assert.equal(sent.details.plainTextBody, "Thanks.\n\n> The original words\n");
+  assert.equal(
+    sent.details.plainTextBody,
+    "Thanks.\n\n> The original words\n\nOn 9/29/26 1:00 PM, Dave wrote:\n> The original words\n",
+    "the person's words, then the mail it answers as Thunderbird quotes it"
+  );
   assert.equal(sent.details.isPlainText, true);
   assert.equal(sent.details.identityId, "id1");
   assert.deepEqual(sent.options, { mode: "sendNow" });
@@ -254,26 +258,72 @@ test("a new mail with no messages.send permission goes through a window as well,
   noWindowsLeft(world);
 });
 
-test("a window that Thunderbird composes in HTML by default is made plain text", async () => {
-  const { world, app } = await lab({ messagesSend: false });
-  world.quirks.htmlCompose = true;
-  await sendOk(app);
-  assert.equal(world.sent[0].details.isPlainText, true);
-  assert.equal(world.sent[0].details.plainTextBody, "Words\n\nMore words ✓\n");
+test("a sender that writes HTML is refused with a sentence, by either way, and nothing is sent: its words would go out changed", async () => {
+  for (const messagesSend of [true, false]) {
+    const { world, app } = await lab({ messagesSend });
+    world.quirks.htmlCompose = true;
+    for (const extra of [{}, { kind: "reply", reply_to: "orig@example.org", subject: "Re: Project plan" }]) {
+      const answer = await ask(app, "send", base(extra));
+      assert.equal(answer.ok, false);
+      assert.equal(answer.code, "engine_error");
+      assert.match(answer.error, /HTML.*Nothing was sent/);
+    }
+    assert.equal(world.sent.length, 0);
+    assert.equal(world.calls.filter(c => c[0] === "open").length, 0, "no window was opened to find out");
+    noWindowsLeft(world);
+  }
 });
 
-test("a signature that the identity adds after the words is allowed, and the words are still what was written", async () => {
-  const { world, app } = await lab({ messagesSend: false });
-  world.quirks.signature = "Me Myself, Example Corp";
-  await sendOk(app);
-  assert.equal(world.sent.length, 1);
-  assert.ok(world.sent[0].details.plainTextBody.startsWith("Words\n\nMore words ✓"));
+test("the quoted mail and the signature that Thunderbird composes are kept under the person's words, as the draft says", async () => {
+  const { world, app } = await lab({ signature: "Me Myself, Example Corp" });
+  await result(app, "send", base({ kind: "reply", reply_to: "orig@example.org", to: [{ name: "Dave", email: "dave@example.org" }], subject: "Re: Project plan", body: "Thanks.\n" }));
+  assert.equal(
+    world.sent[0].details.plainTextBody,
+    "Thanks.\n\nOn 9/29/26 1:00 PM, Dave wrote:\n> The original words\n\n-- \nMe Myself, Example Corp\n"
+  );
+  noWindowsLeft(world);
+});
+
+test("a forward carries the forwarded mail under the person's words", async () => {
+  const { world, app } = await lab();
+  await result(app, "send", base({ kind: "forward", reply_to: "orig@example.org", subject: "Fwd: Project plan", body: "FYI\n" }));
+  const body = world.sent[0].details.plainTextBody;
+  assert.ok(body.startsWith("FYI\n\n-------- Forwarded Message --------\nSubject: \tProject plan\n"), body);
+  assert.ok(body.includes("The original words"), "the forwarded mail's own words are in it");
+});
+
+test("a new mail from a sender with a signature goes through a window, which is where Thunderbird puts it", async () => {
+  const { world, app } = await lab({ signature: "Me Myself, Example Corp" });
+  const out = await sendOk(app, { body: "Words\n" });
+  assert.equal(out.saved, true);
+  assert.equal(world.sent[0].via, "compose", "messages.sendMessage composes nothing, so it would have left the signature out");
+  assert.equal(world.sent[0].details.plainTextBody, "Words\n\n-- \nMe Myself, Example Corp\n");
+  noWindowsLeft(world);
+});
+
+test("a sender with no signature still goes the quiet way, and one that is asked for is the one whose signature is used", async () => {
+  const { world, app } = await lab({ signature: "Me Myself, Example Corp", workSignature: "Me At Work" });
+  await sendOk(app, { identity: "id2", body: "Words\n" });
+  assert.equal(world.sent[0].via, "compose");
+  assert.equal(world.sent[0].details.identityId, "id2");
+  assert.equal(world.sent[0].details.plainTextBody, "Words\n\n-- \nMe At Work\n", "the signature of the sender that was asked for, not the first");
+  const none = await lab({ signature: "x" });
+  await sendOk(none.app, { identity: "id2" });
+  assert.equal(none.world.sent[0].via, "messages", "id2 has no signature: nothing to put in a window for");
+});
+
+test("what is left of a window after the words is only what Thunderbird composed: words given with no room are put first", async () => {
+  assert.equal(composed("Words", "\n\nOn a day, Dave wrote:\n> hi\n"), "Words\n\nOn a day, Dave wrote:\n> hi\n");
+  assert.equal(composed("Words\n\n\n", "\n-- \nSig\n"), "Words\n\n-- \nSig\n");
+  assert.equal(composed("Words", ""), "Words\n");
+  assert.equal(composed("Words", "  \n \n"), "Words\n");
+  assert.equal(composed("", ""), "\n");
+  assert.equal(composed("", "\n\nOn a day, Dave wrote:\n> hi\n"), "\n\nOn a day, Dave wrote:\n> hi\n", "no words: Thunderbird's own mail as it made it");
 });
 
 test("when Thunderbird does not take what it was given, nothing is sent and the window is closed", async () => {
-  for (const field of ["subject", "to", "cc", "bcc", "identityId", "plainTextBody", "isPlainText"]) {
-    const { world, app } = await lab({ messagesSend: false });
-    world.quirks.htmlCompose = true;   // so that a window that ignores isPlainText is one that stays HTML
+  for (const field of ["subject", "to", "cc", "bcc", "identityId", "plainTextBody"]) {
+    const { world, app } = await lab({ messagesSend: false, signature: "Me Myself", workSignature: "Me At Work" });
     world.ignore.add(field);
     const args = base({ cc: [{ name: "", email: "cc@example.net" }], bcc: [{ name: "", email: "b@example.net" }], identity: "id2", subject: "Different" });
     const answer = await ask(app, "send", args);
@@ -497,4 +547,127 @@ test("a failed send closes its window, however it failed", async () => {
   assert.equal(answer.ok, false);
   await settle();
   noWindowsLeft(world);
+});
+
+// -- a link that has gone, a Thunderbird that is stuck, and the time that is left --
+
+test("a send whose connection is gone is not begun: not queued behind another, and not after a window was made", async () => {
+  const { world, app } = await lab({ extra: true });
+  world.behavior.send = { kind: "slow", ms: 4000 };
+  const first = app.port();
+  first.receive({ id: 1, op: "send", ...base({ subject: "first" }) });
+  first.receive({ id: 2, op: "send", ...base({ subject: "queued behind it" }) });
+  await settle();
+  first.die();
+  await world.clock.advance(5000);
+  assert.deepEqual(world.sent.map(s => s.details.subject), ["first"], "the one that was already in Thunderbird's hands goes on");
+  assert.equal(first.answerTo(2).length, 0);
+
+  const { world: other, app: second } = await lab({ messagesSend: false });
+  const real = other.messenger.compose.getComposeDetails;
+  other.messenger.compose.getComposeDetails = async (...args) => {
+    second.port().die();   // the host goes while the window is being filled in
+    return real(...args);
+  };
+  const port = second.port();
+  port.receive({ id: 3, op: "send", ...base() });
+  await other.clock.advance(1000);
+  assert.equal(other.sent.length, 0, "a mail nobody can be told about is not sent");
+  noWindowsLeft(other);
+});
+
+test("a send that reaches the add-on on a connection that has already gone sends nothing", async () => {
+  const { world, app } = await lab();
+  const dead = { ids: new Set(), live: false, post: () => false };
+  await app.engine.handle({ id: 5, op: "send", ...base() }, dead);
+  assert.equal(world.sent.length, 0);
+  assert.equal(dead.ids.size, 0, "and it is not left among the requests being answered");
+});
+
+test("a send given up on makes the account an error until Thunderbird answers it, and its end ends that", async () => {
+  const { world, app } = await lab();
+  world.behavior.send = { kind: "slow", ms: 70_000 };
+  const port = app.port();
+  port.receive({ id: 20, op: "send", ...base() });
+  await world.clock.advance(56_000);
+  assert.equal(port.answerTo(20)[0].code, "unknown_outcome");
+  await world.clock.advance(1500);
+  assert.deepEqual(port.events("sync").map(e => [e.account, e.state]), [["account1", "error"]]);
+  assert.match(port.events("sync")[0].detail, /restart/i);
+  assert.equal((await result(app, "accounts"))[0].state, "error");
+  const again = await ask(app, "send", base());
+  assert.match(again.error, /stuck on an earlier mail/);
+  assert.match(again.error, /dialog nobody can see/);
+  assert.match(again.error, /restarted/);
+  assert.match(again.error, /Nothing was sent/);
+  await world.clock.advance(20_000);
+  assert.deepEqual(port.events("sync").map(e => e.state), ["error", "idle"], "Thunderbird answered at last: the account is well again");
+  assert.equal((await result(app, "accounts"))[0].state, "ok");
+});
+
+test("a send that ends within its time does not make the account an error", async () => {
+  const { world, app } = await lab();
+  world.behavior.send = { kind: "slow", ms: 20_000 };
+  const port = app.port();
+  port.receive({ id: 21, op: "send", ...base() });
+  await world.clock.advance(25_000);
+  assert.equal(port.answerTo(21)[0].ok, true);
+  assert.equal(port.events("sync").length, 0);
+  assert.equal(app.engine.sending.isLost("account1"), false);
+});
+
+test("a look at the Sent folder that never answers does not keep a send from being answered, nor the account from the next one", async () => {
+  const { world, app } = await lab();
+  world.behavior.send = { kind: "ok", quiet: true, copy: false };
+  const query = world.messenger.messages.query;
+  world.messenger.messages.query = (...args) => (args[0]?.headerMessageId?.startsWith("sent-") ? new Promise(() => {}) : query(...args));
+  const port = app.port();
+  port.receive({ id: 30, op: "send", ...base() });
+  await world.clock.advance(3500);
+  assert.equal(port.answerTo(30).length, 1, "answered when the look is given up, long before the deadline");
+  assert.equal(port.answerTo(30)[0].ok, true);
+  assert.equal(port.answerTo(30)[0].result.saved, false, "and says it does not know the copy is saved");
+  world.messenger.messages.query = query;
+  world.behavior.send = { kind: "ok" };
+  assert.equal((await ask(app, "send", base({ subject: "next" }))).ok, true, "the lane is free for the next");
+});
+
+test("a send queued behind another is held to the 55 seconds from when it came, so one that would begin too late is refused", async () => {
+  const { world, app } = await lab();
+  world.behavior.send = { kind: "slow", ms: 53_000 };
+  const port = app.port();
+  port.receive({ id: 40, op: "send", ...base({ subject: "long" }) });
+  port.receive({ id: 41, op: "send", ...base({ subject: "late" }) });
+  await world.clock.advance(60_000);
+  assert.equal(port.answerTo(40)[0].ok, true);
+  const late = port.answerTo(41)[0];
+  assert.equal(late.ok, false);
+  assert.equal(late.code, "engine_error", "never begun, so a plain failure and not unknown_outcome");
+  assert.match(late.error, /Nothing was sent/);
+  assert.deepEqual(world.sent.map(s => s.details.subject), ["long"]);
+});
+
+test("the mail that is replied to is the one that was named, even when Thunderbird has given that number to another", async () => {
+  const { world, app, inbox, orig } = await lab({ messagesSend: false });
+  await result(app, "get", { account: "account1", key: "orig@example.org" });   // remembers where it is
+  world.messages.get(orig.id).header.headerMessageId = "someone-else@example.org";
+  world.message(inbox, { headerMessageId: "orig@example.org", subject: "The real one", author: "Eve <eve@example.org>" });
+  const opened = [];
+  const open = world.openWindow.bind(world);
+  world.openWindow = (kind, id, ...rest) => (opened.push(id), open(kind, id, ...rest));
+  await result(app, "send", base({ kind: "reply", reply_to: "orig@example.org" }));
+  assert.equal(opened.length, 1);
+  assert.notEqual(opened[0], orig.id, "the window was opened on the mail with that Message-ID");
+  assert.equal(world.header(opened[0]).subject, "The real one");
+});
+
+test("an address whose domain is one word is an address: Thunderbird judges the rest, as it does for the person", async () => {
+  const { world, app } = await lab();
+  await sendOk(app, { to: [{ name: "", email: "root@localhost" }, { name: "Ops", email: "ops@intranet" }] });
+  assert.deepEqual(world.sent[0].details.to, ["root@localhost", '"Ops" <ops@intranet>']);
+  for (const email of ["nobody", "a@@b", "@b", "a@", "a b@c", "a@b\nBcc: x@example.org"]) {
+    const answer = await ask(app, "send", base({ to: [{ name: "", email }] }));
+    assert.equal(answer.code, "bad_request", JSON.stringify(email));
+  }
+  assert.equal(world.sent.length, 1);
 });

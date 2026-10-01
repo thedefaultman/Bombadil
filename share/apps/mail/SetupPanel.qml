@@ -4,11 +4,19 @@ import Bombadil
 
 // Before there is an account to read: one field for the person's email address. When the service has found where to
 // sign in it says so in its own words, and Thunderbird's window (which does the signing in) is brought up on request
-// and put away again with Done.
+// and put away again with Done. A sign-in that is wrong or given up on is never a dead end: "Use a different address"
+// takes that account away, and an account being added to others has its field beside the one still signing in.
 Item {
     id: root
 
     property bool inPlace: false        // opened from "Add an account", so there is a way back
+    readonly property bool signing: !!backend.signingIn
+    onSigningChanged: {
+        if (!signing && visible) {      // given up on: a different address is wanted, so the old one is not kept
+            address.text = ""
+            address.forceActiveFocus()
+        }
+    }
 
     signal closed()
 
@@ -55,7 +63,8 @@ Item {
 
         // an account is signing in
         ColumnLayout {
-            visible: !!backend.signingIn
+            objectName: "signinBlock"
+            visible: root.signing
             Layout.fillWidth: true
             spacing: 10
             PlainText {
@@ -89,9 +98,15 @@ Item {
                     flat: true
                     onClicked: backend.hideEngine()
                 }
+                QuietButton {
+                    objectName: "giveUp"
+                    text: "Use a different address"
+                    flat: true
+                    onClicked: backend.removeAccount(backend.signingIn.id)
+                }
             }
             PlainText {
-                visible: backend.addError !== ""
+                visible: backend.addError !== "" && !root.inPlace      // (in place, the field below says it)
                 Layout.fillWidth: true
                 text: backend.addError
                 wrapMode: Text.Wrap
@@ -100,19 +115,21 @@ Item {
             }
         }
 
-        // no account yet
+        // the address of an account to add
         ColumnLayout {
-            visible: !backend.signingIn
+            objectName: "addressBlock"
+            visible: !root.signing || root.inPlace
             Layout.fillWidth: true
             spacing: 10
             PlainText {
                 Layout.fillWidth: true
-                text: "Mail for all your accounts, in one list"
+                text: root.inPlace ? "Add an account" : "Mail for all your accounts, in one list"
                 wrapMode: Text.Wrap
                 font.pixelSize: Theme.headingSize
                 font.weight: Font.DemiBold
             }
             PlainText {
+                visible: !root.inPlace
                 Layout.fillWidth: true
                 text: "Your mail stays with your provider. Nothing is sent until you press Send."
                 wrapMode: Text.Wrap
@@ -158,5 +175,5 @@ Item {
         if (address.text.trim() !== "" && !backend.adding)
             backend.addAccount(address.text.trim())
     }
-    onVisibleChanged: if (visible && !backend.signingIn) address.forceActiveFocus()
+    onVisibleChanged: if (visible && !root.signing) address.forceActiveFocus()
 }

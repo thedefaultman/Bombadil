@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { World, start, ask, result } from "./fake.js";
+import { World, start, ask, readOn, result } from "./fake.js";
 
 const sha1 = text => createHash("sha1").update(text).digest("hex");
 
@@ -139,8 +139,8 @@ test("a page that is full says there is more only when there is, and a list is n
   const first = await result(app, "list", { account: "account1", folder: "inbox", limit: 5 });
   assert.equal(first.messages.length, 5);
   assert.equal(first.more, true);
-  const continues = world.calls.filter(c => c[0] === "continueList").length;
-  assert.equal(continues, 0, "five messages came from the first page of ten");
+  assert.equal(readOn(world).length, 0, "five messages came from the first page of ten");
+  assert.equal(world.lists.size, 0, "and what Thunderbird had prepared after that was read, so it forgot the list");
   const exact = await result(app, "list", { account: "account1", folder: "inbox", limit: 25 });
   assert.equal(exact.messages.length, 25);
   assert.equal(exact.more, false);
@@ -154,7 +154,7 @@ test("a folder with a hundred thousand messages costs a page, not the folder", a
   }
   const out = await result(app, "list", { account: "account1", folder: "inbox", limit: 20 });
   assert.equal(out.messages.length, 20);
-  assert.equal(world.calls.filter(c => c[0] === "continueList").length, 0);
+  assert.equal(readOn(world).length, 0);
   assert.equal(world.lists.size, 0);
 });
 
@@ -164,6 +164,124 @@ test("unread asks for the unread ones only", async () => {
   world.message(inbox, { headerMessageId: "b@example.org", read: false });
   const out = await result(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 10 });
   assert.deepEqual(keys(out), ["b@example.org"]);
+});
+
+test("the unread ones are asked of Thunderbird, which filters them, and the folder is not paged through", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 100 });
+  for (let i = 0; i < 3000; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, read: i % 100 !== 0, date: new Date(Date.UTC(2026, 0, 1) + i * 60_000) });
+  }
+  const out = await result(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 50 });
+  assert.equal(out.messages.length, 30);
+  assert.equal(out.more, false);
+  assert.ok(out.messages.every(m => m.unread));
+  assert.equal(out.messages[0].key, "m2900@example.org");
+  assert.equal(world.calls.filter(c => c[0] === "list").length, 0, "no folder was listed to be skipped through");
+  assert.equal(world.calls.filter(c => c[0] === "query").length, 1, "few unread: one query, not one for each window");
+  assert.equal(world.lists.size, 0);
+});
+
+test("a folder with many unread messages is asked for by window, newest first, and says there is more", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 100 });
+  const day = 86_400_000;
+  for (let i = 0; i < 1500; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, read: false, date: new Date(world.clock.now() - 3600_000 - i * 3_600_000) });
+  }
+  const out = await result(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 20 });
+  assert.equal(out.messages.length, 20);
+  assert.equal(out.more, true);
+  assert.deepEqual(keys(out).slice(0, 3), ["m0@example.org", "m1@example.org", "m2@example.org"]);
+  const asked = world.calls.filter(c => c[0] === "query").map(c => c[1]);
+  assert.ok(asked.length <= 2, `${asked.length} windows were asked for twenty messages of a day each`);
+  assert.ok(asked.every(q => q.unread === true && q.toDate !== undefined || q.fromDate !== undefined));
+  assert.ok(asked[0].fromDate.getTime() >= world.clock.now() - 2 * day);
+  assert.equal(world.lists.size, 0);
+});
+
+test("an older page is found from before, in windows counted back from it, and a window is read whole", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 100 });
+  const day = 86_400_000;
+  const origin = Date.UTC(2020, 0, 1);
+  for (let i = 0; i < 400; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, date: new Date(origin + i * 6 * 3600_000) });
+  }
+  const before = (origin + 300 * 6 * 3600_000) / 1000;
+  const out = await result(app, "list", { account: "account1", folder: "inbox", limit: 10, before });
+  assert.deepEqual(keys(out), Array.from({ length: 10 }, (_, i) => `m${300 - i}@example.org`));
+  assert.equal(out.messages[0].ts, before, "before is inclusive");
+  assert.equal(out.more, true);
+  const asked = world.calls.filter(c => c[0] === "query").map(c => c[1]);
+  assert.equal(asked[0].toDate.getTime(), before * 1000, "the first window ends at before, not at now");
+  assert.equal(asked[0].toDate.getTime() - asked[0].fromDate.getTime(), day);
+  assert.equal(world.calls.filter(c => c[0] === "list").length, 0);
+  assert.equal(world.lists.size, 0);
+  const last = await result(app, "list", { account: "account1", folder: "inbox", limit: 50, before: origin / 1000 });
+  assert.deepEqual(keys(last), ["m0@example.org"]);
+  assert.equal(last.more, false);
+});
+
+test("pages by before and the first page agree: every message once, newest first, however it is paged", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 100 });
+  const origin = Date.UTC(2023, 5, 1);
+  for (let i = 0; i < 700; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, read: i % 3 !== 0, date: new Date(origin + i * 4 * 3600_000) });
+  }
+  for (const unread of [false, true]) {
+    const seen = [];
+    let before;
+    for (let round = 0; round < 50; round++) {
+      const out = await result(app, "list", { account: "account1", folder: "inbox", limit: 60, unread, ...(before === undefined ? {} : { before }) });
+      for (const m of out.messages) {
+        if (!seen.includes(m.key)) {
+          seen.push(m.key);
+        }
+      }
+      if (!out.more) {
+        break;
+      }
+      before = out.messages.at(-1).ts;
+    }
+    const want = Array.from({ length: 700 }, (_, i) => 699 - i).filter(i => !unread || i % 3 === 0).map(i => `m${i}@example.org`);
+    assert.deepEqual(seen, want, unread ? "the unread ones" : "all");
+  }
+  assert.equal(world.lists.size, 0);
+});
+
+test("a page that cannot be read in time is an error, and one that is part read is the part that is certain", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 50 });
+  const day = 86_400_000;
+  for (let i = 0; i < 300; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, read: false, date: new Date(world.clock.now() - i * 2 * 3600_000) });
+  }
+  world.quirks.pageCost = 3000;   // every page Thunderbird makes takes three seconds
+  const hurried = await ask(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 200, before: (world.clock.now() - 100 * day) / 1000 });
+  assert.equal(hurried.ok, true, "nothing of the folder is that old: every window is empty and quick");
+  world.quirks.pageCost = 0;
+  for (let i = 0; i < 1000; i++) {
+    world.message(inbox, { headerMessageId: `u${i}@example.org`, read: false, date: new Date(world.clock.now() - 20 * day - i * 600_000) });
+  }
+  world.quirks.pageCost = 2000;
+  const part = await ask(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 500 });
+  assert.equal(part.ok, true);
+  assert.equal(part.result.more, true, "time ran out with windows still to read, which is more");
+  assert.ok(part.result.messages.length > 0 && part.result.messages.length < 500);
+  const times = part.result.messages.map(m => m.ts);
+  assert.deepEqual(times, [...times].sort((a, b) => b - a));
+  assert.ok(part.result.messages.every(m => m.key.startsWith("m")), "only the windows that were read to the end are in it");
+  assert.equal(world.lists.size, 0);
+});
+
+test("a first window that cannot be read in time is too slow, not a page that is missing mail", async () => {
+  const { world, app, inbox } = await mailbox({ pageSize: 20 });
+  for (let i = 0; i < 400; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, read: false, date: new Date(world.clock.now() - 1000 - i * 1000) });
+  }
+  world.quirks.pageCost = 3000;
+  const out = await ask(app, "list", { account: "account1", folder: "inbox", unread: true, limit: 500 });
+  assert.equal(out.ok, false);
+  assert.equal(out.code, "engine_error");
+  assert.match(out.error, /too long/);
+  assert.equal(world.lists.size, 0);
 });
 
 test("a bad list request is refused, an account Thunderbird does not have is not found", async () => {
@@ -403,4 +521,52 @@ test("accounts are the mail accounts, with their senders, folders and unread cou
   assert.equal(rows[0].type, "imap");
   assert.equal(rows[0].unread, 2);
   assert.equal(rows[0].name, "Lab");
+});
+
+test("get asks Thunderbird for the message as it is, never decrypted: that could ask for a passphrase nobody can type", async () => {
+  const { world, app, inbox } = await mailbox();
+  world.message(inbox, { headerMessageId: "secret@example.org", plain: "words" });
+  await result(app, "get", { account: "account1", key: "secret@example.org" });
+  const reads = world.calls.filter(c => c[0] === "getFull");
+  assert.equal(reads.length, 1);
+  assert.deepEqual(reads[0][2], { decrypt: false });
+});
+
+test("get: the size of an attached mail is the whole file's, since Thunderbird lists the part by its headers alone", async () => {
+  const { world, app, inbox } = await mailbox();
+  world.message(inbox, {
+    headerMessageId: "wrapped@example.org",
+    plain: "Forwarded as an attachment.",
+    attachments: [
+      { name: "original.eml", contentType: "message/rfc822", content: new Uint8Array(18), partName: "1.2" },
+      { name: "plan.pdf", contentType: "application/pdf", content: new Uint8Array(325), partName: "1.3" },
+    ],
+  });
+  const asked = [];
+  world.messenger.messages.getAttachmentFile = async (id, part) => (asked.push(part), new File([new Uint8Array(4321)], "original.eml"));
+  const got = await result(app, "get", { account: "account1", key: "wrapped@example.org" });
+  assert.deepEqual(got.attachments.map(a => [a.part, a.size]), [["1.2", 4321], ["1.3", 325]]);
+  assert.deepEqual(asked, ["1.2"], "only attached mails are fetched to be measured");
+});
+
+test("get: an attached mail that Thunderbird will not hand over in two seconds is listed as Thunderbird gave it", async () => {
+  const { world, app, inbox } = await mailbox();
+  world.message(inbox, {
+    headerMessageId: "slow@example.org",
+    plain: "Words.",
+    attachments: Array.from({ length: 6 }, (_, i) => ({
+      name: `m${i}.eml`,
+      contentType: "message/rfc822",
+      content: new Uint8Array(18),
+      partName: `1.${i + 2}`,
+    })),
+  });
+  const asked = [];
+  world.messenger.messages.getAttachmentFile = (id, part) => (asked.push(part), new Promise(() => {}));
+  const reply = ask(app, "get", { account: "account1", key: "slow@example.org" });
+  await world.clock.advance(2100);
+  const answer = await reply;
+  assert.equal(answer.ok, true);
+  assert.deepEqual(answer.result.attachments.map(a => a.size), [18, 18, 18, 18, 18, 18]);
+  assert.equal(asked.length, 4, "no more than four are asked for");
 });

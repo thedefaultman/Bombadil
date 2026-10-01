@@ -32,6 +32,10 @@ const READ_BUDGET_MS = 8000;          // the service gives up on a read at 10 s
 const SCAN_MAX = 20_000;
 const SCAN_FOLDERS = 40;              // an account with hundreds of labels is not searched in all of them at once
 const SCAN_BUDGET_MS = 6000;
+// A header can be made as long as a mail server takes (Postfix: 100 KB), and a page has up to two hundred of them
+// in one frame that the service reads whole, at most 64 MiB. It keeps fifty addresses and a short subject.
+const ADDRESSES_MAX = 50;
+const SUBJECT_MAX = 1000;
 const LOCAL_ONLY = new Set(["none", "local", "rss", "nntp"]);   // accounts that are not somewhere mail arrives from
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
@@ -270,9 +274,9 @@ export class Mailbox {
       account: header.folder?.accountId ?? "",
       folder: kind,
       from: parseMailbox(header.author),
-      to: parseMailboxes(header.recipients),
-      cc: parseMailboxes(header.ccList),
-      subject: String(header.subject ?? ""),
+      to: parseMailboxes(header.recipients, ADDRESSES_MAX),
+      cc: parseMailboxes(header.ccList, ADDRESSES_MAX),
+      subject: String(header.subject ?? "").slice(0, SUBJECT_MAX),
       ts: timeOf(header),
       unread: header.read === false,
       flagged: header.flagged === true,

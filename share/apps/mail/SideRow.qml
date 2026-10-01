@@ -125,5 +125,15 @@ FocusScope {
             text: "Open"
             onClicked: root.webRequested(root.info.web.url)
         }
+        // What the note asks for (finishing a sign-in, a password for an app) is done in Thunderbird's own window.
+        LinkButton {
+            objectName: "sideEngine"
+            visible: !!root.info.engine
+            Layout.leftMargin: 22
+            Layout.topMargin: 2
+            text: backend.staged ? "Done" : "Show Thunderbird's window"
+            icon: ""
+            onClicked: backend.staged ? backend.hideEngine() : backend.showEngine()
+        }
     }
 }

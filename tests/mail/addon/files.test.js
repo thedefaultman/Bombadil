@@ -258,3 +258,66 @@ test("names and types of files that came from outside are made safe", () => {
   assert.equal(contentType("text/plain\r\nX: y"), "application/octet-stream");
   assert.equal(contentType(undefined), "application/octet-stream");
 });
+
+// -- the slow part: getting the file out of Thunderbird --
+
+test("an attachment that Thunderbird takes thirty seconds to fetch from the mail server is still answered", async () => {
+  const { world, app } = await withAttachment(bytesOf(5000));
+  const real = world.messenger.messages.getAttachmentFile;
+  world.messenger.messages.getAttachmentFile = async (...args) => {
+    await new Promise(resolve => world.clock.setTimeout(resolve, 30_000));
+    return real(...args);
+  };
+  const port = app.port();
+  port.receive({ id: 70, op: "attachment", account: "account1", key: "att@example.org", part: "1.2" });
+  await world.clock.advance(29_000);
+  assert.equal(port.answerTo(70).length, 0, "the add-on is not the one that gives up at ten seconds");
+  await world.clock.advance(2000);
+  assert.equal(port.answerTo(70)[0].ok, true);
+  await drain(world);
+  assert.equal(blobsOf(app, port.answerTo(70)[0].result.xfer).length, 1);
+});
+
+test("an attachment that the mail server does not give in time is answered in the add-on's own words, before the service gives up", async () => {
+  const { world, app } = await withAttachment(bytesOf(5000));
+  world.messenger.messages.getAttachmentFile = () => new Promise(() => {});
+  const port = app.port();
+  port.receive({ id: 71, op: "attachment", account: "account1", key: "att@example.org", part: "1.2" });
+  await world.clock.advance(97_000);
+  assert.equal(port.answerTo(71).length, 0);
+  await world.clock.advance(3000);
+  const [answer] = port.answerTo(71);
+  assert.equal(answer.ok, false);
+  assert.equal(answer.code, "engine_error");
+  assert.match(answer.error, /from the mail server in time/);
+  assert.equal(port.answerTo(71).length, 1);
+  assert.equal(app.port().events("blob").length, 0);
+});
+
+test("a file that is listed as over 100 MiB is too_big without being fetched at all", async () => {
+  const { world, app } = await withAttachment(bytesOf(10));
+  let fetched = 0;
+  world.messenger.messages.listAttachments = async () => [{ partName: "1.2", name: "big.bin", contentType: "x/y", size: 100 * 1024 * 1024 + 1 }];
+  world.messenger.messages.getAttachmentFile = async () => (fetched++, new File([], "big.bin"));
+  const answer = await ask(app, "attachment", { account: "account1", key: "att@example.org", part: "1.2" });
+  assert.equal(answer.code, "too_big");
+  assert.equal(fetched, 0, "a mail server is not asked for what cannot be sent");
+});
+
+test("the stash holds 100 MiB in all, whatever the files, and has room again when a file is let go", () => {
+  const stash = new Stash({ clock: new FakeClock() });
+  const chunk = new Uint8Array(CHUNK_MAX);
+  const fill = (xfer, mib) => {
+    const pieces = Math.ceil((mib * 1024 * 1024) / CHUNK_MAX);
+    for (let seq = 0; seq < pieces; seq++) {
+      stash.put({ xfer, seq, data: b64(chunk), last: seq === pieces - 1 });
+    }
+  };
+  fill("one", 40);
+  fill("two", 40);
+  assert.throws(() => fill("three", 40), e => e.code === "too_big" && /too much of other files/.test(e.message));
+  assert.equal(stash.transfers.has("three"), false, "the one that did not fit is not left half taken");
+  stash.drop("one");
+  fill("four", 40);
+  assert.ok(stash.held <= 100 * 1024 * 1024);
+});

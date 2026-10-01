@@ -2,14 +2,15 @@
 
 // What the window says when a view has nothing in it, and the icon for a row of the left column.
 
-function emptyLine(view, searching) {
+function emptyLine(view, searching, waiting) {
     if (searching)
         return "Nothing found."
     if (view === "needs_reply")
         return "Nothing needs a reply."
     if (view === "drafts")
         return "No drafts."
-    return "Your inbox is empty."
+    // an inbox that cannot be read yet is not an empty one (the note on its account says why)
+    return waiting ? "Nothing to show yet." : "Your inbox is empty."
 }
 
 function viewIcon(row) {

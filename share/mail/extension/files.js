@@ -8,17 +8,18 @@
  * service writes it to disk as it arrives and nothing holds a whole file but Thunderbird's own.
  *
  * The stash is bounded in every direction: a file is at most 100 MiB, a transfer's pieces must come in
- * order and in the size the service sends, at most 64 transfers wait at a time and 256 MiB in all, and one
- * that is not taken within ten minutes of its last piece is forgotten. Only a send takes pieces out, and it
+ * order and in the size the service sends, at most 64 transfers wait at a time and 100 MiB in all (a send
+ * makes its files from the pieces, so twice that is in memory for a moment), and one that is not taken within
+ * ten minutes of its last piece is forgotten. Only a send takes pieces out, and it
  * forgets what it was told about when it is over, however it ended.
  */
 
-import { badRequest, engineError, notFound, tooBig } from "./errors.js";
-import { pause } from "./clock.js";
+import { badRequest, engineError, EngineError, notFound, tooBig } from "./errors.js";
+import { pause, withDeadline } from "./clock.js";
 
 export const CHUNK_MAX = 384 * 1024;
 export const FILE_MAX = 100 * 1024 * 1024;
-const STASH_MAX = 256 * 1024 * 1024;
+const STASH_MAX = 100 * 1024 * 1024;
 const TRANSFERS_MAX = 64;
 const KEEP_MS = 10 * 60 * 1000;
 const SWEEP_MS = 60 * 1000;
@@ -158,6 +159,10 @@ export class Stash {
   }
 }
 
+/** The transfers a send's `attachments` name (whatever it was given, which may not be a list). */
+export const transfersOf = attachments =>
+  (Array.isArray(attachments) ? attachments : []).map(item => item?.xfer).filter(xfer => typeof xfer === "string");
+
 /** A name for a file that is safe to put in a header and on disk: no path, no control characters. */
 export function fileName(name) {
   const clean = String(name ?? "")
@@ -180,6 +185,7 @@ export function contentType(type) {
 // -- going out --
 
 const STREAMS_MAX = 4;
+const FILE_WAIT_MS = 100_000;
 
 /** Files being sent out, one after the other: the pieces of two files never take turns on the one link. */
 export class Outgoing {
@@ -206,8 +212,13 @@ export class Outgoing {
 /**
  * `attachment`: the answer is what the file is and the name of its transfer; the pieces follow as `blob`
  * events, in order, once the answer is on its way (`ctx.after`). A file over the limit is refused before the
- * first piece. A piece that cannot be read ends the transfer, and the service, which waits for the next one
- * for thirty seconds, gives up on it and says so.
+ * first piece, and before Thunderbird is asked for it when the mail says how big it is. A piece that cannot be
+ * read ends the transfer, and the service, which waits for the next one for thirty seconds, gives up on it
+ * and says so.
+ *
+ * Getting the file out of Thunderbird is the slow part: it has to have the mail, and one that has not been
+ * downloaded yet comes from the mail server. The service waits two minutes for it, so this has a hundred
+ * seconds (engine.js), and says in its own sentence when that was not enough.
  */
 export async function attachment({ messenger, mailbox, clock, outgoing, randomId }, args, ctx) {
   const { account, key, part } = args;
@@ -220,11 +231,17 @@ export async function attachment({ messenger, mailbox, clock, outgoing, randomId
   if (!found) {
     throw notFound("That attachment is not in the message.");
   }
+  if (found.size > FILE_MAX) {
+    throw tooBig("That file is too big to save here.");
+  }
   let file;
   try {
-    file = await messenger.messages.getAttachmentFile(header.id, part);
-  } catch {
-    throw engineError("Thunderbird could not read that attachment.");
+    const patience = Math.max(1000, (typeof ctx.left === "function" ? ctx.left() : FILE_WAIT_MS) - 1500);
+    file = await withDeadline(clock, messenger.messages.getAttachmentFile(header.id, part), patience, () =>
+      engineError("Thunderbird could not get that attachment from the mail server in time.")
+    );
+  } catch (e) {
+    throw e instanceof EngineError ? e : engineError("Thunderbird could not read that attachment.");
   }
   if (file.size > FILE_MAX) {
     throw tooBig("That file is too big to save here.");

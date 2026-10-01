@@ -211,10 +211,11 @@ test("when the folders and the first mail arrive, it is told as sync idle, and t
   assert.equal((await result(app, "accounts"))[0].state, "ok");
 });
 
-test("a mailbox that really is empty is syncing for two minutes and ok after", async () => {
+test("a mailbox that really is empty, whose server has given its folders, is syncing for two minutes and ok after", async () => {
   const world = new World();
   const account = world.account("account1");
   world.folder(account, "INBOX", { specialUse: ["inbox"] });
+  world.folder(account, "Sent", { specialUse: ["sent"] });
   const app = await start({ world });
   assert.equal((await result(app, "accounts"))[0].state, "syncing");
   await world.clock.advance(119_000);
@@ -222,6 +223,43 @@ test("a mailbox that really is empty is syncing for two minutes and ok after", a
   await world.clock.advance(20_000);
   assert.equal((await result(app, "accounts"))[0].state, "ok");
   assert.deepEqual(app.port().events("sync").map(e => e.state), ["idle"], "the recheck timer told it");
+});
+
+test("an account that has an Inbox and nothing else has not been heard from, and is not ok however long it is empty", async () => {
+  // Thunderbird makes the Inbox itself (after about twenty seconds); the server's other folders, and any mail,
+  // are what show that the sign-in worked. Measured on a server that was not there at all.
+  const world = new World();
+  const account = world.account("account1");
+  const inbox = world.folder(account, "INBOX", { specialUse: ["inbox"] });
+  const app = await start({ world });
+  await world.clock.advance(3 * 60_000);
+  let row = (await result(app, "accounts"))[0];
+  assert.equal(row.state, "syncing");
+  assert.match(row.detail, /Nothing has come from this account yet/);
+  await world.clock.advance(3 * 60_000);
+  row = (await result(app, "accounts"))[0];
+  assert.equal(row.state, "error");
+  assert.match(row.detail, /may not have worked/);
+  await world.clock.advance(10 * 60_000);
+  assert.equal((await result(app, "accounts"))[0].state, "error", "ten minutes of nothing is not ok");
+  assert.deepEqual(app.port().events("sync").map(e => e.state), ["error"], "syncing was where it began, and nothing was told of it");
+  // and then the server answers: a folder, or a message
+  world.folder(account, "Trash", { specialUse: ["trash"] });
+  world.events.folders.onCreated.fire({});
+  await world.clock.advance(3000);
+  assert.equal((await result(app, "accounts"))[0].state, "ok");
+  assert.equal(app.port().events("sync").at(-1).state, "idle");
+  void inbox;
+});
+
+test("an account that has had mail is ok, whatever its other folders", async () => {
+  const world = new World();
+  const account = world.account("account1");
+  const inbox = world.folder(account, "INBOX", { specialUse: ["inbox"] });
+  world.message(inbox, { headerMessageId: "one@example.org" });
+  const app = await start({ world });
+  await world.clock.advance(3 * 60_000);
+  assert.equal((await result(app, "accounts"))[0].state, "ok");
 });
 
 test("an account with no inbox after five minutes is an error, with a detail that does not claim to know why", async () => {
@@ -261,4 +299,63 @@ test("an account that appears later is told if it is not ok, and one that goes i
   await world.clock.advance(3000);
   assert.equal(app.engine.view.told.has("account2"), false);
   assert.equal(app.engine.mailbox.tables.has("account2"), false);
+});
+
+// -- identities, and the lists Thunderbird makes for what it tells --
+
+test("a sender made, changed or removed is accounts_changed, once, and the accounts are read again", async () => {
+  const { world, app } = await lab();
+  const before = told(app, "accounts_changed").length;
+  assert.deepEqual((await result(app, "accounts"))[0].emails, ["account1@example.test"]);
+  world.accounts.get("account1").identities.push({ id: "id-new", email: "new@example.test", name: "New" });
+  for (const name of ["onCreated", "onUpdated", "onDeleted"]) {
+    world.events.identities[name].fire("id-new", {});
+  }
+  await world.clock.advance(1100);
+  assert.equal(told(app, "accounts_changed").length, before + 1);
+  assert.deepEqual((await result(app, "accounts"))[0].emails, ["account1@example.test", "new@example.test"]);
+});
+
+test("the listeners for identities are removed with the others, and a Thunderbird without the event is served", async () => {
+  const { world, app } = await lab();
+  assert.equal(world.events.identities.onCreated.listeners.length, 1);
+  app.engine.stop();
+  assert.equal(world.events.identities.onCreated.listeners.length, 0);
+  const bare = new World();
+  bare.standard("account1");
+  delete bare.messenger.identities;
+  const other = await start({ world: bare });
+  assert.equal((await ask(other, "accounts")).ok, true);
+});
+
+test("the lists that come with moved, copied and deleted messages are let go, and the counts are told again", async () => {
+  const { world, app, inbox, archive } = await lab();
+  for (let i = 0; i < 300; i++) {
+    world.message(inbox, { headerMessageId: `bulk${i}@example.org`, date: new Date(world.clock.now() - i * 1000) });
+    world.message(archive, { headerMessageId: `kept${i}@example.org`, date: new Date(world.clock.now() - i * 1000) });
+  }
+  const before = told(app, "counts_changed").length;
+  const first = await world.messenger.messages.list(inbox.id);
+  const second = await world.messenger.messages.list(archive.id);
+  const third = await world.messenger.messages.list(inbox.id);
+  assert.ok(first.id && second.id && third.id, "all three have more pages");
+  assert.equal(world.lists.size, 3);
+  world.events.messages.onMoved.fire(first, second);
+  world.events.messages.onDeleted.fire(third);
+  await settle();
+  await settle();
+  assert.equal(world.lists.size, 0, "Thunderbird forgets them: nothing is held for a page nobody reads");
+  await world.clock.advance(600);
+  assert.equal(told(app, "counts_changed").length, before + 1);
+});
+
+test("a copy or a move whose lists are not lists at all is only a change of the counts", async () => {
+  const { world, app } = await lab();
+  const before = told(app, "counts_changed").length;
+  world.events.messages.onCopied.fire(null, undefined);
+  world.events.messages.onMoved.fire({ messages: [] }, { id: null, messages: [] });
+  world.events.messages.onDeleted.fire(undefined);
+  await world.clock.advance(600);
+  assert.equal(told(app, "counts_changed").length, before + 1);
+  assert.equal(world.calls.filter(c => c[0] === "abortList").length, 0);
 });

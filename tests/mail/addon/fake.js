@@ -6,10 +6,13 @@
  *
  * What is faithful, because the add-on depends on it:
  * - `messages.list` returns pages and a list id, sorted only when it is asked to be; `continueList` and
- *   `abortList` are counted so a test can see that no list is left open.
+ *   `abortList` are counted. A list stays in `world.lists` until its last page has been read, and `abortList`
+ *   does not end that (it did not, in the real one: pages piled up in Thunderbird) but stops more pages being
+ *   made (`quirks.prepared` more, two by default), so `world.lists.size === 0` after an op says the add-on
+ *   read what it began.
  * - `messages.query` only knows the keys the real one does (anything else is an error), takes dates as Date
- *   objects only (a string or a number never answers), matches subject and text case-sensitively, and returns
- *   what it finds in no useful order.
+ *   objects only (a string or a number never answers), matches subject, body and text case-sensitively, and
+ *   returns what it finds in no useful order.
  * - A moved message gets a new id; `getFull` has lower-case header names with arrays of values.
  * - `compose.setComposeDetails` can be made to ignore a field, to see the add-on refuse to send.
  */
@@ -163,6 +166,37 @@ function structure(spec) {
   return parts;
 }
 
+/**
+ * The words of a mail as Thunderbird's own `body` matching sees them: plain parts, and HTML as text. The tags are
+ * taken out in one pass (a pattern that looks for the closing `>` from every `<` is quadratic on a hostile mail,
+ * and this is the fake's doing, not the add-on's), and an unclosed tag runs to the end, as in a real parser.
+ */
+function bodyText(spec) {
+  const html = spec.html ?? "";
+  const lower = html.toLowerCase();
+  let text = "";
+  let at = 0;
+  while (at < html.length) {
+    const open = html.indexOf("<", at);
+    if (open < 0) {
+      text += html.slice(at);
+      break;
+    }
+    text += html.slice(at, open);
+    const close = html.indexOf(">", open);
+    if (close < 0) {
+      break;
+    }
+    if (/^<style[\s>]/i.test(html.slice(open, open + 8))) {
+      const end = lower.indexOf("</style>", close);
+      at = end < 0 ? html.length : end + 8;
+    } else {
+      at = close + 1;
+    }
+  }
+  return `${spec.plain ?? ""}\n${text}`;
+}
+
 export class World {
   constructor({ clock = new FakeClock(), pageSize = 100, messagesSend = true } = {}) {
     this.clock = clock;
@@ -185,6 +219,7 @@ export class World {
     this.connectError = null;
     this.events = {
       accounts: { onCreated: new FakeEvent(), onDeleted: new FakeEvent(), onUpdated: new FakeEvent() },
+      identities: { onCreated: new FakeEvent(), onDeleted: new FakeEvent(), onUpdated: new FakeEvent() },
       folders: {
         onCreated: new FakeEvent(),
         onDeleted: new FakeEvent(),
@@ -308,7 +343,12 @@ export class World {
       id: account.id,
       name: account.name,
       type: account.type,
-      identities: account.identities.map(i => ({ ...i })),
+      identities: account.identities.map(i => ({
+        composeHtml: this.quirks.htmlCompose === true,
+        signature: "",
+        signatureIsPlainText: true,
+        ...i,
+      })),
     };
     if (withFolders) {
       out.folders = account.rootFolders.map(f => this.tree(f, true));
@@ -316,16 +356,24 @@ export class World {
     return out;
   }
 
-  page(items, kind) {
+  /**
+   * A page of `items`, and the list that holds the rest. As in Thunderbird, a list is kept until its last page
+   * has been read (`abortList` does not forget it), and a page has the list's id until then.
+   */
+  page(items, kind, listId = null) {
     if (this.quirks.pageCost) {
       this.clock.time += this.quirks.pageCost;   // a slow Thunderbird: every page takes this long
     }
     const first = items.slice(0, this.pageSize);
-    if (items.length <= this.pageSize) {
+    const rest = items.slice(this.pageSize);
+    if (rest.length === 0) {
+      if (listId) {
+        this.lists.delete(listId);
+      }
       return { id: null, messages: first.map(h => ({ ...h })) };
     }
-    const id = `${kind}${this.nextList++}`;
-    this.lists.set(id, items.slice(this.pageSize));
+    const id = listId ?? `${kind}${this.nextList++}`;
+    this.lists.set(id, rest);
     return { id, messages: first.map(h => ({ ...h })) };
   }
 
@@ -392,7 +440,8 @@ export class World {
               (info.recipients === undefined ||
                 [...header.recipients, ...header.ccList].some(r => r.toLowerCase().includes(info.recipients.toLowerCase()))) &&
               (info.subject === undefined || has(header.subject, info.subject)) &&
-              (info.fullText === undefined || has(header.subject + (spec.plain ?? ""), info.fullText))
+              (info.fullText === undefined || has(header.subject + (spec.plain ?? ""), info.fullText)) &&
+              (info.body === undefined || has(bodyText(spec), info.body))
             );
           })
           .map(m => m.header)
@@ -403,14 +452,18 @@ export class World {
         hook("continueList", id);
         const rest = world.lists.get(id);
         if (!rest) {
-          throw new Error(`No such list: ${id}`);
+          throw new Error(`No message list for id ${id}. Have you reached the end of a list?`);
         }
-        world.lists.delete(id);
-        return world.page(rest, "list");
+        return world.page(rest, "list", id);
       },
       async abortList(id) {
         hook("abortList", id);
-        world.lists.delete(id);
+        if (!world.lists.has(id)) {
+          throw new Error(`No message list for id ${id}. Have you reached the end of a list?`);
+        }
+        // Thunderbird stops preparing pages, and keeps the list and the pages it has until they are read.
+        const rest = world.lists.get(id);
+        world.lists.set(id, rest.slice(0, (world.quirks.prepared ?? 2) * world.pageSize));
       },
       async getFull(id, options = {}) {
         hook("getFull", id, options);
@@ -560,6 +613,7 @@ export class World {
       },
     };
     return {
+      identities: { ...world.events.identities },
       accounts: {
         ...world.events.accounts,
         async list(withFolders) {
@@ -652,7 +706,9 @@ export class World {
   /** Both ways of sending end here: what was sent is recorded, and the behaviour is the test's to choose. */
   async doSend(via, window, details, options) {
     this.calls.push([`${via}.send`, options]);
-    const behavior = this.behavior.send;
+    // `behavior.accounts` ({account id: behaviour}) is for a test where one account's outgoing server is not the others'
+    const account = [...this.accounts.values()].find(a => a.identities.some(i => i.id === details.identityId));
+    const behavior = this.behavior.accounts?.[account?.id] ?? this.behavior.send;
     const record = { via, details: JSON.parse(JSON.stringify({ ...details, attachments: undefined })), options };
     record.files = (window ? window.attachments : details.attachments ?? []).map(a => ({
       name: a.name ?? a.file?.name,
@@ -682,7 +738,16 @@ export class World {
   }
 }
 
+/** What Thunderbird puts at the foot of a plain text mail for an identity's signature. */
+const signatureOf = identity => (identity?.signature ? `\n-- \n${identity.signature}\n` : "");
+
 class ComposeWindow {
+  /**
+   * A compose window as Thunderbird makes it: the quoted mail and its attribution for a reply (with the cursor
+   * on the empty lines above), the forwarded mail for a forward, the identity's signature at the foot, and
+   * nothing but the signature for a new mail. Setting the body replaces all of that (it did in the real one),
+   * and changing the identity swaps the signature of the old one for the new one's.
+   */
   constructor(world, { tabId, windowId, kind, original, account, details }) {
     this.world = world;
     this.tabId = tabId;
@@ -691,7 +756,7 @@ class ComposeWindow {
     this.original = original;
     this.account = account;
     this.nextAttachment = 1;
-    const sender = account.identities[0];
+    const sender = world.accountOut(account, false).identities[0];
     this.fields = {
       identityId: sender.id,
       from: `${sender.name} <${sender.email}>`,
@@ -699,7 +764,7 @@ class ComposeWindow {
       cc: [],
       bcc: [],
       subject: "",
-      isPlainText: !world.quirks.htmlCompose,
+      isPlainText: !sender.composeHtml,
       plainTextBody: "",
       body: "<p></p>",
       type: kind.split(":")[0],
@@ -707,20 +772,25 @@ class ComposeWindow {
       isModified: false,
     };
     this.attachments = [];
+    let made = "";
     if (original) {
+      const spec = world.messages.get(original.id)?.spec ?? {};
+      const said = spec.plain ?? "";
       this.fields.to = [original.author];
-      this.fields.subject = (kind.startsWith("forward") ? "Fwd: " : "Re: ") + original.subject;
-      this.fields.plainTextBody = `${original.author} wrote:\n> quoted\n`;
       if (kind.startsWith("forward")) {
+        this.fields.subject = `Fwd: ${original.subject}`;
+        made = `\n\n\n-------- Forwarded Message --------\nSubject: \t${original.subject}\nFrom: \t${original.author}\n\n\n\n${said}\n`;
         // A forward brings the original's attachments.
-        (world.messages.get(original.id)?.spec.attachments ?? []).forEach(a =>
+        (spec.attachments ?? []).forEach(a =>
           this.attachments.push({ id: this.nextAttachment++, name: a.name, file: new File([a.content], a.name) })
         );
+      } else {
+        this.fields.subject = `Re: ${original.subject}`;
+        const who = original.author.replace(/\s*<.*>\s*$/, "");
+        made = `\n\nOn 9/29/26 1:00 PM, ${who} wrote:\n${said.split("\n").map(line => `> ${line}`).join("\n")}\n`;
       }
     }
-    if (world.quirks.signature) {
-      this.fields.plainTextBody += `\n-- \n${world.quirks.signature}`;
-    }
+    this.fields.plainTextBody = made + signatureOf(sender);
     if (details) {
       this.write(details);
     }
@@ -735,11 +805,18 @@ class ComposeWindow {
       if (this.world.ignore.has(key)) {
         continue;
       }
+      if (key === "isPlainText" && this.fields.isPlainText === false) {
+        continue;   // a window that opened as HTML stays HTML (the real one did not make it plain text)
+      }
       if (key === "identityId") {
-        const identity = this.account.identities.find(i => i.id === value);
+        const identities = this.world.accountOut(this.account, false).identities;
+        const identity = identities.find(i => i.id === value);
         if (!identity) {
           throw new Error(`Identity not found: ${value}`);
         }
+        const old = signatureOf(identities.find(i => i.id === this.fields.identityId));
+        const body = this.fields.plainTextBody;
+        this.fields.plainTextBody = old && body.includes(old) ? body.replace(old, signatureOf(identity)) : body + signatureOf(identity);
       }
       this.fields[key] = value;
     }
@@ -792,6 +869,23 @@ export class FakePort {
   events(name) {
     return this.sent.filter(f => f.event === name);
   }
+}
+
+/**
+ * The `continueList` calls that read on for the add-on's own use: not the ones that only empty a list it has
+ * given up on (after `abortList`, which is what lets Thunderbird forget the list).
+ */
+export function readOn(world) {
+  const aborted = new Set();
+  const reads = [];
+  for (const [name, id] of world.calls) {
+    if (name === "abortList") {
+      aborted.add(id);
+    } else if (name === "continueList" && !aborted.has(id)) {
+      reads.push(id);
+    }
+  }
+  return reads;
 }
 
 /** The add-on, started on a fake Thunderbird. */

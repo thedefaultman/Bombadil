@@ -2,8 +2,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { World, start, ask, result } from "./fake.js";
-import { windows } from "../../../share/mail/extension/finding.js";
+import { World, start, ask, readOn, result } from "./fake.js";
 
 const DAY = 86_400_000;
 
@@ -16,21 +15,6 @@ async function lab(options = {}) {
 }
 
 const keys = out => out.messages.map(m => m.key);
-
-test("the windows go back in time, each ending where the next begins, and cover everything", () => {
-  const now = Date.UTC(2026, 9, 1);
-  const all = windows(undefined, undefined, now);
-  assert.equal(all[0].to, Infinity);
-  assert.equal(all.at(-1).from, -Infinity);
-  for (let i = 1; i < all.length; i++) {
-    assert.equal(all[i].to, all[i - 1].from - 1, "no gap and no overlap");
-  }
-  const bounded = windows(now - 10 * DAY, now - DAY, now);
-  assert.equal(bounded[0].to, now - DAY);
-  assert.equal(bounded.at(-1).from, now - 10 * DAY);
-  assert.ok(bounded.every(w => w.from <= w.to));
-  assert.deepEqual(windows(now + 5, now + 1, now), []);
-});
 
 test("find matches text in the subject without regard to case, which Thunderbird's own query does not", async () => {
   const { world, app, at, inbox } = await lab();
@@ -110,10 +94,10 @@ test("find is newest first, and stops asking older windows once it has enough", 
   for (let i = 0; i < 6; i++) {
     world.message(inbox, { headerMessageId: `old${i}@example.org`, subject: "topic", date: at(400 + i) });
   }
-  const queries = () => world.calls.filter(c => c[0] === "query").length;
+  const older = () => world.calls.filter(c => c[0] === "query" && c[1].fromDate && c[1].fromDate < at(1.5)).length;
   const out = await result(app, "find", { text: "topic", limit: 4 });
   assert.deepEqual(keys(out), ["new0@example.org", "new1@example.org", "new2@example.org", "new3@example.org"]);
-  assert.equal(queries(), 1, "the last day had enough, so no older window was asked");
+  assert.equal(older(), 0, "the last day had enough, so no older window was asked");
   const more = await result(app, "find", { text: "topic", limit: 8 });
   assert.equal(more.messages.length, 8);
   assert.deepEqual(keys(more).slice(6), ["old0@example.org", "old1@example.org"]);
@@ -154,34 +138,92 @@ test("find can be limited to some accounts", async () => {
   assert.deepEqual(keys(await result(app, "find", { text: "same", accounts: ["nobody"] })), []);
 });
 
-test("find reads the body of the newest mails that did not match in their headers, and no more than 300", async () => {
+test("find looks in the words of the mails too, as Thunderbird matches them, and HTML is read as text", async () => {
   const { world, app, at, inbox } = await lab();
   world.message(inbox, { headerMessageId: "deep@example.org", subject: "Nothing here", plain: "The Secret phrase is inside.", date: at(5) });
   world.message(inbox, { headerMessageId: "html@example.org", subject: "Newsletter", html: "<style>.x{}</style><p>Fancy <b>Marker</b> text</p>", date: at(4) });
   assert.deepEqual(keys(await result(app, "find", { text: "secret phrase" })), ["deep@example.org"]);
-  assert.deepEqual(keys(await result(app, "find", { text: "fancy marker text" })), ["html@example.org"], "tags are not text");
+  assert.deepEqual(keys(await result(app, "find", { text: "Fancy Marker text" })), ["html@example.org"], "tags are not text");
   assert.deepEqual(keys(await result(app, "find", { text: "x{}" })), [], "nor is a style sheet");
+  assert.equal(world.calls.filter(c => c[0] === "getFull").length, 0, "no mail is read into the add-on to be searched");
+});
 
-  const big = await lab();
-  for (let i = 0; i < 400; i++) {
-    big.world.message(big.inbox, { headerMessageId: `n${i}@example.org`, subject: "dull", plain: "dull", date: new Date(big.at(1).getTime() - i * 1000) });
+test("find asks Thunderbird for a text as written, in lower case, capitalised, in each word's capital and in capitals", async () => {
+  const { world, app } = await lab();
+  await result(app, "find", { text: "Priya shah" });
+  const bodies = world.calls.filter(c => c[0] === "query" && c[1].body !== undefined).map(c => c[1].body);
+  assert.deepEqual([...new Set(bodies)].sort(), ["PRIYA SHAH", "Priya Shah", "Priya shah", "priya shah"]);
+  world.calls.length = 0;
+  await result(app, "find", { subject: "plan", unread: true });
+  assert.equal(world.calls.filter(c => c[0] === "query" && c[1].body !== undefined).length, 0, "no text, no body to ask for");
+  await assert.rejects(result(app, "find", { text: "x".repeat(301) }), /not text/);
+});
+
+test("find finds a word that is only in the body of a mail older than a thousand newer ones, in every case it is written", async () => {
+  const { world, app, at, inbox } = await lab({ pageSize: 100 });
+  for (let i = 0; i < 1000; i++) {
+    world.message(inbox, { headerMessageId: `n${i}@example.org`, subject: `Dull ${i}`, plain: "dull words", date: new Date(at(1).getTime() - i * 60_000) });
   }
-  const before = big.world.calls.filter(c => c[0] === "getFull").length;
-  await result(big.app, "find", { text: "needle" });
-  const read = big.world.calls.filter(c => c[0] === "getFull").length - before;
-  assert.ok(read <= 300, `${read} bodies were read`);
+  world.message(inbox, { headerMessageId: "old@example.org", subject: "Weekly note", plain: "see ZEBRAWORD-4711 and Quartz and amber", date: at(42) });
+  for (const [text, found] of [["ZEBRAWORD-4711", true], ["zebraword-4711", true], ["quartz", true], ["AMBER", true], ["amber", true], ["Amber", true], ["nothing like it", false]]) {
+    const out = await result(app, "find", { text });
+    assert.deepEqual(keys(out), found ? ["old@example.org"] : [], text);
+    assert.equal(out.partial, undefined, `${text}: every window was read`);
+  }
+  assert.equal(world.lists.size, 0);
+});
+
+test("a mail that is in several folders is one result, the inbox's copy, and does not use up the limit", async () => {
+  const { world, app, at, inbox, archive, sent } = await lab();
+  for (let i = 0; i < 4; i++) {
+    const when = new Date(at(2).getTime() - i * 3_600_000);
+    world.message(archive, { headerMessageId: `dup${i}@example.org`, subject: "same mail", date: when });
+    world.message(sent, { headerMessageId: `dup${i}@example.org`, subject: "same mail", date: when });
+    world.message(inbox, { headerMessageId: `dup${i}@example.org`, subject: "same mail", date: when });
+  }
+  world.message(inbox, { headerMessageId: "other@example.org", subject: "same mail but another", date: at(3) });
+  const out = await result(app, "find", { text: "same mail", limit: 5 });
+  assert.deepEqual(keys(out), ["dup0@example.org", "dup1@example.org", "dup2@example.org", "dup3@example.org", "other@example.org"]);
+  assert.ok(out.messages.slice(0, 4).every(m => m.folder === "inbox"), "the inbox's copy is the one shown");
+  const archived = await result(app, "find", { text: "same mail", folders: ["archive"] });
+  assert.equal(archived.messages.length, 4);
+  assert.ok(archived.messages.every(m => m.folder === "archive"), "and the others are shown when it is only they that are asked for");
+});
+
+test("a mail with no Message-ID in two folders is one result as well", async () => {
+  const { world, app, at, inbox, archive } = await lab();
+  for (const folder of [archive, inbox]) {
+    world.message(folder, { headerMessageId: "md5:abc", author: "Zed <zed@example.net>", subject: "anonymous", date: at(2) });
+  }
+  const out = await result(app, "find", { text: "anonymous" });
+  assert.equal(out.messages.length, 1);
+  assert.equal(out.messages[0].folder, "inbox");
 });
 
 test("find that runs out of time says what it has and that it is partial", async () => {
   const { world, app, at, inbox } = await lab({ pageSize: 10 });
   for (let i = 0; i < 100; i++) {
-    world.message(inbox, { headerMessageId: `m${i}@example.org`, subject: i % 2 ? "match" : "other", date: new Date(at(1).getTime() - i * 1000) });
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, subject: i % 2 ? "match" : "other", date: new Date(at(0.5).getTime() - i * 1000) });
   }
   world.quirks.pageCost = 2500;   // every page of Thunderbird's answer takes two and a half seconds
   const out = await result(app, "find", { text: "match", limit: 50 });
   assert.equal(out.partial, true);
   assert.ok(out.messages.length > 0 && out.messages.length < 50);
   assert.equal(world.lists.size, 0, "the query is given up on, not left to go on");
+});
+
+test("a search of the words that is not done when time is up says partial, and does not pretend to have looked", async () => {
+  const { world, app, at, inbox } = await lab({ pageSize: 10 });
+  for (let i = 0; i < 40; i++) {
+    world.message(inbox, { headerMessageId: `m${i}@example.org`, subject: "dull", plain: "dull", date: new Date(at(1).getTime() - i * 1000) });
+  }
+  world.message(inbox, { headerMessageId: "old@example.org", subject: "dull", plain: "needle", date: at(60) });
+  world.quirks.pageCost = 1200;
+  const out = await result(app, "find", { text: "needle" });
+  assert.equal(out.partial, true, "the mail that has it is in a window that was never reached");
+  assert.deepEqual(keys(out), []);
+  world.quirks.pageCost = 0;
+  assert.deepEqual(keys(await result(app, "find", { text: "needle" })), ["old@example.org"]);
 });
 
 test("a bad find is refused", async () => {
@@ -215,7 +257,7 @@ test("known reads no more of the Sent folders than it has to", async () => {
   }
   const out = await result(app, "known", { emails: ["r0@example.net", "r1@example.net"] });
   assert.deepEqual(out, { "r0@example.net": true, "r1@example.net": true });
-  assert.ok(world.calls.filter(c => c[0] === "continueList").length < 3);
+  assert.ok(readOn(world).length < 3);
   assert.equal(world.lists.size, 0);
 });
 

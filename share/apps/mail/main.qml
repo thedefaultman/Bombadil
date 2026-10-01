@@ -68,20 +68,28 @@ AppWindow {
         else
             event.accepted = false
     }
-    // R replies, A archives and # deletes the mail that is open. Typing in a field never gets here: the field has it.
+    // With a mail open, R replies, A archives and # deletes it (said in the quiet line; a key held down does it once).
+    // Any other letter typed with the keyboard on the list or the mail is the start of a search, so that typing a
+    // word to look for never answers or puts away a mail. Typing in a field never gets here: the field has it.
     Keys.onPressed: event => {
         if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) || !win.mainShown
-                || !backend.opened || backend.draft)
+                || backend.draft)
             return
-        if (event.key === Qt.Key_R) {
-            backend.reply("reply")
+        const isHash = event.key === Qt.Key_NumberSign || event.text === "#"
+        if (backend.opened && (event.key === Qt.Key_R || event.key === Qt.Key_A || isHash)) {
             event.accepted = true
-        } else if (event.key === Qt.Key_A) {
-            backend.archive()
+            if (event.isAutoRepeat)
+                return
+            if (event.key === Qt.Key_R)
+                backend.reply("reply")
+            else if (event.key === Qt.Key_A)
+                backend.archive()
+            else
+                backend.trash()
+        } else if (event.text.length === 1 && event.text.charCodeAt(0) > 32 && event.text.charCodeAt(0) !== 127) {
             event.accepted = true
-        } else if (event.key === Qt.Key_NumberSign || event.text === "#") {
-            backend.trash()
-            event.accepted = true
+            if (!event.isAutoRepeat)     // (a held shortcut key that has done its work does not go on as a search)
+                list.typeToSearch(event.text)
         }
     }
 
@@ -121,7 +129,7 @@ AppWindow {
         verticalAlignment: Text.AlignVCenter
         wrapMode: Text.Wrap
         color: Theme.muted
-        text: backend.connected ? "Loading" : "Mail is not running yet. This fills in as soon as it starts."
+        text: backend.loadText
     }
 
     SetupPanel {
@@ -181,6 +189,12 @@ AppWindow {
                     visible: !!modelData.web
                     text: "Open"
                     onClicked: backend.openWeb(modelData.web.url)
+                }
+                LinkButton {
+                    visible: !!modelData.engine
+                    text: backend.staged ? "Done" : "Show Thunderbird's window"
+                    icon: ""
+                    onClicked: backend.staged ? backend.hideEngine() : backend.showEngine()
                 }
             }
         }
