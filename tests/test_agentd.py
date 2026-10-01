@@ -616,6 +616,33 @@ async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
 
 
 @pytest.mark.asyncio
+async def test_a_card_dragged_into_the_row_is_folded_alone_and_a_drag_back_gives_it_its_place(home):
+    import tomllib
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    other_r, other_w = await _another(d)
+    await _say(w, {"type": "desk", "op": "fold", "widget": "machine"})   # the card dropped in the row
+    for rd in (r, other_r):
+        got = await _desk_state(rd)
+        assert got["stripped"] == ["machine"] and got["folded"] is False   # not the word "desk"
+    assert tomllib.loads(paths.desk_file().read_text())["stripped"] == ["machine"]
+    await _say(w, {"type": "desk", "op": "fold", "widget": "machine"})   # already so: nothing to tell
+    assert await _silent(r)
+    await _say(w, {"type": "desk", "op": "move", "widget": "machine", "rail": "left", "rank": 0})
+    moved = await _desk_state(r)       # the strip dropped on a rail: moved and unfolded in one message
+    assert moved["stripped"] == [] and moved["order"]["left"][0] == "machine"
+    await _say(w, {"type": "desk", "op": "fold", "widget": "needs"})
+    assert (await _desk_state(r))["stripped"] == ["needs"]
+    await _say(w, {"type": "desk", "op": "unfold", "widget": "needs"})
+    assert (await _desk_state(r))["stripped"] == []
+    await _say(w, {"type": "desk", "op": "fold", "widget": "sofa"})      # nothing of ours: says nothing
+    assert await _silent(r)
+    w.close()
+    other_w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_bar_that_restarts_mid_turn_gets_the_route_again(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
@@ -836,8 +863,11 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "fold"}, True, "Folded the desk."),
         ({"op": "fold"}, True, "The desk is already folded."),
         ({"op": "unfold"}, True, "Unfolded the desk."),
+        ({"op": "fold", "widget": "now"}, True, "Folded Now to its strip."),
+        ({"op": "unfold", "widget": "now"}, True, "Unfolded Now."),
         ({"op": "move", "widget": "watching", "rail": "right", "rank": 0}, True,
          "Moved Watching to the right rail."),
+        ({"op": "fold", "widget": "machine"}, True, "Folded Machine to its strip."),
         ({"op": "show", "widget": "Machine"}, True, "Here is the machine. It is back on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
