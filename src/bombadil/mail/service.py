@@ -257,7 +257,7 @@ class Conn:
             return False
         if self.writer.transport.get_write_buffer_size() > SEND_CAP:
             log("dropping a client that stopped reading")
-            self.close()
+            self.close(abort=True)
             return False
         try:
             self.writer.write(data)
@@ -266,13 +266,23 @@ class Conn:
             return False
         return True
 
-    def close(self) -> None:
-        if not self.closed:
-            self.closed = True
-            try:
-                self.writer.close()
-            except (OSError, RuntimeError):
-                pass
+    def close(self, abort: bool = False) -> None:
+        """Closing a transport waits for what is buffered to be read, which a client that does not read never
+        does: its socket, its buffer and its place would stay for as long as it likes. So what is waiting is
+        given DRAIN_S to be read, and a client that has stopped reading is cut at once."""
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            transport = self.writer.transport
+            if abort:
+                transport.abort()
+                return
+            self.writer.close()
+            if transport.get_write_buffer_size():
+                asyncio.get_running_loop().call_later(DRAIN_S, transport.abort)
+        except (OSError, RuntimeError):
+            pass
 
 
 def turn_scope(pid: int) -> bool:
@@ -446,6 +456,10 @@ class Service:
                 raise
             log(f"{self.db_path} is damaged ({e}); setting it aside and starting over")
             self.store.start_over(e)
+            try:
+                self._sweep_files()   # the drafts that owned the attachment copies are gone with the old notes
+            except OSError as err:
+                log(f"sweeping after the new notes: {err}")
             self.loop.call_soon_threadsafe(self._recovered)
             raise Refusal(INTERNAL, "Mail's own notes were damaged and had to be started again. "
                                     "Try that once more.") from e
@@ -521,7 +535,8 @@ class Service:
             self.press_path.parent.mkdir(parents=True, exist_ok=True)
             if self.press_path.exists() and self.press_path.stat().st_size > PRESS_LOG_ROTATE:
                 self.press_path.replace(self.press_path.with_name(self.press_path.name + ".1"))
-            with self.press_path.open("a") as f:
+            fd = os.open(self.press_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o600)
+            with os.fdopen(fd, "a") as f:
                 f.write(json.dumps(row) + "\n")
         except OSError as e:
             log(f"press log: {e}")   # a log that cannot be written never stops a press
@@ -942,8 +957,8 @@ class Service:
                 ready.append(a)
             else:
                 skipped.append(self._skipped(a))
-        if ready and not self.engine.connected:
-            raise self._down()
+        if not self.engine.connected and any(a["state"] in USABLE for a in accounts):
+            raise self._down()   # even for accounts Thunderbird has not named yet: nothing can be said about them
         results = await asyncio.gather(*(self._ask("list", account=a["engine_id"], folder="inbox",
                                                    limit=limit + len(seen), **({"before": before} if before else {}))
                                          for a in ready), return_exceptions=True)
@@ -975,7 +990,9 @@ class Service:
         return {"view": view, "messages": page, "cursor": nxt, "more": more, "skipped": skipped}
 
     def _skipped(self, a: dict) -> dict:
-        return {"account": a["id"], "state": a["state"], "note": a["note"],
+        waiting = a["state"] in USABLE and not a["engine_id"]
+        return {"account": a["id"], "state": a["state"],
+                "note": a["note"] or ("Thunderbird has not set this account up yet." if waiting else ""),
                 "web": self._account_out(a)["web"]}
 
     def _drop_gone(self, pages: list) -> None:
@@ -1136,11 +1153,11 @@ class Service:
         if given is None:
             folder = paths.home() / "Downloads"
             await self._file(lambda: folder.mkdir(parents=True, exist_ok=True))
-            return folder
-        folder = Path(given).expanduser()
-        if not folder.is_absolute():
-            raise _bad("Give the whole path of the folder.")
-        folder = Path(os.path.realpath(folder))
+        else:
+            folder = Path(given).expanduser()
+            if not folder.is_absolute():
+                raise _bad("Give the whole path of the folder.")
+        folder = Path(os.path.realpath(folder))   # where it really is: Downloads may be a link to somewhere else
         if not folder.is_dir():
             raise Refusal(NOT_FOUND, "That folder does not exist.")
         if text.is_sensitive_path(folder / "x"):

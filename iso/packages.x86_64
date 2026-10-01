@@ -45,6 +45,8 @@ noto-fonts-emoji
 # agents
 nodejs
 npm
+# mail: Thunderbird is the engine behind Bombadil's Mail window, run unseen (docs/MAIL.md)
+thunderbird
 # archiso live
 arch-install-scripts
 archinstall

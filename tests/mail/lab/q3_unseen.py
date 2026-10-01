@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Q3/Q5: can Thunderbird run "unseen"?  --headless, unmapped/minimised windows, footprint, first-run windows.
 
-    python3 q3_unseen.py headless|hidden|footprint|firstrun|compose|all [--json out.json]
+    python3 q3_unseen.py headless|hidden|footprint|firstrun|compose|modal|all [--json out.json]
 
   headless   --headless with NO X display at all: starts? syncs IMAP? runs the add-on? new-mail events? compose+send?
   hidden     normal window on Xvfb, then xdotool windowunmap / openbox minimise: still syncing / running the add-on?
   footprint  cold start to "add-on connected", idle RSS/PSS and CPU after 2 min, for windowed / unmapped / headless
   firstrun   what pops up when the quiet prefs are missing (and with no account), and which single pref suppresses what
   compose    Q5: compose.sendMessage with the compose window never shown / minimised / unfocused / unmapped
+  modal      Q5: blocking dialogs on the send path (message > mailnews.message_warning_size, SMTP refused)
 """
 import argparse
 import base64
@@ -246,13 +247,77 @@ def t_compose(lab):
     lab.stop()
 
 
+def _new_windows(lab, before):
+    return [w for w in lab.windows() if w not in before]
+
+
+def t_modal(lab):
+    """Q5: blocking dialogs on the send path. (1) message larger than mailnews.message_warning_size, (2) SMTP refused."""
+    import tempfile
+    big = r"""
+      const mb = args[0];
+      const u8 = new Uint8Array(mb*1024*1024);
+      for (let i = 0; i < u8.length; i += 65536) crypto.getRandomValues(u8.subarray(i, Math.min(i+65536, u8.length)));
+      globalThis.__res = {state: "pending"};
+      messenger.messages.sendMessage({to:["alice@example.org"], subject:"big "+mb, body:"x",
+        attachments:[{file:new File([u8],"big.bin",{type:"application/octet-stream"})}]}, {mode:"sendNow"})
+        .then(r => { globalThis.__res = {state: "resolved", keys: Object.keys(r || {})}; },
+              e => { globalThis.__res = {state: "rejected", err: String(e && e.message || e)}; });
+      return "started";
+    """
+    small = big.replace("const u8 = new Uint8Array(mb*1024*1024);", "const u8 = new Uint8Array(1024);")
+    tmp = tempfile.mkdtemp(prefix="q3-modal-")
+
+    def prefs(txt):
+        p = os.path.join(tmp, "x%d.js" % len(txt))
+        open(p, "w").write(txt)
+        return p
+
+    def watch(label, code, arg, dismiss_after=8):
+        before = lab.windows()
+        b = lab.bridge()
+        n0 = len(lab.ms.sent())
+        t0 = time.time()
+        b.eval(code, arg)
+        time.sleep(dismiss_after)
+        st = b.eval("return globalThis.__res")
+        new = _new_windows(lab, before)
+        lab.screenshot("/tmp/q3-modal-%s.png" % label.split()[0])
+        out = {"after_%ds_promise" % dismiss_after: st, "new X windows": new, "smtp_received": len(lab.ms.sent()) - n0}
+        if new:
+            xdo(lab, "key", "Return")
+            time.sleep(4)
+            out["after Return key"] = {"promise": b.eval("return globalThis.__res"), "smtp_received": len(lab.ms.sent()) - n0,
+                                       "new X windows": _new_windows(lab, before)}
+        return out
+
+    # (1) default threshold (20 MiB message size)
+    lab.start(LAB_WM="openbox", LAB_EXTRA_PREFS=prefs('user_pref("mailnews.message_warning_size", 20971520);\n'))
+    lab.bridge()
+    time.sleep(3)
+    say("modal", "1a 12 MiB attachment, default mailnews.message_warning_size", watch("1a", big, 12, 6))
+    say("modal", "1b 15 MiB attachment, default mailnews.message_warning_size", watch("1b", big, 15, 8))
+    lab.stop()
+    lab.start(LAB_WM="openbox")  # lab default = quiet prefs incl. mailnews.message_warning_size=0
+    lab.bridge()
+    time.sleep(3)
+    say("modal", "1c 15 MiB attachment, lab prefs (warning size 0)", watch("1c", big, 15, 8))
+    lab.stop()
+    # (2) SMTP connection refused
+    lab.start(LAB_WM="openbox", LAB_EXTRA_PREFS=prefs('user_pref("mail.smtpserver.smtp1.port", 1);\n'))
+    lab.bridge()
+    time.sleep(3)
+    say("modal", "2a messages.sendMessage, SMTP port refuses connections", watch("2a", small, 1, 12))
+    lab.stop()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("what", nargs="?", default="all")
     ap.add_argument("--json")
     a = ap.parse_args()
     lab = Lab()
-    todo = ["headless", "hidden", "compose", "firstrun", "footprint"] if a.what == "all" else [a.what]
+    todo = ["headless", "hidden", "compose", "modal", "firstrun", "footprint"] if a.what == "all" else [a.what]
     for w in todo:
         print("=== %s" % w, flush=True)
         globals()["t_" + w](lab)

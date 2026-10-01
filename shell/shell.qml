@@ -1,7 +1,8 @@
 //@ pragma UseQApplication
 // The Bombadil bar: a Quickshell shell that is the whole visible UI at login.
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
-// while it works and how the turn ended. The pill is also the launcher: an app or panel name
+// while it works and how the turn ended, and, when nothing else has it, a notice another service
+// asked agentd to say (new mail). The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
@@ -69,6 +70,12 @@ ShellRoot {
         }
         // A message as agentd would send it, for demos and the VM smoke check.
         function inject(message: string): void { root.handle(message) }
+    }
+    IpcHandler {
+        target: "line"
+        // What the line above the pill is saying, notices included, as JSON: for the VM smoke test and the
+        // desktop test.
+        function state(): string { return JSON.stringify(pillState.snapshot()) }
     }
 
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed

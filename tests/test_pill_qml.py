@@ -5,6 +5,7 @@ shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> t
 picture of each state.
 """
 
+import json
 import os
 import time
 from pathlib import Path
@@ -33,6 +34,8 @@ Window {
     property var sent: []
     property int screens: 1
     property int handOffs: 0
+    // What shell.qml does with a line from agentd (lists arrive as they do from a parsed line).
+    function feed(line) { pillState.handle(JSON.parse(line)) }
     PillState {
         id: pillState
         objectName: "pill"
@@ -553,3 +556,33 @@ def test_a_prompt_before_the_ai_is_ready_brings_the_setup_line_back_over_a_finis
     assert bar.pill.property("mode") == "closing"
     bar.call("submit", "make me an app")
     assert bar.pill.property("mode") == "setup" and [label for label, _ in bar.chips()] == ["Claude", "Codex"]
+
+
+def feed(bar, **msg):
+    QtCore.QMetaObject.invokeMethod(bar.win, "feed", QtCore.Q_ARG("QVariant", json.dumps(msg)))
+    bar.pump()
+
+
+def test_every_screens_line_shows_the_same_notice_and_the_cross_on_one_puts_it_away_on_all(bar):
+    bar.win.setProperty("screens", 2)
+    bar.pump(0.2)
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=300, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.pump(0.3)
+    assert [it.property("text") for it in bar.items("line")] == ["Priya Shah: Launch date"] * 2
+    assert len(bar.items("noticeChip")) == 2
+    bar.click_item(bar.items("noticeDismiss")[0])
+    bar.pump(0.4)
+    assert bar.sent[-1] == {"type": "notice_dismiss", "id": 1}
+    assert bar.items("noticeChip") == [] and not any(it.isVisible() for it in bar.items("statusLine", visible_only=False))
+
+
+def test_a_notice_does_not_move_the_turn_line_or_the_setup_chips_around_it(bar):
+    feed(bar, type="notice", id=1, source="mail", line="Priya Shah: Launch date", tone="ask", ttl=0, at=1.0,
+         actions=[{"id": "reply", "label": "Reply", "style": "primary"}])
+    bar.send(**CHOOSE)
+    assert bar.text() == "Which AI should run this computer?" and bar.items("noticeChip") == []
+    assert [label for label, _ in bar.chips()] == ["Claude", "Codex"]
+    bar.send(type="setup", state="ready", tone="done", actions=[], line="")
+    assert bar.text() == "Priya Shah: Launch date" and bar.chips() == []
+    assert len(bar.items("noticeChip")) == 1

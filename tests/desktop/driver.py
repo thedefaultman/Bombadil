@@ -474,6 +474,69 @@ time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
 
+# 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
+# cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
+# service on its fake engine says new mail, agentd turns it into a notice, the bar shows it.
+def pill_state():
+    r = run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "line", "state")
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {}
+
+
+def until_state(pred, timeout=15):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        st = pill_state()
+        if st and pred(st):
+            return st
+        time.sleep(0.3)
+    return pill_state()
+
+
+key("Escape")
+until_state(lambda st: st.get("mode") == "idle", 15)
+inject({"type": "notice", "id": 901, "source": "mail", "line": "Priya Shah: Launch date", "tone": "ask",
+        "actions": [{"id": "reply", "label": "Reply", "style": "primary"},
+                    {"id": "open", "label": "Open", "style": "quiet"}], "ttl": 300, "at": time.time()})
+st = until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("27-notice-new-mail")
+check("a notice takes the idle line, with its two chips", st.get("noticeShown") and [
+    (n["line"], [a["label"] for a in n["actions"]]) for n in st["notices"]] == [("Priya Shah: Launch date", ["Reply", "Open"])], st.get("notices"))
+inject({"type": "notice", "id": 902, "source": "mail", "line": "I can't tell whether that went. Look in Sent before you press Send again.",
+        "tone": "error", "actions": [], "ttl": 0, "at": time.time()})
+inject({"type": "notice", "id": 903, "source": "mail", "line": "Leo Park: Quick question", "tone": "ask",
+        "actions": [{"id": "reply", "label": "Reply", "style": "primary"}], "ttl": 300, "at": time.time()})
+st = until_state(lambda st: len(st.get("notices", [])) == 3)
+time.sleep(0.6)
+shot("28-notice-warning-ahead-of-news")
+check("a warning stays ahead of newer news", [n["id"] for n in st["notices"]] == [902, 903, 901], [n["id"] for n in st.get("notices", [])])
+for nid in (901, 902, 903):
+    inject({"type": "notice_end", "id": nid})
+st = until_state(lambda st: not st.get("notices"))
+check("agentd ending them clears the line", not st.get("notices") and not st.get("noticeShown"), st.get("notices"))
+
+env.update(BOMBADIL_MAIL_ENGINE="fake", BOMBADIL_MAIL_FAKE_DRIP="2")
+mail_proc = start("mail", [str(REPO / "bin" / "bombadil-mail")])
+n = mark()
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "mail" and m["id"] != 901, 60, n)
+check("new mail from the fake service reaches the bar's socket as a notice with Reply and Open",
+      got and [a["id"] for a in got["actions"]] == ["reply", "open"] and got["line"].startswith("Leo Park: "), got)
+st = until_state(lambda st: st.get("noticeShown"), 20)
+time.sleep(0.6)
+shot("29-notice-from-the-mail-service")
+check("and the bar shows that line", st.get("noticeShown") and any(
+    n["line"].startswith("Leo Park: ") for n in st.get("notices", [])), st.get("notices"))
+mail_proc.terminate()   # no more mail; what is live is put away the way the cross does
+live = [n["id"] for n in st.get("notices", [])]
+for nid in live:
+    send({"type": "notice_dismiss", "id": nid})
+ended = wait(lambda m: m.get("type") == "notice_end" and m.get("id") in live, 10, n)
+st = until_state(lambda st: not st.get("notices"))
+check("a dismissal reaches agentd and the line goes", ended and not st.get("notices"), (ended, st.get("notices")))
+
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
     p.terminate()

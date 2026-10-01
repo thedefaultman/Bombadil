@@ -74,6 +74,11 @@ PREFS_QUIET = [
     # --- behaviour of the background add-on -------------------------------------------
     ("general.useragent.locale", "en-US", "Stable locale for headless operation."),
     ("mail.server.default.check_new_mail", True, "Poll/IDLE for new mail (per-server value below also set)."),
+    ("mailnews.message_warning_size", 0,
+     "MessageSend.sys.mjs: when the finished MIME message is larger than this many bytes (default 20971520 = 20 MiB, "
+     "i.e. a ~15 MiB attachment after base64) Thunderbird calls Services.prompt.confirm() = a MODAL dialog, and "
+     "messages.sendMessage()/compose.sendMessage() never settle until someone clicks it. 0 disables the question. "
+     "Measured: 12 MiB attachment sends in 3 s, 15 MiB hangs for the whole timeout without this pref."),
 ]
 
 # Add-on loading. Release Thunderbird 157 does NOT enforce signing (MOZ_REQUIRE_SIGNING=false,

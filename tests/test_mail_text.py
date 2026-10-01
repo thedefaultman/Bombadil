@@ -289,7 +289,8 @@ def test_anything_in_a_dot_folder_of_home_is_sensitive(places, rel):
 
 @pytest.mark.parametrize("name", ["id_rsa", "id_ed25519", "server.pem", "my.key", "wallet.kdbx", "key4.db",
                                   "logins.json", ".netrc", ".env", ".env.local", "credentials.json",
-                                  "Credentials", "Login Data", "deploy.p12", ".pgpass", ".git-credentials"])
+                                  "Credentials", "Login Data", "deploy.p12", ".pgpass", ".git-credentials",
+                                  "passwords.txt", "My Passwords.docx", "wifi-passwd", "Passphrase.txt"])
 def test_files_named_like_secrets_are_sensitive_wherever_they_are(places, name):
     assert text.is_sensitive_path(places / "docs" / name)
 

@@ -13,11 +13,15 @@ host that comes back cost nothing; and a damaged notes file is replaced, not tru
 """
 
 import asyncio
+import base64
 import json
 import os
+import signal
 import socket
 import sqlite3
 import stat
+import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -27,8 +31,9 @@ import pytest_asyncio
 
 from bombadil import paths
 from bombadil.mail import accounts as accts
-from bombadil.mail import bridge, drafts, fake, protocol, service
+from bombadil.mail import bridge, drafts, fake, protocol, service, store
 from bombadil.mail.service import Service
+from bombadil.mail.store import Store
 
 pytestmark = pytest.mark.asyncio
 
@@ -1076,6 +1081,13 @@ async def test_no_folder_that_holds_keys_or_the_services_own_state_is_written_to
     assert tree(home) == before and not list((home / ".ssh").iterdir())
 
 
+async def test_downloads_that_is_a_link_to_a_folder_that_holds_keys_is_not_written_to_either(mail, person, home):
+    (home / ".ssh").mkdir()
+    os.symlink(home / ".ssh", home / "Downloads")
+    await person.fails("save_attachment", "refused", id=INVOICE, part="1.2")
+    assert list((home / ".ssh").iterdir()) == []
+
+
 @pytest.mark.parametrize("name", ["../../evil.sh", "/etc/cron.d/job", ".bashrc", "CON.txt", "a\x00b.txt",
                                   "-rf", "x\u202efdp.exe", "....//....//x", "tab\there.txt", " . ", "..", "", "x" * 400])
 async def test_no_attachment_name_makes_a_file_anywhere_but_in_the_folder_it_was_saved_to(mail, person, home, name):
@@ -1537,7 +1549,7 @@ async def test_with_thunderbird_down_the_press_says_so_and_the_draft_waits_and_g
     assert await state_of(person, d) == "open"
     nothing_went(mail)
     mail.process.fail_start = None
-    await until(lambda: mail.service.engine_state == "up")
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
     assert (await press(person, d))["already"] is False       # what was shown is still what was shown
     assert len(mail.engine.sent) == 1
 
@@ -1572,6 +1584,7 @@ async def test_a_process_in_an_agents_turn_cannot_press_and_the_refusal_is_logge
     [row] = mail.press_rows()
     assert (row["kind"], row["code"], row["src"], row["ok"], row["id"]) == ("mail", "agent", "mail", False, d["id"])
     assert row["pid"] == os.getpid() and row["fingerprint"] == d["fingerprint"]
+    assert stat.S_IMODE(os.stat(paths.press_log()).st_mode) == 0o600      # whose presses were refused is the person's
     assert "MUST NOT" not in json.dumps(row)
     await agent.fails("send", "refused", id=d["id"], fingerprint=d["fingerprint"], again=True)
     await agent.fails("send", "refused", id=5, fingerprint=None)             # nor with junk: it is still logged
@@ -1891,9 +1904,9 @@ async def test_an_agent_cannot_attach_what_looks_like_a_secret_and_a_person_is_t
     assert await person.call("list", view="drafts") == [] and mail.draft_files("d1") == []
     assert not (mail.files / "drafts").exists() or list((mail.files / "drafts").iterdir()) == []
     d = await person.call("draft", to="jo@family.example", body="x", attachments=[str(path)])
-    assert kinds(d) == ["sensitive_file"] and d["attachments"][0]["name"] == path.name
-    e = await agent.fails("draft_edit", "refused", id=d["id"], add_attachments=[str(path)])
-    assert [a["name"] for a in (await person.call("draft_get", id=d["id"]))["attachments"]] == [path.name]
+    assert kinds(d) == ["sensitive_file"] and d["attachments"][0]["name"] == path.name.lstrip(".")
+    await agent.fails("draft_edit", "refused", id=d["id"], add_attachments=[str(path)])
+    assert [a["name"] for a in (await person.call("draft_get", id=d["id"]))["attachments"]] == [path.name.lstrip(".")]
 
 
 async def test_a_key_in_a_file_with_an_innocent_name_is_not_attached_by_an_agent_and_flagged_for_a_person(person, agent,
@@ -1928,3 +1941,768 @@ async def test_a_draft_with_a_warning_can_still_be_sent_by_the_person_who_has_re
     await shown(person, d)
     assert (await press(person, d))["already"] is False
     assert [a["email"] for a in mail.engine.sent[0]["to"]] == [OUTSIDE]
+
+
+# -- Thunderbird going away and coming back --
+
+async def test_with_thunderbird_down_mail_says_why_in_a_sentence_and_drafts_still_work(mail, person):
+    await person.call("subscribe")
+    mail.process.fail_start = OSError("no display")
+    mail.process.crash()
+    push = await person.push("status")
+    assert push["engine"] in ("starting", "restarting", "down") and push["text"] and push["detail"]
+    await until(lambda: mail.service.engine_state == "restarting")
+    status = await person.call("status")
+    assert status["engine"] == "restarting" and "Thunderbird" in status["detail"] and status["text"]
+    for op, args in (("list", {"view": "all"}), ("read", {"id": LAUNCH}), ("search", {"text": "launch"}),
+                     ("draft", {"reply_to": LAUNCH, "body": "x"}), ("set_flags", {"id": LAUNCH, "read": True}),
+                     ("archive", {"id": LAUNCH}), ("save_attachment", {"id": INVOICE, "part": "1.2"})):
+        sentence = await person.fails(op, "engine_down", **args)
+        assert "Thunderbird" in sentence or "Mail" in sentence
+    d = await person.call("draft", to="jo@family.example", body="Written while it is down")   # needs nothing from it
+    e = await person.call("draft_edit", id=d["id"], body="Changed while it is down")
+    assert (await person.call("draft_get", id=d["id"]))["fingerprint"] == e["fingerprint"]
+    assert [x["id"] for x in await person.call("list", view="drafts")] == [d["id"]]
+    assert (await person.call("accounts"))["accounts"][0]["email"] == "maya@acme.example"
+    mail.process.fail_start = None
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
+    assert (await person.call("list", view="all"))["messages"]
+    assert (await person.push("status", 5))["engine"] in ("up", "starting")
+
+
+async def test_a_thunderbird_that_cannot_start_is_tried_again_slower_and_then_said_to_keep_stopping(mail, person,
+                                                                                                    monkeypatch):
+    monkeypatch.setattr(service, "BACKOFF_MIN", 0.01)
+    monkeypatch.setattr(service, "BACKOFF_MAX", 0.03)
+    mail.process.fail_start = OSError("no display")
+    mail.process.crash()
+    await until(lambda: mail.service.engine_state == "down", 8.0)
+    assert "keeps stopping" in mail.service.engine_detail
+    starts = mail.process.calls.count(("start",))
+    assert starts >= 6
+    mail.process.fail_start = None
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up", 8.0)
+    status = await person.call("status")
+    assert status["engine"] == "up"
+
+
+async def test_a_thunderbird_that_is_not_installed_is_blocked_with_the_reason_and_nothing_is_started(mail, person):
+    mail.process.unavailable = "Thunderbird is not installed here."
+    mail.process.crash()
+    await until(lambda: mail.service.engine_state == "blocked")
+    status = await person.call("status")
+    assert status["engine"] == "blocked" and status["detail"] == "Thunderbird is not installed here."
+    starts = mail.process.calls.count(("start",))
+    await asyncio.sleep(0.3)
+    assert mail.process.calls.count(("start",)) == starts
+    await person.fails("list", "engine_down", view="all")
+    mail.process.unavailable = None
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
+
+
+async def test_a_thunderbird_that_stops_by_itself_is_started_again_and_the_window_is_told(mail, person):
+    await person.call("subscribe")
+    before = mail.process.calls.count(("start",))
+    mail.process.crash()
+    await until(lambda: mail.process.calls.count(("start",)) > before and mail.engine.connected)
+    await until(lambda: mail.service.engine_state == "up")
+    assert (await person.call("list", view="all"))["messages"]
+
+
+async def test_a_running_thunderbird_whose_add_on_never_connects_is_started_again_after_a_wait(mail, person,
+                                                                                               monkeypatch):
+    monkeypatch.setattr(service, "LINK_WAIT_S", 0.3)
+    mail.engine.set_up(False)             # the link is gone and the process is not
+    await until(lambda: mail.service.engine_state in ("starting", "restarting"))
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
+    assert ("restart",) in mail.process.calls or mail.process.calls.count(("start",)) >= 2
+
+
+async def test_adding_an_account_restarts_thunderbird_so_that_it_is_in_the_profile_and_a_failure_is_a_pause(mail,
+                                                                                                         person):
+    mail.process.fail_start = OSError("profile locked")
+    got = await person.call("add_account", email="jo@family.example")
+    assert got["state"] == "syncing"
+    await until(lambda: mail.service.engine_state in ("restarting", "starting"))
+    assert "jo@family.example" in [a["email"] for a in (await person.call("accounts"))["accounts"]]
+    mail.process.fail_start = None
+    await until(lambda: mail.engine.connected and mail.service.engine_state == "up")
+    assert ("seed_account", "jo@family.example", "imap") in mail.process.calls
+
+
+async def test_with_no_process_at_all_mail_says_it_cannot_fetch_and_drafts_work(started):
+    m = await Mail.start(engine=fake.FakeEngine(), process=None, up=False)
+    started.append(m)
+    c = await m.client()
+    await until(lambda: m.service.engine_state == "blocked")
+    assert "not installed" in (await c.call("status"))["detail"]
+    await c.fails("list", "engine_down", view="all")
+    d = await c.call("draft", to="jo@family.example", body="x")
+    assert d["state"] == "open"
+
+
+# -- the real link: a host that connects to mail.sock and says engine_hello --
+
+ENGINE_ACCOUNT = {"engine_id": "tb-1", "name": "Maya at Acme", "type": "imap", "emails": ["maya@acme.example"],
+                  "identities": [{"id": "id1", "email": "maya@acme.example", "name": "Maya Reyes"}],
+                  "folders": {"inbox": True, "sent": True, "drafts": True, "archive": True, "trash": True},
+                  "state": "ok", "detail": "", "unread": 2}
+HANG = object()
+
+
+def emsg(key, subject="Hello", sender="Priya Shah <priya@acme.example>", **kw):
+    name, _, rest = sender.partition(" <")
+    return {"key": key, "account": "tb-1", "folder": "inbox", "from": {"name": name, "email": rest.rstrip(">")},
+            "to": [{"name": "", "email": "maya@acme.example"}], "cc": [], "subject": subject, "ts": time.time() - 60,
+            "unread": True, "flagged": False, "attachments": False, "thread": None, "message_id": key, **kw}
+
+
+class Failure(Exception):
+    def __init__(self, code, sentence):
+        self.code, self.sentence = code, sentence
+
+
+class Host:
+    """What the native-messaging host relays for Thunderbird's add-on: a connection to mail.sock that says
+    engine_hello and then answers the service's requests from `handlers` (a result, a Failure, or HANG)."""
+
+    def __init__(self, path):
+        self.path = path
+        self.requests: list[dict] = []
+        self.blobs: dict[str, bytearray] = {}
+        self.handlers = {"info": lambda a: {"version": 1, "app": "Thunderbird", "app_version": "128.0"},
+                         "accounts": lambda a: [ENGINE_ACCOUNT],
+                         "list": lambda a: {"messages": [emsg("k1@acme.example", "From the host")], "more": False},
+                         "known": lambda a: {e: False for e in a["emails"]},
+                         "blob": self._blob}
+        self.reader = self.writer = self.task = None
+
+    def _blob(self, a):
+        self.blobs.setdefault(a["xfer"], bytearray()).extend(base64.b64decode(a["data"]))
+        return {}
+
+    async def connect(self, pid=None):
+        self.reader, self.writer = await asyncio.open_unix_connection(str(self.path), limit=1 << 27)
+        self.writer.write((json.dumps({"op": "engine_hello", "pid": pid or os.getpid()}) + "\n").encode())
+        self.task = asyncio.ensure_future(self._serve())
+        return self
+
+    async def _serve(self):
+        while True:
+            try:
+                line = await self.reader.readline()
+            except (OSError, ValueError):
+                return
+            if not line:
+                return
+            req = json.loads(line)
+            self.requests.append(req)
+            handler = self.handlers.get(req.get("op"))
+            if handler is HANG:
+                continue
+            try:
+                if handler is None:
+                    raise Failure("engine_error", f"The add-on cannot {req.get('op')}.")
+                reply = {"id": req["id"], "ok": True, "result": handler(req)}
+            except Failure as e:
+                reply = {"id": req["id"], "ok": False, "error": e.sentence, "code": e.code}
+            self.say(reply)
+
+    def say(self, frame):
+        self.writer.write((json.dumps(frame) + "\n").encode())
+
+    def ops(self):
+        return [r["op"] for r in self.requests]
+
+    async def closed(self, timeout=3.0):
+        await asyncio.wait_for(self.task, timeout)
+
+    def close(self):
+        if self.writer is not None:
+            self.writer.close()
+
+
+@pytest_asyncio.fixture
+async def real(started):
+    """A service with the real link and no process, waiting for a host."""
+    m = await Mail.start(engine=bridge.EngineLink(), process=None, initial=False, up=False)
+    started.append(m)
+    m.hosts = []
+
+    async def host(**kw):
+        h = Host(m.service.socket_path)
+        for name, fn in kw.items():
+            h.handlers[name] = fn
+        await h.connect()
+        m.hosts.append(h)
+        return h
+    m.host = host
+    yield m
+    for h in m.hosts:
+        h.close()
+
+
+async def test_a_host_that_says_hello_is_the_engine_and_the_accounts_it_has_are_taken_up(real):
+    c = await real.client()
+    await until(lambda: real.service.engine_state == "blocked")        # no process, and nobody connected
+    await c.call("subscribe")
+    host = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    assert (await c.push("status"))["engine"] == "up"
+    assert host.ops()[:2] == ["info", "accounts"]
+    [a] = (await c.call("accounts"))["accounts"]
+    assert (a["id"], a["email"], a["state"], a["unread"], a["name"]) == ("a1", "maya@acme.example", "ok", 2,
+                                                                       "Maya at Acme")
+    assert real.service.engine.connected
+
+
+async def test_what_the_host_answers_to_a_list_comes_through_as_mail_with_ids_from_the_service(real):
+    c = await real.client()
+    host = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    [m] = (await c.call("list", view="all"))["messages"]
+    assert m["id"] == "a1/k1@acme.example" and m["subject"] == "From the host" and m["from"]["name"] == "Priya Shah"
+    asked = next(r for r in host.requests if r["op"] == "list")
+    assert asked["account"] == "tb-1" and asked["folder"] == "inbox"
+
+
+async def test_a_second_host_replaces_the_first_and_the_first_is_hung_up_on(real):
+    c = await real.client()
+    first = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    second = await real.host(list=lambda a: {"messages": [emsg("k2@acme.example", "From the second")], "more": False})
+    await first.closed()
+    await until(lambda: "info" in second.ops())
+    [m] = (await c.call("list", view="all"))["messages"]
+    assert m["subject"] == "From the second"
+    assert real.service.engine.connected and real.service.engine_state == "up"
+
+
+async def test_a_request_the_host_never_answers_fails_with_engine_down_when_it_hangs_up(real):
+    c = await real.client()
+    host = await real.host(list=HANG)
+    await until(lambda: real.service.engine_state == "up")
+    asking = asyncio.create_task(c.ask("list", view="all"))
+    await until(lambda: "list" in host.ops())
+    host.close()
+    answer = await asking
+    assert answer["ok"] is False and answer["code"] == "engine_down" and answer["error"]
+    await until(lambda: not real.service.engine.connected)
+    await c.fails("list", "engine_down", view="all")
+
+
+async def test_a_host_that_hangs_up_is_the_end_of_the_engine_and_a_new_one_is_the_start_of_it_again(real):
+    c = await real.client()
+    await c.call("subscribe")
+    host = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    host.close()
+    await until(lambda: not real.service.engine.connected)
+    while (await c.push("status", 3))["engine"] == "up":     # the first one said it was up; the next says it is not
+        pass
+    again = await real.host()
+    await until(lambda: real.service.engine_state == "up" and real.service.engine.connected)
+    assert "info" in again.ops()
+
+
+async def test_a_process_inside_an_agents_turn_cannot_be_the_engine(real):
+    real.agent_flag = True
+    try:
+        host = await real.host()
+        await host.closed()                       # the service hung up on it
+        await asyncio.sleep(0.1)
+    finally:
+        real.agent_flag = False
+    assert not real.service.engine.connected and host.ops() == []
+
+
+async def test_the_hello_event_is_kept_and_other_events_reach_the_window(real):
+    c = await real.client()
+    await c.call("subscribe")
+    host = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    host.say({"event": "hello", "version": 1, "app": "Thunderbird", "app_version": "128.0", "caps": ["send"]})
+    await until(lambda: real.service.engine.hello is not None)
+    assert real.service.engine.hello["caps"] == ["send"]
+    host.say({"event": "new_mail", "account": "tb-1", "messages": [emsg("fresh@acme.example", "Brand new")]})
+    push = await c.push("new_mail")
+    assert push["message"]["id"] == "a1/fresh@acme.example" and push["known"] is False
+
+
+async def test_a_mail_that_comes_in_one_big_frame_is_read_and_cut_for_the_window(real):
+    host = await real.host(get=lambda a: {"message": emsg("big@acme.example", "Big"), "text": "word " * 400_000,
+                                          "html": None, "headers": {}, "attachments": []})
+    c = await real.client()
+    await until(lambda: real.service.engine_state == "up")
+    got = await c.call("read", id="a1/big@acme.example")
+    assert got["truncated"] is True and 0 < len(got["text"]) < 1_000_000
+    assert (await c.call("ping"))["pong"]
+    assert host.ops().count("get") == 1
+
+
+async def test_a_press_over_the_real_link_uploads_the_attachments_then_sends_one_request_that_names_them(real,
+                                                                                                          home):
+    c = await real.client()
+    big = bytes(range(256)) * 3000
+    f = write(home, "big.bin", big)
+    sent = []
+
+    def send(a):
+        sent.append(a)
+        return {"message_id": "sent-1@acme.example", "saved": True}
+    host = await real.host(send=send, get=lambda a: {"message": emsg("k1@acme.example", "Question"), "text": "Hi",
+                                                      "html": None, "headers": {}, "attachments": []})
+    await until(lambda: real.service.engine_state == "up")
+    d = await c.call("draft", reply_to="a1/k1@acme.example", body="Yes.", attachments=[str(f)], cc="leo@acme.example")
+    await shown(c, d)
+    got = await press(c, d)
+    assert got["already"] is False and got["receipt"]["message_id"] == "sent-1@acme.example"
+    [req] = sent
+    assert set(req) == {"id", "op", "account", "kind", "reply_to", "to", "cc", "bcc", "subject", "body", "attachments"}
+    assert (req["account"], req["kind"], req["reply_to"], req["subject"], req["body"]) == (
+        "tb-1", "reply", "k1@acme.example", "Re: Question", "Yes.")
+    assert [a["email"] for a in req["to"]] == ["priya@acme.example"] and [a["email"] for a in req["cc"]] == [
+        "leo@acme.example"]
+    [att] = req["attachments"]
+    assert set(att) == {"name", "content_type", "xfer"} and att["name"] == "big.bin"
+    assert bytes(host.blobs[att["xfer"]]) == big
+    ops = host.ops()
+    assert ops.index("send") > max(i for i, o in enumerate(ops) if o == "blob")        # all of it was there first
+
+
+async def test_a_host_that_says_no_to_a_send_is_a_plain_no_and_one_that_says_nothing_is_unknown(real):
+    c = await real.client()
+
+    def no(a):
+        raise Failure("engine_error", "The server said no.")
+    host = await real.host(send=no)
+    await until(lambda: real.service.engine_state == "up")
+    d = await c.call("draft", to="jo@family.example", body="x")
+    await shown(c, d)
+    sentence = await c.fails("send", "engine_error", id=d["id"], fingerprint=d["fingerprint"])
+    assert "server said no" in sentence and "Nothing was sent" in sentence
+    assert (await c.call("draft_get", id=d["id"]))["state"] == "open"
+    host.handlers["send"] = HANG
+    sentence = await c.fails("send", "unknown_outcome", id=d["id"], fingerprint=d["fingerprint"])      # SEND_S passes
+    assert "look in Sent" in sentence
+    assert (await c.call("draft_get", id=d["id"]))["state"] == "unknown"
+    second = await real.host()
+    await until(lambda: real.service.engine.connected)
+    host2_sends = [r for r in second.requests if r["op"] == "send"]
+    assert host2_sends == []                          # nothing tried it again on the new connection
+
+
+async def test_a_link_that_goes_while_the_send_is_out_is_unknown_even_though_the_host_was_alive(real):
+    c = await real.client()
+    host = await real.host()
+    await until(lambda: real.service.engine_state == "up")
+    d = await c.call("draft", to="jo@family.example", body="x")
+    await shown(c, d)
+    host.handlers["send"] = lambda a: host.writer.close()      # the add-on's side of the link ends
+    await c.fails("send", "unknown_outcome", id=d["id"], fingerprint=d["fingerprint"])
+    assert (await c.call("draft_get", id=d["id"]))["state"] == "unknown"
+
+
+# -- a client that does not read, too many clients, and what must not pile up --
+
+async def raw_client(mail, rcvbuf=None):
+    """A connection that is read by hand (or not at all), with a small receive buffer if asked."""
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    if rcvbuf:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, rcvbuf)
+    sock.setblocking(False)
+    await asyncio.get_running_loop().sock_connect(sock, str(mail.service.socket_path))
+    return sock
+
+
+async def ended(sock, seconds=5.0) -> bool:
+    """Reading what is left on a socket, does it come to an end (the service closed it) and not stay open?"""
+    loop = asyncio.get_running_loop()
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            if not await asyncio.wait_for(loop.sock_recv(sock, 1 << 16), 1.0):
+                return True
+        except ConnectionResetError:
+            return True
+        except TimeoutError:
+            continue
+    return False
+
+
+async def test_a_client_that_asks_and_never_reads_is_dropped_and_nobody_else_is_slowed(mail, person, monkeypatch):
+    monkeypatch.setattr(service, "DRAIN_S", 0.3)
+    sock = await raw_client(mail, 4096)
+    loop = asyncio.get_running_loop()
+    await until(lambda: len(mail.service.conns) == 2)
+    request = json.dumps({"op": "status"}).encode() + b"\n"
+    for _ in range(40):                        # status is a kilobyte or two, so the buffers fill quickly
+        await loop.sock_sendall(sock, request * 50)
+        await asyncio.sleep(0)
+    began = time.monotonic()
+    assert (await person.call("ping"))["pong"] and time.monotonic() - began < 0.5
+    await until(lambda: len(mail.service.conns) == 1, 8.0)       # it was let go of, and the others were not
+    assert await ended(sock)                                      # and its socket was closed, not kept open
+    assert (await person.call("status"))["engine"] == "up"
+    sock.close()
+
+
+async def test_a_subscriber_that_never_reads_is_dropped_when_what_is_waiting_for_it_passes_the_cap(mail, person,
+                                                                                                  monkeypatch):
+    monkeypatch.setattr(service, "SEND_CAP", 50_000)
+    sock = await raw_client(mail, 4096)
+    loop = asyncio.get_running_loop()
+    await loop.sock_sendall(sock, b'{"op": "subscribe"}\n')
+    await until(lambda: any(c.subscribed for c in mail.service.conns))
+    await person.call("subscribe")
+    for _ in range(40):
+        mail.service._broadcast({"push": "filler", "pad": "x" * 60_000})
+        await asyncio.sleep(0.02)                # whoever reads has the time to
+    await until(lambda: len(mail.service.conns) == 1)
+    assert await ended(sock)
+    assert (await person.push("filler"))["push"] == "filler"        # whoever reads gets everything
+    sock.close()
+
+
+async def test_more_clients_than_the_limit_are_turned_away_and_a_place_frees_when_one_leaves(mail, person,
+                                                                                            monkeypatch):
+    monkeypatch.setattr(service, "MAX_CLIENTS", 3)
+    two, three = await mail.client(), await mail.client()
+    assert (await three.call("ping"))["pong"]
+    reader, writer = await asyncio.open_unix_connection(str(mail.service.socket_path))
+    writer.write(b'{"op": "ping"}\n')
+    try:
+        assert await asyncio.wait_for(reader.readline(), 3) == b""        # no answer: there is no room
+    except ConnectionResetError:
+        pass
+    writer.close()
+    two.close()
+    await until(lambda: len(mail.service.conns) == 2)
+    four = await mail.client()
+    assert (await four.call("ping"))["pong"]
+
+
+async def test_connecting_and_leaving_in_every_way_leaves_nothing_behind(mail, person):
+    for i in range(60):
+        _reader, writer = await asyncio.open_unix_connection(str(mail.service.socket_path))
+        if i % 4 == 0:
+            writer.write(b'{"op": "status"}\n')      # asked, and gone before the answer
+        elif i % 4 == 1:
+            writer.write(b'{"op": "list", "view": "all"')     # half a request
+        elif i % 4 == 2:
+            writer.write(b'{"op": "subscribe"}\n{"op": "views"}\n')
+        writer.close()
+    await until(lambda: len(mail.service.conns) == 1)
+    assert (await person.call("ping"))["pong"]
+
+
+async def test_requests_sent_in_a_pile_without_waiting_are_answered_in_order(mail):
+    reader, writer = await asyncio.open_unix_connection(str(mail.service.socket_path))
+    writer.write(b"".join(json.dumps({"id": i, "op": "ping"}).encode() + b"\n" for i in range(500)))
+    got = [json.loads(await asyncio.wait_for(reader.readline(), 5))["id"] for _ in range(500)]
+    assert got == list(range(500))
+    writer.close()
+
+
+async def test_a_send_in_progress_does_not_hold_up_anybody_else(mail, person):
+    d = await ready(person)
+    other = await mail.client()
+    mail.engine.send_delay = 0.5
+    sending = asyncio.create_task(press(person, d))
+    await until(lambda: calls(mail, "send"))
+    began = time.monotonic()
+    assert (await other.call("status"))["engine"] == "up" and (await other.call("list", view="drafts"))
+    assert time.monotonic() - began < 0.3
+    await sending
+
+
+async def test_a_burst_of_engine_events_keeps_only_the_latest_and_the_service_goes_on(mail, person):
+    await person.call("subscribe")
+    for i in range(1000):
+        mail.engine._later(mail.engine._event, {"event": "counts_changed", "n": i})
+    mail.service._events.extend({"event": "nonsense", "n": i} for i in range(1000))
+    assert len(mail.service._events) <= service.EVENTS_MAX
+    await until(lambda: len(mail.service._events) == 0)
+    assert (await person.call("accounts", fresh=True))["accounts"]
+
+
+async def test_many_edits_at_once_leave_no_locks_and_no_flights_behind(mail, person):
+    d = await reply_draft(person)
+    clients = [await mail.client() for _ in range(8)]
+
+    async def edits(c, k):
+        for i in range(8):
+            await c.ask("draft_edit", id=d["id"], body=f"{k}-{i}")
+            await c.ask("draft_shown", id=d["id"], fingerprint="0" * 64)
+            await c.ask("send", id=d["id"], fingerprint="0" * 64)
+            await c.ask("draft_get", id=f"d{900 + i}")
+    await asyncio.gather(*(edits(c, k) for k, c in enumerate(clients)))
+    assert mail.service._dlocks == {} and mail.service._flights == {}
+    assert (await person.call("draft_get", id=d["id"]))["state"] == "open"
+    assert mail.engine.sent == []
+
+
+async def test_what_the_service_holds_for_one_connection_is_bounded_by_the_request_limit(mail, person):
+    reader, writer = await asyncio.open_unix_connection(str(mail.service.socket_path), limit=1 << 26)
+    body = "x" * service.MAX_BODY
+    writer.write(json.dumps({"op": "draft", "to": "jo@family.example", "body": body}).encode() + b"\n")
+    answer = json.loads(await asyncio.wait_for(reader.readline(), 10))
+    assert answer["ok"] is True and len(answer["result"]["body"]) == len(body)       # as large as is allowed
+    writer.write(b'{"op": "ping", "pad": "' + b"x" * (service.LINE_LIMIT - 100) + b'"}\n')       # a line just in limits
+    assert json.loads(await asyncio.wait_for(reader.readline(), 10))["ok"] is True
+    writer.write(b'{"op": "ping", "pad": "' + b"x" * service.LINE_LIMIT + b'"}\n')
+    assert json.loads(await asyncio.wait_for(reader.readline(), 10))["code"] == "bad_request"
+    assert await reader.readline() == b""
+    writer.close()
+
+
+# -- the notes are damaged, or left over, or too old --
+
+async def test_notes_that_cannot_be_read_at_start_are_set_aside_and_the_accounts_come_back_from_thunderbird(started,
+                                                                                                          home):
+    (home / "state").mkdir()
+    (home / "state" / "mail.db").write_bytes(b"this is not a database " * 400)
+    m = await Mail.start()
+    started.append(m)
+    c = await m.client()
+    assert (home / "state" / "mail.db.broken").exists()
+    assert len((await c.call("accounts"))["accounts"]) == 3
+    d = await c.call("draft", to="jo@family.example", body="x")
+    assert d["id"] == "d1"
+
+
+async def test_notes_that_go_bad_while_running_are_a_sentence_once_and_then_made_again_from_thunderbird(mail, person,
+                                                                                                      home,
+                                                                                                      monkeypatch):
+    await person.call("mark_reply", id=LAUNCH, needs=True, why="a date")
+    f = write(home, "a.txt")
+    d = await person.call("draft", to="jo@family.example", body="x", attachments=[str(f)])
+    assert mail.draft_files(d["id"]) == ["a.txt"]
+    real = Store.drafts
+    boom = {"n": 0}
+
+    def damaged(self, *a, **k):
+        if boom["n"] == 0:
+            boom["n"] = 1
+            raise sqlite3.DatabaseError("database disk image is malformed")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Store, "drafts", damaged)
+    sentence = await person.fails("list", "internal", view="drafts")
+    assert "started again" in sentence
+    assert (home / "state" / "mail.db.broken").exists()
+    assert await person.call("list", view="drafts") == []
+    await person.fails("draft_get", "not_found", id=d["id"])
+    assert (await person.call("list", view="needs_reply"))["messages"] == []
+    await until(lambda: mail.draft_files(d["id"]) == [])          # the copies of a draft that is gone went too
+
+    async def back():
+        return len((await person.call("accounts", fresh=True))["accounts"]) == 3
+    await until(back)
+    assert (await person.call("list", view="all"))["messages"]
+
+
+async def test_notes_that_are_unwell_but_not_damaged_are_not_thrown_away(mail, person, monkeypatch):
+    def busy(self, *a, **k):
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(Store, "drafts", busy)
+    await person.fails("list", "internal", view="drafts")
+    monkeypatch.undo()
+    assert not (mail.files.parent / "mail.db.broken").exists()
+
+
+async def test_files_that_belong_to_no_draft_are_swept_at_start_and_those_that_do_are_kept(started, home):
+    m = await Mail.start()
+    c = await m.client()
+    f = write(home, "keep.txt")
+    d = await c.call("draft", to="jo@family.example", body="x", attachments=[str(f)])
+    gone = await c.call("draft", to="jo@family.example", body="y", attachments=[str(f)])
+    await c.call("draft_discard", id=gone["id"])
+    m.service.stop()
+    await asyncio.wait_for(m.task, 10)
+    (m.files / "drafts" / "d99").mkdir(parents=True)
+    (m.files / "drafts" / "d99" / "orphan.txt").write_bytes(b"left over")
+    (m.files / "inflight").mkdir(exist_ok=True)
+    (m.files / "inflight" / "abc.part").write_bytes(b"half a download")
+    again = await Mail.start()
+    started.append(again)
+    assert again.draft_files(d["id"]) == ["keep.txt"]
+    assert sorted(p.name for p in (again.files / "drafts").iterdir()) == [d["id"]]
+    assert not (again.files / "inflight").exists() or list((again.files / "inflight").iterdir()) == []
+
+
+async def test_a_draft_that_was_sent_or_discarded_long_ago_is_forgotten_with_its_receipt(started, home, monkeypatch):
+    m = await Mail.start()
+    started.append(m)
+    c = await m.client()
+    sent = await ready(c)
+    await press(c, sent)
+    gone = await reply_draft(c, to=SAM)
+    await c.call("draft_discard", id=gone["id"])
+    keep = await c.call("draft", to="jo@family.example", body="still open")
+    m.service.stop()
+    await asyncio.wait_for(m.task, 10)
+    later = await Mail.start(clock=lambda: time.time() + store.RETENTION_S + 3600)
+    started.append(later)
+    c2 = await later.client()
+    await c2.fails("draft_get", "not_found", id=sent["id"])
+    await c2.fails("draft_get", "not_found", id=gone["id"])
+    assert (await c2.call("draft_get", id=keep["id"]))["state"] == "open"        # open drafts are never old
+
+
+async def test_the_hourly_tidy_forgets_old_drafts_in_a_service_that_has_been_running_for_days(started, monkeypatch):
+    monkeypatch.setattr(service, "PRUNE_S", 0.1)
+    offset = {"s": 0.0}
+    m = await Mail.start(clock=lambda: time.time() + offset["s"])
+    started.append(m)
+    c = await m.client()
+    d = await ready(c)
+    await press(c, d)
+    offset["s"] = store.RETENTION_S + 3600
+
+    async def forgotten():
+        return (await c.ask("draft_get", id=d["id"]))["ok"] is False
+    await until(forgotten, 5.0)
+
+
+async def test_the_press_log_is_cut_at_a_size_and_keeps_one_older_part(mail, person, agent, monkeypatch):
+    monkeypatch.setattr(service, "PRESS_LOG_ROTATE", 600)
+    d = await ready(person)
+    for _ in range(40):
+        await agent.fails("send", "refused", id=d["id"], fingerprint=d["fingerprint"])
+    log = paths.press_log()
+    assert log.exists() and log.with_name(log.name + ".1").exists()
+    assert not log.with_name(log.name + ".2").exists()
+    assert log.stat().st_size < 600 + 400
+    rows = [json.loads(x) for x in log.read_text().splitlines()]
+    assert rows and all(r["code"] == "agent" for r in rows)
+
+
+# -- the service as a program --
+
+SRC = Path(__file__).resolve().parents[1] / "src"
+BIN = Path(__file__).resolve().parents[1] / "bin" / "bombadil-mail"
+FAKE = {"BOMBADIL_MAIL_ENGINE": "fake", "PYTHONPATH": str(SRC)}
+
+
+def program(*args, script=False):
+    """The service as the supervisor runs it, on the fake engine, in this test's temp home (the environment the
+    `places` fixture made is inherited)."""
+    argv = [str(BIN) if script else sys.executable, *([] if script else ["-m", "bombadil.mail.service"]), *args]
+    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            env={**os.environ, **FAKE})
+
+
+def finish(proc, seconds=20.0):
+    """Wait for it to end, and what it printed."""
+    try:
+        out, err = proc.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+    return proc.returncode, out, err
+
+
+def wait_for_socket(proc, path, seconds=15.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and proc.poll() is None and not path.exists():
+        time.sleep(0.05)
+    assert path.exists(), f"the service did not start: {proc.poll()}"
+
+
+@pytest.mark.parametrize("script", [False, True], ids=["module", "script"])
+async def test_the_program_starts_on_the_fake_engine_answers_and_leaves_cleanly_on_sigterm(home, script):
+    from bombadil.mail import client
+    sock = home / "run" / "mail.sock"
+
+    def go():
+        proc = program(script=script)
+        try:
+            wait_for_socket(proc, sock)
+            with client.Connection(sock, timeout=10) as c:
+                status = c.request("status")
+                assert status["fake"] is True and len(status["accounts"]) == 3
+                assert c.request("ping")["pong"]
+                assert c.request("draft", to="jo@family.example", body="from the program")["state"] == "open"
+            proc.send_signal(signal.SIGTERM)
+            return finish(proc)[0]
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                finish(proc)
+    assert await asyncio.to_thread(go) == 0
+    assert not sock.exists() and (home / "state" / "mail.db").exists()
+
+
+async def test_a_second_program_on_the_same_notes_says_so_and_leaves_the_first_alone(home):
+    from bombadil.mail import client
+    sock = home / "run" / "mail.sock"
+
+    def go():
+        first = program()
+        try:
+            wait_for_socket(first, sock)
+            code, _, err = finish(program())
+            with client.Connection(sock, timeout=10) as c:
+                assert c.request("ping")["pong"]
+            return code, err
+        finally:
+            first.terminate()
+            finish(first)
+    code, err = await asyncio.to_thread(go)
+    assert code == 1 and "already" in err
+
+
+@pytest.mark.parametrize("flag, code", [("--help", 0), ("-h", 0), ("--what", 2)])
+async def test_the_program_with_an_argument_says_what_it_is_and_does_not_start(home, flag, code):
+    got, out, err = await asyncio.to_thread(lambda: finish(program(flag)))
+    assert got == code and not (home / "run" / "mail.sock").exists()
+    assert "mail" in out.lower() or "mail" in err.lower()
+
+
+async def test_the_launcher_script_is_executable_and_says_what_it_is(home):
+    assert os.access(BIN, os.X_OK)
+    got, out, _ = await asyncio.to_thread(lambda: finish(program("--help", script=True)))
+    assert got == 0 and "mail" in out.lower()
+
+
+# -- races inside a press: what happens between the checks and the write of "sending" --
+
+async def test_a_draft_edited_and_edited_back_while_its_attachments_go_up_is_not_sent_unshown(mail, person, home,
+                                                                                            monkeypatch):
+    f = write(home, "plan.txt", b"the plan")
+    d = await person.call("draft", to="jo@family.example", body="First words", attachments=[str(f)])
+    await shown(person, d)
+    other = await mail.client()
+    release, uploading = asyncio.Event(), asyncio.Event()
+    real_blob = mail.engine.send_blob
+
+    async def slow_blob(*a, **k):
+        uploading.set()
+        await release.wait()
+        return await real_blob(*a, **k)
+    monkeypatch.setattr(mail.engine, "send_blob", slow_blob)
+    pressing = asyncio.create_task(person.ask("send", id=d["id"], fingerprint=d["fingerprint"]))
+    await asyncio.wait_for(uploading.wait(), 5)
+    await other.call("draft_edit", id=d["id"], body="Second words")
+    back = await other.call("draft_edit", id=d["id"], body="First words")
+    assert back["fingerprint"] == d["fingerprint"]                  # the very same draft, and no longer shown
+    release.set()
+    answer = await pressing
+    assert answer["ok"] is False and answer["code"] == "changed"
+    assert not calls(mail, "send") and (await person.call("draft_get", id=d["id"]))["state"] == "open"
+
+
+async def test_a_draft_that_is_discarded_in_the_moment_a_press_begins_is_sent_and_not_discarded(mail, person,
+                                                                                               monkeypatch):
+    d = await ready(person)
+    real, fired = Store.set_state, []
+
+    def racing(self, did, state, now, *, was=None):
+        if state == "discarded" and not fired:
+            fired.append(1)
+            assert self.begin_send(did, d["fingerprint"], now)      # the press got there first
+        return real(self, did, state, now, was=was)
+    monkeypatch.setattr(Store, "set_state", racing)
+    await person.fails("draft_discard", "refused", id=d["id"])
+    monkeypatch.undo()
+    assert (await person.call("draft_get", id=d["id"]))["state"] == "sending"

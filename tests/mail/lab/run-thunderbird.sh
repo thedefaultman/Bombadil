@@ -97,7 +97,7 @@ launch_tb() {
   DISPLAY="$(cat "$LAB/display")"
   date +%s.%N > "$LAB/start.time"
   local dispenv=(-u DISPLAY); [ -n "$DISPLAY" ] && dispenv=(DISPLAY="$DISPLAY")
-  env HOME="$LAB/home" "${dispenv[@]}" BOMBADIL_LAB_DIR="$LAB" MOZ_CRASHREPORTER_DISABLE=1 \
+  env "${dispenv[@]}" HOME="$LAB/home" BOMBADIL_LAB_DIR="$LAB" MOZ_CRASHREPORTER_DISABLE=1 \
       MOZ_CRASHREPORTER_NO_REPORT=1 NO_AT_BRIDGE=1 \
       setsid "$TB_BIN" "${TB_ARGS[@]}" >>"$LAB/tb.log" 2>&1 &
   echo $! > "$LAB/tb.pid"; echo $! > "$LAB/tb.pgid"

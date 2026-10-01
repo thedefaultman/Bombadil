@@ -256,7 +256,7 @@ def t_chunks(lab, mb=20):
     b = lab.bridge()
     blob = os.urandom(mb * 1024 * 1024)
     want = hashlib.sha256(blob).hexdigest()
-    raw_chunk = 512 * 1024  # 512 KiB raw -> 699,052 base64 chars: one frame < 1 MiB
+    raw_chunk = 3 * 174762  # 524,286 raw bytes (a multiple of 3, so every chunk is padding-free base64) -> 699,048 chars: one frame < 1 MiB
     n0 = len(lab.ms.sent())
     t = time.time()
     chunks = [blob[i:i + raw_chunk] for i in range(0, len(blob), raw_chunk)]
@@ -276,10 +276,11 @@ def t_chunks(lab, mb=20):
     say("chunks", "host->add-on->SMTP", "%d MB in %d chunks of %d KiB: stash upload %.1fs, send %.1fs, sha256 %s" % (mb, len(chunks), raw_chunk // 1024, t_up, t_send, "MATCH" if got == [want] else "MISMATCH %s" % got))
     b.request(op="stash_drop", key="big")
     # add-on -> host: a received 20 MB attachment, in one frame
+    b64 = base64.b64encode(blob)
     eml = (b"From: Big <big@example.org>\r\nTo: test@example.test\r\nSubject: Big attachment in\r\nMessage-ID: <big-in@example.org>\r\nDate: Mon, 28 Sep 2026 09:00:00 +0000\r\n"
            b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B\r\n"
            b"Content-Type: application/octet-stream; name=\"in.bin\"\r\nContent-Disposition: attachment; filename=\"in.bin\"\r\nContent-Transfer-Encoding: base64\r\n\r\n"
-           + b"\r\n".join(base64.b64encode(blob)[i:i + 76] for i in range(0, len(base64.b64encode(blob)), 76)) + b"\r\n--B--\r\n")
+           + b"\r\n".join(b64[i:i + 76] for i in range(0, len(b64), 76)) + b"\r\n--B--\r\n")
     lab.ms.deliver(eml, "INBOX")
     for _ in range(60):
         r = b.call("messages.query", {"headerMessageId": "big-in@example.org"})["messages"]

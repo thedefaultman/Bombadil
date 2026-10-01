@@ -93,13 +93,15 @@ class Notices:
 
     def post(self, source: str, line: str, tone: str = "step", actions=(), ttl: float = 0,
              handler: Handler | None = None) -> int:
-        """Say something. The oldest notice makes room when the stack is full."""
+        """Say something. The oldest notice that is not an error makes room when the stack is full."""
         self._next += 1
         ttl = max(0.0, float(ttl or 0))
         notice = Notice(self._next, str(source), one_line(line), tone if tone in TONES else "step",
                         _actions(actions), ttl, self.clock(), self.mono() + ttl if ttl else None, handler)
         while len(self._live) >= self.limit:
-            self.dismiss(next(iter(self._live)))
+            # An error is something the person must not miss (a send nobody can be sure of, one that was not
+            # theirs): a run of new mail does not push it off. Only when every one is an error does one go.
+            self.dismiss(next((i for i, n in self._live.items() if n.tone != "error"), next(iter(self._live))))
         self._live[notice.id] = notice
         self.emit(notice.wire())
         return notice.id

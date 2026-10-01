@@ -156,6 +156,22 @@ def test_a_request_that_cannot_be_written_as_json_is_refused_and_not_sent(serve)
     assert len(server.requests) == 1
 
 
+def test_text_goes_as_text_and_not_as_escapes_so_a_long_draft_in_any_script_fits_the_limit(serve):
+    line = client._encode({"op": "draft", "body": "\u00e9" * 400_000})
+    assert len(line) < 1 << 20 and b"\\u" not in line          # as escapes it would be six times the size
+    odd = client._encode({"a": "x\ny" + chr(0x2028) + "z"})
+    assert odd.count(b"\n") == 1 and odd.endswith(b"\n")       # one request is one line, whatever is in the text
+
+
+def test_a_lone_surrogate_cannot_be_text_so_that_one_request_goes_escaped_and_the_call_carries_on(serve):
+    lone = chr(0xD800)
+    server = serve(lambda c, r: ok(c, r, r["body"]))
+    with Connection() as conn:
+        assert conn.request("draft", 1.0, body="a" + lone + "b") == "a" + lone + "b"
+        assert conn.request("draft", 1.0, body="fine \u00e9") == "fine \u00e9"
+    assert len(server.requests) == 2
+
+
 def test_calls_from_two_threads_each_get_their_own_answer(serve):
     serve(lambda c, r: ok(c, r, r["tag"]))
     got = {}

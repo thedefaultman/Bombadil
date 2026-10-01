@@ -129,6 +129,10 @@ class Store:
             self.start_over(e)
 
     def _open(self) -> None:
+        try:   # the person's drafts and who they answer: the file is made theirs alone, and SQLite gives its
+            os.close(os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600))   # -wal and -shm its mode
+        except OSError:
+            pass   # what cannot be made is reported by the connect that follows
         self.db = sqlite3.connect(self.path, timeout=BUSY_MS / 1000, isolation_level=None, check_same_thread=False)
         try:
             self.db.row_factory = sqlite3.Row

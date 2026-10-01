@@ -1,6 +1,7 @@
 """mail/store.py: accounts, marks, drafts and the press's state machine, and what it does with a damaged file."""
 
 import json
+import os
 import sqlite3
 import threading
 
@@ -38,6 +39,23 @@ def test_a_new_store_makes_its_folder_and_file_in_wal_mode_with_full_syncs(tmp_p
     assert s.one("SELECT version FROM schema")["version"] == store_mod.SCHEMA_VERSION
     assert s.recovered is None
     s.close()
+
+
+def test_the_file_and_its_wal_are_the_persons_alone_even_after_it_was_set_aside_and_made_again(tmp_path):
+    path = tmp_path / "state" / "mail.db"
+    old = os.umask(0o022)       # the usual one: files would be readable by everybody
+    try:
+        s = Store(path)
+        s.add_account("a@b.example", "imap", "ok", name="A", note="", now=1.0)
+        modes = {f.name: os.stat(f).st_mode & 0o777 for f in path.parent.glob("mail.db*")}
+        assert modes and set(modes.values()) == {0o600}, modes
+        s.start_over(sqlite3.DatabaseError("test"))
+        s.add_account("a@b.example", "imap", "ok", name="A", note="", now=1.0)
+        modes = {f.name: os.stat(f).st_mode & 0o777 for f in path.parent.glob("mail.db*") if ".broken" not in f.name}
+        assert modes and set(modes.values()) == {0o600}, modes
+        s.close()
+    finally:
+        os.umask(old)
 
 
 def test_what_was_written_is_there_after_the_store_is_opened_again(tmp_path):
