@@ -50,6 +50,11 @@ SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in
 PROVIDER_WORDS = {"claude": ["claude", "claude code", "anthropic"], "codex": ["codex", "openai codex", "chatgpt"]}
 PROVIDER_VERBS = ("use", "switch to", "change to", "sign in to", "log in to", "sign into", "log into",
                   "sign in with", "log in with")
+# Resting the AI by hand and ending it ("pause claude", "resume the ai"; agentd does these itself).
+# "the AI" is whichever one runs the machine. "use claude" ends a pause too (it is in PROVIDER_VERBS).
+REST_VERBS = ("pause", "resume")
+REST_TARGETS = {**PROVIDER_WORDS, "ai": ["the ai", "ai"]}
+REST_TITLES = {"claude": "Claude", "codex": "Codex", "ai": "the AI"}
 # Checked after app and panel names, so an app you made called "Sound" wins.
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
@@ -199,6 +204,12 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
             name = _lookup(word, PROVIDER_WORDS) if word else None
             if name:
                 return Action("provider", name, title=name.capitalize())
+    if plain:
+        for verb in REST_VERBS:
+            word = _strip_verb(t, (verb,))
+            target = _lookup(word, REST_TARGETS) if word else None
+            if target:
+                return Action("rest", target, verb, REST_TITLES[target])
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
@@ -427,6 +438,23 @@ class Launcher:
             self._undo_marker().unlink()
         except OSError:
             pass
+
+    def undo_marker(self) -> dict | None:
+        """The marker of the last undo as it is now, for skip_restore_point."""
+        return self._marker()
+
+    def skip_restore_point(self, snapshot: int | None, before: dict | None) -> None:
+        """A turn took a restore point and changed nothing (the account's limit stopped it at once).
+        Undo must go past that empty point rather than say "Undone" and change nothing: put back
+        the marker the turn cleared (`before`), or, with none, mark the point itself as already
+        undone, which is how the next undo knows to start below it. An undo still waiting for its
+        restart already covers this point: it has nothing to add, so it is not "newer" (see _undo)."""
+        if before is not None:
+            if self._pending(before) and snapshot is not None:
+                before = {**before, "covered": max(int(before.get("covered") or 0), int(snapshot))}
+            self._write_marker(before)
+        elif snapshot is not None:
+            self._write_marker({"snapshot": int(snapshot), "what": "", "boot": None, "t": time.time()})
 
     def _undo(self, _a: Action) -> tuple[bool, str]:
         if not self.snaps.available:

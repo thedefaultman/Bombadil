@@ -1,7 +1,7 @@
 """The line above the pill, and the picture above that, driven by agentd's events in an offscreen window.
 
-PillState, StatusLine, QueueChips and CardHost are plain Qt Quick (Quickshell only wraps them in
-shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save a
+PillState, StatusLine, QueueChips, SetupChips, AiCard and CardHost are plain Qt Quick (Quickshell only
+wraps them in shell.qml), so they load here without a compositor. Set BOMBADIL_SCREENS=<dir> to save a
 picture of each state.
 """
 
@@ -59,6 +59,7 @@ Window {
             StatusLine { objectName: "statusLine"; pill: pillState; Layout.fillWidth: true }
             SetupChips { objectName: "setupChips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             QueueChips { objectName: "chips"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
+            AiCard { objectName: "aiCard"; pill: pillState; Layout.alignment: Qt.AlignHCenter }
             Rectangle { Layout.fillWidth: true; implicitHeight: 52; radius: 26; color: "#f01a1d21" }
         }
     }

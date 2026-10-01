@@ -9,6 +9,7 @@ import Bombadil as Kit
 //   working    orange, turns a third of a turn a second around the b, which never moves
 //   needs      amber, knocks twice and waits, with a glow that breathes behind it
 //   done       green, one hop with a squash on landing, then still
+//   resting    the AI is out of plan or paused: the outline whole in grey over a faint fill, the b cut in; still
 //   stopped    the Stop button's own grey square
 //   offline    the outline alone, broken, red; the b stays
 //   starting   the working roll (the pill adds the word "Starting")
@@ -27,7 +28,7 @@ Item {
     implicitHeight: 24
 
     readonly property bool rolling: face === "working" || face === "starting"
-    readonly property bool drawn: face !== "stopped" && face !== "offline"
+    readonly property bool drawn: face !== "stopped" && face !== "offline" && face !== "resting"
     readonly property color fill: rolling ? Kit.Theme.accent : face === "needs" ? Kit.Theme.warn : Kit.Theme.good
 
     // The stone: corner radius 2.7, side radius 15.3, top corner centred on (12, 5.7), centroid at
@@ -118,6 +119,34 @@ Item {
         visible: stone.face === "stopped"
         x: 6; y: 6; width: 12; height: 12; radius: 2.4
         color: Kit.Theme.muted
+    }
+
+    // Resting: the stone as a hollow, grey and still. The outline is the offline one, whole, and a
+    // faint grey fill keeps the b legible: it is cut in the ground's colour as on every other face.
+    Shape {
+        anchors.fill: parent
+        visible: stone.face === "resting"
+        ShapePath {
+            fillColor: Kit.Theme.alpha(Kit.Theme.muted, 0.3)
+            strokeColor: Kit.Theme.muted
+            strokeWidth: 1.5
+            joinStyle: ShapePath.MiterJoin
+            PathSvg {
+                path: "M10.763 4.082A2.475 2.475 0 0 1 13.238 4.082A14.025 14.025 0 0 1 20.25 16.228A2.475 2.475 0 0 1 19.013 18.371"
+                    + "A14.025 14.025 0 0 1 4.988 18.371A2.475 2.475 0 0 1 3.75 16.228A14.025 14.025 0 0 1 10.762 4.082Z"
+            }
+        }
+        Shape {
+            anchors.fill: parent
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: stone.ground
+                strokeWidth: 1.6
+                capStyle: ShapePath.FlatCap
+                joinStyle: ShapePath.MiterJoin
+                PathSvg { path: "M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86" }
+            }
+        }
     }
 
     // Offline: the outline alone, 1.5 px, six round-capped dashes (one on each corner and each
