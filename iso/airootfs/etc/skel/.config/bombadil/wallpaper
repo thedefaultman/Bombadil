@@ -1,0 +1,8 @@
+# The picture under the desk. To use your own, write the path of an image on a line of its own,
+# for example:
+#
+#   ~/Pictures/mountains.jpg
+#
+# The path, not the picture itself. The desk notices the change at once; your picture is dimmed a
+# little so the cards and the pill stay easy to read over it. With no path here (or no file) the
+# standard picture is shown. Lines that start with # are ignored.

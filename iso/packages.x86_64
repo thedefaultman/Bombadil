@@ -33,6 +33,8 @@ foot
 zellij
 nautilus
 chromium
+# pdftotext and pdftoppm: PDF text for the brain's search, first pages for Focus
+poppler
 pipewire
 pipewire-audio
 pipewire-alsa

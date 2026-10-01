@@ -13,7 +13,7 @@ dest="$profile/airootfs/usr/share/bombadil"
 mkdir -p "$dest"
 cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/iso/packages.x86_64" "$dest/"
 mkdir -p "$profile/airootfs/usr/local/bin"
-for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp bombadil-shell bombadil-signal; do
+for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp bombadil-shell bombadil-signal bombadil-brain bombadil-brain-watch; do
   ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
 done
 # Bake the provider CLIs in, so the first-run picker only has to log in.
