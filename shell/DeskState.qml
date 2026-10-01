@@ -14,15 +14,23 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // A button or a small x on a rows card was pressed. DeskState answers the ones that are its own
-    // (Why? and the x on Watching, Open on Needs you); the signals stay open for anyone else.
+    // A window came onto the stage (one more than before). The pill puts a picture away for it.
+    signal windowOpened()
+    // A button or a small x on a rows card was pressed, or a row that opens something was tapped.
+    // DeskState answers the ones that are its own (Why? and the x on Watching, Open on Needs you, the
+    // disk on Machine); the signals stay open for anyone else.
     signal rowAction(string widget, string key, string action)
     signal rowRemove(string widget, string key)
+    signal rowOpen(string widget, string key, string opens)
     onRowAction: (widget, key, action) => {
         if (widget === "watching" && action === "Why?") outgoing({ type: "jobs", op: "why", id: key })
         else if (widget === "needs" && action === "Open") outgoing({ type: "dev", action: "open", key: key })
     }
     onRowRemove: (widget, key) => { if (widget === "watching") _removeJob(key) }
+    // Never a prompt: agentd shows what is behind the row and answers nothing else.
+    onRowOpen: (widget, key, opens) => {
+        if (widget === "machine" && opens !== "") outgoing({ type: "vitals", op: "open", row: opens })
+    }
 
     // Left rail first, in the default order, then right.
     readonly property var widgetIds: ["now", "watching", "alive", "needs", "away", "machine"]
@@ -53,9 +61,10 @@ QtObject {
     property var nowModel: ({ title: "", why: "", steps: [], edge: "machine", command: "", caption: "",
                               done: false, running: false })
     property string nowStripText: "working"
-    // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, pulse, button,
-    // remove}]} and an optional strip: {text, dot, ring, mark, textColor, outlined}. Watching and
-    // Needs you are filled from agentd's `jobs` and `dev` messages (below), the others by later pieces.
+    // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, parts, pulse,
+    // button, remove, opens}]} and an optional strip: {text, dot, ring, mark, textColor, outlined}.
+    // Watching, Needs you and Machine are filled from agentd's `jobs`, `dev` and `machine` messages
+    // (below), the others by later pieces.
     property var watchModel: ({ title: "Watching", why: "", rows: [] })
     property var needsModel: ({ title: "Needs you", why: "", rows: [] })
     property var awayModel: null
@@ -171,11 +180,10 @@ QtObject {
             return 68 + 26 * nowModel.steps.length + (nowModel.command ? 20 : 0)
                  + (nowModel.caption ? nowCaptionHeight : 0)
         }
-        if (id === "machine") return 210
         if (id === "alive") return 168
         const m = _model(id)
         let h = 50 + 18
-        for (const r of (m && m.rows ? m.rows : [])) h += r.kind === "meter" ? 34 : 44
+        for (const r of (m && m.rows ? m.rows : [])) h += r.kind === "meter" || r.kind === "stack" ? 34 : 44
         return h
     }
 
@@ -300,8 +308,10 @@ QtObject {
             kind: w.kind === "panel" ? "panel" : "window", fullscreen: !!w.fullscreen
         })).filter(w => isFinite(w.x + w.y + w.w + w.h) && w.w > 0 && w.h > 0)
         if (JSON.stringify(clean) === JSON.stringify(windows)) return
+        const opened = clean.length > windows.length
         windows = clean
         _updateCover()
+        if (opened) windowOpened()
     }
 
     function setMonitor(width, height) {
@@ -394,6 +404,7 @@ QtObject {
         if (ev.type === "desk") { _applyDesk(ev); return }
         if (ev.type === "jobs") { _applyJobs(ev); return }
         if (ev.type === "dev") { _applyDev(ev); return }
+        if (ev.type === "machine") { _applyMachine(ev); return }
         if (ev.type === "status") {
             if (ev.busy && ev.turn !== undefined && ev.turn !== null && _phase === "idle") {
                 // The bar (re)connected in the middle of a turn; agentd sends its plan next.
@@ -451,8 +462,9 @@ QtObject {
 
     function _end(ev) {
         const failed = _error !== "" && (!_resultOk || _result === "")
-        if (ev.stopped || failed || !_qualifies) {
-            // A stopped or failed turn has nothing to tick: the card leaves at once.
+        if (ev.stopped || ev.requeued || failed || !_qualifies) {
+            // A stopped or failed turn has nothing to tick: the card leaves at once. So does one the
+            // limit stopped halfway: no turn runs while the AI rests, and it was not done.
             _clear()
             return
         }
@@ -469,6 +481,8 @@ QtObject {
         // Nothing on Watching or Needs you can be answered now, and agentd sends both tables again.
         if (jobs.length > 0 || Object.keys(_gone).length > 0) { jobs = []; _gone = {} }
         if (sessions.length > 0 || attention.length > 0) { sessions = []; attention = []; _refreshNeeds() }
+        // Nor Machine's readings, which are agentd's; it sends the card again with the desk.
+        if (machineModel !== null) machineModel = null
     }
 
     onConnectedChanged: if (connected) outgoing({ type: "desk", op: "get" })
@@ -731,6 +745,71 @@ QtObject {
         if (JSON.stringify(next) !== JSON.stringify(needsModel)) needsModel = next
     }
 
+    // -- Machine: agentd's vitals --
+
+    // What a row may be and say; the card has no dot rows, no buttons and no x.
+    readonly property var machineKinds: ["meter", "stack", "plain"]
+    readonly property var machineTones: ["machine", "sessions", "you", "ok", "amber", "red"]
+    readonly property int machineMaxRows: 6
+
+    // A number held to 0..1, or null for anything that is not one.
+    function _unit(v) {
+        const n = typeof v === "number" || (typeof v === "string" && v.trim() !== "") ? Number(v) : NaN
+        return isFinite(n) ? Math.max(0, Math.min(1, n)) : null
+    }
+
+    function _text(v) { return typeof v === "string" ? v : "" }
+    function _machineTone(t) { return machineTones.indexOf(t) >= 0 ? t : "you" }
+
+    // The pieces of a stack, each in a known tone and a fraction of the track. All of them together
+    // are held to the whole track, so a message that adds up to more cannot draw past it, and a piece
+    // with nothing in it is not one.
+    function _cleanParts(list) {
+        const out = []
+        let left = 1
+        for (const p of (Array.isArray(list) ? list : [])) {
+            const f = p && typeof p === "object" ? _unit(p.fraction) : null
+            const take = Math.min(f === null ? 0 : f, left)
+            if (take <= 0) continue
+            out.push({ tone: _machineTone(p.tone), fraction: take })
+            left -= take
+        }
+        return out
+    }
+
+    // Known kinds only, a row with no key is dropped, and so is every row past the sixth.
+    function _cleanMachineRows(list) {
+        const out = []
+        for (const r of (Array.isArray(list) ? list : [])) {
+            if (out.length >= machineMaxRows) break
+            if (!r || typeof r !== "object" || _text(r.key) === "" || machineKinds.indexOf(r.kind) < 0) continue
+            if (out.some(o => o.key === r.key)) continue
+            const row = { key: r.key, kind: r.kind, title: _text(r.title), sub: _text(r.sub),
+                          meter: r.kind === "plain" ? null : _unit(r.meter), meterText: _text(r.meterText),
+                          tone: _machineTone(r.tone), pulse: false, button: "", remove: false,
+                          opens: _text(r.opens) }
+            if (r.kind === "stack") row.parts = _cleanParts(r.parts)
+            out.push(row)
+        }
+        return out
+    }
+
+    // agentd's machine message is the whole card, or says there is none: a calm machine, or nothing
+    // on it the card can draw. Whatever it gets wrong is dropped.
+    function _applyMachine(ev) {
+        const rows = ev.present === true ? _cleanMachineRows(ev.rows) : []
+        let next = null
+        if (rows.length > 0) {
+            next = { title: "Machine", why: _text(ev.why), rows: rows }
+            const s = ev.strip && typeof ev.strip === "object" ? ev.strip : {}
+            if (_text(s.text) !== "")
+                next.strip = { text: s.text, dot: s.dot === "amber" ? T.amber : s.dot === "red" ? T.red : "",
+                               ring: false, outlined: false }
+        }
+        // Left alone when nothing changed, so the card is not touched by a message that repeats itself.
+        if (JSON.stringify(next) !== JSON.stringify(machineModel)) machineModel = next
+    }
+
     // -- what the desk asks agentd to do (the state comes back as a `desk` message) --
 
     // "desk": every card folds to its strip, and back.
@@ -764,7 +843,8 @@ QtObject {
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
             now: { visible: nowVisible, phase: _phase, model: nowModel },
-            watching: watchModel, needs: needsModel, needsYou: needsYou, face: pill ? pill.face : ""
+            watching: watchModel, needs: needsModel, machine: machineModel, needsYou: needsYou,
+            face: pill ? pill.face : ""
         }
     }
 }

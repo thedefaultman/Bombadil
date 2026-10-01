@@ -43,6 +43,10 @@ hl.curve("ease", { type = "bezier", points = { {0.16, 1}, {0.3, 1} } })
 hl.animation({ leaf = "windows", enabled = true, speed = 4, bezier = "ease", style = "slide" })
 hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 5, bezier = "ease", style = "slidevert" })
 hl.animation({ leaf = "fade", enabled = true, speed = 4, bezier = "ease" })
+-- The bar is a layer, and Hyprland slides a layer to its new place whenever it is resized, which
+-- is every time a picture appears or grows: the pill dipped and swung back for half a second each
+-- time. Layers (the bar, the notifications) just take their new size.
+hl.animation({ leaf = "layers", enabled = false })
 
 -- Panels are special workspaces; os-mcp toggles them. They also have keys.
 hl.bind("SUPER + B", hl.dsp.workspace.toggle_special("browser"))

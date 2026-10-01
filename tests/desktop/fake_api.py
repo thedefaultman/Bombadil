@@ -3,7 +3,9 @@
 Each prompt the driver types has a script: "install ffmpeg" runs sudo pacman, "make me a password
 manager" streams a create_app call slowly (so the line counts up), "set up docker" runs a root
 sleep for Stop to end, "show me the route" states a two-step plan and ticks it off (Now on the desk),
-"explain the vpn" draws a picture (show_card) slowly, "tell me a joke" only talks.
+"explain the vpn" draws a picture (show_card) slowly, "tell me a joke" only talks. "write a haiku about
+rain" talks too, but while the driver has run the plan out (POST /__control {"limit": {"reset": <epoch>}})
+the API answers it with the 429 a used-up claude.ai plan gets, and {"limit": null} lets it through again.
 """
 
 import json
@@ -13,6 +15,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 LOG = open(sys.argv[2], "a")
 N = [0]
+LIMIT = {"reset": None}   # when the plan that is out comes back (epoch seconds), None while it is not
 
 QML = """import QtQuick
 import QtQuick.Controls
@@ -70,6 +73,34 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def refuse(self, reset):
+        """What the API says to a claude.ai login whose five-hour window is used up: a 429 with the unified
+        rate-limit headers and the body "Error". The real CLI (2.1.286) turns that into a rate_limit_event and
+        "You've hit your session limit · resets 3:45am (UTC)" and ends the turn at once; a busy API's plain
+        429 (an API key's) it retries ten times over three minutes first."""
+        body = json.dumps(
+            {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}, "request_id": "req_e2e429"}
+        ).encode()
+        self.send_response(429)
+        self.send_header("content-type", "application/json")
+        for k, v in {
+            "request-id": "req_e2e429",
+            "anthropic-ratelimit-unified-status": "rejected",
+            "anthropic-ratelimit-unified-reset": str(reset),
+            "anthropic-ratelimit-unified-representative-claim": "five_hour",
+            "anthropic-ratelimit-unified-5h-utilization": "1.0",
+            "anthropic-ratelimit-unified-5h-reset": str(reset),
+            "anthropic-ratelimit-unified-7d-utilization": "0.31",
+            "anthropic-ratelimit-unified-7d-reset": str(reset + 3 * 86400),
+            "anthropic-ratelimit-unified-overage-status": "rejected",
+            "anthropic-ratelimit-unified-overage-disabled-reason": "org_level_disabled",
+            "anthropic-ratelimit-unified-fallback": "available",
+        }.items():
+            self.send_header(k, v)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def ev(self, name, data, pause=0.03):
         self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())
         self.wfile.flush()
@@ -81,6 +112,14 @@ class H(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(n))
         except Exception:
             body = {}
+        if self.path.startswith("/__control"):
+            LIMIT["reset"] = (body.get("limit") or {}).get("reset")
+            r = b"{}"
+            self.send_response(200)
+            self.send_header("content-length", str(len(r)))
+            self.end_headers()
+            self.wfile.write(r)
+            return
         msgs = body.get("messages", [])
         if "count_tokens" in self.path or not body.get("stream"):
             r = json.dumps(
@@ -123,12 +162,15 @@ class H(BaseHTTPRequestHandler):
             and isinstance(users[-1].get("content"), list)
             and any(b.get("type") == "tool_result" for b in users[-1]["content"])
         )
+        refused = bool(LIMIT["reset"]) and "haiku" in first
         LOG.write(
             json.dumps(
                 {
                     "n": N[0],
                     "first": first[-200:],
                     "after_tool": after_tool,
+                    "prompts": len(prompts),   # more than one: the conversation carries what was said before
+                    "refused": refused,
                     "shape": [
                         (
                             m.get("role"),
@@ -143,6 +185,8 @@ class H(BaseHTTPRequestHandler):
             + "\n"
         )
         LOG.flush()
+        if refused:
+            return self.refuse(LIMIT["reset"])
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.send_header("connection", "close")
@@ -367,6 +411,8 @@ class H(BaseHTTPRequestHandler):
                 stop = "tool_use"
         elif "joke" in first:
             text("Why do penguins never get lost at sea?\nThey always follow the kernel.", step=6, pause=0.08)
+        elif "haiku" in first:
+            text("Rain taps on the glass,\nthe kettle hums to itself,\nthe afternoon waits.", step=6, pause=0.08)
         else:
             text("OK.")
         self.ev(

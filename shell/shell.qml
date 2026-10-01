@@ -44,6 +44,7 @@ ShellRoot {
         id: deskState
         pill: pillState
         onOutgoing: msg => root.write(msg)
+        onWindowOpened: pillState.windowOpened()
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
@@ -232,10 +233,12 @@ ShellRoot {
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
+                Region { item: foundChips.visible ? foundChips : null }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: sessionChips.visible ? sessionChips : null }   // (a hidden item keeps its last place)
                 Region { item: appChips }
+                Region { item: aiCard.visible ? aiCard : null }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
                 Region { item: stripsRight }
@@ -309,6 +312,8 @@ ShellRoot {
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
+                    // A full-screen window on this screen puts the picture away (it is still there after).
+                    Binding { target: cardHost.item; property: "suppressed"; value: win.capsule; when: cardHost.item !== null }
                 }
 
                 StatusLine {
@@ -317,6 +322,18 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                // While the AI rests: what the sentence you typed nearly names on this computer (an app, a
+                // word, a past ask), under the line that says the ask is kept. A press opens it.
+                FoundChips {
+                    id: foundChips
+                    pill: pillState
+                    // As wide as its chips (the input mask lets clicks beside them through), and no wider
+                    // than the bar: three long labels shrink and cut themselves short.
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: Math.min(Math.max(360, win.pillMax), column.width)
                 }
 
                 // Which AI, Sign in, Show sign-in: the choices under the setup line.
@@ -426,6 +443,14 @@ ShellRoot {
                     }
                 }
 
+                // The AI card: one row per AI with a switch, opened by a click on the stone while no turn runs.
+                AiCard {
+                    id: aiCard
+                    pill: pillState
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
                 // Prompt bar
                 Rectangle {
                     id: pillBox
@@ -445,7 +470,8 @@ ShellRoot {
                         spacing: 8
 
                         // The stone: Bombadil's mark, in the dot's place. Its face says what the machine is
-                        // doing (Stone.qml); while a turn runs, hover turns it into Stop.
+                        // doing (Stone.qml); while a turn runs, hover turns it into Stop and a click stops
+                        // it; otherwise a click opens the AI card (and another closes it).
                         Rectangle {
                             id: dotBox
                             readonly property bool stoppable: pillState.stoppable && dotHover.hovered && !win.capsule
@@ -471,8 +497,8 @@ ShellRoot {
                                 Rectangle { width: 9; height: 9; radius: 2; color: Kit.Theme.accent; anchors.verticalCenter: parent.verticalCenter }
                                 Text { font.family: Kit.Theme.fontFamily; text: "Stop"; color: Kit.Theme.accentInk; font.pixelSize: Kit.Theme.smallSize }
                             }
-                            HoverHandler { id: dotHover; cursorShape: pillState.busy ? Qt.PointingHandCursor : Qt.ArrowCursor }
-                            TapHandler { enabled: pillState.stoppable; onTapped: pillState.stop() }
+                            HoverHandler { id: dotHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: pillState.stoppable ? pillState.stop() : pillState.toggleAi() }
                         }
 
                         Item {
@@ -486,10 +512,12 @@ ShellRoot {
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
                                 // While a coding session waits for you, the empty pill says so ("reviewer on
-                                // Bombadil: run the migration?") and Tab goes there.
+                                // Bombadil: run the migration?") and Tab goes there; else, while the AI rests,
+                                // it says what still works and when asks run.
                                 placeholderText: pillState.face === "starting" ? "Starting"
                                                  : (!root.connected ? "Waiting for agentd…"
-                                                    : (devState.line !== "" ? devState.line + "   ⇥" : "Ask anything"))
+                                                    : (devState.line !== "" ? devState.line + "   ⇥"
+                                                       : (pillState.restHint || "Ask anything")))
                                 color: Kit.Theme.fg
                                 placeholderTextColor: devState.line !== "" && root.connected && pillState.face !== "starting"
                                                       ? Kit.Theme.accentInk : Kit.Theme.muted
@@ -504,7 +532,10 @@ ShellRoot {
                                         root.release()
                                     }
                                 }
-                                onTextChanged: if (win.summoned) idle.restart()
+                                onTextChanged: {
+                                    if (win.summoned) idle.restart()
+                                    if (text !== "") pillState.closeAi()
+                                }
                                 // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
                                 // pill it walks to the next session waiting for you.
                                 Keys.onTabPressed: {
@@ -516,10 +547,12 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it clears, then puts the line, the
-                                // picture and the drawer away and gives the keyboard back.
+                                // Esc stops a running turn; otherwise it puts the AI card away (and gives the
+                                // keyboard back), clears, then puts the line, the picture and the drawer away
+                                // and gives the keyboard back.
                                 Keys.onEscapePressed: {
                                     if (pillState.stoppable) pillState.stop()
+                                    else if (pillState.aiOpen) { pillState.closeAi(); root.release() }
                                     else if (text !== "") text = ""
                                     else { pillState.dismiss(); pillState.closeDetails(); root.release() }
                                 }

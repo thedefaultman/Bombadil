@@ -1,5 +1,17 @@
 #!/bin/sh
-# The real CLI, pointed at the scripted API.
-export ANTHROPIC_API_KEY=sk-ant-fake ANTHROPIC_BASE_URL=http://127.0.0.1:18555 DISABLE_TELEMETRY=1 \
+# The real CLI, pointed at the scripted API. Usually it holds an API key; while the driver keeps
+# ~/.e2e-claude-ai it is a claude.ai login instead (an OAuth token, no key), the kind of account whose
+# plan can run out: only that kind gets the CLI's rate_limit_event and "You've hit your session limit".
+if [ -e "$HOME/.e2e-claude-ai" ]; then
+  export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-fake
+else
+  export ANTHROPIC_API_KEY=sk-ant-fake
+fi
+# While the driver keeps ~/.e2e-retry-watchdog the CLI is in its unattended retry mode (what an agent's own
+# environment may carry): a limit is waited out, with api_retry lines, and the turn does not end.
+if [ -e "$HOME/.e2e-retry-watchdog" ]; then
+  export CLAUDE_CODE_RETRY_WATCHDOG=1
+fi
+export ANTHROPIC_BASE_URL=http://127.0.0.1:18555 DISABLE_TELEMETRY=1 \
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
 exec /opt/claude "$@"

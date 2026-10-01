@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """bombadil: talk to agentd from a terminal, or manage the system.
 
-  bombadil ask "open the browser"     send a prompt and stream the reply
+  bombadil ask "open the browser"     send a prompt and stream the reply; when the AI rests (out of plan
+                                       or paused) it says so and exits 75 instead of waiting for the reset
+                                       (the ask stays queued and runs then)
   bombadil status                      is the agent busy, which provider
   bombadil stop                        end the running turn and everything it started
   bombadil pill                        give the pill the keyboard (Hyprland runs this on a Super tap)
@@ -34,6 +36,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from bombadil import config, dev, pager, paths, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
+EX_TEMPFAIL = 75   # `ask` when the AI rests: it does not wait for the reset (sysexits.h)
+
+
+def resting(line: str | None) -> int:
+    """The AI is out of plan or paused: say so on stderr (stdout is the answer's) and stop waiting. The ask
+    stays queued in agentd, as a chip, and runs at the reset."""
+    if line:
+        print(line, file=sys.stderr)
+    return EX_TEMPFAIL
 
 
 def talk(msg: dict, until: str | None = "turn_end"):
@@ -45,12 +56,18 @@ def talk(msg: dict, until: str | None = "turn_end"):
             return 1
         s.sendall((json.dumps(msg) + "\n").encode())
         mine = None  # the turn id agentd gave this prompt; other clients' turns are skipped
+        line_now = ""  # agentd's line while the AI rests: an ask made then waits for the reset
         for line in s.makefile("r"):
             ev = json.loads(line)
+            if ev.get("type") == "setup":
+                line_now = (ev.get("line") or "") if ev.get("state") == "resting" else ""
+                continue
             if ev.get("type") == "status":
                 if until == "status":
                     print(json.dumps(ev))
                     return 0
+                if line_now and any(q.get("turn") == mine and q.get("wait") for q in ev.get("queue") or []):
+                    return resting(line_now)   # our ask is a chip that waits for the AI
                 continue
             if ev.get("type") == "queued":
                 mine = ev["turn"]
@@ -74,7 +91,8 @@ def talk(msg: dict, until: str | None = "turn_end"):
                 if ev.get("turn") is None:
                     return 1
             if ev.get("kind") == until:
-                return 0
+                # The limit stopped the turn halfway: it goes back to the queue and carries on at the reset.
+                return resting(ev.get("line")) if ev.get("requeued") else 0
     return 0
 
 

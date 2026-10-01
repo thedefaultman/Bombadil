@@ -284,6 +284,62 @@ def test_stopped_is_the_stop_buttons_grey_square(mark):
     mark.snap("stopped")
 
 
+def hues(img, tone, tol=30):
+    return {(x, y) for x in range(img.width()) for y in range(img.height()) if near(img.pixelColor(x, y).name(), tone, tol)}
+
+
+def test_resting_is_a_whole_grey_outline_over_a_faint_fill_with_the_b_cut_in(mark):
+    mark.set(face="resting")
+    img = mark.image()
+    # Grey and hollow: not the stone's green, and none of the colours that mean something else.
+    for tone in ("good", "warn", "accent", "bad"):
+        assert not hues(img, THEME[tone]), tone
+    inside = img.pixelColor(12, 8)
+    assert not near(inside.name(), GROUND, 6) and not near(inside.name(), THEME["muted"], 12)   # a fill, fainter than the line
+    assert max(inside.red(), inside.green(), inside.blue()) - min(inside.red(), inside.green(), inside.blue()) < 12
+    assert len(hues(img, THEME["muted"], 40)) > 60                     # the outline
+    # It keeps rest's 24 px grid: nothing outside the stone's own silhouette.
+    mark.set(face="rest")
+    assert len(silhouette(img) - silhouette(mark.image())) <= 4
+    # The b is cut in the ground's colour, as on the other faces (here the test's magenta).
+    assert near(img.pixelColor(8, 12).name(), CUT) and len(cut_pixels(img)) > 15
+    mark.set(face="resting")
+    mark.snap("resting")
+
+
+def test_resting_outline_is_unbroken_and_the_stone_stands_still(mark):
+    mark.set(face="resting")
+    img = mark.image()
+    outline = hues(img, THEME["muted"], 40)
+    # Flood the outside from a corner without crossing the outline: it must not reach the inside.
+    seen, todo = set(), [(0, 0)]
+    while todo:
+        x, y = todo.pop()
+        if (x, y) in seen or (x, y) in outline or not (0 <= x < 24 and 0 <= y < 24):
+            continue
+        seen.add((x, y))
+        todo += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+    assert (12, 8) not in seen and (12, 16) not in seen and (6, 14) not in seen
+    # Still: no roll, no knock, no lean, no hop, and nothing moves meanwhile.
+    mark.pump(0.7)
+    assert mark.image() == img
+    assert [mark.stone.property(n) for n in ("turn", "knock", "lean", "hopY")] == [0.0, 0.0, 0.0, 0.0]
+    assert mark.stone.property("rolling") is False
+
+
+def test_resting_is_not_any_other_face(mark):
+    shots = {}
+    for face in ("rest", "offline", "stopped", "needs", "working", "resting"):
+        mark.set(face=face, reducedMotion=True)       # held still, so the pictures can be compared
+        shots[face] = mark.image()
+
+    def differ(a, b):
+        return sum(1 for x in range(24) for y in range(24) if not near(a.pixelColor(x, y).name(), b.pixelColor(x, y).name(), 12))
+
+    for other in ("rest", "offline", "stopped", "needs", "working"):
+        assert differ(shots["resting"], shots[other]) > 40, other
+
+
 def test_offline_is_a_broken_red_outline_and_the_b_stays(mark):
     mark.set(face="offline")
     img = mark.image()

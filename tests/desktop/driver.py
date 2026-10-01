@@ -4,6 +4,7 @@ Runs inside the test container (tests/desktop/run.sh) as an ordinary user with p
 Typing goes through wtype, Super through `bombadil pill`; each check prints PASS or FAIL.
 """
 
+import http.client
 import json
 import os
 import re
@@ -29,6 +30,7 @@ env = dict(
     WLR_HEADLESS_OUTPUTS="1",
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
+    BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -66,6 +68,18 @@ def stone_pixels(name, rows=(737, 787), colour="#5fb36b", tol=14):
     want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
     for y in range(*rows):
         for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+def colour_pixels(name, colour, box, tol=14):
+    """How many pixels of a screenshot's box (x0, y0, x1, y1) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
             c = img.pixelColor(x, y)
             n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
     return n
@@ -186,6 +200,21 @@ def api_requests():
         return len((OUT / "api-requests.jsonl").read_text().splitlines())
     except OSError:
         return 0
+
+
+def api_log():
+    try:
+        return [json.loads(ln) for ln in (OUT / "api-requests.jsonl").read_text().splitlines()]
+    except (OSError, ValueError):
+        return []
+
+
+def api_control(limit):
+    """The scripted API's plan: {"reset": epoch seconds} refuses the haiku ask as a used-up plan does, None lets it through."""
+    c = http.client.HTTPConnection("127.0.0.1", 18555, timeout=5)
+    c.request("POST", "/__control", json.dumps({"limit": limit}), {"content-type": "application/json"})
+    c.getresponse().read()
+    c.close()
 
 
 def sleeps():
@@ -479,8 +508,6 @@ time.sleep(0.8)
 shot("23-picture-word")
 
 
-# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
-# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
     return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "desk", *args)
 
@@ -492,6 +519,45 @@ def desk_state():
         return {}
 
 
+# 22b. what a window does to a picture. The pill is 360 wide while a window shares the stage and a
+# 100 px capsule under a full-screen one; a picture over the middle of either cannot be read next to
+# the window. A window that opens puts it away; a window going full-screen hides it, and it returns.
+time.sleep(2.0)                 # a window right after a picture is the same ask's: it is let be
+middle = glass_pixels(500, 480, 200)
+check("the picture word's picture is up in the middle of the bar", middle > 40, middle)
+tiled = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600}]})
+full = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600, "fullscreen": True}]})
+desk_ipc("cover", tiled)
+time.sleep(1.0)
+shot("23-picture-window-opened")
+gone = glass_pixels(500, 480, 200)
+check("a window that opens puts the picture away", desk_state().get("mode") == "shared" and gone < middle // 3, f"{middle} -> {gone}")
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.2)
+shot("23-picture-beside-window")
+shared = glass_pixels(500, 480, 200)
+check("a picture asked for beside a window still shows", shared > 20, shared)
+desk_ipc("cover", full)
+time.sleep(1.0)
+st = desk_state()
+shot("23-picture-fullscreen")
+check("a window that goes full-screen makes the pill the capsule", st.get("mode") == "immersive" and st.get("pillWidth") == 100, (st.get("mode"), st.get("pillWidth")))
+hidden = glass_pixels(500, 480, 200)
+check("and hides the picture over it", hidden < shared // 3, f"{shared} -> {hidden}")
+desk_ipc("cover", tiled)
+time.sleep(1.2)
+back = glass_pixels(500, 480, 200)
+check("the picture comes back when the window leaves full screen", back > shared // 2, f"{hidden} -> {back}")
+desk_ipc("cover", '{"windows": []}')
+time.sleep(0.8)
+
+
+# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
+# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 summon()
 typ("show me the route")
 n = mark()
@@ -626,6 +692,631 @@ shot("27-desk-clear")
 check("and the stone is still: nothing waits, nothing is amber",
       not st.get("needsYou") and st.get("face") != "needs" and stone_pixels("27-desk-clear", colour="#e0a93b") < 20,
       f"face {st.get('face')}")
+
+# 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
+# claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
+# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
+# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
+# the same conversation: the first time the owner says so, the second time the clock does.
+STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
+LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
+claude_ai = Path.home() / ".e2e-claude-ai"
+claude_ai.touch()
+rest_file = Path.home() / ".local" / "state" / "bombadil" / "rest.json"
+
+
+def ink(shot_name):
+    """What colours the stone is drawn in: grey while the AI rests, green at rest, amber for needs, red for offline."""
+    tokens = {"grey": "#8b939c", "green": "#5fb36b", "amber": "#e0a93b", "red": "#d05555"}
+    return {c: colour_pixels(shot_name, v, STONE) for c, v in tokens.items()}
+
+
+summon()
+typ("tell me a joke")   # a first turn that works, so the haiku has a conversation to come back to
+n = mark()
+key("Return")
+first = wait(ev("result"), 40, n)
+check("the CLI works as a claude.ai login too", first is not None and first.get("ok"), first and first.get("text"))
+time.sleep(1.5)
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+end = wait(ev("turn_end", turn=haiku), 20, n)
+time.sleep(1.0)
+shot("27-resting")
+refusals = [r for r in api_log()[before:] if r["refused"]]
+check(
+    "the API refused the ask once and the CLI did not retry it",
+    len(refusals) == 1 and len(api_log()) == before + 1,
+    len(api_log()) - before,
+)
+r = (resting or {}).get("rest") or {}
+check(
+    "the CLI's own limit notice puts the machine to rest, with the time the plan gave",
+    r.get("provider") == "claude" and r.get("why") == "limit" and r.get("kind") == "five_hour" and r.get("until") == reset,
+    resting,
+)
+check(
+    "the line says when and that the apps still work, and offers no button",
+    resting and resting["line"].startswith("Claude is at its limit until ")
+    and resting["line"].endswith("Your apps and files still work.") and resting["actions"] == [] and resting["tone"] == "step",
+    resting and (resting["line"], resting["actions"]),
+)
+check(
+    "the empty field says what waits and until when",
+    r.get("hint", "").startswith("Open or find anything. Asks wait for ") and r.get("when") and r["when"] in r["hint"],
+    r.get("hint"),
+)
+check(
+    "the turn ends to run again, with no error and no result",
+    end and end.get("requeued") is True and end.get("line") == resting["line"] and not any(
+        m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]
+    ),
+    end and end.get("line"),
+)
+check(
+    "the log of the turn says the limit stopped it",
+    wait(ev("rest", turn=haiku, window="five_hour", until=reset), 1, n) is not None,
+)
+check(
+    "the ask goes back to the front of the queue under the same id",
+    wait(ev("queued", turn=haiku, prompt="write a haiku about rain"), 1, n) is not None,
+)
+with lock:
+    sts = [m for m in events[n:] if m.get("type") == "status" and m.get("setup") == "resting"]
+st = sts[-1] if sts else None
+check(
+    "the ask waits at the front as a chip that says when, and nothing is on it",
+    st and st["queue"] and st["queue"][0]["turn"] == haiku and st["queue"][0].get("wait") == r.get("wait") and not st["busy"],
+    st and st["queue"],
+)
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "limit" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check(
+    "the AI card has a row for Claude that says when it is back",
+    row and row["text"].startswith("at its limit until ") and row["current"] and row["enabled"] and row["on"],
+    row,
+)
+stone = ink("27-resting")
+check(
+    "the stone rests as a grey hollow: no green, no amber, no red",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and ink("00-resting")["grey"] < 10,
+    stone,
+)
+check("the line above the pill says it", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+check(
+    "the line fades by itself and the empty field carries the state",
+    until(lambda: glass_pixels(*LINE) < 5, 30),
+    glass_pixels(*LINE),
+)
+shot("28-resting-field")
+summon()
+time.sleep(0.8)
+shot("29-resting-summoned")
+check("the line comes back when the pill is summoned", glass_pixels(*LINE) > 20, glass_pixels(*LINE))
+key("Escape")
+
+# words that never need the AI still work while it rests: an app by name, and a "!" command.
+before = len(api_log())
+words_from = mark()   # the finder below looks at what these two do not send: no "found" for either
+m = mark()
+summon()
+typ("passwords")
+key("Return")
+o = wait(ev("local", phase="done"), 10, m)
+time.sleep(0.5)
+shot("30-resting-passwords")
+check("an app opens by name while the AI rests", o is not None and o.get("ok"), o and o.get("text"))
+summon()
+typ("!echo hi")
+m = mark()
+key("Return")
+bang = wait(ev("turn_end"), 20, m)
+time.sleep(0.4)
+shot("31-resting-bang")
+check(
+    "a ! command runs while the AI rests, with no model",
+    bang is not None and not bang.get("requeued") and wait(ev("turn_start", prompt="!echo hi"), 1, m) is not None
+    and len(api_log()) == before,
+    bang,
+)
+
+# no "found" for what the finder is not for: a launcher word ("passwords" runs at once, and would be found if it were
+# looked for) and a "!" command (neither waits for the AI).
+check(
+    "no found for a launcher word or a ! command",
+    wait(lambda x: x.get("type") == "found", 1.0, words_from) is None,
+    [x for x in events[words_from:] if x.get("type") == "found"],
+)
+
+
+# the finder: while the AI rests, a sentence that has to wait is kept as a chip, and agentd also looks, on this computer
+# only (no model), for the apps, launcher words and past asks it nearly names. It only offers: one "found" message
+# with the line and up to three matches. A press (found_open, which the bar sends on a click) opens one.
+def passwords_up():
+    return "bombadil-app-passwords" in run("swaymsg", "-t", "get_tree").stdout
+
+
+def kept_ask(prompt):
+    """Type an ask while the AI rests: (its turn, the mark before it) once agentd has kept it as a chip."""
+    summon()
+    typ(prompt)
+    n = mark()
+    key("Return")
+    q = wait(ev("queued", prompt=prompt), 5, n)
+    return (q or {}).get("turn"), n
+
+
+def found_for(turn, since, timeout=10):
+    return wait(lambda x: x.get("type") == "found" and x.get("turn") == turn, timeout, since)
+
+
+def kept_queue():
+    """The waiting asks as the latest status says them, [(turn, the chip's label)]."""
+    with lock:
+        sts = [x for x in events if x.get("type") == "status"]
+    return [(q["turn"], q.get("wait")) for q in sts[-1]["queue"]] if sts else []
+
+
+# The bar's state does not say what chips it shows (the desk's `state` has only the stone's face), so they are read off the
+# screenshots. The stack above the pill grows up from it: the line, then (while there is something found) a row of
+# chips 30 px high and 8 px apart, then the setup's chips, then the waiting asks. So a chip row is the line standing 38 px
+# higher than it does without one, and the chips are the rounded stretches of glass across the row under the line.
+CHIP_ROW = 30 + 8
+FOUND_ROW = 666       # a pixel row just inside the top of that row of chips: glass, no text yet
+LINE_ROW = 622        # and one just inside the top of the line
+
+
+def line_top(name, x=195, rows=(560, 735)):
+    """The first row (from the top) of a screenshot where the bar's glass is at x: the top of the line above the pill,
+    whose left end is at x=190 and over which nothing else is drawn that far left. None when there is no line."""
+    from PySide6.QtGui import QImage
+    img = QImage(str(OUT / f"{name}.png"))
+
+    def glass(y):
+        c = img.pixelColor(x, y)
+        return 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38
+
+    # A single row of it is not a line: the bar's window edge is a hairline that comes and goes at the
+    # edge of that colour. The line is a box a few dozen rows high.
+    for y in range(*rows):
+        if all(glass(y + i) for i in range(12)):
+            return y
+    return None
+
+
+def glass_runs(name, y, x0=190, x1=1090):
+    """The stretches (from, to) of one row of a screenshot that are the bar's glass; a gap of 5 px or more parts two."""
+    from PySide6.QtGui import QImage
+    img, runs = QImage(str(OUT / f"{name}.png")), []
+    for x in range(x0, x1):
+        c = img.pixelColor(x, y)
+        if 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38:
+            if runs and x - runs[-1][1] <= 5:
+                runs[-1][1] = x
+            else:
+                runs.append([x, x])
+    return [tuple(run) for run in runs]
+
+
+def chip_shapes(name, count):
+    """True when `count` chips stand under the line: that many rounded stretches of glass in the chip row, each far
+    narrower than the line, each with the label's light text on it."""
+    runs = glass_runs(name, FOUND_ROW)
+    texts = [colour_pixels(name, "#e6e8eb", (a, FOUND_ROW - 2, b, FOUND_ROW + 24)) for a, b in runs]
+    line = glass_runs(name, LINE_ROW)
+    return (len(runs) == count and all(b - a < 700 for a, b in runs) and all(t > 15 for t in texts)
+            and len(line) == 1 and line[0][1] - line[0][0] > 800), (runs, texts, line)
+
+
+def crop(name, box=(180, 560, 920, 240)):
+    """The pill's part of a screenshot (x, y, w, h) saved beside it as <name>-pill.png: no window is in it."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage
+    QImage(str(OUT / f"{name}.png")).copy(QRect(*box)).save(str(OUT / f"{name}-pill.png"))
+
+
+rest_when, rest_wait = r.get("when"), r.get("wait")
+no_chips_at = line_top("29-resting-summoned")   # the resting line over the waiting haiku: where the line stands with no chips
+
+# 1. a sentence that names an app: the app is found, and the ask is kept all the same.
+summon()
+typ("quit passwords")   # the Passwords window is up from above: put it away, so that a press has to bring it back
+key("Return")
+check("the Passwords window is put away first", until(lambda: not passwords_up(), 10), passwords_up())
+asks0 = api_requests()
+t_pw, n = kept_ask("my password app")
+f1 = found_for(t_pw, n)
+time.sleep(0.8)
+shot("36-found-app")
+m0 = (f1 or {}).get("matches") or [{}]
+check(
+    "my password app: found, with the line that says when the ask runs and the Passwords app first",
+    f1 and f1["prompt"] == "my password app" and f1["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and (m0[0].get("id"), m0[0].get("kind"), m0[0].get("label"), m0[0].get("hint")) == ("1", "app", "Passwords", "App"),
+    f1 and (f1["line"], f1["matches"]),
+)
+check(
+    "the finder sent nothing to the API, and the ask waits as a chip that says when",
+    api_requests() == asks0 and dict(kept_queue()).get(t_pw) == rest_wait and rest_wait,
+    (api_requests() - asks0, kept_queue()),
+)
+stone = ink("36-found-app")
+check(
+    "the stone is still the resting grey while it looks",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and desk_state().get("face") == "resting",
+    (stone, desk_state().get("face")),
+)
+ok, seen = chip_shapes("36-found-app", len(f1["matches"]) if f1 else 0)
+check(
+    "the bar shows one quiet chip under the line for each thing found, a row above where the line stands with none",
+    f1 and ok and line_top("36-found-app") == no_chips_at - CHIP_ROW,
+    (seen, line_top("36-found-app"), no_chips_at),
+)
+crop("36-found-app")
+
+# 2. a press on it: the app opens as if its word was typed, and the ask it came from is let go.
+m = mark()
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+done = wait(ev("local", phase="done"), 15, m)
+gone = wait(ev("unqueued", turn=t_pw), 5, m)
+up = until(passwords_up, 10)
+time.sleep(1.0)
+shot("37-found-opened")
+check("a press opens the app: a local answer that went well, and the Passwords window is up", done and done.get("ok") and up, done and done.get("text"))
+check("and lets go of the kept ask, with nothing sent to the API",
+      gone is not None and t_pw not in dict(kept_queue()) and api_requests() == asks0, kept_queue())
+check("and its chips are gone from the bar", line_top("37-found-opened") in (None, no_chips_at)
+      and not glass_runs("37-found-opened", LINE_ROW), (line_top("37-found-opened"), no_chips_at))
+
+# 3. a sentence that names nothing here: kept, and the line says there is nothing.
+t_fr, n = kept_ask("what is the capital of france")
+f3 = found_for(t_fr, n)
+time.sleep(0.8)
+shot("38-found-nothing")
+check(
+    "a sentence that names nothing is kept, and the line says nothing matches",
+    f3 and f3["matches"] == [] and f3["line"] == f"Kept for {rest_when}. Nothing on this computer matches."
+    and dict(kept_queue()).get(t_fr) == rest_wait and api_requests() == asks0,
+    f3 and (f3["line"], f3["matches"]),
+)
+check(
+    "and the bar shows no chip under it: the line stands where it does with none",
+    line_top("38-found-nothing") == no_chips_at and not glass_runs("38-found-nothing", LINE_ROW),
+    (line_top("38-found-nothing"), no_chips_at),
+)
+crop("38-found-nothing")
+
+# 4. a past ask: "install ffmpeg" went well at the start of this run, and "ffmpeg" nearly names it.
+t_ff, n = kept_ask("ffmpeg")
+f4 = found_for(t_ff, n)
+time.sleep(0.8)
+shot("39-found-ask")
+past = next((x for x in (f4 or {}).get("matches", []) if x["kind"] == "ask"), {})
+check(
+    "ffmpeg finds the past ask, by its words and how long ago, with its steps behind it",
+    f4 and f4["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and past.get("label", "").startswith("You asked: install ffmpeg (") and past.get("hint") == "Its steps",
+    f4 and f4["matches"],
+)
+ok, seen = chip_shapes("39-found-ask", len(f4["matches"]) if f4 else 0)
+check("the bar shows its chip under the line", f4 and ok and line_top("39-found-ask") == no_chips_at - CHIP_ROW, seen)
+crop("39-found-ask")
+# the line fades after 12 s, like the resting line, and the chips with it
+gone_line = until(lambda: glass_pixels(195, 560, 175) < 5, 25)
+shot("39-found-ask-faded")
+check("the chips fade with the line", gone_line and not glass_runs("39-found-ask-faded", FOUND_ROW) and line_top("39-found-ask-faded") is None,
+      (glass_runs("39-found-ask-faded", FOUND_ROW), line_top("39-found-ask-faded")))
+
+# 5. a press on what was not offered does nothing: another id, a turn that is no longer waiting.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": "9"})
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+check(
+    "a press on an id that was not offered, or on a ask that left, opens nothing and drops nothing",
+    wait(lambda x: x.get("type") == "event" and x.get("kind") in ("local", "unqueued"), 1.2, m) is None
+    and t_ff in dict(kept_queue()) and not drawer_open(),
+    [x for x in events[m:] if x.get("type") == "event"],
+)
+
+# 4b. the press on the past ask opens the steps of that turn in the Details drawer, and lets the kept ask go.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": past.get("id", "1")})
+gone = wait(ev("unqueued", turn=t_ff), 5, m)
+shown = until(drawer_open, 10)
+time.sleep(1.5)
+shot("40-found-ask-opened")
+watch = [ln for ln in run("pgrep", "-af", "bombadil").stdout.splitlines() if "watch --file" in ln]
+check("a press on the past ask lets go of the kept ask and opens its steps in the Details drawer",
+      gone is not None and t_ff not in dict(kept_queue()) and shown and bool(watch), (gone, shown, watch[:1]))
+rows = []
+for ln in (rest_file.parent / "turns.jsonl").read_text().splitlines():
+    try:
+        rows.append(json.loads(ln))
+    except ValueError:
+        pass
+steps = next((x.get("details") for x in rows if x.get("prompt") == "install ffmpeg" and x.get("ok") is True), None)
+check("the drawer shows the steps of that very turn: the log of the ask that installed ffmpeg",
+      steps and any(f"watch --file {steps}" in ln for ln in watch), (steps, watch[:1]))
+has_keys = until(lambda: focused_app() == "bombadil-details", 5)
+key("Escape")
+check("the drawer has the keyboard and one Esc puts it away", has_keys and until(lambda: not drawer_open(), 5), focused_app())
+if drawer_open():
+    send({"type": "close_details"})
+check("nothing of this went to the API", api_requests() == asks0, api_requests() - asks0)
+
+# an app's own ask is not looked for either, and the one kept above that names nothing goes, so that the count at the
+# return is the haiku alone.
+m = mark()
+send({"type": "prompt", "text": "[from app passwords] list my logins"})
+app_ask = wait(ev("queued", prompt=lambda p: (p or "").startswith("[from app passwords]")), 5, m)
+check("an app's ask that waits is not looked for", app_ask is not None and wait(lambda x: x.get("type") == "found", 1.0, m) is None)
+for t in (app_ask and app_ask.get("turn"), t_fr):
+    send({"type": "unqueue", "turn": t})
+time.sleep(0.5)
+check("the asks of the finder's tests are let go: the haiku alone waits", [q[0] for q in kept_queue()] == [haiku], kept_queue())
+
+# the plan comes back: the API lets the ask through, the state file says the time has passed, and the owner says so.
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 20, m)
+check(
+    "the machine says it is back and what runs now",
+    back and back["line"] == "Claude is back. Running your waiting ask." and back["tone"] == "done" and "rest" not in back,
+    back and back["line"],
+)
+again = wait(ev("turn_start", turn=haiku), 20, m)
+done = wait(ev("turn_end", turn=haiku), 60, m)
+res = wait(ev("result", turn=haiku), 1, m)
+check(
+    "the same ask runs again under the same id",
+    again is not None and again["prompt"] == "write a haiku about rain",
+    again and again.get("prompt"),
+)
+check(
+    "it ends well, with the answer, in the same conversation",
+    done and not done.get("requeued") and res and res.get("ok") and "kettle" in res.get("text", "")
+    and res.get("session_id") == first.get("session_id") and api_log()[-1]["prompts"] > 1 and not api_log()[-1]["refused"],
+    res and (res.get("session_id"), first.get("session_id"), api_log()[-1]),
+)
+time.sleep(2.5)
+shot("32-back")
+check("the stone is green again", stone_pixels("32-back") > 100, stone_pixels("32-back"))
+
+# and by itself: the plan says it is back in fifteen seconds, a second ask waits behind the first, and the machine
+# wakes on the clock, a minute after the time (agentd's REST_POLL looks, the wall clock decides).
+reset = int(time.time()) + 15
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 60, n)
+check(
+    "a second refusal rests the machine again, with the new time",
+    resting and resting["rest"]["until"] == reset,
+    resting and resting.get("rest"),
+)
+summon()
+typ("tell me a joke")
+key("Return")
+joke = wait(lambda m: m.get("type") == "status" and len(m.get("queue", [])) == 2, 10, n)
+shot("33-two-waiting")
+check(
+    "a second ask waits behind the first, each with its time",
+    joke and [q["turn"] for q in joke["queue"]][0] == haiku and all(q.get("wait") for q in joke["queue"]),
+    joke and joke["queue"],
+)
+api_control(None)
+woke = wait(lambda m: m.get("type") == "setup" and m.get("state") == "ready", 120, n)
+woke_at = time.time()
+check(
+    "the machine wakes by itself, a minute after the time, and says what runs now",
+    woke and woke["line"] == "Claude is back. Running your 2 waiting asks." and woke["tone"] == "done" and woke_at >= reset + 59,
+    woke and (woke["line"], round(woke_at - reset, 1)),
+)
+with lock:
+    k = events.index(woke) if woke else n
+d1 = wait(ev("turn_end", turn=haiku), 60, k)
+d2 = wait(ev("turn_end", turn=lambda t: t is not None and t > haiku), 60, k)
+check(
+    "both asks run, the first one first",
+    d1 is not None and d2 is not None and d1["_t"] < d2["_t"] and not d1.get("requeued"),
+    (d1 and d1.get("line"), d2 and d2.get("line")),
+)
+time.sleep(2.5)
+shot("34-woke")
+check("the stone is green again after the wake", stone_pixels("34-woke") > 100, stone_pixels("34-woke"))
+
+# a CLI that does not end the turn: in its unattended retry mode it sleeps until the reset and says api_retry, so
+# agentd ends the turn for it (the first long wait), puts the CLI away and rests the same way.
+watchdog = Path.home() / ".e2e-retry-watchdog"
+watchdog.touch()
+reset = int(time.time()) + 7200
+api_control({"reset": reset})
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+asked = wait(ev("turn_start"), 10, n)
+haiku = asked and asked.get("turn")
+resting = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 30, n)
+end = wait(ev("turn_end", turn=haiku), 10, n)
+check(
+    "a CLI that waits out the limit instead of ending is ended for it, and the machine rests",
+    resting and resting["rest"]["until"] == reset and resting["rest"]["kind"] == "five_hour" and end and end.get("requeued") is True,
+    resting and resting.get("rest"),
+)
+check(
+    "putting it away is not an error, and says no result",
+    not any(m.get("type") == "event" and m.get("kind") in ("error", "result") and m.get("turn") == haiku for m in events[n:]),
+    [(m["kind"], m.get("text")) for m in events[n:] if m.get("kind") in ("error", "result") and m.get("turn") == haiku],
+)
+clis = lambda: [ln for ln in run("ps", "-eo", "pid,args").stdout.splitlines() if "--output-format stream-json" in ln]
+check("and the CLI is not left sleeping", until(lambda: not clis(), 10), clis())
+watchdog.unlink()
+api_control(None)
+data = json.loads(rest_file.read_text())
+data["providers"]["claude"]["until"] = time.time() - 600
+rest_file.write_text(json.dumps(data))
+m = mark()
+summon()
+typ("resume the ai")
+key("Return")
+res = wait(ev("result", turn=haiku), 60, m)
+check(
+    "the same ask runs again once it is back",
+    res is not None and res.get("ok") and "kettle" in res.get("text", ""),
+    res and res.get("text"),
+)
+time.sleep(2.5)
+
+# paused by hand: the same rest with no time and one button; an ask waits as "paused", and the button lets it run.
+summon()
+typ("pause claude")
+n = mark()
+key("Return")
+paused = wait(lambda m: m.get("type") == "setup" and m.get("state") == "resting", 10, n)
+row = wait(lambda m: m.get("type") == "ai" and any(x["name"] == "claude" and x["state"] == "paused" for x in m["rows"]), 5, n)
+row = row and next(x for x in row["rows"] if x["name"] == "claude")
+check("the AI card's row says paused, with its switch off", row and row["text"] == "paused" and not row["on"] and row["enabled"], row)
+check(
+    "pause claude rests it by hand, with one button to resume",
+    paused and paused["rest"]["why"] == "hand" and paused["rest"]["until"] is None
+    and paused["line"] == "Claude is paused. Your apps and files still work."
+    and [(a["id"], a["label"]) for a in paused["actions"]] == [("resume", "Resume Claude")],
+    paused and (paused["line"], paused["actions"]),
+)
+before = len(api_log())
+summon()
+typ("write a haiku about rain")
+n = mark()
+key("Return")
+queued = wait(lambda m: m.get("type") == "status" and m.get("queue"), 10, n)
+time.sleep(1.0)
+shot("35-paused")
+check(
+    "an ask waits as paused, with nothing sent and the stone resting grey",
+    queued and queued["queue"][0].get("wait") == "paused" and len(api_log()) == before and ink("35-paused")["grey"] > 20
+    and not ink("35-paused")["green"],
+    queued and queued["queue"],
+)
+# the finder while paused by hand: the ask is kept "until you resume", and agentd looks all the same. The first ask is
+# the haiku above, which went well earlier (a past ask now); the second names nothing and goes again.
+f7 = wait(lambda x: x.get("type") == "found" and x.get("prompt") == "write a haiku about rain", 5, n)
+check(
+    "paused by hand the line says the ask is kept until you resume, and what is found",
+    f7 and f7["line"] == "Kept until you resume Claude. " + (
+        "Found on this computer:" if f7["matches"] else "Nothing on this computer matches."),
+    f7 and (f7["line"], f7["matches"]),
+)
+check(
+    "and the haiku that ran earlier is found as a past ask",
+    f7 and any(x["kind"] == "ask" and x["label"].startswith("You asked: write a haiku about rain (") for x in f7["matches"]),
+    f7 and f7["matches"],
+)
+t_nf, n7 = kept_ask("what is the capital of france")
+f7b = found_for(t_nf, n7)
+time.sleep(0.8)
+shot("41-found-paused")
+crop("35-paused")
+crop("41-found-paused")
+check(
+    "paused, the bar shows a chip row under the line for what is found, and none for nothing",
+    line_top("41-found-paused") - line_top("35-paused") == CHIP_ROW,
+    (line_top("35-paused"), line_top("41-found-paused")),
+)
+check(
+    "paused by hand, a sentence that names nothing says so too",
+    f7b and f7b["line"] == "Kept until you resume Claude. Nothing on this computer matches." and f7b["matches"] == [],
+    f7b and (f7b["line"], f7b["matches"]),
+)
+send({"type": "unqueue", "turn": t_nf})
+time.sleep(0.5)
+m = mark()
+send({"type": "setup_action", "id": "resume"})
+back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 10, m)
+res = wait(ev("result"), 60, m)
+check(
+    "Resume Claude brings it back and the waiting ask runs",
+    back and back["line"] == "Claude is back. Running your waiting ask." and res and res.get("ok") and "kettle" in res.get("text", ""),
+    back and back["line"],
+)
+claude_ai.unlink()
+
+
+# 11. Machine: agentd's `machine` message, injected (the checks above are the shell's half; vitals.py and the
+# loop that sends it are tested on a fake machine in pytest).
+def region_pixels(name, box, colour, tol=14):
+    """How many pixels in the box (x, y, w, h) are this colour."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, n = QColor(colour), QImage(str(OUT / f"{name}.png")), 0
+    x0, y0, w, h = box
+    for y in range(max(0, y0), min(img.height(), y0 + h)):
+        for x in range(max(0, x0), min(img.width(), x0 + w)):
+            c = img.pixelColor(x, y)
+            n += abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3
+    return n
+
+
+summon()
+typ("how's the machine?")
+before = api_requests()
+n = mark()
+key("Return")
+asked = wait(ev("local", phase="done"), 10, n)
+check("asking how the machine is answers in a line, with no model", asked and asked.get("ok")
+      and asked.get("text") == "Here is the machine." and api_requests() == before, asked and asked.get("text"))
+key("Escape")
+inject({"type": "machine", "present": True, "asked": False,
+        "why": "Memory is nearly full \u00b7 sessions use most",
+        "strip": {"text": "memory 91%", "dot": "amber"},
+        "rows": [
+            {"key": "memory", "kind": "stack", "title": "Memory", "meterText": "14.5 of 16 GB", "meter": 0.91,
+             "tone": "amber", "parts": [{"tone": "machine", "fraction": 0.12}, {"tone": "sessions", "fraction": 0.40},
+                                        {"tone": "you", "fraction": 0.39}], "opens": ""},
+            {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "214 of 230 GB", "meter": 0.93,
+             "tone": "amber", "opens": "disk"},
+            {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "37% busy \u00b7 62\u00b0", "meter": 0.37,
+             "tone": "you", "opens": ""},
+            {"key": "net", "kind": "plain", "title": "Network", "sub": "\u2193 1.2 MB/s   \u2191 40 kB/s",
+             "tone": "you", "opens": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("28-desk-machine")
+mc = st.get("machine") or {}
+slot = (st.get("slots") or {}).get("machine") or {}
+check("the Machine card is up in full, on the right rail", st["present"]["machine"] and st["faces"]["machine"] == "full"
+      and slot.get("side") == "right", (st.get("faces"), slot))
+check("it has memory, the disk, the processor and the network, memory in three parts",
+      [r["key"] for r in mc.get("rows", [])] == ["memory", "disk", "cpu", "net"]
+      and [p["tone"] for p in mc["rows"][0]["parts"]] == ["machine", "sessions", "you"], mc.get("rows"))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+parts = {name: region_pixels("28-desk-machine", box, colour) for name, colour in
+         (("amber", "#e0a93b"), ("machine", "#d97757"), ("sessions", "#5b9bd5"))}
+check("the card draws amber for the lines crossed and one colour for each who uses the memory",
+      parts["amber"] > 150 and parts["machine"] > 40 and parts["sessions"] > 150, parts)
+check("the card is the face, so no chip beside the pill says memory", not st["strips"]["right"], st.get("strips"))
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("the card leaves when the machine says everything is back under its lines",
+      st["faces"]["machine"] == "hidden" and not st["present"]["machine"], st.get("faces"))
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.

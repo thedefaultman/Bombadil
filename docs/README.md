@@ -22,6 +22,7 @@ The project's documents, next to its code.
   - `design-system.md`: the look written down: colour, type, shape, space, motion, icons and the pill's states.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
   - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
+  - `tips-and-desk-defaults-brief.md`: what is on the desk after boot (nothing, on purpose), a still Tips card for a new user's first week that opens into a Tips app where each tip plays on a small copy of the screen, and Keep, When needed and Off for each widget. Four questions open. Its page, `pages/tips-and-your-desk.html`, plays the twenty seed tips.
   - `boot-and-wallpaper.md`: every screen from power-on to the desk in the design system's colours: the quiet console, the wallpaper under the desk, and why the desk used to be black.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system

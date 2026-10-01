@@ -14,18 +14,22 @@ Rectangle {
     objectName: "cardHost"
     required property var pill       // a PillState
     property int maxHeight: 560      // taller pictures scroll
+    // Put away while a full-screen window has the screen (the pill is a dot and a clock then): a
+    // picture hanging over it, in the middle of whatever it shows, is in the way. It comes back after.
+    property bool suppressed: false
 
     // The card being shown, kept a moment after it goes so it fades instead of blanking.
     readonly property var current: pill.card
     property var last: null
     onCurrentChanged: if (current) last = current
-    readonly property bool shown: !!current
+    readonly property bool shown: !!current && !suppressed
     readonly property bool partial: !!(last && last.partial)
 
     // The height is not animated. The bar's window is as tall as its contents, so a height that
-    // grows over a few frames resizes the window every frame, and the compositor shows the pill
-    // jumping while it catches up. The window grows once; the card eases in inside the space, by
-    // fading and rising a few pixels instead, and gives the space back once it has faded out.
+    // grows over a few frames resizes the window every frame (each resize is a blip on the screen,
+    // and a compositor that animates layers, as Hyprland does unless its "layers" animation is off,
+    // swings the pill with every one). The window grows once; the card eases in inside the space,
+    // by fading and rising a few pixels instead, and gives the space back once it has faded out.
     implicitHeight: shown || opacity > 0 ? content.implicitHeight + 28 : 0
     radius: Kit.Theme.radiusLine
     color: Kit.Theme.glassLine
