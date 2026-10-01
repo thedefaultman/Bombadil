@@ -1,87 +1,1045 @@
 #!/usr/bin/env bash
-# Install the live system to a disk: btrfs with @, @home and @snapshots so a turn can be undone.
-# Copies the running live system (no network needed), then turns it into a normal boot.
-# Usage: sudo bombadil-install /dev/nvme0n1 [--yes]
+# Put Bombadil on a disk, from the USB stick it is running from.
+#
+#   bombadil-install                                     at a terminal: asks which disk and what password, then installs
+#   bombadil-install --plan FILE [--password-fd N]       what the install card runs (plan: src/bombadil/installplan.py)
+#   bombadil-install DISK [--yes]                        a whole disk, no password and no encryption (tests, the laptop VM)
+#   bombadil-install --refresh DISK [--yes] [--password-fd N]
+#                                                        a fresh system under the home folder that is already there
+#
+# The password comes on a file descriptor and is never in an argument, a file or the log. With one
+# the disk is encrypted (LUKS2) and the same password is the account's.
+#
+# The layout is the one thing no update can change later (layout 1; see docs/ARCHITECTURE.md):
+#   p1  1 GiB EFI system partition at /efi: GRUB, its modules, grub.cfg and grubenv. Never rolled back.
+#   p2  btrfs (inside LUKS2 with a password), subvolumes at the top level:
+#         @ (/, with /boot: the kernel goes back with a restore point), @home, @snapshots,
+#         @log (/var/log) and @pkg (/var/cache/pacman/pkg) beside @ because undo swaps @ for a snapshot.
+#       Inside @home, nested subvolumes for what a restore point of the home folder must skip.
+#
+# Sourced by the tests, which call the functions; run directly it does the install.
 set -euo pipefail
-disk="${1:?usage: bombadil-install /dev/DISK [--yes]}"
-if [[ "${2:-}" != "--yes" ]]; then
-  read -r -p "This erases $disk. Type the disk name to continue: " ok
+
+LAYOUT=1
+guided_run=0   # set by the main block when it is run at a terminal with no arguments
+SRC_LIB="${BOMBADIL_SRC:-/usr/share/bombadil/src}"
+CARRY_LIST="${BOMBADIL_CARRY_LIST:-/usr/share/bombadil/install/carry.list}"
+target="${BOMBADIL_TARGET:-/mnt}"
+work=/run/bombadil-install
+LOG="${BOMBADIL_INSTALL_LOG:-/tmp/bombadil-install.log}"
+live_home=/home/user
+SHARE_DIR="${BOMBADIL_SHARE:-/usr/share/bombadil/share}"
+MODULES="${BOMBADIL_MODULES:-/usr/lib/modules}"
+CMDLINE_FILE="${BOMBADIL_CMDLINE_FILE:-/proc/cmdline}"
+EFI_SYSFS="${BOMBADIL_EFI_SYSFS:-/sys/firmware/efi}"
+STICK_CACHE="${BOMBADIL_STICK_CACHE:-/var/cache/pacman/pkg}"
+NM_CONNECTIONS="${BOMBADIL_NM_CONNECTIONS:-/etc/NetworkManager/system-connections}"
+# btrfs wants this much free to keep the old system beside the new one while a refresh copies it.
+REFRESH_FREE_GIB=10
+# GRUB reads a typed password up to this many characters.
+MAX_PASSWORD=255
+# What a restore point of the home folder does not contain: the conversation and the history (what
+# the agent did is not undone with what it changed), caches, the provider CLIs' own state, the browser
+# profile and the projects (git has those).
+HOME_SUBVOLS=(.cache .local/state/bombadil .claude .codex .local/share/claude .config/chromium
+              .local/share/bombadil/browser Projects)
+# GRUB has to open the disk with this password, and at cryptsetup's own cost (1 GiB of memory, several
+# seconds of work) firmware that fragments memory below 4 GiB makes it reject the right password.
+LUKS_MEMORY="${BOMBADIL_LUKS_MEMORY:-262144}"      # KiB
+LUKS_ITER_TIME="${BOMBADIL_LUKS_ITER_TIME:-1000}"  # ms of work, measured by cryptsetup on this machine
+
+say()  { printf '%s\n' "$*"; }
+step() { printf '==> %s\n' "$*"; }
+warn() { printf 'Note: %s\n' "$*"; }
+die()  { printf 'Error: %s\n' "$*" >&2; exit 1; }
+
+usage() { sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+# -- arguments, plan, password ------------------------------------------------------------------
+
+parse_args() {
+  plan_file=""; disk_arg=""; mode_arg=""; yes=0; pw_fd=""
+  while (($#)); do
+    case "$1" in
+      --plan) plan_file="${2:?--plan needs a file}"; shift 2 ;;
+      --password-fd) pw_fd="${2:?--password-fd needs a number}"; shift 2 ;;
+      --refresh) mode_arg=refresh; shift ;;
+      --yes) yes=1; shift ;;
+      -h|--help) usage; exit 0 ;;
+      /dev/*) [[ -z "$disk_arg" ]] || die "one disk at a time"; disk_arg="$1"; shift ;;
+      *) usage >&2; die "unknown argument: $1" ;;
+    esac
+  done
+  [[ -n "$plan_file" || -n "$disk_arg" ]] || { usage >&2; exit 2; }
+}
+
+load_plan() {
+  local args=(--carry-list "$CARRY_LIST") out
+  [[ -z "$plan_file" ]] || args+=(--plan "$plan_file")
+  [[ -z "$disk_arg" ]] || args+=(--disk "$disk_arg")
+  [[ -z "$mode_arg" ]] || args+=(--mode "$mode_arg")
+  out=$(PYTHONPATH="$SRC_LIB" python3 -m bombadil.installplan "${args[@]}") || exit 2
+  # Every value was matched against a strict pattern and quoted by the module.
+  eval "$out"
+  disk="$P_DISK"; mode="$P_MODE"
+}
+
+read_password() {
+  password=""
+  if [[ -n "$pw_fd" ]]; then
+    [[ "$pw_fd" =~ ^[0-9]+$ ]] || die "--password-fd needs a file descriptor number"
+    IFS= read -r -u "$pw_fd" password || [[ -n "$password" ]] || die "nothing to read on file descriptor $pw_fd"
+    [[ -n "$password" ]] || die "the password is empty"
+    (( ${#password} <= MAX_PASSWORD )) || die "the password is longer than $MAX_PASSWORD characters, which is all GRUB can take when it asks for it"
+  fi
+  case "$P_ENCRYPT" in
+    yes) encrypt=yes ;;
+    no) encrypt=no ;;
+    *) if [[ -n "$password" ]]; then encrypt=yes; else encrypt=no; fi ;;
+  esac
+  [[ "$encrypt" == no || -n "$password" ]] || die "an encrypted disk needs a password"
+}
+
+# -- what the machine is, and whether it is safe to go on -----------------------------------------
+
+# The disk the USB stick itself is on, or nothing (a stick that was taken out after it was copied to
+# memory is not in the way; a CD drive has no disk above it).
+stick_disk() {
+  local uuid dev parent
+  uuid=$(tr ' ' '\n' <"$CMDLINE_FILE" | sed -n 's/^archisosearchuuid=//p' | head -n 1)
+  [[ -n "$uuid" ]] || return 0
+  dev=$(blkid -U "$uuid" 2>/dev/null) || return 0
+  parent=$(lsblk -no PKNAME "$dev" 2>/dev/null | head -n 1)
+  if [[ -n "$parent" ]]; then echo "/dev/$parent"; else echo "$dev"; fi
+}
+
+is_block() { [[ -b "$1" ]]; }
+
+# The newest kernel of the system that will be copied: the image's (the live session may have upgraded its own).
+newest_kernel() {  # newest_kernel [ROOT]
+  local k
+  k=$(printf '%s\n' "${1:-}$MODULES"/*/vmlinuz | sort -V | tail -n 1)
+  [[ -f "$k" ]] || return 1
+  echo "$k"
+}
+
+probe() {
+  step "Checking the disk"
+  [[ -d "$EFI_SYSFS" ]] || die "This computer did not start in UEFI mode, which Bombadil needs. Restart it from the USB stick's UEFI entry."
+  local t
+  for t in sgdisk wipefs mkfs.fat mkfs.btrfs btrfs blkid lsblk partprobe arch-chroot python3 snapper grub-install; do
+    command -v "$t" >/dev/null || die "$t is missing from this system"
+  done
+  if [[ "$encrypt" == yes ]]; then
+    for t in cryptsetup systemd-cryptenroll; do command -v "$t" >/dev/null || die "$t is missing from this system"; done
+  fi
+  is_block "$disk" || die "$disk is not a disk"
+  [[ "$(lsblk -dnro TYPE "$disk")" == disk ]] || die "$disk is not a whole disk"
+  # The stick first: its own size is not the reason to give for refusing it.
+  local stick; stick=$(stick_disk)
+  if [[ -n "$stick" && "$(readlink -f "$disk")" == "$(readlink -f "$stick")" ]]; then
+    die "$disk is the USB stick Bombadil started from; it is never the place to install"
+  fi
+  (( $(blockdev --getsize64 "$disk") >= 16 * 1024 * 1024 * 1024 )) || die "$disk is smaller than 16 GB"
+  local fstypes; fstypes=$(lsblk -nro FSTYPE "$disk")
+  if grep -qx iso9660 <<<"$fstypes"; then
+    die "$disk holds a Bombadil install image (an ISO); it is the stick, or another one, and is never the place to install"
+  fi
+  if [[ -n "$(lsblk -nro MOUNTPOINTS "$disk" | tr -d '[:space:]')" ]]; then
+    die "$disk is in use (something on it is mounted); nothing was changed"
+  fi
+  image=""
+  if mountpoint -q /run/archiso/airootfs 2>/dev/null; then image=/run/archiso/airootfs; fi
+  kernel=$(newest_kernel "$image") || die "No kernel found under $image$MODULES"
+  version=$(cat /usr/share/bombadil/VERSION 2>/dev/null || cat /version 2>/dev/null || echo unknown)
+  if [[ "$mode" == fresh ]]; then
+    if [[ "$P_KIND" == usb ]]; then kind=usb
+    elif [[ "$(lsblk -dnro TRAN "$disk")" == usb ]]; then kind=usb
+    else kind=internal; fi
+  fi
+}
+
+# "Type the disk name" for a hand-run install; the card's own button is the question on the plan path.
+confirm() {
+  [[ "$yes" == 1 || -n "$plan_file" ]] && return 0
+  local what="erases"; [[ "$mode" == refresh ]] && what="replaces the system on"
+  local ok; read -r -p "This $what $disk. Type the disk name to continue: " ok
   [[ "$ok" == "$disk" ]] || exit 1
-fi
-sgdisk -Z "$disk"
-sgdisk -n1:0:+1G -t1:ef00 -n2:0:0 -t2:8300 "$disk"
-partprobe "$disk" 2>/dev/null || true; udevadm settle
-p1="${disk}1"; p2="${disk}2"; [[ "$disk" == *nvme* || "$disk" == *mmcblk* ]] && { p1="${disk}p1"; p2="${disk}p2"; }
-mkfs.fat -F32 "$p1"
-mkfs.btrfs -f -L bombadil "$p2"
-mount "$p2" /mnt
-btrfs subvolume create /mnt/@; btrfs subvolume create /mnt/@home; btrfs subvolume create /mnt/@snapshots
-umount /mnt
-mount -o subvol=@,compress=zstd "$p2" /mnt
-mkdir -p /mnt/home
-mount -o subvol=@home,compress=zstd "$p2" /mnt/home
+}
 
-# The live root (erofs + overlay) minus runtime and live-only state. The ESP is mounted after
-# the copy: FAT cannot take the ownership cp -a tries to preserve.
-echo "Copying the system…"
-cp -ax /. /mnt/
-rm -rf /mnt/home/* /mnt/boot /mnt/etc/machine-id /mnt/var/lib/systemd/random-seed \
-  /mnt/etc/mkinitcpio.conf.d/archiso.conf /mnt/etc/systemd/system/serial-getty@ttyS0.service.d
-for u in bombadil-live pacman-init; do
-  rm -f /mnt/etc/systemd/system/*.wants/$u.service
-done
-rm -f /mnt/etc/systemd/system/{bombadil-live,pacman-init}.service
-mkdir -p /mnt/boot
-mount "$p1" /mnt/boot
-cp /run/archiso/bootmnt/arch/boot/x86_64/vmlinuz-linux /mnt/boot/
+# -- the disk ----------------------------------------------------------------------------------------
 
-genfstab -U /mnt > /mnt/etc/fstab
-# Mount / by subvolume *name*, not id: undo swaps a snapshot in under the name @.
-sed -i -E 's/subvolid=[0-9]+,?//; s/,+(\s)/\1/' /mnt/etc/fstab
-echo "UUID=$(blkid -s UUID -o value "$p2") /.snapshots btrfs subvol=/@snapshots 0 0" >> /mnt/etc/fstab
+# The partitions of the disk, in order: sets esp and main.
+find_partitions() {
+  local parts
+  mapfile -t parts < <(lsblk -nrpo PATH,TYPE "$disk" | awk '$2 == "part" { print $1 }')
+  (( ${#parts[@]} == 2 )) || die "$disk does not have the two partitions of a Bombadil disk"
+  esp="${parts[0]}"; main="${parts[1]}"
+}
 
-cat > /mnt/etc/mkinitcpio.d/linux.preset <<'P'
-PRESETS=('default')
-ALL_kver='/boot/vmlinuz-linux'
-default_image='/boot/initramfs-linux.img'
+partition() {
+  step "Partitioning $disk"
+  phase=erased
+  wipefs -a "$disk" >/dev/null
+  sgdisk -Z "$disk" >/dev/null
+  local type=8300; [[ "$encrypt" == yes ]] && type=8309
+  sgdisk -n1:0:+1G -t1:ef00 -c1:"EFI system partition" -n2:0:0 -t2:"$type" -c2:Bombadil "$disk" >/dev/null
+  partprobe "$disk" 2>/dev/null || true
+  udevadm settle
+  find_partitions
+  wipefs -a "$esp" "$main" >/dev/null
+  mkfs.fat -F32 -n BOMBADIL "$esp" >/dev/null
+}
+
+# A random key for the initramfs, so the password is typed once (at GRUB) and not again. Its slot is cheap
+# because the key is random; the password's own slot is the expensive one.
+new_keyfile() {
+  install -d -m 700 "$work"
+  keyfile="$work/root.key"
+  head -c 64 /dev/urandom >"$keyfile"; chmod 400 "$keyfile"
+  printf '%s' "$password" | cryptsetup luksAddKey --batch-mode --pbkdf pbkdf2 --pbkdf-force-iterations 1000 \
+    --key-file=- "$main" "$keyfile"
+}
+
+make_luks() {
+  step "Locking the disk with your password"
+  install -d -m 700 "$work"
+  # The password slot is the one GRUB opens.
+  printf '%s' "$password" | cryptsetup luksFormat --batch-mode --type luks2 --label bombadil \
+    --pbkdf argon2id --pbkdf-memory "$LUKS_MEMORY" --pbkdf-parallel 1 --iter-time "$LUKS_ITER_TIME" --key-file=- "$main"
+  new_keyfile
+  # Unlocking with the key file would try the password's expensive slot first; slot 1 is the key file's.
+  cryptsetup config --batch-mode --key-slot 1 --priority prefer "$main"
+  local out
+  out=$(systemd-cryptenroll --unlock-key-file="$keyfile" --recovery-key "$main" 2>/dev/null) || die "could not make a recovery key"
+  recovery=$(grep -oE '([a-z]{8}-){7}[a-z]{8}' <<<"$out" | head -n 1 || true)
+  [[ -n "$recovery" ]] || die "the recovery key was not made"
+  # Each way in has to work before anything is put on the disk.
+  printf '%s' "$password" | cryptsetup open --test-passphrase --key-file=- "$main" || die "the password does not open the disk"
+  cryptsetup open --test-passphrase --key-file="$keyfile" "$main" || die "the key file does not open the disk"
+  printf '%s' "$recovery" | cryptsetup open --test-passphrase --key-file=- "$main" || die "the recovery key does not open the disk"
+  luks_uuid=$(cryptsetup luksUUID "$main")
+  printf '%s' "$password" | cryptsetup open --key-file=- "$main" root
+  opened_luks=1
+  root_dev=/dev/mapper/root
+}
+
+make_filesystem() {
+  if [[ "$encrypt" == yes ]]; then make_luks; else root_dev="$main"; fi
+  step "Creating the filesystem"
+  mkfs.btrfs -f -L bombadil "$root_dev" >/dev/null
+  mkdir -p "$work/top"
+  mount "$root_dev" "$work/top"
+  local sv
+  for sv in @ @home @snapshots @log @pkg; do btrfs subvolume create "$work/top/$sv" >/dev/null; done
+  umount "$work/top"
+}
+
+# -- refresh: the same disk, a new system under the home folder that is there --------------------------
+#
+# The order is what makes a failure harmless. Everything that can be read without changing anything is
+# read first. Then the old system is renamed aside (a rename is instant and loses nothing) and the new one is
+# copied in: until the boot files are replaced, the last step, a failure puts the old system straight back.
+# A failure after that leaves a marker in the half-made system, and running the refresh again starts over
+# from the old one, which is still aside.
+
+INCOMPLETE=var/lib/bombadil/install-incomplete   # in a system the installer has not finished making
+ESP_GUID=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+
+# The newest system a refresh put aside that is whole: the one to go back to.
+kept_system() {  # kept_system TOP
+  local d best=""
+  for d in "$1"/@.before-refresh-*; do
+    [[ -d "$d" && -f "$d/etc/fstab" && -d "$d/usr/lib/modules" && ! -e "$d/$INCOMPLETE" ]] && best="$d"
+  done
+  [[ -n "$best" ]] && echo "${best##*/}"
+  return 0
+}
+
+refresh_open() {
+  step "Looking at what is on $disk"
+  find_partitions
+  # Whichever of the two partitions holds the FAT filesystem is the EFI system partition.
+  if [[ "$(blkid -s TYPE -o value "$main")" == vfat ]]; then local t="$esp"; esp="$main"; main="$t"; fi
+  [[ "$(blkid -s TYPE -o value "$esp")" == vfat ]] || die "$disk has no EFI system partition a refresh can keep"
+  [[ "$(lsblk -no PARTTYPE "$esp" | head -n 1)" == "$ESP_GUID" ]] || die "$esp is not an EFI system partition; a refresh only replaces the boot files of one"
+  mkdir -p "$work/esp-old" "$work/top"
+  mount -o ro "$esp" "$work/esp-old"
+  [[ ! -e "$work/esp-old/EFI/Microsoft" ]] || { umount "$work/esp-old"; die "Windows is on this disk; a refresh only works on a disk that holds Bombadil alone"; }
+  umount "$work/esp-old"
+  case "$(blkid -s TYPE -o value "$main")" in
+    crypto_LUKS)
+      [[ -n "$password" ]] || die "this disk is encrypted; a refresh needs its password"
+      command -v cryptsetup >/dev/null || die "cryptsetup is missing from this system"
+      printf '%s' "$password" | cryptsetup open --key-file=- "$main" root || die "that password does not open $disk"
+      opened_luks=1
+      root_dev=/dev/mapper/root; encrypt=yes
+      luks_uuid=$(cryptsetup luksUUID "$main") ;;
+    btrfs) root_dev="$main"; encrypt=no ;;
+    *) die "$main is not a Bombadil system (it holds $(blkid -s TYPE -o value "$main" || echo nothing))" ;;
+  esac
+  mount "$root_dev" "$work/top"
+  local top="$work/top" sv
+  for sv in @ @home @snapshots; do
+    btrfs subvolume show "$top/$sv" >/dev/null 2>&1 || die "$disk is not a Bombadil disk: it has no $sv"
+  done
+  [[ -d "$top/@home/user" ]] || die "There is no home folder on $disk to keep"
+  resume=0
+  if [[ -e "$top/@/$INCOMPLETE" ]]; then
+    # An earlier refresh stopped part way: its half-made system is here, and the user's own is still aside.
+    resume=1
+    old=$(kept_system "$top")
+    [[ -n "$old" ]] || die "An earlier refresh stopped, and the system it put aside is not whole; nothing was changed"
+    say "An earlier refresh stopped part way; starting it again from the system it put aside ($old)."
+  else
+    [[ -d "$top/@/usr/lib/modules" && -d "$top/@/usr/share/bombadil" ]] \
+      || die "The system on $disk is not a Bombadil one this refresh can move aside; nothing was changed"
+    local free
+    free=$(df --output=avail -B1G "$top" | tail -n 1 | tr -d ' G')
+    (( free >= REFRESH_FREE_GIB )) || die "There is not room on $disk for a second system beside the old one (${free} GB free, ${REFRESH_FREE_GIB} needed); nothing was changed"
+  fi
+  # A key file for the initramfs: the old system has one, or a new one is added with the password.
+  if [[ "$encrypt" == yes && ! -f "$top/${old:-@}/etc/cryptsetup-keys.d/root.key" ]]; then
+    new_keyfile
+  fi
+}
+
+refresh_aside() {
+  step "Putting the old system aside"
+  local top="$work/top" stamp sv
+  made_log=0; made_pkg=0
+  if (( resume )); then
+    # The earlier run's half-made system and its restore points: only ever our own copy of the image.
+    btrfs subvolume delete -R "$top/@" >/dev/null
+    btrfs subvolume delete -R "$top/@snapshots" >/dev/null
+  else
+    stamp=$(date +%Y%m%d-%H%M%S)
+    local name="@.before-refresh-$stamp"
+    # An earlier layout kept the kernel on the EFI partition, which the new layout empties: take it
+    # into the old system's own /boot, and point the old fstab at /efi, so the old system can still
+    # start from the new GRUB (bombadil-rollback --device DISK refresh).
+    if [[ ! -f "$top/@/boot/vmlinuz-linux" ]]; then
+      mount -o ro "$esp" "$work/esp-old"
+      if [[ -f "$work/esp-old/vmlinuz-linux" && -f "$work/esp-old/initramfs-linux.img" ]]; then
+        mkdir -p "$top/@/boot"
+        cp -a "$work/esp-old/vmlinuz-linux" "$work/esp-old/initramfs-linux.img" "$top/@/boot/"
+      else
+        warn "the old system's kernel was not on the EFI partition; going back to it will need a new one"
+      fi
+      umount "$work/esp-old"
+    fi
+    if [[ -f "$top/@/etc/fstab" ]]; then
+      cp -a "$top/@/etc/fstab" "$top/@/etc/fstab.bombadil-backup"
+      sed -i -E 's|^([^#[:space:]]+[[:space:]]+)/boot([[:space:]]+vfat)|\1/efi\2|' "$top/@/etc/fstab"
+      mkdir -p "$top/@/efi"
+    fi
+    # Facts about the old system that the new one keeps.
+    old_packages=$(pacman --dbpath "$top/@/var/lib/pacman" -Qqe 2>/dev/null | sort || true)
+    mv "$top/@" "$top/$name"
+    old="$name"
+    mv "$top/@snapshots" "$top/@snapshots.$name"
+  fi
+  # A run that starts over from an earlier stop cannot claim the boot files are as they were.
+  if (( resume )); then phase=boot; else phase=aside; fi
+  btrfs subvolume create "$top/@" >/dev/null
+  btrfs subvolume create "$top/@snapshots" >/dev/null
+  for sv in @log @pkg; do
+    btrfs subvolume show "$top/$sv" >/dev/null 2>&1 && continue
+    btrfs subvolume create "$top/$sv" >/dev/null
+    [[ "$sv" == @log ]] && made_log=1 || made_pkg=1
+  done
+}
+
+# Put everything back the way it was, for a refresh that stopped before the boot files were touched.
+refresh_restore() {
+  local top="$work/top"
+  [[ -n "$old" && -d "$top/$old" ]] || return 1
+  btrfs subvolume delete -R "$top/@" >/dev/null || return 1
+  btrfs subvolume delete -R "$top/@snapshots" >/dev/null || return 1
+  mv "$top/$old" "$top/@" || return 1
+  mv "$top/@snapshots.$old" "$top/@snapshots" || return 1
+  (( made_log )) && btrfs subvolume delete "$top/@log" >/dev/null
+  (( made_pkg )) && btrfs subvolume delete "$top/@pkg" >/dev/null
+  if [[ -f "$top/@/etc/fstab.bombadil-backup" ]]; then mv -f "$top/@/etc/fstab.bombadil-backup" "$top/@/etc/fstab"; fi
+  return 0
+}
+
+# The things about this computer that a new system keeps from the old one (patterns, from the old root).
+REFRESH_KEEP=(etc/NetworkManager/system-connections etc/hostname etc/localtime etc/locale.conf etc/vconsole.conf
+              etc/machine-id 'etc/ssh/ssh_host_*' var/lib/systemd/linger var/lib/bombadil/recovery-key
+              etc/cryptsetup-keys.d)
+
+refresh_keep() {
+  step "Keeping what belongs to this computer"
+  local oldroot="$work/top/$old" p f
+  (
+    cd "$oldroot"
+    shopt -s nullglob
+    for p in "${REFRESH_KEEP[@]}"; do
+      # shellcheck disable=SC2086
+      for f in $p; do
+        # A name with no wildcard stays as written when nothing matches it: only what exists is kept.
+        [[ -e "$f" || -L "$f" ]] || continue
+        cp -a --parents "$f" "$target/"
+      done
+    done
+  )
+  old_hash=$(awk -F: '$1 == "user" { print $2 }' "$oldroot/etc/shadow" 2>/dev/null || true)
+  local stamp=${old#@.before-refresh-}
+  mkdir -p "$target/var/lib/bombadil"
+  # What the old system had that the image does not: the agent can offer it back.
+  if [[ -n "${old_packages:-}" ]]; then
+    comm -23 <(printf '%s\n' "$old_packages") <(pacman --dbpath "${image:-}/var/lib/pacman" -Qqe 2>/dev/null | sort) \
+      >"$target/var/lib/bombadil/refresh-$stamp.txt" || true
+  fi
+}
+
+# -- the system ---------------------------------------------------------------------------------------
+
+mount_root() {
+  mkdir -p "$target"
+  mount -o subvol=@,compress=zstd "$root_dev" "$target"
+}
+
+copy_system() {
+  step "Copying the system (a few minutes)"
+  if [[ -n "$image" ]]; then
+    # The read-only image under the live overlay: the same clean system for everyone, without what
+    # the stick's own session wrote (its journal, keyring, root history, caches).
+    cp -a "$image/." "$target/"
+  else
+    warn "no system image is mounted here; copying the running system, without its own state"
+    cp -ax /. "$target/"
+    rm -rf "$target/var/log/journal" "$target/etc/pacman.d/gnupg" "$target/root" "$target/var/lib/NetworkManager" \
+      "$target/var/cache/pacman/pkg"
+    mkdir -p "$target/root"; chmod 700 "$target/root"
+  fi
+  # Live-only state and units.
+  rm -rf "${target:?}/home/"* "${target:?}/boot" "$target/etc/machine-id" "$target/var/lib/systemd/random-seed" \
+    "$target/etc/mkinitcpio.conf.d/archiso.conf" "$target/etc/systemd/system/serial-getty@ttyS0.service.d" \
+    "$target/etc/pacman.d/gnupg"
+  local u
+  for u in bombadil-live pacman-init; do
+    rm -f "$target"/etc/systemd/system/*.wants/"$u".service "$target/etc/systemd/system/$u.service"
+  done
+  # Until the install is finished this says so: a refresh that runs again starts over from the system it put aside.
+  mkdir -p "$target/var/lib/bombadil"; : >"$target/$INCOMPLETE"
+  # The kernel goes into the root's own /boot, so a restore point holds the kernel that goes with its modules.
+  install -Dm644 "$kernel" "$target/boot/vmlinuz-linux"
+  if [[ -f /etc/vconsole.conf ]]; then cp /etc/vconsole.conf "$target/etc/vconsole.conf"; fi
+  if [[ -f /etc/locale.conf ]]; then cp /etc/locale.conf "$target/etc/locale.conf"; fi
+}
+
+# Everything but /.snapshots, which only exists once snapper has made its configuration.
+mount_extras() {
+  mkdir -p "$target"/{home,efi,var/log,var/cache/pacman/pkg}
+  mountpoint -q "$target/home" || mount -o subvol=@home,compress=zstd "$root_dev" "$target/home"
+  mount -o subvol=@log,compress=zstd "$root_dev" "$target/var/log"
+  mount -o subvol=@pkg "$root_dev" "$target/var/cache/pacman/pkg"
+  mount -o umask=0077 "$esp" "$target/efi"
+  mkdir -p "$target/var/log/journal"
+}
+
+chroot_run() { arch-chroot "$target" "$@"; }
+
+# /etc/fstab by identifier, and the subvolume by name: undo swaps a snapshot in under the name @.
+write_fstab() {
+  local fsu espu
+  fsu=$(blkid -s UUID -o value "$root_dev"); espu=$(blkid -s UUID -o value "$esp")
+  {
+    echo "# Bombadil disk layout $LAYOUT. The system is @; undo swaps a restore point in under that name."
+    printf 'UUID=%s\t/\tbtrfs\tsubvol=@,compress=zstd\t0 0\n' "$fsu"
+    printf 'UUID=%s\t/home\tbtrfs\tsubvol=@home,compress=zstd\t0 0\n' "$fsu"
+    printf 'UUID=%s\t/.snapshots\tbtrfs\tsubvol=@snapshots\t0 0\n' "$fsu"
+    printf 'UUID=%s\t/var/log\tbtrfs\tsubvol=@log,compress=zstd\t0 0\n' "$fsu"
+    printf 'UUID=%s\t/var/cache/pacman/pkg\tbtrfs\tsubvol=@pkg\t0 0\n' "$fsu"
+    printf 'UUID=%s\t/efi\tvfat\tumask=0077\t0 2\n' "$espu"
+  } >"$target/etc/fstab"
+}
+
+write_initramfs_config() {
+  local hooks="base systemd autodetect microcode modconf kms keyboard sd-vconsole block filesystems"
+  [[ "$encrypt" == yes ]] && hooks="base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems"
+  {
+    echo "# Bombadil: the systemd initramfs; with a password it opens the disk with a key file inside itself."
+    echo "HOOKS=($hooks)"
+    [[ "$encrypt" == yes ]] && echo "FILES=(/etc/cryptsetup-keys.d/root.key)"
+    echo 'COMPRESSION="zstd"'
+  } >"$target/etc/mkinitcpio.conf.d/bombadil.conf"
+  cat >"$target/etc/mkinitcpio.d/linux.preset" <<'P'
+# mkinitcpio preset file for the 'linux' package: the kernel and the initramfs live in /boot on the
+# root, which is what puts them inside a restore point. No ALL_config: a preset that names a config
+# makes mkinitcpio skip the drop-ins in /etc/mkinitcpio.conf.d, where Bombadil's hooks are.
+ALL_kver="/boot/vmlinuz-linux"
+PRESETS=('default' 'fallback')
+default_image="/boot/initramfs-linux.img"
+fallback_image="/boot/initramfs-linux-fallback.img"
+fallback_options="-S autodetect"
 P
+  if [[ "$encrypt" == yes ]]; then
+    install -d -m 700 "$target/etc/cryptsetup-keys.d"
+    [[ -f "$target/etc/cryptsetup-keys.d/root.key" ]] || install -m 400 "$keyfile" "$target/etc/cryptsetup-keys.d/root.key"
+    # x-initrd.attach: the initramfs opens it (mkinitcpio 42 deprecates /etc/crypttab.initramfs).
+    printf 'root\tUUID=%s\t/etc/cryptsetup-keys.d/root.key\tluks,discard,x-initrd.attach\n' "$luks_uuid" >"$target/etc/crypttab"
+    chmod 600 "$target/etc/crypttab"
+  else
+    rm -f "$target/etc/crypttab"
+  fi
+}
 
-arch-chroot /mnt /bin/bash -e <<'CH'
-systemd-machine-id-setup
-ln -sf /usr/share/zoneinfo/UTC /etc/localtime
-echo bombadil > /etc/hostname
-id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user
-mkdir -p /home/user && cp -aT /etc/skel /home/user && chown -R user: /home/user
-passwd -d user
-systemctl enable greetd NetworkManager
-# snapper wants to create /.snapshots itself; let it, then put the @snapshots subvolume there.
+# Set KEY=VALUE in a GRUB defaults file, replacing the line (commented out or not) or adding one.
+set_grub_var() {
+  local file=$1 key=$2 value=$3
+  if grep -q "^#\?$key=" "$file"; then
+    sed -i "s|^#\?$key=.*|$key=$value|" "$file"
+  else
+    echo "$key=$value" >>"$file"
+  fi
+}
+
+# GRUB's screen while it asks for the disk password: the mark on the ground, in Inter. Both files live on the
+# EFI partition, which GRUB reads before the disk is unlocked; /etc/grub.d/000_bombadil_screen (in the image)
+# is what puts them on the screen ahead of the password prompt. The font is made here from the system's Inter;
+# if it cannot be, GRUB keeps its plain screen.
+grub_theme() {
+  local src="$SHARE_DIR/grub/bombadil" dest="$target/efi/grub/themes/bombadil" font
+  [[ -f "$src/background.png" ]] || return 0
+  install -d "$dest"
+  cp "$src/background.png" "$dest/"
+  font=$(chroot_run fc-match -f '%{file}' 'Inter:style=Regular' 2>/dev/null) || font=""
+  if [[ -n "$font" ]] && chroot_run grub-mkfont -s 16 -o /efi/grub/themes/bombadil/inter-16.pf2 "$font" >/dev/null 2>&1 \
+     && [[ -s "$dest/inter-16.pf2" ]]; then
+    install -d "$target/etc/default/grub.d"
+    # Not when GRUB_TERMINAL_OUTPUT was set to something else (a serial console for the VM tests).
+    cat >"$target/etc/default/grub.d/bombadil.cfg" <<'CFG'
+# GRUB's screen (the installer wrote this; see /etc/grub.d/000_bombadil_screen).
+if [ "${GRUB_TERMINAL_OUTPUT:-console}" = console ]; then
+  GRUB_TERMINAL_OUTPUT=gfxterm
+  GRUB_GFXMODE=auto
+fi
+CFG
+  else
+    warn "the font for the boot screen could not be made; GRUB keeps its plain screen"
+    rm -rf "$dest"
+  fi
+}
+
+grub_defaults() {
+  local file=$1
+  # Straight into Bombadil: no menu unless Esc is held at power-on.
+  set_grub_var "$file" GRUB_TIMEOUT_STYLE hidden
+  set_grub_var "$file" GRUB_TIMEOUT 1
+  set_grub_var "$file" GRUB_TERMINAL_OUTPUT console
+  set_grub_var "$file" GRUB_DISTRIBUTOR '"Bombadil"'
+  # The initramfs carries the microcode (the microcode hook); a separate early image would load it twice.
+  set_grub_var "$file" GRUB_EARLY_INITRD_LINUX_STOCK '""'
+  [[ "$encrypt" == yes ]] && set_grub_var "$file" GRUB_ENABLE_CRYPTODISK y
+  # A serial console shows GRUB's password prompt to the test host.
+  [[ -z "${BOMBADIL_INSTALL_GRUB_SERIAL:-}" ]] || {
+    set_grub_var "$file" GRUB_TERMINAL_OUTPUT '"console serial"'
+    set_grub_var "$file" GRUB_SERIAL_COMMAND '"serial --unit=0 --speed=115200"'
+  }
+  # Extra kernel arguments (the VM tests boot the installed system with the smoke test).
+  if [[ -n "${BOMBADIL_INSTALL_CMDLINE:-}" ]]; then
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$BOMBADIL_INSTALL_CMDLINE |" "$file"
+  fi
+  return 0
+}
+
+# The account, the clock, the name and the services, all inside the new system.
+configure() {
+  step "Setting up the system"
+  write_fstab
+  write_initramfs_config
+  local hostname="$P_HOSTNAME"
+  local keep_identity=0; [[ "$mode" == refresh ]] && keep_identity=1
+  chroot_run /usr/bin/env PLAN_ZONE="$P_TIMEZONE" PLAN_KEYMAP="$P_KEYMAP" PLAN_HOST="$hostname" KEEP="$keep_identity" \
+    HOME_EXISTS="$([[ -d "$target/home/user" ]] && echo 1 || echo 0)" bash -e <<'CH'
+[[ -s /etc/machine-id ]] || systemd-machine-id-setup
+if [[ "$KEEP" != 1 ]]; then
+  ln -sf "/usr/share/zoneinfo/$PLAN_ZONE" /etc/localtime
+  [[ -n "$PLAN_KEYMAP" ]] && echo "KEYMAP=$PLAN_KEYMAP" > /etc/vconsole.conf
+  echo "${PLAN_HOST:-bombadil-$(cut -c1-4 /etc/machine-id)}" > /etc/hostname
+fi
+pacman-key --init >/dev/null 2>&1
+pacman-key --populate >/dev/null 2>&1
+if ! id user >/dev/null 2>&1; then
+  if [[ "$HOME_EXISTS" == 1 ]]; then useradd -M -u 1000 -U -G wheel,video,input,audio user
+  else useradd -m -u 1000 -U -G wheel,video,input,audio user; fi
+fi
+# A copy of the running system (no image mounted) already has the account but no home folder.
+if [[ ! -d /home/user ]]; then
+  install -d -o user -g user -m 700 /home/user
+  cp -a /etc/skel/. /home/user/
+  chown -R user: /home/user
+fi
+systemctl enable greetd NetworkManager systemd-timesyncd fstrim.timer snapper-cleanup.timer
+systemd-tmpfiles --create --prefix=/var/log/journal >/dev/null 2>&1 || true
+CH
+  if [[ "$mode" == refresh && -n "${old_hash:-}" ]]; then
+    # The account keeps the password it had.
+    printf 'user:%s\n' "$old_hash" | chroot_run chpasswd -e
+  elif [[ -n "$password" ]]; then
+    printf 'user:%s\n' "$password" | chroot_run chpasswd
+  else
+    chroot_run passwd -d user >/dev/null
+  fi
+}
+
+# A directory that restore points of the home folder skip: a subvolume inside @home. A folder that has files
+# is copied into the subvolume beside it and swapped in, so a stop at any point leaves the files where they were.
+make_subvolume() {
+  local dir=$1 owner mode=755
+  [[ -L "$dir" ]] && return 0
+  local keep="$dir.bombadil-old" new="$dir.bombadil-new"
+  case "$dir" in */.claude|*/.codex|*/.local/share/claude|*/.config/chromium|*/.local/share/bombadil/browser) mode=700 ;; esac
+  if [[ -d "$dir" ]] && btrfs subvolume show "$dir" >/dev/null 2>&1; then
+    [[ ! -e "$keep" ]] || warn "$keep is left from an earlier try; your files are in $dir, and it can be removed"
+    return 0
+  fi
+  if [[ ! -e "$dir" && -e "$keep" ]]; then
+    # Stopped between the two renames: the folder goes back, and the copy is made again.
+    mv "$keep" "$dir"
+  fi
+  if [[ -d "$dir" ]]; then
+    [[ ! -e "$keep" ]] || die "$keep is left from an earlier try; look at it, put it back or remove it, then run the install again"
+    [[ ! -e "$new" ]] || btrfs subvolume delete -R "$new" >/dev/null
+    btrfs subvolume create "$new" >/dev/null
+    cp -a --reflink=auto "$dir/." "$new/"
+    chown --reference="$dir" "$new"; chmod --reference="$dir" "$new"
+    mv "$dir" "$keep"
+    mv "$new" "$dir"
+    rm -rf "$keep"
+  else
+    owner="$(stat -c %u:%g "$target/home/user")"
+    # Parents the account would own, created as it.
+    local parent; parent="$(dirname "$dir")"
+    if [[ ! -d "$parent" ]]; then
+      mkdir -p "$parent"
+      local p="$parent"
+      while [[ "$p" != "$target/home/user" && "$p" == "$target/home/user/"* ]]; do chown "$owner" "$p"; p="$(dirname "$p")"; done
+    fi
+    btrfs subvolume create "$dir" >/dev/null
+    chown "$owner" "$dir"; chmod "$mode" "$dir"
+  fi
+}
+
+prepare_home() {
+  step "Preparing the home folder"
+  local h="$target/home/user" rel
+  if [[ "$mode" == refresh ]]; then
+    # Only what is missing, made by the account itself: the kept home wins over the skeleton.
+    chroot_run runuser -u user -- cp -an /etc/skel/. /home/user/ || true
+  fi
+  for rel in "${HOME_SUBVOLS[@]}"; do make_subvolume "$h/$rel"; done
+}
+
+# What comes from the stick's own home folder: the paths the carry list names that exist there.
+carry() {
+  step "Bringing your things along"
+  local rel src dst h="$target/home/user"
+  for rel in "${P_CARRY[@]}"; do
+    src="$live_home/$rel"; dst="$h/$rel"
+    [[ -e "$src" || -L "$src" ]] || continue
+    # A refresh keeps what the home folder already has: a sign-in on the stick never replaces it.
+    [[ "$mode" == refresh && ( -e "$dst" || -L "$dst" ) && ! -d "$dst" ]] && continue
+    mkdir -p "$(dirname "$dst")"
+    if [[ -d "$src" ]]; then
+      if [[ "$mode" == refresh && -d "$dst" && -n "$(ls -A "$dst" 2>/dev/null)" ]]; then continue; fi
+      mkdir -p "$dst"; cp -aT "$src" "$dst"
+    else
+      cp -a "$src" "$dst"
+    fi
+  done
+  # The Wi-Fi networks that were joined on the stick.
+  if [[ "$mode" != refresh && -d "$NM_CONNECTIONS" ]]; then
+    mkdir -p "$target/etc/NetworkManager/system-connections"
+    cp -a "$NM_CONNECTIONS/." "$target/etc/NetworkManager/system-connections/" 2>/dev/null || true
+  fi
+  # A restore-point number from before a refresh means nothing now.
+  rm -f "$h/.local/state/bombadil/undo.json"
+}
+
+# Restore points: one config for the system (the newest 30 turns stay) and one for the home folder.
+snapper_setup() {
+  step "Setting up undo"
+  chroot_run bash -e <<'CH'
+# snapper makes /.snapshots itself; the @snapshots subvolume goes there instead.
 rmdir /.snapshots 2>/dev/null || true
 snapper --no-dbus -c root create-config /
-btrfs subvolume delete /.snapshots
+btrfs subvolume delete /.snapshots >/dev/null
 mkdir /.snapshots
-mkinitcpio -P
-# Straight into Bombadil: no menu unless Esc is held at power-on.
-for kv in GRUB_TIMEOUT_STYLE=hidden GRUB_TIMEOUT=1 GRUB_TERMINAL_OUTPUT=console; do
-  k=${kv%%=*}
-  if grep -q "^#\?$k=" /etc/default/grub; then sed -i "s|^#\?$k=.*|$kv|" /etc/default/grub; else echo "$kv" >> /etc/default/grub; fi
-done
-grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil --removable
-grub-mkconfig -o /boot/grub/grub.cfg
-CH
-# Signed in on the live system: the sign-in and the chosen AI come along, so the installed
-# system starts signed in (the brief's "sign in once").
-for f in .claude .claude.json .codex .config/bombadil; do
-  [[ -e "/home/user/$f" ]] || continue
-  mkdir -p "/mnt/home/user/$(dirname "$f")"
-  cp -aT "/home/user/$f" "/mnt/home/user/$f"
-done
-arch-chroot /mnt chown -R user: /home/user
-# Extra kernel arguments for the installed system (the VM test boots it with the smoke test).
-if [[ -n "${BOMBADIL_INSTALL_CMDLINE:-}" ]]; then
-  sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"$BOMBADIL_INSTALL_CMDLINE |" /mnt/etc/default/grub
-  sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' /mnt/etc/default/grub
-  arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+# One restore point per agent turn and no hourly ones; the cleanup timer keeps the newest 30.
+snapper --no-dbus -c root set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30
+if [[ -e /home/.snapshots ]]; then
+  cp /usr/share/snapper/config-templates/default /etc/snapper/configs/home
+  sed -i 's|^SUBVOLUME=.*|SUBVOLUME="/home"|' /etc/snapper/configs/home
+  sed -i 's|^SNAPPER_CONFIGS=.*|SNAPPER_CONFIGS="root home"|' /etc/conf.d/snapper
+else
+  snapper --no-dbus -c home create-config /home
 fi
-mount -o subvol=@snapshots "$p2" /mnt/.snapshots
-chmod 750 /mnt/.snapshots
-echo "Installed. Reboot into Bombadil."
+snapper --no-dbus -c home set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30
+CH
+  mount -o subvol=@snapshots "$root_dev" "$target/.snapshots"
+  chmod 750 "$target/.snapshots"
+}
+
+snapshot() {  # snapshot DESCRIPTION
+  chroot_run snapper --no-dbus -c root create --description "$1" --print-number
+}
+
+# Programs installed on the stick, since it started, go into the installed system as their own restore
+# point, from the packages the stick already downloaded (no network, no agent).
+replay_stick_packages() {
+  [[ -n "$image" ]] || return 0
+  local cache="$STICK_CACHE" name ver files=() brought=() f c
+  # Both lists are read once (a query per package is thousands of queries); what differs is new or a new version.
+  while read -r name ver; do
+    [[ -n "$name" ]] || continue
+    f=""
+    for c in "$cache/$name-$ver"-*.pkg.tar.*; do
+      [[ -e "$c" && "$c" != *.sig ]] && { f="$c"; break; }
+    done
+    if [[ -n "$f" ]]; then files+=("$f"); brought+=("$name"); else warn "$name $ver came from the stick but its package file is gone; not brought"; fi
+  done < <(comm -23 <(pacman -Q 2>/dev/null | sort) <(pacman --dbpath "$image/var/lib/pacman" -Q 2>/dev/null | sort))
+  stick_brought=("${brought[@]}")
+  (( ${#files[@]} )) || return 0
+  step "Bringing the programs you installed on the stick"
+  local names=()
+  for f in "${files[@]}"; do
+    cp -a "$f" "$target/var/cache/pacman/pkg/"
+    [[ ! -e "$f.sig" ]] || cp -a "$f.sig" "$target/var/cache/pacman/pkg/"
+    names+=("/var/cache/pacman/pkg/$(basename "$f")")
+  done
+  if chroot_run pacman -U --noconfirm --needed "${names[@]}"; then
+    local list; list=$(printf '%s, ' "${brought[@]:0:5}"); list=${list%, }
+    record
+    snapshot "Brought from the USB stick: $list" >/dev/null
+  else
+    warn "the programs from the stick could not be installed; the system is as it came"
+    stick_brought=()
+  fi
+}
+
+# GRUB and the EFI partition: core, modules, grub.cfg and grubenv all live on the ESP and never roll back;
+# the kernel and initramfs are read from @/boot, so they go back with an undo.
+boot() {
+  step "Making it start"
+  chroot_run mkinitcpio -P
+  grub_defaults "$target/etc/default/grub"
+  if [[ "$mode" == refresh ]]; then
+    # The last thing a refresh changes outside the two systems: the old boot files go only now that the new
+    # system has its kernel, its initramfs and its GRUB settings. (The EFI partition is emptied, not formatted
+    # again, so its identifier stays and the old fstab still names it.)
+    phase=boot
+    find "$target/efi" -mindepth 1 -delete
+  fi
+  local common=(--target=x86_64-efi --efi-directory=/efi --boot-directory=/efi)
+  # A named firmware entry; the firmware forgets those after an update or a flat battery, so the
+  # fallback path is written too (a whole disk or a USB drive has no Windows to lose it to).
+  chroot_run grub-install "${common[@]}" --bootloader-id=Bombadil || warn "the firmware would not keep a Bombadil entry; the fallback path starts it"
+  chroot_run grub-install "${common[@]}" --removable
+  grub_theme
+  chroot_run bombadil-grub-config
+}
+
+# The things that must be true for the next start, checked before it is claimed.
+# The kernel modules are compressed files that nothing reads until a device needs one, so a damaged USB stick
+# or a bad copy shows up first as a driver that is missing months later. Every one is read back here.
+check_modules() {
+  local t=$1 bad
+  [[ -d "$t/usr/lib/modules" ]] || die "no kernel modules were copied"
+  find "$t/usr/lib/modules" -name '*.ko.zst' -print0 | xargs -0 -r -n 200 zstd -tq >/dev/null 2>&1 && return 0
+  # shellcheck disable=SC2016  # the quoted script is for the sh that xargs starts
+  bad=$(find "$t/usr/lib/modules" -name '*.ko.zst' -print0 \
+    | xargs -0 -n 1 sh -c 'zstd -tq "$1" >/dev/null 2>&1 || { echo "$1"; exit 255; }' _ 2>/dev/null | head -n 1) || true
+  die "a copied kernel module is damaged (${bad#"$t"}). The USB stick may be damaged: write it again, or try another stick"
+}
+
+verify() {
+  step "Checking the result"
+  local t="$target" cfg="$target/efi/grub/grub.cfg" listing
+  check_modules "$t"
+  [[ -s "$t/boot/vmlinuz-linux" && -s "$t/boot/initramfs-linux.img" && -s "$t/boot/initramfs-linux-fallback.img" ]] \
+    || die "the kernel or an initramfs is missing from /boot"
+  [[ -s "$t/efi/EFI/BOOT/BOOTX64.EFI" && -s "$cfg" ]] || die "GRUB is not on the EFI partition"
+  grep -q 'rootflags=subvol=@' "$cfg" || die "grub.cfg does not start the system from the @ subvolume"
+  grep -q '/@/boot/vmlinuz-linux' "$cfg" || die "grub.cfg does not start the kernel in /@/boot"
+  grep -q '/@/boot/initramfs-linux.img' "$cfg" || die "grub.cfg does not load the initramfs from /@/boot"
+  grep -q 'initramfs-linux-fallback.img' "$cfg" || die "grub.cfg has no fallback entry"
+  # Undo swaps snapshots in under the name @, which only works while the top level is the default subvolume.
+  [[ "$(btrfs subvolume get-default "$t")" == "ID 5 "* ]] || die "the filesystem's default subvolume is not the top level"
+  if [[ "$encrypt" == yes ]]; then
+    grep -q cryptomount "$cfg" || die "grub.cfg does not open the encrypted disk"
+    grep -qE "cryptomount -u (${luks_uuid}|${luks_uuid//-/})\$" "$cfg" || die "grub.cfg opens a different disk than the one just locked"
+    [[ -s "$t/efi/grub/x86_64-efi/luks2.mod" || -s "$t/efi/grub/x86_64-efi/luks.mod" ]] || die "GRUB has no module to open the disk"
+    # Captured first: grep -q would end the listing early, and pipefail would call that a failure.
+    listing=$(chroot_run lsinitcpio /boot/initramfs-linux.img) || die "the initramfs cannot be read"
+    grep -q 'etc/cryptsetup-keys.d/root.key' <<<"$listing" || die "the initramfs has no key for the disk"
+    grep -q 'etc/crypttab' <<<"$listing" || die "the initramfs does not know which disk to open"
+    grep -q 'systemd-cryptsetup' <<<"$listing" || die "the initramfs has no tool to open the disk"
+  fi
+}
+
+record() {
+  step "Keeping a record"
+  install -d "$target/var/lib/bombadil"
+  local zone zone_source="$P_TIMEZONE_SOURCE"
+  zone=$(readlink "$target/etc/localtime" | sed 's|.*/zoneinfo/||')
+  if [[ "$mode" == refresh ]]; then
+    # The old system's zone is kept; an install that only ever knew UTC has not been told one.
+    if [[ "$zone" == UTC ]]; then zone_source="unset"; else zone_source="chosen"; fi
+  fi
+  INSTALL_JSON="$target/var/lib/bombadil/install.json" LAYOUT="$LAYOUT" VERSION_TEXT="$version" MODE="$mode" \
+    ENCRYPTED="$encrypt" KIND="${kind:-internal}" ZONE="$zone" ZONE_SOURCE="$zone_source" \
+    RECOVERY_PENDING="$([[ -n "${recovery:-}" || -s "$target/var/lib/bombadil/recovery-key" ]] && echo 1 || echo 0)" BROUGHT="$(printf '%s\n' "${stick_brought[@]:-}")" \
+    KEPT_ASIDE="${old:-}" python3 - <<'PY'
+import json, os, time
+e = os.environ
+rec = {
+    "layout": int(e["LAYOUT"]),
+    "date": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    "image_version": e["VERSION_TEXT"],
+    "mode": e["MODE"],
+    "encrypted": e["ENCRYPTED"] == "yes",
+    "target_kind": e["KIND"],
+    "timezone": e["ZONE"],
+    "timezone_source": e["ZONE_SOURCE"],
+    "packages_brought": [p for p in e["BROUGHT"].split("\n") if p],
+    "recovery_key_pending": e["RECOVERY_PENDING"] == "1",
+    "kept_aside": [p for p in (e["KEPT_ASIDE"], "@snapshots." + e["KEPT_ASIDE"] if e["KEPT_ASIDE"] else "") if p],
+}
+with open(e["INSTALL_JSON"], "w") as f:
+    json.dump(rec, f, indent=2)
+    f.write("\n")
+PY
+  chmod 644 "$target/var/lib/bombadil/install.json"
+  rm -f "$target/$INCOMPLETE"
+  if [[ -n "${recovery:-}" ]]; then
+    # Only until the first start shows it once.
+    (umask 077; printf '%s\n' "$recovery" >"$target/var/lib/bombadil/recovery-key")
+  fi
+}
+
+cleanup() {
+  local rc=$?
+  set +e
+  local leave=0 restored=0
+  # For a test host that adds to the new system before it is shut down (scripts/wsl-vm.sh): the caller unmounts.
+  [[ -n "${BOMBADIL_INSTALL_LEAVE_MOUNTED:-}" && $rc == 0 ]] && leave=1
+  if [[ -d "$target" ]] && mountpoint -q "$target"; then
+    cp "$LOG" "$target/var/log/bombadil-install.log" 2>/dev/null
+    sync
+    if (( leave )); then say "The new system is left mounted at $target, as asked."; else umount -R "$target"; fi
+  fi
+  # A refresh that stopped before the boot files were touched puts the old system straight back.
+  if (( rc != 0 )) && [[ "$phase" == aside && "$mode" == refresh ]] && mountpoint -q "$work/top"; then
+    refresh_restore && restored=1
+  fi
+  mountpoint -q "$work/top" && umount "$work/top"
+  mountpoint -q "$work/esp-old" && umount "$work/esp-old"
+  [[ "${opened_luks:-0}" == 1 ]] && (( ! leave )) && cryptsetup close root
+  rm -rf "$work/root.key"
+  if (( rc != 0 )); then
+    case "$phase:$mode" in
+      checking:*) say "The install stopped before anything on the disk was changed." ;;
+      erased:*) say "The install stopped after the disk was erased, so it does not start yet. Nothing on the USB stick changed: run the install again." ;;
+      aside:refresh)
+        if (( restored )); then
+          say "The refresh stopped and put everything back: the system and the home folder on the disk are as they were."
+        else
+          say "The refresh stopped. The system that was on the disk is kept as $old and the home folder was not touched; bombadil-rollback --device DISK refresh, from this stick, puts the old system back."
+        fi ;;
+      boot:refresh) say "The refresh stopped after the old boot files were replaced, so the computer does not start yet. The home folder and the old system ($old) are on the disk. Run the refresh again from this stick: it starts over from the old system." ;;
+      *) say "The install stopped." ;;
+    esac
+  fi
+  return "$rc"
+}
+
+# -- a hand-run install: asks what the install card would ask -----------------------------------------
+
+ZONEINFO_DIR="${BOMBADIL_ZONEINFO:-/usr/share/zoneinfo}"
+
+ask() {  # ask PROMPT [DEFAULT]: one line of answer, the default when it is empty
+  local reply
+  read -r -p "$1" reply || die "no answer was given; nothing was changed"
+  printf '%s' "${reply:-${2:-}}"
+}
+
+ask_number() {  # ask_number PROMPT MAX [DEFAULT]: a whole number from 1 to MAX, asked again until it is one
+  local reply
+  while :; do
+    reply=$(ask "$1" "${3:-}")
+    if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= $2 )); then printf '%s' "$reply"; return; fi
+    say "Please type a number from 1 to $2." >&2
+  done
+}
+
+ask_secret() {  # ask_secret PROMPT: one line, not shown, into $secret
+  read -rs -p "$1" secret || die "no answer was given; nothing was changed"
+  printf '\n' >&2
+}
+
+# The new disk's password, twice, into $guided_password ("" when the person chose none).
+ask_new_password() {
+  local again
+  say ""
+  say "Choose a password for this computer. It opens the disk when the computer starts, and it unlocks the screen."
+  say "Use letters, numbers and ordinary symbols: the boot screen reads a US keyboard."
+  while :; do
+    ask_secret "Password (empty for none): "
+    guided_password=$secret
+    if [[ -z "$guided_password" ]]; then
+      if [[ "$(ask "Without a password the disk is not encrypted and anyone holding this computer can read it. Install without one? (yes/no) " no)" == yes ]]; then return; fi
+      continue
+    fi
+    if [[ "$guided_password" == *[^\ -~]* ]]; then say "Please use only letters, numbers and ordinary symbols."; continue; fi
+    if (( ${#guided_password} > MAX_PASSWORD )); then say "That is too long; $MAX_PASSWORD characters is the most the boot screen takes."; continue; fi
+    ask_secret "Again: "; again=$secret
+    if [[ "$again" == "$guided_password" ]]; then return; fi
+    say "Those two were different. Let us try again."
+  done
+}
+
+# The plan, from the answers: the disk and mode, and for a fresh install the time zone and the name.
+guided() {
+  local lines count pick n path _offered bombadil encrypted what zone default_zone zone_source host model seed answer enc
+  say "Bombadil installer"
+  say ""
+  say "These are the disks in this computer:"
+  lines=$(PYTHONPATH="$SRC_LIB" python3 -m bombadil.installplan --disks --stick "$(stick_disk)") || die "could not look at the disks"
+  while IFS=$'\t' read -r n path _offered bombadil encrypted what; do
+    if [[ "$n" == - ]]; then say "      $path  $what"; else say "  $n)  $path  $what"; fi
+  done <<<"$lines"
+  count=$(awk -F'\t' '$3 == 1' <<<"$lines" | wc -l)
+  (( count > 0 )) || die "There is no disk here that Bombadil can be put on."
+  pick=$(ask_number "Which disk? (1-$count) " "$count" "$([[ $count == 1 ]] && echo 1)")
+  IFS=$'\t' read -r n path _offered bombadil encrypted what < <(awk -F'\t' -v n="$pick" '$1 == n' <<<"$lines")
+
+  mode=fresh
+  if [[ "$bombadil" == 1 ]]; then
+    say ""
+    say "Bombadil is already on $path."
+    say "  1)  Replace the system, keep my files and settings"
+    say "  2)  Erase the disk and start over"
+    [[ "$(ask_number "Which? (1-2) " 2)" == 1 ]] && mode=refresh
+  fi
+
+  guided_password=""
+  zone=""; zone_source=""; host=""
+  if [[ "$mode" == refresh ]]; then
+    if [[ "$encrypted" == 1 ]]; then
+      ask_secret "The disk's password: "
+      guided_password=$secret
+      [[ -n "$guided_password" ]] || die "a refresh needs the disk's password; nothing was changed"
+    fi
+  else
+    ask_new_password
+    default_zone=$(timedatectl show -p Timezone --value 2>/dev/null || true); default_zone=${default_zone:-UTC}
+    while :; do
+      zone=$(ask "Time zone, for example Europe/Lisbon [$default_zone]: " "$default_zone")
+      [[ "$zone" =~ ^[A-Za-z0-9][A-Za-z0-9_+/-]*$ && -f "$ZONEINFO_DIR/$zone" ]] && break
+      say "That is not a time zone this computer knows."
+    done
+    if [[ "$zone" == "$default_zone" && "$zone" == UTC ]]; then zone_source="unset"; else zone_source="chosen"; fi
+    model=$(cat /sys/class/dmi/id/product_version 2>/dev/null || true)
+    [[ -n "${model//[[:space:]]/}" ]] || model=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+    seed=$(cat /etc/machine-id 2>/dev/null || true)
+    host=$(PYTHONPATH="$SRC_LIB" python3 -c 'import sys
+from bombadil.installplan import suggest_hostname
+print(suggest_hostname(sys.argv[1], model=sys.argv[2] or None))' "$seed" "$model")
+    while :; do
+      answer=$(ask "Name for this computer [$host]: " "$host")
+      [[ "$answer" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] && break
+      say "A name can have lowercase letters, numbers and hyphens, and must start and end with a letter or number."
+    done
+    host=$answer
+  fi
+
+  say ""
+  if [[ "$mode" == refresh ]]; then
+    say "This replaces the system on $path with a new one. Your files and settings stay, and the old system is kept for 14 days."
+  else
+    say "This ERASES everything on $path ($what) and puts Bombadil there${guided_password:+, encrypted}."
+  fi
+  [[ "$(ask "To go on, type the disk's name ($path): ")" == "$path" ]] || die "That was not the disk's name; nothing was changed."
+
+  plan_file=$(mktemp /tmp/bombadil-plan.XXXXXX)
+  enc=""   # a refresh keeps what the disk has
+  if [[ "$mode" == fresh ]]; then if [[ -n "$guided_password" ]]; then enc=yes; else enc=no; fi; fi
+  PLAN_DISK=$path PLAN_MODE=$mode PLAN_ZONE=$zone PLAN_ZONE_SOURCE=$zone_source PLAN_HOST=$host PLAN_ENCRYPT=$enc \
+    python3 - >"$plan_file" <<'PY'
+import json, os
+e = os.environ
+plan = {"disk": e["PLAN_DISK"], "mode": e["PLAN_MODE"]}
+if e["PLAN_ZONE"]:
+    plan.update(timezone=e["PLAN_ZONE"], timezone_source=e["PLAN_ZONE_SOURCE"])
+if e["PLAN_HOST"]:
+    plan["hostname"] = e["PLAN_HOST"]
+if e["PLAN_ENCRYPT"]:
+    plan["encrypt"] = e["PLAN_ENCRYPT"] == "yes"
+print(json.dumps(plan))
+PY
+  disk_arg=""; mode_arg=""; yes=1; pw_fd=""
+  if [[ -n "$guided_password" ]]; then
+    # Read back by read_password; the password is in no argument and no file.
+    exec {pw_fd}< <(printf '%s\n' "$guided_password")
+  fi
+}
+
+run() {
+  if (( guided_run )); then guided; else parse_args "$@"; fi
+  load_plan
+  read_password
+  probe
+  confirm
+  phase=checking; mode=${mode:-fresh}
+  trap cleanup EXIT
+  mkdir -p "$work"
+  opened_luks=0; old=""; recovery=""; stick_brought=(); made_log=0; made_pkg=0; resume=0
+  if [[ "$mode" == refresh ]]; then
+    refresh_open
+    refresh_aside
+    kind=internal
+  else
+    partition
+    make_filesystem
+  fi
+  mount_root
+  copy_system
+  if [[ "$mode" == refresh ]]; then refresh_keep; fi
+  mount_extras
+  configure
+  prepare_home
+  carry
+  snapper_setup
+  boot
+  verify
+  record
+  [[ "$mode" != refresh ]] || rm -f "$work/top/$old/etc/fstab.bombadil-backup"
+  snapshot "Bombadil $version, as installed" >/dev/null
+  replay_stick_packages
+  if (( guided_run )) && [[ -n "${recovery:-}" ]]; then
+    say ""
+    say "Your recovery key. If you ever forget the password, this opens the disk. Write it down or take a photo of it now:"
+    say ""
+    say "    $recovery"
+    say ""
+  fi
+  say "Installed. Take out the USB stick, then Restart."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  mkdir -p "$(dirname "$LOG")"
+  # With nothing to go on and a person at the keyboard, ask. (Decided here: inside the pipe below nothing is a terminal.)
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then guided_run=1; fi
+  run "$@" 2>&1 | tee -a "$LOG"
+  rc=${PIPESTATUS[0]}
+  if (( rc == 0 && guided_run )); then
+    read -r -p "Take out the USB stick, then press Enter to restart. " _ || true
+    systemctl reboot
+  fi
+  exit "$rc"
+fi
+

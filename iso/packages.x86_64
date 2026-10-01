@@ -3,7 +3,11 @@ base
 linux
 linux-firmware
 btrfs-progs
+cryptsetup
+amd-ucode
+intel-ucode
 gptfdisk
+parted
 dosfstools
 snapper
 grub
@@ -30,6 +34,7 @@ wl-clipboard
 mako
 libnotify
 foot
+tmux
 nautilus
 chromium
 # pdftotext and pdftoppm: PDF text for the brain's search, first pages for Focus

@@ -43,14 +43,14 @@ sync_tree() {
 }
 
 # What goes into the ISO, so a commit that only touches docs or VM scripts reuses the last build.
-iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:scripts/build-iso.sh | sha1sum | cut -c1-12; }
+iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:install HEAD:scripts/build-iso.sh | sha1sum | cut -c1-12; }
 
 build() {
   local key; key=$(iso_key)
   if [[ -f "$out/.iso-key" && "$(cat "$out/.iso-key")" == "$key" ]] && ls "$out"/*.iso >/dev/null 2>&1; then return; fi
   echo "Building the ISO for $(git -C "$tree" log -1 --format='%h %s') (15 to 30 minutes)..."
   rm -f "$out"/*.iso "$out/.iso-key"
-  (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) WORK=/var/tmp/bombadil-work scripts/build-iso.sh)
+  (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) BOMBADIL_TEST_ENTRIES=1 WORK=/var/tmp/bombadil-work scripts/build-iso.sh)
   rm -rf /var/tmp/bombadil-work   # several GB of build tree; pacman's package cache stays for next time
   echo "$key" > "$out/.iso-key"
 }
@@ -105,9 +105,10 @@ install() {
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
 monitor = f'hl.monitor({{ output = "Virtual-1", mode = "{sys.argv[2]}@60", position = "0x0", scale = 1 }})'
-line = ("BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
+# The installer leaves the new system mounted for this, and unmounts it afterwards.
+line = ("BOMBADIL_INSTALL_LEAVE_MOUNTED=1 BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
         f" && echo '{monitor} -- the VM window (scripts/wsl-vm.sh)' >> /mnt/home/user/.config/hypr/hyprland.lua"
-        " && echo INSTALL-''DONE; poweroff\r").encode()
+        " && sync && umount -R /mnt && echo INSTALL-''DONE; poweroff\r").encode()
 for i in range(0, len(line), 8):
     s.sendall(line[i:i + 8]); time.sleep(0.05)
 time.sleep(1)

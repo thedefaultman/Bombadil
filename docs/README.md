@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `INSTALLED-OS.md`: Bombadil as an installed system: the principles, the disk and how it is opened (with diagrams), fresh install, refresh and undo, the install plan, and how to test a change to it.
 - `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
 - `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.

@@ -28,49 +28,7 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
     assert "never `pacman -Sy` alone" in providers.system_prompt()
 
 
-ARCH_GRUB_DEFAULTS = """\
-# GRUB boot loader configuration
-
-GRUB_DEFAULT=0
-GRUB_TIMEOUT=5
-GRUB_DISTRIBUTOR="Arch"
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"
-GRUB_CMDLINE_LINUX=""
-
-# Uncomment to use basic console
-#GRUB_TERMINAL_INPUT=console
-
-# Uncomment to disable graphical terminal
-#GRUB_TERMINAL_OUTPUT=console
-GRUB_TIMEOUT_STYLE=menu
-"""
-
-
-def _installer_grub_lines(tmp_path, defaults: str) -> list[str]:
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for kv in GRUB_TIMEOUT_STYLE")
-    end = script.index("grub-install", start)
-    # The loop runs inside the chroot on /etc/default/grub; run the same lines on a copy.
-    assert script.index("grub-mkconfig") > end
-    grub = tmp_path / "grub"
-    grub.write_text(defaults)
-    subprocess.run(["bash", "-e", "-c", script[start:end].replace("/etc/default/grub", str(grub))], check=True)
-    return grub.read_text().splitlines()
-
-
-def test_grub_boots_straight_in_with_the_menu_one_esc_away(tmp_path):
-    lines = _installer_grub_lines(tmp_path, ARCH_GRUB_DEFAULTS)
-    for want in ("GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=1", "GRUB_TERMINAL_OUTPUT=console"):
-        assert lines.count(want) == 1
-    assert "GRUB_TIMEOUT=5" not in lines and "GRUB_TIMEOUT_STYLE=menu" not in lines
-    assert 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"' in lines and "#GRUB_TERMINAL_INPUT=console" in lines
-
-
-def test_grub_settings_missing_from_the_defaults_are_added(tmp_path):
-    lines = _installer_grub_lines(tmp_path, "GRUB_DEFAULT=0\n")
-    assert lines[0] == "GRUB_DEFAULT=0"
-    assert set(lines[1:]) == {"GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=1", "GRUB_TERMINAL_OUTPUT=console"}
+# The installer's GRUB defaults are tested with the installer, in tests/test_installer.py.
 
 
 def test_the_pill_opens_from_super_and_from_alt_space():
@@ -92,3 +50,44 @@ def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers
     assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.system_prompt()
+
+
+def test_the_stick_carries_everything_the_installer_calls():
+    # bombadil-install checks for these tools before it touches a disk, and mkinitcpio builds the
+    # initramfs that opens an encrypted one; the microcode packages are what the installed system's initramfs embeds.
+    assert {"grub", "efibootmgr", "btrfs-progs", "snapper", "dosfstools", "gptfdisk", "arch-install-scripts",
+            "cryptsetup", "mkinitcpio", "amd-ucode", "intel-ucode", "parted"} <= _packages()
+
+
+def test_the_installed_clock_is_kept_right_by_timesyncd():
+    # The installed system is a copy of the image; a service enabled in the image is enabled there.
+    link = ISO / "airootfs/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service"
+    assert link.is_symlink() and link.readlink().name == "systemd-timesyncd.service"
+
+
+def test_the_image_has_what_remote_control_runs_in():
+    # `bombadil remote` keeps Claude Code's remote-control server in a detached tmux session.
+    assert "tmux" in _packages()
+
+
+def test_the_image_is_built_without_erofs_tail_packing():
+    # erofs-utils 1.9.4 zeroed the last block of some incompressible files with `-E ztailpacking`, among them kernel
+    # modules; the installer reads every module back and refuses an install from an image like that.
+    profiledef = (ISO / "profiledef.sh").read_text()
+    options = re.search(r"^airootfs_image_tool_options=\((.*)\)", profiledef, re.M).group(1)
+    assert "ztailpacking" not in options
+
+
+def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
+    script = (ISO.parent / "scripts/build-iso.sh").read_text()
+    assert "verify_image" in script and "diff -rq" in script
+
+
+def test_every_script_the_image_adds_to_the_path_or_to_grub_is_executable():
+    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable
+    # (and grub-mkconfig skips a file in /etc/grub.d that is not executable).
+    profiledef = (ISO / "profiledef.sh").read_text()
+    listed = set(re.findall(r'\["(/[^"]+)"\]="0:0:755"', profiledef))
+    for folder in ("usr/local/bin", "etc/grub.d"):
+        shipped = {f"/{folder}/{p.name}" for p in (ISO / "airootfs" / folder).iterdir() if p.is_file()}
+        assert shipped <= listed, sorted(shipped - listed)

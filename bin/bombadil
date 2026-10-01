@@ -20,6 +20,8 @@
   bombadil brain focus PATH|URL|KEY    everything around one thing (turn:41, app:passwords, system)
   bombadil brain rebuild               forget the index and make it again from your files
                                        (add --json to any brain command for the whole answer)
+  bombadil remote [status|url|show|stop]  let claude.ai/code or the Claude app steer a Claude Code session on this computer
+  bombadil snapshot [--hook]           take a restore point now (--hook: for a Claude Code hook, labelled by its prompt)
 """
 import json
 import os
@@ -29,7 +31,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, pager, paths, snapshots, watch  # noqa: E402
+from bombadil import config, pager, paths, remote, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 EX_TEMPFAIL = 75   # `ask` when the AI rests: it does not wait for the reset (sysexits.h)
@@ -276,6 +278,19 @@ def main() -> int:
             print(f"unknown provider; choose from {config.PROVIDERS}")
             return 2
         return follow_setup({"type": "signin", **({"provider": args[0]} if args else {})})
+    elif cmd == "remote":
+        return remote.main(args)
+    elif cmd == "snapshot":
+        # Never fails: as a hook, a non-zero answer would stop the prompt it is taken for.
+        label = snapshots.label_from_hook(sys.stdin.read()) if "--hook" in args else "turn: " + (" ".join(args) or "by hand")
+        try:
+            snap = snapshots.Snapshots().create(label)
+        except Exception as e:  # noqa: BLE001
+            print(f"no restore point: {e}", file=sys.stderr)
+            return 0
+        if snap is not None and "--hook" not in args:
+            print(f"restore point {snap.number}")
+        return 0
     elif cmd == "open":
         if not args:
             print(__doc__)

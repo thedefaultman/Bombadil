@@ -21,9 +21,70 @@
 4. The CLI's JSON stream becomes `text` / `tool` / `result` events, broadcast to all clients.
 5. The turn is appended to `~/.local/state/bombadil/turns.jsonl`.
 
-"Undo that" is the agent calling `rollback` (or the user running `bombadil undo`): snapper
-rolls the root subvolume back to the last `turn:` snapshot; it applies on reboot. Home is
-its own subvolume and is not rolled back.
+"Undo that" is the agent calling `rollback` (or the user running `bombadil undo`):
+`bombadil-rollback` swaps the last `turn:` snapshot in under the name `@`; it applies on
+reboot. Home is its own subvolume and is not rolled back. The disk it works on is below.
+
+## The installed disk (layout 1)
+
+`bombadil-install` writes the one thing no update can change later, so it is written once and
+recorded in `/var/lib/bombadil/install.json` (`"layout": 1`).
+
+| Where | What |
+|---|---|
+| p1, 1 GiB, FAT32, `/efi` | GRUB's core and modules, `grub.cfg`, `grubenv`, and the fallback path `EFI/BOOT/BOOTX64.EFI`. Never rolled back. |
+| p2 | btrfs, inside LUKS2 when a password was given. Top-level subvolumes: `@` (`/`, with `/boot`), `@home`, `@snapshots` (`/.snapshots`), `@log` (`/var/log`), `@pkg` (`/var/cache/pacman/pkg`). |
+| `/boot` | Inside `@`: `vmlinuz-linux`, `initramfs-linux.img` and `initramfs-linux-fallback.img`, so a restore point holds the kernel that goes with its modules and an undo cannot start a kernel whose modules are gone. |
+| `@home` | Nested subvolumes that a restore point of the home folder skips: `.cache`, `.local/state/bombadil`, `.claude`, `.codex`, `.local/share/claude`, `.config/chromium`, `.local/share/bombadil/browser`, `Projects`. |
+
+`@log` and `@pkg` sit beside `@` because undo replaces `@`: the logs of a bad start, and the
+packages downloaded since, survive the undo. `/etc/fstab` names the disks by identifier and the
+system by subvolume, so a snapshot swapped in under the name `@` mounts like the one it replaced.
+GRUB reads the kernel from `/@/boot`, so `grub.cfg` stays right after any undo.
+
+snapper has two configs, `root` and `home`, with no hourly snapshots (one is taken per agent
+turn) and the newest 30 kept by `snapper-cleanup.timer`.
+
+**Encryption.** With a password the disk is LUKS2 with three ways in: the password (argon2id at
+256 MiB, the cost GRUB can pay on firmware that fragments low memory; typed once, at GRUB), a
+random key file inside the initramfs (so the initramfs opens the disk without asking again),
+and a recovery key from `systemd-cryptenroll`, kept in `/var/lib/bombadil/recovery-key`
+(mode 600, inside the encrypted disk) until the first start shows it once. The same password is
+the account's. The initramfs is systemd's (`sd-encrypt`, `/etc/crypttab` with `x-initrd.attach`).
+
+**The plan.** The install card (a later piece) writes a JSON plan and gives the password on a
+file descriptor, never in a file, an argument or the log: `bombadil-install --plan FILE
+--password-fd N`. `src/bombadil/installplan.py` checks every field before anything is touched
+(disk, mode, time zone and where it came from, keymap, computer name, what to carry, whether to
+encrypt, internal or USB) and is also the place `install/carry.list` is read: the home paths that
+may come along from the stick (the sign-in, the chosen AI, made apps, the browser profile).
+`bombadil-install DISK --yes` is the plan-less form the tests and the VM helper scripts use: no password,
+no encryption.
+
+**Refresh** (`bombadil-install --refresh DISK`) gives a disk a new system under the home folder
+that is already there. Everything that can be read is read first, so a disk that is not a
+Bombadil disk, or has Windows on it, is left exactly as it was. Then the old `@` and `@snapshots`
+are renamed `@.before-refresh-<stamp>` and `@snapshots.@.before-refresh-<stamp>` (so an old
+restore point can never be swapped into the new system), the old kernel is put in that system's
+own `/boot` and its fstab pointed at `/efi`, and the EFI partition is emptied, not formatted
+again, so its identifier stays. `@home` is kept and only gains the nested subvolumes above.
+Kept from the old system: the computer's name, time zone, locale, console keymap, machine id,
+Wi-Fi networks, SSH host keys, the account's password, and the list of programs it had that the
+new image does not (`/var/lib/bombadil/refresh-<stamp>.txt`, for the agent to offer back). What
+is carried from the stick never replaces what the home folder already has.
+`bombadil-rollback --device DEV refresh` puts the old system back (the newest one that is whole). It is
+kept until a later cleanup removes it after 14 days.
+
+A refresh changes things in an order that makes a stop harmless. Reading comes first (and a disk with
+less than 10 GB free is refused, since the old system stays beside the new one). The old system is then
+renamed aside and the new one copied in; until the boot files are replaced, which is the very last step,
+a stop puts the old system straight back and says so. A stop after that leaves `var/lib/bombadil/install-incomplete`
+in the half-made system, and running the refresh again starts over from the system that is still aside.
+Undo itself never leaves the disk without an `@`: the snapshot is made beside it first, and the two names
+are exchanged in one step.
+
+Tested by `tests/test_installer.py` (the decisions, as sourced shell functions) and, in a VM, by
+`scripts/test-vm.sh` with `MODE=install`, `install-encrypted` and `refresh`.
 
 ## Signing in
 
@@ -227,7 +288,7 @@ import from outside its own folder any other way.)
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,
-  app window rules, greetd autologin, snapper config on the installed system).
+  app window rules, greetd autologin).
 - Browser control: a Playwright/CDP MCP against Chromium's port 9222, so the agent can
   read and act in pages the user is watching.
 - Voice input and a screen-aware mode (periodic screenshots into context).

@@ -1,0 +1,20 @@
+#!/bin/sh
+# The screen GRUB asks for the disk's password on: Inter, and the ground with the mark behind it.
+#
+# grub-mkconfig runs the scripts in this folder in name order, and 00_header's cryptomount is what asks for
+# the password, so this one sorts before it (a theme, which GRUB only applies once the menu shows, would
+# come too late). It says nothing unless the terminal is the graphical one: bombadil-install sets that
+# (/etc/default/grub.d/bombadil.cfg) only after it has made the font, and a test install that reads GRUB on
+# the serial line keeps the text terminal. Without the font the block does nothing either.
+[ "${GRUB_TERMINAL_OUTPUT:-}" = gfxterm ] || exit 0
+cat <<'EOF'
+# The screen the disk's password is asked on (iso/airootfs/etc/grub.d/000_bombadil_screen).
+if loadfont ($root)/grub/themes/bombadil/inter-16.pf2; then
+  insmod all_video
+  insmod gfxterm
+  insmod png
+  set gfxmode=auto
+  terminal_output gfxterm
+  background_image ($root)/grub/themes/bombadil/background.png
+fi
+EOF

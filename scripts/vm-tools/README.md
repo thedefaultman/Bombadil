@@ -46,7 +46,7 @@ empty line; the script does it).
   (press Enter with `vmin keys ret`). With the hidden menu it boots by itself.
 - **What `update-in-place` does not move**: `iso/` changes. By hand: packages with
   `sudo pacman -Syu --noconfirm --needed ...`; files under `/etc`; GRUB defaults in `/etc/default/grub`
-  then `sudo grub-mkconfig -o /boot/grub/grub.cfg`; and the user's `~/.config/hypr/hyprland.lua`,
+  then `sudo grub-mkconfig -o /efi/grub/grub.cfg` (`/boot/grub/grub.cfg` on a disk installed before layout 1, see docs/ARCHITECTURE.md); and the user's `~/.config/hypr/hyprland.lua`,
   which also keeps the launcher's `Virtual-1` pin (so the smoke's `virtual-display-size` fails here).
 - **Windows**: the Windows key opens the Start menu, not the pill (use Alt+Space once it is on the
   VM); the window opens small, Ctrl+Alt+F makes it full screen and again leaves it; do not resize or

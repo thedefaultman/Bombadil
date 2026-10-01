@@ -10,7 +10,11 @@ check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PA
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
 # bombadil.smoke          live checks, then power off
 # bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
-# bombadil.smoke=undo     on an installed system: session checks, then an undo round trip over a reboot
+# bombadil.smoke=install-encrypted
+#                         the installer alone, with a password (the host types it at GRUB on the next start)
+# bombadil.smoke=refresh  on a disk an older Bombadil installed: plant a marker in its home folder, refresh, power off
+# bombadil.smoke=undo     on an installed system: its layout, then an undo round trip over a reboot
+# bombadil.smoke=refreshed  on a refreshed system: the old home folder is there, the old system is kept aside
 mode="$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^bombadil\.smoke=\?//p' | head -1)"
 say "START mode=${mode:-live}"
 
@@ -249,7 +253,7 @@ times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never B
 offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
 agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
-if [[ "$mode" != "undo" ]]; then
+if [[ "$mode" =~ ^(install|live|)$ ]]; then
   : >/tmp/smoke.agentd.log
   check signin-agentd-starts restart_agentd
   check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
@@ -301,9 +305,84 @@ if [[ "$mode" != "undo" ]]; then
   agentd_log
 fi
 
+# What the installer must refuse, and what it must do, from the live system (a USB-attached ISO is /dev/sda
+# when the host attaches it that way; a CD has no disk, and the check is then skipped).
+stick=$(lsblk -dnro NAME,TYPE,TRAN | awk '$2 == "disk" && $3 == "usb" { print "/dev/" $1; exit }')
+stick_refused() { local o; o=$(bombadil-install "$stick" --yes 2>&1) && return 1; grep -q 'is the USB stick Bombadil started from' <<<"$o"; }
+no_uefi_needed() { [[ -d /sys/firmware/efi ]]; }
+
+cmdline_installed="console=tty0 console=ttyS0,115200 bombadil.smoke=undo"
+
 if [[ "$mode" == "install" ]]; then
-  check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
+  [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
+  check install bash -c "BOMBADIL_INSTALL_CMDLINE='$cmdline_installed' bombadil-install /dev/vda --yes"
 fi
+
+if [[ "$mode" == "install-encrypted" ]]; then
+  check booted-in-uefi no_uefi_needed
+  [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
+  # What the stick's home folder has: the sign-in comes along; Apps is on the carry list but not in this plan
+  # (the installed system's own checks make an app in ~/Apps, so what is looked for is the stick's demo).
+  mkdir -p /home/user/.claude /home/user/Apps/demo /home/user/Notes
+  echo stick-login >/home/user/.claude/credentials.json; echo x >/home/user/Apps/demo/app.qml; echo x >/home/user/Notes/n.txt
+  chown -R user: /home/user/.claude /home/user/Apps /home/user/Notes
+  cat >/tmp/smoke-plan.json <<'PLAN'
+{"disk": "/dev/vda", "timezone": "Europe/Lisbon", "timezone_source": "detected", "hostname": "smoke-laptop", "keymap": "us",
+ "carry": [".claude", ".config/bombadil"]}
+PLAN
+  check install-encrypted bash -c "BOMBADIL_INSTALL_GRUB_SERIAL=1 BOMBADIL_INSTALL_CMDLINE='$cmdline_installed' \
+    bombadil-install --plan /tmp/smoke-plan.json --password-fd 3 3< <(printf '%s\n' 'correct-horse-battery-staple')"
+fi
+
+if [[ "$mode" == "refresh" ]]; then
+  # The disk was installed by an older Bombadil. Put things in its home folder that a refresh must keep, and
+  # things in its system that only belong to it, then refresh.
+  plant() {
+    local top=/run/smoke-top
+    mkdir -p "$top"
+    mount -o subvolid=5 /dev/vda2 "$top" || return 1
+    echo planted >"$top/@home/user/.bombadil-refresh-marker"
+    mkdir -p "$top/@home/user/.claude" "$top/@home/user/Projects/demo"
+    echo home-login >"$top/@home/user/.claude/credentials.json"
+    echo code >"$top/@home/user/Projects/demo/main.py"
+    echo old-machine >"$top/@/etc/hostname"
+    echo old-system >"$top/@/etc/bombadil-old-marker"
+    chown -R 1000:1000 "$top/@home/user/.claude" "$top/@home/user/Projects" "$top/@home/user/.bombadil-refresh-marker"
+    umount "$top"
+  }
+  check refresh-plant plant
+  # The stick has a sign-in of its own, which must not replace the home folder's.
+  mkdir -p /home/user/.claude; echo stick-login >/home/user/.claude/credentials.json; chown -R user: /home/user/.claude
+  check refresh-runs bash -c "BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200 bombadil.smoke=refreshed' bombadil-install --refresh /dev/vda --yes"
+fi
+
+# The shape of an installed disk (layout 1), from inside the installed system.
+layout_checks() {
+  local enc
+  enc=$(python3 -c 'import json; print(json.load(open("/var/lib/bombadil/install.json"))["encrypted"])' 2>/dev/null)
+  check layout-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["layout"] == 1, d'
+  mount_is() { findmnt -no FSTYPE,OPTIONS "$1" | grep -Eq "^$2 .*subvol=/$3(,|\$)"; }
+  check layout-root mount_is / btrfs @
+  check layout-home mount_is /home btrfs @home
+  check layout-snapshots mount_is /.snapshots btrfs @snapshots
+  check layout-log mount_is /var/log btrfs @log
+  check layout-pkg mount_is /var/cache/pacman/pkg btrfs @pkg
+  check layout-efi bash -c '[[ "$(findmnt -no FSTYPE /efi)" == vfat ]]'
+  check layout-boot-in-root bash -c '! mountpoint -q /boot && test -s /boot/vmlinuz-linux && test -s /boot/initramfs-linux.img && test -s /boot/initramfs-linux-fallback.img'
+  check layout-grub-on-efi bash -c 'test -s /efi/EFI/BOOT/BOOTX64.EFI && test -s /efi/grub/grub.cfg && grep -q "/@/boot/vmlinuz-linux" /efi/grub/grub.cfg'
+  check layout-snapper bash -c 'snapper list-configs | grep -qw root && snapper list-configs | grep -qw home && snapper -c root --csvout get-config | grep -q "^NUMBER_LIMIT,30"'
+  check layout-home-subvolumes bash -c 'for d in .cache .claude .codex .config/chromium Projects; do btrfs subvolume show "/home/user/$d" >/dev/null || exit 1; done'
+  check layout-time-sync systemctl is-enabled systemd-timesyncd
+  if [[ "$enc" == True ]]; then
+    check layout-encrypted bash -c 'cryptsetup status root | grep -q "type: *LUKS2"'
+    check layout-three-ways-in bash -c 'dev=$(cryptsetup status root | awk "/device:/ {print \$2}"); [[ "$(cryptsetup luksDump "$dev" | grep -cE "^ +[0-9]+: luks2")" == 3 ]]'
+    check layout-key-in-initramfs bash -c 'lsinitcpio /boot/initramfs-linux.img | grep -q etc/cryptsetup-keys.d/root.key'
+    check layout-recovery-key-waits bash -c 'test "$(stat -c %a /var/lib/bombadil/recovery-key)" = 600'
+    check layout-record-encrypted python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["encrypted"] and d["recovery_key_pending"] and d["timezone_source"] == "detected" and d["timezone"] == "Europe/Lisbon", d'
+    check layout-hostname bash -c '[[ "$(cat /etc/hostname)" == smoke-laptop ]]'
+    check layout-carry-list bash -c 'test "$(cat /home/user/.claude/credentials.json)" = stick-login && test ! -e /home/user/Apps/demo && test ! -e /home/user/Notes'
+  fi
+}
 
 if [[ "$mode" == "undo" ]]; then
   phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
@@ -339,8 +418,10 @@ if [[ "$mode" == "undo" ]]; then
       shot brain
     fi
     check grub-menu-hidden grep -q '^GRUB_TIMEOUT_STYLE=hidden' /etc/default/grub
+    layout_checks
     check snapshots-available as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; sys.exit(not snapshots.Snapshots().available)'
     check snapshot-turn as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke change"))'
+    check restore-point-has-a-kernel bash -c 'n=$(snapper -c root list --columns number | tail -n 1 | tr -d " "); test -s "/.snapshots/$n/snapshot/boot/vmlinuz-linux"'
     check change-system bash -c 'echo changed > /etc/bombadil-smoke-marker'
     check undo as_user bombadil undo
     echo 2 > "$phase"; chown user: "$phase"
@@ -349,7 +430,31 @@ if [[ "$mode" == "undo" ]]; then
     exit 0
   fi
   check undo-applied bash -c '! test -e /etc/bombadil-smoke-marker'
+  # The kernel that started is the one that goes with these modules: a restore point holds both.
+  check undo-kernel-matches-modules bash -c 'test -d "/usr/lib/modules/$(uname -r)" && modinfo -k "$(uname -r)" btrfs >/dev/null'
+  check undo-layout-kept bash -c 'findmnt -no OPTIONS / | grep -Eq "subvol=/@(,|$)" && test -s /boot/vmlinuz-linux'
   rm -f "$phase"
+fi
+
+if [[ "$mode" == "refreshed" ]]; then
+  layout_checks
+  check refresh-kept-the-home-folder bash -c 'test "$(cat /home/user/.bombadil-refresh-marker)" = planted && test "$(cat /home/user/Projects/demo/main.py)" = code'
+  check refresh-kept-the-sign-in bash -c 'test "$(cat /home/user/.claude/credentials.json)" = home-login'
+  check refresh-home-is-the-users bash -c 'test "$(stat -c %u /home/user/.bombadil-refresh-marker)" = 1000 && test "$(stat -c %u /home/user)" = 1000'
+  check refresh-kept-the-computer-name bash -c 'test "$(cat /etc/hostname)" = old-machine'
+  check refresh-is-the-new-system bash -c '! test -e /etc/bombadil-old-marker'
+  check refresh-old-system-kept bash -c 'top=$(mktemp -d); mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" "$top" && ls -d "$top"/@.before-refresh-* >/dev/null && test -f "$top"/@.before-refresh-*/etc/bombadil-old-marker && test -s "$top"/@.before-refresh-*/boot/vmlinuz-linux; r=$?; umount "$top"; exit $r'
+  check refresh-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["mode"] == "refresh" and d["kept_aside"], d'
+  check refresh-home-restore-points bash -c 'snapper -c home list >/dev/null'
+  # Put the old system back: the same GRUB then starts it, which the host sees as that system's own session coming up.
+  phase=/home/user/.bombadil-smoke-phase
+  if [[ ! -f "$phase" ]]; then
+    check refresh-undo bombadil-rollback refresh
+    echo 2 > "$phase"; chown user: "$phase"
+    say "REBOOT pass=$ok fail=$fail"
+    [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
+    exit 0
+  fi
 fi
 
 say "DONE pass=$ok fail=$fail"
