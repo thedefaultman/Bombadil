@@ -59,9 +59,9 @@ class Spawns(list):
 @pytest.fixture
 def projects(home, monkeypatch):
     root = home / "Projects"
-    for name in ("latchkey", "Bombadil", "notes"):
+    for name in ("myapp", "Bombadil", "notes"):
         (root / name).mkdir(parents=True)
-    for name in ("latchkey", "Bombadil"):
+    for name in ("myapp", "Bombadil"):
         subprocess.run(["git", "init", "-q", "-b", "main", str(root / name)], check=True)
         subprocess.run(["git", "-C", str(root / name), "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q",
                         "--allow-empty", "-m", "first"], check=True)
@@ -81,21 +81,21 @@ def _dev(clock=None):
 
 def test_launcher_forms_name_projects_and_sessions(projects):
     d, _, _ = _dev()
-    a = launcher.match("claude latchkey", [], d)
+    a = launcher.match("claude myapp", [], d)
     assert (a.kind, a.verb, a.tool, a.target, a.role, a.title) == \
-        ("session", "start", "claude", "latchkey", "claude", "claude on Latchkey")
+        ("session", "start", "claude", "myapp", "claude", "claude on Myapp")
     a = launcher.match("Codex bombadil reviewer", [], d)
     assert (a.kind, a.tool, a.target, a.role, a.title) == ("session", "codex", "Bombadil", "reviewer",
                                                          "reviewer on Bombadil")
     assert launcher.match("shell notes", [], d).tool == "shell"
-    a = launcher.match("latchkey", [], d)
-    assert (a.kind, a.target) == ("project", "latchkey")
+    a = launcher.match("myapp", [], d)
+    assert (a.kind, a.target) == ("project", "myapp")
     assert launcher.match("what's running?", [], d).kind == "sessions"
     # Not ours: a project that is not there, a sentence, the tool's name alone.
     for text in ("claude nothere", "claude what is this", "claude", "codex", "end", "reviewer"):
         assert launcher.match(text, [], d) is None, text
     # Without sessions (tests, a client that has none) nothing changes.
-    assert launcher.match("claude latchkey", []) is None
+    assert launcher.match("claude myapp", []) is None
     # Core words still win.
     assert launcher.match("undo", [], d).kind == "undo"
 
@@ -111,12 +111,12 @@ def test_a_named_session_comes_back_by_its_name(projects):
     a = launcher.match("end reviewer", [], d)
     assert (a.kind, a.target) == ("end", "bombadil/reviewer")
     # The same role on two projects: say which.
-    d.open("claude", "latchkey", "reviewer")
+    d.open("claude", "myapp", "reviewer")
     a = launcher.match("reviewer", [], d)
-    assert a.kind == "choose" and a.title == "reviewer is on Latchkey and Bombadil"
-    assert launcher.match("reviewer latchkey", [], d).target == "latchkey/reviewer"
+    assert a.kind == "choose" and a.title == "reviewer is on Myapp and Bombadil"
+    assert launcher.match("reviewer myapp", [], d).target == "myapp/reviewer"
     names = {e["name"]: e for e in launcher.entries([], d)}
-    assert names["latchkey"]["kind"] == "project" and "claude latchkey" in names
+    assert names["myapp"]["kind"] == "project" and "claude myapp" in names
     assert names["bombadil/reviewer"]["words"] == ["reviewer"]
 
 
@@ -124,60 +124,60 @@ def test_end_names_sessions_a_role_cannot(projects):
     d, z, _ = _dev()
     run = launcher.Launcher(sessions=d, runner=z, spawn=Spawns())
     # A project with nothing on it; a session that is not running.
-    assert run.run(launcher.match("end latchkey", [], d)) == (False, "Nothing runs on Latchkey.")
-    assert run.run(launcher.match("end claude latchkey", [], d)) == (False, "Claude on Latchkey is not running.")
-    d.open("claude", "latchkey")
-    a = launcher.match("end claude latchkey", [], d)
-    assert (a.kind, a.target) == ("end", "latchkey/claude")
+    assert run.run(launcher.match("end myapp", [], d)) == (False, "Nothing runs on Myapp.")
+    assert run.run(launcher.match("end claude myapp", [], d)) == (False, "Claude on Myapp is not running.")
+    d.open("claude", "myapp")
+    a = launcher.match("end claude myapp", [], d)
+    assert (a.kind, a.target) == ("end", "myapp/claude")
     # The project's name ends its one session...
-    a = launcher.match("end latchkey", [], d)
-    assert (a.kind, a.target) == ("end", "latchkey/claude")
+    a = launcher.match("end myapp", [], d)
+    assert (a.kind, a.target) == ("end", "myapp/claude")
     # ...and with two, asks which.
-    d.open("codex", "latchkey", "reviewer")
-    a = launcher.match("end latchkey", [], d)
+    d.open("codex", "myapp", "reviewer")
+    a = launcher.match("end myapp", [], d)
     assert a.kind == "choose"
-    assert run.run(a) == (False, "Latchkey runs reviewer and claude: say which, as in “end reviewer latchkey”.")
-    assert run.run(launcher.match("end codex latchkey reviewer", [], d)) == (True, "Ended reviewer on Latchkey. Its copy is kept.")
-    assert run.run(launcher.match("end latchkey", [], d)) == (True, "Ended claude on Latchkey.")
-    assert run.run(launcher.match("end claude latchkey", [], d)) == (False, "Claude on Latchkey is not running.")
+    assert run.run(a) == (False, "Myapp runs reviewer and claude: say which, as in “end reviewer myapp”.")
+    assert run.run(launcher.match("end codex myapp reviewer", [], d)) == (True, "Ended reviewer on Myapp. Its copy is kept.")
+    assert run.run(launcher.match("end myapp", [], d)) == (True, "Ended claude on Myapp.")
+    assert run.run(launcher.match("end claude myapp", [], d)) == (False, "Claude on Myapp is not running.")
     # A role on two projects: the choice keeps the verb.
-    d.open("claude", "latchkey", "builder")
+    d.open("claude", "myapp", "builder")
     d.open("claude", "bombadil", "builder")
     a = launcher.match("end builder", [], d)
-    assert run.run(a) == (False, "Builder is on Bombadil and Latchkey: say which, as in “end builder bombadil”.")
+    assert run.run(a) == (False, "Builder is on Bombadil and Myapp: say which, as in “end builder bombadil”.")
 
 
 # -- starting, bringing back, ending --
 
 def test_first_session_takes_the_checkout_and_the_next_one_a_copy(projects):
     d, z, spawns = _dev()
-    ok, line = d.open("claude", "latchkey")
-    assert ok and line == "Started claude on Latchkey."
-    first = d.sessions["latchkey/claude"]
-    assert first.folder == str(projects / "latchkey") and not first.copy
+    ok, line = d.open("claude", "myapp")
+    assert ok and line == "Started claude on Myapp."
+    first = d.sessions["myapp/claude"]
+    assert first.folder == str(projects / "myapp") and not first.copy
     # Only the tool shows: zellij's tab and status bars are closed, its link plugin kept.
     closed = [c[-1] for c in z.calls if "close-pane" in c]
     assert closed == ["plugin_1", "plugin_2"]
     cmd = z.started()[0]
-    assert cmd[-6:] == ["--close-on-exit", "--", dev.bombadil_bin(), "dev", "run", "latchkey/claude"]
-    assert cmd[cmd.index("--create-background") + 1] == "bombadil-latchkey-claude"
+    assert cmd[-6:] == ["--close-on-exit", "--", dev.bombadil_bin(), "dev", "run", "myapp/claude"]
+    assert cmd[cmd.index("--create-background") + 1] == "bombadil-myapp-claude"
     env = z.envs[0]
-    assert env["BOMBADIL_SESSION"] == "1" and env["BOMBADIL_DEV_ID"] == "latchkey/claude"
+    assert env["BOMBADIL_SESSION"] == "1" and env["BOMBADIL_DEV_ID"] == "myapp/claude"
     assert "BOMBADIL_OS" not in env
     # The viewer: foot on the zellij session, with an app id the window rules and focus use.
-    assert spawns[0][0] == "foot" and "--app-id=bombadil-session-latchkey-claude" in spawns[0]
-    assert spawns[0][-2:] == ["attach", "bombadil-latchkey-claude"]
+    assert spawns[0][0] == "foot" and "--app-id=bombadil-session-myapp-claude" in spawns[0]
+    assert spawns[0][-2:] == ["attach", "bombadil-myapp-claude"]
 
-    ok, line = d.open("codex", "latchkey", "api")
-    assert line == "Started api on Latchkey in its own copy."
-    api = d.sessions["latchkey/api"]
-    assert api.copy and api.folder == str(projects / ".work" / "latchkey" / "api")
+    ok, line = d.open("codex", "myapp", "api")
+    assert line == "Started api on Myapp in its own copy."
+    api = d.sessions["myapp/api"]
+    assert api.copy and api.folder == str(projects / ".work" / "myapp" / "api")
     assert (Path(api.folder) / ".git").exists()
     branch = subprocess.run(["git", "-C", api.folder, "branch", "--show-current"], capture_output=True, text=True)
     assert branch.stdout.strip() == "bombadil/api"
     # A shell never takes the checkout or a copy.
-    d.open("shell", "latchkey")
-    assert d.sessions["latchkey/shell"].folder == str(projects / "latchkey")
+    d.open("shell", "myapp")
+    assert d.sessions["myapp/shell"].folder == str(projects / "myapp")
     # A folder that is no git repository: the second session shares it and the line says so.
     d.open("claude", "notes")
     assert d.open("codex", "notes", "b")[1] == "Started b on Notes in the same folder, which is not a git repository."
@@ -185,10 +185,10 @@ def test_first_session_takes_the_checkout_and_the_next_one_a_copy(projects):
 
 def test_typing_the_same_name_brings_it_back_and_never_starts_two(projects):
     d, z, spawns = _dev()
-    d.open("claude", "latchkey")
-    assert d.open("claude", "latchkey") == (True, "Back to claude on Latchkey.")
+    d.open("claude", "myapp")
+    assert d.open("claude", "myapp") == (True, "Back to claude on Myapp.")
     assert len(z.started()) == 1 and len(spawns) == 2   # a second viewer, no second session
-    ok, line = d.open("codex", "latchkey", "claude")
+    ok, line = d.open("codex", "myapp", "claude")
     assert not ok and "is a Claude session" in line
 
 
@@ -209,38 +209,38 @@ def test_end_kills_the_session_and_keeps_its_copy(projects):
 
 def test_after_a_restart_sessions_are_asleep_and_resume_by_id(projects, monkeypatch):
     d, z, _ = _dev()
-    d.open("claude", "latchkey")
-    conv = d.sessions["latchkey/claude"].conversation
+    d.open("claude", "myapp")
+    conv = d.sessions["myapp/claude"].conversation
     monkeypatch.setattr(dev, "boot_id", lambda: "another-boot")
     d2, z2, _ = _dev()
-    s = d2.sessions["latchkey/claude"]
+    s = d2.sessions["myapp/claude"]
     assert (s.alive, s.state, s.last) == (False, "asleep", "Stopped by a restart")
     assert d2.snapshot()["sessions"][0]["state"] == "asleep"
-    assert d2.open("claude", "latchkey") == (True, "Resumed claude on Latchkey.")
-    assert z2.started()[0][-1] == "--resume" and d2.sessions["latchkey/claude"].conversation == conv
+    assert d2.open("claude", "myapp") == (True, "Resumed claude on Myapp.")
+    assert z2.started()[0][-1] == "--resume" and d2.sessions["myapp/claude"].conversation == conv
 
 
 def test_agentd_restarting_keeps_running_sessions(projects):
     d, z, _ = _dev()
-    d.open("claude", "latchkey")
+    d.open("claude", "myapp")
     d2 = dev.Dev(runner=z, spawn=Spawns())
     d2.hypr = d.hypr
     d2.check()
-    assert d2.sessions["latchkey/claude"].alive
+    assert d2.sessions["myapp/claude"].alive
     z.running.clear()   # its zellij went away without a word
-    d2.sessions["latchkey/claude"].since -= 60
+    d2.sessions["myapp/claude"].since -= 60
     d2.check()
-    s = d2.sessions["latchkey/claude"]
+    s = d2.sessions["myapp/claude"]
     assert (s.alive, s.state, s.last) == (False, "failed", "Stopped unexpectedly")
 
 
 def test_a_zellij_that_cannot_be_asked_is_never_taken_for_gone(projects):
     d, z, _ = _dev()
-    d.open("claude", "latchkey")
-    d.sessions["latchkey/claude"].since -= 60
+    d.open("claude", "myapp")
+    d.sessions["myapp/claude"].since -= 60
     d._run = lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "zellij: broken")
     d.check()
-    assert d.sessions["latchkey/claude"].alive
+    assert d.sessions["myapp/claude"].alive
 
 
 # -- what the hooks say --
@@ -345,13 +345,13 @@ def test_a_tool_that_crashes_turns_red_and_resumes_by_its_name(projects):
 def test_sessions_started_by_hand_are_listed_as_yours(projects):
     d, _, _ = _dev()
     me = os.getpid()
-    d.signal({"event": "SessionStart", "tool": "claude", "session_id": "abc", "cwd": str(projects / "latchkey" / "src"),
+    d.signal({"event": "SessionStart", "tool": "claude", "session_id": "abc", "cwd": str(projects / "myapp" / "src"),
               "pid": me, "pid_start": dev._pid_start(me)})
     s = d.sessions["yours/abc"]
-    assert s.yours and s.project == "latchkey" and s.title == "claude on Latchkey"
+    assert s.yours and s.project == "myapp" and s.title == "claude on Myapp"
     d.signal({"event": "UserPromptSubmit", "session_id": "abc", "text": "hi"})
     assert s.state == "working"
-    assert launcher.match("claude latchkey", [], d).verb == "start"   # never taken over
+    assert launcher.match("claude myapp", [], d).verb == "start"   # never taken over
     d.signal({"event": "SessionEnd", "session_id": "abc"})
     assert "yours/abc" not in d.sessions
     # One that died without saying goodbye goes with its process.
@@ -364,22 +364,22 @@ def test_sessions_started_by_hand_are_listed_as_yours(projects):
 
 def test_the_registry_is_what_the_wrapper_and_the_list_read(projects):
     d, _, _ = _dev()
-    d.open("claude", "latchkey")
+    d.open("claude", "myapp")
     data = json.loads(dev.Dev.registry().read_text())
     assert data["sessions"][0]["tool"] == "claude"
     s = dev.Session.from_dict(data["sessions"][0])
     argv = dev.command_for(s, resume=False)
-    assert argv[-4:] == ["--session-id", s.conversation, "-n", "claude on Latchkey"]
+    assert argv[-4:] == ["--session-id", s.conversation, "-n", "claude on Myapp"]
     assert dev.command_for(s, resume=True)[-4:-2] == ["--resume", s.conversation]
     s.tool, s.conversation = "codex", "t-1"
     assert dev.command_for(s, resume=True)[-4:] == ["codex", "--no-daemon", "resume", "t-1"]
-    assert any("claude on Latchkey" in line for line in d.listing())
+    assert any("claude on Myapp" in line for line in d.listing())
 
 
 def test_the_wrapper_reports_how_its_tool_ended(projects, tmp_path, monkeypatch):
     d, _, _ = _dev()
-    d.open("shell", "latchkey")
-    d.open("claude", "latchkey")
+    d.open("shell", "myapp")
+    d.open("claude", "myapp")
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "claude").write_text("#!/bin/sh\nexit 3\n")
@@ -390,12 +390,12 @@ def test_the_wrapper_reports_how_its_tool_ended(projects, tmp_path, monkeypatch)
     which = shutil.which
     monkeypatch.setattr(dev.shutil, "which", lambda name: None if name == "mise" else which(name))
     got = []
-    assert dev.run("latchkey/claude", report=got.append) == 3
-    assert got[0]["event"] == "exit" and got[0]["code"] == 3 and got[0]["dev_id"] == "latchkey/claude"
+    assert dev.run("myapp/claude", report=got.append) == 3
+    assert got[0]["event"] == "exit" and got[0]["code"] == 3 and got[0]["dev_id"] == "myapp/claude"
     got.clear()
-    assert dev.run("latchkey/shell", report=got.append) == 0
+    assert dev.run("myapp/shell", report=got.append) == 0
     assert got[0]["code"] == 0
-    assert dev.run("latchkey/nothing", report=got.append) == 2
+    assert dev.run("myapp/nothing", report=got.append) == 2
 
 
 # -- bombadil-signal --
@@ -409,7 +409,7 @@ def _signal(args, payload, env=None):
 
 def test_the_hook_program_spools_when_agentd_is_away_and_skips_the_machine(home):
     env = {"BOMBADIL_STATE": str(home / "state"), "BOMBADIL_RUNTIME": str(home / "run"),
-           "BOMBADIL_DEV_ID": "latchkey/claude", "CLAUDE_PID": str(os.getpid())}
+           "BOMBADIL_DEV_ID": "myapp/claude", "CLAUDE_PID": str(os.getpid())}
     long = "x" * 5000
     payload = json.dumps({"hook_event_name": "PreToolUse", "session_id": "s1", "cwd": "/w", "tool_name": "Bash",
                           "tool_input": {"command": long, "description": "Run it", "content": long}})
@@ -418,7 +418,7 @@ def test_the_hook_program_spools_when_agentd_is_away_and_skips_the_machine(home)
     msgs = dev.take_spool()
     assert len(msgs) == 1 and dev.take_spool() == []
     m = msgs[0]
-    assert (m["event"], m["dev_id"], m["pid"]) == ("PreToolUse", "latchkey/claude", os.getpid())
+    assert (m["event"], m["dev_id"], m["pid"]) == ("PreToolUse", "myapp/claude", os.getpid())
     assert m["tool_input"] == {"description": "Run it", "command": "x" * 300}   # trimmed, no file bodies
     # The machine's own agent is not a coding session.
     _signal(["claude"], payload, {**env, "BOMBADIL_OS": "1"})

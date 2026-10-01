@@ -148,12 +148,12 @@ def test_no_sessions_no_chips(bar):
 
 def test_a_chip_per_project_and_a_dot_per_session(bar):
     bar.send([_s("bombadil/builder", "working"), _s("bombadil/reviewer", "asked", unseen=True, last="Run it?"),
-              _s("bombadil/kit", "failed", alive=False, unseen=True), _s("latchkey/api", "done", unseen=True),
-              _s("latchkey/claude", "asleep", alive=False)],
-             attention=["bombadil/reviewer", "latchkey/api", "bombadil/kit"], line="reviewer, api and kit are waiting")
+              _s("bombadil/kit", "failed", alive=False, unseen=True), _s("myapp/api", "done", unseen=True),
+              _s("myapp/claude", "asleep", alive=False)],
+             attention=["bombadil/reviewer", "myapp/api", "bombadil/kit"], line="reviewer, api and kit are waiting")
     assert len(bar.items("projectChip")) == 2
     assert bar.dots() == [("bombadil/builder", "working"), ("bombadil/kit", "failed"), ("bombadil/reviewer", "turn"),
-                          ("latchkey/api", "turn"), ("latchkey/claude", "asleep")]
+                          ("myapp/api", "turn"), ("myapp/claude", "asleep")]
     bar.snap("dots-two-projects")
     assert not bar.warnings
 

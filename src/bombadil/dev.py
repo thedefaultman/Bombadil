@@ -1,13 +1,13 @@
 """Coding sessions: the vendors' own tools, kept alive by Bombadil and brought back by name.
 
-"claude latchkey" in the pill starts the real Claude Code in ~/Projects/latchkey, unchanged,
+"claude myapp" in the pill starts the real Claude Code in ~/Projects/myapp, unchanged,
 inside an invisible zellij session (no bars, no keys of its own) in its own systemd scope. The
 window is only a viewer: closing it detaches, and typing the name again attaches a new viewer,
 mid-sentence, scrollback and all. A session ends when its tool exits or on "end <name>";
 agentd restarting, the bar restarting or the compositor crashing touch none of them.
 
 Names: a session is a role on a project ("reviewer on Bombadil"). Without a role it is named
-after its tool ("claude on Latchkey"), so typing "claude latchkey" again brings that one back.
+after its tool ("claude on Myapp"), so typing "claude myapp" again brings that one back.
 The first session on a repository works in the checkout; each further one gets a copy of its
 own (a git worktree under ~/Projects/.work/<repo>/<role>). Plain shells always open in the
 checkout and never take it from anyone.
@@ -50,7 +50,7 @@ ASKING = {"PermissionRequest", "Elicitation"}
 
 
 def key(s: str) -> str:
-    """'Latch Key' -> 'latchkey', as the launcher folds words; '' when it is not a plain word."""
+    """'My App' -> 'myapp', as the launcher folds words; '' when it is not a plain word."""
     k = re.sub(r"[\s_-]+", "", str(s).lower())
     return k if re.fullmatch(r"[a-z0-9]+", k) else ""
 
@@ -60,7 +60,7 @@ def slug(s: str) -> str:
 
 
 def project_title(name: str) -> str:
-    """'latchkey' -> 'Latchkey'; a name with capitals already stays as it is ('iOS-app')."""
+    """'myapp' -> 'Myapp'; a name with capitals already stays as it is ('iOS-app')."""
     return name if name != name.lower() else name[:1].upper() + name[1:]
 
 
@@ -105,7 +105,7 @@ def bombadil_bin() -> str:
 
 @dataclass
 class Session:
-    project: str                  # the project's folder name under ~/Projects ("latchkey")
+    project: str                  # the project's folder name under ~/Projects ("myapp")
     role: str                     # "reviewer"; the tool's name when none was given
     tool: str                     # claude | codex | shell
     folder: str                   # the checkout, or its copy

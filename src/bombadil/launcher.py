@@ -194,7 +194,7 @@ def _dev_match(t: str, d) -> Action | None:
 
 
 def _dev_end(word: str, d) -> Action | None:
-    """"end claude latchkey" and "end latchkey": the sessions a role cannot name. A project
+    """"end claude myapp" and "end myapp": the sessions a role cannot name. A project
     with one session ends it; with several, say which."""
     m = DEV_RE.fullmatch(word)
     folder = d.project(m.group(2)) if m else d.project(word)

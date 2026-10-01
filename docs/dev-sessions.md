@@ -8,11 +8,11 @@ change it or build on it without losing what it stands for. The design it follow
 
 ## Principles to keep
 
-- **The real tool, unchanged.** `claude latchkey` starts the vendor's own TUI in the project. Nothing
+- **The real tool, unchanged.** `claude myapp` starts the vendor's own TUI in the project. Nothing
   is wrapped in a Bombadil interface, nothing is re-skinned, and every key goes to the tool.
 - **A window is a viewer, not a home.** Closing it never costs work. The session lives somewhere else
   and a new window attaches to it, mid-sentence.
-- **Say it by name, never by path.** A session is a role on a project ("reviewer on Latchkey").
+- **Say it by name, never by path.** A session is a role on a project ("reviewer on Myapp").
   Typing the name brings it back; nothing waits for the model.
 - **Only what needs you shows.** One dot per session. One line in the pill when something waits.
   Nothing else on screen.
@@ -22,12 +22,12 @@ change it or build on it without losing what it stands for. The design it follow
 
 | You do | What happens |
 | --- | --- |
-| Tap Super, type `claude latchkey`, Enter | Claude Code opens in a large floating window, in `~/Projects/latchkey`. |
+| Tap Super, type `claude myapp`, Enter | Claude Code opens in a large floating window, in `~/Projects/myapp`. |
 | Close the window | Only the viewer closes. The session keeps running. |
-| Type `claude latchkey` again | A new window attaches to the same session, scrollback and half-typed sentence intact. |
-| `claude latchkey reviewer` | A second, named session on the same repository, in a git worktree of its own. |
-| `codex latchkey`, `shell latchkey` | The same, for Codex and for a plain shell. |
-| `end reviewer`, `end claude latchkey`, `end latchkey` | Ends that session (a project name alone ends its only session, or asks which). |
+| Type `claude myapp` again | A new window attaches to the same session, scrollback and half-typed sentence intact. |
+| `claude myapp reviewer` | A second, named session on the same repository, in a git worktree of its own. |
+| `codex myapp`, `shell myapp` | The same, for Codex and for a plain shell. |
+| `end reviewer`, `end claude myapp`, `end myapp` | Ends that session (a project name alone ends its only session, or asks which). |
 | `what's running?` | A plain list of every session in the details drawer. |
 
 Beside the pill, each project gets a chip with one dot per session:
@@ -41,7 +41,7 @@ Beside the pill, each project gets a chip with one dot per session:
   through the same hooks but never wraps or restarts it.
 
 Hover a dot to read the session's last few lines. Click it to bring the session forward. When a
-session waits for you, the empty pill says so ("reviewer on Latchkey: run the migration?") and Tab
+session waits for you, the empty pill says so ("reviewer on Myapp: run the migration?") and Tab
 takes you there; with several waiting, Tab walks them, questions first, and ends on "Nothing needs
 you." The session in front of you never announces itself. With more than three projects the chips
 fold into one ("4 projects · 1 waiting").
