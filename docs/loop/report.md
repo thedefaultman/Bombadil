@@ -6,7 +6,7 @@ Three modules in `src/bombadil/loop/`. The runner looks at the machine and keeps
 
 - **`runner.py`** collects what the probes look at (hyprctl, coredumps, agentd, the bar's files, the turn ledger and logs, the apps' status files, failed units), runs the probes, looks again 500 ms later at every invariant that is red, and hands the result to the findings store. Hyprland's events decide when to look; while he is away it looks once a minute, and once a day it runs the doctor.
 - **`versions.py`** asks for the build, Hyprland, Quickshell, Claude Code, Codex and the kit, once each per process, with a 4 s timeout. Anything missing is `"unknown"`.
-- **`report.py`** builds the report from typed fields, shows what goes and what stays, and makes the new-issue link. He presses Submit himself: no token is stored and `gh` is not used.
+- **`report.py`** builds the report from typed fields, shows what goes and what stays, and makes the new-issue link. He presses Submit himself: no token is stored and `gh` is not used. Opening the page puts the report in the page's address, so GitHub receives the text when the page loads; nothing is posted until Submit.
 
 ## `runner`
 
@@ -63,16 +63,24 @@ Report.render() -> str         "Title: ...\nSeen: ...\nExpected: ...\nObserved: 
 Report.body()   -> str         render() without the Title line (what the issue's body holds)
 Report.title .seen .picture .log .versions .tried .patch .to_dict()
 preview(report) -> Preview(goes, stays, text)        the two lists of the Send card, and the exact text
-hold(report) -> Path | None                          reports/<fp>.md, where `clear_found` looks
+hold(report) -> Path | None                          reports/<fp>.md, where `clear_found` looks, and findings/<fp>/report.json
+held(fp) -> Report | None                            the report as it was held; None when it was not or cannot be read
+shown(finding) -> Report                             held(fp) for a finding he has looked at (state "reported"), else build(finding)
 issue_url(report, repo="thedefaultman/Bombadil", copy=copy_text) -> Link(url, paste, copied, note)
-already_reported(fp, repo=..., fetch=None, timeout=4.0) -> int | None     an issue number, or None
+already_reported(fp, repo=..., fetch=None, timeout=4.0) -> int | None     the number of an open issue, or None
 open_issue_page(url, hyprland=None) -> "panel" | "xdg-open" | ""
 copy_text(text) -> bool                              wl-copy, when there is one
 ```
 
-The report reads only typed fields: the finding's counts and sentences, the build and versions, window rectangles and class kinds, and at most three log lines. The picture is 64 columns of scaled boxes with no titles; Bombadil's own window classes are named and everything else is "other window". The few free-text fields are cut to one line, then every path becomes `~` or `<path>` (system paths stay), any title or prompt the evidence holds is taken out, and his login and machine names are removed. That second lock is a belt: the tests plant his words in every key the evidence could hold and assert that none of it reaches `render()`, `preview()`, `to_dict()`, the held file or the link.
+The report reads only typed fields: the finding's counts and sentences, the build and versions, window rectangles and class kinds, and at most three log lines. The picture is 64 columns of scaled boxes with no titles; Bombadil's own window classes are named and everything else is "other window". The few free-text fields are cut to one line, then every path becomes `~` or `<path>` (system paths stay), any title or prompt the evidence holds is taken out, links, query strings, email and IP addresses, `Bearer` and `password=` style values and long token-like runs become `<url>`, `<email>`, `<ip>`, `<token>` and so on, and his login and machine names are removed. That second lock is a belt: the tests plant his words in every key the evidence could hold and assert that none of it reaches `render()`, `preview()`, `to_dict()`, the held file or the link.
 
-A link over about 7000 characters after quoting opens the empty new-issue page (`paste=True`) and the whole report (title included) goes to the clipboard; the card says "Paste it here" when it got there. `already_reported` searches the project's issues for `[fp <hash>]` and is for after he pressed Send. `open_issue_page` slides the browser panel in, PUTs `/json/new?<url>` to Chromium's port 9222 (retrying while Chromium starts), and falls back to `xdg-open`. Only `https://github.com/` links are opened.
+**An app's own log is never in a report.** It is whatever the app printed, or he typed, and no pattern can tell a document title or a name in it from a word. The log lines of the compositor, agentd and the bar are Hyprland's and Bombadil's own text, and up to three are kept (scrubbed as above); for a finding about an app (component `apps`) the report has no Log block and its Observed sentence names no word of the log (`app-health` says only that a log has a fatal line; what tells one fatal line from another goes to the fingerprint, never to the text). The app's log stays in the evidence on this machine.
+
+**A path goes whole, spaces and all.** A file name can hold a space, so a path (under home, or any other that is not a system one) goes on past spaces to the next `": "`, a quote or bracket, or the end of the line. This takes a few words after an unquoted path with it (`cannot open /home/u/a.txt and retry` reads `cannot open ~`), never fewer; `open '/home/u/My Notes/a b.txt': denied` reads `open '~': denied`. `file:///` links count as paths.
+
+A link over about 7000 characters after quoting opens the empty new-issue page (`paste=True`) and the whole report (title included) goes to the clipboard; the card says "Paste it here" when it got there. `already_reported` searches the project's issues for `[fp <hash>]` and is for after he pressed Send; only an open issue counts, because the fingerprint carries no build and a bug that comes back after its fix is a new report (the report names the build). `open_issue_page` slides the browser panel in, asks Chromium's port 9222 for a new tab through `browser.DevTools.new_tab` (retrying while Chromium starts), and falls back to `xdg-open`. Chromium keeps only the first `&`-separated field of the `/json/new` query, so the whole link is percent-encoded once more, as every page the browser panel opens is; without that the tab holds the title and nothing else. Only `https://github.com/` links are opened.
+
+**What he sends is what he read.** `hold` writes `reports/<fp>.md` and, beside the evidence, `report.json` with the fields the report was made of. A finding in state `reported` is previewed and sent from that copy (`shown`), so a sighting that arrives after he opened the card cannot put other text in the issue; "See the report" again builds and holds a new one. If the copy is missing or unreadable the report is built from the evidence as it is.
 
 ## Traps
 
@@ -91,8 +99,13 @@ A link over about 7000 characters after quoting opens the empty new-issue page (
 
 - That the shapes in the fixtures are what a real `hyprctl -j clients|monitors|layers|activewindow` prints (already listed in `probes.md`), and that `Hyprland().request("j/...")` answers in under 3 s under load.
 - The event names and data shapes from `.socket2.sock` (`openwindow>>ADDR,WS,CLASS,TITLE`, `activespecial>>special:details,MON`): built from the documented format, never seen live.
-- That the browser panel takes the PUT on port 9222 and opens the new-issue page in it. The test talks to a local HTTP server that accepts a PUT; Chromium itself was not run.
+- That the browser panel takes the PUT on port 9222 and opens the new-issue page in it, with its body. The test talks to a local HTTP server that cuts the query at its first `&` and unescapes it, as Chromium's source does; Chromium itself was not run.
 - The `found-by-bombadil` label: GitHub ignores a label that does not exist on the repository, and the issue opens without it.
 - `coredumpctl info` line names (`PID: 1234 (python3)`, `Command Line: ...`) and `systemctl --user --failed --plain` output, written from memory of systemd.
 - That a real agentd answers the ping within 2 s under load, and `bombadil-app check <dir> --wait 800` prints `{ok, errors}` as the kit's status does.
 - The machine kind: `systemd-detect-virt` and the DMI chassis type on the laptop.
+
+## Known gaps
+
+- Free text from Hyprland, agentd and the bar is cut and scrubbed by shape, not understood: a title or a name a program prints in one of its own log lines is not found.
+- A closed issue with the fingerprint is not looked at: the new report does not name it.

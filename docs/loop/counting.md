@@ -40,6 +40,12 @@ an injected time. Thresholds come from `config.toml` `[offers]` (`offers.Config`
 - Counted: typed asks that are not empty, shell, sign-in, private (route or words), over 300
   characters, stopped, failed, undone within 60 s, a rephrase within 120 s of a failed turn, or
   something he said Never to. Each has a reason in `requests.reason`.
+- Private words: words about secrets (ssh keys, tokens, a keyring, "credentials", a seed phrase), a secret
+  said aloud ("my password is ...", "sudo password ...", "login as x pass y", "my pin is ...", an SSN, a
+  CVV), and what a secret looks like (a key's prefix such as `sk-`, `ghp_`, `AKIA` or `xox`, a JWT, a long
+  token, a card or SSN number). Such an ask is never counted and its words are never written to `loop.db`.
+  "Passwords" on its own (the passwords app), "login" and "sign in", and "pin" without a value or "my" in
+  front count like any other ask.
 - Same request: verb kinds agree, and `0.4 * text + 0.6 * route` is at least 0.5, or text alone is at
   least 0.8. Different named things never join. Open, ask and tell-me-when are one "looking" kind.
   Make and fix asks ignore the route.
@@ -100,3 +106,7 @@ been?); precision is the share of the `same: True` pairs he agrees with.
 - Everything Hyprland: nothing in this part touches it.
 - The builders behind forms A and D (`words.py`, the app kit, `per_app_git`) live elsewhere; here they
   are named and described but not run.
+
+## Known gaps
+
+- A secret that is neither a keyword nor a known shape ("the word is swordfish") still counts, and a group that repeats it shows the sentence in Noticed and in the asks tool until the group is 90 days quiet.

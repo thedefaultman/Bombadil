@@ -12,8 +12,8 @@ work. Slow things that are not the database (the network, opening a page, moving
 in other threads, so a tap is never stuck behind them.
 
 The trail is written only through agentd's own ledger writer (`_log_line`), so turns.jsonl keeps one
-writer and stays append only. Nothing is sent anywhere from here until he presses Send and then Submit
-on a page that shows what goes.
+writer and stays append only. Nothing is sent from here until he presses Send; the page that opens
+carries the report in its address, and nothing is posted until he presses Submit on it.
 """
 
 import asyncio
@@ -355,7 +355,8 @@ class LoopService:
         held = f.state == "reported"
         return {"id": f.fp, "kind": "report" if held else "found", "title": f.title,
                 "meta": _times(f.n, f.days),
-                "what": ("It is held on this computer. Nothing is sent until you press Submit." if held
+                "what": ("It is held on this computer. Opening the page sends it to GitHub; nothing is "
+                         "posted until you press Submit." if held
                          else "Bombadil cannot fix this here. You can send it to the project."),
                 "fp": f.fp,
                 "primary": {"label": "See the report" if held else "Send to the project", "op": "report"},
@@ -416,7 +417,7 @@ class LoopService:
                      "why": [t for t in (f"Expected: {f.expected}" if f.expected else "",
                                          f"Seen: {f.observed}" if f.observed else "") if t]}
             if f.state == "reported":
-                entry["preview"] = report.preview(report.build(f)).to_dict()
+                entry["preview"] = report.preview(report.shown(f)).to_dict()
             found.append(entry)
         return {"hidden": self._flag("hidden") == "1", "resting": store.resting(now), "asks": asks,
                 "found": found, "said_no": said_no, "words": listed}
@@ -912,7 +913,7 @@ class LoopService:
     def _w_preview(self, rid: str, form: str | None, now: float):
         if ":" in rid:
             f = self._findings.get(rid)
-            return report.preview(report.build(f)).to_dict() if f is not None else None
+            return report.preview(report.shown(f)).to_dict() if f is not None else None
         g = self._store.group(rid, now)
         if g is None:
             return None
@@ -929,7 +930,8 @@ class LoopService:
         if made is None:
             return Result(False, "That is not in the list of things it found any more.")
         await self._open_window()
-        return Result(True, "The report is ready. Nothing is sent until you press Submit on the page.", made)
+        return Result(True, "The report is ready. Opening the issue page sends it to GitHub as part of the "
+                            "address; nothing is posted until you press Submit on the page.", made)
 
     def _w_report(self, fp: str):
         f = self._findings.get(fp)
@@ -942,7 +944,7 @@ class LoopService:
 
     def _w_reported(self, fp: str):
         f = self._findings.get(fp)
-        return report.build(f) if f is not None and f.state == "reported" else None
+        return report.shown(f) if f is not None and f.state == "reported" else None
 
     async def _op_send(self, rid: str, form, writer) -> Result:
         if rid in self._sending:

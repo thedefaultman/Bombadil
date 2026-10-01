@@ -5,13 +5,15 @@ picture drawn from the windows' rectangles, and at most three log lines. Nothing
 because nothing else is read: no prompt, no window title, no path, no screenshot, no name. The few
 free-text fields (the title, what was expected and observed, the log lines) are cut to one line, and
 as a second lock every path in them becomes "~" or "<path>" and any private string the evidence
-holds (a title, a prompt) is taken out. The lock is not what keeps the report clean; leaving things
-out is.
+holds (a title, a prompt) is taken out, and a last resort takes out what looks like a link, an address,
+an email or a key. The lock is not what keeps the report clean; leaving things out is: an app's own log
+lines, which are whatever the app printed, are never in a report.
 
   build(finding)            the Report, from the finding and its evidence.json
   preview(report)           the two lists the Send card shows, and the exact text
-  hold(report)              writes reports/<fp>.md, the copy held on the machine
-  already_reported(fp)      the number of the issue that has this fingerprint, or None
+  hold(report)              writes reports/<fp>.md, the copy held on the machine (and what it was made of)
+  shown(finding)            the report he is looking at: the held one once he has, else a new one
+  already_reported(fp)      the number of the open issue that has this fingerprint, or None
   issue_url(report)         the new-issue link, prefilled; too long a body goes to the clipboard
   open_issue_page(url)      shows it in the browser panel (or xdg-open); he presses Submit himself
 
@@ -31,11 +33,12 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .. import hypr, paths
+from .. import browser, hypr, paths
 from .findings import evidence_dir
+from .probes import PATH_REST
 
 DEFAULT_REPO = "thedefaultman/Bombadil"
 LABELS = "found-by-bombadil"
@@ -66,8 +69,23 @@ _PRIVATE_KEYS = frozenset({"title", "initialTitle", "prompt", "result", "summary
 _SYSTEM = ("/usr/", "/opt/", "/etc/", "/lib/", "/lib64/", "/bin/", "/sbin/", "/dev/", "/proc/", "/sys/",
            "/run/")
 _GENERIC_NAMES = frozenset({"user", "root", "arch", "admin", "bombadil", "localhost", "archiso"})
-_HOME = re.compile(r"(?:/home/[^/\s]+|/Users/[^/\s]+|/root(?![\w.-])|~(?=/|\s|$))(?:/[^\s\"'<>)\]]*)?")
-_PATH = re.compile(r"(?<![\w/:.])/(?:[\w.@+%=,-]+/)*[\w.@+%=,-]+")
+# A path goes on past a space (a file name can hold one), to the next ": ", a quote or a bracket, or the end.
+_HOME = re.compile(r"(?:/home/[^/\s]+|/Users/[^/\s]+|/root(?![\w.-])|~(?=/|\s|$))(?:/[^\s\"'<>)\]]*" + PATH_REST + ")?")
+_PATH = re.compile(r"(?<![\w/:.])(?P<run>/(?:[\w.@+%=,-]+/)*[\w.@+%=,-]+)(?P<rest>" + PATH_REST + ")")
+# The last resort for a line that is kept, in the shapes such things take. It cannot know a title or a
+# name in a sentence: that is why an app's log is left out, and this is not instead of that.
+_LOOSE = (
+    (re.compile(r"\b[a-z][a-z0-9+.-]{1,15}://[^\s'\"<>)\]]*", re.IGNORECASE), "<url>"),
+    (re.compile(r"\b(?:bearer|basic)\s+[\w.~+/=-]{8,}", re.IGNORECASE), "<token>"),
+    (re.compile(r"\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|authorization)\s*[=:]\s*\S+",
+                re.IGNORECASE), "<secret>"),
+    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "<email>"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<ip>"),
+    (re.compile(r"\b(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}\b|(?<![\w:])(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{0,4}::"
+                r"(?:[0-9a-f]{1,4}:){0,6}[0-9a-f]{0,4}(?![\w:])", re.IGNORECASE), "<ip>"),
+    (re.compile(r"[?&][\w.%+-]+=[^\s&'\"<>)\]]*"), "<query>"),
+    (re.compile(r"\b(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}\b|\b[A-Za-z0-9_-]{32,}\b"), "<token>"),
+)
 
 
 # -- the report --
@@ -157,7 +175,10 @@ def _names() -> list[str]:
 
 
 def _path_label(m: re.Match) -> str:
-    return m.group(0) if m.group(0).startswith(_SYSTEM) else "<path>"
+    run = m.group("run")
+    if run.startswith(_SYSTEM):
+        return run + _PATH.sub(_path_label, m.group("rest"))     # kept; what follows it may not be
+    return "<path>"
 
 
 def _first_line(text) -> str:
@@ -169,8 +190,8 @@ def _first_line(text) -> str:
 
 def _line(text, private: Iterable[str] = (), limit: int = 160) -> str:
     """One line of free text: its first line, what is private taken out, every path collapsed (under
-    home to "~", the rest to "<path>" except the system's own), his name and his machine's taken out,
-    and cut."""
+    home to "~", the rest to "<path>" except the system's own), links, addresses, emails and keys
+    taken out, his name and his machine's taken out, and cut."""
     s = _first_line(text)
     for secret in private:
         s = s.replace(secret, "…")
@@ -178,6 +199,8 @@ def _line(text, private: Iterable[str] = (), limit: int = 160) -> str:
         s = s.replace(home, "~")
     s = _HOME.sub("~", s)
     s = _PATH.sub(_path_label, s)
+    for loose, label in _LOOSE:
+        s = loose.sub(label, s)
     for name in _names():
         s = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", "…", s, flags=re.IGNORECASE)
     s = " ".join(s.split())
@@ -380,7 +403,7 @@ def _plain(v, limit: int = 40) -> str:
 
 def _log_lines(bundle: dict, private: list[str]) -> tuple:
     """At most three lines of the evidence's log: the last ones that say something went wrong, else the
-    last ones."""
+    last ones. Not for an app: what it printed is whatever it, or he, wrote."""
     raw = [ln for ln in bundle.get("log", []) if isinstance(ln, str) and ln.strip()] \
         if isinstance(bundle.get("log"), list) else []
     bad = [ln for ln in raw if re.search(r"error|fail|fatal|warn|critical|crash|denied", ln, re.IGNORECASE)]
@@ -431,7 +454,7 @@ def build(finding, bundle: dict | None = None, *, versions: dict | None = None, 
         days=days if isinstance(days, int) and days > 0 else 1, build=_plain(versions.get("build", ""), 40),
         machine=kind, expected=_line(_get(finding, "expected", ""), private, 200),
         observed=f"{observed} ({note})" if note and observed else observed,
-        picture=_picture(bundle), log=_log_lines(bundle, private), versions=shown,
+        picture=_picture(bundle), log=() if component == "apps" else _log_lines(bundle, private), versions=shown,
         tried=tuple(_line(t, private) for t in tried) if tried is not None else (TRIED,),
         patch=patch.strip("\n"), what=what, check=f"{probe}: {observed}" if probe else observed)
 
@@ -468,7 +491,8 @@ def preview(report: Report) -> Preview:
 
 
 def hold(report: Report) -> Path | None:
-    """Write the report where it waits for him: reports/<fingerprint>.md. None when the disk says no."""
+    """Write the report where it waits for him: reports/<fingerprint>.md. None when the disk says no.
+    What it was made of goes beside the evidence (report.json), so `shown` gives back what he read."""
     path = paths.loop_dir() / "reports" / f"{evidence_dir(report.fp).name}.md"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -477,7 +501,38 @@ def hold(report: Report) -> Path | None:
         os.replace(tmp, path)
     except OSError:
         return None
+    try:
+        copy = evidence_dir(report.fp) / "report.json"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        tmp = copy.with_suffix(".tmp")
+        tmp.write_text(json.dumps(asdict(report)))
+        os.replace(tmp, copy)
+    except OSError:
+        pass        # `shown` then builds the report again from the evidence
     return path
+
+
+def held(fp: str) -> Report | None:
+    """The report as `hold` wrote it, or None: never held, or the copy cannot be read."""
+    try:
+        data = json.loads((evidence_dir(fp) / "report.json").read_text())
+        data["log"], data["tried"] = tuple(data["log"]), tuple(data["tried"])
+        data["versions"] = tuple(tuple(v) for v in data["versions"])
+        found = Report(**data)
+        return found if found.fp == fp and isinstance(found.render(), str) else None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def shown(finding) -> Report:
+    """The report for a finding as he sees it. Once he has looked at it (state "reported") that is the
+    report held then, so the text he sends is the text he read, whatever was seen since; before that,
+    one built from the evidence as it is."""
+    if _get(finding, "state") == "reported":
+        found = held(str(_get(finding, "fp", "")))
+        if found is not None:
+            return found
+    return build(finding)
 
 
 # -- the project's issues --
@@ -491,10 +546,11 @@ def _get_json(url: str, timeout: float):
 
 def already_reported(fp: str, repo: str = DEFAULT_REPO, fetch: Callable | None = None,
                      timeout: float = 4.0) -> int | None:
-    """The number of an issue in `repo` whose title carries this fingerprint ("[fp 3c91a0]"), open ones
-    first, or None: not there, offline, or anything else. Never raises. `fetch(url, timeout)` gives
-    the search answer as parsed JSON (the default asks GitHub, without a token). For after he pressed
-    Send only: nothing is asked before that."""
+    """The number of an open issue in `repo` whose title carries this fingerprint ("[fp 3c91a0]"), or
+    None: not there, offline, or anything else. A closed one is not "already reported": the fingerprint
+    carries no build, so a bug that came back after its fix is a new report. Never raises. `fetch(url,
+    timeout)` gives the search answer as parsed JSON (the default asks GitHub, without a token). For
+    after he pressed Send only: nothing is asked before that."""
     tag = f"[fp {short_fp(fp)}]"
     if not re.fullmatch(r"[0-9a-f]{4,12}", short_fp(fp)) or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
         return None
@@ -504,10 +560,9 @@ def already_reported(fp: str, repo: str = DEFAULT_REPO, fetch: Callable | None =
         found = (fetch or _get_json)(url, timeout)
         items = found.get("items") if isinstance(found, dict) else None
         hits = [i for i in items or [] if isinstance(i, dict) and isinstance(i.get("number"), int)
-                and tag in str(i.get("title", ""))]
+                and tag in str(i.get("title", "")) and i.get("state") != "closed"]
     except Exception:  # noqa: BLE001 - offline, rate limited, a proxy that answers in HTML: not found
         return None
-    hits.sort(key=lambda i: i.get("state") != "open")
     return hits[0]["number"] if hits else None
 
 
@@ -563,12 +618,12 @@ def issue_url(report: Report, repo: str = DEFAULT_REPO,
 
 
 def _put_new_tab(url: str) -> bool:
-    """Ask Chromium, through its debugging port, to open `url` in a new tab."""
-    req = urllib.request.Request(f"http://127.0.0.1:{BROWSER_DEBUG_PORT}/json/new?{url}", method="PUT")
+    """Ask Chromium, through its debugging port, to open `url` in a new tab, the way the browser panel
+    opens any page: Chromium keeps only the first field of that query, so the whole link goes in
+    percent-encoded (DevTools.new_tab), and the port is never asked through a proxy."""
     try:
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            return 200 <= resp.status < 300
-    except (OSError, ValueError):
+        return isinstance(browser.DevTools(port=BROWSER_DEBUG_PORT).new_tab(url), dict)
+    except browser.DOWN:
         return False
 
 

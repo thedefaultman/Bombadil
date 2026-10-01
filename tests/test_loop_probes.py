@@ -246,7 +246,7 @@ def test_hyprland_config_errors_are_read_with_the_paths_taken_out():
     assert one("hypr-config", Observation(configerrors=[""])).ok is True        # hyprctl's empty answer
     err = "Config error in file /home/user/.config/hypr/hyprland.lua at line 12: no such function hl.nope"
     r = one("hypr-config", Observation(configerrors=[err, "another"]))
-    assert r.ok is False and r.observed.startswith("Config error in file <path> at line 12")
+    assert r.ok is False and r.observed == "Config error in file <path>: no such function hl.nope"
     assert "/home" not in r.observed and r.evidence["errors"][1] == "another"
 
 
@@ -583,7 +583,8 @@ def test_a_fatal_line_in_an_apps_log_counts_from_the_apps_latest_start():
            "10:02:11 error: FATAL: Segmentation fault in libQt6Quick"]
     r = one("app-health", Observation(apps=[{"ok": True, "running": True, "log": log}]))
     assert r.ok is False
-    assert r.observed == "an app's log has a fatal line: error: fatal: segmentation fault in libqtquick"
+    assert r.observed == "an app's log has a fatal line"      # the app's own words are not in the sentence
+    assert r.evidence["fp_line"] == "error: fatal: segmentation fault in libqtquick"
     assert "/home" not in json.dumps(r.evidence)
     restarted = [*log, "--- 10:05:00 bombadil-app run notes (pid 4300)", "loaded /home/user/Apps/notes/main.qml"]
     assert one("app-health", Observation(apps=[{"ok": True, "running": True, "log": restarted}])).ok is True
@@ -762,8 +763,8 @@ def test_the_probes_only_look_at_what_they_are_given(monkeypatch):
 
 
 def test_what_goes_in_a_fingerprint_loses_paths_numbers_and_ids():
-    line = "Error in /home/user/.config/hypr/x.lua:12 pid 4242 at 0x55a1c0 id 3c91a0ff, 12.5 s (9f8e7d6c-1234-4abc-8def-0123456789ab)"
-    assert probes.strip_line(line) == "error in pid at id , s ()"
-    assert probes.scrub_text("see /home/user/x.lua:3 and ~/notes/a.txt or https://example.com/a/b") == \
-        "see <path> and <path> or https://example.com/a/b"
+    line = "Error pid 4242 at 0x55a1c0 id 3c91a0ff, 12.5 s (9f8e7d6c-1234-4abc-8def-0123456789ab) in /home/user/.config/hypr/x.lua:12"
+    assert probes.strip_line(line) == "error pid at id , s () in"
+    assert probes.scrub_text("see '/home/user/x.lua:3' and '~/notes/a.txt' or https://example.com/a/b") == \
+        "see '<path>' and '<path>' or https://example.com/a/b"
     assert probes.scrub_text("a/b and 1/2 and / alone") == "a/b and 1/2 and / alone"

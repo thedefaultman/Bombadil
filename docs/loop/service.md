@@ -83,8 +83,8 @@ LoopService(agentd, *, loop_dir=None, clock=time.time, opener=None, fetcher=None
 | `not_now` `never` `got_it` | answers the offer (or dismisses / never a finding) | "Okay. That will not come up again for a while." / "Okay. That will not be offered again." / "Okay, nothing to make." |
 | `other_ways` | nothing to do (the bar shows the other forms itself) | "Those are the other ways it could be done." |
 | `preview` | `forms.preview` for a group (a string), the report's preview for a finding | "This is what it would do." + `preview` |
-| `report` | builds and holds the report, marks it `reported` | "The report is ready. Nothing is sent until you press Submit on the page." + `preview` `{text, goes, stays}` |
-| `send` | (after `report`) searches the project's issues, opens the prefilled page, marks it `sent` | "The issue page is open with the report filled in. Press Submit there if it looks right." |
+| `report` | builds and holds the report, marks it `reported` | "The report is ready. Opening the issue page sends it to GitHub as part of the address; nothing is posted until you press Submit on the page." + `preview` `{text, goes, stays}` |
+| `send` | (after `report`) searches the project's issues for an open one with the fingerprint, opens the prefilled page with the report held at `report` (not one built again), marks it `sent` | "The issue page is open with the report filled in. Press Submit there if it looks right." |
 | `undo` | takes a trail row back: a word out, an app into the trash, a put-away word back | "Took out the word “…”." / "Put the app … away." / "Brought back the word “…”." |
 | `bring_back` | a put-away word, a group he said no to, or an app that went to the trash | "Okay. That can come up again." / "Brought the app … back." |
 | `forget_asks` | empties the counts (and the model step's pinned answers); words stay | "Forgot what you asked. The words made from it stay." |

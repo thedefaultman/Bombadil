@@ -16,8 +16,8 @@ sections. A section with nothing in it is hidden; when all five are empty the fi
   offers "Put it back".
 - **Found**: a plain sentence, the count, "Why?" (only when agentd sent the evidence) and "Send to the
   project". That opens the Send card inside the window: what goes, what stays here, the exact text, then
-  "Open the issue page", "Not now", "Never for this". Nothing leaves the machine until he presses Submit
-  on the page that opens.
+  "Open the issue page", "Not now", "Never for this". Opening the page puts the text in its address, so
+  GitHub gets it then; nothing is posted until he presses Submit on the page.
 - **You said no to**: each with "Bring back".
 - **Words**: the words he made, what each opens, "Bring back" on a put-away one. There is no "Put away":
   the contract has no op for it (see followups in the build notes).

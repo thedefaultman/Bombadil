@@ -22,6 +22,7 @@ checked again 500 ms later; `event`, `crash` and `drift` are facts that already 
 at once; `friction` is what he had to work around and counts when it repeats.
 """
 
+import functools
 import json
 import math
 import os
@@ -327,7 +328,11 @@ def _now(obs: Observation) -> float | None:
 
 
 # What goes in a fingerprint or a report must not carry where he keeps things or machine noise.
-_PATH = re.compile(r"(?<![\w/:.])(?:~|/(?=[\w.]))[\w.@+%:=,-]*(?:/[\w.@+%:=,-]*)+")
+# A file name can hold a space, so a path goes on past one: to the next ": " (an error's own words), a
+# quote or a bracket, or the end of the line. That over-takes a word or two after a path, never less.
+PATH_REST = r"""(?:(?<!:)[ \t](?:(?!:[ \t])[^\n'"`<>()\[\]{}])*)?"""
+_PATH = re.compile(r"(?<![\w/:.])(?:~|/(?=[\w.]))[\w.@+%:=,-]*(?:/[\w.@+%:=,-]*)+" + PATH_REST)
+_FILE_URL = re.compile(r"\bfile://(?=/)")       # file:///home/x is a path with a scheme in front of it
 _UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 _HEX = re.compile(r"\b0x[0-9a-f]+\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{6,}\b", re.IGNORECASE)
 _OPAQUE = re.compile(r"\b(?=[\w-]*\d)[\w-]{16,}\b")
@@ -338,19 +343,85 @@ _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 
 def scrub_text(text) -> str:
     """Where he keeps things removed: a path (absolute, or under ~) becomes <path>."""
-    return _PATH.sub("<path>", str(text))
+    return _PATH.sub("<path>", _FILE_URL.sub("", str(text)))
 
 
 def strip_line(text) -> str:
     """A line as the same problem always reads: no paths, pids, times, numbers, hex ids, uuids or
     request ids, one space between words. What a fingerprint is made of."""
-    s = _PATH.sub("", str(text))
+    s = _PATH.sub("", _FILE_URL.sub("", str(text)))
     s = _UUID.sub("", s)
     s = _HEX.sub("", s)
     s = _OPAQUE.sub("", s)
     s = _TIME.sub("", s)
     s = _NUMBER.sub("", s)
     return " ".join(s.lower().split())
+
+
+# What he typed, echoed back in someone else's words: a run of this many of his words in a row (in any
+# case and spacing, over a line break or cut short) is his, and so is a shorter run this long.
+ECHO_WORDS = 4
+ECHO_CHARS = 24
+_WORD = re.compile(r"\w+(?:['’]\w+)*")
+_JSON_ESCAPE = re.compile(r"\\(?:u([0-9a-fA-F]{4})|(.))", re.DOTALL)
+
+
+def _unescaped(text) -> str:
+    """A JSON string's escapes undone, with a line break read as a space: a CLI that puts the request
+    in its error body quotes it."""
+    def one(m):
+        if m.group(1):
+            return chr(int(m.group(1), 16))
+        return " " if m.group(2) in "nrt" else m.group(2)
+    return _JSON_ESCAPE.sub(one, str(text))
+
+
+def _lowered(word: str) -> str:
+    return word.casefold().replace("’", "'")
+
+
+@functools.lru_cache(maxsize=4)
+def _echoes(said: tuple) -> dict:
+    """What would be an echo of each of these (what he said), by the number of words in a row: the whole
+    of a short ask, any four words of a long one, and a shorter run that is long enough to be his."""
+    runs: dict[int, set] = {}
+    for text in said:
+        lines = [text, *(x for x in text.splitlines() if len(x.strip()) >= 8)] if "\n" in text.strip() else [text]
+        for line in lines:
+            words = [_lowered(m.group()) for m in _WORD.finditer(line)][:2000]
+            if 0 < len(words) < ECHO_WORDS:
+                runs.setdefault(len(words), set()).add(tuple(words))
+            for i in range(len(words)):
+                for size in range(1, min(ECHO_WORDS, len(words) - i) + 1):
+                    run = tuple(words[i:i + size])
+                    if size == ECHO_WORDS or sum(map(len, run)) + size - 1 >= ECHO_CHARS:
+                        runs.setdefault(size, set()).add(run)
+    return runs
+
+
+def blank_echoes(text, said: Iterable[str]) -> str:
+    """`text` with every echo of what he said (`said`, his prompts) turned into "…": whole words only,
+    whatever the case or spacing, and only the echoed run, so the rest of the line still says what went
+    wrong."""
+    text = str(text)
+    runs = _echoes(tuple(s for s in said if isinstance(s, str) and s.strip()))
+    found = [(m.start(), m.end(), _lowered(m.group())) for m in _WORD.finditer(text)]
+    covered = [False] * len(found)
+    for size, seen in runs.items():
+        for i in range(len(found) - size + 1):
+            if tuple(w for _, _, w in found[i:i + size]) in seen:
+                covered[i:i + size] = [True] * size
+    out, last, i = [], 0, 0
+    while i < len(found):
+        if not covered[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(found) and covered[j + 1]:
+            j += 1
+        out += [text[last:found[i][0]], "…"]
+        last, i = found[j][1], j + 1
+    return "".join([*out, text[last:]])
 
 
 def write_json_atomic(path: Path, obj) -> None:
@@ -754,15 +825,16 @@ def _errors_by_turn(obs: Observation) -> dict[object, list[str]]:
 
 
 def _prompts(obs: Observation) -> list[str]:
-    return [p for r in _dicts(obs.ledger) or [] for p in (_str(r.get("prompt")),) if len(p) >= 4]
+    """What went to a provider: his asks. The loop's own rows (an undo, a stop) never did."""
+    return [p for r in _dicts(obs.ledger) or [] if r.get("kind") != "local"
+            for p in (_str(r.get("prompt")),) if len(p) >= 4]
 
 
 def _redacted(text: str, prompts: list[str], limit: int = 120) -> str:
-    """A provider's error line, without his words (a CLI that echoes the prompt) or paths."""
-    line = _one_line(text, 400)
-    for p in prompts:
-        line = line.replace(p, "…")
-    return scrub_text(line)[:limit]
+    """A provider's error line, without his words (a CLI that echoes the prompt: as it was, in JSON,
+    over several lines or cut short) or paths. His words come out of all of the error first, then its
+    first line is taken."""
+    return scrub_text(_one_line(blank_echoes(_unescaped(text), prompts), 400))[:limit]
 
 
 
@@ -1054,9 +1126,10 @@ def _app_health(obs):
         start = max((i for i, x in enumerate(log) if x.startswith("---")), default=-1)
         for line in log[start + 1:]:
             if _FATAL.search(line):
-                return red("an app's log has no FATAL line",
-                           f"an app's log has a fatal line: {strip_line(line)[:100]}",
-                           line=scrub_text(_one_line(line, 160)))
+                # The line is the app's own output, which can hold his words: the sentence does not, and
+                # what tells one fatal line from another goes to the fingerprint only (fp_line).
+                return red("an app's log has no FATAL line", "an app's log has a fatal line",
+                           line=scrub_text(_one_line(line, 160)), fp_line=strip_line(line)[:100])
     return green(apps=len(apps))
 
 

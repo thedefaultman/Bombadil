@@ -6,7 +6,7 @@ import "text.js" as T
 
 // Noticed: what Bombadil has noticed about what you ask, what it made from that, and the bugs it found
 // in itself. It draws what agentd says (`backend.full`) and sends what he presses; nothing is decided
-// here, and nothing is sent anywhere without him pressing Submit on the page the Send card opens.
+// here, and nothing is posted without him pressing Submit on the page the Send card opens.
 AppWindow {
     id: win
     title: "Noticed"

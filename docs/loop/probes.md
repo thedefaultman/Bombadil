@@ -55,7 +55,7 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `bar-alive` | invariant | `bar.json`'s `alive_at` is under 15 s old; not for 30 s after `agentd_started` | bar, now |
 | `bar-restarts` | event | fewer than 3 `restart` rows in 600 s (one result per burst) | events |
 | `coredump` | crash | no dump of agentd, the bar, Hyprland, an app, os-mcp or the browser panel in 7 days (each dump is one sighting at its own time; microseconds or seconds both read) | coredumps |
-| `turn-failed` | friction | a turn with `ok` false or null that was not stopped, not a `!command`, and not signed out, a limit or offline | ledger |
+| `turn-failed` | friction | a turn with `ok` false or null that was not stopped, not a `!command`, and not signed out, a limit or offline; the error's first line is shown with every echo of his asks taken out (see below) | ledger |
 | `os-tools` | event | no turn's `result`, or error event, says the OS tools did not start (the reason is kept) | ledger |
 | `tool-errors` | friction | no os-mcp tool fails in 40% or more of at least 5 calls in 3 days | tool_results |
 | `app-check` | friction | `create_app` does not fail its own check twice for the same missing piece | tool_results |
@@ -65,7 +65,7 @@ attach_words(finding, prompts, fired=None) -> list[str]   # the one function tha
 | `slow-turn` | friction | no turn took 3 times its group's median | ledger, groups, medians |
 | `provider-drift` | drift | no turn had a stream message type the provider adapter does not know (`drift` in the row) | ledger |
 | `esc-friction` | friction | no bar `friction` row `what: esc` of 3 presses or more in 10 s or less (the drawer or a card up is noted) | events |
-| `app-health` | invariant | no app's status is not ok with its process gone, and no FATAL line after the log's last `---` run marker | apps |
+| `app-health` | invariant | no app's status is not ok with its process gone, and no FATAL line after the log's last `---` run marker; the sentence says only that a log has a fatal line (the line goes to the evidence and, stripped, to the fingerprint) | apps |
 
 ### Red on the six the VM found, green on the fixed state
 
@@ -140,7 +140,10 @@ for r in results:
   its judges. Today nothing is `fixable`; the mender sets it.
 - **Fingerprint**: `component:rule:` and the first 6 hex of the sha1 of `strip_line(first observed line)`:
   paths, times, numbers, hex and request ids removed, lower-cased. Same problem, same fingerprint, whatever
-  pid or path.
+  pid or path. A probe whose sentence must not carry a line it read (`app-health`) puts that line, stripped,
+  in `evidence["fp_line"]`; the fingerprint is made of it, and it is never written down.
+- **Flaky probe**: the finding about it carries the versions the runner passed to `record_retry` (and no
+  other evidence of the window the probe looked at), so its report names the build.
 
 ### Evidence
 
@@ -149,7 +152,10 @@ the probe id and `command` (`bombadil probe <id>`), windows without titles (clas
 position, size), monitors, layers (namespaces and boxes), the bar's rects, the last 40 log lines, the turn
 row without its words, the turn's tool events, versions, and `words`. Not in it: a screenshot, a prompt, a
 title, a path under home, a token, the app's name. Secrets in the observation or the turn row are found and
-removed from every string by their value as well as by shape. `attach_words` keeps only the trouble words
+removed from every string by their value as well as by shape: one of 12 characters or more wherever it is,
+a shorter one only as a whole word (a typed "undo" is not in "undone"), and never from a probe's own title
+and expected sentence. The loop's own rows are not secrets: a local row whose prompt is its own action
+("undo", "stop") adds nothing, and the asks a provider could echo are the model turns only. `attach_words` keeps only the trouble words
 (still, won't, stuck, broken, frozen, again, not working, doesn't work, nothing happens), never the sentence,
 and only from prompts within 5 minutes of a probe firing.
 
@@ -177,6 +183,13 @@ and only from prompts within 5 minutes of a probe firing.
 - **Events count on the first sighting.** `summon-focus` and `bar-restarts` are facts, but a noisy bar could
   make them noisy; moving them to "counts at 2" is one line in `_counts`.
 - **The app name is left out of `app-health`'s evidence** on purpose: it is his words.
+- **A provider's error line.** A CLI may echo his ask in its error, as it was, in JSON (escapes undone), over
+  several lines, in another case or cut short. `turn-failed` takes out of the whole error every run of four
+  of his words in a row (or of 24 characters), whole words only, and the whole of an ask shorter than four
+  words; the first line is taken after that, so the error's own words stay and fingerprints stay apart.
+- **A path takes the rest of its name.** `scrub_text` and `strip_line` end a path at the next `": "`, a quote
+  or bracket, or the end of the line, so a path with a space in its name goes whole; the words after an
+  unquoted path go with it (a Hyprland config error reads `Config error in file <path>: no such function`).
 - **Fixture geometry is constructed**, not captured. The shapes are hyprctl's; the numbers are chosen to
   show each bug. Nothing here was run against a live Hyprland.
 - `summon-focus` uses 1.5 s for the ack (the task says so); the brief's 300 ms is a target, not a limit.
@@ -191,3 +204,7 @@ and only from prompts within 5 minutes of a probe firing.
   turns to look at.
 - There is no "fixed" state for a finding yet; `sent` is the last one, `reported` is a held report.
 - A `bombadil probe <id>` command is in every bundle; it belongs to the CLI part and does not exist here.
+
+## Known gaps
+
+- A word he typed that is also a word of a probe's own sentence ("again", "stopped") is blanked from that sentence when it is a whole word, because a short secret is taken out as one.

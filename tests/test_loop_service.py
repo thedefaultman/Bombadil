@@ -801,13 +801,15 @@ async def test_a_finding_becomes_a_row_a_held_report_and_an_issue_page_he_submit
     assert asked == [] and opened == []                           # nothing is asked or sent until he says so
     # See the report: it is held on this computer, and what is shown is what is held.
     seen = await rig.do("report", found.fp)
-    assert seen["ok"] and seen["text"] == "The report is ready. Nothing is sent until you press Submit on the page."
+    assert seen["ok"] and seen["text"] == ("The report is ready. Opening the issue page sends it to GitHub as part "
+                                           "of the address; nothing is posted until you press Submit on the page.")
     assert set(seen["preview"]) == {"goes", "stays", "text"} and seen["preview"]["goes"] and seen["preview"]["stays"]
     held = paths.loop_dir() / "reports" / f"{findings.evidence_dir(found.fp).name}.md"
     assert held.read_text() == seen["preview"]["text"] and opened == [] and asked == []
     [row] = rig.bar.last("noticed")["rows"]
     assert row["kind"] == "report" and row["primary"] == {"label": "See the report", "op": "report"}
-    assert row["what"] == "It is held on this computer. Nothing is sent until you press Submit."
+    assert row["what"] == ("It is held on this computer. Opening the page sends it to GitHub; nothing is "
+                           "posted until you press Submit.")
     [entry] = (await rig.full())["found"]
     assert entry["state"] == "reported" and entry["can_send"] is True and entry["preview"] == seen["preview"]
     # Send: the project's issues are searched for this problem, then its page opens with the report filled in.

@@ -47,12 +47,24 @@ W_TEXT, W_ROUTE, JOIN = 0.4, 0.6, 0.5
 _PREFIX_APP = re.compile(r"^\s*\[from app [^\]]*\]\s*", re.IGNORECASE)
 _PREFIX_ABOUT = re.compile(r"^\s*About\s+(?:[~/.][^\n:]*|\S+\.\w{1,6}):\s*", re.IGNORECASE)
 
-# Text about these is never counted, whatever the route says.
+# Text about these is never counted, whatever the route says. The first lines are words about secrets;
+# the rest is a secret said aloud (a password, a pin or a login with its value) and what a secret looks
+# like (a key's prefix, a long token, an SSN or a card number). "Passwords", "login" and "pin" alone are
+# not here: asking for the passwords app, to sign in or to pin a window counts like any other ask.
 PRIVATE_TEXT = re.compile(
     r"\.ssh\b|ssh[- ]keys?|\.gnupg|\bgpg\b|\bpgp\b|key-?ring|keychain|kwallet|\bsecrets?\b|\btokens?\b|"
     r"api[_ -]?keys?|\.env\b|private[_ -]?keys?|credentials?|seed phrase|recovery (?:phrase|codes?)|"
     r"\b2fa\b|\botp\b|\bpasswords?\s+(?:for|of|to)\b|\bmy\s+\w+\s+password\b|\bpassphrase\b|"
-    r"what(?:'s| is)\s+(?:the |my )?password", re.IGNORECASE)
+    r"what(?:'s| is)\s+(?:the |my )?password|"
+    r"\bpass(?:word|wd|code)\s*(?:is|was|=|:)\s*\S|\b(?:sudo|root|admin)\s+pass(?:word|wd)?\b|"
+    r"\b(?:login|log[- ]?in|sign[- ]?in|username|user name|user)\b[^\n]{0,40}?\bpass(?:word|wd)?\s+"
+    r"(?!(?:manager|app|store|vault)\b)\S|"
+    r"\b(?:login|log[- ]?in|sign[- ]?in|username|user name)\s*(?:is|=|:|as)\s*\S+\s*[/|]\s*\S|"
+    r"\bmy\s+(?:\w+\s+)?pin\b|\b(?:pin|passcode)\s+(?:code\s+|number\s+)?(?:is\s+|was\s+|=\s*|:\s*)?\d{3,8}\b|"
+    r"\bssn\b|social security (?:number|no\b)|\bcvv2?\b|\bcvc\b|\biban\b|"
+    r"\bsk-[\w-]{16,}|\bgh[pousr]_\w{16,}|\bAKIA[0-9A-Z]{12,}|\bxox[abprs]-[\w-]{8,}|\beyJ[\w-]{8,}\.[\w-]{8,}|"
+    r"\b(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{32,}\b|"
+    r"\b\d{3}-\d{2}-\d{4}\b|\b(?:\d[ -]?){13,19}\b", re.IGNORECASE)
 
 
 def clean_text(text: str) -> str:

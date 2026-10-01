@@ -53,6 +53,7 @@ FLIPS = 3                # red then green on retry this many times ...
 FLIP_WINDOW = 7 * 86400.0    # ... in this long is a flaky probe
 KEEP_PENDING = 30 * 86400.0  # a friction that never counted is forgotten after this
 LOG_LINES = 40
+WHOLE_WORD = 12          # a secret shorter than this is only taken out as a whole word: "undo" is not in "undone"
 
 SCHEMA = ["""
 CREATE TABLE findings(
@@ -145,7 +146,10 @@ def fingerprint(component: str, rule: str, line: str) -> str:
 
 
 def fingerprint_of(result: Result) -> str:
-    return fingerprint(result.component, result.rule, result.observed)
+    """A probe whose sentence must not carry the line it read keeps what tells its findings apart in
+    `fp_line` (stripped, never written down); the fingerprint is made of that."""
+    own = result.evidence.get("fp_line") if isinstance(result.evidence, dict) else None
+    return fingerprint(result.component, result.rule, own if isinstance(own, str) and own else result.observed)
 
 
 def _slug(fp: str) -> str:
@@ -159,7 +163,7 @@ def evidence_dir(fp: str) -> Path:
 # -- the evidence bundle --
 
 _BANNED = frozenset({"title", "initialTitle", "prompt", "result", "summary", "details", "word", "target",
-                     "text", "session", "cmdline", "address", "pid"})
+                     "text", "session", "cmdline", "address", "pid", "fp_line"})
 _TURN_KEYS = ("id", "t", "started", "seconds", "origin", "ok", "stopped", "provider", "model", "cost", "v",
               "kind", "verb", "via", "action", "of", "snapshot")
 
@@ -184,7 +188,11 @@ def _secrets(obs: Observation | None, turn) -> list[str]:
     rows = [*(obs.ledger if obs and isinstance(obs.ledger, list) else []), turn]
     for r in rows:
         if isinstance(r, dict):
-            found |= {r.get(k) for k in ("prompt", "result", "summary")}
+            # A button's own word on a local row ("undo", "stop") is the loop's, not his.
+            own = ({str(r[k]).strip().lower() for k in ("action", "verb") if r.get(k)}
+                   if r.get("kind") == "local" else set())
+            found |= {x for x in (r.get(k) for k in ("prompt", "result", "summary"))
+                      if not (isinstance(x, str) and x.strip().lower() in own)}
     # A title that is a class name, or too short to be his, would only eat the bundle's own words.
     return sorted((s for s in found if isinstance(s, str) and len(s) >= 4 and not s.startswith("bombadil")),
                   key=len, reverse=True)
@@ -195,10 +203,18 @@ def _homes() -> list[str]:
     return sorted((h for h in homes if len(h) > 1 and h != "/"), key=len, reverse=True)
 
 
+def _whole_word(secret: str) -> re.Pattern:
+    lead = r"(?<!\w)" if re.match(r"\w", secret) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", secret) else ""
+    return re.compile(f"{lead}{re.escape(secret)}{tail}")
+
+
 def _redact(text, secrets: list[str], limit: int = 300) -> str:
     s = str(text)
     for secret in secrets:
-        s = s.replace(secret, "…")
+        if secret not in s:
+            continue
+        s = s.replace(secret, "…") if len(secret) >= WHOLE_WORD else _whole_word(secret).sub("…", s)
     s = scrub_text(s)
     for home in _homes():    # what the path pattern cannot see: a bare home folder
         s = s.replace(home, "~")
@@ -381,7 +397,7 @@ class FindingsStore:
                 found = self.record(replace(r, retry_after=None), now, **context) or found
             return found
         if any(r.ok is True for r in results):
-            return self._flip(first, now)
+            return self._flip(first, now, context.get("versions"))
         return None
 
     def _count(self, r: Result, now: float, context: dict) -> Finding | None:
@@ -413,8 +429,9 @@ class FindingsStore:
                 "observed=excluded.observed, first_t=excluded.first_t, "
                 "last_t=MAX(findings.last_t, excluded.last_t), n=excluded.n, days=excluded.days, "
                 "counted=MAX(findings.counted, excluded.counted)",
-                (fp, r.component, r.rule, r.id, r.kind, _redact(r.title or r.id, secrets),
-                 _redact(r.expected, secrets), _redact(r.observed, secrets), first, last, n, days,
+                # The probe's own title and expected are its words, never his: only what it saw is taken out.
+                (fp, r.component, r.rule, r.id, r.kind, _redact(r.title or r.id, ()),
+                 _redact(r.expected, ()), _redact(r.observed, secrets), first, last, n, days,
                  int(counted), str(evidence_dir(fp))))
             if r.kind != "friction" and r.component != "loop":
                 # A probe firing is what makes a friction seen once count: look back as well as forward.
@@ -456,9 +473,9 @@ class FindingsStore:
 
     # -- flaky probes --
 
-    def _flip(self, first: Result, now: float) -> Finding | None:
+    def _flip(self, first: Result, now: float, versions=None) -> Finding | None:
         """A probe that was red and then green on retry: one more flip. The third in a week
-        quarantines it and raises a finding about it."""
+        quarantines it and raises a finding about it, which carries the versions it was seen on."""
         with db.transaction(self.conn):
             self.conn.execute("INSERT INTO probe_flips(probe, t) VALUES(?, ?)", (first.id, now))
             flips = self.conn.execute("SELECT COUNT(*) FROM probe_flips WHERE probe=? AND t > ?",
@@ -470,7 +487,7 @@ class FindingsStore:
                        {"probe": first.id, "flips": flips}, kind="event",
                        title=f"One of Bombadil's own checks ({first.id}) keeps changing its mind, "
                              "so it is set aside.")
-        return self._count(about, now, {})
+        return self._count(about, now, {"versions": versions if isinstance(versions, dict) else None})
 
     @_guard(set)
     def quarantined(self, now: float | None = None) -> set[str]:

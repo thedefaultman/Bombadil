@@ -9,8 +9,9 @@ What you see: nothing for a few days. Then a small "noticed 1" chip right of the
 your own words appear with one suggestion ("show me my passwords · 4 times on 3 days. Say "my
 passwords" and Passwords opens."), and one button. Click it, or say "noticed", for the Noticed
 window: what you ask most, what Bombadil made from it (each with Undo), the bugs it found (each
-with Send to the project) and what you said no to. Nothing is sent anywhere until you press Submit
-on a page that shows exactly what goes.
+with Send to the project) and what you said no to. The Send card shows exactly what goes. Opening the
+issue page puts that text in the page's address, so it reaches GitHub when the page loads; nothing is
+posted until you press Submit there.
 
 ## Rules (from the brief)
 
@@ -21,7 +22,9 @@ on a page that shows exactly what goes.
    Nothing on the line, no keyboard, no sound, no mark on the dot, never during a turn.
 3. A tap is the ask. The loop never builds anything from a count on its own.
 4. Probes only read. What they cannot fix they write up.
-5. What he would notice waits for him. Nothing leaves the machine until he presses Submit.
+5. What he would notice waits for him. Nothing leaves the machine until he presses Send to the project,
+   and nothing is posted until he presses Submit on the page that opens (its address carries the report,
+   so GitHub sees the text when the page loads).
 6. No new words to learn: "noticed" is the widget's name, "hide noticed" and "show noticed" its verbs.
 
 ## How the pieces fit
@@ -75,7 +78,8 @@ lives in the service, so a different shell could draw the same thing.
   days; "Never" stops that idea; two silent expiries or two Nevers in a row rest all offers for 30 days;
   "hide noticed" holds everything. At most one new offer a day and three a week.
 - **Reports are his to send.** A finding becomes a report he can read in full, with what goes and what
-  stays on the machine, and the issue page opens prefilled. Nothing is submitted for him.
+  stays on the machine, and the issue page opens prefilled with that text: the report he read is the one
+  held, and the one sent. Nothing is submitted for him.
 
 The per-surface details are in [`loop/bar.md`](loop/bar.md) (chip and card) and
 [`loop/window.md`](loop/window.md) (the window).
@@ -172,7 +176,7 @@ except `words.toml` (`paths.words_file()`, `~/.config/bombadil/words.toml`).
 - `bar.json`: the bar's last report, rewritten atomically at most every 2 s:
   `{"pid", "connected_at", "alive_at", "build", "screens": {"<name>": {"w", "h", "rects": [{"name", "x", "y", "w", "h"}]}}}`.
 - `agentd.json`: `{"pid", "started", "build", "socket"}`, written when agentd starts.
-- `findings/<fp>/`: evidence bundles (`evidence.json` and the files it names). `reports/<fp>.md`: the report held for sending.
+- `findings/<fp>/`: evidence bundles (`evidence.json` and the files it names). `reports/<fp>.md`: the report held for sending, and `findings/<fp>/report.json`, the fields it was made of, which the `send` op uses so that what is sent is what he read.
 - `config.toml` (optional): numbers that may be retuned, never the model's to change (`[offers] asks = 3, days = 2, window_days = 21`, …).
 
 ## agentd ↔ clients

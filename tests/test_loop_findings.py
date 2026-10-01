@@ -397,7 +397,7 @@ def test_the_evidence_holds_nothing_of_his(store, home):
                                                                           "h": 52}]}}}
     bad = Result(False, "drawer-focus", "hypr", "drawer-focus", "bombadil-details is the active window",
                  f"the drawer is open and the active window is none ({SECRETS['title']})",
-                 {"active": "none", "title": SECRETS["title"], "note": f"{home}/x {SECRETS['prompt']}",
+                 {"active": "none", "title": SECRETS["title"], "note": f"{SECRETS['prompt']} {home}/x",
                   "nested": {"prompt": SECRETS["prompt"], "keep": 3}}, None, "invariant",
                  "The details drawer takes no keyboard")
     found = store.record(bad, noon(), obs=obs, log=log, turn=turn, tools=tools, versions=versions)
@@ -416,7 +416,7 @@ def test_the_evidence_holds_nothing_of_his(store, home):
     bundle = json.loads(text)
     assert bundle["command"] == "bombadil probe drawer-focus" and bundle["probe"] == "drawer-focus"
     assert bundle["expected"] and bundle["observed"].startswith("the drawer is open and the active window is none")
-    assert bundle["evidence"] == {"active": "none", "note": "<path> …", "nested": {"keep": 3}}
+    assert bundle["evidence"] == {"active": "none", "note": "… <path>", "nested": {"keep": 3}}
     assert [w["class"] for w in bundle["windows"]] == ["other", "bombadil-details"]
     assert all("title" not in w and "initialTitle" not in w and "pid" not in w and "address" not in w
                for w in bundle["windows"])

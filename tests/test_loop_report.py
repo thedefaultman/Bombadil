@@ -343,8 +343,8 @@ def test_log_lines_are_the_last_ones_that_say_something_went_wrong_else_the_last
 
 
 def test_paths_become_home_or_path_and_system_files_stay():
-    line = report._line("open /home/daniel/a/b.txt then ~/notes/x.md and /mnt/data/taxes/2025.pdf "
-                        "but /usr/lib/qt6/plugins/x.so and /etc/hypr/hyprland.lua are ours, also /home/someone/else")
+    line = report._line("open '/home/daniel/a/b.txt' then '~/notes/x.md' and '/mnt/data/taxes/2025.pdf' "
+                        "but /usr/lib/qt6/plugins/x.so and /etc/hypr/hyprland.lua are ours, also '/home/someone/else'")
     assert "daniel" not in line and "taxes" not in line and "someone" not in line and "notes" not in line
     assert "/usr/lib/qt6/plugins/x.so" in line and "/etc/hypr/hyprland.lua" in line
     assert report._line("a fraction 1/2 and and/or are words") == "a fraction 1/2 and and/or are words"
@@ -661,14 +661,20 @@ def test_only_the_projects_host_is_opened():
 
 
 class Chromium(http.server.BaseHTTPRequestHandler):
+    """Chromium's /json/new as its source has it (devtools_http_handler.cc): PUT only, the query cut at
+    its first "&", then unescaped. What it opens is what it keeps."""
+
     seen: ClassVar[list] = []
 
     def do_PUT(self):
-        Chromium.seen.append((self.command, self.path))
+        path, _, query = self.path.partition("?")
+        tab = {"id": "T1", "type": "page", "url": urllib.parse.unquote(query.split("&")[0])}
+        Chromium.seen.append((self.command, path, tab["url"]))
+        data = json.dumps(tab).encode()
         self.send_response(200)
-        self.send_header("Content-Length", "2")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(b"{}")
+        self.wfile.write(data)
 
     def log_message(self, *args):
         pass
@@ -685,4 +691,5 @@ def test_the_put_is_what_chromiums_debugging_port_expects(monkeypatch):
         assert report.open_issue_page(url, Panel(available=False), xdg=lambda u: 1 / 0) == "panel"
     finally:
         server.shutdown()
-    assert Chromium.seen == [("PUT", f"/json/new?{url}")]       # the link as it is, after the question mark
+    assert Chromium.seen == [("PUT", "/json/new", url)]       # the whole link: the body and the label too
+    assert "&body=" in url and "&labels=" in url
