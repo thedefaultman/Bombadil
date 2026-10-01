@@ -7,6 +7,10 @@ value that gets through is matched against a strict pattern first and quoted.
 
     python3 -m bombadil.installplan --plan plan.json
     python3 -m bombadil.installplan --disk /dev/vda --mode refresh
+    python3 -m bombadil.installplan --disks [--stick /dev/sdb] [--lsblk lsblk.json]   the disks a person can pick from
+
+The same module lists the disks for a hand-run install, so what is offered, and why a disk is not, is
+decided in one tested place.
 """
 
 import argparse
@@ -177,6 +181,78 @@ def suggest_hostname(seed: str, model: str | None = None, name: str | None = Non
     return host[:63].strip("-") if _HOST.fullmatch(host[:63].strip("-")) else fallback
 
 
+MIN_DISK = 16 * 1024**3
+LSBLK_COLUMNS = "PATH,SIZE,TYPE,TRAN,MODEL,FSTYPE,PARTLABEL,LABEL,MOUNTPOINTS"
+
+
+def _walk(node: dict):
+    yield node
+    for child in node.get("children") or []:
+        yield from _walk(child)
+
+
+def _size_text(size: int) -> str:
+    gb = size / 1000**3
+    return f"{gb / 1000:.1f} TB" if gb >= 1000 else f"{gb:.0f} GB"
+
+
+def list_disks(lsblk: dict, stick: str = "") -> list[dict]:
+    """The whole disks in `lsblk -J -b -o ...` output, each with what is on it and whether it can be picked.
+    A disk is not offered when it is the USB stick Bombadil started from, holds an install image, has
+    something mounted, or is too small; it is still listed, with the reason, so a person looking for it
+    is told why it is missing."""
+    out = []
+    for dev in lsblk.get("blockdevices", []):
+        path = dev.get("path") or ""
+        if dev.get("type") != "disk" or path.startswith(("/dev/zram", "/dev/ram", "/dev/loop", "/dev/sr")):
+            continue
+        nodes = list(_walk(dev))[1:]
+        fstypes = {(n.get("fstype") or "").lower() for n in nodes} - {""}
+        labels = {(n.get("partlabel") or "") for n in nodes}
+        parts = [n for n in nodes if n.get("type") == "part"]
+        mounted = any(m for n in nodes for m in (n.get("mountpoints") or []) if m)
+        size = int(dev.get("size") or 0)
+        windows = bool({"ntfs", "bitlocker"} & fstypes) or any(lb.startswith("Microsoft") or lb == "Basic data partition" for lb in labels)
+        bombadil = "Bombadil" in labels
+        encrypted = "crypto_luks" in fstypes
+        why = ""
+        if stick and path == stick:
+            why = "the USB stick Bombadil started from"
+        elif "iso9660" in fstypes:
+            why = "a Bombadil install image"
+        elif mounted:
+            why = "in use"
+        elif size < MIN_DISK:
+            why = "smaller than 16 GB"
+        if bombadil:
+            note = "Bombadil is on it" + (", encrypted" if encrypted else "")
+        elif windows:
+            note = "Windows is on it"
+        elif not parts:
+            note = "empty"
+        else:
+            note = f"{len(parts)} partition{'s' if len(parts) != 1 else ''}, not Bombadil"
+        out.append({"path": path, "size": size, "model": " ".join((dev.get("model") or "").split()),
+                    "usb": (dev.get("tran") or "") == "usb", "offered": not why, "why_not": why, "note": note,
+                    "bombadil": bombadil, "encrypted": encrypted, "windows": windows})
+    return out
+
+
+def disk_lines(disks: list[dict]) -> list[str]:
+    """Tab-separated for the installer's shell: number (or -), path, offered, bombadil, encrypted, then the line to show."""
+    lines, n = [], 0
+    for d in disks:
+        what = " ".join(x for x in (_size_text(d["size"]), d["model"] or "disk", "(USB)" if d["usb"] else "") if x)
+        if d["offered"]:
+            n += 1
+            shown = f"{what}: {d['note']}"
+        else:
+            shown = f"{what}: not offered, it is {d['why_not']}"
+        lines.append("\t".join([str(n) if d["offered"] else "-", d["path"], "1" if d["offered"] else "0",
+                                "1" if d["bombadil"] else "0", "1" if d["encrypted"] else "0", shown]))
+    return lines
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="bombadil.installplan")
     ap.add_argument("--plan", help="the plan, as a JSON file")
@@ -184,7 +260,21 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--mode", choices=MODES, help="fresh or refresh, when the plan has none")
     ap.add_argument("--carry-list", type=Path, default=CARRY_LIST)
     ap.add_argument("--zoneinfo", type=Path, default=ZONEINFO)
+    ap.add_argument("--disks", action="store_true", help="list the disks a person can pick from, one per line")
+    ap.add_argument("--stick", default="", help="with --disks: the disk the USB stick is on")
+    ap.add_argument("--lsblk", type=Path, help="with --disks: lsblk's JSON, instead of running it")
     args = ap.parse_args(argv)
+    if args.disks:
+        import subprocess
+        try:
+            raw = args.lsblk.read_text() if args.lsblk else subprocess.run(
+                ["lsblk", "-J", "-b", "-o", LSBLK_COLUMNS], capture_output=True, text=True, check=True).stdout
+            lines = disk_lines(list_disks(json.loads(raw), args.stick))
+        except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"install plan: could not list the disks: {e}", file=sys.stderr)
+            return 2
+        print("\n".join(lines))
+        return 0
     try:
         raw = json.loads(Path(args.plan).read_text()) if args.plan else {}
         plan = validate(raw, carry_list=read_carry_list(args.carry_list), zoneinfo=args.zoneinfo,

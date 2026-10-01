@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Put Bombadil on a disk, from the USB stick it is running from.
 #
+#   bombadil-install                                     at a terminal: asks which disk and what password, then installs
 #   bombadil-install --plan FILE [--password-fd N]       what the install card runs (plan: src/bombadil/installplan.py)
 #   bombadil-install DISK [--yes]                        a whole disk, no password and no encryption (tests, the laptop VM)
 #   bombadil-install --refresh DISK [--yes] [--password-fd N]
@@ -20,6 +21,7 @@
 set -euo pipefail
 
 LAYOUT=1
+guided_run=0   # set by the main block when it is run at a terminal with no arguments
 SRC_LIB="${BOMBADIL_SRC:-/usr/share/bombadil/src}"
 CARRY_LIST="${BOMBADIL_CARRY_LIST:-/usr/share/bombadil/install/carry.list}"
 target="${BOMBADIL_TARGET:-/mnt}"
@@ -50,7 +52,7 @@ step() { printf '==> %s\n' "$*"; }
 warn() { printf 'Note: %s\n' "$*"; }
 die()  { printf 'Error: %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 # -- arguments, plan, password ------------------------------------------------------------------
 
@@ -826,8 +828,139 @@ cleanup() {
   return "$rc"
 }
 
+# -- a hand-run install: asks what the install card would ask -----------------------------------------
+
+ZONEINFO_DIR="${BOMBADIL_ZONEINFO:-/usr/share/zoneinfo}"
+
+ask() {  # ask PROMPT [DEFAULT]: one line of answer, the default when it is empty
+  local reply
+  read -r -p "$1" reply || die "no answer was given; nothing was changed"
+  printf '%s' "${reply:-${2:-}}"
+}
+
+ask_number() {  # ask_number PROMPT MAX [DEFAULT]: a whole number from 1 to MAX, asked again until it is one
+  local reply
+  while :; do
+    reply=$(ask "$1" "${3:-}")
+    if [[ "$reply" =~ ^[0-9]+$ ]] && (( reply >= 1 && reply <= $2 )); then printf '%s' "$reply"; return; fi
+    say "Please type a number from 1 to $2." >&2
+  done
+}
+
+ask_secret() {  # ask_secret PROMPT: one line, not shown, into $secret
+  read -rs -p "$1" secret || die "no answer was given; nothing was changed"
+  printf '\n' >&2
+}
+
+# The new disk's password, twice, into $guided_password ("" when the person chose none).
+ask_new_password() {
+  local again
+  say ""
+  say "Choose a password for this computer. It opens the disk when the computer starts, and it unlocks the screen."
+  say "Use letters, numbers and ordinary symbols: the boot screen reads a US keyboard."
+  while :; do
+    ask_secret "Password (empty for none): "
+    guided_password=$secret
+    if [[ -z "$guided_password" ]]; then
+      if [[ "$(ask "Without a password the disk is not encrypted and anyone holding this computer can read it. Install without one? (yes/no) " no)" == yes ]]; then return; fi
+      continue
+    fi
+    if [[ "$guided_password" == *[^\ -~]* ]]; then say "Please use only letters, numbers and ordinary symbols."; continue; fi
+    if (( ${#guided_password} > MAX_PASSWORD )); then say "That is too long; $MAX_PASSWORD characters is the most the boot screen takes."; continue; fi
+    ask_secret "Again: "; again=$secret
+    if [[ "$again" == "$guided_password" ]]; then return; fi
+    say "Those two were different. Let us try again."
+  done
+}
+
+# The plan, from the answers: the disk and mode, and for a fresh install the time zone and the name.
+guided() {
+  local lines count pick n path _offered bombadil encrypted what zone default_zone zone_source host model seed answer enc
+  say "Bombadil installer"
+  say ""
+  say "These are the disks in this computer:"
+  lines=$(PYTHONPATH="$SRC_LIB" python3 -m bombadil.installplan --disks --stick "$(stick_disk)") || die "could not look at the disks"
+  while IFS=$'\t' read -r n path _offered bombadil encrypted what; do
+    if [[ "$n" == - ]]; then say "      $path  $what"; else say "  $n)  $path  $what"; fi
+  done <<<"$lines"
+  count=$(awk -F'\t' '$3 == 1' <<<"$lines" | wc -l)
+  (( count > 0 )) || die "There is no disk here that Bombadil can be put on."
+  pick=$(ask_number "Which disk? (1-$count) " "$count" "$([[ $count == 1 ]] && echo 1)")
+  IFS=$'\t' read -r n path _offered bombadil encrypted what < <(awk -F'\t' -v n="$pick" '$1 == n' <<<"$lines")
+
+  mode=fresh
+  if [[ "$bombadil" == 1 ]]; then
+    say ""
+    say "Bombadil is already on $path."
+    say "  1)  Replace the system, keep my files and settings"
+    say "  2)  Erase the disk and start over"
+    [[ "$(ask_number "Which? (1-2) " 2)" == 1 ]] && mode=refresh
+  fi
+
+  guided_password=""
+  zone=""; zone_source=""; host=""
+  if [[ "$mode" == refresh ]]; then
+    if [[ "$encrypted" == 1 ]]; then
+      ask_secret "The disk's password: "
+      guided_password=$secret
+      [[ -n "$guided_password" ]] || die "a refresh needs the disk's password; nothing was changed"
+    fi
+  else
+    ask_new_password
+    default_zone=$(timedatectl show -p Timezone --value 2>/dev/null || true); default_zone=${default_zone:-UTC}
+    while :; do
+      zone=$(ask "Time zone, for example Europe/Lisbon [$default_zone]: " "$default_zone")
+      [[ "$zone" =~ ^[A-Za-z0-9][A-Za-z0-9_+/-]*$ && -f "$ZONEINFO_DIR/$zone" ]] && break
+      say "That is not a time zone this computer knows."
+    done
+    if [[ "$zone" == "$default_zone" && "$zone" == UTC ]]; then zone_source="unset"; else zone_source="chosen"; fi
+    model=$(cat /sys/class/dmi/id/product_version 2>/dev/null || true)
+    [[ -n "${model//[[:space:]]/}" ]] || model=$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)
+    seed=$(cat /etc/machine-id 2>/dev/null || true)
+    host=$(PYTHONPATH="$SRC_LIB" python3 -c 'import sys
+from bombadil.installplan import suggest_hostname
+print(suggest_hostname(sys.argv[1], model=sys.argv[2] or None))' "$seed" "$model")
+    while :; do
+      answer=$(ask "Name for this computer [$host]: " "$host")
+      [[ "$answer" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] && break
+      say "A name can have lowercase letters, numbers and hyphens, and must start and end with a letter or number."
+    done
+    host=$answer
+  fi
+
+  say ""
+  if [[ "$mode" == refresh ]]; then
+    say "This replaces the system on $path with a new one. Your files and settings stay, and the old system is kept for 14 days."
+  else
+    say "This ERASES everything on $path ($what) and puts Bombadil there${guided_password:+, encrypted}."
+  fi
+  [[ "$(ask "To go on, type the disk's name ($path): ")" == "$path" ]] || die "That was not the disk's name; nothing was changed."
+
+  plan_file=$(mktemp /tmp/bombadil-plan.XXXXXX)
+  enc=""   # a refresh keeps what the disk has
+  if [[ "$mode" == fresh ]]; then if [[ -n "$guided_password" ]]; then enc=yes; else enc=no; fi; fi
+  PLAN_DISK=$path PLAN_MODE=$mode PLAN_ZONE=$zone PLAN_ZONE_SOURCE=$zone_source PLAN_HOST=$host PLAN_ENCRYPT=$enc \
+    python3 - >"$plan_file" <<'PY'
+import json, os
+e = os.environ
+plan = {"disk": e["PLAN_DISK"], "mode": e["PLAN_MODE"]}
+if e["PLAN_ZONE"]:
+    plan.update(timezone=e["PLAN_ZONE"], timezone_source=e["PLAN_ZONE_SOURCE"])
+if e["PLAN_HOST"]:
+    plan["hostname"] = e["PLAN_HOST"]
+if e["PLAN_ENCRYPT"]:
+    plan["encrypt"] = e["PLAN_ENCRYPT"] == "yes"
+print(json.dumps(plan))
+PY
+  disk_arg=""; mode_arg=""; yes=1; pw_fd=""
+  if [[ -n "$guided_password" ]]; then
+    # Read back by read_password; the password is in no argument and no file.
+    exec {pw_fd}< <(printf '%s\n' "$guided_password")
+  fi
+}
+
 run() {
-  parse_args "$@"
+  if (( guided_run )); then guided; else parse_args "$@"; fi
   load_plan
   read_password
   probe
@@ -858,12 +991,26 @@ run() {
   [[ "$mode" != refresh ]] || rm -f "$work/top/$old/etc/fstab.bombadil-backup"
   snapshot "Bombadil $version, as installed" >/dev/null
   replay_stick_packages
+  if (( guided_run )) && [[ -n "${recovery:-}" ]]; then
+    say ""
+    say "Your recovery key. If you ever forget the password, this opens the disk. Write it down or take a photo of it now:"
+    say ""
+    say "    $recovery"
+    say ""
+  fi
   say "Installed. Take out the USB stick, then Restart."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   mkdir -p "$(dirname "$LOG")"
+  # With nothing to go on and a person at the keyboard, ask. (Decided here: inside the pipe below nothing is a terminal.)
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then guided_run=1; fi
   run "$@" 2>&1 | tee -a "$LOG"
-  exit "${PIPESTATUS[0]}"
+  rc=${PIPESTATUS[0]}
+  if (( rc == 0 && guided_run )); then
+    read -r -p "Take out the USB stick, then press Enter to restart. " _ || true
+    systemctl reboot
+  fi
+  exit "$rc"
 fi
 

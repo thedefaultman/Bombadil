@@ -165,3 +165,59 @@ def test_the_name_the_card_offers_is_readable_when_the_maker_gave_a_model_and_di
     host = installplan.suggest_hostname(seed, model=model, name=name)
     assert host == expected
     assert installplan._HOST.fullmatch(host)
+
+
+def _node(path, kind, **kw):
+    return {"path": path, "type": kind, **kw}
+
+
+def test_the_disks_a_person_can_pick_from_and_the_reason_for_each_one_that_is_missing():
+    lsblk = {"blockdevices": [
+        _node("/dev/nvme0n1", "disk", size=512 * 1000**3, model="SAMSUNG  MZVLB512", tran="nvme", children=[
+            _node("/dev/nvme0n1p1", "part", fstype="vfat", partlabel="EFI system partition"),
+            _node("/dev/nvme0n1p3", "part", fstype="BitLocker", partlabel="Basic data partition")]),
+        _node("/dev/sda", "disk", size=1000 * 1000**3, model="WD Blue", tran="sata", children=[
+            _node("/dev/sda2", "part", fstype="crypto_LUKS", partlabel="Bombadil")]),
+        _node("/dev/sdb", "disk", size=32 * 1000**3, model="Flash", tran="usb", children=[
+            _node("/dev/sdb1", "part", fstype="iso9660", mountpoints=["/run/archiso/bootmnt"])]),
+        _node("/dev/sdc", "disk", size=8 * 1000**3, model="Tiny", tran="usb"),
+        _node("/dev/sdd", "disk", size=256 * 1000**3, model="Busy", children=[
+            _node("/dev/sdd1", "part", fstype="ext4", mountpoints=["/mnt/data"])]),
+        _node("/dev/zram0", "disk", size=8 * 1000**3),
+        _node("/dev/loop0", "loop", size=1000**3),
+        _node("/dev/sr0", "rom", size=1000**3),
+    ]}
+    by = {d["path"]: d for d in installplan.list_disks(lsblk, stick="/dev/sdb")}
+    assert list(by) == ["/dev/nvme0n1", "/dev/sda", "/dev/sdb", "/dev/sdc", "/dev/sdd"]
+    assert by["/dev/nvme0n1"]["offered"] and by["/dev/nvme0n1"]["windows"] and by["/dev/nvme0n1"]["note"] == "Windows is on it"
+    assert by["/dev/nvme0n1"]["model"] == "SAMSUNG MZVLB512"
+    assert by["/dev/sda"]["offered"] and by["/dev/sda"]["bombadil"] and by["/dev/sda"]["encrypted"]
+    assert by["/dev/sda"]["note"] == "Bombadil is on it, encrypted"
+    assert by["/dev/sdb"]["why_not"] == "the USB stick Bombadil started from"
+    assert by["/dev/sdc"]["why_not"] == "smaller than 16 GB"
+    assert by["/dev/sdd"]["why_not"] == "in use"
+    # An install image is refused by what is on it too, when the stick is not the one this boot came from.
+    other = installplan.list_disks(lsblk, stick="")
+    assert [d for d in other if d["path"] == "/dev/sdb"][0]["why_not"] == "a Bombadil install image"
+
+
+def test_the_lines_for_the_shell_number_only_what_can_be_picked():
+    disks = [{"path": "/dev/a", "size": 500 * 1000**3, "model": "A", "usb": False, "offered": True, "why_not": "",
+              "note": "empty", "bombadil": False, "encrypted": False, "windows": False},
+             {"path": "/dev/b", "size": 2000 * 1000**3, "model": "", "usb": True, "offered": False,
+              "why_not": "in use", "note": "", "bombadil": False, "encrypted": False, "windows": False},
+             {"path": "/dev/c", "size": 256 * 1000**3, "model": "C", "usb": False, "offered": True, "why_not": "",
+              "note": "Bombadil is on it", "bombadil": True, "encrypted": False, "windows": False}]
+    rows = [line.split("\t") for line in installplan.disk_lines(disks)]
+    assert [r[0] for r in rows] == ["1", "-", "2"]
+    assert rows[1][2:5] == ["0", "0", "0"] and rows[2][2:5] == ["1", "1", "0"]
+    assert rows[1][5] == "2.0 TB disk (USB): not offered, it is in use"
+
+
+def test_run_as_a_module_it_lists_the_disks_from_lsblks_json(tmp_path):
+    f = tmp_path / "lsblk.json"
+    f.write_text(json.dumps({"blockdevices": [_node("/dev/vda", "disk", size=64 * 1000**3, model="QEMU", tran="")]}))
+    src = Path(__file__).resolve().parent.parent / "src"
+    r = subprocess.run([sys.executable, "-m", "bombadil.installplan", "--disks", "--lsblk", str(f)], capture_output=True,
+                       text=True, env={"PYTHONPATH": str(src), "PATH": "/usr/bin:/bin"})
+    assert r.returncode == 0 and r.stdout.startswith("1\t/dev/vda\t1\t0\t0\t64 GB QEMU: empty")

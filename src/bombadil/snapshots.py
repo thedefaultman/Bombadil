@@ -22,6 +22,17 @@ class Snapshot:
     description: str
 
 
+def label_from_hook(text: str, where: str = "remote") -> str:
+    """The description of a restore point taken by a Claude Code UserPromptSubmit hook, which is handed
+    {"prompt": "..."} on stdin: "turn: remote: <the start of the prompt>". The "turn:" is what undo looks for."""
+    try:
+        prompt = str(json.loads(text).get("prompt", ""))
+    except (ValueError, AttributeError):
+        prompt = ""
+    prompt = " ".join(prompt.split())
+    return f"turn: {where}: {prompt[:60]}".rstrip(": ") if prompt else f"turn: {where}"
+
+
 class Snapshots:
     def __init__(self, config_name: str = "root", runner=subprocess.run, configs_dir: Path = SNAPPER_CONFIGS):
         self.config_name = config_name

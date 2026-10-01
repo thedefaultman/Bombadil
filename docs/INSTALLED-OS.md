@@ -107,6 +107,41 @@ flowchart LR
   exchange where the kernel offers it) and keeps the previous root as `@.undone-<stamp>`, so an
   undo can itself be undone.
 
+## Installing on a computer
+
+What you need: a computer that starts in UEFI mode (Secure Boot off), a disk you are willing to
+erase (16 GB or more), a USB stick with the Bombadil image, and a network connection (Wi-Fi is set
+up from the pill: say "wifi").
+
+1. Write the image to the stick, start the computer from it, and let it open.
+2. Sign in to the AI when the pill asks. The sign-in is carried to the installed system (it is on
+   `install/carry.list`), so the installed computer is signed in on its first start.
+3. Say **install** in the pill (or press Super+Enter for a terminal and run `sudo bombadil-install`).
+   It lists the disks and what is on each, then asks, one question at a time: which disk, a
+   password, the time zone, a name for the computer. Nothing is changed until the disk's name is
+   typed in full. When Bombadil is already on the disk it offers to replace the system and keep the
+   files and settings (a refresh) instead.
+4. At the end it shows a **recovery key**. Write it down or photograph it: it opens the disk if the
+   password is forgotten, and it is shown here once. Then take out the stick and press Enter to
+   restart.
+5. At power-on the computer asks for the password once. The desktop opens signed in.
+
+## Remote control
+
+`bombadil remote` (or the word **remote** in the pill) starts Claude Code's remote-control server
+on the computer, in a detached tmux session, so another device can steer a session here from
+claude.ai/code or the Claude app. It needs a claude.ai account (not an API key), which the sign-in
+in step 2 gives. `src/bombadil/remote.py` explains the details; in short:
+
+- `bombadil remote` starts it, or says it is already on, and prints the link.
+- `bombadil remote status`, `url`, `show` (look at the session; Ctrl-b then d leaves it running)
+  and `stop`.
+- The session works in `~/Projects/remote`, a folder Bombadil makes. It has no permission
+  questions, and a restore point is taken before every prompt, labelled `turn: remote: ...`, so
+  "undo" in the pill takes back what a remote session did. A folder you name yourself is left
+  exactly as it is.
+- Remote control does not start by itself at boot; after a restart, say "remote" in the pill.
+
 ## What a user sees
 
 - On the stick: the pill offers "Install on this computer". The card draws the disks as bars with
@@ -118,8 +153,10 @@ flowchart LR
 - Afterwards: undo works from the pill; closing the lid locks behind the same password; an update
   arrives as one restore point so a kernel that goes wrong goes back with undo.
 
-The install card is a later piece; today the same plan is run by hand with
-`bombadil-install --plan FILE --password-fd N`.
+The install card is a later piece. Until it exists the same questions are asked in a terminal
+(`bombadil-install` with no arguments, or the word "install" in the pill), and the plan is
+written for the person from the answers; `bombadil-install --plan FILE --password-fd N` is what the
+card will run.
 
 ## The plan
 

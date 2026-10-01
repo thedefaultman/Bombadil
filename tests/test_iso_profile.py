@@ -56,3 +56,8 @@ def test_the_installed_clock_is_kept_right_by_timesyncd():
     # The installed system is a copy of the image; a service enabled in the image is enabled there.
     link = ISO / "airootfs/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service"
     assert link.is_symlink() and link.readlink().name == "systemd-timesyncd.service"
+
+
+def test_the_image_has_what_remote_control_runs_in():
+    # `bombadil remote` keeps Claude Code's remote-control server in a detached tmux session.
+    assert "tmux" in _packages()

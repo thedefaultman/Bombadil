@@ -20,7 +20,8 @@ INSTALL = BIN / "bombadil-install"
 ROLLBACK = BIN / "bombadil-rollback"
 
 
-def sh(script: str, *, env: dict | None = None, path_first: Path | None = None, check: bool = True):
+def sh(script: str, *, env: dict | None = None, path_first: Path | None = None, check: bool = True,
+       input: str | None = None):
     """Run bash with the installer sourced (its `run` does not start), then `script`."""
     full = {
         "PATH": f"{path_first}:/usr/bin:/bin" if path_first else "/usr/bin:/bin",
@@ -30,7 +31,7 @@ def sh(script: str, *, env: dict | None = None, path_first: Path | None = None, 
         **(env or {}),
     }
     return subprocess.run(["bash", "-c", f'source "{INSTALL}"\n{script}'], env=full, capture_output=True,
-                          text=True, check=check)
+                          text=True, check=check, input=input)
 
 
 def shim(directory: Path, name: str, body: str) -> None:
@@ -960,3 +961,128 @@ def test_a_system_with_no_kernel_modules_is_not_a_finished_install(tmp_path):
     shutil.rmtree(t / "usr")
     r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
     assert r.returncode != 0 and "no kernel modules" in r.stderr
+
+
+# -- the install a person runs by hand ------------------------------------------------------------------
+
+def _disk(path, size_gb, model, children=(), tran="sata"):
+    return {"path": path, "size": size_gb * 1000**3, "type": "disk", "tran": tran, "model": model,
+            "children": list(children)}
+
+
+def _part(path, fstype, partlabel="", mount=None):
+    return {"path": path, "type": "part", "fstype": fstype, "partlabel": partlabel, "mountpoints": [mount]}
+
+
+DISKS = {"blockdevices": [
+    _disk("/dev/nvme0n1", 512, "SAMSUNG MZVLB512", tran="nvme",
+          children=[_part("/dev/nvme0n1p1", "vfat", "EFI system partition"), _part("/dev/nvme0n1p3", "ntfs", "Basic data partition")]),
+    _disk("/dev/sda", 1000, "WD Blue", children=[_part("/dev/sda1", "vfat", "EFI"), _part("/dev/sda2", "crypto_LUKS", "Bombadil")]),
+    _disk("/dev/sdb", 32, "Flash", tran="usb", children=[_part("/dev/sdb1", "iso9660", mount="/run/archiso/bootmnt")]),
+]}
+
+
+def guided_session(tmp_path, answers, disks=DISKS, then=""):
+    """Run guided() with `answers` typed, and print what it decided: the plan, and the password as read back."""
+    shims = tmp_path / "shims"
+    shim(shims, "lsblk", f"cat <<'EOF'\n{json.dumps(disks)}\nEOF")
+    zones = tmp_path / "zoneinfo"
+    for z in ("UTC", "Europe/Lisbon"):
+        (zones / z).parent.mkdir(parents=True, exist_ok=True)
+        (zones / z).write_bytes(b"TZif2" + b"\0" * 40)
+    cmdline = tmp_path / "cmdline"
+    cmdline.write_text("quiet\n")
+    script = ('guided; echo "PLAN=$(cat "$plan_file")"; echo "MODE=$mode"; '
+              'if [[ -n "$pw_fd" ]]; then IFS= read -r -u "$pw_fd" p; echo "PW=$p"; else echo "PW=none"; fi; ' + then)
+    return sh(script, env={"BOMBADIL_ZONEINFO": str(zones), "BOMBADIL_CMDLINE_FILE": str(cmdline)},
+              path_first=shims, input=answers, check=False)
+
+
+def _decided(r):
+    assert r.returncode == 0, r.stdout + r.stderr
+    got = dict(line.split("=", 1) for line in r.stdout.splitlines() if line.startswith(("PLAN=", "MODE=", "PW=")))
+    return json.loads(got["PLAN"]), got["MODE"], got["PW"]
+
+
+def test_a_new_encrypted_install_asks_for_disk_password_zone_and_name_and_writes_the_plan(tmp_path):
+    answers = "1\ncorrect horse\ncorrect horse\nEurope/Lisbon\nspare-laptop\n/dev/nvme0n1\n"
+    plan, mode, pw = _decided(guided_session(tmp_path, answers))
+    assert plan == {"disk": "/dev/nvme0n1", "mode": "fresh", "timezone": "Europe/Lisbon", "timezone_source": "chosen",
+                    "hostname": "spare-laptop", "encrypt": True}
+    assert mode == "fresh" and pw == "correct horse"
+
+
+def test_the_plan_a_person_makes_is_one_the_plan_checker_accepts(tmp_path):
+    answers = "1\nhunter22\nhunter22\nEurope/Lisbon\nspare-laptop\n/dev/nvme0n1\n"
+    plan, _, _ = _decided(guided_session(tmp_path, answers))
+    from bombadil import installplan
+    zones = tmp_path / "zoneinfo"
+    checked = installplan.validate(plan, carry_list=installplan.read_carry_list(ROOT / "install/carry.list"), zoneinfo=zones)
+    assert checked["encrypt"] is True and checked["hostname"] == "spare-laptop"
+
+
+def test_the_stick_is_listed_but_not_offered_and_the_disks_say_what_is_on_them(tmp_path):
+    r = guided_session(tmp_path, "1\npw-one-two\npw-one-two\nUTC\n\n/dev/nvme0n1\n")
+    assert "1)  /dev/nvme0n1  512 GB SAMSUNG MZVLB512: Windows is on it" in r.stdout
+    assert "2)  /dev/sda  1.0 TB WD Blue: Bombadil is on it, encrypted" in r.stdout
+    assert "/dev/sdb  32 GB Flash (USB): not offered, it is a Bombadil install image" in r.stdout
+
+
+def test_the_time_zone_left_at_the_live_default_is_not_taken_as_a_choice(tmp_path):
+    plan, _, _ = _decided(guided_session(tmp_path, "1\npw-one-two\npw-one-two\n\n\n/dev/nvme0n1\n"))
+    assert (plan["timezone"], plan["timezone_source"]) == ("UTC", "unset")
+    assert plan["hostname"]   # the computer's own suggestion, accepted
+
+
+def test_no_password_needs_a_second_yes_and_then_means_no_encryption(tmp_path):
+    answers = "1\n\nno\npw-one-two\npw-one-two\nUTC\nhost1\n/dev/nvme0n1\n"   # empty, "no", then a real one
+    plan, _, pw = _decided(guided_session(tmp_path, answers))
+    assert plan["encrypt"] is True and pw == "pw-one-two"
+    plan, _, pw = _decided(guided_session(tmp_path, "1\n\nyes\nUTC\nhost1\n/dev/nvme0n1\n"))
+    assert plan["encrypt"] is False and pw == "none"
+
+
+def test_a_password_typed_twice_must_match_and_be_plain_text_the_boot_screen_can_read(tmp_path):
+    answers = "1\nfirst-one\nsecond-one\nüberpass\nüberpass\nright-one\nright-one\nUTC\nhost1\n/dev/nvme0n1\n"
+    r = guided_session(tmp_path, answers)
+    plan, _, pw = _decided(r)
+    assert pw == "right-one" and "different" in r.stdout and "ordinary symbols" in r.stdout
+
+
+def test_a_bad_disk_number_and_a_bad_zone_and_a_bad_name_are_asked_again(tmp_path):
+    answers = "7\nx\n1\npw-one-two\npw-one-two\nMars/Olympus\nUTC\nBad Name\ngood-name\n/dev/nvme0n1\n"
+    r = guided_session(tmp_path, answers)
+    plan, _, _ = _decided(r)
+    assert plan["disk"] == "/dev/nvme0n1" and plan["hostname"] == "good-name"
+    assert "from 1 to 2" in r.stdout + r.stderr and "not a time zone" in r.stdout
+
+
+def test_the_disk_is_only_erased_after_its_name_is_typed(tmp_path):
+    r = guided_session(tmp_path, "1\npw-one-two\npw-one-two\nUTC\nhost1\nyes\n")
+    assert r.returncode != 0 and "nothing was changed" in r.stderr and "PLAN=" not in r.stdout
+    assert "ERASES everything on /dev/nvme0n1 (512 GB SAMSUNG MZVLB512: Windows is on it)" in r.stdout
+
+
+def test_a_disk_that_already_has_bombadil_can_be_refreshed_with_its_own_password_and_no_other_questions(tmp_path):
+    answers = "2\n1\nthe old password\n/dev/sda\n"
+    plan, mode, pw = _decided(guided_session(tmp_path, answers))
+    assert plan == {"disk": "/dev/sda", "mode": "refresh"}
+    assert mode == "refresh" and pw == "the old password"
+
+
+def test_a_disk_that_has_bombadil_can_also_be_erased_instead(tmp_path):
+    answers = "2\n2\npw-one-two\npw-one-two\nUTC\nhost1\n/dev/sda\n"
+    plan, mode, _ = _decided(guided_session(tmp_path, answers))
+    assert mode == "fresh" and plan["encrypt"] is True
+
+
+def test_with_no_disk_to_offer_it_says_so_and_changes_nothing(tmp_path):
+    only_stick = {"blockdevices": [DISKS["blockdevices"][2]]}
+    r = guided_session(tmp_path, "", disks=only_stick)
+    assert r.returncode != 0 and "no disk here" in r.stderr
+
+
+def test_a_single_disk_is_chosen_by_pressing_enter(tmp_path):
+    one = {"blockdevices": [DISKS["blockdevices"][0]]}
+    plan, _, _ = _decided(guided_session(tmp_path, "\npw-one-two\npw-one-two\nUTC\nhost1\n/dev/nvme0n1\n", disks=one))
+    assert plan["disk"] == "/dev/nvme0n1"
