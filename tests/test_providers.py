@@ -156,6 +156,9 @@ def test_codex_items_become_steps_and_results():
             {"text": "Install ffmpeg", "completed": True}, {"text": "Open the browser", "completed": False}]}},
     ]
     ev = [e for m in lines for e in p.parse(json.dumps(m))]
+    # Each finished step ends the message its reason belonged to.
+    assert [e["kind"] for e in ev].count("message_start") == 3
+    ev = [e for e in ev if e["kind"] != "message_start"]
     assert ev[0] == {"kind": "thinking", "text": "Installing ffmpeg"}
     assert ev[1]["name"] == "Bash" and "pacman" in ev[1]["input"]["command"]
     assert ev[2] == {"kind": "tool_result", "id": "c", "output": "error: target not found", "error": True, "exit_code": 1}
@@ -177,6 +180,46 @@ def test_shell_turns_stream_output_and_end_with_the_exit_code():
     end = list(p.finish())
     assert end[0]["error"] and end[0]["exit_code"] == 2
     assert end[1] == {"kind": "result", "ok": False, "text": "one\ntwo\n(exit 2)"}
+
+
+def test_claude_says_where_each_model_message_starts():
+    """The sentence before a step is that message's reason: the Narrator needs its boundaries."""
+    p = providers.Claude("x")
+    ev = _kinds(p, "claude-install-ffmpeg.jsonl")
+    kinds = [e["kind"] for e in ev]
+    assert kinds.count("message_start") >= 1
+    # A message starts before anything it says.
+    assert kinds.index("message_start") < kinds.index("text_delta")
+    assert list(p.parse(json.dumps({"type": "stream_event", "event": {"type": "message_start"}}))) == [
+        {"kind": "message_start"}]
+
+
+def test_every_turn_says_where_the_kit_lives_and_how_to_import_it(tmp_path, monkeypatch):
+    """A fresh session must not go searching the disk for Theme.qml."""
+    share = tmp_path / "share"
+    (share / "qml" / "Bombadil").mkdir(parents=True)
+    (share / "skills" / "bombadil-apps").mkdir(parents=True)
+    monkeypatch.setattr(providers, "__file__", str(tmp_path / "nowhere" / "src" / "bombadil" / "providers.py"))
+    monkeypatch.setenv("BOMBADIL_SHARE", str(tmp_path))
+    prompt = providers.system_prompt()
+    assert "import Bombadil" in prompt and f"{share}/qml/Bombadil/" in prompt
+    assert f"{share}/skills/bombadil-apps/SKILL.md" in prompt and "never search the disk" in prompt
+    claude = providers.Claude("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
+    assert claude[claude.index("--append-system-prompt") + 1] == prompt        # resumed turns get it too
+    codex = providers.Codex("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
+    assert f"developer_instructions={json.dumps(prompt)}" in codex
+
+
+def test_kit_paths_on_this_checkout_exist():
+    kit, skill = providers.kit_paths()
+    assert (kit / "Theme.qml").is_file() and (skill / "SKILL.md").is_file()
+
+
+def test_the_system_prompt_asks_for_reasons_plans_and_pictures():
+    prompt = providers.system_prompt()
+    assert "say in one short plain sentence why" in prompt
+    assert "write the plan first with your task tool" in prompt
+    assert "show it as a picture (system_map for this machine, show_card otherwise), then say one line" in prompt
 
 
 def test_only_the_clis_own_retry_notices_are_not_progress():
@@ -307,26 +350,6 @@ def test_codex_signed_in_asks_codex_login_status(tmp_path, monkeypatch):
         codex.write_text(f"#!/bin/sh\n[ \"$1 $2\" = \"login status\" ] || exit 9\n{script}\n")
         codex.chmod(0o755)
         assert p.signed_in() is want, script
-
-def test_every_turn_says_where_the_kit_lives_and_how_to_import_it(tmp_path, monkeypatch):
-    """A fresh session must not go searching the disk for Theme.qml."""
-    share = tmp_path / "share"
-    (share / "qml" / "Bombadil").mkdir(parents=True)
-    (share / "skills" / "bombadil-apps").mkdir(parents=True)
-    monkeypatch.setattr(providers, "__file__", str(tmp_path / "nowhere" / "src" / "bombadil" / "providers.py"))
-    monkeypatch.setenv("BOMBADIL_SHARE", str(tmp_path))
-    prompt = providers.system_prompt()
-    assert "import Bombadil" in prompt and f"{share}/qml/Bombadil/" in prompt
-    assert f"{share}/skills/bombadil-apps/SKILL.md" in prompt and "never search the disk" in prompt
-    claude = providers.Claude("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
-    assert claude[claude.index("--append-system-prompt") + 1] == prompt        # resumed turns get it too
-    codex = providers.Codex("/usr/bin/bombadil-os-mcp").command(providers.Turn("hi", session_id="s"), tmp_path)
-    assert f"developer_instructions={json.dumps(prompt)}" in codex
-
-
-def test_kit_paths_on_this_checkout_exist():
-    kit, skill = providers.kit_paths()
-    assert (kit / "Theme.qml").is_file() and (skill / "SKILL.md").is_file()
 
 
 def _todo_list(kind, items, item_id="l"):

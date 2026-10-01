@@ -6,7 +6,7 @@ hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", sca
 
 hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
-    hl.exec_cmd("quickshell -p /usr/share/bombadil/shell/shell.qml")
+    hl.exec_cmd("bombadil-shell")
     hl.exec_cmd("mako")
     -- Mail's service is a user unit that starts at login, before this session has a screen, and
     -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
@@ -60,7 +60,7 @@ hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
-hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; quickshell -p /usr/share/bombadil/shell/shell.qml"))
+hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("pkill -x quickshell; bombadil-shell"))
 
 -- Generated apps float, centered, so they appear as a card over the desktop.
 hl.window_rule({

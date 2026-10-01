@@ -107,6 +107,7 @@ AppWindow {
 | a table explorer (processes, files, logs) | `SearchField` in `actions`, a full-size `DataTable`, a detail `Panel` or `Dialog` on `activated` |
 | a form tool (converter, generator, calculator) | a `Panel` with a `Form` of `Field`s and a result `Mono` with a copy `IconButton` |
 | an editor (notes, config files, scripts) | `Editor { path: "~/notes.md" }` with a file list beside it |
+| an explainer (how it works, what depends on what, what changed) | a `Diagram` with a `spec`: `chain` for a path, `layers` for needs, `compare` for before and after, `timeline` for a sequence |
 | anything with secrets | `Vault` behind an unlock screen (`examples/password-manager/LockScreen.qml`), `Clipboard.copy(pw, 30)`, close what shows secrets `onUnlockedChanged`, check `vault.error` after assigning `data`, reset a `PasswordField`'s `revealed` after unlock |
 
 ## The kit at a glance
@@ -116,7 +117,7 @@ Text: `Heading`, `Body`, `Caption`, `Mono`. Bits: `Icon`, `IconButton`, `Badge`,
 `EmptyState`, `DetailGrid`. Lists: `SearchField`, `ItemList`, `ListRow`, `DataTable`.
 Forms: `Form`, `Field`, `PasswordField`. Editing: `Editor`. Feedback: `ConfirmDialog`,
 `win.toast(text, tone)`. Charts: `Series`, `LineChart`, `BarChart`, `Sparkline`, `Meter`,
-`Ring`, `StackedBar`. Formatting: `Fmt.bytes()`, `Fmt.percent()`, `Fmt.duration()`,
+`Ring`, `StackedBar`. Pictures: `Diagram`. Formatting: `Fmt.bytes()`, `Fmt.percent()`, `Fmt.duration()`,
 `Fmt.relative()`, ...
 
 Native: `App` (name, dataDir, hide(), notify(), openUrl()), `Store`, `Vault`, `System`

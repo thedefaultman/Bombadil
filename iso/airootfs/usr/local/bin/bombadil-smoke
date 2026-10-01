@@ -46,8 +46,8 @@ virtual_display_size() { hypr_json monitors | python3 -c 'import json,sys; m=[x 
 # A real sound output: not just PipeWire's "Dummy Output", which it makes when there is no card or
 # no ALSA plugin to read one.
 audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\. ' | grep -v "Dummy Output" | grep -q .; }
-# Every generated app card sits at its own spot (a second one does not hide the first).
-apps_apart() { hypr_json clients | python3 -c 'import json,sys; a=[tuple(c["at"]) for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(a); sys.exit(len(a) < 2 or len(set(a)) != len(a))'; }
+# Every generated app has its own drawer (a special workspace), so a second never hides the first.
+apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
@@ -100,7 +100,11 @@ check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
 check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 shot app
-check app-hide app_hidden smoke-test
+check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
+check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
+check apps-have-own-drawers wait_for 30 apps_in_own_drawers
+check second-app-shown wait_for 30 special_shown app-smoke-two
+check app-hide app_hidden smoke-two
 for ex in memory password-manager; do
   [[ -d "/usr/share/bombadil/share/skills/bombadil-apps/examples/$ex" ]] || continue
   check "example-$ex" open_example "$ex"
@@ -108,10 +112,25 @@ for ex in memory password-manager; do
   check "example-$ex-status" wait_for 30 app_ok "$ex"
   shot "$ex"
 done
-check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
-check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
-check apps-have-own-spots wait_for 30 apps_apart
 check screenshot grab
+
+# Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
+# was there to draw it) and comes back as words. How long it took goes in the log: a capture over
+# 500 ms on real hardware is a finding, not a failure.
+picture() {
+  local t0 out args="{\"kind\":\"$1\"}"
+  [[ -n "${2:-}" ]] && args="{\"kind\":\"$1\",\"target\":\"$2\"}"
+  t0=$(date +%s%N)
+  out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
+    | as_user timeout 60 bombadil-os-mcp | tail -1) || return 1
+  echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms: ${out:0:400}" >&2
+  grep -q 'shown above the bar' <<<"$out"
+}
+check os-mcp-lists-pictures bash -c 'printf "%s\n" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}" | timeout 20 bombadil-os-mcp | grep -q system_map'
+for kind in network boot disks sound screens; do check "picture-$kind" picture "$kind"; done
+check picture-service picture service systemd-logind
+shot picture
 
 # The pill: a tap on Super gives it the keyboard, a launcher word opens without the model, and
 # Super+Escape stops a running turn and everything it started.
@@ -120,6 +139,15 @@ keys meta_l
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
+# A tap that did nothing: was it the bind (Hyprland never ran `bombadil pill`) or the pill? Say which
+# in the log: ask for the pill by hand and type the word again.
+if ! launcher_ran browser "Opened the browser" "$before"; then
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1)"
+  as_user bombadil pill; sleep 3
+  keys b r o w s e r ret
+  if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
+  else say "DIAG by hand the pill did not take the word either"; fi
+fi
 shot launcher-browser
 check browser-hide-again mcp_call hide_panel '{"name":"browser"}'
 # Alt+Space opens the pill too, for hosts that keep Super.
@@ -152,6 +180,15 @@ keys meta_l
 keys esc
 check pill-esc-closes-details wait_for 30 drawer_gone
 shot details-closed
+
+# A click on a box in a picture that names a service opens it in the same drawer, in the viewer
+# (bombadil view, which needs no pager on the image), and one Esc puts it away.
+check open-unit agentd_send '{"type": "open", "kind": "unit", "value": "systemd-logind.service"}'
+check open-unit-window wait_for 60 has_client 'c["class"]=="bombadil-details" and c["workspace"]["name"]=="special:details"'
+check open-unit-has-keyboard wait_for 30 active_is bombadil-details
+shot open-unit
+keys esc
+check open-unit-esc-closes wait_for 30 drawer_gone
 
 # Mail (docs/MAIL.md): Thunderbird is the engine, kept unseen by bombadil-mail, whose user unit starts at
 # login. The live system has no mail account, so what needs mail runs the service on its fake engine (sample

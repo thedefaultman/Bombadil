@@ -19,4 +19,4 @@ trap 'kill $(jobs -p) 2>/dev/null || true; [[ -z "${mail:-}" ]] || rm -rf "$mail
 "$root/bin/agentd" &
 "$root/bin/bombadil-mail" &
 sleep 0.5
-quickshell -p "$root/shell/shell.qml"
+bombadil-shell

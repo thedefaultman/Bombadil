@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 
 // The parts of a notice's line that are not its words: the chips (the primary one is orange, a quiet
 // one is plain), how many other notices wait behind this one, and the cross that puts it away. The
@@ -27,19 +28,20 @@ RowLayout {
             readonly property bool primary: modelData.style === "primary"
             objectName: "noticeChip"
             implicitWidth: label.implicitWidth + 28
-            implicitHeight: 26
+            implicitHeight: Kit.Theme.chipHeight
             radius: implicitHeight / 2
-            color: tap.pressed ? "#353b43" : hover.hovered ? "#2a2f36" : (primary ? "#f022262b" : "#d91a1d21")
+            color: tap.pressed ? Kit.Theme.borderStrong : hover.hovered ? Kit.Theme.overlay : (primary ? Kit.Theme.glassRaised : Kit.Theme.glassChip)
             border.width: 1
-            border.color: primary ? (hover.hovered ? "#e89a80" : "#d97757") : "#2a2f36"
-            Behavior on border.color { ColorAnimation { duration: 150 } }
+            border.color: primary ? (hover.hovered ? Kit.Theme.accentHover : Kit.Theme.accent) : Kit.Theme.border
+            Behavior on border.color { ColorAnimation { duration: Kit.Theme.fast } }
 
             Text {
                 id: label
                 anchors.centerIn: parent
                 text: chip.modelData.label
-                color: chip.primary ? "#e6e8eb" : "#a9b0b8"
-                font.pixelSize: 13
+                color: chip.primary ? Kit.Theme.fg : Kit.Theme.muted
+                font.pixelSize: Kit.Theme.smallSize
+                font.family: Kit.Theme.fontFamily
                 textFormat: Text.PlainText
             }
             HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
@@ -55,8 +57,9 @@ RowLayout {
         objectName: "noticeMore"
         visible: tail.withTail && tail.pill.notices.length > 1
         text: "+" + (tail.pill.notices.length - 1)
-        color: "#8b939c"
-        font.pixelSize: 12
+        color: Kit.Theme.muted
+        font.family: Kit.Theme.fontFamily
+        font.pixelSize: Kit.Theme.captionSize
         font.features: { "tnum": 1 }
     }
 
@@ -64,8 +67,9 @@ RowLayout {
         objectName: "noticeDismiss"
         visible: tail.withTail
         text: "×"
-        color: away.hovered ? "#e6e8eb" : "#8b939c"
-        font.pixelSize: 15
+        color: away.hovered ? Kit.Theme.fg : Kit.Theme.muted
+        font.family: Kit.Theme.fontFamily
+        font.pixelSize: Kit.Theme.lineSize
         HoverHandler { id: away; cursorShape: Qt.PointingHandCursor; margin: 6 }
         TapHandler {
             // The notice that was on the line when the press began is the one it puts away.

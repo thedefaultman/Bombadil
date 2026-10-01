@@ -530,6 +530,51 @@ StackedBar {
 }
 ```
 
+## Pictures
+
+### Diagram
+Boxes and the lines between them, from data, in one of four fixed shapes. The layout is fixed and
+never a force layout: the same data draws the same picture. It is the same component the bar uses
+for the pictures the OS draws above the pill (`show_card`, `system_map`), so a picture in an app
+looks like those. Use it when an answer has parts, order or change; for numbers over time use a
+chart instead.
+
+```qml
+Diagram {
+    Layout.fillWidth: true
+    spec: ({
+        shape: "chain", title: "How the backup runs",
+        nodes: [{ id: "a", label: "Timer", sub: "daily, 03:00" },
+                { id: "b", label: "rsync", state: "active" },
+                { id: "c", label: "Backup disk", state: "warn", note: "82% full",
+                  opens: { kind: "path", value: "/mnt/backup" } }],
+        say: "The disk is nearly full, so the next run may fail."
+    })
+    onOpened: target => Qt.openUrlExternally("file://" + target.value)   // a box with `opens` is a button
+}
+```
+
+`spec` is the card `show_card` takes:
+
+- `shape`: `chain` (left to right, wrapping into rows when it does not fit; arrows in order unless
+  `linked: false` or `links` are given), `layers` (a box sits below every box that points at it;
+  give `links`, nothing else needed), `compare` (every node has `side: "before"` or `"after"`; the
+  same `key` on both sides puts them on one row), `timeline` (one row per node: `time` as text and
+  `weight` as a number for the bar's length).
+- `title` (60 characters), `say` (one plain sentence, 160), `highlight` (ids lit, the rest dimmed).
+- `nodes` (at most 12): `label` (32), `sub` (60), `note` (60, under the box), `id` (needed by links and
+  highlight), `state`, `icon` (a kit icon name), `opens`.
+- `state`: `ok`, `warn` (amber, a triangle), `bad` (red, an x), `new` (orange, a plus), `gone` (dim and
+  struck through), `active` (blue). Colour is never the only sign.
+- `links` (at most 16): `{ from, to, label (24), state }`.
+- `opens`: `{ kind, value }` with kind `path`, `unit`, `package`, `url` or `turn`. The component only
+  emits `opened(target)`; the bar's host opens it, and in an app you decide what it does.
+
+Properties: `spec`, `showTitle` (true: the title above and the `say` line under), `minBoxWidth` (132),
+`maxBoxWidth` (208). Signals: `opened(target)` for a box with `opens`, `picked(node)` for any click.
+A spec with `partial: true` shows "drawing…" (a card still being written). Bad data draws nothing and
+warns about nothing.
+
 ## Icons
 
 `activity` `alert-triangle` `archive` `arrow-down` `arrow-left` `arrow-right` `arrow-up`
