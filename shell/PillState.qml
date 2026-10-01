@@ -54,6 +54,10 @@ QtObject {
     // The picture above the line (a diagram card from show_card, system_map or a receipt), or null.
     // One at a time: a newer one replaces it; Esc and its × put it away; the next turn clears it.
     property var card: null
+    // A picture you asked for keeps the line that came with it. The picture sits above the line, so
+    // when the line faded the picture dropped by the line's height, and a click aimed at its × (or at
+    // a box) missed. A receipt is not asked for: it fades with its line. Esc or × puts both away.
+    readonly property bool pictureStays: !!card && !card.receipt && !card.partial
     property double cardAt: 0
     // Esc and the Stop dot act while a turn runs, from the moment Enter showed "On it", and
     // while a sign-in is under way (they call it off).

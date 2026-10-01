@@ -417,9 +417,16 @@ def parse_blame(text: str | None) -> list[tuple[str, float]]:
     return rows
 
 
+def _worth_blaming(rows: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """The units of `blame` that say what the boot did. A .device unit is the time spent waiting for
+    the hardware to appear (five seconds each on a VM whose disk is slow to show up) and an initrd-*
+    unit is the early boot before the system proper: neither is something to fix."""
+    return [r for r in rows if r[1] >= 0.001 and not r[0].endswith(".device") and not r[0].startswith("initrd-")]
+
+
 def _boot_from_blame(rows: list[tuple[str, float]], total: float) -> dict:
     """The slowest units of the boot, longest first, each with a bar as long as it took."""
-    keep = [r for r in rows if r[1] >= 0.001][:cards.MAX_NODES]
+    keep = _worth_blaming(rows)[:cards.MAX_NODES]
     nodes = [{"id": f"u{i + 1}", "label": _short(unit), "time": _fmt_secs(took), "weight": round(took, 3),
               "opens": {"kind": "unit", "value": unit}} for i, (unit, took) in enumerate(keep)]
     lit = []
@@ -449,7 +456,7 @@ def capture_boot(run_: Run = run, budget: float = BUDGET) -> dict:
         raise Unavailable("Could not read the boot: there is no boot record to read (a live system has none).")
     m = _TIME_RE.search(got["time"] if isinstance(got["time"], str) else "")
     total = _secs(m.group(2)) if m and m.group(2) else 0.0
-    if len(rows) < THIN_CHAIN and len([b for b in blamed if b[1] >= 0.001]) > len(rows):
+    if len(rows) < THIN_CHAIN and len(_worth_blaming(blamed)) > len(rows):
         return _boot_from_blame(blamed, total)
     if not rows:
         raise Unavailable("Could not read the boot: there is no boot record to read (a live system has none).")

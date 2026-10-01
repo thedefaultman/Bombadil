@@ -64,6 +64,13 @@ system. The fixtures in `tests/test_sysmap.py` now carry the real shape.
   than four steps and `systemd-analyze blame` knows more units, the card shows the slowest units
   instead (longest first, the duration where the start time was, the longest in amber from a
   second). The three commands run side by side, so it costs no more time.
+- **`blame` is mostly waiting.** On the first version of that fallback the twelve rows were all
+  `.device` units (`dev-vda2.device` and friends), about 5 s each: a `.device` unit is "waiting for
+  the hardware to show up", not work, and the boot says nothing about it. The say line named one of
+  them as the thing that takes longest. `sysmap._worth_blaming` leaves out `.device` units and
+  `initrd-*` units (the early boot, before the real system starts), so the rows are what the machine
+  did: on the test VM `systemd-tmpfiles-setup-dev-early` 2.0 s, `systemd-nsresourced` 1.7 s,
+  `NetworkManager` 448 ms. When nothing but those is left the chain is kept as it is.
 - **Systemd escapes names.** `/dev/disk/by-uuid/1234` is `dev-disk-by\x2duuid-1234` as a unit name,
   and a boot step for a disk check was labelled `systemd-fsck@dev-disk-by\x2duuid-1234...`. The
   pictures say names the way `systemd-escape -u` reads them: `/dev/disk/by-uuid/1234 device`,
@@ -105,6 +112,21 @@ receipt for stopping a service still shows the state and nothing else.
   frame, one blip each. `shell/CardHost.qml` takes its height at once and eases in by fading and
   rising a few pixels inside that space; it hands the space back after it has faded out. (This did
   not cure the dip above, which was the animation; it only keeps a card to one resize.)
+- **A picture you asked for keeps its line, so its × stays where it is.** The card sits above the
+  status line in a bottom-anchored column, so whenever the line grew, shrank or went, the card (and
+  its ×) moved by the line's height; on the real VM the × was at y 389, then 307, then 354 in three
+  tries, and clicks missed. `PillState.pictureStays` is true while a picture that is not a receipt
+  and not half-drawn is up, and the line's fade timer (`StatusLine.qml`) waits while it is. The line
+  goes with the picture, when it is put away with Esc or the ×. A receipt still fades with its
+  closing line, as before (the two are read together), and so does a line with no picture. The
+  line's timer sleeps while a picture holds the line (it has no seconds to count and nothing to
+  fade), so a picture left up costs no wake-ups. The card's top is still its own height above the
+  line, so two different pictures sit at different heights; the same picture sits at the same place
+  each time it is drawn.
+- **A full-screen window puts the picture away.** In a full-screen window the bar is a dot and a
+  clock in a 360 px capsule, and a card hanging over it landed in the middle of whatever the window
+  showed (the Brain's list, for one). `CardHost.suppressed` follows `win.capsule` in `shell.qml`: the
+  card fades out and gives its space back, and it comes back, not dismissed, when the window goes.
 - **A card being drawn keeps the layout it will end with.** The boxes of a streamed chain arrive
   before its links, and the links carry the labels that decide how wide the gaps are, so a finished
   chain used to re-lay itself out from one row into two with a visible jump. `Diagram.qml` now
