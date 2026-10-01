@@ -747,6 +747,10 @@ class Service:
                            if isinstance(i, dict) and str(i.get("email", "")).lower() == a["email"]), a["sender"])
             state = _state_of(row.get("state"), a["state"])
             detail = _clean(row.get("detail"), 300)
+            if a["state"] == "signin" and state == "syncing":
+                # Thunderbird has no word for "waiting for you to sign in": an account it cannot read yet looks
+                # like one that is still fetching, and the steps the person was given stay until it says more.
+                state, detail = "signin", ""
             # the steps a person is given when the account is added stay until the engine has something to say
             note = "" if state == "ok" else detail or (a["note"] if state == a["state"] else "")
             fresh = {"engine_id": str(row.get("engine_id") or "") or None, "state": state, "note": note,
@@ -1812,7 +1816,15 @@ class Service:
         except Exception as e:  # noqa: BLE001 - "sending" becomes unknown at the next start anyway
             log(f"{did}: could not be marked unknown: {type(e).__name__}: {e}")
         self._changed("drafts")
+        self._clear_stuck_dialog()
         raise Refusal(UNKNOWN_OUTCOME, UNKNOWN_SENTENCE)
+
+    def _clear_stuck_dialog(self) -> None:
+        """A send that did not finish is most often a dialog Thunderbird opened (the server refused, a password
+        was wrong) on a workspace nobody looks at, and nothing in the add-on's reach closes one: a start again
+        does. The draft is already `unknown`, so nothing can be sent twice by this."""
+        if self.process is not None and not self._restarting and not self._stopping.is_set():
+            self._spawn(self._restart("a send did not finish"))
 
     async def _reopen(self, did: str, prior: str) -> None:
         await self.job(lambda: self.store.set_state(did, prior, self.clock(), was=("sending",)))
@@ -1971,6 +1983,8 @@ class Service:
         a = next((x for x in self.store.accounts() if x["engine_id"] == eid), None)
         if a is None or (a["state"], a["note"]) == (state, detail):
             return False
+        if a["state"] == "signin" and state == "syncing":
+            return False   # see _apply_accounts: the engine cannot tell waiting for a sign-in from fetching
         self.store.update_account(a["id"], state=state, note=detail)
         return True
 
@@ -2106,7 +2120,16 @@ class Service:
         try:
             await self._process(self.process.prepare)
             for a in accounts:
-                await self._process(self.process.seed_account, dict(a), accts.PROVIDERS.get(a["provider"], accts.IMAP))
+                try:
+                    await self._process(self.process.seed_account, dict(a),
+                                        accts.PROVIDERS.get(a["provider"], accts.IMAP))
+                except ProcessTimeout:
+                    raise
+                except Exception as e:  # noqa: BLE001 - one address Thunderbird cannot be given stops no other
+                    log(f"seeding {a['email']}: {type(e).__name__}: {e}")
+                    await self.job(lambda a=a: self.store.update_account(
+                        a["id"], state="error", note=f"Thunderbird could not be set up for {a['email']}."))
+                    self._changed("accounts", "list")
             await self._process(self.process.start)
         except Exception as e:  # noqa: BLE001 - a failed start is a pause and another try
             self._fails += 1

@@ -3581,3 +3581,44 @@ async def test_stopping_with_a_press_in_flight_ends_it_before_the_notes_close_an
     started.append(again)
     c2 = await again.client()
     assert (await c2.call("draft_get", id=d["id"]))["state"] == "unknown"
+
+
+# -- what the engine's own words must not undo --
+
+async def test_an_account_waiting_for_its_sign_in_is_not_called_syncing_by_an_engine_that_cannot_tell(mail, person):
+    got = await person.call("add_account", email="wait@gmail.com")
+    assert got["state"] == "signin"
+    await until(lambda: mail.service.engine_state == "up")
+    mail.engine.set_state("wait@gmail.com", "syncing", "Thunderbird is fetching this account.")
+    await person.call("accounts", fresh=True)
+    after = next(a for a in (await person.call("accounts", fresh=True))["accounts"] if a["email"] == "wait@gmail.com")
+    assert after["state"] == "signin" and "allow Thunderbird" in after["note"]   # the steps are still there
+    mail.engine.set_state("wait@gmail.com", "ok")
+    await until(lambda: next(a for a in mail.service.store.accounts() if a["email"] == "wait@gmail.com")["state"] == "ok")
+
+
+async def test_one_address_thunderbird_cannot_be_given_stops_no_other_account_from_starting(mail, person):
+    real = mail.process.seed_account
+    await person.call("add_account", email="good@gmail.com")
+    await person.call("add_account", email="bad@family.example")
+
+    def seed(account, provider):
+        if account["email"] == "bad@family.example":
+            raise ValueError("cannot make a server name from that")
+        real(account, provider)
+    mail.process.seed_account = seed
+    mail.engine.drop_account("bad@family.example")      # Thunderbird has no such account: it was never written
+    mail.process.stop()
+    await until(lambda: ("start",) in mail.process.calls[-8:] and mail.process.running())
+    states = {a["email"]: a["state"] for a in (await person.call("accounts", fresh=True))["accounts"]}
+    assert states["bad@family.example"] == "error" and states["good@gmail.com"] == "signin"
+    assert ("seed_account", "good@gmail.com", "google") in mail.process.calls
+
+
+async def test_a_send_that_did_not_finish_starts_thunderbird_again_to_clear_a_dialog_nobody_can_click(mail, person):
+    d = await ready(person)
+    before = mail.process.calls.count(("restart",))
+    mail.engine.hang_send(delivered=False)
+    await person.fails("send", "unknown_outcome", id=d["id"], fingerprint=d["fingerprint"])
+    await until(lambda: mail.process.calls.count(("restart",)) > before)
+    assert await state_of(person, d) == "unknown"
