@@ -283,6 +283,8 @@ ShellRoot {
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
+                    // A full-screen window on this screen puts the picture away (it is still there after).
+                    Binding { target: cardHost.item; property: "suppressed"; value: win.capsule; when: cardHost.item !== null }
                 }
 
                 StatusLine {

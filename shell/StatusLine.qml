@@ -43,14 +43,19 @@ Rectangle {
     }
 
     Timer {
-        // The seconds counter, and fading a finished line nobody is looking at.
-        interval: 250; repeat: true; running: bar.shown
+        // The seconds counter, and fading a finished line nobody is looking at. A finished line
+        // kept by its picture has nothing for it to do, so it sleeps until the picture goes (and
+        // then fades the line, whose time is long past, on its next tick).
+        objectName: "lineTimer"
+        interval: 250; repeat: true
+        running: bar.shown && !(bar.pill.pictureStays && bar.pill.mode !== "working" && bar.pill.flash === "")
         onTriggered: {
             bar.now = Date.now()
             if (bar.pill.flash && bar.now - bar.pill.flashAt > bar.pill.flashFor) bar.pill.flash = ""
             // The line shows on every screen; hovering it on any of them keeps it.
             const done = bar.pill.mode === "closing" || bar.pill.mode === "local" || bar.pill.mode === "resting"
-            if (done && !bar.pill.sticky && bar.pill.hovers === 0 && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
+            if (done && !bar.pill.sticky && !bar.pill.pictureStays && bar.pill.hovers === 0
+                    && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
         }
     }

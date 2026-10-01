@@ -392,7 +392,11 @@ graphical.target @6.668s
 `-multi-user.target @6.668s
   `-getty.target @6.668s
 """
-BLAME = """2.114s dev-disk-by\\x2duuid-1234.device
+BLAME = """5.012s dev-disk-by\\x2dthe\\x2dpath.device
+5.011s dev-disk-by\\x2duuid-1234.device
+2.003s systemd-tmpfiles-setup-dev-early.service
+1.704s systemd-nsresourced.service
+1.502s initrd-switch-root.service
 1.250s NetworkManager-wait-online.service
  777ms NetworkManager.service
  412ms systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD.service
@@ -407,14 +411,22 @@ def test_a_quiet_boot_draws_the_slowest_units_when_the_chain_is_three_lines():
                  "systemd-analyze blame": BLAME})
     card = sysmap.capture_boot(run_)["card"]
     assert card["shape"] == "timeline" and card["title"] == "What takes longest when you boot (17.9 s in all)"
+    # What the boot did, longest first: not the time spent waiting for the hardware (.device) nor the early boot (initrd-*).
     assert [n["label"] for n in card["nodes"]] == [
-        "/dev/disk/by-uuid/1234 device", "NetworkManager-wait-online", "NetworkManager",
-        "systemd-fsck@…/by-uuid/1234-ABCD", "dbus", "polkit"]                     # longest first, the 8 us one left out
-    assert [n["time"] for n in card["nodes"]][:3] == ["2.1 s", "1.2 s", "777 ms"]
-    assert card["nodes"][0]["weight"] == pytest.approx(2.114) and card["nodes"][0]["state"] == "warn"
-    assert card["highlight"] == ["u1"] and "takes 2.1 s, the longest step of the boot" in card["say"]
-    assert card["nodes"][0]["opens"] == {"kind": "unit", "value": "dev-disk-by\\x2duuid-1234.device"}
+        "systemd-tmpfiles-setup-dev-early", "systemd-nsresourced", "NetworkManager-wait-online", "NetworkManager",
+        "systemd-fsck@…/by-uuid/1234-ABCD", "dbus", "polkit"]
+    assert [n["time"] for n in card["nodes"]][:3] == ["2 s", "1.7 s", "1.2 s"]
+    assert card["nodes"][0]["weight"] == pytest.approx(2.003) and card["nodes"][0]["state"] == "warn"
+    assert card["highlight"] == ["u1"]
+    assert card["say"] == "systemd-tmpfiles-setup-dev-early takes 2 s, the longest step of the boot."
+    assert card["nodes"][0]["opens"] == {"kind": "unit", "value": "systemd-tmpfiles-setup-dev-early.service"}
     assert len([c for c in run_.calls if "blame" in c]) == 1
+
+
+def test_a_boot_that_blame_only_fills_with_waiting_for_devices_keeps_the_chain():
+    only_waits = "5.012s dev-sda.device\n5.011s dev-sdb.device\n1.5s initrd-switch-root.service\n"
+    card = sysmap.capture_boot(fake({"systemd-analyze critical-chain": QUIET_CHAIN, "systemd-analyze blame": only_waits}))["card"]
+    assert card["title"].startswith("What starts when you boot") and len(card["nodes"]) == 3
 
 
 def test_a_quiet_boot_with_nothing_slow_says_so():
