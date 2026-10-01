@@ -527,11 +527,28 @@ inject({"type": "jobs", "jobs": [
     {"id": "0a0b0c", "title": "Build the image", "kind": "watch", "state": "failed", "started": now_s - 60,
      "deadline": None, "ended": now_s - 5, "pct": None, "last": "pacman: could not resolve host",
      "unit": "bombadil-job-0a0b0c"}]})
+REVIEWER = {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
+            "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
+            "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
+            "lines": []}
+# One session waiting is the line in the pill and no card, and the stone knocks all the same.
+inject({"type": "dev", "sessions": [REVIEWER], "attention": ["rev"], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26a-desk-one-waiting")
+check("one waiting session: no card, and the stone is amber",
+      not st["present"]["needs"] and st["needsYou"] and st["face"] == "needs"
+      and stone_pixels("26a-desk-one-waiting", colour="#e0a93b") > 60,
+      f"present {st['present']['needs']}, face {st.get('face')}")
+inject({"type": "dev", "sessions": [dict(REVIEWER, state="working")], "attention": [], "front": "", "line": ""})
+time.sleep(1.0)
+st = desk_state()
+shot("26b-desk-answered")
+check("answered: the session stays listed and the stone goes still",
+      not st["needsYou"] and st["face"] != "needs" and stone_pixels("26b-desk-answered", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
 inject({"type": "dev", "sessions": [
-    {"key": "rev", "project": "bombadil", "projectTitle": "Bombadil", "role": "reviewer", "tool": "claude",
-     "toolTitle": "Claude Code", "title": "reviewer", "state": "asked", "alive": True, "unseen": False,
-     "yours": False, "copy": False, "since": now_s - 30, "last": "apply the migration to the local database?",
-     "lines": []},
+    REVIEWER,
     {"key": "bld", "project": "bombadil", "projectTitle": "Bombadil", "role": "builder", "tool": "codex",
      "toolTitle": "Codex", "title": "builder", "state": "asked", "alive": True, "unseen": False, "yours": False,
      "copy": False, "since": now_s - 20, "last": "install qemu-full?", "lines": []}],
@@ -546,6 +563,10 @@ check("the failed row says why in one line, with Why?", w["rows"][2]["button"] =
 check("Needs you lists both waiting sessions", [r["title"] for r in nd.get("rows", [])] == ["reviewer on Bombadil", "builder on Bombadil"], nd.get("rows"))
 check("both cards are in full on their own rails", st["faces"]["watching"] == "full" and st["faces"]["needs"] == "full"
       and st["slots"]["watching"]["side"] == "left" and st["slots"]["needs"]["side"] == "right", st.get("faces"))
+# The stone knocks while anything waits: amber, not the green of rest or the orange of work.
+amber = stone_pixels("26-desk-watching-needs", colour="#e0a93b")
+check("the stone is amber while two sessions wait for you", st.get("needsYou") and st.get("face") == "needs" and amber > 60,
+      f"face {st.get('face')}, amber pixels {amber}")
 # a picture with both rails up stays between them, as wide as the narrowed pill (328..951 at 1280 wide)
 m = mark()
 summon()
@@ -565,6 +586,10 @@ inject({"type": "jobs", "jobs": []})
 time.sleep(0.8)
 st = desk_state()
 check("both cards leave when nothing is counting or waiting", st["faces"]["watching"] == "hidden" and st["faces"]["needs"] == "hidden", st.get("faces"))
+shot("27-desk-clear")
+check("and the stone is still: nothing waits, nothing is amber",
+      not st.get("needsYou") and st.get("face") != "needs" and stone_pixels("27-desk-clear", colour="#e0a93b") < 20,
+      f"face {st.get('face')}")
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.
