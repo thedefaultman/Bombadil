@@ -1775,6 +1775,8 @@ def main(argv: list[str] | None = None) -> int:
 
     async def run():
         serving = asyncio.ensure_future(daemon.serve())
+        # The unit file names behind "what does networkmanager need": a slow read, so before the first ask.
+        asyncio.get_running_loop().run_in_executor(None, sysmap.warm_unit_names)
 
         def on_term():
             # A login goes first. Then the bar's connection: Python 3.12+ waits for every client

@@ -383,6 +383,63 @@ def test_boot_in_the_c_locale_draws_the_whole_chain_not_its_root_alone():
     assert [n["label"] for n in warn] == ["NetworkManager"] and "takes 3.9 s" in card["say"]
 
 
+# A quiet boot (no console messages): the desktop is reached through three targets that finish
+# together, so the critical chain is three lines. The units that took the time are in `blame`.
+QUIET_CHAIN = """The time when unit became active or started is printed after the "@" character.
+The time the unit took to start is printed after the "+" character.
+
+graphical.target @6.668s
+`-multi-user.target @6.668s
+  `-getty.target @6.668s
+"""
+BLAME = """2.114s dev-disk-by\\x2duuid-1234.device
+1.250s NetworkManager-wait-online.service
+ 777ms NetworkManager.service
+ 412ms systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD.service
+ 120ms dbus.service
+  42ms polkit.service
+   8us tiny.service
+"""
+
+
+def test_a_quiet_boot_draws_the_slowest_units_when_the_chain_is_three_lines():
+    run_ = fake({"systemd-analyze critical-chain": QUIET_CHAIN, "systemd-analyze time": TIME_C,
+                 "systemd-analyze blame": BLAME})
+    card = sysmap.capture_boot(run_)["card"]
+    assert card["shape"] == "timeline" and card["title"] == "What takes longest when you boot (17.9 s in all)"
+    assert [n["label"] for n in card["nodes"]] == [
+        "/dev/disk/by-uuid/1234 device", "NetworkManager-wait-online", "NetworkManager",
+        "systemd-fsck@…/by-uuid/1234-ABCD", "dbus", "polkit"]                     # longest first, the 8 us one left out
+    assert [n["time"] for n in card["nodes"]][:3] == ["2.1 s", "1.2 s", "777 ms"]
+    assert card["nodes"][0]["weight"] == pytest.approx(2.114) and card["nodes"][0]["state"] == "warn"
+    assert card["highlight"] == ["u1"] and "takes 2.1 s, the longest step of the boot" in card["say"]
+    assert card["nodes"][0]["opens"] == {"kind": "unit", "value": "dev-disk-by\\x2duuid-1234.device"}
+    assert len([c for c in run_.calls if "blame" in c]) == 1
+
+
+def test_a_quiet_boot_with_nothing_slow_says_so():
+    card = sysmap.capture_boot(fake({"systemd-analyze critical-chain": QUIET_CHAIN,
+                                     "systemd-analyze blame": "612ms a.service\n 90ms b.service\n"}))["card"]
+    assert card["highlight"] == [] and card["say"] == "Nothing holds the boot up: no step takes a second."
+
+
+def test_the_chain_is_kept_when_it_has_enough_steps_or_blame_has_no_more():
+    run_ = fake({"systemd-analyze critical-chain": CHAIN_C, "systemd-analyze blame": BLAME})
+    assert sysmap.capture_boot(run_)["card"]["title"].startswith("What starts when you boot")
+    run_ = fake({"systemd-analyze critical-chain": QUIET_CHAIN, "systemd-analyze blame": "300ms a.service\n"})
+    card = sysmap.capture_boot(run_)["card"]
+    assert card["title"].startswith("What starts when you boot") and len(card["nodes"]) == 3
+    with pytest.raises(sysmap.Unavailable, match="no boot record"):
+        sysmap.capture_boot(fake({"systemd-analyze blame": "8us tiny.service\n"}))
+
+
+def test_blame_is_read_as_systemd_prints_it():
+    rows = sysmap.parse_blame("1min 3.445s slow.service\n 777ms NetworkManager.service\n  12us x.service\nnot a row\n")
+    assert rows == [("slow.service", pytest.approx(63.445)), ("NetworkManager.service", pytest.approx(0.777)),
+                    ("x.service", pytest.approx(0.000012))]
+    assert sysmap.parse_blame(None) == []
+
+
 def test_boot_on_a_live_system_says_why_nothing_is_drawn():
     with pytest.raises(sysmap.Unavailable, match="no boot record"):
         sysmap.capture_boot(fake({}))
@@ -437,14 +494,27 @@ NOT_FOUND = "Id=networkmanager.service\nLoadState=not-found\nActiveState=inactiv
 UNIT_FILES = """dbus.service                               static          -
 NetworkManager-dispatcher.service         enabled         disabled
 NetworkManager.service                    enabled         disabled
+cups.service                              disabled        disabled
 getty@.service                            enabled         enabled
 """
+LOADED_UNITS = """  dbus.service                  loaded active running D-Bus System Message Bus
+  NetworkManager.service        loaded active running Network Manager
+  systemd-timesyncd.service     loaded active running Network Time Synchronization
+● wg-quick@wg0.service          loaded failed failed  WireGuard via wg-quick(8) for wg0
+  getty@.service                loaded inactive dead  Getty on %I
+"""
+
+
+@pytest.fixture(autouse=True)
+def _no_kept_unit_names(monkeypatch):
+    """The list of unit files is kept between asks; a test starts without one."""
+    monkeypatch.setattr(sysmap, "_FILES", sysmap._UnitFiles())
 
 
 def test_a_service_typed_without_its_capitals_is_found_as_systemd_spells_it():
     run_ = fake({f"systemctl show -p {SHOW_PROPS} networkmanager.service": NOT_FOUND,
                  f"systemctl show -p {SHOW_PROPS} NetworkManager.service": NM_SHOW,
-                 "systemctl list-unit-files": UNIT_FILES,
+                 "systemctl list-units": LOADED_UNITS,
                  "systemctl show -p Id,ActiveState,SubState": NM_DEPS})
     r = sysmap.capture_service("networkmanager", run_)
     assert r["card"]["target"] == "NetworkManager.service" and r["card"]["nodes"][0]["label"] == "NetworkManager"
@@ -459,19 +529,99 @@ def test_find_unit_answers_with_the_name_the_machine_uses_or_nothing():
     loaded = "LoadState=loaded\n"
     assert sysmap.find_unit("bluetooth", fake({"systemctl show -p LoadState bluetooth.service": loaded})) == "bluetooth.service"
     run_ = fake({"systemctl show -p LoadState networkmanager.service": "LoadState=not-found\n",
-                 "systemctl list-unit-files": UNIT_FILES})
+                 "systemctl list-units": LOADED_UNITS})
     assert sysmap.find_unit("networkmanager", run_) == "NetworkManager.service"
     assert sysmap.find_unit("NETWORKMANAGER", run_) == "NetworkManager.service"
-    # a unit that only exists loaded (generated, or an instance) is found in the other list, whatever mark it has
-    loaded_list = "● Wg-Quick@wg0.service   loaded failed failed WireGuard\n  dbus.service loaded active running D-Bus\n"
-    run_ = fake({"systemctl show -p LoadState wg-quick@wg0.service": "LoadState=not-found\n",
-                 "systemctl list-units": loaded_list})
-    assert sysmap.find_unit("wg-quick@wg0", run_) == "Wg-Quick@wg0.service"
+    # a unit that is loaded under other capitals is found whatever mark the list gives it
+    run_ = fake({"systemctl show -p LoadState WG-QUICK@wg0.service": "LoadState=not-found\n",
+                 "systemctl list-units": LOADED_UNITS})
+    assert sysmap.find_unit("WG-QUICK@wg0", run_) == "wg-quick@wg0.service"
+    # the name as typed wins over one that differs in its capitals
+    both = "  foo.service loaded active running A\n  Foo.service loaded active running B\n"
+    assert sysmap.find_unit("Foo", fake({"systemctl show -p LoadState Foo.service": "LoadState=not-found\n",
+                                         "systemctl list-units": both})) == "Foo.service"
     # a template cannot be shown, and a name that is nowhere is not a service
     assert sysmap.find_unit("getty@", fake({"systemctl show -p LoadState getty@.service": "LoadState=not-found\n",
-                                            "systemctl list-unit-files": UNIT_FILES})) is None
+                                            "systemctl list-units": LOADED_UNITS})) is None
     assert sysmap.find_unit("the moon", fake({})) is None
     assert sysmap.find_unit("x; rm -rf /", fake({})) is None
+
+
+def test_the_slow_list_of_unit_files_is_never_waited_for():
+    # `systemctl list-unit-files` took 2 s (3 to 25 s under load) on a small VM; the ask has half a second.
+    def run_(argv, budget=0.5):
+        if "list-unit-files" in argv:
+            time.sleep(3)
+            return UNIT_FILES
+        if "list-units" in argv:
+            return LOADED_UNITS
+        return "LoadState=not-found\n" if "show" in argv else None
+
+    t0 = time.monotonic()
+    assert sysmap.find_unit("networkmanager", run_) == "NetworkManager.service"    # a loaded unit needs only list-units
+    assert sysmap.find_unit("cups", run_) is None                                   # a unit file nothing loaded: not yet known
+    assert time.monotonic() - t0 < 1.5
+
+
+def test_a_unit_that_is_only_a_unit_file_is_found_once_the_names_are_kept(monkeypatch):
+    started = []
+    monkeypatch.setattr(sysmap, "_start_thread", started.append)
+    show = {"systemctl show -p LoadState CUPS.service": "LoadState=not-found\n", "systemctl list-units": LOADED_UNITS,
+            "systemctl list-unit-files": UNIT_FILES}
+    run_ = fake(show)
+    # Cold: the ask is answered without them. With a real runner the read starts in the background (once).
+    assert sysmap.find_unit("CUPS", run_) is None
+    assert started == [] and not any("list-unit-files" in c for c in run_.calls)
+    monkeypatch.setattr(sysmap, "run", run_)
+    assert sysmap.find_unit("CUPS", run_) is None and sysmap.find_unit("CUPS", run_) is None
+    assert started == [sysmap.warm_unit_names] * 2          # nothing marks a read as running here, so each ask starts one
+    sysmap._FILES.reading = True
+    sysmap.find_unit("CUPS", run_)
+    assert len(started) == 2                                # ... but one that is running is not started twice
+    sysmap._FILES.reading = False
+    sysmap.warm_unit_names(run_)
+    assert sysmap.find_unit("CUPS", run_) == "cups.service"
+    assert sysmap.find_unit("networkmanager-dispatcher", run_) == "NetworkManager-dispatcher.service"
+    assert sysmap.find_unit("getty@", run_) is None                          # templates are left out
+    # Fresh names are not read again; old ones still answer and are read again in the background.
+    started.clear()
+    assert sysmap.find_unit("CUPS", run_) == "cups.service" and started == []
+    sysmap._FILES.at -= sysmap._FILES.FRESH + 1
+    assert sysmap.find_unit("CUPS", run_) == "cups.service" and len(started) == 1
+
+
+def test_a_read_of_the_unit_files_that_fails_keeps_the_names_it_had():
+    sysmap.warm_unit_names(fake({"systemctl list-unit-files": UNIT_FILES}))
+    sysmap.warm_unit_names(fake({}))
+    assert sysmap._FILES.names["cups.service"] == "cups.service" and not sysmap._FILES.reading
+
+
+# -- unit names as people read them --
+
+@pytest.mark.parametrize("unit, said", [
+    ("NetworkManager.service", "NetworkManager"), ("getty@tty1.service", "getty@tty1"), ("dbus.socket", "dbus.socket"),
+    ("graphical.target", "graphical.target"), ("wg-quick@wg0.service", "wg-quick@wg0"),
+    ("dev-disk-by\\x2duuid-1234.device", "/dev/disk/by-uuid/1234 device"),
+    ("-.mount", "/ mount"), ("home.mount", "/home mount"), ("dev-zram0.swap", "/dev/zram0 swap"),
+    ("systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD.service", "systemd-fsck@/dev/disk/by-uuid/1234-ABCD"),
+    ("systemd-cryptsetup@luks\\x2d1234.service", "systemd-cryptsetup@luks-1234"),
+])
+def test_systemds_escaping_is_undone_in_what_the_pictures_say(unit, said):
+    assert sysmap._pretty(unit) == said
+
+
+def test_a_long_instance_keeps_its_end_and_a_long_plain_name_its_start():
+    short = sysmap._short("systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD\\x2d5678.service")
+    assert len(short) <= cards.MAX_LABEL and short.startswith("systemd-fsck@…") and short.endswith("5678")
+    assert sysmap._short("a" * 50 + ".target") == "a" * 31 + "…"
+
+
+def test_the_boot_picture_names_a_device_by_its_path_but_opens_the_unit():
+    chain = CHAIN_C + "                |-systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD.service @1.5s +90ms\n"
+    card = sysmap.capture_boot(fake({"systemd-analyze critical-chain": chain}))["card"]
+    fsck = next(n for n in card["nodes"] if n["label"].startswith("systemd-fsck@"))
+    assert "\\x" not in fsck["label"] and fsck["label"].endswith("1234-ABCD")
+    assert fsck["opens"]["value"] == "systemd-fsck@dev-disk-by\\x2duuid-1234\\x2dABCD.service"
 
 
 def test_a_restart_that_leaves_the_service_as_it_was_still_gets_a_receipt():
