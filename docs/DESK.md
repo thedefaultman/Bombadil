@@ -132,45 +132,67 @@ defaults chosen here and kept as constants at the top of `vitals.py`:
 
 | Line | Raises the card at | Lets it go at | The chip |
 |---|---|---|---|
+| Coding sessions' ceiling | the sessions' memory reaches 90% of the limit their slice is given | 80% | `sessions 93%` |
 | Memory | 90% of the machine's memory in use | 85% | `memory 91%` |
-| Sessions' ceiling | the coding sessions' memory reaches 90% of the limit their slice is given | 80% | `sessions 93%` |
-| Disk | the fullest real disk is 90% full (amber from 90%, red from 97%, the numbers the disk picture uses) | 88% | `disk 94%` |
+| Disk | the fullest of `/` and `/home` is 90% full | 88% | `disk 94%` |
 | Heat | the hottest sensor reads 80° | 72° | `hot · 82°` |
 
-A line has to hold for three samples in a row to raise the card and ten in a row to let it go, and a card
-that rose stays at least ten seconds, so a spike never flickers it. The sentence names the worst line
-first (the sessions' ceiling, then memory, then the disk, then heat).
+A line has to hold for three samples in a row to raise the card and ten in a row to let it go, and no
+sooner than ten seconds after it rose, so a spike never flickers it. The lines are listed worst first. The
+sentence names them in that order (`Memory is nearly full · coding sessions use most`), the chip shows the
+worst one, and the card's dot is amber, or red when the disk is past 97% (the number the disks picture
+uses). Memory's meter turns amber with the memory line; the disk's turns amber with the disk line and red
+from 97%.
 
 **Who uses the memory.** Three groups, drawn left to right in one meter: *the machine* (the AI's own turns
-and its background jobs, which run as systemd units named `bombadil-turn-…` and `bombadil-job-…`),
-*coding sessions* (units named `bombadil-dev-…`), and *you* (everything else: the apps you are running,
-the browser). Apps have no unit of their own, so *you* is what is left after the other two are taken
-from what is in use. Memory is read from each unit's cgroup (`memory.current`); where the cgroup tree is
-not readable the stack shows memory as one part and the sentence leaves out the "who".
+and its background jobs, which run as systemd units named `bombadil-turn-…`, `bombadil-job-…` and
+`bombadil-timer-…`), *coding sessions* (units named `bombadil-dev-…`), and *you* (what is left of what is in
+use: the apps you are running, the browser). Apps have no unit of their own, so *you* is the rest. The
+clause "coding sessions use most" is added to the memory sentence only when one group holds half of the
+used memory or more. Each unit's memory is its cgroup's `memory.current` less the file cache that can be
+dropped. Where the cgroup tree is not readable the stack shows one part, *you*, and the sentence leaves out
+the "who".
 
-**Cost.** Nothing runs while no shell is connected. A calm machine is sampled every 5 seconds (a handful of
-small reads of `/proc` and one thermal file; the disk every 30 seconds). While the card is up, or asked
-for, or any reading is within five points of its line, it is sampled every second, with the cgroup walk and
-the network counters. `agentd` runs it in a worker thread, so the loop never waits on a read, and
-`BOMBADIL_VITALS=0` turns it off. The message is sent only when it differs from the last one, and its
-numbers are rounded for that, so a calm machine sends nothing.
+**Cost.** Nothing runs while no shell is connected or while Machine is put away. A calm machine is sampled
+every 5 seconds: `/proc/stat`, `/proc/meminfo`, the thermal files, and the sessions' slice, which is
+re-read from where the last walk found it. The disk, the list of sensors and the walk of the cgroup tree
+(at most four levels, only `.slice` directories) run every 30 seconds. While the card is up, asked for, or
+any reading is within five points of its line (five degrees for heat), it is sampled every second, with the
+network counters (loopback, containers' and virtual machines' interfaces, bridges, bonds and VLANs are not
+counted twice). `agentd` runs each sample in a worker thread, so the loop never waits on a read;
+`BOMBADIL_VITALS=0` turns it off (the tests set it). The message is sent only when it differs from the last,
+and its numbers are rounded for that, so a calm machine sends nothing.
 
-**Asking.** `show machine`, or "how's the machine", raises the card even when nothing is wrong, says
-"Here is the machine.", and keeps it up for 30 seconds (`asked: true`; the card draws the same). The
-agent's `desk` tool does the same when the person asked for the desk in that turn.
+**Asking.** `show machine`, or the whole sentence "how's the machine" (also "how is my computer"), raises
+the card for 30 seconds even when nothing is wrong, answers "Here is the machine.", and sends it with
+`asked: true`: the sentence on the card is "The machine is fine" and the chip is the reading nearest its
+line. The agent's `desk` tool does the same when the person asked for the desk in that turn. A longer
+question about the machine goes to the agent as before.
 
-**Rows that open something.** A row with an `opens` value is a button: the Disk row asks `agentd`
-to draw the disks picture (the one "where did my disk go" draws), and never reaches the model.
+**Rows that open something.** A row with an `opens` value is a button. The Disk row asks `agentd` to draw the
+disks picture (the one "where did my disk go" draws), and nothing reaches the model.
+
+**What the shell does with the message.** It draws only what it can: a row kind other than `meter`, `stack`
+or `plain` is dropped, a tone it does not know is "you", numbers are held to 0..1, a stack's parts are held
+to the whole track, at most six rows, and nothing on the card can carry a button, a pulse or a small ×.
+A message that says `present: false`, or has no row it can draw, takes the card away; one identical to
+the last changes nothing.
 
 **Known limits.**
 
 - *The sessions' ceiling line stays quiet until a ceiling exists.* Nothing sets `MemoryHigh` or `MemoryMax`
   on the coding sessions' slice yet; the card reads the limit and, with none, has no line to cross. The
   sessions' memory is still drawn in the stack.
-- *Memory attribution is read from cgroups, not checked on real hardware.* Whether a user service may
-  read the units' `memory.current`, and which thermal zones a laptop exposes, is what the first run on the
-  real machine shows; a reading that cannot be read is left out of the card rather than guessed.
+- *Memory attribution is read from cgroups and was tested on fake trees, not on real hardware.* Whether a
+  user service may read the units' `memory.current`, and which thermal zones a laptop exposes, is what the
+  first run on a real machine shows; a reading that cannot be read is left out of the card rather than
+  guessed.
+- *Sizes are decimal* (as in the disks picture), so a 16 GiB machine reads about 16.9 GB, and the disk
+  row counts used against used plus available, so it can differ by a few percent from `df` on a disk with
+  space reserved for root.
 - *The disk row opens the disks picture,* because there is no space map yet to open.
+- *The card's sentence is cut at the card's width,* so with several lines crossed only the first ones are
+  readable; the chip and the meters carry the rest.
 
 ## Adding a widget
 
