@@ -19,8 +19,8 @@ The status words are the ones in [documenting your piece](contributing/documenti
 | Designed | a decided design with no code |
 | Idea | proposed, not decided |
 
-- **Three sections, one state per row.** A piece that is half built appears twice: what is built under "On main", and the rest under "In progress" or "Designed". Each row links its architecture page or its brief.
-- **What "On main" rests on.** Each row was checked by finding the code on `main` at `6150431`. The whole suite (36 test files) passed on 2026-10-01 against `6150431` with PySide6 and `cryptography` installed: 1,531 passed, 2 skipped (the two wallpaper tests that need PIL). The headless desktop test and the VM smoke test need Docker or QEMU and were not run for this page.
+- **Three tables, one state per row.** A piece that is half built appears twice: what is built under "On main", and the rest under "In progress" or "Designed". Each row links its architecture page or its brief. A fourth section, [Merged after the pin](#merged-after-the-pin), lists what reached `main` after the tables were checked.
+- **What "On main" rests on.** Each row was checked by finding the code on `main` at `6150431`. The whole suite (36 test files, 1,533 tests) ran on 2026-10-01 against `6150431` with PySide6 and `cryptography` installed: 1,531 passed and 2 were skipped (the two wallpaper tests that need PIL). Two timing-sensitive pill tests failed in the full run on a loaded machine and passed when run alone. The headless desktop test and the VM smoke test need Docker or QEMU and were not run for this page.
 - **What "In progress" rests on.** The branches were read, not run, apart from the tests the branch's own notes name. The heads read are listed under the table. Pull request states are those of 2026-10-01 at 03:20 UTC (pull requests 1 to 23); anything merged after that is not reflected in the tables, and [Merged after the pin](#merged-after-the-pin) lists it.
 - **The briefs describe intent.** A brief's own text can describe the code as it stood on the day it was written. Where the two differ, this page and the [architecture pages](ARCHITECTURE.md) follow the code.
 
@@ -69,6 +69,30 @@ Heads read on 2026-10-01: `claude/dev-sessions-gqk92e` at `9e39370`, `claude/pro
 
 Two more branches have no product code. `claude/blissful-ramanujan-5o1p2h` holds a research page on using the machine from another computer (`docs/REMOTE.md` on that branch, marked "nothing here is built yet") and tooling for writing briefs; it is an Idea, named in no brief. `claude/vm-tools-trace` holds tools for measuring the pill and the stone from outside the VM, appeared after the pull request list above was fetched, and merged as pull request #26.
 
+## Merged after the pin
+
+The tables above were checked against `main` at `6150431`, the head from 03:01 to 03:25 UTC on 2026-10-01. At 10:00 UTC the same day `main` was at `969b80b`. The pull requests below merged in between. They were read from the pull request list and the commit log, and what each put on `main` was checked only by the paths named here. The rows above are not rewritten for them; the last column says which rows they change.
+
+| Pull request | Merged (UTC, 2026-10-01) | What it put on `main` | Rows above it changes |
+|---|---|---|---|
+| #24 | 03:25 | The stone no longer stays orange at rest after the bar starts, and the needs-you glow reads at 24 px (`shell/Stone.qml`). | The mark in the machine. |
+| #25 | 03:27 | Documents: the identity brief, the design system and the mark's page. | None. |
+| #16 | 03:37 | The brain: `src/bombadil/brain/`, the Focus window in `share/apps/brain/`, `bin/bombadil-brain`, `bin/bombadil-brain-watch` and the units `bombadil-brain-watch.service` and `bombadil-brain.service`. | The brain row is on `main`, partly shipped: pieces 1 and 2 and the search half of piece 3, with the Rust question's problems 3 and 6 fixed and its problems 4 and 5 left. `share/` holds an `apps` folder. |
+| #27 | 03:37 | Wallpaper follow-up: a picture of your own is dimmed, a first path needs no restart, and a wrong file says so (`shell/Wallpaper.qml`). | Boot and the wallpaper. |
+| #28 | 03:44 | Pictures on a real machine, round two: Hyprland's layer animation, a quick unit lookup and a quiet boot (`src/bombadil/sysmap.py`, `shell/CardHost.qml`). | Why lines, plans and pictures. |
+| #26 | 03:53 | `stonecrop` and `lifttrace` in `scripts/vm-tools/`, and `docs/measuring-the-desk.md`: measuring the pill, the stone and the cards from outside the VM. | The VM test setup. |
+| #29 | 04:12 | A window the pill opens puts the picture away (`shell/PillState.qml`). | Why lines, plans and pictures. |
+| #30 | 04:24 | Picture follow-ups: the boot fallback skips device waits, the close x stays put, and no card shows over a full-screen window. | Why lines, plans and pictures. |
+| #31 | 04:30 | The Machine card (`src/bombadil/vitals.py`, `shell/RowsCard.qml`, `machineModel` in `shell/DeskState.qml`), with later review fixes this page did not read. | The Machine row under In progress is on `main`; the desk row gains a Machine face. |
+| #32 | 04:38 | Resting (poor man switch piece 1): `src/bombadil/rest.py`, the `resting` state in `agentd` and the AI card (`shell/AiCard.qml`). | The Resting row under In progress is on `main`. |
+| #33 | 05:17 | A window that opens puts a picture away, and the full-screen hide is checked in the real bar. | Why lines, plans and pictures. |
+| #34 | 08:01 | A note under a box stays inside the picture (`share/qml/Bombadil/Diagram.qml`). | Why lines, plans and pictures. |
+| #36 | 08:27 | The finder (poor man switch piece 2): `src/bombadil/finder.py` and `shell/FoundChips.qml`. | The finder row under Designed is built. |
+| #37 | 09:28 | One new design brief, [Tips, and the desk after boot](design/tips-and-desk-defaults-brief.md), Designed with no code. | None; this page has no row for it. |
+| #38 | 09:50 | The mail work of the Mail row: `src/bombadil/mail/`, the Mail window in `share/apps/mail/`, the Thunderbird add-on in `share/mail/extension/`, `bin/bombadil-mail` and `bin/bombadil-mail-host`, the unit `bombadil-mail.service`, `thunderbird` in `iso/packages.x86_64`, and the shell's notice chips (`shell/NoticeChips.qml`). | The Mail row under In progress is on `main`, and its list of what is on no branch is out of date. |
+
+Three things are not covered. Pull request #35, a draft titled "Installed OS: encrypted layout, guided install, refresh, remote control, GRUB screen" (branch `claude/installed-os-6tpn6z`), was opened at 08:15 UTC and is not on `main`; the Installed OS rows below do not account for it. The branches still unmerged have moved on since the heads listed above, and their rows were not re-read. The code that #31, #32, #36 and #38 put on `main` was not tested for this page.
+
 ## Designed
 
 A decided design with no code. Where the briefs give an order, the last column repeats it. A piece that is also a row under "In progress" shows only what is not built.
@@ -97,7 +121,7 @@ flowchart LR
     R --> N
 ```
 
-Each arrow points from a piece to one that builds on it. Undo per session builds on the sessions and their hooks alone; handing words across and ship also need the fence (the `ask_machine` door and the push guard).
+Each arrow points from a piece to one that builds on it, and the states are those at the pin. Undo per session builds on the sessions and their hooks alone; handing words across and ship also need the fence (the `ask_machine` door and the push guard).
 
 | Piece | Brief | Order and dependencies |
 |---|---|---|

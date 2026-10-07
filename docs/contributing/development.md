@@ -2,23 +2,25 @@
 
 > **Status:** Shipped
 > **Code:** `pyproject.toml`, `tests/`, `scripts/dev-session.sh`, `scripts/test-vm.sh`, `scripts/wsl-vm.sh`, `scripts/vm-tools/`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `src/bombadil/providers.py`
-> **Design:** none for the test layers. Planned `scripts/test-vm.sh` modes (`install-encrypted`, `refresh`) are designed, not built, in [the installed-OS brief](../design/installed-os-brief.md); running the VM smoke test from a coding session is in [the developer brief](../design/dev-brief.md)
-> **Verified:** 2026-10-01 against `main` at `a30ebc8`
+> **Design:** the commands under [Try it](../../README.md#try-it) in the README are the intent; there is no brief for the test layers. Planned `scripts/test-vm.sh` modes (`install-encrypted`, `refresh`) are designed, not built, in [the installed-OS brief](../design/installed-os-brief.md); running the VM smoke test from a coding session is in [the developer brief](../design/dev-brief.md)
+> **Verified:** 2026-10-01 against `main` at `969b80b`
 
 This page is for someone who has cloned the repository and wants to run Bombadil from the checkout,
 change it, and prove the change. It covers setting up, the five layers of testing from a
-millisecond file check to a booted image, a development session against a checkout with the fake
-provider, the tools that drive an installed VM without a window (how to get that disk, and how to
-measure the screen from outside), the btrfs kernel VM, a map of the repository, the conventions the
-code and configuration show, and where the test for each kind of change goes. How to write the
-documentation for a change is in [documenting.md](documenting.md). How each piece works is in
-[ARCHITECTURE.md](../ARCHITECTURE.md) and the pages it links.
+millisecond file check to a booted image, the tests of Mail (a Python suite, a JavaScript suite for
+the Thunderbird add-on, and tests that need a real Thunderbird), a development session against a
+checkout with the fake provider, the tools that drive an installed VM without a window (how to get
+that disk, and how to measure the screen from outside), the btrfs kernel VM, a map of the repository,
+the conventions the code and configuration show, and where the test for each kind of change goes. How
+to write the documentation for a change is in [documenting.md](documenting.md). How each piece works
+is in [ARCHITECTURE.md](../ARCHITECTURE.md) and the pages it links.
 
-On 2026-10-01 the Python and QML layers were run in a plain Linux container (Ubuntu 24.04 userland,
-Python 3.11.15, 4 CPUs, no display, no systemd, no `/dev/kvm`, no QEMU, and a Docker client with no
-daemon). The desktop test, the ISO smoke, the VM tools, the measuring tools and the btrfs kernel VM
-need Docker or QEMU, so they were read and syntax-checked (`bash -n`, `py_compile`) but not run
-there. The page says which is which.
+On 2026-10-01 the Python, QML and JavaScript layers were run in a plain Linux container (Ubuntu 24.04
+userland, Python 3.11.15, Node 22.22.0, 4 CPUs, no display, no systemd, no `/dev/kvm`, no QEMU, no
+Dovecot, no Thunderbird, and a Docker client with no daemon). The desktop test, the ISO smoke, the VM
+tools, the measuring tools, the btrfs kernel VM and the tests that need a real Thunderbird need that
+software, so they were read and syntax-checked (`bash -n`, `py_compile`) but not run there. The page
+says which is which.
 
 ## Set up
 
@@ -54,6 +56,8 @@ Other layers need more than Python:
 
 | Layer | Needs |
 |---|---|
+| Mail add-on tests (JavaScript) | `node` 22 or later on `PATH`, nothing else: no package install, no Thunderbird. `tests/test_mail_addon.py` skips without it |
+| Mail tests on a real Thunderbird | an unpacked Thunderbird (`BOMBADIL_TEST_THUNDERBIRD`, else `~/.cache/bombadil-lab/thunderbird-157.0/thunderbird`, which `tests/mail/lab/fetch-thunderbird.sh` downloads) and `dovecot` on `PATH`; one test also needs `Xvfb` and `xwininfo`. They skip without them (see [The tests of Mail](#the-tests-of-mail)) |
 | dev session | a Hyprland desktop with `quickshell` (panels, drawers and app placement need Hyprland; the bar alone also ran under sway in the desktop test); `pyside6` only to create or open apps |
 | desktop test | Docker, and a self-contained `claude` binary (`CLAUDE_BIN`) |
 | ISO build | an Arch host with `archiso` and `npm`, or Docker or Podman (`scripts/build-in-container.sh`) |
@@ -153,11 +157,11 @@ flowchart LR
 
 | Layer | Real | Faked | Proves | Run it |
 |---|---|---|---|---|
-| pytest unit tests | the Python code, sockets in a temp folder, plain files, SQLite files (the brain); as root, a real fanotify mark and process-event socket in two brain files | Hyprland, snapper, systemd, btrfs (a recorded mount table), the provider CLIs (`providers.Fake`, a `Scripted` adapter), `bombadil-app check` | the socket protocol and turn lifecycle, provider stream parsing from recorded output, tool results, plain-word narration, the launcher, jobs, the desk model, card checking, picture parsers, the brain's store, watcher stream, writer attribution and search; and static guards over files (tokens, colours, brand files, the ISO profile) | `pytest` |
-| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd in the shell tests, which send the events it would (the `Agent` type's tests run a real `AgentD` on a Unix socket: with the fake provider in `test_appkit_native.py`, with a scripted CLI in `test_appkit_agent.py`); the brain in the Focus window's tests (`test_brain_app.py`); the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys | `pytest` with `.[apps]` |
-| desktop test | Quickshell, agentd, the real Claude Code CLI, `bombadil` commands, a Wayland compositor (sway) | the model (a scripted Anthropic API), Hyprland, systemd, snapper | the pieces work together: timings, a key press to the screen, Stop ends everything a turn started, pictures streamed into the bar, the wallpaper | `tests/desktop/run.sh` |
-| ISO smoke | the built image, Hyprland, greetd, systemd, the installer, snapper on btrfs, the brain's watcher on the installed btrfs layout | the model; sign-in uses a stand-in login, plus the real Codex and Claude pages when the VM has internet | a booted machine does what the product promises: session, bar, panels, apps, pictures, the pill keys, sign-in, install, the brain, undo over a reboot | `scripts/test-vm.sh` |
-| VM tools | a running VM you keep | nothing | a shell, keys, clicks and screenshots on a VM without a window; `vmsmoke` runs the smoke inside it; `stonecrop` and `lifttrace` measure what the screen shows | `scripts/vm-tools/` |
+| pytest unit tests | the Python code, sockets in a temp folder, plain files, SQLite files (the brain, the mail service); as root, a real fanotify mark and process-event socket in two brain files | Hyprland, snapper, systemd, btrfs (a recorded mount table), `/proc` and the cgroup tree (recorded text), the provider CLIs (`providers.Fake`, a `Scripted` adapter, a scripted CLI that refuses with a 429), Thunderbird (the service's `FakeEngine`, a stand-in program), `bombadil-app check` | the socket protocol and turn lifecycle, provider stream parsing from recorded output, the resting state and the finder, the machine's readings, notices, tool results, plain-word narration, the launcher, jobs, the desk model, card checking, picture parsers, the brain's store, watcher stream, writer attribution and search, the mail service and its press; and static guards over files (tokens, colours, brand files, the ISO profile) | `pytest` |
+| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd in the shell tests, which send the events it would (the `Agent` type's tests run a real `AgentD` on a Unix socket: with the fake provider in `test_appkit_native.py`, with a scripted CLI in `test_appkit_agent.py`); the brain in the Focus window's tests (`test_brain_app.py`); the mail service on its fake engine, in a thread, in the Mail window's tests; the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys | `pytest` with `.[apps]` |
+| desktop test | Quickshell, agentd, the real Claude Code CLI, `bombadil` commands, a Wayland compositor (sway), the mail service (`bin/bombadil-mail`) | the model (a scripted Anthropic API, which can also refuse as a used-up plan does), the mail engine (`BOMBADIL_MAIL_ENGINE=fake`), the machine's readings (injected), Hyprland, systemd, snapper | the pieces work together: timings, a key press to the screen, Stop ends everything a turn started, pictures streamed into the bar, the desk and its cards, the AI at rest and the finder, a mail notice from the service to the line, the wallpaper | `tests/desktop/run.sh` |
+| ISO smoke | the built image, Hyprland, greetd, systemd, the installer, snapper on btrfs, the brain's watcher on the installed btrfs layout, the mail user unit and Hyprland's window rule for Thunderbird's windows | the model; sign-in uses a stand-in login, plus the real Codex and Claude pages when the VM has internet; the mail service runs on the fake engine (the image has no mail account), and `foot` windows with Thunderbird's class stand in for its windows | a booted machine does what the product promises: session, bar, panels, apps, pictures, the pill keys, mail, sign-in, install, the brain, undo over a reboot | `scripts/test-vm.sh` |
+| VM tools | a running VM you keep | the model, when agentd is pointed at `scratch_api.py` | a shell, keys, clicks and screenshots on a VM without a window; `vmsmoke` runs the smoke inside it; `stonecrop` and `lifttrace` measure what the screen shows | `scripts/vm-tools/` |
 
 Beside the layers, `tests/vm/btrfs-kernel.sh` boots Arch's own kernel on the installed disk layout for
 a test folder you provide. It is a harness for facts a container cannot give, not a stage between the
@@ -170,7 +174,7 @@ crosses a process or the compositor.
 
 ```mermaid
 flowchart LR
-    c1["agentd, provider, launcher, jobs"] --> U["pytest unit tests"]
+    c1["agentd, provider, launcher, jobs, rest, finder, mail service"] --> U["pytest unit tests"]
     c2["os-mcp tool"] --> U
     c3["card or picture"] --> U
     c3 --> Q["QML tests"]
@@ -189,25 +193,30 @@ Where to add a test for each kind of change:
 
 | Change | Add the test to | Pattern to copy |
 |---|---|---|
-| agentd: a message, a turn step, the queue, setup | `tests/test_agentd.py`; the sign-in flow in `tests/test_agentd_signin.py` | `agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())` with `_start`, `_ask`, `_read_until` (the sign-in file has its own `_start`, `_send` and `_until`) |
-| a provider adapter, or what a CLI prints | `tests/test_providers.py`, with a recorded line file in `tests/fixtures/`; the one-shot command the brain uses (`describe_command`) in `tests/test_brain_describe.py` | `_kinds(p, "claude-plan.jsonl")` |
+| agentd: a message, a turn step, the queue, setup | `tests/test_agentd.py`; the sign-in flow in `tests/test_agentd_signin.py`; the AI at rest in `tests/test_agentd_rest.py`; what the finder offers in `tests/test_agentd_found.py` | `agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())` with `_start`, `_ask`, `_read_until` (the sign-in file has its own `_start`, `_send` and `_until`; the rest and found files import `Scripted`, `_start` and `_ask` from `test_agentd` and add the `Cli` class, a scripted CLI that refuses with a 429 until its mode is flipped) |
+| a provider adapter, or what a CLI prints | `tests/test_providers.py`, with a recorded line file in `tests/fixtures/`; the one-shot command the brain uses (`describe_command`) in `tests/test_brain_describe.py`; whether a failed turn is the account's limit (`limit`, `waiting`) in `tests/test_limit.py` | `_kinds(p, "claude-plan.jsonl")` |
 | the plain words of a step or a risk | `tests/test_narrate.py`, which has several parametrized tables: a shell command is a row of the `(command, text, risk)` table, an os-mcp tool a row of the `(name, args, text, done)` table of `test_tools_in_plain_words`, named `mcp__bombadil-os__<tool>` | a row of the table that matches |
 | a launcher word | `tests/test_launcher.py` | `launcher.match(text, app_list=[])` |
 | an os-mcp tool | `tests/test_mcp_server.py`; picture tools `tests/test_cardtools.py`; app tools `tests/test_appkit_tools.py` | `make()` and `call(server, "tool", **args)` in the first and last; the `tools` fixture and `call(tools, name, args)` in `test_cardtools.py`; the `fake_check` fixture in `test_appkit_tools.py` |
 | a card or a `system_map` subject | `tests/test_cards.py` (checking, layout, text twin), `tests/test_sysmap.py` (parsers fed recorded command output, and the before and after receipts), `tests/test_diagram_qml.py` (drawn) | `fake({...})` from `tests/test_sysmap.py` (`import test_sysmap as fixtures` in the QML tests) |
 | a job or a desk widget | `tests/test_jobs.py`, `tests/test_desk.py`; their cards in `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py` | the `Systemd` stand-in in `test_jobs.py` |
+| the machine's readings and the Machine card (`vitals.py`) | `tests/test_vitals.py`: the parsers on recorded `/proc` and cgroup text served by a stand-in file tree, and `Vitals` against a scripted sampler and a clock for the lines it crosses; the card in `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; the injected message in the desktop test | `rig()` and `run(v, fake, clock, n, **now)` in `test_vitals.py`. agentd samples the real machine unless `BOMBADIL_VITALS=0`: the autouse `no_vitals` fixture in `tests/conftest.py` sets it, and a test that wants the card passes `vitals=` to `AgentD` |
+| the AI at rest (`rest.py`, `Provider.limit`, `Provider.waiting`) | `tests/test_rest.py` (the state file `rest.json`, a provider's reset time, the words), `tests/test_limit.py` (Claude's and Codex's refusals as recorded lines), `tests/test_agentd_rest.py`, `tests/test_launcher_rest.py` (the words that pause and resume by hand), `tests/test_bombadil_ask.py` (`bombadil ask` ends with exit 75 instead of waiting), the pill's line, chips and the AI card in `tests/test_rest_qml.py`, the stone's grey face in `tests/test_stone_qml.py` | `Cli(home, mode="refuse")` in `test_agentd_rest.py`; the `LIMIT` and `PAUSED` messages in `test_rest_qml.py` |
+| the finder (`finder.py`) | `tests/test_finder.py` (pure), the `found` message and the press in `tests/test_agentd_found.py`, the chips in `tests/test_found_qml.py` | `_find(text)` with `APPS` and `ASKS` in `test_finder.py` |
+| notices and the press log (`notices.py`, `outbox.py`) | `tests/test_notices.py`, `tests/test_outbox.py`, and the chips above the pill in `tests/test_notice_qml.py` | `make()` in `test_notices.py` |
+| Mail (`src/bombadil/mail/`, `share/apps/mail/`, `share/mail/extension/`, `bin/bombadil-mail*`) | see [The tests of Mail](#the-tests-of-mail) | the fixtures named there |
 | restore points and undo (`snapshots.py`) | no file of its own: the per-turn restore point and undo in `tests/test_agentd.py`, the launcher's undo in `tests/test_launcher.py`, the OS tools in `tests/test_mcp_server.py`. The snapper command lines run only in the ISO smoke's undo mode | subclass `snapshots.Snapshots` and override `available`, `create`, `list` and `rollback`: `Snaps` (`test_launcher.py`), `FakeSnaps` (`test_mcp_server.py`), or `RecordingSnaps` and `SlowSnaps` over `agentd._NoSnapshots` (`test_agentd.py`) |
 | `config.toml` and its keys (`config.py`) | `tests/test_config.py` | `config.save_user("codex", model="o4-mini")` with the `home` fixture |
 | the brain (`src/bombadil/brain/`, `bombadil brain`) | `tests/test_brain_*.py` by part: `core` (store, ingest, rules, actors), `index`, `witnesses` (turns, Chromium history, `pacman.log`, `memory.md`), `watch`, `fanotify` and `forks` (the root watcher), `service` and `client`, `focus` and `this`, `describe`; the Focus window's backend in `test_brain_app.py` | `FakeWatcher` and `make_brain(home, ...)` in `test_brain_service.py`; the `brain` fixture in `test_brain_focus.py` |
 | a kit component | `tests/test_appkit_kit.py`; add the component to a gallery in `tests/qml/` | `run(home, qml, body)` |
 | a native type (`App`, `System`, `Processes`, `Command`, `Vault`, `TextFile`, `Clipboard`, `Agent`, `Highlighter`, `KitFiles`), or the `Store` component | `tests/test_appkit_native.py` (`Store` is the QML component `share/qml/Bombadil/Store.qml` over `KitFiles`, and its tests are here too); `Agent` against agentd's events in `tests/test_appkit_agent.py` | the `kit` fixture and `make(kit, source)` |
 | the app runtime: hot reload, placement, status | `tests/test_appkit_runtime.py`, `tests/test_appkit_reload.py`, `tests/test_appkit_placement.py` | `drive(name, body)` (defined in `test_appkit_runtime.py`, also used by `test_appkit_reload.py`) for hot reload and status; `FakeHypr` and `ScriptedHypr` for placement |
-| a shell component | the line, chips and card host: `tests/test_pill_qml.py`; the desk: `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; the stone: `tests/test_stone_qml.py` | the `Bar`, `Desk` or `Cards` helper class with a `HARNESS` string |
-| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`, `Wallpaper.qml`) | the desktop test: no offscreen test loads them (`tests/test_wallpaper.py` reads `Wallpaper.qml` and `shell.qml` as text, and the desktop test checks the wallpaper's pixels) | a check in `tests/desktop/driver.py` |
+| a shell component | the line, chips and card host: `tests/test_pill_qml.py`; the AI card and the resting pill: `tests/test_rest_qml.py`; the found chips: `tests/test_found_qml.py`; the notice chips: `tests/test_notice_qml.py`; the desk: `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; the stone: `tests/test_stone_qml.py` | the `Bar`, `Desk` or `Cards` helper class with a `HARNESS` string (`test_rest_qml` and `test_found_qml` reuse `test_pill_qml`'s `Bar`) |
+| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`, `Wallpaper.qml`) | the desktop test: no offscreen test loads them (`tests/test_wallpaper.py`, `test_rest_qml.py`, `test_found_qml.py` and `test_notice_qml.py` read `shell.qml` or `Wallpaper.qml` as text, and the desktop test checks the wallpaper's pixels) | a check in `tests/desktop/driver.py` |
 | a token or the look | edit `share/qml/Bombadil/Theme.qml`; `tests/test_theme.py` keeps `shell/DeskTheme.js` equal and `shell/*.qml` free of hex colours and `"white"` and `"black"`; `tests/test_brand.py` for brand files. A changed `bg`, `sunken`, `panel`, `raised` or `border`, or a changed mark, means running `scripts/make-wallpaper.py` again, or `tests/test_wallpaper.py` fails; its tests also read `overlay` and `muted`, which the script does not draw with, as limits | the `THEME` dict from `tests/qml_theme.py` |
 | the wallpaper (`share/wallpaper/bombadil.png`, `shell/Wallpaper.qml`) | `tests/test_wallpaper.py`: the picture's pixels against the tokens (PySide6) and `Wallpaper.qml` read as text; the picture is drawn again and compared (`pillow`, `numpy`, `cairosvg`) | `_mean(img, cx, cy)` and `rgb(token)` |
-| the ISO profile or installer | static facts in `tests/test_iso_profile.py`; booted behaviour as a check in `bombadil-smoke` | `_packages()`, `_installer_grub_lines()` |
-| the quiet console between the boot loader and the desk | `tests/test_boot_console.py` keeps the kernel parameters in `iso/efiboot/loader/entries/01-bombadil.conf` and `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` equal to the output of `scripts/console-palette.py`; paste that output again when a token it maps changes | `kernel_options(text)`, `colour_params(options)` |
+| the ISO profile or installer | static facts in `tests/test_iso_profile.py` (packages, mirror list, the installer's GRUB edit, the binds and the `layers` animation in the skeleton Hyprland config, and Mail's: the `thunderbird` package and its policy file, the mail unit and its link, Thunderbird's window rule, the session handing the unit its screen, the mail skill's links); the brain's unit and link, and the `for b in ...; do` loop of `scripts/build-iso.sh` that links the commands, in `tests/test_brain_service.py` (its section "the ISO"), which also runs `bash -n` on `bombadil-smoke` and matches the text `bombadil-brain bombadil-brain-watch; do command -v`; booted behaviour as a check in `bombadil-smoke` | `_packages()`, `_installer_grub_lines()` |
+| the quiet console between the boot loader and the desk | `tests/test_boot_console.py` keeps the kernel parameters in `iso/efiboot/loader/entries/01-bombadil.conf` and `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` equal to the output of `scripts/console-palette.py` (paste that output again when a token it maps changes), the serial smoke entries loud, the installer copying the live `/etc` so the drop-in arrives, greetd keeping Hyprland's start-up text off the console, and `hyprland.lua`'s background opaque | `kernel_options(text)`, `colour_params(options)` |
 | anything that needs the real Hyprland: the Super binds, drawers, focus | a check in `bombadil-smoke` | `has_client`, `special_shown`, `active_is` |
 | a fact about the kernel or the btrfs layout | a test folder for `tests/vm/btrfs-kernel.sh` | `tests/vm/samples/` |
 | generated apps on disk: names, files, running one (`apps.py`) | `tests/test_apps.py` | `test_create_and_list(home)` |

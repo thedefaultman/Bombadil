@@ -1,17 +1,17 @@
 # Design system
 
 > **Status:** Partly shipped
-> **Code:** `share/qml/Bombadil/Theme.qml`, `share/qml/Bombadil/Style/`, `share/qml/Bombadil/icons/`, `shell/DeskTheme.js`, `shell/Stone.qml`, `shell/Wallpaper.qml`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `docs/brand/`
-> **Design:** [The design system note](../design/design-system.md), [The Bombadil mark](../design/identity-brief.md), [Brand assets](../brand/README.md), [Boot and the wallpaper](../design/boot-and-wallpaper.md), [Bombadil's voice](../design/voice-brief.md)
-> **Verified:** 2026-10-01 against `main` at `a30ebc8`
+> **Code:** `share/qml/Bombadil/Theme.qml`, `share/qml/Bombadil/Style/`, `share/qml/Bombadil/icons/`, `shell/DeskTheme.js`, `shell/Stone.qml`, `shell/PillState.qml`, `shell/AiCard.qml`, `shell/Wallpaper.qml`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `docs/brand/`
+> **Design:** [The design system note](../design/design-system.md), [The Bombadil mark](../design/identity-brief.md), [Brand assets](../brand/README.md), [Boot and the wallpaper](../design/boot-and-wallpaper.md), [Bombadil's voice](../design/voice-brief.md), [Tips and desk defaults](../design/tips-and-desk-defaults-brief.md)
+> **Verified:** 2026-10-01 against `main` at `969b80b`
 
-Bombadil's look is one set of values kept in one file, `share/qml/Bombadil/Theme.qml`. The shell, the app kit, the `Bombadil.Style` controls, the wallpaper and every generated app read it, so a window the agent writes looks like the pill. This page is the token reference: the names and values, who reads them, how to add or change one, and which tests hold them. The reasoning behind the look is in [the design note](../design/design-system.md) and is not repeated here. Where the note and `Theme.qml` disagree, `Theme.qml` is right, and [Known gaps](#known-gaps) lists each difference.
+Bombadil's look is one set of values kept in one file, `share/qml/Bombadil/Theme.qml`. The shell, the app kit, the `Bombadil.Style` controls, the wallpaper and every generated app read it, so a window the agent writes looks like the pill. This page is the token reference: the names and values, who reads them, how to add or change one, and which tests hold them. The reasoning behind the look is in [the design note](../design/design-system.md) and is not repeated here. This page documents `Theme.qml` and the code. Where the note says something else, the note is the design intent and [Known gaps](#known-gaps) lists each difference.
 
 ## What is built
 
-- **Shipped:** the tokens, the `Bombadil.Style` controls, the icons, the stone in the pill, the wallpaper under the desk, the boot console's palette and the logo files. Tests cover the tokens, the stone, the wallpaper, the console palette and the logo files; the style and the icons are checked by a gallery that is run by hand ([Tests](#tests)).
+- **Shipped:** the tokens, the `Bombadil.Style` controls, the 85 icons, the stone in the pill with its nine faces, the AI card that a click on the stone opens, the wallpaper under the desk, the boot console's palette and the logo files. Tests cover the tokens, the stone, the wallpaper, the console palette and the logo files; the style and the icons are checked by a gallery that is run by hand ([Tests](#tests)).
 - **In progress** on a branch that is not on `main`: voices for the interface's words.
-- **Designed, built in part:** a still version of every animation under reduced motion. The stone and the wallpaper's fade have one ([Reduced motion](#reduced-motion)).
+- **Designed, built in part:** a still version of every animation under reduced motion. The stone and the wallpaper's fade have one ([Reduced motion](#reduced-motion)). A writable `reducedMotion` token in `Theme.qml`, set by the shell and by the app runtime, is designed in [the tips brief](../design/tips-and-desk-defaults-brief.md) with no code.
 - **Missing:** the note names a `hairline` token (the 1 px border) and a `shadowPopup` token. `Theme.qml` has neither.
 
 The mark's design reasoning is in [the identity brief](../design/identity-brief.md) and its construction in [the brand assets page](../brand/README.md). The kit's component catalogue is in [the app kit doc](../architecture/app-kit.md). None of them is repeated here.
@@ -48,28 +48,33 @@ flowchart LR
 | `Bombadil.Style` controls | A module of their own: `share/qml/Bombadil/Style/qmldir` starts with `module Bombadil.Style`. Every file that reads a token does `import Bombadil` and then writes `Theme.x`. `Page.qml`, `EditMenu.qml` and `ScrollView.qml` read none (`ScrollView.qml` imports `Bombadil` and does not use it). |
 | Generated apps | `import Bombadil`. `src/bombadil/appkit/engine.py` sets the style `Bombadil.Style` (`QT_QUICK_CONTROLS_STYLE` and `QQuickStyle.setStyle`), the application font to Inter at 14 px, and the import path to `share/qml` (this checkout first, then the installed copy). The app runtime also reads `Theme.bg` through `THEME_PROBE` to colour the native window (`src/bombadil/appkit/runtime.py`). |
 | The shell | `import Bombadil as Kit`, then `Kit.Theme.x`. Quickshell resolves a singleton only from its own directory or from the import path, so `bin/bombadil-shell` exports `QML2_IMPORT_PATH=<root>/share/qml` and then runs `quickshell -p shell/shell.qml`. `shell/Wallpaper.qml` reads `Kit.Theme.bg` and `Kit.Theme.slow` the same way. |
-| The desk's logic | `shell/DeskTheme.js`, a `.pragma library` script of plain values. A library script cannot import a directory, so it cannot read `Theme.qml`. The values whose names differ from their token (`panel`, `strip`, `you`, `machine`, `sessions`, `ok`, `amber`, `amberText`, `red`, `redText`, `onAccent`) carry the token's name in a comment, but the real link is `tests/test_theme.py`, which compares 25 of the file's 33 values. |
-| The wallpaper picture and the boot console | Two scripts read `Theme.qml` with the pattern `readonly property color <name>: "#RRGGBB"`, which sees only opaque six-digit colours. `scripts/make-wallpaper.py` draws `share/wallpaper/bombadil.png` from `bg`, `sunken`, `panel`, `raised` and `border`. `scripts/console-palette.py` prints the kernel's 16 console colours. Their output is committed, and a test fails when it goes stale ([Ground](#ground-wallpaper-and-boot-console)). |
+| The desk's logic | `shell/DeskTheme.js`, a `.pragma library` script of plain values. A library script cannot import a directory, so it cannot read `Theme.qml`. The colours whose names differ from their token (`panel`, `strip`, `you`, `machine`, `sessions`, `ok`, `amber`, `amberText`, `red`, `redText`, `onAccent`) carry the token's name in a comment. `cardWidth` (`railWidth`) and `stripHeight` (`chipHeight`) differ too and carry none. The real link is `tests/test_theme.py`, which compares 25 of the file's 33 values. |
+| The wallpaper picture and the boot console | Two scripts read `Theme.qml` with the pattern `readonly property color <name>: "#RRGGBB"`, which sees only opaque six-digit colours. `scripts/make-wallpaper.py` draws `share/wallpaper/bombadil.png` from `bg`, `sunken`, `panel`, `raised` and `border`, and takes the stone's outline from `docs/brand/bombadil-mark.svg`. `scripts/console-palette.py` prints the kernel's 16 console colours. Their output is committed, and a test fails when it goes stale ([Ground](#ground-wallpaper-and-boot-console)). |
 | Files that are not QML | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `share/grub/bombadil/theme.txt`, the installed icons and `docs/brand/*.svg` repeat some values as literals. [Changing a token](#changing-a-token) says which are checked. |
 
 ## Content fundamentals
 
 The words of the interface are part of the look. The rules are in [the design note](../design/design-system.md#content-fundamentals), in the principle [one design language](../principles.md#one-design-language) and in [the voice brief](../design/voice-brief.md#the-rules), which adds the line limits and keeps `On it`, `Undo` and `Details` plain in every voice. What the code does about them:
 
-- No test enforces the rules. A search of `shell/*.qml` and `src/bombadil/narrate.py` for a string ending in `!` finds none.
+- No test enforces the rules for the shell's own words. `tests/test_rest.py` checks the resting lines only: each is under 100 characters and has no em dash. A search of `shell/*.qml`, `src/bombadil/narrate.py`, `src/bombadil/rest.py`, `src/bombadil/finder.py` and `src/bombadil/notices.py` for a string ending in `!` finds none.
 - A turn that changed something keeps its line with `Undo` and `Details`; one that cannot be undone says `can’t be undone` in `badInk` (`shell/StatusLine.qml`).
-- The agent's replies are one or two plain sentences with no markdown and no lists (`src/bombadil/providers.py`). The line above the pill shows one line while a turn runs and at most four when it ends (`maximumLineCount` in `shell/StatusLine.qml`).
-- Voices that change greetings are in progress on a branch that is not on `main`: nothing in `src/` or `shell/` on `main` selects one. The interface's words are fixed strings, such as the ones below, and the step lines that `src/bombadil/narrate.py` writes.
+- The agent is told, in its system prompt in `src/bombadil/providers.py`, to reply in one or two plain sentences with no markdown and no lists. Nothing checks the reply. The line above the pill shows one line while a turn runs and at most four when it ends (`maximumLineCount` in `shell/StatusLine.qml`).
+- Voices that change greetings are in progress on a branch that is not on `main`: nothing in `src/` or `shell/` on `main` selects one. The interface's words are fixed strings, such as the ones below, the step lines that `src/bombadil/narrate.py` writes and the resting lines in `src/bombadil/rest.py`, which are the same in every voice.
 
 | Moment | Words | Source |
 |---|---|---|
 | Prompt placeholder, connected | `Ask anything` | `shell/shell.qml` |
-| Prompt placeholder, agentd has not answered yet | `Starting` | `shell/shell.qml` |
+| Prompt placeholder, before agentd's first answer | `Starting` | `shell/shell.qml` |
 | Prompt placeholder, agentd missing | `Waiting for agentd…` | `shell/shell.qml` |
 | A turn starts | `On it` | `shell/PillState.qml` |
 | A turn is being stopped, was stopped, ended with nothing to say | `Stopping`, `Stopped.`, `Done.` | `shell/PillState.qml` |
 | Typing while disconnected | `Not connected to the agent yet.` | `shell/PillState.qml` |
 | The socket drops during a turn | `Lost touch with the agent. Reconnecting.` | `shell/PillState.qml` |
+| The AI is out of plan, or paused by hand | `Claude is at its limit until 15:00. Your apps and files still work.`, `Claude is paused. Your apps and files still work.` | `words` in `src/bombadil/rest.py` |
+| The empty field while the AI rests | `Open or find anything. Asks wait for 15:00.` | `words` in `src/bombadil/rest.py`, set as the placeholder by `shell/shell.qml` |
+| A turn the limit stopped halfway | `Claude hit its limit partway, after changing 2 files. It carries on at 15:00.` | `cut_off` in `src/bombadil/rest.py` |
+| An ask kept while the AI rests | `Kept for 15:00. Found on this computer:` | `kept` in `src/bombadil/rest.py` |
+| The AI comes back | `Claude is back. Running your 3 waiting asks.` | `back` in `src/bombadil/rest.py` |
 | The last hot reload of an app failed; the previous window stays up | `Reload failed` | `share/qml/Bombadil/AppWindow.qml` |
 | An app cannot load at all | `<title> could not load`, then `Fix the file and it reloads by itself.` | `src/bombadil/appkit/runtime.py` |
 
@@ -90,21 +95,23 @@ White is the person, orange is the machine acting, blue is a coding session. Thi
 | red | failed, offline, or cannot be undone | `bad` |
 | green | connected and healthy | `good` |
 
-- A status has a mark (a dot, an edge, an icon) and, where it carries text on the dark ground, an ink: `accentInk`, `warnInk`, `badInk`. Coloured text uses the ink, never the mark: `bad` as text on `panel` is 4.1:1, `badInk` is 8.2:1. The shell follows this rule; the kit does not yet ([known gaps](#known-gaps)).
+- A status has a mark (a dot, an edge, an icon) and, where it carries text on the dark ground, an ink: `accentInk`, `warnInk`, `badInk`. Coloured text uses the ink, never the mark: `bad` as text on `panel` is 4.1:1, `badInk` is 8.2:1. The shell follows this rule with one exception, the percent of a crossed line on the Machine card, which `shell/RowsCard.qml` draws in the mark (`amber` or `red`). The kit does not follow it in several places ([known gaps](#known-gaps)).
 - Hue is not the only signal in the shell: the stone's faces differ by shape and motion as well as colour, and `shell/StatusLine.qml` shows the exact command beside an amber or red edge. Elsewhere `good` and `bad` differ by colour, with the words beside them to say which: the desk's dots (`toneColor` in `shell/RowsCard.qml`) and the kit's `Badge` and `Meter` tones.
-- In the pill, the stone, the border and Stop use `accent` for the machine's turn, and the desk's `machine` colour is the same orange. `accent` also marks what is chosen or primary: the border of a shown app chip and of primary setup chips in the shell, and in the kit the primary button (`highlighted: true`), a checked box or switch, the focus ring, text selection, links and the selected-tab underline. One primary button per view.
+- The AI resting is nobody's colour: its stone is grey and hollow (`muted`), never `warn`, `bad` or `accent`, and its line is a plain step line that is never red (`shell/StatusLine.qml`). The resting setup state is not one of the states that give the face `needs` (`PillState.face`).
+- The Machine card ([the desk page](../architecture/desk.md)) follows the same rule: a stack row cuts its track into the three who-colours (`machine`, `sessions`, `you`) by who holds the memory, and a line that is crossed turns the row's tone `amber`, or `red` for a full disk (`PARTS` and `DISK_RED` in `src/bombadil/vitals.py`; the tones in `toneColor` in `shell/RowsCard.qml`).
+- In the pill, the stone, the border and Stop use `accent` for the machine's turn, and the desk's `machine` colour is the same orange. `accent` also marks what is chosen or primary: the border of a shown app chip, of primary setup chips and of a primary notice chip in the shell, the AI card's switch when it is on, and in the kit the primary button (`highlighted: true`), a checked box or switch, the focus ring, text selection, links and the selected-tab underline. One primary button per view.
 
 ### Surfaces
 
 | Token | Value | For |
 |---|---|---|
-| `bg` | `#101214` | Window background (`ApplicationWindow`, `AppWindow`, the app runtime's native window) and the desktop ground: the wallpaper window and the layer that dims a picture of the user's own (`shell/Wallpaper.qml`), `background_color` in `hyprland.lua`, `desktop-color` in the GRUB theme, colour 0 of the boot console. |
+| `bg` | `#101214` | Window background (`ApplicationWindow`, `AppWindow`, the app runtime's native window) and the desktop ground: the wallpaper window and the layer that dims a picture of the user's own (`shell/Wallpaper.qml`), `background_color` in `hyprland.lua`, `desktop-color` in the GRUB theme (in the tree; nothing on `main` installs it), colour 0 of the boot console. |
 | `panel` | `#1a1d21` | Cards and panels (`Pane`, `Dialog`, `Drawer`), the tile behind the mark. The shell's surfaces are its glass variants. |
 | `raised` | `#22262b` | Hover on kit rows (`ListRow`, `DataTable`), the selected row of a style `ItemDelegate`, inputs, default buttons, the line's Undo and Details, a meter's track on a desk card. |
-| `overlay` | `#2a2f36` | Popups, menus, tooltips, toasts, chart tooltips, a default button's hover. The same value as `border`. |
+| `overlay` | `#2a2f36` | Popups, menus, tooltips, toasts, chart tooltips, a default button's hover, a hovered notice chip. The same value as `border`. |
 | `sunken` | `#0c0e10` | Editors, code, wells. Also the ink of the popup shadow and of the modal backdrop, and where the wallpaper's corners fall to. |
-| `border` | `#2a2f36` | Hairlines between surfaces, the pill's resting border, Hyprland's inactive window border. |
-| `borderStrong` | `#3a414a` | The outline of a control and of a floating surface, a hovered outline, menu separators, a switch's off track, the pressed fill of a chip or a line button. |
+| `border` | `#2a2f36` | Hairlines between surfaces, the pill's resting border, Hyprland's inactive window border, the hover fill of a chip or a line button. |
+| `borderStrong` | `#3a414a` | The outline of a control and of a floating surface, a hovered outline, menu separators, a switch's off track (the kit's and the AI card's), the pressed fill of a chip or a line button. |
 | `borderActive` | `#4a525c` | The pill's border while it holds the keyboard. |
 
 ### Glass
@@ -114,19 +121,19 @@ The shell's surfaces float over windows: `panel` at a set opacity. Apps are opaq
 | Token | QML value | CSS | Opacity | For |
 |---|---|---|---|---|
 | `glassPill` | `#f01a1d21` | `#1a1d21f0` | 94% | The prompt bar; the default `ground` of the stone. |
-| `glassLine` | `#e61a1d21` | `#1a1d21e6` | 90% | The line above the pill and the picture above it (`StatusLine`, `CardHost`). |
-| `glassChip` | `#d91a1d21` | `#1a1d21d9` | 85% | Queued prompts, running-app chips, quiet setup chips. |
+| `glassLine` | `#e61a1d21` | `#1a1d21e6` | 90% | The line above the pill, the picture above it and the AI card (`StatusLine`, `CardHost`, `AiCard`). |
+| `glassChip` | `#d91a1d21` | `#1a1d21d9` | 85% | Queued prompts, running-app chips, quiet setup chips, found chips, quiet notice chips. |
 | `glassCard` | `#f51a1d21` | `#1a1d21f5` | 96% | The desk's cards, through `DeskTheme.panel`. |
 | `glassStrip` | `#f21a1d21` | `#1a1d21f2` | 95% | The desk's strips, through `DeskTheme.strip`. |
-| `glassRaised` | `#f022262b` | `#22262bf0` | 94% of `raised` | A chosen chip: the app chip whose window is shown, big and primary setup chips. |
+| `glassRaised` | `#f022262b` | `#22262bf0` | 94% of `raised` | A chosen chip: the app chip whose window is shown, big and primary setup chips, a primary notice chip. |
 
 ### Ink
 
 | Token | Value | For | On `panel` |
 |---|---|---|---|
 | `fg` | `#e6e8eb` | Primary text, and the mark's ink on the dark ground. | 13.8:1 |
-| `muted` | `#8b939c` | Secondary text, captions, the clock, placeholders in the pill, the stopped stone. | 5.4:1 (4.3:1 on `overlay`) |
-| `faint` | `#5c636b` | Disabled text, the Tab ghost, the `next` label, placeholders in kit fields. | 2.8:1 |
+| `muted` | `#8b939c` | Secondary text, captions, the clock, placeholders in the pill, the stopped and the resting stone. | 5.4:1 (4.3:1 on `overlay`) |
+| `faint` | `#5c636b` | Disabled text, the Tab ghost, the `next` label (or the time, `limit` or `paused` that replaces it while the AI rests), placeholders in kit fields. | 2.8:1 |
 
 `faint` is not for essential text. `Diagram` draws a box's optional `note` and its `drawing…` label in `faint` ([known gaps](#known-gaps)).
 
@@ -141,11 +148,11 @@ The shell's surfaces float over windows: `panel` at a set opacity. Apps are opaq
 | `accentSoft` | `#33d97757` | A tinted wash behind accent things: a selected kit row (`ListRow`, `DataTable`), a checked button, a slider handle's halo, Stop's hover. |
 | `accentInk` | `#f2c4b3` | Text in the accent family on the dark ground: the word `Stop`. 10.7:1 on `panel`. |
 | `accentOnLight` | `#b4532f` | The accent on a light page (print, the lockup on white). 4.48:1 on `groundLight`; `accent` there is 2.8:1. |
-| `good` | `#5fb36b` | Connected, resting, done. A mark only. |
-| `warn` | `#e0a93b` | A step that touches the system (the line's amber edge), a stone waiting on you. |
+| `good` | `#5fb36b` | Connected, at rest, done. Meant as a mark; the kit also draws text in it ([known gaps](#known-gaps)). |
+| `warn` | `#e0a93b` | A step that touches the system (the line's amber edge), a stone waiting on you, a line crossed on the Machine card. |
 | `warnInk` | `#e8c38d` | The exact command under a marked step. 10.2:1 on `panel`. |
-| `bad` | `#d05555` | Failed, offline, irreversible: edges, the offline outline, destructive buttons. A mark, not text (4.1:1). |
-| `badInk` | `#f0a0a0` | Error text and `can’t be undone` in the shell. |
+| `bad` | `#d05555` | Failed, offline, irreversible: edges (a warning notice's too), the offline outline, destructive buttons. A mark, not text (4.1:1). |
+| `badInk` | `#f0a0a0` | Error text and `can’t be undone` in the shell, and the words of a warning notice. |
 | `badLine` | `#7a2e2e` | The pill's border when the agent is unreachable. |
 | `info` | `#5b9bd5` | Coding sessions and neutral facts. |
 
@@ -167,12 +174,12 @@ The mark is a stone with a lowercase b cut through it. [The brand assets page](.
 
 | Property | Type | Default | Meaning |
 |---|---|---|---|
-| `face` | string | `rest` | One of the eight faces below. |
+| `face` | string | `rest` | One of the nine faces below. |
 | `ground` | colour | `glassPill` | The colour the b is cut in. |
 | `reducedMotion` | bool | `false` | Working pulses instead of rolling, `needs` holds its glow, `done` fades in. |
 | `settle` | int, ms | 400 | For this long after the stone is created it is painted `good` whatever its face says, then follows its face. |
 
-The `settle` delay is a workaround. The code records that the scene graph dropped a colour change made in the first frames after the bar started: the face went `starting`, then `rest` 39 ms later, and the stone stayed orange. It gives no cause. A `starting` face therefore shows green for its first 400 ms and then turns orange if it is still starting.
+The `settle` delay is a workaround. The code records that the scene graph dropped a colour change made in the first frames after the bar started: the face went `starting`, then `rest` 39 ms later, and the stone stayed orange. It gives no cause. A `starting` face therefore shows green for its first 400 ms and then turns orange if it is still starting. The faces that are not the filled stone (`stopped`, `resting`, `offline`) are drawn in their own colour from the first frame.
 
 ### The pill's states
 
@@ -192,12 +199,15 @@ stateDiagram-v2
     rest --> needs : setup or a session waits on you
     working --> needs : a session waits on you
     needs --> rest : answered
+    rest --> resting : the AI is out of plan or paused
+    working --> resting : the limit stops a turn
+    resting --> rest : the AI is back
     rest --> offline : agentd lost
     working --> offline : agentd lost
     offline --> rest : agentd back
 ```
 
-`offline` can follow any state, because `!connected` is the first test in `PillState.face`. `needs` outranks `working`, so a turn that is running shows `needs` while a session waits, and `working` again when none does.
+`offline` can follow any state, because `!connected` is the first test in `PillState.face`. `needs` outranks `working`, so a turn that is running shows `needs` while a session waits, and `working` again when none does. `resting` is shown only while no turn runs and nothing waits on the person: `offline`, `needs` and `working` outrank it, and it outranks `done` and `stopped` (`tests/test_rest_qml.py`).
 
 | `face` | Stone | Motion | Under reduced motion | `PillState.face` gives it when |
 |---|---|---|---|---|
@@ -208,9 +218,10 @@ stateDiagram-v2
 | `needs` | `warn`, with a filled radial glow behind (never a ring) that reaches 16 px from the stone's centre, 5 px past the stone and into the pill's padding, so it reads at 24 px | Two knocks tipping 8 degrees, then a wait, on a 1.6 s beat; the glow breathes 0.25 to 0.6 on the same beat. | No knocks; the glow is held at 0.45. | `PillState.needsYou`, or mode `setup` with `setupState` `choose` (which AI), `signed_out` or `offline`. The desk sets `needsYou` while at least one coding session waits on the person (`DeskState.needsYou`, a `Binding` in `shell/DeskState.qml`), whether its card is up, folded to a strip or hidden under a full-screen window. It clears with the last row and when the socket drops. |
 | `done` | `good`, then still | Once, 700 ms: squash to (1.06, 0.9) about the foot, a 3 px hop, a landing squash to (1.1, 0.84), a small rebound. | A 600 ms fade in from 0.3. | Mode `closing` after a turn that was not stopped and did not end in an error. |
 | `stopped` | A 12 px `muted` square, radius 2.4 | None. | Same. | Mode `closing` and the turn was stopped. |
+| `resting` | The stone as a hollow: the whole outline in `muted`, 1.5 px, over a fill of `muted` at 30% opacity, with the b cut in `ground` as on the other faces | None. | Same. | `PillState.resting` (agentd's setup state `resting`: the AI is out of plan or spending, or paused by hand), or a closing line of a turn the limit stopped halfway (`_cutOff`). |
 | `offline` | The outline alone: 1.5 px `bad`, six round-capped dashes, one on each corner and each side; the b stays as a `bad` line | None. | Same. | Not connected after agentd was seen, or after the boot window passed. |
 
-`PillState.face` picks the first match, in this order: disconnected (`starting` or `offline`), `needs`, `working`, `closing` (`stopped`, `rest` on an error, else `done`), `rest`. The states are meant to differ in shape or motion as well as colour: rest is still, listening leans, working turns, needs knocks and glows, done hops, stopped is a square, offline is a broken outline. That is design intent; no test renders them in greyscale. `starting` looks the same as `working`, and `done` looks like `rest` once its hop ends.
+`PillState.face` picks the first match, in this order: disconnected (`starting` or `offline`), `needs`, `working`, `resting`, `closing` (`stopped`, `rest` on an error, else `done`), `rest`. The states are meant to differ in shape or motion as well as colour: rest is still, listening leans, working turns, needs knocks and glows, done hops, stopped is a square, resting is a whole hollow outline, offline is a broken one. That is design intent; no test renders them in greyscale. `tests/test_stone_qml.py` does check that `resting` differs from `rest`, `offline`, `stopped`, `needs` and `working` by more than 40 pixels of the 24 by 24 slot. `starting` looks the same as `working`, and `done` looks like `rest` once its hop ends.
 
 The pill's border is a separate rule in `shell/shell.qml`, first match wins:
 
@@ -225,6 +236,8 @@ So the border turns orange only while agentd reports a turn. During the optimist
 
 While a turn can be stopped and the pointer is over the stone, the stone gives way to Stop: a 9 px `accent` square and the word `Stop` in `accentInk` on an `accentSoft` wash. It is not offered in the capsule the desk narrows the pill to under a full-screen window.
 
+When no turn runs, a click on the stone opens the AI card (`shell/AiCard.qml`, `PillState.toggleAi`), and a second click, Esc or typing puts it away. It is a `glassLine` card on a `border` hairline with `radiusLine` corners, 360 px wide, one row per AI: the AI's name in `fg` and its state in `muted`, both at `smallSize`, and a switch. The switch repeats the kit's (`Style/Switch.qml`) by hand: 36 by 20, a 14 px knob, `borderStrong` when off, `accent` (`accentHover`, `accentPressed`) with an `accentFg` knob when on, and 0.4 opacity when it cannot be flipped. The card fades in `normal` and grows in `fast`. Its rows are agentd's: the switch follows what agentd sends, not the tap.
+
 ## Type
 
 `fontFamily` is `Inter`, which the image installs (`inter-font` in `iso/packages.x86_64`). `monoFamily` is the generic `monospace`, for commands and code. Numbers that tick use tabular figures (`font.features: { "tnum": 1 }`, as in `Stat` and the line's seconds counter). The style names below come from [the design note](../design/design-system.md#type); the code has only the size tokens.
@@ -234,9 +247,9 @@ The shell group:
 | Style | Size | Token | Where |
 |---|---|---|---|
 | `pill-input` | 16 | `promptSize` | What you type in the pill. |
-| `line` | 15 | `lineSize` | The line above the pill and the picture's title. |
-| `meta` | 13 | `smallSize` | The clock, the seconds counter, chip prompts, `Stop`. |
-| `shell-caption` | 12 | `captionSize` | Line buttons, `next`, `can’t be undone`, the launcher hint. |
+| `line` | 15 | `lineSize` | The line above the pill and the picture's title, the × that puts a notice away. |
+| `meta` | 13 | `smallSize` | The clock, the seconds counter, chip prompts, `Stop`, the AI card's rows, the labels of found and notice chips. |
+| `shell-caption` | 12 | `captionSize` | Line buttons, `next`, `can’t be undone`, the launcher hint, a found chip's hint, the `+N` that counts waiting notices. |
 | `command` | 12, `monoFamily` | `captionSize` | The exact command under a marked step, in `warnInk` or `badInk`. |
 
 The apps group:
@@ -262,7 +275,7 @@ Things that speak are fully round, with a radius of half their height. Things th
 | Token | Value | For |
 |---|---|---|
 | `radiusPill` | 26 | The prompt bar (`pillHeight` 52). `tests/test_theme.py` requires `pillHeight` to equal twice `radiusPill`. |
-| `radiusLine` | 14 | The line above the pill and the picture above it. Chips and strips (28 high) are pills too: `radius` is half their height. |
+| `radiusLine` | 14 | The line above the pill, the picture above it and the AI card. Chips (28 or 30 high) and strips (28) are pills too: `radius` is half their height. |
 | `radiusLineButton` | 12 | Undo and Details (24 high). |
 | `radius` | 12 | Windows, cards, panels, popups. Hyprland's `rounding` matches it. |
 | `radiusSmall` | 8 | Controls and rows. |
@@ -271,9 +284,9 @@ Things that speak are fully round, with a radius of half their height. Things th
 | `pad` | 16 | Padding inside a card or window. |
 | `controlHeight` | 36 | Buttons, fields, combo boxes. |
 | `rowHeight` | 44 | List rows, the toolbar. |
-| `chipHeight` | 28 | Queued chips; the desk's strips. |
+| `chipHeight` | 28 | Queued chips, notice chips; the desk's strips. |
 | `pillHeight` | 52 | The prompt bar. |
-| `pillMaxWidth` | 900 | The widest the pill, the line and the picture grow on a screen that is not the desk's, and the widest the setup chips and app chips rows grow. On the desk's screen the width is `DeskState.pillWidth`, which holds its own literals 900 and 360 ([known gaps](#known-gaps)). The bar's column sits 12 px from the screen's edge, a literal equal to `gap` (`margins: 12` in `shell/shell.qml`). |
+| `pillMaxWidth` | 900 | The widest the pill, the line and the picture grow on a screen that is not the desk's, and the widest the setup chips and app chips rows grow. On the desk's screen the width is `DeskState.pillWidth`, which holds its own literals: 100 in the capsule, 360 while any window shares the stage, and between 360 and 900 when the stage is open ([known gaps](#known-gaps)). The bar's column sits 12 px from the screen's edge, a literal equal to `gap` (`margins: 12` in `shell/shell.qml`). |
 | `railWidth` | 300 | A desk card's width (`DeskTheme.cardWidth`). |
 | `pillBorder` | 1.5 | The pill's border width. |
 | `focusRing` | 2 | The width of the keyboard focus outline. Nothing reads it. |
@@ -282,24 +295,39 @@ Hairlines between surfaces are 1 px; there is no token for it. Other widths: the
 
 ## Motion
 
-Every movement means one thing: rolling is working, a knock is waiting on you, a hop is done, a lean is listening. Nothing else moves. This is the principle [quiet at rest](../principles.md#quiet-at-rest).
+The stone's four movements each mean one thing: rolling is working, a knock is waiting on you, a hop is done, a lean is listening. The rest of the shell and the kit fade, slide, fold and spin without carrying state ([Reduced motion](#reduced-motion) and [Known gaps](#known-gaps) list them). This is the principle [quiet at rest](../principles.md#quiet-at-rest).
 
 | Token | Value | For |
 |---|---|---|
-| `fast` | 120 ms | Hover and press colour changes, popup and tooltip fades, the line's height changing, the width of the stone's box when Stop appears. |
-| `normal` | 200 ms | Fades: the line, modal backdrops, dialogs, drawers, page slides, chart growth, the tab underline, and the picture above the line, which fades in while it rises 14 px and does not animate its height. |
+| `fast` | 120 ms | Hover and press colour changes, popup and tooltip fades, the line's height changing, the width of the stone's box when Stop appears, the AI card's height and its switch's slide. |
+| `normal` | 200 ms | Fades: the line, the AI card, modal backdrops, dialogs, drawers, page slides, chart growth, the tab underline, and the picture above the line, which fades in while it rises 14 px and does not animate its height. |
 | `slow` | 300 ms | The pill's border colour, and the wallpaper picture's fade-in and dimming. |
 | `pulseLow` | 0.3 | The dimmest point of the reduced-motion working pulse. |
 
-The desk keeps three durations in `shell/DeskTheme.js`: `foldMs` 150 (a card folds), `unfoldDelayMs` 400 (a card returns that long after the window over it is gone) and `washMs` 600 (a row's colour washes over a card's left edge). They have no token in `Theme.qml`.
+The desk keeps three durations in `shell/DeskTheme.js`: `foldMs` 150 (a card folds), `unfoldDelayMs` 400 (a card returns that long after the window over it is gone) and `washMs` 600 (a row's colour washes over a card's left edge). `shell/DeskState.qml` adds `pillAnimMs`, 150 ms, for the pill's width when the desk's mode changes. None has a token in `Theme.qml`.
 
 Windows and panels slide on the bezier (0.16, 1, 0.3, 1): `hyprland.lua` defines it as the curve `ease` for windows, special workspaces and fades. The stone's lean uses the same curve. The same file turns Hyprland's `layers` animation off, because the bar is a layer, and a layer that slid whenever it was resized swung the pill each time a picture appeared or grew.
 
-How long a line stays (`shell/PillState.qml`; the timer in `shell/StatusLine.qml` fades it): 12 s after a turn (`fadeAfter`), 5 s after a local answer, 15 s after an undo, 8 s after a picture, a sign-in message or "Lost touch with the agent. Reconnecting.", and 4 s for "Not connected to the agent yet." typed into the pill. A receipt picture that arrives with a turn's line raises that line to at least 15 s, and a receipt fades with its line. A picture the person asked for (`pictureStays`: a card that is neither a receipt nor half drawn) keeps the line that came with it until Esc or the picture's ×, and the timer sleeps meanwhile. A local error with no turn sets no time of its own and keeps the previous one. A turn that changed something keeps its line, with Undo, until the next prompt or until Esc puts it away. A message shown over a running turn lasts 3.5 s, or 8 s for the answer to "why". Hovering the line or the picture on any screen keeps it.
+How long the line above the pill stays: `fadeAfter` in `shell/PillState.qml` sets it, and the timer in `shell/StatusLine.qml` fades the line.
+
+| The line | Stays |
+|---|---|
+| After a turn; the line that says the AI rests; the line of what was found | 12 s |
+| A local answer | 5 s |
+| After an undo | 15 s |
+| After a picture; a setup message that says the AI is ready ("Signed in to Claude…", "Claude is back…"); "Lost touch with the agent. Reconnecting." | 8 s |
+| "Not connected to the agent yet." typed into the pill | 4 s |
+| A receipt picture that arrives with a turn's line | At least 15 s; a receipt fades with its line. |
+| A picture the person asked for (`pictureStays`: a card that is neither a receipt nor half drawn) | Until the picture goes: Esc, its ×, a newer picture, the next turn, or a window that opens on the stage (`windowOpened`). The timer sleeps meanwhile. |
+| A turn that changed something | Until the next prompt or until Esc puts it away, with Undo; it fades like any other line while a notice waits. |
+| A notice | No timer in the pill: until agentd ends it (`notice_end`) or the person puts it away with its ×. |
+| A message flashed over the line | 3.5 s, or 8 s for the answer to "why". |
+
+An `error` event that belongs to no turn sets no time of its own and keeps the previous one. Hovering the line, the picture or a found chip on any screen keeps it.
 
 ### Reduced motion
 
-`shell/shell.qml` reads `BOMBADIL_REDUCE_MOTION=1` into `reducedMotion` and passes it to the stone and to `Wallpaper`, which then fades its picture and its dimming in 0 ms. Nothing in the repository sets that variable, so it is a switch to set by hand. Only those two honour it. The kit's animations (`BusyIndicator` spins every 900 ms, indeterminate `ProgressBar` sweeps every 1400 ms, `StackView` slides, `Dialog` scales) and the desk's (the 2000 ms ring in `shell/DeskCard.qml`, folds) read no such flag, and neither do the line's and the picture's fades. Every movement having a still version is the rule; the stone and the wallpaper are the only places it is built.
+`shell/shell.qml` reads `BOMBADIL_REDUCE_MOTION=1` into `reducedMotion` and passes it to the stone and to `Wallpaper`, which then fades its picture and its dimming in 0 ms. Nothing in the repository sets that variable, so it is a switch to set by hand. Only those two honour it. The kit's animations (`BusyIndicator` spins every 900 ms, indeterminate `ProgressBar` sweeps every 1400 ms, `StackView` slides, `Dialog` scales) and the desk's (the 2000 ms ring in `shell/DeskCard.qml`, folds, the pill's width change) read no such flag, and neither do the fades of the line, the picture and the AI card. Every movement having a still version is the rule; the stone and the wallpaper are the only places it is built.
 
 ## Depth
 
@@ -319,7 +347,7 @@ The console palette takes colour 1 from `bad`, 2 from `good`, 3 from `warn`, 4 f
 
 `shell/Wallpaper.qml` opens one window per screen on the Background layer (namespace `bombadil-wallpaper`) with an empty input region, so it takes no clicks, and `ExclusionMode.Ignore`, so it reaches the screen's edge. The window is `bg` and the picture fades in over it once, in `slow`. A picture of the user's own that will not load is replaced by the standard one, and if that will not load either the plain ground stays. A picture of the user's own is dimmed by a `bg` layer at `dim`, a literal 0.6: `tests/test_wallpaper.py` works out from `bg`, `panel`, `muted` and `glassChip` that `muted` text keeps at least 4.5:1 on the quietest glass over a white stripe (4.66 computed). The standard picture is drawn dark and is not dimmed. Where the user's picture is named, and the rest of the reasoning, is in [the boot and wallpaper note](../design/boot-and-wallpaper.md).
 
-`scripts/make-wallpaper.py` draws the standard picture from tokens only: `bg` lit toward `panel` from above and falling toward `sunken` at the corners, with the stone lying between `panel` and `raised` at its top, a hairline of `border` along its top edge and no orange. Nothing in it is lighter than `raised` except that hairline, so cards and the pill stay the lightest things on screen. It needs `pip install pillow numpy cairosvg`. Do not edit the PNG by hand.
+`scripts/make-wallpaper.py` draws the standard picture with every colour taken from tokens: `bg` lit toward `panel` from above and falling toward `sunken` at the corners, with the stone lying between `panel` and `raised` at its top, a hairline of `border` along its top edge and no orange. The stone's shape and its b are not tokens: the script reads them from `docs/brand/bombadil-mark.svg` by pattern, so that file must keep its name and its structure ([how, on the brand page](../brand/README.md#changing-it)). Nothing in it is lighter than `raised` except that hairline, so cards and the pill stay the lightest things on screen. It needs `pip install pillow numpy cairosvg`. Do not edit the PNG by hand.
 
 ```sh
 scripts/make-wallpaper.py                # share/wallpaper/bombadil.png, 2560 by 1440
@@ -330,12 +358,13 @@ scripts/console-palette.py --table       # the palette, one colour a line
 
 ## Iconography
 
-The set is [Lucide](https://lucide.dev) (ISC licence, `lucide-static` 0.544.0, text in `share/qml/Bombadil/icons/LICENSE`): 77 SVGs in `share/qml/Bombadil/icons/`. Each is 24 by 24 with a 2 px stroke, round caps and joins, and `stroke="currentColor"`. They are Lucide's drawings with its licence comment and `class` attribute removed. Five are saved under a shorter file name than Lucide's: `key` (Lucide `key-round`), `sliders` (`sliders-horizontal`), `trash` (`trash-2`), `wand` (`wand-sparkles`) and `refresh` (`refresh-cw`).
+The set is [Lucide](https://lucide.dev) (ISC licence, `lucide-static` 0.544.0, text in `share/qml/Bombadil/icons/LICENSE`): 85 SVGs in `share/qml/Bombadil/icons/`, eight of them added for mail (`inbox`, `mail`, `mail-open`, `reply`, `reply-all`, `forward`, `flag`, `paperclip`). Each is 24 by 24 with a 2 px stroke, round caps and joins, and `stroke="currentColor"`. They are Lucide's drawings with its licence comment and `class` attribute removed. Five are saved under a shorter file name than Lucide's: `key` (Lucide `key-round`), `sliders` (`sliders-horizontal`), `trash` (`trash-2`), `wand` (`wand-sparkles`) and `refresh` (`refresh-cw`).
 
 - Tint through the kit's `Icon`: `Icon { name: "check"; size: 16; color: Theme.muted }`. It draws with `IconImage`, which paints the SVG in `color`. `size` defaults to 18 and `color` to `fg`.
 - On a stock button, `Button { icon.source: Theme.icon("copy") }`. `Theme.icon(name)` returns the URL of `icons/<name>.svg`. The style sets `icon.width` and `icon.height` to 16 on buttons, rows and tool buttons.
 - Tint icons to their text colour: `fg`, `muted`, or a status ink.
 - Do not mix in other icon sets or emoji. If an icon is missing, add it from Lucide with its name ([Extending it](#extending-it)).
+- The `icon` in an app's `app.toml` names a file in this folder: `src/bombadil/apps.py` builds the desktop entry's `Icon=` from `icons/<icon>.svg`, and the built-in mail app uses `icon = "mail"` (`share/apps/mail/app.toml`).
 - The mark is not part of this set. It lives in `docs/brand` and in the image's icon directories.
 
 ## Light-page use
@@ -348,7 +377,7 @@ The OS has one dark ground and no theme switch. Three tokens exist for the place
 | `groundLight` | `#f2f3f4` | The light page's ground. |
 | `accentOnLight` | `#b4532f` | The accent for the dot of the i and links: 4.48:1 on `groundLight`. |
 
-`bombadil-lockup-light.svg` uses `inkOnLight` and `accentOnLight`. `README.md` opens with a `<picture>` that shows `docs/brand/bombadil-lockup.svg` when the viewer prefers a dark scheme and the light lockup otherwise. The design pages in `docs/design/pages` repeat the three light tokens by hand as the light scheme's `--bg`, `--fg` and `--accent` (`bombadil-at-work.html`, `bombadils-voice.html` and `the-poor-man-switch.html` use `#f1f2f3` for `--bg`), and the OS values as `--os-*` variables (not every page declares every one). Nothing checks them, and they have drifted: five pages (`bombadil-tends-itself.html`, `bombadils-brain.html`, `building-on-bombadil.html`, `how-bombadil-feels.html` and `the-bombadil-desk.html`) set `--os-amber: #e0a84a` and `--os-red: #e06a6a`, where the tokens `warn` and `bad` are `#e0a93b` and `#d05555`. The pages' dark reading palette (`--bg` `#0d0f11`, `--accent` `#e08462`) is their own and matches no token.
+`bombadil-lockup-light.svg` uses `inkOnLight` and `accentOnLight`. `README.md` opens with a `<picture>` that shows `docs/brand/bombadil-lockup.svg` when the viewer prefers a dark scheme and the light lockup otherwise. The design pages in `docs/design/pages` repeat the three light tokens by hand as the light scheme's `--bg`, `--fg` and `--accent` (`bombadil-at-work.html`, `bombadils-voice.html`, `the-poor-man-switch.html` and `tips-and-your-desk.html` use `#f1f2f3` for `--bg`), and the OS values as `--os-*` variables (not every page declares every one). Nothing checks them, and they have drifted: five pages (`bombadil-tends-itself.html`, `bombadils-brain.html`, `building-on-bombadil.html`, `how-bombadil-feels.html` and `the-bombadil-desk.html`) set `--os-amber: #e0a84a` and `--os-red: #e06a6a`, where the tokens `warn` and `bad` are `#e0a93b` and `#d05555`. The pages' dark reading palette has its own `--bg` (`#0d0f11`), `--surface` (`#16191c`) and `--accent` (`#e08462`), which match no token; its `--fg`, `--muted` and `--line` equal `fg`, `muted` and `border`.
 
 ## Using the tokens
 
@@ -423,19 +452,19 @@ Rectangle {
 | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` | `bg` as `background_color`, written `0xff101214` | `test_hyprlands_own_background_is_the_opaque_ground` (the alpha byte `ff`, then `bg`) |
 | The same file | `accent` and `border` as window border colours (with an alpha byte), 12 px rounding, gaps 6 and 12 | Nothing. |
 | The installed icon `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg` | `panel`, `fg` | `test_installed_icons_need_no_svg_mask` in `tests/test_brand.py` |
-| `share/grub/bombadil/theme.txt` | `bg` as `desktop-color`; `Inter Regular 16` | `test_the_grub_theme_names_its_files_and_the_ground` |
+| `share/grub/bombadil/theme.txt` | `bg` as `desktop-color`; `Inter Regular 16`. The files are in the tree and tested, but on 2026-10-01 nothing in the installer copies them ([the brand page](../brand/README.md#where-the-mark-is-used-in-the-product)) | `test_the_grub_theme_names_its_files_and_the_ground` |
 | `docs/brand/*.svg` | `fg`, `accent`, `panel`, `border`, `inkOnLight`, `accentOnLight` | Only that they parse. |
 | `docs/design/pages/*.html`, `share/skills/bombadil-apps/references/components.md` | In the pages, the three light tokens (`--bg`, `--fg`, `--accent`) and the OS values (`--os-*`); in the components list, the tokens apps use. The pages' dark reading palette is their own | Nothing. |
 | `src/bombadil/appkit/native/highlighter.py` (`PALETTE`, used by the kit's `Editor`) | `accent` (keyword, heading), `faint` (comment), `fg` and `muted` as literals; six syntax colours that are not tokens | Nothing. |
 | `tests/test_diagram_qml.py` | `border`, `warn`, `bad`, `accent`, `faint` and `info`, asserted as hex literals | The test itself: it fails when one of them changes, and the literal is then updated by hand. |
-| `tests/test_pill_qml.py`, `tests/desktop/driver.py` | In the harness pill of `test_pill_qml.py`, `glassPill` as `#f01a1d21`, `pillHeight` as 52 and `radiusPill` as 26. In the driver, `good` and `warn` as the stone's pixel colours (`#5fb36b`, `#e0a93b`), `bg` as `(16, 18, 20)`, `dim` as 0.6, and `glassLine` in a docstring | Nothing. |
+| `tests/test_pill_qml.py`, `tests/test_notice_qml.py`, `tests/test_mail_app_qml.py`, `tests/desktop/driver.py` | In the harness pill of the first two, `glassPill` as `#f01a1d21`, `pillHeight` as 52 and `radiusPill` as 26. In the mail app test, `muted` as `#8b939c`. In the driver, `good`, `warn`, `muted` and `bad` as the stone's pixel colours (`#5fb36b`, `#e0a93b`, `#8b939c`, `#d05555`), `warn`, `accent` and `info` as the Machine card's colours, `bg` as `(16, 18, 20)`, `dim` as 0.6, and `glassLine` in a docstring | Nothing. |
 | `tests/test_desk_qml.py`, `tests/test_desk_cards_qml.py`, `tests/test_stone_qml.py` | `bg`, painted as a literal `#101214` ground behind what is under test (`GROUND` in the stone test) | Nothing: they keep passing after `bg` changes, so update the literal to keep them on the real ground. |
 
 `DeskTheme.js` has eight more values that no test compares: `railMargin`, `railTop`, `railBottom`, `cardGap`, `stripGap`, `foldMs`, `unfoldDelayMs` and `washMs`.
 
 ## Logo files
 
-The six files in `docs/brand` are catalogued, with their sizes and uses, in [the brand assets page](../brand/README.md#brand-assets). Do not rename them: `README.md` refers to the two lockups and `share/grub/bombadil/README.md` refers to `bombadil-mark.svg`. The tokens they carry as literals are `fg`, `accent`, `panel`, `border`, `inkOnLight` and `accentOnLight`, and only their parsing is tested. The tile's corner radius is 28 units of 120, not the `radius` token. The four SVGs cut the b with an SVG `<mask>`, which Qt's SVG renderer ignores, so the installed icons, which Qt draws, are mask-free copies in `iso/airootfs/usr/share/icons/hicolor/scalable/apps/` (`bombadil.svg`, also in `iso/airootfs/usr/share/pixmaps/`, and the one-colour 16 px `bombadil-symbolic.svg`). A separate colour drawing for 16 px, and `LOGO=bombadil` in the installed system's `os-release`, are designed: no file in the repository provides either.
+The six files in `docs/brand` are catalogued, with their sizes and uses, in [the brand assets page](../brand/README.md#brand-assets). Do not rename them: `README.md` refers to the two lockups and `share/grub/bombadil/README.md` refers to `bombadil-mark.svg`. `scripts/make-wallpaper.py` also reads `bombadil-mark.svg` by pattern (a `<path ... mask=>` for the stone and the first `<path>` after `<mask` for the b), so its structure must stay too. Only the two redraw tests in `tests/test_wallpaper.py` catch a change, and only where Pillow, NumPy and CairoSVG are installed. The tokens they carry as literals are `fg`, `accent`, `panel`, `border`, `inkOnLight` and `accentOnLight`, and only their parsing is tested. The tile's corner radius is 28 units of 120, not the `radius` token. The four SVGs cut the b with an SVG `<mask>`, which Qt's SVG renderer ignores, so the installed icons, which Qt draws, are mask-free copies in `iso/airootfs/usr/share/icons/hicolor/scalable/apps/` (`bombadil.svg`, also in `iso/airootfs/usr/share/pixmaps/`, and the one-colour 16 px `bombadil-symbolic.svg`). A separate colour drawing for 16 px, and `LOGO=bombadil` in the installed system's `os-release`, are designed: no file in the repository provides either.
 
 ## Extending it
 
@@ -451,7 +480,7 @@ The six files in `docs/brand` are catalogued, with their sizes and uses, in [the
 ### 2. Add an icon
 
 1. Take the SVG from Lucide at the version in `share/qml/Bombadil/icons/LICENSE` (0.544.0) and keep the drawing as it is: 24 by 24, stroke `currentColor`, 2 px, round caps and joins. Remove the `<!-- @license ... -->` comment and the `class` attribute, as in the existing files. Name the file in Lucide's lower-case hyphenated form. The five shorter names above are the exception: Lucide's own `key`, `trash`, `sliders` and `wand` are different drawings, and Lucide 0.544.0 has no `refresh`, so check the drawing and not only the name.
-2. Save it as `share/qml/Bombadil/icons/<name>.svg`. Nothing needs registering for the kit: `share/qml/Bombadil/qmldir` lists QML types only, `Theme.icon("<name>")` builds the path from the file name, `cards.icon_names()` in `src/bombadil/cards.py` reads the folder, so a diagram node accepts the name at once, and `scripts/build-iso.sh` copies the whole `share` tree into the image.
+2. Save it as `share/qml/Bombadil/icons/<name>.svg`. Nothing needs registering for the kit: `share/qml/Bombadil/qmldir` lists QML types only, `Theme.icon("<name>")` builds the path from the file name, `cards.icon_names()` in `src/bombadil/cards.py` reads the folder, so a diagram node accepts the name at once, `src/bombadil/apps.py` accepts it as an app's `icon`, and `scripts/build-iso.sh` copies the whole `share` tree into the image.
 3. Add the name to the `## Icons` list at the end of `share/skills/bombadil-apps/references/components.md`. That list is the one the agent is told to use (`src/bombadil/cards.py` and `src/bombadil/cardtools.py` point to it), so the agent does not know a name until it is there.
 4. Use it with `Icon { name: "<name>" }` or `icon.source: Theme.icon("<name>")`, tinted to a text colour. Look at it in `tests/qml/style_gallery.qml` or a small app.
 5. `tests/test_cards.py::test_the_kit_icons_are_the_only_icons` asserts only `wifi` and `shield`, so check the name by loading it. Do not add an icon from another set.
@@ -459,11 +488,11 @@ The six files in `docs/brand` are catalogued, with their sizes and uses, in [the
 ### 3. Add a state to the stone
 
 1. Choose the face name and where it comes from. Faces that `agentd` events decide belong in the `face` binding of `shell/PillState.qml`, in the right place in its order. A face that only one screen shows is mapped in `shell/shell.qml` the way `listening` is: `face: win.summoned && pillState.face === "rest" ? "listening" : pillState.face`.
-2. In `shell/Stone.qml`, `face` is a plain string. The colour comes from `fill` (`accent` while `rolling`, `warn` for `needs`, else `good`), which reaches the shape through `paint` once `settle` has passed. A face that is not the stone, like `stopped` and `offline`, is its own item with `visible: stone.face === "<name>"`, and its name is excluded in `drawn`.
+2. In `shell/Stone.qml`, `face` is a plain string. The colour comes from `fill` (`accent` while `rolling`, `warn` for `needs`, else `good`), which reaches the shape through `paint` once `settle` has passed. A face that is not the filled stone, like `stopped`, `resting` and `offline`, is its own item with `visible: stone.face === "<name>"`, and its name is excluded in `drawn`.
 3. Give the movement a `SequentialAnimation` with `running: stone.face === "<name>" && !stone.reducedMotion` and an `onStopped` that puts the property back, and a second one for `stone.reducedMotion` that is still or fades. Use the pose properties (`lean`, `turn`, `knock`, `hopY`, `hopSx`, `hopSy`, `glowOpacity`) so the b keeps riding.
 4. Take every colour from a token. The state must mean one thing, read without colour, and have a still version.
-5. Add a test to `tests/test_stone_qml.py`: `mark.set(face="<name>")`, then `near(mark.at(x, y), THEME["<token>"])`, and `mark.snap("<name>")`. The `mark` fixture builds the stone with `settle=0`, so a colour shows at once; build `Mark(app, tmp_path, settle=400)` to test the first frames. If the face has a trigger, add it to `tests/test_pill_qml.py` with `face(bar)`. If the border should change, edit the border rule in `shell/shell.qml`.
-6. Update the table and the diagram on this page.
+5. Add a test to `tests/test_stone_qml.py`: `mark.set(face="<name>")`, then `near(mark.at(x, y), THEME["<token>"])`, and `mark.snap("<name>")`. The `mark` fixture builds the stone with `settle=0`, so a colour shows at once; build `Mark(app, tmp_path, settle=400)` to test the first frames. If the face has a trigger, add it to `tests/test_pill_qml.py` with `face(bar)` (the resting face's triggers are in `tests/test_rest_qml.py`). If the border should change, edit the border rule in `shell/shell.qml`.
+6. Update the table and the diagram on this page, and the pages that list the faces: `docs/brand/README.md`, `docs/architecture/shell.md#the-stone`, `docs/roadmap.md` and the note's table of states ([the design note](../design/design-system.md#the-pills-states)).
 
 ### 4. Add a component that respects the tokens
 
@@ -486,11 +515,11 @@ The six files in `docs/brand` are catalogued, with their sizes and uses, in [the
 
 ## Principles it keeps
 
-- [Colour says who](../principles.md#colour-says-who): colours are picked from the tokens by meaning. The trap is using `accent` because it looks good; it is the machine's colour, and a second use for decoration weakens every orange mark on screen.
+- [Colour says who](../principles.md#colour-says-who): colours are picked from the tokens by meaning. The trap is using `accent` because it looks good; it is the machine's colour, and a second use for decoration weakens every orange mark on screen. The same goes for a state that is nobody's: the AI resting is `muted`, not `warn` or `bad`.
 - [One design language](../principles.md#one-design-language): the shell, the apps, the wallpaper and the boot console read the same `Theme`. The trap is a literal: a hex colour or a size typed into a file is a second design that drifts, and the tests catch it only in `shell/*.qml`, in the wallpaper picture and in the console parameters. Editing the wallpaper PNG by hand, or changing a ground token without running `scripts/make-wallpaper.py`, is the same trap.
 - [Quiet at rest](../principles.md#quiet-at-rest): the stone's four movements each mean one thing. Most control motion is a fade or a slide of 120 to 200 ms; `Dialog` also scales, the combo box arrow turns, and the busy indicator and the indeterminate progress bar loop. The trap is a movement that means nothing or has no still version; the desk's looping ring and the kit's spinners have none (see [known gaps](#known-gaps)).
 - [Original](../principles.md#original): the character is in how the stone moves. The trap is decoration that carries character instead: a face, a mascot, or a mark drawn in orange.
-- [Something true in 200 ms](../principles.md#something-true-in-200-ms): `PillState.submit` makes the face `working` and the line `On it` on the keypress, before agentd answers. The stone changes colour at once (once its first 400 ms have passed), the line fades in over 200 ms and grows over 120 ms, and the border, which waits for agentd to report the turn, eases over 300 ms. The trap is a design that waits for an animation or for agentd before it shows the state.
+- [Something true in 200 ms](../principles.md#something-true-in-200-ms): `PillState.submit` makes the face `working` and the line `On it` on the keypress, before agentd answers (while the AI rests it shows the resting line at once instead, and never `On it`). The stone changes colour at once (once its first 400 ms have passed), the line fades in over 200 ms and grows over 120 ms, and the border, which waits for agentd to report the turn, eases over 300 ms. The trap is a design that waits for an animation or for agentd before it shows the state.
 
 ## Tests
 
@@ -498,21 +527,22 @@ The six files in `docs/brand` are catalogued, with their sizes and uses, in [the
 |---|---|
 | `tests/test_theme.py` | The parity of `DeskTheme.js` with `Theme.qml`, the required tokens, no colour literal and a font family in every shell file, the import path and launcher. |
 | `tests/test_brand.py` | The installed icons, no masks in them, the README banner, the PNG sizes, the GRUB theme. |
-| `tests/test_stone_qml.py` | 14 tests. Each face rendered offscreen and read back pixel by pixel: colours, the b staying inside the stone in every pose, a third of a turn looking the same, two knocks, the pulse, the hop, the first 400 ms painted `good`, and the glow's reach past the 24 px slot. Skipped without PySide6 and its system libraries. |
+| `tests/test_stone_qml.py` | 17 tests. Each face rendered offscreen and read back pixel by pixel: colours, the b staying inside the stone in every pose, a third of a turn looking the same, two knocks, the pulse, the hop, the first 400 ms painted `good`, the glow's reach past the 24 px slot, and for `resting` a grey whole outline over a faint fill with the b cut in, still, unlike every other face. Skipped without PySide6 and its system libraries. |
 | `tests/test_pill_qml.py` | `PillState.face` through a turn, a stop, setup, a session that waits (`needsYou`) and a lost connection, the line's timing and the font families the line uses. |
+| `tests/test_rest_qml.py`, `tests/test_found_qml.py`, `tests/test_notice_qml.py` | The pill while the AI rests (the resting line and its face, the empty field's hint, the waiting chips, the AI card and its switches), the found chips, and the notices on the line (their chips, the red edge of a warning, the orange of a primary chip). The first two also check that what they draw uses `fontFamily`. |
 | `tests/test_desk_qml.py` | That the desk writes `needsYou` into the pill, keeps it through a fold, a window and the capsule, and clears it when the socket drops. |
-| `tests/test_wallpaper.py` | 14 tests. The picture's pixels against the tokens, the dimming arithmetic, the shell file's layer, mask and path, and the config file. Two of them redraw the picture with `scripts/make-wallpaper.py` and need Pillow, NumPy and CairoSVG. |
+| `tests/test_wallpaper.py` | 14 tests. The picture's pixels against the tokens, the dimming arithmetic, the shell file's layer, mask and path, and the config file. Five read the picture's pixels and need PySide6. Two redraw the picture with `scripts/make-wallpaper.py` and need Pillow, NumPy and CairoSVG. |
 | `tests/test_boot_console.py` | 8 tests. The kernel parameters in the boot entry and the GRUB drop-in equal `scripts/console-palette.py`, greetd keeps Hyprland's start-up text off the console, and `background_color` is opaque `bg`. |
 | `tests/test_appkit_kit.py` | `Theme.alpha`, among the kit's behaviour. |
 
 ```sh
 pytest -q tests/test_theme.py tests/test_brand.py tests/test_stone_qml.py tests/test_pill_qml.py
 pytest -q tests/test_wallpaper.py tests/test_boot_console.py
-BOMBADIL_SCREENS=/tmp/stones pytest -q tests/test_stone_qml.py    # also saves six faces at 8x
+BOMBADIL_SCREENS=/tmp/stones pytest -q tests/test_stone_qml.py    # also saves seven faces at 8x
 bin/bombadil-app check tests/qml/style_gallery.qml --screenshot gallery.png
 ```
 
-`BOMBADIL_SCREENS` saves a picture of `rest`, `working`, `listening`, `needs`, `stopped` and `offline`, not of `starting` or `done`.
+`BOMBADIL_SCREENS` saves a picture of `rest`, `working`, `listening`, `needs`, `stopped`, `resting` and `offline`, not of `starting` or `done`.
 
 No pytest file asserts anything about a `Bombadil.Style` control. The style gallery is a visual check, run by hand: it draws most of the 41 controls in their states on `bg` and on `panel`, and reports `ok: true` when it loads without errors. It does not draw `Drawer`, `StackView`, `ScrollIndicator`, a plain `Popup` or `ApplicationWindow`, and `DialogButtonBox` only inside its `Dialog`.
 
@@ -520,7 +550,7 @@ No pytest file asserts anything about a `Bombadil.Style` control. The style gall
 
 Each is read from the file named.
 
-- The design note and the code differ on these points, and the code is right:
+- The design note and the code differ on these points. The page documents the code; for the rows that are design intent, the note says what was meant:
 
   | The note says | The code has |
   |---|---|
@@ -531,16 +561,19 @@ Each is read from the file named.
   | `title` (22/700) for a window's title row. | `share/qml/Bombadil/AppWindow.qml` draws it at `headingSize` (17), DemiBold. |
   | `display` is 34/700. | `displaySize` only, with no reader in the kit. |
   | 24 px icons in toolbars. | `Style/ToolButton.qml` sets 16. |
-  | Never use `accent` for anything the machine is not doing. | A shown app chip's border, primary setup chips, and in the kit a primary button, a checked box or switch, the focus ring and text selection use it as a highlight. |
+  | Never use `accent` for anything the machine is not doing. | A shown app chip's border, primary setup and notice chips, the AI card's switch when on, and in the kit a primary button, a checked box or switch, the focus ring and text selection use it as a highlight. |
+  | Glass is `glassPill`, `glassLine`, `glassChip` and `glassCard`. | Six tokens: also `glassStrip` (95%) and `glassRaised` (`raised` at 94%). |
+  | Every movement means one thing; nothing else moves. | The kit and the desk fade, slide, fold and spin: hover and press fades, popups, dialogs, `BusyIndicator`, the indeterminate `ProgressBar`, a card's fold and wash, the desk's 2000 ms ring ([Reduced motion](#reduced-motion)). |
 
-- Disabled controls use a literal `opacity: enabled ? 1 : 0.4` in 21 files of `share/qml/Bombadil/Style/`.
+- Disabled controls use a literal `opacity: enabled ? 1 : 0.4` in 21 files of `share/qml/Bombadil/Style/`, and `shell/AiCard.qml` writes `opacity: usable ? 1 : 0.4` for a switch that cannot be flipped.
 - Reduced motion reaches only the stone and the wallpaper's fade, and only through an environment variable nothing sets (`shell/shell.qml`). The listening lean ignores it (`shell/Stone.qml`).
 - Text smaller than the 12 px floor: `shell/NowCard.qml`, `shell/RowsCard.qml` and `share/qml/Bombadil/Diagram.qml` set 11 px.
 - `faint` text that a person may need to read: `share/qml/Bombadil/Diagram.qml` draws a box's `note` and the `drawing…` label in it (2.8:1 on `panel`).
 - The desk's text sizes (14, 13, 12, 11) are literals because `shell/DeskTheme.js` carries no type sizes (`shell/DeskCard.qml`, `shell/RowsCard.qml`).
-- The pill's width on the desk's screen is a literal: `shell/DeskState.qml` computes `pillTarget` with `Math.max(360, Math.min(900, ...))`, and `shell/shell.qml` repeats 360 as `Math.max(360, win.pillMax)` for the line, the picture and the queued chips. `pillMaxWidth` serves only the other screens and the setup and app chip rows, `DeskTheme.js` has no copy of it, and no test compares the two.
-- Other numeric literals in the shell that repeat or stand in for a token value: the app chips in `shell/shell.qml` (height 28 is `chipHeight`; radius 14 is half that height and only coincides with `radiusLine`; a 15 px glyph is `lineSize`), `shell/QueueChips.qml` (15 px) and `shell/SetupChips.qml` (17 and 13 px, which are `headingSize` and `smallSize`). Two have no token: the 150 ms border fade of the app chips in `shell/shell.qml`, which is neither `fast` nor `normal`, and the 24 px height of `shell/LineButton.qml`. No colour literal remains in `shell/*.qml`.
-- The kit draws error and danger text in `bad` (4.1:1 on `panel`), not `badInk`: `share/qml/Bombadil/Style/Button.qml` (a `danger` button's ink), `share/qml/Bombadil/Style/MenuItem.qml` (a `danger` item), `share/qml/Bombadil/Field.qml` (a field's error text) and the `<title> could not load` heading in `src/bombadil/appkit/runtime.py`. `accentInk`, `warnInk` and `badInk` have no reader under `share/qml`; `shell/StatusLine.qml` and `shell/shell.qml` read them, and the desk reads copies of `warnInk` and `badInk` as `DeskTheme.amberText` and `redText` (`shell/NowCard.qml`).
+- The pill's width on the desk's screen is a literal: `shell/DeskState.qml` computes `pillTarget` as 100 in the capsule, 360 while any window shares the stage, and `Math.max(360, Math.min(900, ...))` when the stage is open, and `shell/shell.qml` repeats 360 as `Math.max(360, win.pillMax)` for the line, the picture, the found chips and the queued chips. `pillMaxWidth` serves only the other screens and the setup and app chip rows, `DeskTheme.js` has no copy of it, and no test compares the two. `shell/AiCard.qml` is 360 wide by its own literal.
+- Other numeric literals in the shell that repeat or stand in for a token value: the app chips in `shell/shell.qml` (height 28 is `chipHeight`; radius 14 is half that height and only coincides with `radiusLine`; a 15 px glyph is `lineSize`), `shell/QueueChips.qml` (15 px) and `shell/SetupChips.qml` (17 and 13 px, which are `headingSize` and `smallSize`). Some have no token: the 150 ms border fade of the app chips in `shell/shell.qml` and the 150 ms `pillAnimMs` in `shell/DeskState.qml`, which are neither `fast` nor `normal`; the 24 px height of `shell/LineButton.qml`; the 30 px height of found chips and of setup chips that are not big (46 for the big pair), where `chipHeight` is 28; and the 36 by 20 switch of `shell/AiCard.qml`, a hand copy of `Style/Switch.qml`. No colour literal remains in `shell/*.qml`.
+- The kit draws error and danger text in `bad` (4.1:1 on `panel`), not `badInk`: `share/qml/Bombadil/Style/Button.qml` (a `danger` button's ink), `share/qml/Bombadil/Style/MenuItem.qml` (a `danger` item), `share/qml/Bombadil/Field.qml` (a field's error text) and the `<title> could not load` heading in `src/bombadil/appkit/runtime.py`. It draws text in the other marks too: `share/qml/Bombadil/Badge.qml` and the delta of `share/qml/Bombadil/Stat.qml` take `Theme.tone(...)` (`good`, `warn`, `bad`, `info`), and the 11 px sub-text of a `Diagram` step is `warn` or `bad`. `accentInk`, `warnInk` and `badInk` have no reader under `share/qml`; `shell/StatusLine.qml` and `shell/shell.qml` read them, the built-in mail app reads `badInk` and `warnInk` (`share/apps/mail`), and the desk reads copies of `warnInk` and `badInk` as `DeskTheme.amberText` and `redText` (`shell/NowCard.qml`). The desk's Machine card draws the percent of a crossed line in `amber` or `red`, the marks (`shell/RowsCard.qml`; `bad` is 4.1:1 on the card).
+- Hover and pressed shades are sometimes computed, not tokens: `Qt.lighter` and `Qt.darker` in `shell/RowsCard.qml`, `shell/AiCard.qml` and, under `share/qml/Bombadil/`, in `Style/Button.qml` (`danger`), `Style/Switch.qml`, `Style/SwitchDelegate.qml`, `Style/Slider.qml`, `Style/RangeSlider.qml`, `BarChart.qml` and `StackedBar.qml`. `shell/RowsCard.qml` also draws a `Do it` button in `accent` with `accentFg` text at 12 px, under the 14 px that `accentFg` needs; it is not reachable on `main`, because nothing sends a row with that button.
 - The editor's syntax colours are not tokens: `PALETTE` in `src/bombadil/appkit/native/highlighter.py` repeats `accent`, `faint`, `fg` and `muted` as literals and adds six colours that no token holds. Changing `accent` does not change the editor, and no test compares them.
 - `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` repeats `accent`, `border`, the radius and the gaps with no test against `Theme.qml`. Only `background_color` is checked.
 - The stone is painted `good` for its first 400 ms whatever its face says (`settle` in `shell/Stone.qml`), a workaround for a colour change the scene graph dropped on a VM. The code gives no cause.
