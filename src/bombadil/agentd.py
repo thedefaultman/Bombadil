@@ -31,8 +31,10 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "open_url", "url": "...", "signin": id?}  a link for the browser panel
                                                         (bombadil-browser: $BROWSER and xdg-open)
                    {"type": "desk", "op": "get"}        the desk's state (and the plan of a running turn)
-                   {"type": "desk", "op": "fold"|"hide"|"show"|"move", "widget": "machine",
+                   {"type": "desk", "op": "fold"|"unfold"|"hide"|"show"|"move", "widget": "machine",
                     "rail": "left"|"right", "rank": 0}  change the desk; the state comes back to everyone
+                                                        (fold with no widget is the word "desk"; with one,
+                                                        only that card goes to its strip)
                    {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
                                                         the os-mcp `desk` tool; answered with desk-result
                    {"type": "jobs", "op": "get"}        the jobs table (also sent after `desk get`)
@@ -66,8 +68,8 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         up to three things on this computer it nearly names (none:
                                                         the line says so); only offered, a press opens one
                    {"type": "summon", "text"?: "..."}
-                   {"type": "desk", "folded": bool, "hidden": [...], "rails": {...}, "order": {...},
-                    "screen": ""}                       the desk's state: to whoever asks, and on every change
+                   {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "rails": {...},
+                    "order": {...}, "screen": ""}       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a desk-tool, to its sender only
                    {"type": "jobs", "jobs": [{"id", "title", "kind": "job"|"watch"|"timer", "state":
@@ -666,7 +668,7 @@ class AgentD:
             self._vitals_kick()   # Machine put away stops the sampling; shown again starts it
 
     async def _desk_op(self, msg: dict, writer: asyncio.StreamWriter):
-        """The shell asks for the desk, or changes it (a click on a strip, a drag later)."""
+        """The shell asks for the desk, or changes it (a click on a strip, a card dragged somewhere)."""
         op = str(msg.get("op", ""))
         if op == "get":
             await self._send(writer, await asyncio.to_thread(self.desk.snapshot))
@@ -678,13 +680,14 @@ class AgentD:
             if self.vitals is not None and self.vitals.message()["present"]:
                 await self._send(writer, self.vitals.message())
             return
-        if op not in ("fold", "hide", "show", "move"):
+        if op not in ("fold", "unfold", "hide", "show", "move"):
             return
 
         def change():
             before = self.desk.snapshot()
-            ok, text = self.desk.apply("toggle" if op == "fold" else op, msg.get("widget"),
-                                       msg.get("rail"), msg.get("rank"))
+            # "fold" alone is the word "desk", one press for both ways; with a widget it folds that one card.
+            ok, text = self.desk.apply("toggle" if op == "fold" and not msg.get("widget") else op,
+                                       msg.get("widget"), msg.get("rail"), msg.get("rank"))
             return ok, text, self.desk.snapshot() != before
         ok, text, changed = await asyncio.to_thread(change)
         if ok and changed:

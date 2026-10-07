@@ -915,7 +915,7 @@ def _os_tool(tool: str, a: dict) -> Step | None:
             to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
             return Step(f"Moving {widget}{to}")
         if op in ("fold", "unfold"):
-            return Step(f"{op.capitalize()}ing the desk")
+            return Step(f"{op.capitalize()}ing {widget}" if a.get("widget") else f"{op.capitalize()}ing the desk")
         return Step("Looking at the desk")
     if tool == "job":
         op = str(a.get("op") or "")

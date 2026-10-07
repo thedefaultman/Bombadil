@@ -13,7 +13,7 @@ def fresh(home) -> desk.Desk:
 
 def test_a_new_desk_is_the_one_the_shell_expects(home):
     assert desk.Desk().snapshot() == {
-        "type": "desk", "folded": False, "hidden": ["alive"], "screen": "",
+        "type": "desk", "folded": False, "hidden": ["alive"], "stripped": [], "screen": "",
         "rails": {"now": "left", "watching": "left", "needs": "right", "machine": "right", "away": "right",
                   "alive": "left"},
         "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}}
@@ -35,6 +35,20 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
     ([("fold",), ("fold",)], True, "The desk is already folded."),
     ([("unfold",)], True, "The desk is already unfolded."),
     ([("fold",), ("unfold",)], True, "Unfolded the desk."),
+    ([("fold", "machine")], True, "Folded Machine to its strip."),
+    ([("fold", "Needs you")], True, "Folded Needs you to its strip."),
+    ([("fold", "machine"), ("fold", "machine")], True, "Machine is already folded."),
+    ([("unfold", "machine")], True, "Machine is already unfolded."),
+    ([("fold", "machine"), ("unfold", "machine")], True, "Unfolded Machine."),
+    ([("fold", "sofa")], False, ("There is no widget called 'sofa'. The widgets are Now, Watching, Alive, "
+                                 "Needs you, Away and Machine.")),
+    ([("fold", "machine"), ("show", "machine")], True, "Here is the machine."),
+    ([("fold", "watching"), ("show", "watching")], True, "Unfolded Watching."),
+    ([("fold", "alive"), ("show", "alive")], True, "Put Alive on the desk."),
+    ([("fold", "watching"), ("move", "watching", None, 1)], True, "Unfolded Watching."),
+    ([("fold", "watching"), ("move", "watching", "left")], True, "Unfolded Watching."),
+    ([("fold", "watching"), ("move", "watching", "right", 0)], True, "Moved Watching to the right rail."),
+    ([("fold", "now"), ("move", "now", None, 2)], True, "Moved Now further from the pill."),
     ([("hide", "sofa")], False, ("There is no widget called 'sofa'. The widgets are Now, Watching, Alive, "
                                  "Needs you, Away and Machine.")),
     ([("hide", None)], False, "Which widget? The widgets are Now, Watching, Alive, Needs you, Away and Machine."),
@@ -70,6 +84,55 @@ def test_a_move_puts_the_widget_where_it_was_asked(home):
     assert d.snapshot()["order"]["right"][0] == "machine"
 
 
+def test_folding_one_widget_is_not_folding_the_desk(home):
+    d = fresh(home)
+    d.apply("fold", "machine")
+    assert d.snapshot()["stripped"] == ["machine"] and d.snapshot()["folded"] is False
+    d.apply("toggle")
+    assert d.snapshot()["stripped"] == ["machine"] and d.snapshot()["folded"] is True
+    d.apply("unfold")        # the word "desk" unfolds the desk and leaves the hand-folded card where it is
+    assert d.snapshot()["stripped"] == ["machine"] and d.snapshot()["folded"] is False
+    d.apply("unfold", "machine")
+    assert d.snapshot()["stripped"] == []
+
+
+def test_a_hand_folded_widget_keeps_its_place_and_asking_or_moving_gives_the_card_back(home):
+    d = fresh(home)
+    before = d.snapshot()["order"]
+    d.apply("fold", "watching")
+    assert d.snapshot()["order"] == before                       # still second in its rail, only a strip
+    assert d.apply("hide", "watching") == (True, "Put Watching away.")
+    assert d.snapshot()["stripped"] == ["watching"]              # put away is another thing
+    assert d.apply("show", "watching") == (True, "Put Watching on the desk.")
+    assert d.snapshot()["stripped"] == []                        # asking wants the card
+    d.apply("fold", "needs")
+    assert d.apply("hide", "needs")[0] is False and d.snapshot()["stripped"] == ["needs"]
+    d.apply("move", "needs", "left", 0)                          # a strip dragged into a rail
+    assert d.snapshot()["stripped"] == [] and d.snapshot()["order"]["left"][0] == "needs"
+
+
+def test_an_unchanged_move_still_gives_the_card_back_and_says_it_changed(home):
+    d = fresh(home)
+    changes = []
+    d.on_change = lambda: changes.append(1)
+    d.apply("fold", "watching")
+    d.apply("move", "watching", None, 1)
+    assert d.snapshot()["stripped"] == [] and len(changes) == 2
+    d.apply("move", "watching", None, 1)          # now it is only where it already is
+    assert len(changes) == 2
+
+
+@pytest.mark.parametrize("widget", ["machine", "watching"])
+def test_showing_a_hand_folded_widget_is_a_change_that_is_saved_and_told(home, widget):
+    d = fresh(home)
+    d.apply("fold", widget)
+    changes = []
+    d.on_change = lambda: changes.append(1)
+    d.apply("show", widget)
+    assert d.snapshot()["stripped"] == [] and changes == [1]
+    assert desk.Desk().load().snapshot()["stripped"] == []
+
+
 def test_hiding_keeps_the_place_so_showing_puts_it_back(home):
     d = fresh(home)
     before = d.snapshot()["order"]
@@ -93,6 +156,9 @@ def test_state_is_said_in_words_and_changes_nothing(home):
     assert d.apply("state") == (True, ("The desk is open. Left rail, nearest the pill first: Now, Watching, "
                                        "Alive (put away). Right rail: Needs you, Away, Machine."))
     assert not paths.desk_file().exists()
+    d.apply("fold", "machine")
+    assert d.apply("state")[1].endswith("Right rail: Needs you, Away, Machine (folded to a strip).")
+    d.apply("unfold", "machine")
     d.apply("fold")
     assert d.apply("state")[1].startswith("The desk is folded to strips.")
 
@@ -102,10 +168,12 @@ def test_a_change_survives_a_restart(home):
     d.apply("hide", "machine")
     d.apply("show", "alive")
     d.apply("move", "watching", "right", 1)
+    d.apply("fold", "needs")
     d.apply("toggle")
     again = desk.Desk().load()
     assert again.snapshot() == d.snapshot()
     assert again.snapshot()["folded"] is True and again.snapshot()["hidden"] == ["machine"]
+    assert again.snapshot()["stripped"] == ["needs"]
     assert again.snapshot()["order"]["right"] == ["needs", "watching", "away", "machine"]
 
 
@@ -118,6 +186,7 @@ def test_the_file_is_small_toml_anyone_can_read(home):
     assert text.startswith("# Bombadil's desk")
     data = tomllib.loads(text)
     assert data["folded"] is False and data["screen"] == "DP-1" and data["hidden"] == ["alive"]
+    assert data["stripped"] == []
     assert data["rails"]["now"] == "right" and data["order"]["right"][0] == "now"
     assert not list(paths.desk_file().parent.glob("*.tmp"))   # written whole, then moved into place
 
@@ -134,6 +203,8 @@ def test_no_file_is_the_default_desk_and_load_writes_nothing(home):
     "folded = 5\nhidden = 'machine'\n[rails]\nnow = 3\n[order]\nleft = 'now'\n",
     "[rails]\nnow = ['left']\n[order]\nleft = [['now'], 4, {a = 1}]\nright = 7\n",
     "hidden = [['a'], 3, 'nothing']\nscreen = 4\n",
+    "stripped = 'machine'\n",
+    "stripped = [['machine'], 3, 'nothing', {a = 1}]\n",
 ])
 def test_a_corrupt_or_odd_file_gives_a_working_default_desk(home, content):
     paths.desk_file().parent.mkdir(parents=True)
@@ -143,6 +214,12 @@ def test_a_corrupt_or_odd_file_gives_a_working_default_desk(home, content):
     assert d.snapshot()["rails"] == desk.Desk().snapshot()["rails"] and d.snapshot()["screen"] == ""
     assert d.apply("hide", "machine") == (True, "Put Machine away.")   # and the file can be saved over
     assert "machine" in desk.Desk().load().snapshot()["hidden"]
+
+
+def test_a_hand_edit_may_fold_any_widget_even_needs_you_but_only_the_ones_there_are(home):
+    paths.desk_file().parent.mkdir(parents=True)
+    paths.desk_file().write_text('stripped = ["needs", "ghost", "machine", 5, "machine"]\n')
+    assert desk.Desk().load().snapshot()["stripped"] == ["needs", "machine"]   # in the widgets' own order
 
 
 @pytest.mark.parametrize("screen", [
@@ -283,6 +360,7 @@ def _consistent(s):
     """Every widget is in exactly one rail's order, the one its rails entry names."""
     everyone = s["order"]["left"] + s["order"]["right"]
     assert sorted(everyone) == sorted(desk.WIDGETS)
+    assert set(s["stripped"]) <= set(desk.WIDGETS) and s["stripped"] == [w for w in desk.WIDGETS if w in s["stripped"]]
     for r in desk.RAILS:
         assert all(s["rails"][w] == r for w in s["order"][r])
     assert "needs" not in s["hidden"]
@@ -320,6 +398,8 @@ def test_the_title_the_line_uses():
     "pin my batch. also bring the machine card back", "move now to the right rail",
     "Show my batch on the desk", "the widget is in the way", "hide the machine card",
     "show while you were away", "please hide machine", "put up my desk",
+    "unfold the machine card", "unfold watching", "unfold needs you", "unfold the machine please",
+    "fold the machine into a strip", "fold watching to a strip",
 ])
 def test_the_words_that_ask_for_the_desk(prompt):
     assert desk.asked_for_desk(prompt)
@@ -335,6 +415,7 @@ def test_the_words_that_ask_for_the_desk(prompt):
     "keep away from the machine", "put away the groceries", "bring me the machine specs",
     "I am at the help desk all day", "a standing desk for the office", "write to the front desk",
     "tidy my desk job list", "make a password manager",
+    "unfold the map of the machine's drives", "unfold the paper and read it", "fold the laundry into the machine",
 ])
 def test_the_words_that_do_not(prompt):
     assert not desk.asked_for_desk(prompt)
@@ -360,6 +441,9 @@ def test_the_state_file_is_the_one_paths_names(home):
     ({"op": "move", "widget": "now", "rank": 1}, "Moving Now"),
     ({"op": "fold"}, "Folding the desk"),
     ({"op": "unfold"}, "Unfolding the desk"),
+    ({"op": "fold", "widget": "machine"}, "Folding Machine"),
+    ({"op": "unfold", "widget": "needs"}, "Unfolding Needs you"),
+    ({"op": "fold", "widget": ""}, "Folding the desk"),
     ({"op": "state"}, "Looking at the desk"),
     ({}, "Looking at the desk"),
 ])
