@@ -1,7 +1,8 @@
 //@ pragma UseQApplication
 // The Bombadil bar: a Quickshell shell that is the whole visible UI at login.
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
-// while it works and how the turn ended. The pill is also the launcher: an app or panel name
+// while it works and how the turn ended, and, when nothing else has it, a notice another service
+// asked agentd to say (new mail). The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
 // Above the pill's left end, a chip per project holds a dot per coding session; when one waits
 // for you the pill's empty line says so, and Tab goes there.
@@ -80,8 +81,23 @@ ShellRoot {
             const v = JSON.parse(windows)
             deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
         }
-        // A message as agentd would send it, for demos and the VM smoke check.
-        function inject(message: string): void { root.handle(message) }
+        // A message as agentd would send it, for demos and the desktop test. A notice, or its end, only on a
+        // bar started for a test (BOMBADIL_BAR_INJECT=1, which no session of the image sets): the line above the
+        // pill is where agentd's warnings about mail show, and any process of the person's, an agent's shell
+        // included, that could say what it likes there could take one down. The other kinds are as open as
+        // they were (docs/MAIL.md says so).
+        function inject(message: string): void {
+            let ev
+            try { ev = JSON.parse(message) } catch (e) { return }
+            if (ev && String(ev.type).startsWith("notice") && Quickshell.env("BOMBADIL_BAR_INJECT") !== "1") return
+            root.handle(message)
+        }
+    }
+    IpcHandler {
+        target: "line"
+        // What the line above the pill is saying, notices included, as JSON: for the VM smoke test and the
+        // desktop test.
+        function state(): string { return JSON.stringify(pillState.snapshot()) }
     }
 
     // The coding sessions (dev.py): their dots, and the line the pill shows while one waits.

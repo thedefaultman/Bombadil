@@ -10,6 +10,10 @@ hl.on("hyprland.start", function()
     hl.exec_cmd("mako")
     -- One foot server for the coding sessions' windows, so a session's window rises at once.
     hl.exec_cmd("foot --server")
+    -- Mail's service is a user unit that starts at login, before this session has a screen, and
+    -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
+        .. " && systemctl --user restart bombadil-mail.service")
     -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
@@ -91,3 +95,9 @@ hl.window_rule({ name = "panel-terminal", match = { class = "^(bombadil-terminal
 hl.window_rule({ name = "panel-files", match = { class = "^(org.gnome.Nautilus)$" }, workspace = "special:files silent" })
 -- The details drawer: a turn's commands and output (click the line above the pill), history, Wi-Fi.
 hl.window_rule({ name = "panel-details", match = { class = "^(bombadil-details)$" }, workspace = "special:details silent" })
+
+-- Thunderbird is Mail's engine and is never seen: every window it opens (the main one, a compose window
+-- the add-on makes for a reply) goes to a special workspace nobody opens, and never takes focus. The class
+-- is matched without case, and as the Flatpak and the distribution's own names ("org.mozilla.thunderbird",
+-- "net.thunderbird.Thunderbird"). The workspace is not one of hypr.PANELS, so nothing offers or toggles it.
+hl.window_rule({ name = "mail-engine", match = { class = "(?i)^(.*\\.)?thunderbird.*$" }, workspace = "special:mail-engine silent" })

@@ -79,3 +79,25 @@ def desk_file() -> Path:
 
 def jobs_dir() -> Path:
     return state_dir() / "jobs"
+
+
+def mail_socket() -> Path:
+    return _env_path("BOMBADIL_MAIL_SOCKET", runtime_dir() / "mail.sock")
+
+
+def mail_db() -> Path:
+    return _env_path("BOMBADIL_MAIL_DB", state_dir() / "mail.db")
+
+
+def mail_files() -> Path:
+    """Copies of a draft's attachments and the attachments being fetched: nothing else."""
+    return _env_path("BOMBADIL_MAIL_FILES", state_dir() / "mail")
+
+
+def mail_profile() -> Path:
+    """Thunderbird's profile, the engine's own copy of the mail."""
+    return _env_path("BOMBADIL_MAIL_PROFILE", data_dir() / "mail")
+
+
+def press_log() -> Path:
+    return _env_path("BOMBADIL_PRESS_LOG", state_dir() / "presses.jsonl")

@@ -24,16 +24,25 @@
   bombadil brain focus PATH|URL|KEY    everything around one thing (turn:41, app:passwords, system)
   bombadil brain rebuild               forget the index and make it again from your files
                                        (add --json to any brain command for the whole answer)
+  bombadil mail [status]               is Mail running, and how is each account
+  bombadil mail accounts               every mail account: id, address, state, unread
+  bombadil mail add EMAIL              add an account (finish signing in in the Mail window)
+  bombadil mail remove ID              take an account out of Bombadil (the mail stays with its provider)
+  bombadil mail views                  the views the Mail window has
+  bombadil mail list [VIEW]            the newest mail in a view (all, needs_reply, drafts, acct:ID)
+  bombadil mail show [VIEW]            open the Mail window on a view
+                                       (nothing sends from here: Send is a button in the Mail window)
 """
 import json
 import os
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, dev, pager, paths, snapshots, watch  # noqa: E402
+from bombadil import config, dev, notices, pager, paths, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 EX_TEMPFAIL = 75   # `ask` when the AI rests: it does not wait for the reset (sysexits.h)
@@ -266,6 +275,139 @@ def brain(args: list[str]) -> int:
     return 0
 
 
+def mail_when(ts) -> str:
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if isinstance(ts, (int, float)) else ""
+
+
+def clean(value, limit: int = 200) -> str:
+    """What the service says, as one plain line for a terminal. A name, a subject and an id are other people's
+    words, and a terminal does what the escape sequences in them say (clears the screen, retitles the window,
+    on some writes to the clipboard); one_line folds those and the newlines, which could forge a row, to spaces."""
+    return notices.one_line("" if value is None else value, limit)
+
+
+def mail_line(m: dict) -> str:
+    """One mail as a row: id, when, who, what. Never its text."""
+    who = m.get("from") if isinstance(m.get("from"), dict) else {}
+    marks = [x for x, on in (("unread", m.get("unread")), ("needs a reply", m.get("needs_reply"))) if on]
+    bits = [clean(m.get("id"), 128), mail_when(m.get("ts")), clean(who.get("name") or who.get("email"), 80),
+            clean(m.get("subject") or "(no subject)")]
+    return "  ".join(b for b in bits if b) + (f"  [{', '.join(marks)}]" if marks else "")
+
+
+def mail_draft(d: dict) -> str:
+    """One draft as a row: id, who it is to, its subject and where it stands (not sent until Send is pressed)."""
+    to = ", ".join(clean(a.get("email"), 120) for a in d.get("to") or [] if isinstance(a, dict))
+    bits = [clean(d.get("id"), 128), f"to {to}" if to else "to nobody yet", clean(d.get("subject") or "(no subject)")]
+    return "  ".join(bits) + f"  [draft, {clean(d.get('state') or 'open', 24)}]"
+
+
+def mail_account(a: dict) -> str:
+    bits = [clean(a.get("id"), 40), clean(a.get("email"), 120), clean(a.get("state"), 24)]
+    if isinstance(a.get("unread"), int):
+        bits.append(f"{a['unread']} unread")
+    if a.get("note"):
+        bits.append(clean(a["note"]))
+    return "  ".join(b for b in bits if b)
+
+
+def mail_view(v) -> str:
+    if not isinstance(v, dict):
+        return clean(v, 80)
+    return "  ".join(clean(x, 80) for x in (v.get("id"), v.get("title") or v.get("name"), v.get("count"))
+                     if x not in (None, ""))
+
+
+def mail_items(result, key: str) -> list:
+    """The rows of an answer: a list, or {key: [...]} (the service's shape)."""
+    rows = result if isinstance(result, list) else (result or {}).get(key) if isinstance(result, dict) else []
+    return [r for r in rows or [] if isinstance(r, dict)]
+
+
+def mail_status_lines(status) -> list[str]:
+    text = clean(status.get("text"), 300) if isinstance(status, dict) else ""
+    return [text or "Mail is running."] + [mail_account(a) for a in mail_items(status, "accounts")]
+
+
+def mail_skipped(result) -> list[str]:
+    """What a list did not read, and why: an account that is signing in, blocked or in error says so, and
+    a list that was cut says there is more. Silence here would read as "nothing in it"."""
+    if not isinstance(result, dict):
+        return []
+    lines = [f"Not read: {mail_account({'id': a.get('account'), 'state': a.get('state'), 'note': a.get('note')})}"
+             for a in mail_items(result, "skipped")]
+    return lines + (["There is more than this; the Mail window has all of it."] if result.get("more") is True else [])
+
+
+def mail(args: list[str]) -> int:
+    """`bombadil mail ...`: plain lines, and the service's own sentence with exit 1 when it says no. There
+    is no send here: a mail goes only by the Send button in the Mail window."""
+    from bombadil import launcher
+    from bombadil.mail import client
+    sub, rest = (args[0], args[1:]) if args else ("status", [])
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")   # a name that is not UTF-8 still prints
+    try:
+        if sub == "status" and not rest:
+            lines = mail_status_lines(client.request("status"))
+        elif sub == "accounts" and not rest:
+            lines = [mail_account(a) for a in mail_items(client.request("accounts"), "accounts")] \
+                or ["No mail account yet."]
+        elif sub == "add" and len(rest) == 1:
+            result = client.request("add_account", timeout=30.0, email=rest[0])
+            lines = [mail_account(result) if isinstance(result, dict) else "Added."]
+            if isinstance(result, dict) and result.get("state") == "signin":
+                lines.append("Finish signing in in the Mail window.")
+        elif sub == "remove" and len(rest) == 1:
+            client.request("remove_account", timeout=10.0, id=rest[0])
+            lines = [f"Removed {clean(rest[0], 80)}."]
+        elif sub == "views" and not rest:
+            lines = [mail_view(v) for v in mail_items(client.request("views"), "views")]
+        elif sub == "list" and len(rest) <= 1:
+            view = rest[0] if rest else "all"
+            result = client.request("list", timeout=10.0, view=view, limit=30)
+            # The drafts view is a list of drafts; every other view is {"messages": [...], ...}.
+            lines = ([mail_draft(d) for d in mail_items(result, "drafts")] if view == "drafts"
+                     else [mail_line(m) for m in mail_items(result, "messages")])
+            lines += mail_skipped(result)
+            lines = lines or ["Nothing here."]
+        elif sub == "show" and len(rest) <= 1:
+            return mail_show(rest[0] if rest else "all", client, launcher)
+        else:
+            print(__doc__)
+            return 2
+    except (client.MailUnavailable, client.MailError) as e:
+        print(clean(e, 300), file=sys.stderr)
+        return 1
+    for line in lines:
+        print(line)
+    return 0
+
+
+def mail_show(view: str, client, launcher) -> int:
+    """Open the Mail window on a view. With no service it opens all the same, and the window says why it
+    is empty (as the typed word "mail" does). From inside an agent's turn only the service is asked: a window
+    started here would be a process of that turn, whose Send is refused, so agentd, which hears the service's
+    "show", opens it (and `mail_show` is the agent's own way)."""
+    try:
+        launcher.ask_mail_to_show(view=view)
+    except client.MailUnavailable:
+        pass
+    except client.MailError as e:
+        print(clean(e, 300), file=sys.stderr)
+        return 1
+    if os.environ.get("BOMBADIL_TURN"):
+        print("Asked Mail to show it. (From inside a turn, agentd opens the window.)")
+        return 0
+    try:
+        launcher.Launcher().open_mail_window()
+    except (OSError, RuntimeError) as e:   # the window would not open
+        print(f"Could not open Mail: {clean(e, 300)}", file=sys.stderr)
+        return 1
+    print("Opened Mail.")
+    return 0
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
@@ -309,6 +451,8 @@ def main() -> int:
             print(f"unknown provider; choose from {config.PROVIDERS}")
             return 2
         return follow_setup({"type": "signin", **({"provider": args[0]} if args else {})})
+    elif cmd == "mail":
+        return mail(args)
     elif cmd == "open":
         if not args:
             print(__doc__)

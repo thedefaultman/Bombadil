@@ -24,8 +24,9 @@ say "START mode=${mode:-live}"
 
 check user-exists id user
 check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
-# `command -v a b` succeeds when either is found, so the brain's two are looked for one by one.
+# `command -v a b` succeeds when either is found, so the brain's two and Mail's three are looked for one by one.
 check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
+check mail-tools-installed bash -c 'for b in thunderbird bombadil-mail bombadil-mail-host; do command -v $b || exit 1; done'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
@@ -107,6 +108,7 @@ open_example() { as_user cp -rT "/usr/share/bombadil/share/skills/bombadil-apps/
 check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
 check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
+check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md -a -f /home/user/.agents/skills/bombadil-mail/SKILL.md
 shot app
 check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
 check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
@@ -235,6 +237,95 @@ check dev-end says "Ended shell on Smoke" end shell smoke
 check dev-ended wait_for 20 zellij_lacks bombadil-smoke-shell
 check dev-scope-gone wait_for 20 unit_gone 'bombadil-dev-smoke-shell-*.scope'
 check dev-in-history history_has "Ended shell on Smoke"
+# Mail (docs/MAIL.md): Thunderbird is the engine, kept unseen by bombadil-mail, whose user unit starts at
+# login. The live system has no mail account, so what needs mail runs the service on its fake engine (sample
+# mailboxes, a new mail every few seconds) in the unit's place, then puts the unit back. The fake's database
+# and attachment folder are scratch ones, so its sample accounts are never in the mail.db the unit's service
+# reads next. The press log stays where agentd writes it, which is where the service looks.
+mail_unit() { as_user systemctl --user "$@" bombadil-mail.service; }
+mail_gone() { ! pgrep -u user -f 'bin/bombadil-mail$' >/dev/null; }
+fake_mail() {
+  mail_unit stop; wait_for 20 mail_gone || return 1
+  rm -rf /tmp/smoke-mail; install -d -o user -g user /tmp/smoke-mail
+  as_user env BOMBADIL_MAIL_ENGINE=fake BOMBADIL_MAIL_FAKE_DRIP=4 BOMBADIL_MAIL_DB=/tmp/smoke-mail/mail.db \
+    BOMBADIL_MAIL_FILES=/tmp/smoke-mail/files setsid -f bombadil-mail >>/tmp/smoke.mail.log 2>&1 </dev/null
+  wait_for 30 test -S "$run/bombadil/mail.sock"
+}
+restore_mail() {
+  pkill -u user -f 'bin/bombadil-mail$'; wait_for 20 mail_gone || return 1
+  mail_unit start && wait_for 60 mail_unit is-active --quiet
+}
+# agentd says new mail from someone known as a notice: wait for one on its own socket.
+mail_notice_from_agentd() {
+  as_user python3 - "$sock" <<'PY'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX); s.settimeout(40); s.connect(sys.argv[1])
+for raw in s.makefile():
+    m = json.loads(raw)
+    if m.get("type") == "notice" and m.get("source") == "mail":
+        print(m, flush=True)
+        sys.exit(0 if m.get("line") and m.get("actions") else 1)
+sys.exit(1)
+PY
+}
+# The bar has it, and is showing it (the pill's own line must be free for a notice to show).
+line_state() { as_user timeout 10 quickshell ipc -p /usr/share/bombadil/shell/shell.qml call line state; }
+mail_notice_on_the_line() {
+  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == "mail" and n["actions"] for n in d["notices"])))'
+}
+# Windows of class Thunderbird (the Arch package's is org.mozilla.Thunderbird) open on mail-engine, which is never
+# shown and never has the keyboard. Both spellings are opened by the check, and every class the window rule's own
+# pattern takes is held to it, so a class that matches and landed elsewhere fails as that, not as "no window".
+engine_window_hidden() {
+  local c m a
+  c=$(hypr_json clients) && m=$(hypr_json monitors) && a=$(hypr_json activewindow) || return 1
+  python3 -c 'import json,re,sys; c, m, a = (json.loads(x) for x in sys.argv[1:4])
+rule = re.compile(r"(?i)(.*\.)?thunderbird.*")
+t = [x for x in c if rule.fullmatch(x["class"])]
+print([(x["class"], x["workspace"]["name"]) for x in t], a.get("class"))
+sys.exit(bool(len({x["class"].lower() for x in t} & {"thunderbird", "org.mozilla.thunderbird"}) < 2
+              or any(x["workspace"]["name"] != "special:mail-engine" for x in t)
+              or rule.fullmatch(a.get("class", ""))
+              or any((x.get("specialWorkspace") or {}).get("name") == "special:mail-engine" for x in m)))' "$c" "$m" "$a"
+}
+mail_accounts_listed() { as_user bombadil mail accounts | tee /dev/stderr | grep -q maya@acme.example; }
+mail_log() { local l; while IFS= read -r l; do say "MAIL-LOG: $l"; done < <(tail -n 30 /tmp/smoke.mail.log); }
+check thunderbird-runs as_user timeout 90 thunderbird --version
+check mail-unit-enabled mail_unit is-enabled
+check mail-unit-active wait_for 60 mail_unit is-active --quiet
+# The unit's own service answers on its socket (no account yet: the engine is off, not broken).
+check mail-unit-answers wait_for 60 as_user timeout 20 bombadil mail status
+if [[ "$mode" != "undo" ]]; then
+  : >/tmp/smoke.mail.log
+  # Thunderbird's windows map while the pill holds the keyboard (a tap on Super), as they do when the engine
+  # starts or a compose window opens under someone typing: "silent" has to leave the keyboard where it is, and
+  # the word typed next has to reach the pill (the pill gives the keyboard back after 20 s, so this goes at once).
+  before=$(launcher_done browser "Opened the browser")
+  { sleep 4; as_user foot --app-id Thunderbird -e sleep 120 & as_user foot --app-id org.mozilla.Thunderbird -e sleep 120 & wait; } >/dev/null 2>&1 &
+  keys meta_l
+  check mail-engine-window-hidden wait_for 60 engine_window_hidden
+  keys b r o w s e r ret
+  check mail-engine-window-keeps-the-keyboard wait_for 60 launcher_ran browser "Opened the browser" "$before"
+  launcher_ran browser "Opened the browser" "$before" || say "DIAG the word did not reach the pill; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1)"
+  check mail-engine-browser-hide mcp_call hide_panel '{"name":"browser"}'
+  pkill -u user -f '^foot --app-id (org\.mozilla\.)?Thunderbird -e sleep 120$'
+  check mail-fake-starts fake_mail
+  check mail-status wait_for 30 as_user timeout 20 bombadil mail status
+  check mail-accounts-listed wait_for 30 mail_accounts_listed
+  check mail-new-mail-is-a-notice mail_notice_from_agentd
+  check mail-notice-on-the-line wait_for 40 mail_notice_on_the_line
+  shot mail-notice
+  before=$(launcher_done mail "Opened Mail")
+  check mail-word-opens-window as_user timeout 60 bombadil ask mail
+  check mail-launcher-without-model wait_for 30 launcher_ran mail "Opened Mail" "$before"
+  check mail-window wait_for 120 has_client 'c["class"]=="bombadil-app-mail" and c["workspace"]["name"]=="special:app-mail"'
+  check mail-window-shown wait_for 30 special_shown app-mail
+  check mail-window-status wait_for 30 app_ok mail
+  shot mail
+  check mail-window-hide app_hidden mail
+  check mail-unit-restored restore_mail
+  mail_log
+fi
 
 
 # Signing in (the live system has no provider picked and no login). agentd asks which AI in the

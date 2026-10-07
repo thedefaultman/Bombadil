@@ -271,6 +271,20 @@ The card host is loaded through a `Loader`, so a picture that will not draw cost
 the bar. (The kit reaches the shell through `bin/bombadil-shell`'s import path: Quickshell cannot
 import from outside its own folder any other way.)
 
+## Mail
+
+Mail is its own view, not a website: one Mail window (`share/apps/mail`, a kit app) for every account,
+fed by Thunderbird running unseen as the engine: Gmail and Microsoft let a person allow Thunderbird on
+their own, where a new app would wait for a review or an admin. `bombadil-mail` (a user unit) is the
+middle: it owns the window's socket and the drafts, supervises Thunderbird on the `special:mail-engine`
+workspace that nobody opens (a window rule in `hyprland.lua`), and talks to a small add-on inside
+Thunderbird through `bombadil-mail-host`. The agent reads, searches, marks and drafts through five tools
+and cannot send: a draft goes only on the person's press on Send, which agentd checks and logs. Whatever
+agentd's `notice` messages say (new mail, a draft that is ready, a receipt) the bar shows as a line
+above the pill when no turn line has it (`shell/NoticeChips.qml`). `docs/MAIL.md` is the contract:
+processes (with diagrams), wire protocol, the press, the tools and what the ISO adds;
+`docs/design/mail-view.md` is the design: the line, the rules and what the person sees.
+
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,
