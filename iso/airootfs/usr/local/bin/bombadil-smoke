@@ -362,7 +362,9 @@ if [[ "$mode" != "undo" ]]; then
   check voice-name-saved wait_for 60 persona_has '^name = "Daniel"'
   check voice-default-merry persona_has '^voice = "merry"'
   shot voice-saved
-  keys meta_l
+  # `bombadil pill` is what the Super bind runs. A tap and a word sent right after it race each other under
+  # software emulation (the launcher checks above lose the same race), so ask for the pill and let it settle.
+  as_user bombadil pill; sleep 3
   keys v o i c e ret
   check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
   shot voice-word
