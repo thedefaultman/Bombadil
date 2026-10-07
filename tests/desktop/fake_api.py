@@ -167,6 +167,7 @@ class H(BaseHTTPRequestHandler):
             json.dumps(
                 {
                     "n": N[0],
+                    "model": body.get("model"),
                     "first": first[-200:],
                     "after_tool": after_tool,
                     "prompts": len(prompts),   # more than one: the conversation carries what was said before

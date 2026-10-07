@@ -42,6 +42,17 @@ def test_details_show_each_step_its_command_and_output():
     assert lines[-1].startswith("  Stopped while installing docker.")
 
 
+def test_a_command_that_stop_ended_reads_stopped_not_failed():
+    def last(code):
+        events = [{"kind": "tool", "name": "Bash", "input": {"command": "sleep 300"}},
+                  {"kind": "tool_result", "output": "", "error": True, "exit_code": code}]
+        return list(watch.Renderer().lines(events))[-1]
+    for code in (-2, -15, -9):   # SIGINT, SIGTERM, SIGKILL: what Stop sends
+        assert last(code) == "  │ stopped"
+    assert last(1) == "  │ failed (exit 1)"
+    assert last(-11) == "  │ failed (exit -11)"
+
+
 def test_every_command_shows_under_its_step_marked_or_not():
     events = [
         {"kind": "tool", "name": "Bash", "input": {"command": "ls -la ~/Downloads"}},

@@ -20,6 +20,8 @@ from . import narrate, paths, rest
 
 AMBER, RED, DIM, BOLD, RESET = "\033[33m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 CLAUDE_REJECTED = "The user doesn't want to proceed with this tool use"
+# A command's exit code is -N when signal N ended it: what Stop sends (SIGINT, then SIGTERM, then SIGKILL).
+STOP_CODES = (-2, -15, -9)
 
 
 def _color(on: bool):
@@ -85,7 +87,10 @@ class Renderer:
                     yield c(DIM, "  │ ") + line[: self.width * 3]
             if ev.get("error"):
                 code = ev.get("exit_code")
-                yield c(RED, "  │ failed" + (f" (exit {code})" if code not in (None, "") else ""))
+                if code in STOP_CODES:
+                    yield c(RED, "  │ stopped")
+                else:
+                    yield c(RED, "  │ failed" + (f" (exit {code})" if code not in (None, "") else ""))
         elif kind == "text":
             for line in (ev.get("text") or "").strip().splitlines():
                 yield f"  {line}"
