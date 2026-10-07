@@ -19,6 +19,10 @@ check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium a
 # `command -v a b` succeeds when either is found, so the brain's two and Mail's three are looked for one by one.
 check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
 check mail-tools-installed bash -c 'for b in thunderbird bombadil-mail bombadil-mail-host; do command -v $b || exit 1; done'
+# Connections: the service and the browser service, the Python they run on, and no mako (the shell owns the notifications).
+check connect-tools-installed bash -c 'for b in bombadil-connect bombadil-browserd notify-send wl-copy; do command -v $b || exit 1; done'
+check connect-python-installed python3 -c 'import httpx; from mcp import ClientSession'
+check mako-is-not-installed bash -c '! command -v mako'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
@@ -101,6 +105,7 @@ check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
 check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md -a -f /home/user/.agents/skills/bombadil-mail/SKILL.md
+check connect-skill-installed as_user test -f /home/user/.claude/skills/bombadil-connect/SKILL.md -a -f /home/user/.agents/skills/bombadil-connect/SKILL.md
 shot app
 check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
 check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
@@ -213,23 +218,26 @@ restore_mail() {
   mail_unit start && wait_for 60 mail_unit is-active --quiet
 }
 # agentd says new mail from someone known as a notice: wait for one on its own socket.
-mail_notice_from_agentd() {
-  as_user python3 - "$sock" <<'PY'
+# notice_from_agentd SOURCE [TEXT]: the first notice of that source, with chips and (when given) TEXT in its line.
+notice_from_agentd() {
+  as_user python3 - "$sock" "$1" "${2:-}" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(40); s.connect(sys.argv[1])
 for raw in s.makefile():
     m = json.loads(raw)
-    if m.get("type") == "notice" and m.get("source") == "mail":
+    if m.get("type") == "notice" and m.get("source") == sys.argv[2]:
         print(m, flush=True)
-        sys.exit(0 if m.get("line") and m.get("actions") else 1)
+        sys.exit(0 if m.get("line") and m.get("actions") and sys.argv[3] in m["line"] else 1)
 sys.exit(1)
 PY
 }
+mail_notice_from_agentd() { notice_from_agentd mail; }
 # The bar has it, and is showing it (the pill's own line must be free for a notice to show).
 line_state() { as_user timeout 10 quickshell ipc -p /usr/share/bombadil/shell/shell.qml call line state; }
-mail_notice_on_the_line() {
-  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == "mail" and n["actions"] for n in d["notices"])))'
+notice_on_the_line() {
+  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == sys.argv[1] and n["actions"] for n in d["notices"])))' "$1"
 }
+mail_notice_on_the_line() { notice_on_the_line mail; }
 # Windows of class Thunderbird (the Arch package's is org.mozilla.Thunderbird) open on mail-engine, which is never
 # shown and never has the keyboard. Both spellings are opened by the check, and every class the window rule's own
 # pattern takes is held to it, so a class that matches and landed elsewhere fails as that, not as "no window".
@@ -282,6 +290,77 @@ if [[ "$mode" != "undo" ]]; then
   check mail-window-hide app_hidden mail
   check mail-unit-restored restore_mail
   mail_log
+fi
+
+
+# Connections (docs/CONNECT.md): bombadil-connect is a system unit with its own user, and what it keeps is closed to
+# the person's own processes. The live system has no connection, so what needs one runs the same unit on its fake
+# engine (sample messages and tasks) through a drop-in, with its database in a scratch folder of the unit's own
+# state directory (the real connect.db never sees a sample); the folder and the drop-in are taken away afterwards.
+connect_unit() { systemctl "$@" bombadil-connect.service; }
+connect_dropin=/run/systemd/system/bombadil-connect.service.d
+fake_connect() {
+  install -d "$connect_dropin"
+  install -d -o bombadil-connect -g bombadil-connect -m 0700 /var/lib/bombadil-connect/smoke-fake
+  printf '[Service]\nEnvironment=BOMBADIL_CONNECT_ENGINE=fake BOMBADIL_CONNECT_STATE=/var/lib/bombadil-connect/smoke-fake\n' >"$connect_dropin/fake.conf"
+  systemctl daemon-reload && connect_unit restart && wait_for 30 test -S /run/bombadil-connect/connect.sock
+}
+restore_connect() {
+  rm -rf "$connect_dropin" /var/lib/bombadil-connect/smoke-fake; systemctl daemon-reload
+  connect_unit restart && wait_for 60 connect_unit is-active --quiet
+}
+# connect_says OP EXPRESSION: the service answers the person's own process (not root, not its user) and the
+# answer `r` satisfies EXPRESSION.
+connect_says() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.connect import client
+r = client.request(sys.argv[1], 5); print(r, flush=True); sys.exit(not eval(sys.argv[2]))' "$1" "$2"
+}
+browserd_up() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.browserd import client
+r = client.request("status", 5); print(r, flush=True); sys.exit(not isinstance(r.get("up"), bool))'
+}
+# The directory is its own user's and closed to everyone else, so the person's processes cannot list it. They can still
+# `sudo` on this image (sudoers.d/bombadil), so this is what the unit keeps, not yet a wall against an agent that runs as them.
+connect_state_closed() { [[ "$(stat -c %U:%a /var/lib/bombadil-connect)" == bombadil-connect:700 ]] && ! as_user ls /var/lib/bombadil-connect; }
+# The unit as systemd loaded it, not as the file reads.
+connect_hardened() {
+  local want key
+  for want in User=bombadil-connect NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes RuntimeDirectoryMode=0755 MemoryMax=314572800; do
+    key=${want%%=*}
+    [[ "$(connect_unit show -P "$key")" == "${want#*=}" ]] || { echo "$key is $(connect_unit show -P "$key"), not ${want#*=}"; return 1; }
+  done
+}
+# The shell's NotificationServer is the one owner of the name, whatever a web page or notify-send calls it by, and a
+# notification becomes one line with Reply and Open, shown by the bar. notify-send stands in for a page's notification.
+notifications_owner_is_the_shell() { as_user busctl --user status org.freedesktop.Notifications | tee /dev/stderr | grep -q '^Comm=quickshell'; }
+notification_becomes_a_notice() {
+  notice_from_agentd notify "Legal just signed off" >/tmp/smoke.notify.log 2>&1 &
+  local listener=$!
+  sleep 2   # the listener is connected before the notification is sent
+  as_user notify-send -a Teams "Priya Shah" "Legal just signed off" || return 1
+  wait_for 8 notice_on_the_line notify || { kill "$listener" 2>/dev/null; cat /tmp/smoke.notify.log; return 1; }
+  wait "$listener"; local heard=$?
+  cat /tmp/smoke.notify.log; return $heard
+}
+check connect-user-exists bash -c 'getent passwd bombadil-connect | grep -q nologin'
+check connect-unit-enabled connect_unit is-enabled
+check connect-unit-active wait_for 60 connect_unit is-active --quiet
+check connect-unit-hardened connect_hardened
+# No connection yet: the service is up and says so, to a process that is not its own user.
+check connect-unit-answers wait_for 60 connect_says status 'r.get("state") == "ok"'
+check connect-state-is-closed connect_state_closed
+check browserd-unit-enabled as_user systemctl --user is-enabled bombadil-browserd.service
+check browserd-unit-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-browserd.service
+check browserd-unit-answers wait_for 60 browserd_up
+if [[ "$mode" != "undo" ]]; then
+  check mako-is-not-running bash -c '! pgrep -x mako'
+  check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
+  check notification-becomes-a-notice notification_becomes_a_notice
+  check connect-fake-starts fake_connect
+  check connect-status wait_for 30 connect_says status 'r.get("state") == "ok"'
+  check connect-connections-listed wait_for 30 connect_says connections 'r["connections"]'
+  check connect-messages-listed wait_for 30 connect_says messages 'r["messages"]'
+  check connect-unit-restored restore_connect
 fi
 
 

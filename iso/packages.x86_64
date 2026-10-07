@@ -27,7 +27,6 @@ python-pip
 grim
 slurp
 wl-clipboard
-mako
 libnotify
 foot
 nautilus
@@ -49,6 +48,10 @@ nodejs
 npm
 # mail: Thunderbird is the engine behind Bombadil's Mail window, run unseen (docs/MAIL.md)
 thunderbird
+# connections: the connection service speaks to Slack with httpx and to the work tools with the official MCP
+# client (docs/CONNECT.md); notifications are the shell's own server, so there is no mako
+python-mcp
+python-httpx
 # archiso live
 arch-install-scripts
 archinstall

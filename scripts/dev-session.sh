@@ -18,7 +18,18 @@ if [[ "${BOMBADIL_MAIL_ENGINE:-fake}" == fake ]]; then
   export BOMBADIL_MAIL_ENGINE=fake BOMBADIL_MAIL_DB="$mail/mail.db" BOMBADIL_MAIL_FILES="$mail/files" \
     BOMBADIL_PRESS_LOG="$mail/presses.jsonl" BOMBADIL_MAIL_SOCKET="$mail/mail.sock"
 fi
-trap 'kill $(jobs -p) 2>/dev/null || true; [[ -z "${mail:-}" ]] || rm -rf "$mail"' EXIT
+# Connections (Slack and work tools) run on their fake engine as well: sample messages and tasks, no account,
+# no key. Its socket and its state are in a scratch folder for the reason mail's are, and the service lets in
+# only the uid that runs this session. agentd and the bar get the same variables, and the service starts first,
+# so agentd's first look at it finds it. BOMBADIL_CONNECT_ENGINE=real (anything but fake) uses the system unit.
+if [[ "${BOMBADIL_CONNECT_ENGINE:-fake}" == fake ]]; then
+  connect="$(mktemp -d)"; mkdir -m 0700 "$connect/state"
+  export BOMBADIL_CONNECT_ENGINE=fake BOMBADIL_CONNECT_SOCKET="$connect/connect.sock" \
+    BOMBADIL_CONNECT_STATE="$connect/state" BOMBADIL_CONNECT_UIDS="${BOMBADIL_CONNECT_UIDS:-$(id -u)-$(id -u)}"
+fi
+trap 'kill $(jobs -p) 2>/dev/null || true
+      [[ -z "${mail:-}" ]] || rm -rf "$mail"; [[ -z "${connect:-}" ]] || rm -rf "$connect"' EXIT
+if [[ -n "${connect:-}" ]]; then "$root/bin/bombadil-connect" & fi
 "$root/bin/agentd" &
 "$root/bin/bombadil-mail" &
 sleep 0.5

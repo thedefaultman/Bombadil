@@ -7,7 +7,9 @@ hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", sca
 hl.on("hyprland.start", function()
     hl.exec_cmd("agentd")
     hl.exec_cmd("bombadil-shell")
-    hl.exec_cmd("mako")
+    -- No notification daemon is started: the bar's NotificationServer owns org.freedesktop.Notifications on the
+    -- session bus, and a second owner (mako, dunst) would take web pages' notifications away from the line.
+
     -- Mail's service is a user unit that starts at login, before this session has a screen, and
     -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
@@ -47,7 +49,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 5, bezier = "e
 hl.animation({ leaf = "fade", enabled = true, speed = 4, bezier = "ease" })
 -- The bar is a layer, and Hyprland slides a layer to its new place whenever it is resized, which
 -- is every time a picture appears or grows: the pill dipped and swung back for half a second each
--- time. Layers (the bar, the notifications) just take their new size.
+-- time. Layers (the bar) just take their new size.
 hl.animation({ leaf = "layers", enabled = false })
 
 -- Panels are special workspaces; os-mcp toggles them. They also have keys.

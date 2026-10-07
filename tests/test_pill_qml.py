@@ -887,7 +887,7 @@ def test_nothing_is_sent_to_agentd_while_it_is_away(bar):
     assert len(bar.sent) == n and bar.pill.property("flash") == "Not connected to the agent yet."
 
 
-@pytest.mark.parametrize("card", [None, 3, "a string", {"type": "list", "id": "x"}, {"gone": True}])
+@pytest.mark.parametrize("card", [None, 3, "a string", {"type": "checklist", "id": "x"}, {"gone": True}])
 def test_odd_cards_change_nothing(bar, card):
     _card_event(bar, _diagram())
     bar.send(kind="card", turn=None, card=card)

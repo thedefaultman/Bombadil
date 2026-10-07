@@ -1,0 +1,71 @@
+# Jira, through Atlassian's official remote MCP server (the Rovo MCP server).
+#
+# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
+# documents; nothing was registered or authorized):
+#   - POST https://mcp.atlassian.com/v1/mcp answers 401 with WWW-Authenticate: Bearer error="invalid_token" and no
+#     resource_metadata (the client falls back to the well-known address).
+#   - Protected-resource metadata names an authorization server on auth.atlassian.com (a path inside it, which the
+#     SDK's discovery handles) and lists 22 scopes, Jira, Confluence and Compass among them, offline_access and
+#     read:jira-work and write:jira-work included. Only the Jira ones, and offline_access (so tokens refresh), are
+#     asked for here: the SDK would otherwise ask for all of them. Whether the server accepts a narrower set is a
+#     guess.
+#   - Authorization-server metadata: authorize, token and register endpoints, S256 PKCE, public clients allowed,
+#     client_id_metadata_document_supported = true.
+#
+# A guess, from memory and not looked at on the live server: every tool name and argument name
+# (getAccessibleAtlassianResources, searchJiraIssuesUsingJql, createJiraIssue, addCommentToJiraIssue; cloudId,
+# jql, maxResults, projectKey, issueTypeName, summary, issueIdOrKey, commentBody), that the first tool's answer is
+# a list of sites with id and url, and that the rest answer in JSON in the text or as structured content. The
+# [context] step exists because every Jira tool wants the site's id (cloudId) and only this tool says it.
+
+[server]
+service = "jira"
+name = "Jira"
+url = "https://mcp.atlassian.com/v1/mcp"
+scopes = ["read:jira-work", "offline_access"]
+write_scopes = ["write:jira-work"]
+reads = "Jira issues assigned to you that are not done."
+verified = false
+
+[context]
+tool = "getAccessibleAtlassianResources"
+
+[context.bind]
+cloud_id = "0.id"
+site = "0.url"
+
+[list]
+tool = "searchJiraIssuesUsingJql"
+arguments = { cloudId = "{cloud_id}", jql = "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", maxResults = "{limit}", fields = ["summary", "status", "duedate"] }
+items = "issues"
+why = "assigned to you"
+url_template = "{site}/browse/{id}"
+
+[list.map]
+ref = "key"
+title = "fields.summary"
+status = "fields.status.name"
+due = "fields.duedate"
+
+[create]
+tool = "createJiraIssue"
+noun = "issue"
+arguments = { cloudId = "{cloud_id}", issueTypeName = "Task" }
+fields = [
+  { key = "project", label = "Project", edit = "line", required = true, arg = "projectKey" },
+  { key = "title", label = "Title", edit = "line", required = true, arg = "summary" },
+  { key = "description", label = "Description", edit = "text" },
+]
+
+[create.result]
+id = "key"
+url_template = "{site}/browse/{id}"
+
+[comment]
+tool = "addCommentToJiraIssue"
+target = "issueIdOrKey"
+noun = "issue"
+arguments = { cloudId = "{cloud_id}" }
+fields = [
+  { key = "body", label = "Comment", edit = "text", required = true, arg = "commentBody" },
+]

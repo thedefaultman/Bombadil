@@ -1,0 +1,60 @@
+# ClickUp, through its official remote MCP server.
+#
+# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
+# documents; nothing was registered or authorized):
+#   - POST https://mcp.clickup.com/mcp answers 401 with WWW-Authenticate carrying resource_metadata.
+#   - Protected-resource metadata names https://mcp.clickup.com as the authorization server, scopes read and write.
+#   - Authorization-server metadata: authorize, token and register endpoints on mcp.clickup.com, S256 PKCE, public
+#     clients only (token_endpoint_auth_methods is just "none"), and one grant, authorization_code. No
+#     refresh_token grant is advertised, so the recipe does not ask for one and a lapsed sign-in means signing in
+#     again. client_id_metadata_document_supported is not advertised: registration is the dynamic kind.
+#
+# A guess, and a weak one, because nothing about ClickUp's tools was looked at and my memory of them is not to be
+# trusted: every tool name, every argument name and the shape of every answer below. They follow the clickup_
+# prefix that its tools are said to use. Treat the whole of [list], [create] and [comment] as a placeholder until
+# someone has run it against a real workspace.
+
+[server]
+service = "clickup"
+name = "ClickUp"
+url = "https://mcp.clickup.com/mcp"
+scopes = ["read"]
+write_scopes = ["write"]
+grants = ["authorization_code"]
+reads = "ClickUp tasks assigned to you."
+verified = false
+
+[list]
+tool = "clickup_filter_tasks"
+arguments = { assignees = ["me"], limit = "{limit}" }
+items = "tasks"
+why = "assigned to you"
+done = ["complete", "closed", "done"]
+
+[list.map]
+ref = "id"
+title = "name"
+status = "status.status"
+due = "due_date"
+url = "url"
+
+[create]
+tool = "clickup_create_task"
+noun = "task"
+fields = [
+  { key = "title", label = "Task", edit = "line", required = true, arg = "name" },
+  { key = "list", label = "List", edit = "line", required = true, arg = "list_id" },
+  { key = "description", label = "Description", edit = "text" },
+]
+
+[create.result]
+id = "id"
+url = "url"
+
+[comment]
+tool = "clickup_create_task_comment"
+target = "task_id"
+noun = "task"
+fields = [
+  { key = "body", label = "Comment", edit = "text", required = true, arg = "comment_text" },
+]

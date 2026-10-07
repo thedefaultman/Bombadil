@@ -1,0 +1,18 @@
+[Unit]
+Description=Bombadil browser service: reads, points and takes a value off the page the browser panel shows
+Documentation=file:///usr/share/bombadil/src/bombadil/browserd/service.py
+After=graphical-session.target
+# Nothing depends on it, so it is never given up on: without this, five quick failures leave it stopped
+# until the next login.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bombadil-browserd
+# It holds one connection to the panel's Chromium and has no hands. When it dies the panel and the
+# turns carry on, and the Slack setup says the browser service is not running until it is back.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,47 @@
+[Unit]
+Description=Bombadil connections: Slack and work tools, and the keys they need
+Documentation=file:///usr/share/bombadil/src/bombadil/connect/service.py
+# Nothing depends on connections, so they are never given up on: without this, five quick failures
+# leave the service stopped until the next boot.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Its own user, not the person's: the keys it holds are in a directory only this user can open, so the
+# person's own programs cannot read them. (The person has sudo on this image, so an agent that uses it still can.)
+# The command is the live image's link to the tree; a package that installs the commands in /usr/bin changes
+# this line only.
+User=bombadil-connect
+ExecStart=/usr/local/bin/bombadil-connect
+Environment=BOMBADIL_CONNECT_SOCKET=/run/bombadil-connect/connect.sock
+Environment=BOMBADIL_CONNECT_STATE=/var/lib/bombadil-connect
+# connect.sock is mode 0666 and the service checks each peer's uid itself, so the person's own processes
+# have to be able to walk to it: the directory is open to read and search, and the database is not.
+RuntimeDirectory=bombadil-connect
+RuntimeDirectoryMode=0755
+StateDirectory=bombadil-connect
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Not ProtectProc, ProcSubset, PrivateUsers or PrivatePIDs: before it performs anything the service looks in
+# /proc/<pid> of the process that pressed, and reads its cgroup, to refuse a press from inside an agent's turn.
+MemoryMax=300M
+# A service that dies leaves the pill, cards and turns as they are: agentd's pokes give up after 0.3 s
+# and say "Connections are not running yet" until it is back.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

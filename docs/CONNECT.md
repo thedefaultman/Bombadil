@@ -21,7 +21,10 @@ is invented.
   the workspace that made it; this one is inside it and keeps none anyway.
 - **The tokens are not the agent's.** The agent runs as the person, with a shell. `bombadil-connect` runs as its
   own system user and keeps every token in a directory only that user can read. The agent is never handed a
-  token, and no tool returns one.
+  token, and no tool returns one. Today this keeps the tokens from every program of the person's except what
+  can use `sudo`: the image gives its user passwordless `sudo`, so the agent's own shell could read the store.
+  It is a rule with a check, and becomes a wall when the agent loses `sudo` (the hardening order in the design
+  page).
 - **The press is the person's.** The agent has `propose`, which puts a draft on a card; it has no tool that
   posts, replies, creates or comments. The shell's press on the card's Send reaches agentd, which checks who
   pressed and what, and only then asks the connection service to do that one thing (rule 2 of the design, and
@@ -311,8 +314,9 @@ fingerprint from agentd's update.
 
 **Connected here** is the list card "Connected here": each mail account (from the mail service), the Slack app and
 each tool, one row each with what it reads (`reads`), its state, and "Disconnect" (mail's `remove_account` or
-`remove_connection`); a service not yet connected is a quiet row with "Connect". It opens by its words and from
-the stone's card.
+`remove_connection`); a service not yet connected is a quiet row with "Connect". It opens by its words. The
+design calls for a holding card that lists it; no such card exists in the code yet, so this list card is what it
+opens as until one does.
 
 ## Notifications (replacing mako)
 
@@ -329,10 +333,17 @@ notification text is other people's words. `mako` leaves `iso/packages.x86_64` a
 
 ## The image
 
-`python-mcp`, `python-httpx` and `wl-clipboard` are in `iso/packages.x86_64`; `mako` is not. `bombadil-connect.service`
+`python-mcp` and `python-httpx` are added to `iso/packages.x86_64` (with what they pull in: the SDK's server-side
+dependencies, 23 packages, all in Arch's `extra`); `wl-clipboard` and `libnotify` were already there; `mako` is gone.
+A snapshot rollback of the whole root also rolls back `/var/lib/bombadil-connect`: the tokens return to what they
+were then, and the ids of performed presses with them (a press the rollback undid can be pressed again, which is
+what undo means). `bombadil-connect.service`
 is a system unit (`User=bombadil-connect`, `StateDirectory=bombadil-connect` mode 0700, `RuntimeDirectory=bombadil-connect`,
 `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`,
-`MemoryMax=300M`, `Restart=on-failure`), enabled by a symlink in `multi-user.target.wants`; the user comes from
+`MemoryMax=300M`, `Restart=on-failure`, and the kernel-facing keys systemd offers that the service does not need:
+`PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, an empty
+`CapabilityBoundingSet`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`; not
+`ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), enabled by a symlink in `multi-user.target.wants`; the user comes from
 `/usr/lib/sysusers.d/bombadil-connect.conf`. `bombadil-browserd.service` is a user unit like mail's. `share/skills/bombadil-connect/SKILL.md`
 tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills`.
 

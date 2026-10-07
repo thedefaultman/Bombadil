@@ -4,6 +4,11 @@
 Both end the same way: the finished card goes to agentd over its socket, which sends it to the
 bar, and the agent gets the picture back in words (the card's text twin), so it writes one line
 about it instead of a description.
+
+Both draw diagrams and nothing else. The other kinds of card (a message with its reply box, a
+task, a list) belong to the person's connections: agentd makes them from what the connections
+hold, and the agent has no tool that draws one, so it cannot put words in a place that looks like
+somebody else's message.
 """
 
 import json
@@ -89,7 +94,8 @@ SHOW_CARD = (
     "links), layers (a box sits below what points at it: give links from a box to what it needs), compare "
     "(every box has side before or after; the same key on both sides puts them on one row), timeline (boxes "
     "with a time). At most 12 boxes and 16 links, labels up to 32 characters, one plain sentence in `say`. "
-    "Highlight the box to look at. For THIS machine's network, boot, a service, disks, sound or screens use "
+    "Highlight the box to look at. It draws diagrams only (messages, tasks and lists come from the person's "
+    "connections). For THIS machine's network, boot, a service, disks, sound or screens use "
     "system_map instead: it reads the real machine, and you must never draw its state from memory. After "
     "the picture say one short line, not a description of it."
 )
@@ -122,7 +128,8 @@ def register(tools) -> None:
     def show_card(a):
         kind = a.get("kind", "diagram")
         if kind != "diagram":
-            raise ValueError(f"kind {kind!r} is not drawn yet: only diagram is")
+            raise ValueError(f"kind {kind!r} is not drawn here: only diagram is. "
+                             "Messages, tasks and lists come from your connections, not from show_card.")
         card, errors = cards.validate_diagram(a)
         if card is None:
             raise ValueError("The picture was not drawn:\n- " + "\n- ".join(errors))

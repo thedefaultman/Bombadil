@@ -3,8 +3,9 @@
 Nothing that reaches another person is sent by the agent. A draft waits in a view; the person's
 press on the view's Send comes to agentd as {"type": "press", "kind": "mail", "id": draft,
 "fingerprint": fp}, and `Outbox.press` is the only way from there to the service that does the
-sending. A kind is a performer registered here ("mail" now; a Slack reply or a ticket later), so
-the rules below hold for each without being written again.
+sending. A kind is a performer registered here ("mail", and the three that go through the connection service:
+"slack_reply", "task_create" and "task_comment", which are proposals, proposals.py), so the rules below hold for
+each without being written again.
 
 Why it is shaped this way:
 
@@ -24,6 +25,11 @@ Why it is shaped this way:
   loop can neither fill the disk nor push the rows of real presses out of the file.
 - "I never press Send for you" is said once in a person's life with the machine, so it is kept in
   told.json beside the other state.
+- A proposal's press (docs/CONNECT.md) is the same press with more to check first: the proposal is open, has
+  something in it, and the fingerprint that was pressed, the proposal's own and the one the shell said it drew all
+  agree. It is marked `sending` before the connection service is asked, once, and ends `sent`, `unknown` (the service
+  may have done it; it is never tried again by itself, and the person's own second press is a new attempt with a new
+  id) or open again with the service's own sentence when it said no.
 
 This is a rule with a check, not yet a wall: the agent runs as the person (docs/MAIL.md, "The
 press"). A process it starts outside its scope, with systemd-run --user, still passes the check
@@ -42,10 +48,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths, procs
+from .connect import client as connect_client
+from .connect.driver import KINDS
 from .mail import client as mail_client
+from .proposals import Proposals, is_empty, perform_id
 
 PERFORM_SECONDS = 90.0      # no performer is waited for longer than this
 MAIL_SEND_SECONDS = 70.0    # the service gives up on the engine at 60; this is its time to say so
+CONNECT_SECONDS = 25.0      # the Slack driver gives up on a post at 20; this is the service's time to say so
 LOG_ROTATE_BYTES = 1 << 20
 REMEMBER = 256              # presses remembered for the "went without a press" check
 REFUSAL_REPEAT_SECONDS = 5.0   # the same refusal is written to the log once per this
@@ -56,10 +66,14 @@ UNSURE = ("unknown_outcome", "error")
 REPEATS = ("agent", "no_peer", "bad_request", "unknown_kind", "busy")
 TOLD_MAIL = "mail-press"
 TOLD_MAIL_LINE = "I never press Send for you. Change anything in it first if you like."
+TOLD_CONNECT = "connect-press"
 
 NOT_SENT = "Nothing was sent."
 UNKNOWN_LINE = "I can't tell whether that went. Look in Sent before you press Send again."
 MAIL_DOWN = "Mail is not running yet. " + NOT_SENT
+CONNECT_DOWN = "Connections are not running yet. " + NOT_SENT
+THEIR_NAMES = {"slack": "Slack", "linear": "Linear", "notion": "Notion", "jira": "Jira", "todoist": "Todoist",
+               "clickup": "ClickUp"}
 _FIELD = re.compile(r"[^\x21-\x7e]")   # a printable, space-free field; nothing else is ever logged
 
 
@@ -111,16 +125,50 @@ async def send_mail(draft: str, fingerprint: str, again: bool = False) -> PressR
     return await asyncio.to_thread(_send_mail, draft, fingerprint, again)
 
 
+def _unknown_connect(kind: str, target: str) -> str:
+    """Where to look when nobody can say whether a proposal went: the service it was for."""
+    service = str(target).split(":", 1)[0]
+    where = "Slack" if kind == "slack_reply" else THEIR_NAMES.get(service, "the tool")
+    return f"I can't tell whether that went. Look in {where} before you press Send again."
+
+
+def _perform_connect(kind: str, target: str, content, fingerprint: str, proposal: str) -> tuple[str, PressResult]:
+    """Ask the connection service to do one thing, waiting as long as it may take. What came of it is `sent`, `open`
+    (the service said no, or was never reached: nothing went) or `unknown` (it was asked and then said nothing, or said
+    it cannot tell, or says that proposal was done already: it may have gone). A service that cannot be reached was
+    never asked."""
+    try:
+        conn = connect_client.Connection(timeout=CONNECT_SECONDS)
+    except connect_client.ConnectUnavailable:
+        return "open", PressResult(False, CONNECT_DOWN, code="service_down")
+    unsure = PressResult(False, _unknown_connect(kind, target), code="unknown_outcome")
+    with conn:
+        try:
+            result = conn.request("perform", timeout=CONNECT_SECONDS, kind=kind, target=target, content=content,
+                                  fingerprint=fingerprint, proposal=proposal)
+        except connect_client.ConnectUnavailable:
+            return "unknown", unsure
+        except connect_client.ConnectError as e:
+            code = str(getattr(e, "code", "") or "error")
+            if code in ("unknown_outcome", "already", "internal"):
+                return "unknown", unsure
+            return "open", PressResult(False, str(e), code=code)
+    receipt = _receipt(result)
+    return "sent", PressResult(True, str((receipt or {}).get("line") or "Done."), receipt)
+
+
 def _field(value, limit: int = 128) -> str:
     return _FIELD.sub("", str(value))[:limit]
 
 
 class Outbox:
     def __init__(self, performers: dict[str, Performer] | None = None,
-                 in_turn: Callable[[int], bool] | None = None):
+                 in_turn: Callable[[int], bool] | None = None, proposals: Proposals | None = None):
         """`in_turn` says whether a process belongs to the turn that is running, for a turn that has
-        no systemd scope (agentd knows its process tree)."""
-        self.performers: dict[str, Performer] = {"mail": send_mail, **(performers or {})}
+        no systemd scope (agentd knows its process tree). `proposals` is what waits for a press."""
+        self.proposals = proposals if proposals is not None else Proposals()
+        self.performers: dict[str, Performer] = {
+            "mail": send_mail, **{kind: self._proposal_performer(kind) for kind in KINDS}, **(performers or {})}
         self.in_turn = in_turn
         self._busy: set[tuple[str, str]] = set()
         self._pressed: OrderedDict[tuple[str, str], None] = OrderedDict()
@@ -180,6 +228,45 @@ class Outbox:
                 self._pressed[key] = None
                 while len(self._pressed) > REMEMBER:
                     self._pressed.popitem(last=False)
+        return result
+
+    def _proposal_performer(self, kind: str) -> Performer:
+        async def perform(id: str, fingerprint: str, again: bool = False) -> PressResult:
+            return await self._perform_proposal(kind, id, fingerprint, again)
+        return perform
+
+    async def _perform_proposal(self, kind: str, id: str, fingerprint: str, again: bool) -> PressResult:
+        props = self.proposals
+        p = props.record(id)
+        if p is None or p["kind"] != kind:
+            return PressResult(False, "I no longer have that one. " + NOT_SENT, code="changed")
+        if p["state"] == "sent":
+            # Pressed twice: the same receipt and no second act (the service would say "already" as well).
+            return PressResult(True, str((p["receipt"] or {}).get("line") or "Sent."), p["receipt"])
+        again = again and p["state"] == "unknown"
+        if p["state"] == "unknown" and not again:
+            return PressResult(False, _unknown_connect(kind, p["target"]), code="unknown_outcome")
+        if p["state"] not in ("open", "unknown"):
+            return PressResult(False, "That was put away. " + NOT_SENT, code="changed")
+        if is_empty(p["content"]):
+            return PressResult(False, "There is nothing in it to send yet. " + NOT_SENT, code="changed")
+        if not (fingerprint == p["fingerprint"] == p["shown"]):
+            return PressResult(False, "That is not what the card showed. " + NOT_SENT, code="changed")
+        if props.begin_send(id, again) is None:
+            return PressResult(False, "That is not what the card showed. " + NOT_SENT, code="changed")
+        try:
+            outcome, result = await asyncio.to_thread(_perform_connect, kind, p["target"], p["content"],
+                                                      p["fingerprint"], perform_id(props.record(id)))
+        except BaseException:
+            props.unknown(id, _unknown_connect(kind, p["target"]))   # cancelled mid-send: it may have gone
+            raise
+        if outcome == "sent":
+            result.receipt = {**(result.receipt or {"line": result.line}), "proposal": id}
+            props.sent(id, result.receipt)
+        elif outcome == "unknown":
+            props.unknown(id, result.line)
+        else:
+            props.reopen(id, result.line)
         return result
 
     def from_agent(self, pid: int) -> bool:
@@ -275,3 +362,8 @@ def tell_once(key: str, line: str) -> str:
 def told_mail_press() -> str:
     """The sentence a person hears once with their first draft from the agent, or ""."""
     return tell_once(TOLD_MAIL, TOLD_MAIL_LINE)
+
+
+def told_connect_press() -> str:
+    """The same, once, with the first reply or task the agent puts on a card."""
+    return tell_once(TOLD_CONNECT, TOLD_MAIL_LINE)

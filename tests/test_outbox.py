@@ -173,7 +173,7 @@ async def test_a_performer_that_never_answers_is_an_outcome_nobody_knows(home, m
 @pytest.mark.asyncio
 async def test_the_registry_is_open_to_other_kinds(home):
     box = Outbox()
-    assert set(box.performers) == {"mail"}
+    assert set(box.performers) == {"mail", "slack_reply", "task_create", "task_comment"}   # and nothing else sends
     doing = Doing()
     box.register("slack", doing)
     assert (await box.press("slack", "c1", "f1", 10)).ok and doing.calls == [("c1", "f1")]

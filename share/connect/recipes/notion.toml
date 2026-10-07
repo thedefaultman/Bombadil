@@ -1,0 +1,43 @@
+# Notion, through its official remote MCP server.
+#
+# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
+# documents; nothing was registered or authorized):
+#   - POST https://mcp.notion.com/mcp answers 401 with WWW-Authenticate carrying resource_metadata.
+#   - Protected-resource metadata ("Notion MCP (Beta)") names https://mcp.notion.com as the authorization
+#     server and lists one scope, "default". Left to the server: no scopes are named here.
+#   - Authorization-server metadata: authorize, token and register endpoints on mcp.notion.com, public clients
+#     allowed, authorization_code and refresh_token grants, client_id_metadata_document_supported = true.
+#
+# A guess, from memory and not looked at on the live server: the tool names notion-create-pages and
+# notion-create-comment, their argument shapes (a list of pages with properties.title and content; a comment as
+# rich_text) and the shape of their answers.
+#
+# There is no [list] on purpose. Notion has no "assigned to me" across a workspace that I know of: what waits on a
+# person lives in some database of theirs, and Bombadil does not know which. The connection reads nothing in the
+# background; it is here for what the person presses (a page, a comment). Someone who knows the answer adds a [list]
+# for their own workspace as a file of their own.
+
+[server]
+service = "notion"
+name = "Notion"
+url = "https://mcp.notion.com/mcp"
+scopes = []
+write_scopes = []
+reads = "Pages in Notion, only when you ask."
+verified = false
+
+[create]
+tool = "notion-create-pages"
+noun = "page"
+fields = [
+  { key = "title", label = "Title", edit = "line", required = true, arg = "pages.0.properties.title" },
+  { key = "content", label = "Page", edit = "text", arg = "pages.0.content" },
+]
+
+[comment]
+tool = "notion-create-comment"
+target = "page_id"
+noun = "page"
+fields = [
+  { key = "body", label = "Comment", edit = "text", required = true, arg = "rich_text.0.text.content" },
+]

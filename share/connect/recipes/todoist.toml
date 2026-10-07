@@ -1,0 +1,56 @@
+# Todoist, through its official remote MCP server.
+#
+# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
+# documents; nothing was registered or authorized):
+#   - POST https://ai.todoist.net/mcp answers 401 with WWW-Authenticate carrying resource_metadata.
+#   - Protected-resource metadata names https://todoist.com as the authorization server and lists one scope for
+#     this resource, data:read_write. That is asked for. The authorization server also knows data:read, but the
+#     resource does not offer it, and whether the MCP server would accept a read-only token is a guess.
+#   - Authorization-server metadata: authorize, token and register endpoints on todoist.com, S256 PKCE, public
+#     clients allowed, authorization_code and refresh_token grants, client_id_metadata_document_supported = true.
+#
+# A guess, from memory of Doist's published tool list and not looked at on the live server: the tool names
+# find-tasks-by-date, add-tasks and add-comments, their arguments (these tools take a list: tasks, comments) and
+# the shape of their answers (a tasks list with id, content, dueDate). That is why verified is false.
+
+[server]
+service = "todoist"
+name = "Todoist"
+url = "https://ai.todoist.net/mcp"
+scopes = ["data:read_write"]
+write_scopes = []
+reads = "Todoist tasks that are due today or overdue."
+verified = false
+
+[list]
+tool = "find-tasks-by-date"
+arguments = { startDate = "today", overdueOption = "overdue-and-today", limit = "{limit}" }
+items = "tasks"
+why = "due today or overdue"
+url_template = "https://app.todoist.com/app/task/{id}"
+
+[list.map]
+ref = "id"
+title = "content"
+due = "dueDate"
+
+[create]
+tool = "add-tasks"
+noun = "task"
+fields = [
+  { key = "title", label = "Task", edit = "line", required = true, arg = "tasks.0.content" },
+  { key = "description", label = "Note", edit = "text", arg = "tasks.0.description" },
+  { key = "due", label = "Due", edit = "date", arg = "tasks.0.dueString" },
+]
+
+[create.result]
+id = "tasks.0.id"
+url_template = "https://app.todoist.com/app/task/{id}"
+
+[comment]
+tool = "add-comments"
+target = "comments.0.taskId"
+noun = "task"
+fields = [
+  { key = "body", label = "Comment", edit = "text", required = true, arg = "comments.0.content" },
+]

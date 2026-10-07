@@ -32,6 +32,13 @@ env = dict(
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
+    # Connections run on their fake engine, in the container's own folders: the service, agentd and the shell all read
+    # these, and a container's user is outside the service's default range of people (1000 to 59999).
+    BOMBADIL_CONNECT_ENGINE="fake",
+    BOMBADIL_CONNECT_UIDS="0-65535",
+    BOMBADIL_CONNECT_SOCKET=str(xdg / "connect" / "connect.sock"),
+    BOMBADIL_CONNECT_STATE=str(xdg / "connect" / "state"),
+    DBUS_SESSION_BUS_ADDRESS=f"unix:path={xdg}/bus",   # the shell's NotificationServer owns the name on this bus
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -119,6 +126,17 @@ for _ in range(100):
     time.sleep(0.1)
 env["WAYLAND_DISPLAY"] = socks[0].name
 env["SWAYSOCK"] = next(iter(xdg.glob("sway-ipc.*")), Path("")).as_posix()
+# The session bus first, so that the shell's NotificationServer is the only owner of org.freedesktop.Notifications
+# (nothing else in the image claims it), then the connection service on its fake engine, so that agentd's first look
+# at it finds it. A notification is posted to the bus the way a web page's is (gdbus or busctl; libnotify is not in the image).
+start("dbus", ["dbus-daemon", "--session", "--nofork", f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"])
+(xdg / "connect" / "state").mkdir(mode=0o700, parents=True, exist_ok=True)
+start("connect", [str(REPO / "bin" / "bombadil-connect")])
+for path in (xdg / "bus", xdg / "connect" / "connect.sock"):
+    for _ in range(100):
+        if path.exists():
+            break
+        time.sleep(0.1)
 start("agentd", [str(REPO / "bin" / "agentd")])
 sock_path = xdg / "bombadil" / "agentd.sock"
 for _ in range(100):
