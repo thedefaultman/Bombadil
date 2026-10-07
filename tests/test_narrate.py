@@ -1022,3 +1022,19 @@ def test_the_job_line_goes_to_the_pill_and_leaves_no_undo_behind(home):
 ])
 def test_odd_job_arguments_never_break_the_line(home, args):
     assert narrate.tool_step(JOB, args).text
+
+
+def test_the_mail_tools_have_words_and_reading_mail_is_an_outside_read():
+    step = lambda tool: narrate.tool_step(f"mcp__bombadil-os__{tool}", {}).text  # noqa: E731
+    assert step("mail_search") == "Looking through your mail" and step("mail_read") == "Reading a mail"
+    assert step("mail_mark") == "Marking the mail that needs a reply" and step("mail_draft") == "Writing a draft"
+    assert step("mail_show") == "Opening Mail"
+    assert narrate.tool_step("mcp__bombadil-os__mail_draft", {}).risk != SYSTEM   # a draft changes nothing yet
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__mail_read", "input": {"id": "a1/x"}, "id": "m"})
+    marked = n.on_event({"kind": "tool", "name": "Write", "input": {"file_path": "/etc/hosts", "content": "x"}})
+    assert marked["after"] == {"label": "a mail", "kind": "mail", "text": "after reading a mail"}
+    quiet = narrate.Narrator()
+    quiet.on_event({"kind": "tool", "name": "mcp__bombadil-os__mail_mark", "input": {"id": "a1/x"}, "id": "m"})
+    assert "after" not in quiet.on_event({"kind": "tool", "name": "Write",
+                                          "input": {"file_path": "/etc/hosts", "content": "x"}})

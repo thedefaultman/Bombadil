@@ -1,0 +1,43 @@
+{
+  "manifest_version": 2,
+  "name": "Bombadil Mail Lab",
+  "version": "0.1.0",
+  "description": "Lab build of the Bombadil MailExtension: a generic messenger.* RPC bridge over native messaging.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "bombadil-mail-lab@bombadil.lab",
+      "strict_min_version": "128.0"
+    }
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "permissions": [
+    "nativeMessaging",
+    "accountsRead",
+    "accountsFolders",
+    "accountsIdentities",
+    "addressBooks",
+    "compose",
+    "compose.save",
+    "compose.send",
+    "messages.save",
+    "messagesRead",
+    "messagesMove",
+    "messagesDelete",
+    "messagesUpdate",
+    "messagesModify",
+    "messagesImport",
+    "messagesTags",
+    "messagesTagsList",
+    "sensitiveDataUpload",
+    "storage"
+  ],
+  "content_security_policy": "script-src 'self' 'unsafe-eval'; object-src 'self'",
+  "optional_permissions": [
+    "messages.send"
+  ]
+}
