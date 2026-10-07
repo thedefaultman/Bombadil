@@ -30,6 +30,7 @@ env = dict(
     WLR_HEADLESS_OUTPUTS="1",
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
+    BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
@@ -540,8 +541,6 @@ time.sleep(0.8)
 shot("23-picture-word")
 
 
-# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
-# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 def desk_ipc(*args):
     return run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "desk", *args)
 
@@ -553,6 +552,45 @@ def desk_state():
         return {}
 
 
+# 22b. what a window does to a picture. The pill is 360 wide while a window shares the stage and a
+# 100 px capsule under a full-screen one; a picture over the middle of either cannot be read next to
+# the window. A window that opens puts it away; a window going full-screen hides it, and it returns.
+time.sleep(2.0)                 # a window right after a picture is the same ask's: it is let be
+middle = glass_pixels(500, 480, 200)
+check("the picture word's picture is up in the middle of the bar", middle > 40, middle)
+tiled = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600}]})
+full = json.dumps({"windows": [{"x": 0, "y": 40, "w": 1280, "h": 600, "fullscreen": True}]})
+desk_ipc("cover", tiled)
+time.sleep(1.0)
+shot("23-picture-window-opened")
+gone = glass_pixels(500, 480, 200)
+check("a window that opens puts the picture away", desk_state().get("mode") == "shared" and gone < middle // 3, f"{middle} -> {gone}")
+m = mark()
+summon()
+typ("how am i connected")
+key("Return")
+wait(ev("local", action="picture", phase="done"), 20, m)
+time.sleep(1.2)
+shot("23-picture-beside-window")
+shared = glass_pixels(500, 480, 200)
+check("a picture asked for beside a window still shows", shared > 20, shared)
+desk_ipc("cover", full)
+time.sleep(1.0)
+st = desk_state()
+shot("23-picture-fullscreen")
+check("a window that goes full-screen makes the pill the capsule", st.get("mode") == "immersive" and st.get("pillWidth") == 100, (st.get("mode"), st.get("pillWidth")))
+hidden = glass_pixels(500, 480, 200)
+check("and hides the picture over it", hidden < shared // 3, f"{shared} -> {hidden}")
+desk_ipc("cover", tiled)
+time.sleep(1.2)
+back = glass_pixels(500, 480, 200)
+check("the picture comes back when the window leaves full screen", back > shared // 2, f"{hidden} -> {back}")
+desk_ipc("cover", '{"windows": []}')
+time.sleep(0.8)
+
+
+# 8. the desk: Now on the left rail while a two-step plan runs, folded by a window over it, and the
+# `desk` word. (Hyprland's own window list is not here: the desk is told where the windows are.)
 summon()
 typ("show me the route")
 n = mark()
@@ -800,6 +838,7 @@ key("Escape")
 
 # words that never need the AI still work while it rests: an app by name, and a "!" command.
 before = len(api_log())
+words_from = mark()   # the finder below looks at what these two do not send: no "found" for either
 m = mark()
 summon()
 typ("passwords")
@@ -821,6 +860,241 @@ check(
     and len(api_log()) == before,
     bang,
 )
+
+# no "found" for what the finder is not for: a launcher word ("passwords" runs at once, and would be found if it were
+# looked for) and a "!" command (neither waits for the AI).
+check(
+    "no found for a launcher word or a ! command",
+    wait(lambda x: x.get("type") == "found", 1.0, words_from) is None,
+    [x for x in events[words_from:] if x.get("type") == "found"],
+)
+
+
+# the finder: while the AI rests, a sentence that has to wait is kept as a chip, and agentd also looks, on this computer
+# only (no model), for the apps, launcher words and past asks it nearly names. It only offers: one "found" message
+# with the line and up to three matches. A press (found_open, which the bar sends on a click) opens one.
+def passwords_up():
+    return "bombadil-app-passwords" in run("swaymsg", "-t", "get_tree").stdout
+
+
+def kept_ask(prompt):
+    """Type an ask while the AI rests: (its turn, the mark before it) once agentd has kept it as a chip."""
+    summon()
+    typ(prompt)
+    n = mark()
+    key("Return")
+    q = wait(ev("queued", prompt=prompt), 5, n)
+    return (q or {}).get("turn"), n
+
+
+def found_for(turn, since, timeout=10):
+    return wait(lambda x: x.get("type") == "found" and x.get("turn") == turn, timeout, since)
+
+
+def kept_queue():
+    """The waiting asks as the latest status says them, [(turn, the chip's label)]."""
+    with lock:
+        sts = [x for x in events if x.get("type") == "status"]
+    return [(q["turn"], q.get("wait")) for q in sts[-1]["queue"]] if sts else []
+
+
+# The bar's state does not say what chips it shows (the desk's `state` has only the stone's face), so they are read off the
+# screenshots. The stack above the pill grows up from it: the line, then (while there is something found) a row of
+# chips 30 px high and 8 px apart, then the setup's chips, then the waiting asks. So a chip row is the line standing 38 px
+# higher than it does without one, and the chips are the rounded stretches of glass across the row under the line.
+CHIP_ROW = 30 + 8
+FOUND_ROW = 666       # a pixel row just inside the top of that row of chips: glass, no text yet
+LINE_ROW = 622        # and one just inside the top of the line
+
+
+def line_top(name, x=195, rows=(560, 735)):
+    """The first row (from the top) of a screenshot where the bar's glass is at x: the top of the line above the pill,
+    whose left end is at x=190 and over which nothing else is drawn that far left. None when there is no line."""
+    from PySide6.QtGui import QImage
+    img = QImage(str(OUT / f"{name}.png"))
+
+    def glass(y):
+        c = img.pixelColor(x, y)
+        return 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38
+
+    # A single row of it is not a line: the bar's window edge is a hairline that comes and goes at the
+    # edge of that colour. The line is a box a few dozen rows high.
+    for y in range(*rows):
+        if all(glass(y + i) for i in range(12)):
+            return y
+    return None
+
+
+def glass_runs(name, y, x0=190, x1=1090):
+    """The stretches (from, to) of one row of a screenshot that are the bar's glass; a gap of 5 px or more parts two."""
+    from PySide6.QtGui import QImage
+    img, runs = QImage(str(OUT / f"{name}.png")), []
+    for x in range(x0, x1):
+        c = img.pixelColor(x, y)
+        if 21 <= c.red() <= 30 and 24 <= c.green() <= 34 and 28 <= c.blue() <= 38:
+            if runs and x - runs[-1][1] <= 5:
+                runs[-1][1] = x
+            else:
+                runs.append([x, x])
+    return [tuple(run) for run in runs]
+
+
+def chip_shapes(name, count):
+    """True when `count` chips stand under the line: that many rounded stretches of glass in the chip row, each far
+    narrower than the line, each with the label's light text on it."""
+    runs = glass_runs(name, FOUND_ROW)
+    texts = [colour_pixels(name, "#e6e8eb", (a, FOUND_ROW - 2, b, FOUND_ROW + 24)) for a, b in runs]
+    line = glass_runs(name, LINE_ROW)
+    return (len(runs) == count and all(b - a < 700 for a, b in runs) and all(t > 15 for t in texts)
+            and len(line) == 1 and line[0][1] - line[0][0] > 800), (runs, texts, line)
+
+
+def crop(name, box=(180, 560, 920, 240)):
+    """The pill's part of a screenshot (x, y, w, h) saved beside it as <name>-pill.png: no window is in it."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QImage
+    QImage(str(OUT / f"{name}.png")).copy(QRect(*box)).save(str(OUT / f"{name}-pill.png"))
+
+
+rest_when, rest_wait = r.get("when"), r.get("wait")
+no_chips_at = line_top("29-resting-summoned")   # the resting line over the waiting haiku: where the line stands with no chips
+
+# 1. a sentence that names an app: the app is found, and the ask is kept all the same.
+summon()
+typ("quit passwords")   # the Passwords window is up from above: put it away, so that a press has to bring it back
+key("Return")
+check("the Passwords window is put away first", until(lambda: not passwords_up(), 10), passwords_up())
+asks0 = api_requests()
+t_pw, n = kept_ask("my password app")
+f1 = found_for(t_pw, n)
+time.sleep(0.8)
+shot("36-found-app")
+m0 = (f1 or {}).get("matches") or [{}]
+check(
+    "my password app: found, with the line that says when the ask runs and the Passwords app first",
+    f1 and f1["prompt"] == "my password app" and f1["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and (m0[0].get("id"), m0[0].get("kind"), m0[0].get("label"), m0[0].get("hint")) == ("1", "app", "Passwords", "App"),
+    f1 and (f1["line"], f1["matches"]),
+)
+check(
+    "the finder sent nothing to the API, and the ask waits as a chip that says when",
+    api_requests() == asks0 and dict(kept_queue()).get(t_pw) == rest_wait and rest_wait,
+    (api_requests() - asks0, kept_queue()),
+)
+stone = ink("36-found-app")
+check(
+    "the stone is still the resting grey while it looks",
+    stone["grey"] > 20 and not (stone["green"] or stone["amber"] or stone["red"]) and desk_state().get("face") == "resting",
+    (stone, desk_state().get("face")),
+)
+ok, seen = chip_shapes("36-found-app", len(f1["matches"]) if f1 else 0)
+check(
+    "the bar shows one quiet chip under the line for each thing found, a row above where the line stands with none",
+    f1 and ok and line_top("36-found-app") == no_chips_at - CHIP_ROW,
+    (seen, line_top("36-found-app"), no_chips_at),
+)
+crop("36-found-app")
+
+# 2. a press on it: the app opens as if its word was typed, and the ask it came from is let go.
+m = mark()
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+done = wait(ev("local", phase="done"), 15, m)
+gone = wait(ev("unqueued", turn=t_pw), 5, m)
+up = until(passwords_up, 10)
+time.sleep(1.0)
+shot("37-found-opened")
+check("a press opens the app: a local answer that went well, and the Passwords window is up", done and done.get("ok") and up, done and done.get("text"))
+check("and lets go of the kept ask, with nothing sent to the API",
+      gone is not None and t_pw not in dict(kept_queue()) and api_requests() == asks0, kept_queue())
+check("and its chips are gone from the bar", line_top("37-found-opened") in (None, no_chips_at)
+      and not glass_runs("37-found-opened", LINE_ROW), (line_top("37-found-opened"), no_chips_at))
+
+# 3. a sentence that names nothing here: kept, and the line says there is nothing.
+t_fr, n = kept_ask("what is the capital of france")
+f3 = found_for(t_fr, n)
+time.sleep(0.8)
+shot("38-found-nothing")
+check(
+    "a sentence that names nothing is kept, and the line says nothing matches",
+    f3 and f3["matches"] == [] and f3["line"] == f"Kept for {rest_when}. Nothing on this computer matches."
+    and dict(kept_queue()).get(t_fr) == rest_wait and api_requests() == asks0,
+    f3 and (f3["line"], f3["matches"]),
+)
+check(
+    "and the bar shows no chip under it: the line stands where it does with none",
+    line_top("38-found-nothing") == no_chips_at and not glass_runs("38-found-nothing", LINE_ROW),
+    (line_top("38-found-nothing"), no_chips_at),
+)
+crop("38-found-nothing")
+
+# 4. a past ask: "install ffmpeg" went well at the start of this run, and "ffmpeg" nearly names it.
+t_ff, n = kept_ask("ffmpeg")
+f4 = found_for(t_ff, n)
+time.sleep(0.8)
+shot("39-found-ask")
+past = next((x for x in (f4 or {}).get("matches", []) if x["kind"] == "ask"), {})
+check(
+    "ffmpeg finds the past ask, by its words and how long ago, with its steps behind it",
+    f4 and f4["line"] == f"Kept for {rest_when}. Found on this computer:"
+    and past.get("label", "").startswith("You asked: install ffmpeg (") and past.get("hint") == "Its steps",
+    f4 and f4["matches"],
+)
+ok, seen = chip_shapes("39-found-ask", len(f4["matches"]) if f4 else 0)
+check("the bar shows its chip under the line", f4 and ok and line_top("39-found-ask") == no_chips_at - CHIP_ROW, seen)
+crop("39-found-ask")
+# the line fades after 12 s, like the resting line, and the chips with it
+gone_line = until(lambda: glass_pixels(195, 560, 175) < 5, 25)
+shot("39-found-ask-faded")
+check("the chips fade with the line", gone_line and not glass_runs("39-found-ask-faded", FOUND_ROW) and line_top("39-found-ask-faded") is None,
+      (glass_runs("39-found-ask-faded", FOUND_ROW), line_top("39-found-ask-faded")))
+
+# 5. a press on what was not offered does nothing: another id, a turn that is no longer waiting.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": "9"})
+send({"type": "found_open", "turn": t_pw, "id": "1"})
+check(
+    "a press on an id that was not offered, or on a ask that left, opens nothing and drops nothing",
+    wait(lambda x: x.get("type") == "event" and x.get("kind") in ("local", "unqueued"), 1.2, m) is None
+    and t_ff in dict(kept_queue()) and not drawer_open(),
+    [x for x in events[m:] if x.get("type") == "event"],
+)
+
+# 4b. the press on the past ask opens the steps of that turn in the Details drawer, and lets the kept ask go.
+m = mark()
+send({"type": "found_open", "turn": t_ff, "id": past.get("id", "1")})
+gone = wait(ev("unqueued", turn=t_ff), 5, m)
+shown = until(drawer_open, 10)
+time.sleep(1.5)
+shot("40-found-ask-opened")
+watch = [ln for ln in run("pgrep", "-af", "bombadil").stdout.splitlines() if "watch --file" in ln]
+check("a press on the past ask lets go of the kept ask and opens its steps in the Details drawer",
+      gone is not None and t_ff not in dict(kept_queue()) and shown and bool(watch), (gone, shown, watch[:1]))
+rows = []
+for ln in (rest_file.parent / "turns.jsonl").read_text().splitlines():
+    try:
+        rows.append(json.loads(ln))
+    except ValueError:
+        pass
+steps = next((x.get("details") for x in rows if x.get("prompt") == "install ffmpeg" and x.get("ok") is True), None)
+check("the drawer shows the steps of that very turn: the log of the ask that installed ffmpeg",
+      steps and any(f"watch --file {steps}" in ln for ln in watch), (steps, watch[:1]))
+has_keys = until(lambda: focused_app() == "bombadil-details", 5)
+key("Escape")
+check("the drawer has the keyboard and one Esc puts it away", has_keys and until(lambda: not drawer_open(), 5), focused_app())
+if drawer_open():
+    send({"type": "close_details"})
+check("nothing of this went to the API", api_requests() == asks0, api_requests() - asks0)
+
+# an app's own ask is not looked for either, and the one kept above that names nothing goes, so that the count at the
+# return is the haiku alone.
+m = mark()
+send({"type": "prompt", "text": "[from app passwords] list my logins"})
+app_ask = wait(ev("queued", prompt=lambda p: (p or "").startswith("[from app passwords]")), 5, m)
+check("an app's ask that waits is not looked for", app_ask is not None and wait(lambda x: x.get("type") == "found", 1.0, m) is None)
+for t in (app_ask and app_ask.get("turn"), t_fr):
+    send({"type": "unqueue", "turn": t})
+time.sleep(0.5)
+check("the asks of the finder's tests are let go: the haiku alone waits", [q[0] for q in kept_queue()] == [haiku], kept_queue())
 
 # the plan comes back: the API lets the ask through, the state file says the time has passed, and the owner says so.
 api_control(None)
@@ -975,6 +1249,38 @@ check(
     and not ink("35-paused")["green"],
     queued and queued["queue"],
 )
+# the finder while paused by hand: the ask is kept "until you resume", and agentd looks all the same. The first ask is
+# the haiku above, which went well earlier (a past ask now); the second names nothing and goes again.
+f7 = wait(lambda x: x.get("type") == "found" and x.get("prompt") == "write a haiku about rain", 5, n)
+check(
+    "paused by hand the line says the ask is kept until you resume, and what is found",
+    f7 and f7["line"] == "Kept until you resume Claude. " + (
+        "Found on this computer:" if f7["matches"] else "Nothing on this computer matches."),
+    f7 and (f7["line"], f7["matches"]),
+)
+check(
+    "and the haiku that ran earlier is found as a past ask",
+    f7 and any(x["kind"] == "ask" and x["label"].startswith("You asked: write a haiku about rain (") for x in f7["matches"]),
+    f7 and f7["matches"],
+)
+t_nf, n7 = kept_ask("what is the capital of france")
+f7b = found_for(t_nf, n7)
+time.sleep(0.8)
+shot("41-found-paused")
+crop("35-paused")
+crop("41-found-paused")
+check(
+    "paused, the bar shows a chip row under the line for what is found, and none for nothing",
+    line_top("41-found-paused") - line_top("35-paused") == CHIP_ROW,
+    (line_top("35-paused"), line_top("41-found-paused")),
+)
+check(
+    "paused by hand, a sentence that names nothing says so too",
+    f7b and f7b["line"] == "Kept until you resume Claude. Nothing on this computer matches." and f7b["matches"] == [],
+    f7b and (f7b["line"], f7b["matches"]),
+)
+send({"type": "unqueue", "turn": t_nf})
+time.sleep(0.5)
 m = mark()
 send({"type": "setup_action", "id": "resume"})
 back = wait(lambda x: x.get("type") == "setup" and x.get("state") == "ready", 10, m)
@@ -1044,6 +1350,92 @@ time.sleep(0.8)
 st = desk_state()
 check("the card leaves when the machine says everything is back under its lines",
       st["faces"]["machine"] == "hidden" and not st["present"]["machine"], st.get("faces"))
+
+# 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
+# cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
+# service on its fake engine says new mail, agentd turns it into a notice, the bar shows it.
+def pill_state():
+    r = run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "line", "state")
+    try:
+        return json.loads(r.stdout)
+    except ValueError:
+        return {}
+
+
+def until_state(pred, timeout=15):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        st = pill_state()
+        if st and pred(st):
+            return st
+        time.sleep(0.3)
+    return pill_state()
+
+
+key("Escape")
+until_state(lambda st: st.get("mode") == "idle", 15)
+inject({"type": "notice", "id": 901, "source": "mail", "line": "Priya Shah: Launch date", "tone": "ask",
+        "actions": [{"id": "reply", "label": "Reply", "style": "primary"},
+                    {"id": "open", "label": "Open", "style": "quiet"}], "ttl": 300, "at": time.time()})
+st = until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("27-notice-new-mail")
+check("a notice takes the idle line, with its two chips", st.get("noticeShown") and [
+    (n["line"], [a["label"] for a in n["actions"]]) for n in st["notices"]] == [("Priya Shah: Launch date", ["Reply", "Open"])], st.get("notices"))
+inject({"type": "notice", "id": 902, "source": "mail", "line": "I can't tell whether that went. Look in Sent before you press Send again.",
+        "tone": "error", "actions": [], "ttl": 0, "at": time.time()})
+inject({"type": "notice", "id": 903, "source": "mail", "line": "Leo Park: Quick question", "tone": "ask",
+        "actions": [{"id": "reply", "label": "Reply", "style": "primary"}], "ttl": 300, "at": time.time()})
+st = until_state(lambda st: len(st.get("notices", [])) == 3)
+time.sleep(0.6)
+shot("28-notice-warning-ahead-of-news")
+check("a warning stays ahead of newer news", [n["id"] for n in st["notices"]] == [902, 903, 901], [n["id"] for n in st.get("notices", [])])
+for nid in (901, 902, 903):
+    inject({"type": "notice_end", "id": nid})
+st = until_state(lambda st: not st.get("notices"))
+check("agentd ending them clears the line", not st.get("notices") and not st.get("noticeShown"), st.get("notices"))
+
+# The fake's drip says Leo, Priya, then two senders nobody knows (no notice), and agentd's watch starts a few
+# seconds after the service: whichever of the two known senders comes first is the first notice.
+KNOWN_SENDERS = ("Leo Park: ", "Priya Shah: ")
+env.update(BOMBADIL_MAIL_ENGINE="fake", BOMBADIL_MAIL_FAKE_DRIP="2")
+mail_proc = start("mail", [str(REPO / "bin" / "bombadil-mail")])
+n = mark()
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "mail" and m["id"] != 901, 60, n)
+check("new mail from the fake service reaches the bar's socket as a notice with Reply and Open",
+      got and [a["id"] for a in got["actions"]] == ["reply", "open"] and got["line"].startswith(KNOWN_SENDERS), got)
+st = until_state(lambda st: st.get("noticeShown"), 20)
+time.sleep(0.6)
+shot("29-notice-from-the-mail-service")
+check("and the bar shows that line", st.get("noticeShown") and any(
+    n["line"].startswith(KNOWN_SENDERS) for n in st.get("notices", [])), st.get("notices"))
+mail_proc.terminate()   # no more mail; what is live is put away the way the cross does
+live = [n["id"] for n in st.get("notices", [])]
+for nid in live:
+    send({"type": "notice_dismiss", "id": nid})
+ended = wait(lambda m: m.get("type") == "notice_end" and m.get("id") in live, 10, n)
+st = until_state(lambda st: not st.get("notices"))
+check("a dismissal reaches agentd and the line goes", ended and not st.get("notices"), (ended, st.get("notices")))
+
+# `desk inject` is open to any process of the person's, an agent's shell included, so a bar that was not started for
+# a test takes no notice and no end of one from it (the other kinds still go in, as they always did).
+qs_proc.terminate()
+qs_proc.wait(10)
+plain = {k: v for k, v in env.items() if k != "BOMBADIL_BAR_INJECT"}
+with open(OUT / "quickshell-plain.log", "w") as log:
+    plain_bar = subprocess.Popen([str(REPO / "bin" / "bombadil-shell")], env=plain, stdout=log,
+                                 stderr=subprocess.STDOUT)
+procs.append(plain_bar)
+until_state(lambda st: "mode" in st, 30)
+inject({"type": "notice", "id": 950, "source": "mail", "line": "Sent to Priya from maya@acme.example · 09:08",
+        "tone": "done", "actions": [], "ttl": 0, "at": time.time()})
+inject({"type": "notice_end", "id": 950})
+inject({"type": "event", "kind": "local", "action": "panel", "phase": "done", "ok": True, "text": "Opened the browser."})
+st = until_state(lambda st: st.get("line") == "Opened the browser.", 10)
+check("a bar not started for a test takes no injected notice, and still takes the other kinds",
+      st.get("line") == "Opened the browser." and st.get("notices") == [] and not st.get("noticeShown"), st)
+plain_bar.terminate()   # the sections after this start their own bar
+plain_bar.wait(10)
 
 # Quickshell logs a QML error as a warning and carries on (a colour left undefined draws white), so
 # none of the checks above would notice one.

@@ -1,7 +1,8 @@
 //@ pragma UseQApplication
 // The Bombadil bar: a Quickshell shell that is the whole visible UI at login.
 // A pill at the bottom takes what you type; the line above it says what the agent is doing
-// while it works and how the turn ended. The pill is also the launcher: an app or panel name
+// while it works and how the turn ended, and, when nothing else has it, a notice another service
+// asked agentd to say (new mail). The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
@@ -42,6 +43,7 @@ ShellRoot {
         id: deskState
         pill: pillState
         onOutgoing: msg => root.write(msg)
+        onWindowOpened: pillState.windowOpened()
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
@@ -77,8 +79,23 @@ ShellRoot {
             const v = JSON.parse(windows)
             deskState.setWindows(Array.isArray(v) ? v : (Array.isArray(v.windows) ? v.windows : [v]))
         }
-        // A message as agentd would send it, for demos and the VM smoke check.
-        function inject(message: string): void { root.handle(message) }
+        // A message as agentd would send it, for demos and the desktop test. A notice, or its end, only on a
+        // bar started for a test (BOMBADIL_BAR_INJECT=1, which no session of the image sets): the line above the
+        // pill is where agentd's warnings about mail show, and any process of the person's, an agent's shell
+        // included, that could say what it likes there could take one down. The other kinds are as open as
+        // they were (docs/MAIL.md says so).
+        function inject(message: string): void {
+            let ev
+            try { ev = JSON.parse(message) } catch (e) { return }
+            if (ev && String(ev.type).startsWith("notice") && Quickshell.env("BOMBADIL_BAR_INJECT") !== "1") return
+            root.handle(message)
+        }
+    }
+    IpcHandler {
+        target: "line"
+        // What the line above the pill is saying, notices included, as JSON: for the VM smoke test and the
+        // desktop test.
+        function state(): string { return JSON.stringify(pillState.snapshot()) }
     }
 
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
@@ -206,6 +223,7 @@ ShellRoot {
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
+                Region { item: foundChips.visible ? foundChips : null }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
                 Region { item: appChips }
@@ -293,6 +311,18 @@ ShellRoot {
                     Layout.fillWidth: true
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                // While the AI rests: what the sentence you typed nearly names on this computer (an app, a
+                // word, a past ask), under the line that says the ask is kept. A press opens it.
+                FoundChips {
+                    id: foundChips
+                    pill: pillState
+                    // As wide as its chips (the input mask lets clicks beside them through), and no wider
+                    // than the bar: three long labels shrink and cut themselves short.
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: Math.min(Math.max(360, win.pillMax), column.width)
                 }
 
                 // Which AI, Sign in, Show sign-in: the choices under the setup line.
