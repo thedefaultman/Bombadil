@@ -55,7 +55,8 @@ hl.bind("SUPER + B", hl.dsp.workspace.toggle_special("browser"))
 hl.bind("SUPER + T", hl.dsp.workspace.toggle_special("terminal"))
 hl.bind("SUPER + F", hl.dsp.workspace.toggle_special("files"))
 hl.bind("SUPER + Q", hl.dsp.window.close())
-hl.bind("SUPER + Return", hl.dsp.exec_cmd("foot"))
+-- A terminal on the desktop: plain `foot` opens inside the drawer that shows and goes with it.
+hl.bind("SUPER + Return", hl.dsp.exec_cmd("bombadil terminal"))
 -- Tap Super alone: the pill takes the keyboard (a second tap gives it back). It fires on
 -- release, and Hyprland drops it when another key, a click or a drag happened meanwhile.
 hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })

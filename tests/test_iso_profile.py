@@ -91,6 +91,13 @@ def test_hyprland_does_not_slide_the_bar_when_a_picture_resizes_it():
     assert re.search(r'^\s*hl\.animation\(\{ leaf = "layers", enabled = false \}\)', lua, re.M)
 
 
+def test_super_return_opens_a_terminal_that_does_not_belong_to_the_drawer_showing():
+    # A plain `foot` opens inside the drawer that shows (a special workspace) and goes with it.
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    assert re.search(r'^\s*hl\.bind\("SUPER \+ Return", hl\.dsp\.exec_cmd\("bombadil terminal"\)\)', lua, re.M)
+    assert '"SUPER + Return", hl.dsp.exec_cmd("foot")' not in lua
+
+
 def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     # modprobe of a module (overlay, br_netfilter, docker's) fails after pacman -Syu replaced the running kernel.
     from bombadil import providers

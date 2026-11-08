@@ -40,6 +40,7 @@ copy can race the first.
 |---|---|
 | Super (tap) or Alt+Space | the pill takes the keyboard; again gives it back |
 | Super+Esc | stops the running turn and everything it started |
+| Super+Return | a terminal on the desktop (`bombadil terminal`): a drawer that shows (details, files, an app) is put away first, because a window opened while it shows would stay inside it |
 | Super+Ctrl+Esc | `systemctl --user restart bombadil-shell`, for a bar that hangs |
 
 Alt+Space exists for a machine whose host keeps the Super key (a virtual machine's window on

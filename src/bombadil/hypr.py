@@ -217,6 +217,25 @@ class Hyprland:
             self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
         return f"panel {name} {'shown' if show else 'hidden'}{note}"
 
+    def open_terminal(self, spawn=subprocess.Popen) -> str:
+        """Super+Return: a terminal on the desktop. A window that opens while a drawer shows (a special
+        workspace: the details, the files, an app's) lands inside it and leaves with it, so any drawer but
+        the terminal's own is put away first. Never raises over the drawer: the terminal opens anyway."""
+        note = ""
+        if self.available:
+            try:
+                monitors = json.loads(self.request("j/monitors"))
+                mon = next((m for m in monitors if m.get("focused")), monitors[0])
+                name = str((mon.get("specialWorkspace") or {}).get("name", "")).removeprefix("special:")
+                if name and name != "terminal" and _APP_NAME.fullmatch(name):
+                    self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
+                    note = f", {name} put away"
+            except (OSError, RuntimeError, ValueError, KeyError, IndexError, TypeError) as e:
+                note = f", could not tell which drawer shows: {e}"
+        spawn(["foot"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              start_new_session=True)
+        return "terminal opened" + note
+
     def screenshot(self, path: Path) -> Path:
         if shutil.which("grim") is None:
             raise RuntimeError("grim is not installed")
