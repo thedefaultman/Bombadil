@@ -27,7 +27,7 @@ elif [[ $rc -eq 0 || $rc -eq 3 ]]; then
     claude) claude auth login ;;
     codex)  codex login ;;
   esac
-  hyprctl dispatch 'hl.dsp.exec_cmd("agentd")' >/dev/null 2>&1 || true
+  systemctl --user restart bombadil-agentd
   echo "Done. Type in the pill at the bottom of the screen."
 else
   echo "Not signed in yet. Run bombadil-setup again, or type 'sign in' in the pill."

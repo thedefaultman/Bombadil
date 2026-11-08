@@ -270,16 +270,19 @@ ShellRoot {
                 onTriggered: root.release()
             }
 
-            // The cards that folded, beside the pill.
+            // The cards that folded, beside the pill. A drag from them reports the screen's coordinates,
+            // so they need to know where this window sits (only where the desk lives).
             DeskStrips {
                 id: stripsLeft
                 desk: deskState; side: "left"; active: win.onDesk
+                origin: Qt.point(0, deskState.screenHeight - win.height)
                 pillEdge: column.x + pillBox.x
                 pillCentreY: column.y + pillBox.y + pillBox.height / 2
             }
             DeskStrips {
                 id: stripsRight
                 desk: deskState; side: "right"; active: win.onDesk
+                origin: Qt.point(0, deskState.screenHeight - win.height)
                 pillEdge: column.x + pillBox.x + pillBox.width
                 pillCentreY: column.y + pillBox.y + pillBox.height / 2
             }

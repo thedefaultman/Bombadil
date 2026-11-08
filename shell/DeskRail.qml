@@ -25,10 +25,16 @@ Item {
     // Whether the rail's window is up: while a card is meant to be in full, and for as long as one
     // takes to fold away. It follows what the desk says, never the animation: a window that is not
     // up runs no animation, so a card that waited for its own opacity to show the window would
-    // never come back.
+    // never come back. Every rail's window is up for as long as a drag lasts, an empty rail's too:
+    // it draws the mark, and the window the drag began in must not go. They stay a moment after it,
+    // for the card that is on its way.
     readonly property bool anyFull: hitRects.length > 0
-    property bool shown: anyFull || leaving.running
+    property bool shown: anyFull || desk.dragging || leaving.running
     onAnyFullChanged: if (!anyFull) leaving.restart()
+    Connections {
+        target: rail.desk
+        function onDraggingChanged() { if (!rail.desk.dragging) leaving.restart() }
+    }
     Timer {
         id: leaving
         interval: rail.desk.foldMs + 80
@@ -86,6 +92,30 @@ Item {
                                  || cell.modelData === "machine" ? rowsFace : null
             }
 
+            // The title and the line under it are the handle; the rows start below them, so a button
+            // or an x never starts a drag.
+            Item {
+                objectName: "deskGrip-" + cell.modelData
+                width: parent.width; height: 50
+                DeskDrag {
+                    desk: rail.desk
+                    widget: cell.modelData
+                    origin: Qt.point(rail.desk.railX(rail.side), T.railTop)
+                }
+            }
+
+            // The card in hand, and the one a drop was sent for until agentd answers, are dimmed where
+            // they stand: not an animation, so a drag that is held still costs nothing.
+            Rectangle {
+                objectName: "deskDim-" + cell.modelData
+                anchors.fill: parent
+                radius: T.radius
+                color: T.panel
+                opacity: 0.55
+                visible: rail.desk.settling === cell.modelData
+                         || (rail.desk.dragging && rail.desk.drag.id === cell.modelData)
+            }
+
             Component {
                 id: nowFace
                 NowCard {
@@ -109,5 +139,16 @@ Item {
                 }
             }
         }
+    }
+
+    // Where a dragged card would land: a line across the column, in the gap it would take.
+    Rectangle {
+        objectName: "dropMark"
+        readonly property var target: rail.desk.dropTarget
+        visible: target !== null && target.kind === "rank" && target.side === rail.side
+        width: T.cardWidth; height: 3
+        radius: 1.5
+        y: visible ? target.markY - T.railTop - height / 2 : 0
+        color: T.you
     }
 }

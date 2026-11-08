@@ -13,6 +13,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
     ("sudo pacman -S --noconfirm ffmpeg", "Installing ffmpeg", SYSTEM),
     ("sudo pacman -S --needed ffmpeg x264 lame", "Installing ffmpeg, x264 and 1 more", SYSTEM),
     ("sudo pacman -Syu --noconfirm", "Updating the system", SYSTEM),
+    # Installing with -Syu also updates everything else; the line says so.
+    ("sudo pacman -Syu --noconfirm --needed ffmpeg", "Updating the system and installing ffmpeg", SYSTEM),
+    ("sudo pacman -Su ffmpeg x264 lame", "Updating the system and installing ffmpeg, x264 and 1 more", SYSTEM),
+    ("sudo pacman --sync --refresh --sysupgrade docker", "Updating the system and installing docker", SYSTEM),
+    ("/bin/bash -lc 'sudo pacman -Syu --noconfirm --needed docker'", "Updating the system and installing docker", SYSTEM),
     ("sudo pacman -Rns docker", "Removing docker", SYSTEM),
     ("pacman -Ss ffmpeg", "Looking up “ffmpeg”", None),
     ("pacman -Qi ffmpeg", "Checking installed packages", None),
@@ -139,6 +144,15 @@ def test_summary_and_stop_lines():
     assert n.system and not n.irreversible
     n.on_event({"kind": "tool", "name": "Bash", "input": {"command": "sudo pacman -S docker"}})
     assert n.stopped_line() == "Stopped while installing docker."
+
+
+def test_an_install_that_updates_the_system_is_summed_up_as_both():
+    n = narrate.Narrator()
+    line = n.on_event({"kind": "tool", "name": "Bash",
+                       "input": {"command": "sudo pacman -Syu --noconfirm --needed ffmpeg"}})
+    assert line["text"] == "Updating the system and installing ffmpeg"
+    n.on_event({"kind": "tool_result", "id": None, "output": ""})
+    assert n.stopped_line() == "Stopped while updating the system and installing ffmpeg."
 
 
 def test_the_agents_own_words_show_their_newest_line():
