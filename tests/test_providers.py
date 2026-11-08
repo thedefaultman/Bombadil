@@ -243,6 +243,58 @@ def test_codex_reports_a_search_once_with_no_id_to_wait_for():
     assert ev == [{"kind": "tool", "name": "WebSearch", "input": {"query": "arch news"}}]
 
 
+ODD_LINES = [
+    '{"type": "assistant", "message": "a string, not an object"}',
+    '{"type": "assistant", "message": {"content": "text, not a list"}}',
+    '{"type": "assistant", "message": {"content": ["a string block", 3, null, {"type": "text", "text": 5}]}}',
+    '{"type": "user", "message": null}',
+    '{"type": "user", "message": {"content": [null, "x", {"type": "tool_result", "content": 7}]}}',
+    '{"type": "stream_event", "event": "a string"}',
+    '{"type": "stream_event", "event": {"type": "content_block_start", "content_block": "x"}}',
+    '{"type": "stream_event", "event": {"type": "content_block_delta", "delta": []}}',
+    '{"type": "system", "subtype": "init", "mcp_servers": "none"}',
+    '{"type": "result", "result": {"a": 1}, "errors": "one error", "is_error": true}',
+    '{"type": "result", "result": null, "errors": 5, "is_error": true}',
+    '{"type": "thread.started", "thread_id": null}',
+    '{"type": "item.completed", "item": "a string"}',
+    '{"type": "item.completed", "item": {"type": "reasoning", "text": 5}}',
+    '{"type": "item.started", "item": {"type": "todo_list", "items": "x"}}',
+    '{"type": "item.started", "item": {"type": "todo_list", "items": [1, null, {"text": "t"}]}}',
+    '{"type": "turn.failed", "error": ["x"]}',
+    '{"type": "error", "message": null}',
+    '[1, 2]', '"text"', "42", "null", "{", "",
+]
+
+
+@pytest.mark.parametrize("line", ODD_LINES)
+@pytest.mark.parametrize("provider", [providers.Claude("x"), providers.Codex("x")], ids=["claude", "codex"])
+def test_a_line_of_the_wrong_shape_reads_as_nothing_not_an_error(provider, line):
+    events = list(provider.parse(line))
+    assert all(isinstance(e, dict) and "kind" in e for e in events)
+
+
+def test_the_answer_after_an_odd_line_is_still_read():
+    p = providers.Claude("x")
+    lines = ['{"type": "assistant", "message": "..."}',
+             json.dumps({"type": "result", "result": "Done.", "is_error": False, "session_id": "s1"})]
+    ev = list(p.events(lines))
+    assert [e["kind"] for e in ev] == ["result"] and ev[0]["text"] == "Done."
+
+
+def test_the_agent_is_told_how_to_set_the_time_zone():
+    # There is no installer question for it; the user just says where they are.
+    assert "sudo timedatectl set-timezone <Area/City>" in providers.system_prompt()
+
+
+def test_claude_is_asked_for_sonnet_unless_the_config_says_otherwise(home):
+    from bombadil import config
+    cmd = providers.get("claude", "/x", model=config.load().model_for("claude")).command(providers.Turn("hi"), Path("/tmp"))
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5-5"
+    # Codex has no default here, so it is not passed one.
+    cmd = providers.get("codex", "/x", model=config.load().model_for("codex")).command(providers.Turn("hi"), Path("/tmp"))
+    assert "--model" not in cmd
+
+
 # `claude auth login` as Claude Code 2.1.283 runs it (captured 2026-09-27): the printed page
 # ends on platform.claude.com's code page; the one it gives $BROWSER comes back to localhost.
 CLAUDE_PRINTED = ("https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e"

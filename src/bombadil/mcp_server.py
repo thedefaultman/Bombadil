@@ -137,8 +137,9 @@ class OsTools:
            "words this turn (\"put watching on the right\", \"hide machine\", \"fold the desk\"). In any "
            "other turn it is refused and nothing changes; never rearrange the desk on your own. Ops: show and "
            "hide a widget (needs cannot be hidden); move a widget to a rail (left or right) and a rank "
-           "(0 is nearest the pill, and without a rank it goes last); fold and unfold every widget to a "
-           "chip beside the pill and back; state says what is where.",
+           "(0 is nearest the pill, and without a rank it goes last, and a move gives a folded widget its "
+           "card back); fold and unfold every widget to a chip beside the pill and back, or with a "
+           "widget only that one; state says what is where.",
            {"op": {"type": "string", "enum": ["show", "hide", "move", "fold", "unfold", "state"]},
             "widget": {"type": "string", "enum": list(WIDGETS)},
             "rail": {"type": "string", "enum": list(RAILS)},

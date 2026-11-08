@@ -1,0 +1,10 @@
+[Unit]
+Description=Bombadil bar and pill (Quickshell)
+After=bombadil-agentd.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/bin/bombadil-shell
+Restart=always
+RestartSec=1
+TimeoutStopSec=5
