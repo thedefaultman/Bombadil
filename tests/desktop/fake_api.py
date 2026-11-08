@@ -169,6 +169,7 @@ class H(BaseHTTPRequestHandler):
             json.dumps(
                 {
                     "n": N[0],
+                    "model": body.get("model"),
                     "first": first[-200:],
                     "after_tool": after_tool,
                     "persona": "The user goes by" in system,

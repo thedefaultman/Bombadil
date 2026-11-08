@@ -51,6 +51,7 @@ QtObject {
 
     property bool folded: false
     property var hidden: []
+    property var stripped: []           // folded by hand: a strip whatever the room, and no slot in its rail
     property var rails: ({ now: "left", watching: "left", alive: "left", needs: "right", away: "right", machine: "right" })
     property var order: ({ left: ["now", "watching", "alive"], right: ["needs", "away", "machine"] })
     property string screen: ""          // "" = the shell's first screen
@@ -119,6 +120,7 @@ QtObject {
     // -- presence --
 
     function isHidden(id) { return id !== "needs" && hidden.indexOf(id) >= 0 }
+    function isStripped(id) { return stripped.indexOf(id) >= 0 }
     function _rows(m) { return m && m.rows ? m.rows.length : 0 }
 
     readonly property bool nowPresent: nowVisible && !isHidden("now")
@@ -190,7 +192,8 @@ QtObject {
     // Each present widget's slot, from the bottom of its rail up, nearest the pill first, and whether
     // it fits: a widget takes its full face if that fits the room left; it and everything above it
     // fold to strips otherwise. A slot is where the full face would be whether it is shown or not, so
-    // a card that folds for a window does not let the ones above it slide down.
+    // a card that folds for a window does not let the ones above it slide down. One the person folded
+    // by hand has no slot: it is a strip for good, and the cards above it slide down.
     readonly property var _stack: _layout()
     readonly property var slots: _stack.slots
 
@@ -199,7 +202,7 @@ QtObject {
         for (const side of ["left", "right"]) {
             let used = 0, fits = true
             for (const id of order[side]) {
-                if (!present[id]) continue
+                if (!present[id] || isStripped(id)) continue
                 const h = heightOf(id)
                 const gap = used > 0 ? T.cardGap : 0
                 if (used + gap + h > railHeight) fits = false
@@ -258,6 +261,12 @@ QtObject {
                 interval: desk.unfoldDelayMs
                 onTriggered: desk._unfold(wid)
             }
+        },
+        Timer {
+            // After a drop the origin stays dimmed until agentd answers; with no answer it stops being.
+            id: settleTimer
+            interval: desk.settleMs
+            onTriggered: desk.settling = ""
         },
         Timer {
             // A row the person removed comes back if the job is still listed when this runs out: the
@@ -327,7 +336,7 @@ QtObject {
         const f = {}
         for (const id of widgetIds) {
             if (!present[id] || mode === "immersive") f[id] = "hidden"
-            else if (folded || narrow || !_stack.fit[id] || coverFolded[id]) f[id] = "strip"
+            else if (folded || narrow || isStripped(id) || !_stack.fit[id] || coverFolded[id]) f[id] = "strip"
             else f[id] = "full"
         }
         return f
@@ -401,7 +410,12 @@ QtObject {
 
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
-        if (ev.type === "desk") { _applyDesk(ev); return }
+        if (ev.type === "desk") {
+            // A changed order rebuilds the rail's cards, the one in hand among them: it waits for the drop.
+            if (dragging) _held.push(ev)
+            else _applyDesk(ev)
+            return
+        }
         if (ev.type === "jobs") { _applyJobs(ev); return }
         if (ev.type === "dev") { _applyDev(ev); return }
         if (ev.type === "machine") { _applyMachine(ev); return }
@@ -485,7 +499,10 @@ QtObject {
         if (machineModel !== null) machineModel = null
     }
 
-    onConnectedChanged: if (connected) outgoing({ type: "desk", op: "get" })
+    onConnectedChanged: {
+        if (connected) outgoing({ type: "desk", op: "get" })
+        else dragCancel()
+    }
 
     // -- Now's model --
 
@@ -554,8 +571,11 @@ QtObject {
 
     // agentd's desk message: whatever it leaves out stays as it was, whatever it gets wrong is dropped.
     function _applyDesk(ev) {
+        // This is the answer a drop was waiting for.
+        if (settling !== "") { settling = ""; settleTimer.stop() }
         if (ev.folded !== undefined) folded = !!ev.folded
         if (Array.isArray(ev.hidden)) hidden = ev.hidden.filter(id => _known(id) && id !== "needs")
+        if (Array.isArray(ev.stripped)) stripped = ev.stripped.filter((id, i, a) => _known(id) && a.indexOf(id) === i)
         if (typeof ev.screen === "string") screen = ev.screen
         const r = Object.assign({}, rails)
         if (ev.rails && typeof ev.rails === "object") {
@@ -830,21 +850,131 @@ QtObject {
         outgoing(msg)
     }
 
+    // One card to its strip, by hand; move takes it back into a rail.
+    function foldWidget(widget) { outgoing({ type: "desk", op: "fold", widget: widget }) }
+
     // A click on Now's title: the turn's commands and output, as on the line.
     function openDetails() {
         if (pill && pill.turn !== null && pill.turn !== undefined) pill.details()
     }
 
+    // -- dragging: a card by its title, or a strip, to a rail or into the row --
+
+    // What is in the person's hand and where the pointer is, in screen coordinates: null, or
+    // {id, from: "rail" | "strip", side, x, y}. A handle reports through dragStart, dragMove and
+    // dragEnd and never says what is under the pointer: a grab keeps delivering positions beyond its
+    // window's edge, and no window can see the others.
+    property var drag: null
+    readonly property bool dragging: drag !== null
+    // After a drop the origin stays dimmed until agentd answers, or this long.
+    property string settling: ""
+    property int settleMs: 500
+    property var _held: []              // the desk messages that came in during the drag, in order
+
+    // What a drop here would do: {kind: "rank", side, rank, markY}, {kind: "fold"} or null. It reads
+    // the live layout, so the mark follows a rail that shifts under the pointer.
+    readonly property var dropTarget: _target(drag)
+    // The chip a card would fold into if it were dropped now, for the row to show; null elsewhere.
+    readonly property var foldChip: dropTarget !== null && dropTarget.kind === "fold" ? _stripOf(drag.id) : null
+
+    function _faceOf(from) { return from === "rail" ? "full" : from === "strip" ? "strip" : "" }
+
+    function _target(d) {
+        if (d === null) return null
+        // A window in front is the stage's, and a card under one is folded anyway.
+        if (windows.some(w => d.x >= w.x && d.x < w.x + w.w && d.y >= w.y && d.y < w.y + w.h)) return null
+        if (d.y >= screenHeight - rowZone) return d.from === "rail" ? { kind: "fold" } : null
+        const side = d.x <= railX("left") + T.cardWidth + 40 ? "left" : d.x >= railX("right") - 40 ? "right" : ""
+        if (side === "") return null    // the middle of the screen is the stage
+        // agentd counts a rank in the rail's whole order without the widget in hand (Desk._move), the
+        // ones that are away included: only the cards on show are places to drop between.
+        const there = order[side].filter(id => id !== d.id)
+        let next = null, last = null    // the card the drop goes in front of, and the last one up
+        for (const id of there) {
+            if (faces[id] !== "full") continue
+            if (next === null && slots[id].y + slots[id].h / 2 < d.y) next = id
+            last = id
+        }
+        let rank = 0, markY = railBottomY
+        if (next !== null) {
+            rank = there.indexOf(next)
+            markY = slots[next].y + slots[next].h + T.cardGap / 2
+        } else if (last !== null) {
+            rank = there.indexOf(last) + 1
+            markY = slots[last].y - T.cardGap / 2
+        }
+        // A card put back among the cards on show, in the order they are in, has nothing to do: the ones
+        // that are away are places nobody can see. A strip is never in its place: it is a strip for the
+        // room, a window or the word "desk", and a drop gives it its slot.
+        if (d.from === "rail") {
+            const shown = ids => ids.filter(id => faces[id] === "full")
+            const after = there.slice(0, rank).concat([d.id], there.slice(rank))
+            if (JSON.stringify(shown(after)) === JSON.stringify(shown(order[side]))) return null
+        }
+        return { kind: "rank", side: side, rank: rank, markY: markY }
+    }
+
+    // A card taken by its title ("rail") or a strip ("strip"). Refused, and nothing changes, unless the
+    // drop could be carried out: connected, no other drag, and the widget in the face it is taken from
+    // (which an absent widget is not, nor is any under a full-screen window).
+    function dragStart(id, from, x, y) {
+        if (!connected || dragging || faces[id] !== _faceOf(from)) return false
+        drag = { id: id, from: from, side: rails[id], x: x, y: y }
+        return true
+    }
+
+    function dragMove(x, y) {
+        if (dragging) drag = Object.assign({}, drag, { x: x, y: y })
+    }
+
+    // The button went up at (x, y): what is in hand goes there, if there is a place for it. agentd
+    // answers with the new desk; the shell never changes its own state first. What came in while it was
+    // held is applied first, so the place is counted in the order agentd keeps now, and a card that
+    // stopped being what it was taken as has nowhere to go. It is out of hand before that: a changed
+    // order rebuilds the rail's cards, and a card rebuilt under a drag that is still on ends the drag.
+    function dragEnd(x, y) {
+        if (!dragging) return
+        dragMove(x, y)
+        const d = drag
+        drag = null
+        const held = _held
+        _held = []
+        for (const ev of held) _applyDesk(ev)
+        if (faces[d.id] !== _faceOf(d.from)) return
+        const target = _target(d)
+        if (target === null) return
+        if (target.kind === "fold") foldWidget(d.id)
+        else move(d.id, target.side, target.rank)
+        settling = d.id
+        settleTimer.restart()
+    }
+
+    // The drag ended some other way: nothing is sent, and the desk catches up.
+    function dragCancel() {
+        if (dragging) _drop()
+    }
+
+    function _drop() {
+        drag = null
+        const held = _held
+        _held = []
+        for (const ev of held) _applyDesk(ev)
+    }
+
+    // What is in hand stopped being what it was taken as (a window folded the card, it has nothing to
+    // say, a full-screen window took the desk): the drag is over.
+    onFacesChanged: if (dragging && faces[drag.id] !== _faceOf(drag.from)) dragCancel()
+
     // Everything a test or a person at `quickshell ipc call desk state` wants to see.
     function snapshot() {
         return {
-            mode: mode, capsule: capsule, pillWidth: pillWidth, folded: folded, hidden: hidden,
+            mode: mode, capsule: capsule, pillWidth: pillWidth, folded: folded, hidden: hidden, stripped: stripped,
             rails: rails, order: order, screen: screen, present: present, faces: faces, covered: covered,
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
             now: { visible: nowVisible, phase: _phase, model: nowModel },
             watching: watchModel, needs: needsModel, machine: machineModel, needsYou: needsYou,
-            face: pill ? pill.face : ""
+            face: pill ? pill.face : "", drag: drag, dropTarget: dropTarget, settling: settling
         }
     }
 }

@@ -1,12 +1,13 @@
 """The desk: where the widgets sit around the pill, and which of them are put away.
 
 The shell draws the desk; this module is the one place that decides and remembers. It holds
-whether the desk is folded to strips, which widgets are put away, and each widget's rail and
-place in it, and keeps them in ~/.local/state/bombadil/desk.toml so a restart keeps your desk.
+whether the desk is folded to strips, which widgets are put away or folded by hand, and each
+widget's rail and place in it, and keeps them in ~/.local/state/bombadil/desk.toml so a restart
+keeps your desk.
 That directory is outside the restore points, so an undo never moves the desk.
 
 Three things change it: the launcher's own words ("desk", "hide machine"), the shell (a click
-on a strip, a drag later) and the agent's `desk` tool, which agentd lets through only in a turn
+on a strip, a card dragged to another place or into the row) and the agent's `desk` tool, which agentd lets through only in a turn
 whose words asked for the desk (`asked_for_desk`). All three go through `Desk.apply`, which
 answers with one plain sentence for the line above the pill.
 
@@ -61,10 +62,10 @@ _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!wr
 # words or a word that goes on about where it should be: "hide machine", "put watching on the
 # right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
 _DESK_ASK = re.compile(
-    r"\b(?:show|hide|put|keep|pin|move|bring|fold)\s+(?:(?:up|back|the|my)\s+)*"
+    r"\b(?:show|hide|put|keep|pin|move|bring|fold|unfold)\s+(?:(?:up|back|the|my)\s+)*"
     r"(?:now|watching|needs you|machine|alive|while you were away)\b(?!')"
     r"(?=\s*$|\s*,"
-    r"|\s+(?:on|to|in|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
+    r"|\s+(?:on|to|in|into|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 
 
 def asked_for_desk(prompt: str) -> bool:
@@ -121,6 +122,7 @@ class Desk:
     def _reset(self):
         self.folded = False
         self.hidden = set(OPT_IN)
+        self.stripped: set[str] = set()   # folded by hand: a strip whatever the room, and no slot in its rail
         self.rails = {w.id: w.rail for w in WIDGETS.values()}
         self.order = {r: [w.id for w in WIDGETS.values() if w.rail == r] for r in RAILS}
         self.screen = ""    # "" is the shell's first screen; else an output name
@@ -131,6 +133,7 @@ class Desk:
         with self._lock:
             return {"type": "desk", "folded": self.folded,
                     "hidden": [w for w in WIDGETS if w in self.hidden],
+                    "stripped": [w for w in WIDGETS if w in self.stripped],
                     "rails": dict(self.rails),
                     "order": {r: list(self.order[r]) for r in RAILS},
                     "screen": self.screen}
@@ -140,6 +143,7 @@ class Desk:
         with self._lock:
             def rail(r):
                 return ", ".join(WIDGETS[w].title + (" (put away)" if w in self.hidden else "")
+                                 + (" (folded to a strip)" if w in self.stripped else "")
                                  for w in self.order[r])
             return (f"The desk is {'folded to strips' if self.folded else 'open'}. "
                     f"Left rail, nearest the pill first: {rail('left') or 'nothing'}. "
@@ -148,9 +152,11 @@ class Desk:
     # -- changing it --
 
     def apply(self, op: str, widget=None, rail=None, rank=None) -> tuple[bool, str]:
-        """Do one thing to the desk. Ops: toggle (the word "desk"), fold, unfold, hide, show,
-        move (rank counts from the pill within the rail's whole order, put-away widgets
-        included; none puts it last), state. Returns (ok, one plain sentence)."""
+        """Do one thing to the desk. Ops: toggle (the word "desk"), fold and unfold (every card
+        to its strip and back; with a widget, only that one: a card dragged into the row), hide,
+        show (which also gives a hand-folded widget its card back), move (rank counts from the
+        pill within the rail's whole order, put-away widgets included; none puts it last, and a
+        move gives a hand-folded widget its card back), state. Returns (ok, one plain sentence)."""
         with self._lock:
             ok, text, changed = self._apply(str(op), widget, rail, rank)
             if changed:
@@ -169,7 +175,7 @@ class Desk:
         return ok, text
 
     def _apply(self, op: str, widget, rail, rank) -> tuple[bool, str, bool]:
-        if op in ("toggle", "fold", "unfold"):
+        if op == "toggle" or (op in ("fold", "unfold") and not widget):
             want = (not self.folded) if op == "toggle" else op == "fold"
             if want == self.folded:
                 return True, f"The desk is already {'folded' if want else 'unfolded'}.", False
@@ -177,7 +183,7 @@ class Desk:
             return True, f"{'Folded' if want else 'Unfolded'} the desk.", True
         if op == "state":
             return True, self.describe(), False
-        if op not in ("hide", "show", "move"):
+        if op not in ("hide", "show", "move", "fold", "unfold"):
             return False, f"The desk cannot {op}.", False
         wid = find(widget)
         if wid is None:
@@ -191,17 +197,33 @@ class Desk:
                 return True, f"{name} is already put away.", False
             self.hidden.add(wid)
             return True, f"Put {name} away.", True
+        if op in ("fold", "unfold"):
+            want = op == "fold"
+            if want == (wid in self.stripped):
+                return True, f"{name} is already {'folded' if want else 'unfolded'}.", False
+            (self.stripped.add if want else self.stripped.discard)(wid)
+            return True, f"Folded {name} to its strip." if want else f"Unfolded {name}.", True
         if op == "show":
+            # Asking for a widget wants its card, so a hand-folded one is unfolded too.
+            was_folded = wid in self.stripped
+            self.stripped.discard(wid)
             if wid in ASKABLE:
                 was_away = wid in self.hidden
                 self.hidden.discard(wid)
                 # Asking for what was put away puts it back: the answer says so, as the card would not say it.
-                return True, ASKABLE[wid] + (" It is back on the desk." if was_away else ""), was_away
+                return True, ASKABLE[wid] + (" It is back on the desk." if was_away else ""), was_away or was_folded
             if wid not in self.hidden:
-                return True, f"{name} is already on the desk.", False
+                return True, (f"Unfolded {name}." if was_folded else f"{name} is already on the desk."), was_folded
             self.hidden.discard(wid)
             return True, f"Put {name} on the desk.", True
         return self._move(wid, rail, rank)
+
+    def _unfolded(self, wid: str, otherwise: str) -> tuple[bool, str, bool]:
+        """A move that changes no place still gives a hand-folded widget its card back."""
+        if wid not in self.stripped:
+            return True, otherwise, False
+        self.stripped.discard(wid)
+        return True, f"Unfolded {WIDGETS[wid].title}.", True
 
     def _move(self, wid: str, rail, rank) -> tuple[bool, str, bool]:
         name, here = WIDGETS[wid].title, self.rails[wid]
@@ -213,13 +235,14 @@ class Desk:
         if rank is not None and (isinstance(rank, bool) or not isinstance(rank, int)):
             return False, "The place is a whole number: 0 is nearest the pill.", False
         if rank is None and rail == here:
-            return True, f"{name} is already in the {rail} rail.", False
+            return self._unfolded(wid, f"{name} is already in the {rail} rail.")
         was = self.order[here].index(wid)
         there = [w for w in self.order[rail] if w != wid]
         at = len(there) if rank is None else max(0, min(rank, len(there)))
         there.insert(at, wid)
         if rail == here and there == self.order[here]:
-            return True, f"{name} is already there.", False
+            return self._unfolded(wid, f"{name} is already there.")
+        self.stripped.discard(wid)
         if rail != here:
             self.order[here] = [w for w in self.order[here] if w != wid]
             self.rails[wid] = rail
@@ -252,6 +275,8 @@ class Desk:
         if isinstance(data.get("hidden"), list):
             self.hidden = {w for w in data["hidden"]
                            if isinstance(w, str) and w in WIDGETS and w not in ALWAYS}
+        if isinstance(data.get("stripped"), list):
+            self.stripped = {w for w in data["stripped"] if isinstance(w, str) and w in WIDGETS}
         # An output name ("DP-1", "HDMI-A-1", "Virtual-1"), nothing the shell could trip on.
         if isinstance(data.get("screen"), str) and re.fullmatch(r"[A-Za-z0-9 ._:/-]{1,40}", data["screen"]):
             self.screen = data["screen"]
@@ -278,10 +303,11 @@ class Desk:
         """Write desk.toml, all or nothing. A disk that will not take it never costs the change:
         it holds until agentd stops."""
         with self._lock:
-            lines = ["# Bombadil's desk: which widget sits in which rail, and which are put away.",
+            lines = ["# Bombadil's desk: which widget sits in which rail, which are put away and which are folded by hand.",
                      "# agentd writes this when the desk changes; edit by hand only while agentd is stopped.",
                      f"folded = {'true' if self.folded else 'false'}",
                      f"hidden = {json.dumps([w for w in WIDGETS if w in self.hidden])}",
+                     f"stripped = {json.dumps([w for w in WIDGETS if w in self.stripped])}",
                      f"screen = {json.dumps(self.screen)}", "", "[rails]"]
             lines += [f"{w} = {json.dumps(self.rails[w])}" for w in WIDGETS]
             lines += ["", "[order]"] + [f"{r} = {json.dumps(self.order[r])}" for r in RAILS]
