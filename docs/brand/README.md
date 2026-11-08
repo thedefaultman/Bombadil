@@ -167,7 +167,7 @@ Do not:
   `scripts/make-wallpaper.py --no-stone` removes.
 
 The brief judged the look-alike marks it names by eye and asks for a trademark search before a public
-release. The decisions behind these rules are in [the decision log](../decisions.md#d-1045).
+release. The decisions behind these rules are in [the decision log](../decisions/identity-and-design-system.md#d-1045).
 
 ## Where the mark is used in the product
 

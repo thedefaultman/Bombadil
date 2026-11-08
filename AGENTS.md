@@ -22,7 +22,7 @@ The headless desktop test, the ISO build and the VM smoke need Docker or QEMU: s
 
 ## Rules
 
-- **Document the change in the same pull request.** Update the page of the piece you changed, and [the decision log](docs/decisions.md) or [the roadmap](docs/roadmap.md) if you decided or shipped something. [How, and what never to commit](docs/contributing/documenting.md).
+- **Document the change in the same pull request.** Update the page of the piece you changed, and [the decision log](docs/decisions/README.md) or [the roadmap](docs/roadmap.md) if you decided or shipped something. [How, and what never to commit](docs/contributing/documenting.md).
 - **A new surface or a change in how something feels starts as a design brief**, not as code: [how to write one](docs/contributing/design-briefs.md).
 - **Nothing personal or sensitive in the repository.** No names, e-mail addresses, machine or folder names, credentials, session or chat links, or real accounts in code, tests, fixtures, screenshots or docs. Use made-up people (`alex`) and made-up accounts (`acme`, `example.com`). `docs/tools/check_docs.py` catches the common shapes; it cannot catch a name it does not know.
 - **Keep the principles.** The ones that break the product soonest when ignored: the person is a passenger and sees what the machine does; full access is made safe by undo, not by permission prompts; something true is on screen within 200 ms; nothing the person cannot see and stop runs on its own; one design language, taken from `share/qml/Bombadil/Theme.qml` (a new colour or size literal in `shell/` fails `tests/test_theme.py`).

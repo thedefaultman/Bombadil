@@ -92,7 +92,7 @@ The full map with the conventions the code shows is in [the development guide](c
 
 ## The foundation
 
-These choices were made on 2026-09-27 and are the ground the pieces stand on. The reasons are in [the foundation brief](design/foundation-choices.md) and the full list of decisions is [the decision log](decisions.md).
+These choices were made on 2026-09-27 and are the ground the pieces stand on. The reasons are in [the foundation brief](design/foundation-choices.md) and the full list of decisions is [the decision log](decisions/README.md).
 
 | Choice | Pick | Why |
 |---|---|---|

@@ -19,7 +19,7 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 | `docs/design/*-brief.md` | the design briefs: the reasoning and the decisions behind a piece, written before it is built |
 | `docs/design/pages/*.html` | the same briefs as drawn pages, with mock-ups |
 | `docs/design-system/README.md` | the look and the wording of the interface, with token names |
-| `docs/decisions.md` | the decision log: what was decided, when, why, and where it is built |
+| `docs/decisions/` | the decision log, one file per area: what was decided, when, why, and where it is built |
 | `docs/roadmap.md` | what is shipped, in progress and designed |
 | `docs/ux/README.md` | the interaction model: surfaces, states, keys, timings, flows |
 | `docs/contributing/` | how to develop, how to document, how to write a design brief |
@@ -39,7 +39,7 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 | a desk widget or a job kind | `architecture/desk.md` |
 | a colour, size, type or motion value | `design-system/README.md` |
 | the ISO, the installer or the boot flow | `architecture/iso-and-install.md` |
-| a decision that changes an earlier one | `decisions.md`, and the brief that held the old decision |
+| a decision that changes an earlier one | the row in `decisions/`, and the brief that held the old decision |
 | the status of a piece | `roadmap.md` |
 | a new piece | a new `architecture/<piece>.md`, a row in `ARCHITECTURE.md`, a line in `docs/README.md` |
 

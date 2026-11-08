@@ -44,7 +44,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 
 ## I want to know what was decided and what is next
 
-- [The decision log](decisions.md): every decision the briefs record, with its reason, its status and where it is built.
+- [The decision log](decisions/README.md): every decision the briefs record, with its reason, its status and where it is built.
 - [The roadmap](roadmap.md): what is shipped, in progress and designed.
 - [Known issues](known-issues.md): defects that are still true.
 - [History](history.md): how the project got here, in order.

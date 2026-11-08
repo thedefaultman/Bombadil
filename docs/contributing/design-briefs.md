@@ -38,7 +38,7 @@ page is the brief drawn: the same words with mock-ups and diagrams.
 - When the owner answers, mark the decision confirmed and put the date next to it. Do not rewrite the
   decision text to match the answer; add what changed.
 - When a later brief changes an earlier decision, name it under "Extends or changes the earlier briefs" in the
-  new brief and add a row to [the decision log](../decisions.md). Do not edit the old brief's decision silently.
+  new brief and add a row to [the decision log](../decisions/README.md). Do not edit the old brief's decision silently.
 - Facts about upstream tools (a Claude Code flag, a Hyprland behaviour) are written with the version and the
   date they were checked, because they move. Anything not checked is marked as such.
 

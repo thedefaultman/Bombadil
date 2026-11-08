@@ -1,6 +1,6 @@
 # Glossary
 
-This page defines the words Bombadil uses for its parts, its screen and its rules, in alphabetical order. A word that means two things has one row for each. Rows for what is on `main` were checked against the code at `a30ebc8` on 2026-10-01. A row that ends with (in progress) describes work built on a branch that is not on `main`, and one that ends with (designed) describes a decided design with no code, so its meaning comes from the brief or page it links. The [roadmap](roadmap.md) says where each piece stands and [decisions](decisions.md) says why it was chosen.
+This page defines the words Bombadil uses for its parts, its screen and its rules, in alphabetical order. A word that means two things has one row for each. Rows for what is on `main` were checked against the code at `a30ebc8` on 2026-10-01. A row that ends with (in progress) describes work built on a branch that is not on `main`, and one that ends with (designed) describes a decided design with no code, so its meaning comes from the brief or page it links. The [roadmap](roadmap.md) says where each piece stands and [decisions](decisions/README.md) says why it was chosen.
 
 | Term | Meaning | Read more |
 | --- | --- | --- |

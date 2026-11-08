@@ -17,7 +17,7 @@ The documents live in [`docs/`](docs/README.md), next to the code. Start with
 [the principles](docs/principles.md) (the rules the design keeps), then
 [the architecture](docs/ARCHITECTURE.md) (the parts and the path of one turn). Each piece has a page
 in [`docs/architecture/`](docs/architecture/), the reasoning behind each is in the
-[design briefs](docs/design/README.md), and [the decision log](docs/decisions.md) and
+[design briefs](docs/design/README.md), and [the decision log](docs/decisions/README.md) and
 [the roadmap](docs/roadmap.md) say what was decided and what is built. To fork it and build on it,
 read [making it yours](docs/forking.md) and [CONTRIBUTING.md](CONTRIBUTING.md); AI coding agents
 start at [AGENTS.md](AGENTS.md).

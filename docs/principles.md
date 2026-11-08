@@ -250,7 +250,7 @@ Before you open a pull request for something the person can see or that acts on 
 10. Does anything run on its own? Is it a unit the person can see and stop?
 11. If a dependency is missing, what does the person see, and is there a test for it?
 12. Is the piece documented under `docs/architecture/`, and are the decision and its status recorded in
-    [decisions](decisions.md) and [the roadmap](roadmap.md)?
+    [decisions](decisions/README.md) and [the roadmap](roadmap.md)?
 
 ## Where each rule was decided
 
