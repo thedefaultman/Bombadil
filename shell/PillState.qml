@@ -569,6 +569,9 @@ QtObject {
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
+        } else if (mode === "setup") {
+            // "Sign in" and "Claude" chips under a dead agentd answer nobody; the new one sends the setup again.
+            mode = "idle"; line = ""
         }
     }
 

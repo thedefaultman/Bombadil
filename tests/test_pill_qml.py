@@ -979,6 +979,17 @@ def test_signed_in_is_said_once_and_fades(bar):
     assert bar.pill.property("mode") == "idle"
 
 
+def test_a_setup_line_and_its_chips_go_when_agentd_does_and_come_back_with_it(bar):
+    signed_out = dict(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
+                      actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    bar.send(**signed_out)
+    assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
+    bar.call("lost")
+    assert bar.text() == "" and not bar.chips()     # a chip pressed now would reach nobody
+    bar.send(**signed_out)                          # agentd is back and says it again
+    assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
+
+
 def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
     signed_out = dict(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
                       actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
