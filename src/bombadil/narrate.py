@@ -369,8 +369,13 @@ def _pkg_step(prog: str, argv: list[str]) -> Step | None:
         return Step(f"Looking up {what}")
     if op in ("S", "U") and names:
         n = _names(names)
+        if op == "S" and ("u" in flags or "--sysupgrade" in long):
+            # `pacman -Syu ffmpeg` installs ffmpeg and brings every other package up to date (the
+            # only supported way to install on Arch). The line says so: it is not a quiet install.
+            return Step(f"Updating the system and installing {n}{aur}", f"Updated the system and installed {n}",
+                        touched={"package": tuple(names)})
         return Step(f"Installing {n}{aur}", f"Installed {n}", touched={"package": tuple(names)})
-    if op == "S" and "u" in flags:
+    if op == "S" and ("u" in flags or "--sysupgrade" in long):
         return Step("Updating the system", "Updated the system")
     if op == "S" and "y" in flags:
         return Step("Refreshing the package lists")
@@ -915,7 +920,7 @@ def _os_tool(tool: str, a: dict) -> Step | None:
             to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
             return Step(f"Moving {widget}{to}")
         if op in ("fold", "unfold"):
-            return Step(f"{op.capitalize()}ing the desk")
+            return Step(f"{op.capitalize()}ing {widget}" if a.get("widget") else f"{op.capitalize()}ing the desk")
         return Step("Looking at the desk")
     if tool == "job":
         op = str(a.get("op") or "")

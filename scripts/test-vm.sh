@@ -4,6 +4,7 @@
 #
 #   scripts/test-vm.sh                # live checks: session, bar, browser panel, a native app, sign-in
 #   MODE=install scripts/test-vm.sh   # live checks, install to a scratch disk, boot it, test undo
+#   MODE=installed scripts/test-vm.sh # boot the disk the last install run left (its second boot)
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,13 +54,13 @@ boot() {
     for shot in $(grep -ao "BOMBADIL-SMOKE: SHOT [a-z0-9-]*" "$log" | awk '{print $3}'); do
       [[ -f "$out/$name-$shot.png" ]] || python3 "$root/scripts/qmp.py" "$qmp" screenshot "$out/$name-$shot.png" || true
     done
-    # ...and key presses: "BOMBADIL-SMOKE: KEYS <n> <qcode>..." (a Super tap, a word), each once.
+    # ...and key presses: "BOMBADIL-SMOKE: KEYS <boot>-<n> <qcode>..." (a Super tap, a word), each once.
     while read -r n keys; do
       [[ -f "$out/$name.keys.$n" ]] && continue
       touch "$out/$name.keys.$n"
       # shellcheck disable=SC2086
       python3 "$root/scripts/qmp.py" "$qmp" send-keys $keys || true
-    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
+    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9a-f]*-[0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
     if (( $(date +%s) - start > timeout )); then echo "$name: timed out after ${timeout}s"; break; fi
     sleep 2
   done
@@ -76,9 +77,19 @@ if [[ "$mode" == "install" ]]; then
   # The installed system reboots itself once (the undo applies on boot), so no -no-reboot here.
   MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
   logs=("$out/live-install.serial.log" "$out/installed.serial.log")
+elif [[ "$mode" == "installed" ]]; then
+  # The disk an earlier MODE=install run left: boot it again. For an undo round trip that was cut
+  # short (the emulator died as it rebooted): the system remembers its phase, so this is the
+  # second boot, which checks that the undo took.
+  [[ -f "$disk" ]] || { echo "no $disk: run MODE=install first"; exit 2; }
+  [[ -f "$out/installed.serial.log" ]] && cp "$out/installed.serial.log" "$out/installed-first.serial.log"
+  MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
+  logs=("$out/installed.serial.log")
 else
   MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -boot d -no-reboot
   logs=("$out/live.serial.log")
 fi
 for l in "${logs[@]}"; do grep -aqE "BOMBADIL-SMOKE: DONE pass=[0-9]+ fail=0" "$l" || exit 1; done
+# The sign-in checks skip themselves on a machine that has a provider chosen; a fresh ISO has none.
+if grep -aq "BOMBADIL-SMOKE: SKIP signin" "${logs[0]}"; then echo "the sign-in checks were skipped on a fresh ISO"; exit 1; fi
 ! grep -aq "BOMBADIL-SMOKE: FAIL" "${logs[@]}"

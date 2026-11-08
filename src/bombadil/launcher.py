@@ -52,6 +52,13 @@ CORE_COMMANDS = {
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
 }
+# Switch the session's model (agentd does it; it is a setting, not a turn). Checked with the core commands.
+MODEL_WORDS = {
+    "opus": ["use opus", "switch to opus", "use claude opus", "opus please"],
+    "sonnet": ["use sonnet", "switch to sonnet", "use claude sonnet", "sonnet please", "back to sonnet"],
+}
+MODEL_TITLES = {"opus": "Opus", "sonnet": "Sonnet"}
+
 # Checked after the core commands and before app names: the brain's words, about what is
 # in front of you. "brain" opens the Brain on it; the questions answer in the line.
 BRAIN_COMMANDS = {
@@ -74,6 +81,10 @@ REST_TITLES = {"claude": "Claude", "codex": "Codex", "ai": "the AI"}
 UTILITY_COMMANDS = {
     "wifi": ["wifi", "wi-fi", "wi fi", "network", "networks"],
     "sound": ["sound", "volume", "audio"],
+    "volume_up": ["volume up", "louder", "turn it up", "turn the volume up", "turn up the volume"],
+    "volume_down": ["volume down", "quieter", "turn it down", "turn the volume down", "turn down the volume"],
+    "mute": ["mute", "mute the sound", "mute the volume"],
+    "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
 }
@@ -124,7 +135,9 @@ HIDE_VERBS = ("hide", "put away")
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
-NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "why", "whyhere"}
+NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
+               "why", "whyhere"}
+VOLUME_STEP = "5%"
 
 DETAILS_CLASS = "bombadil-details"
 BRAIN_APP = "brain"
@@ -256,6 +269,9 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    model = _lookup(t, MODEL_WORDS) if plain else None
+    if model:
+        return Action("model", model, title=MODEL_TITLES[model])
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
@@ -365,6 +381,8 @@ class Launcher:
         if action.kind in ("panel", "app", "mail"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
+        if action.kind == "model":
+            return f"Switching to {action.title or action.target}"
         if action.kind == "picture":
             return f"Drawing {action.title}"
         if action.kind == "widget":
@@ -374,6 +392,8 @@ class Launcher:
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
                 "provider": f"Switching to {action.title or action.target}",
+                "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
+                "mute": "Muting the sound", "unmute": "Unmuting the sound",
                 "brain": "Opening the Brain", "whyhere": "Looking it up",
                 "desk": "Changing the desk", "send": "Sending is yours"}.get(action.kind, "On it")
 
@@ -391,6 +411,8 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
+                "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
                 "desk": "Could not change the desk"}.get(action.kind, "That did not work")
 
@@ -788,6 +810,27 @@ class Launcher:
             return False, "No sound output found."
         muted = ", muted" if "MUTED" in r.stdout else ""
         return True, f"Volume {round(float(m.group(1)) * 100)}%{muted}."
+
+    def _volume(self, args: list[str], a: Action) -> tuple[bool, str]:
+        if shutil.which("wpctl") is None:
+            return False, "Sound settings need PipeWire, which is not running."
+        # Never past 100%: the level where it stops sounding clean.
+        r = self._run(["wpctl", *args], capture_output=True, text=True, timeout=3, check=False)
+        if r.returncode != 0:
+            return False, f"{self.failed(a)}: no sound output found."
+        return self._sound(a)
+
+    def _volume_up(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{VOLUME_STEP}+"], a)
+
+    def _volume_down(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-volume", "@DEFAULT_AUDIO_SINK@", f"{VOLUME_STEP}-"], a)
+
+    def _mute(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-mute", "@DEFAULT_AUDIO_SINK@", "1"], a)
+
+    def _unmute(self, a: Action) -> tuple[bool, str]:
+        return self._volume(["set-mute", "@DEFAULT_AUDIO_SINK@", "0"], a)
 
     # -- the session --
 
