@@ -3,7 +3,7 @@
 > **Status:** Partly shipped
 > **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/agentd.py`, `src/bombadil/watch.py`, `src/bombadil/providers.py`, `src/bombadil/config.py`, `bin/bombadil`, `shell/CardHost.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Diagram.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
 > **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch)
-> **Verified:** 2026-10-01 against `main` at `969b80b`
+> **Verified:** 2026-11-08 against `main` at `7176e55`
 
 A card is validated data for a picture that the shell draws above the status line. One card type exists,
 `diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`), and every finished card carries a `text`
@@ -246,13 +246,18 @@ rules keep a card from moving the pill or its own close mark, and keep what it d
 
 | Rule | Where | What it means |
 |---|---|---|
-| The `layers` animation is off | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`: `hl.animation({ leaf = "layers", enabled = false })` | The file's comment says Hyprland slides a layer to its new place whenever it is resized, which is every time a picture appears or grows, and the pill dipped and swung back for half a second each time. A card that goes resizes the bar the same way. The file is a skeleton: the home folder is copied from `/etc/skel` when it is made (`iso/airootfs/usr/local/bin/bombadil-install:54`) and `scripts/vm-tools/update-in-place` leaves `~/.config/hypr/hyprland.lua` alone, so an installed system needs that line added by hand |
-| The card is placed once | `CardHost.qml`: `implicitHeight` has no `Behavior`, and a `Translate` of 14 px | The card takes its height at once and fades in and rises inside that space, and it hands the space back after it has faded out. A height that grew over several frames resized the window every frame |
+| The `layers` animation is off | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`: `hl.animation({ leaf = "layers", enabled = false })` | The file's comment says Hyprland slides a layer to its new place whenever it is resized, which is every time a picture appears or grows, and the pill dipped and swung back for half a second each time. A card that goes resizes the bar the same way. The file is a skeleton: the home folder is copied from `/etc/skel` when it is made (the `cp -aT /etc/skel /home/user` line of `iso/airootfs/usr/local/bin/bombadil-install`) and `scripts/vm-tools/update-in-place` leaves `~/.config/hypr/hyprland.lua` alone, so an installed system needs that line added by hand |
+| The card is placed once | `CardHost.qml`: `implicitHeight` has no `Behavior`, and a `Translate` of 14 px | The card takes its height at once and fades in and rises inside that space, and it hands the space back after it has faded out. A height that grew over several frames resized the window every frame. This does not cure the dip the `layers` animation caused (that is the switch in the row above); it only keeps a card to one resize |
 | A picture the person asked for keeps its line | `PillState.pictureStays`, `StatusLine.qml` (`lineTimer`, `done` check) | The card sits above the line in a column anchored to the bottom, so a line that grew, shrank or went moved the card by the line's height and a click aimed at its close mark missed. `pictureStays` is true while a card is up that is not a receipt and not a draft; the line does not fade while it is true, and its timer stops running when the pill is not working and no flash is showing, so a picture left up costs no wake-ups. Esc puts line and picture away together. The close mark clears the card and the line fades on the timer's next tick unless it is `sticky`. A receipt is not asked for and fades with its line |
 | A card being drawn keeps the layout it will end with | `Diagram.qml`: `if (partial && links.length === 0) longest = 14` | The boxes of a streamed chain arrive before its links, and the links' labels decide how wide the gaps are, so a finished chain would lay itself out again from one row into two |
 | A before and after sits together | `Diagram.qml`: `maxCompareWidth`, `compareGap` | The two columns are at most 230 px wide with 76 px between them for the arrow, centred, instead of one at each edge of a wide card |
-| A note under a box stays on the picture | `Diagram.qml`: `boxNote` | A note is centred under its box and at least 170 px wide, which is wider than a box in a narrow card. The first box of a row sits at the picture's left edge, so a note centred under it started off the picture and lost its first letters (at the 360 px a window narrows the card to). The note's `x` is clamped between the picture's two edges and stays centred wherever it fits |
-| A full-screen window puts the card away | the `Binding` in `shell.qml` that sets `CardHost.suppressed` from `win.capsule` | In a full-screen window the pill is a dot and a clock in a 100 px capsule (see [the desk](desk.md)), and a card above it would land over whatever the window shows. The card is still `PillState.card`, so it comes back when the window goes |
+| A note under a box stays on the picture | `Diagram.qml`: `boxNote` | A note is centred under its box and at least 170 px wide, which is wider than a box in a narrow card. The first box of a row sits at the picture's left edge, so a note centred under it started off the picture and lost its first letters (at the 360 px a window narrows the card to). The note's `x` is clamped between the picture's two edges and stays centred wherever it fits. A chain at 360 px also wraps to rows with long connectors (the network picture to three), which is the card's width and not a fault of the note |
+| A full-screen window puts the card away | the `Binding` in `shell.qml` that sets `CardHost.suppressed` from `win.capsule` | In a full-screen window the pill is a dot and a clock in a 100 px capsule (see [the desk](desk.md)), and a card above it would land over whatever the window shows. The card is still `PillState.card`, so it comes back when the window goes. Only a window in Hyprland's full-screen state counts (`HyprCover.qml` reads `fullscreen` 2 or 3): a tiled or maximized terminal does not, so try this with a window in that state |
+
+The card is as wide as the pill, and the pill's width follows the stage (`DeskState.pillTarget`, see [the desk](desk.md)):
+up to 900 px with no window, 360 px while any window or panel shares the stage (the Brain, a `foot` terminal from
+Super+Return), and a 100 px capsule under a window in the full-screen state. That is why a window that opens puts a
+picture away (see Replacing in place).
 
 The card's top edge is its own height above the line, so two different pictures sit at different heights; the same
 picture sits at the same place each time.
@@ -528,6 +533,12 @@ whatever a box opened (`bombadil view`). `launcher.details` runs other programs 
 other pages: `bombadil history` (the `history` word) and `nmtui connect` (the `wifi` word), see [agentd](agentd.md), and
 a background job's output (`Jobs.why`), see [the desk](desk.md).
 
+A step that Stop ended reads `stopped` in that log, not `failed (exit N)`. `watch.py` prints `│ stopped` for a tool
+result that ended in error with exit code -2, -15 or -9 (`STOP_CODES`: the code of a command that SIGINT, SIGTERM or
+SIGKILL ended, which is what Stop sends) and for a result that carries Claude's own rejection text (`CLAUDE_REJECTED`).
+Any other error prints `│ failed (exit N)`, or `│ failed` when the result has no code. Only a Codex command and a typed
+`!command` give a result an exit code (`providers.py`), so for Claude the rejection text is how a stopped step is known.
+
 `bombadil view` (`bin/bombadil` calls `pager.view`) shows `--file PATH` (the first 2,000,000 bytes, with a note when the
 rest is cut) or the output of `-- COMMAND ARG...` (run with a 15 second limit, errors mixed in). A missing program
 says "<name> is not installed.", a program still running after the 15 seconds "<name> did not answer in time.", and one
@@ -766,7 +777,7 @@ which an adapter reports its account's limit (`Provider.limit` and `Provider.wai
 | `tests/test_launcher.py` | picture phrases, a service typed with capitals, the drawer and what each `opens.kind` runs |
 | `tests/test_pill_qml.py` | the card lifecycle in the shell, hover and fade, `because` and `after` on the line, a card placed in one resize, a picture that keeps its line, a full-screen window, a window the launcher opens and a window that opens (`windowOpened`: not a card just drawn or just clicked in, not a draft) |
 | `tests/test_desk_qml.py` (one test, `test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not`) | `DeskState` emitting `windowOpened` only when the list of windows grew, wired to `PillState` as `shell.qml` does |
-| `tests/test_watch.py` | `why:`, `after` and pictures in Details |
+| `tests/test_watch.py` | `why:`, `after` and pictures in Details, and a command that Stop ended reading `stopped` and not `failed` (`test_a_command_that_stop_ended_reads_stopped_not_failed`) |
 | `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, an `open` message for a file (the message a click on its box sends) opens it in the drawer and one Esc puts it away, a window that opens puts the picture away while one asked for beside it still shows, a window that goes full-screen hides it and it returns when the window leaves full screen, and a picture sits between the desk's rails |
 | `scripts/vm-tools/lifttrace` (needs a running VM; its docstring says how) | whether the pill moves when a card changes size |
 | `iso/airootfs/usr/local/bin/bombadil-smoke` (a booted machine) | see below |
@@ -776,14 +787,11 @@ pytest tests/test_cards.py tests/test_cardtools.py tests/test_sysmap.py tests/te
        tests/test_pager.py tests/test_diagram_qml.py
 ```
 
-The async tests need `pytest-asyncio` and the QML tests need PySide6 (they skip without it); see
-[development](../contributing/development.md). Set `BOMBADIL_SCREENS=<dir>` to save a picture of each state that
-`test_diagram_qml.py` and `test_pill_qml.py` draw. On 2026-10-01 the six files gave 423 passed, 24 of them the QML tests
-of `test_diagram_qml.py`. `test_agentd.py`, `test_launcher.py`, `test_pill_qml.py`, `test_watch.py` and
-`test_mcp_server.py`, which cover the rest of the piece, gave another 549 passed. The pointer-driven
-`test_hovering_the_picture_keeps_the_line_from_fading` failed once in that run, on a loaded machine, and passed on two
-reruns alone. Without `pytest-asyncio`, `test_a_card_really_crosses_the_socket_to_agentd` in `tests/test_cardtools.py`
-fails, and so do the async tests of `test_agentd.py`.
+The async tests need `pytest-asyncio` (`test_a_card_really_crosses_the_socket_to_agentd` in `tests/test_cardtools.py`
+and nearly all of `test_agentd.py`) and the QML tests need PySide6 (they skip without it); see
+[development](../contributing/development.md). `test_agentd.py`, `test_launcher.py`, `test_pill_qml.py`,
+`test_desk_qml.py` and `test_watch.py` cover the rest of the piece and run the same way. Set `BOMBADIL_SCREENS=<dir>`
+to save a picture of each state that `test_diagram_qml.py` and `test_pill_qml.py` draw.
 
 The VM smoke script `bombadil-smoke` calls `system_map` for every kind through `bombadil-os-mcp` (the service picture for
 `systemd-logind`), expects "shown above the bar", requires at least three timed rows in the boot picture, and logs the
@@ -828,7 +836,11 @@ unit and checks that the drawer window appears with the keyboard and that Esc cl
   move briefly when a card appeared in one size step. The cause is not known and no test covers it, because `lifttrace`
   needs a running virtual machine. A bar window of fixed height would end the resizes at the price of compositing a
   large transparent surface all the time, which could cost CPU under software rendering; that cost has not been
-  measured.
+  measured. The figures are one dated measurement, taken on 2026-10-01 on a virtual machine at about ten samples a
+  second, and no code or test repeats them: with the animation on, the pill dipped by up to about 55 px for about half
+  a second at each box added, at the final layout and when the card went; with it off, it stayed at rest in 739 of 749
+  samples. What was left with it off: a card that appeared in one step still moved the pill for 3 to 5 samples (the
+  longest run 1 or 2, 22 to 31 px at worst), against 6 samples, a run of 4 and 36 px with the animation on.
 - A `.automount` unit among the rows of `systemd-analyze blame` makes the whole boot picture fail instead of one box not
   opening. `sysmap._BLAME_RE` accepts any unit suffix and `_boot_from_blame` puts `opens: {kind: unit}` on every row, but
   `cards._UNIT_RE` has no `.automount`, so `validate_diagram` refuses the card ("Could not draw boot: nodes[0].opens.value

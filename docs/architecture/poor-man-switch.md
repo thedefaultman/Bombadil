@@ -1,13 +1,13 @@
 # The poor man switch
 
 > **Status:** Partly shipped  
-> **Code:** `src/bombadil/rest.py`, `src/bombadil/finder.py`, `src/bombadil/providers.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/appkit/native/agent.py`, `bin/bombadil`, `shell/AiCard.qml`, `shell/FoundChips.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/Stone.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/shell.qml`  
+> **Code:** `src/bombadil/rest.py`, `src/bombadil/finder.py`, `src/bombadil/providers.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/config.py`, `src/bombadil/appkit/native/agent.py`, `bin/bombadil`, `shell/AiCard.qml`, `shell/FoundChips.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/Stone.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `iso/airootfs/etc/systemd/user/bombadil-agentd.service`  
 > **Design:** [The poor man switch](../design/poor-man-switch-brief.md), [its page](../design/pages/the-poor-man-switch.html)  
-> **Verified:** 2026-10-01 against `main` at `969b80b`
+> **Verified:** 2026-11-08 against `main` at `7176e55`
 
 When Claude or Codex refuses an ask because the plan or the spending limit is used up, Bombadil treats that as a state of the machine and not as the failure of one ask. Most of the machine needs no model (apps and their processes, background jobs, the browser, files, the terminal, launcher words, `!` commands, undo, Details, Stop), so agentd says once that the AI is out, with the time the provider gave, holds every ask as a chip, offers things found on the computer for a sentence the AI cannot answer, and gives the person a switch to rest the AI by hand. In the code the state is `resting`. "The poor man switch" is the design's name and appears nowhere on screen, which says what is true: "Claude is at its limit until 15:00", "Claude is paused".
 
-Pieces 1 (Resting) and 2 (the finder) of the design are on `main` and tested. Pieces 3 to 9 are designed or not built: see [Not built yet](#not-built-yet). The pieces this one changes are described in [agentd](agentd.md), [the shell](shell.md) and [the app kit](app-kit.md).
+Pieces 1 (Resting) and 2 (the finder) of the design are on `main` and tested. Piece 4 is there in part: the words `use opus` and `use sonnet` switch Claude's model by hand, and nothing borrows the other AI or moves to the other model by itself. Pieces 3 and 5 to 9 are designed or not built. [Known gaps](#known-gaps) lists them. The pieces this one changes are described in [agentd](agentd.md), [the shell](shell.md) and [the app kit](app-kit.md).
 
 ## How it works
 
@@ -58,14 +58,14 @@ A CLI that sleeps through the window instead of ending the turn (the unattended 
 
 ### Times
 
-A time is the window's `resetsAt` when it is still to come, else `overageResetsAt`, else a time in the provider's sentence (`rest.parse_time`: "resets 3:45pm", "resets Oct 3, 3pm", "resets Mon 12:00am", "try again at 3:45 PM", "try again at Oct 2nd, 2026 3:45 PM"; a zone the sentence names wins, otherwise local time), else none. `Claude.waiting` falls back to the time of the refusal plus the CLI's retry delay. `rest.resolve` replaces a time that is already past, plus the grace, with the moment of the refusal plus `RETRY_AFTER_REFUSAL` (300 s). `rest.when` writes "15:00" for today, "Thursday 09:00" within six days ("Thu 09:00" on a chip) and "1 Nov" beyond (with the year when it is not this one). It never writes "tomorrow".
+Claude's time is the window's `resetsAt` when this turn's `rate_limit_event` is `rejected` without `isUsingOverage` and the time is still to come, else `overageResetsAt` when that is still to come, else a time in the provider's sentence (`rest.parse_time`: "resets 3:45pm", "resets Oct 3, 3pm", "resets Mon 12:00am", "try again at 3:45 PM", "try again at Oct 2nd, 2026 3:45 PM"; a zone the sentence names wins, otherwise local time), else none. A refusal that is recognised by its text alone (`Claude.QUOTA`) does not use `resetsAt`. Codex gives only the time in its sentence. `Claude.waiting` falls back to the time of the refusal plus the CLI's retry delay. `rest.resolve` replaces a time that is already past, plus the grace, with the moment of the refusal plus `RETRY_AFTER_REFUSAL` (300 s). `rest.when` writes "15:00" for today, "Thursday 09:00" within six days ("Thu 09:00" on a chip) and "1 Nov" beyond (with the year when it is not this one). It never writes "tomorrow".
 
 ### The refused turn
 
 - `_refused` writes `rest.json` first, so a restart finds the limit, remembers the page the provider's message names, and logs a `rest` event.
 - The turn ends with no `result` and no `error` event, which are a failure's. `turn_end` carries `requeued: true` and a `line`: "Claude hit its limit partway, after changing 2 files. It carries on at 15:00." when it changed something (with Undo and Details, as after any turn that did), the resting line when it changed nothing. The `turns.jsonl` row carries `requeued: true` and no receipt follows.
-- The ask goes back to the front of `pending` under its own turn id (`queued` again, `_rest_turn`), in the same conversation: a session id is adopted only from a result that worked, so a refusal never drops it. What the person did without the model since the turn's last try is kept to tell it again, and the rerun starts with "[The last try stopped at a usage limit after: ... Check what is done before redoing it.]" (the last six things the cut-off tries had done).
-- The turn took a restore point as it started and cleared the undo marker. When it changed nothing, `Launcher.skip_restore_point` puts the marker back, so the next "undo" goes past the empty point instead of saying "Undone" and changing nothing.
+- The ask goes back to the front of `pending` under its own turn id (`queued` again, `_rest_turn`), in the same conversation: a conversation id is adopted only from a result that worked, so a refusal never drops it. What the person did without the model since the turn's last try is kept to tell it again, and the rerun starts with "[The last try stopped at a usage limit after: ... Check what is done before redoing it.]" (the last six things the cut-off tries had done).
+- The turn took a restore point as it started and cleared the undo marker. When it changed nothing, `Launcher.skip_restore_point` puts the earlier marker back (or, when there was none, marks the empty point itself as undone), so the next "undo" goes past the empty point instead of saying "Undone" and changing nothing.
 - A turn stopped by hand, or one whose provider changed while it ran, is not put back.
 
 ### The queue and the apps
@@ -97,6 +97,7 @@ A spending limit, or a limit with no time, offers one button, "Raise the limit".
 | Limit with a time | Claude is at its limit until 15:00. Your apps and files still work. | 15:00 | Open or find anything. Asks wait for 15:00. |
 | Weekly limit | Claude is at its weekly limit until Thursday 09:00. Your apps and files still work. | Thu 09:00 | Open or find anything. Asks wait for Thursday 09:00. |
 | Spending limit | Claude is at its spending limit until 15:00. Your apps and files still work. | 15:00 | as the limit with a time |
+| One model's weekly limit | Claude is at its Opus limit until Thursday 09:00. Your apps and files still work. (`seven_day_sonnet` says "Sonnet limit".) | Thu 09:00 | as the weekly limit |
 | No time | Claude is at its limit. Your apps and files still work. ("spending limit" when `why` is `spend`) | limit | Open or find anything. Asks wait for Claude. |
 | Paused by hand | Claude is paused. Your apps and files still work. | paused | Open or find anything. Asks wait until you resume Claude. |
 | Cut off, changed 2 files | Claude hit its limit partway, after changing 2 files. It carries on at 15:00. | | |
@@ -113,7 +114,7 @@ The words are `rest.words`, `rest.cut_off`, `rest.kept`, `rest.back` and `rest.t
 
 ### What keeps working
 
-Nothing that is not a model ask reads the state: launcher words (apps, browser, terminal, files, undo, history, Details, Stop, the picture words, `pause` and `resume`), `!` commands, apps and their processes, background jobs, and the browser panel with its own profile (its pages still need the network). Anything else waits as a chip.
+Nothing that is not a model ask reads the state: launcher words (apps, browser, terminal, files, undo, history, Details, Stop, the picture words, the volume words `volume up`, `volume down`, `mute` and `unmute`, `use opus` and `use sonnet`, `pause` and `resume`; see [launcher words](agentd.md#launcher-words)), `!` commands, apps and their processes, background jobs, and the browser panel with its own profile (its pages still need the network). Anything else waits as a chip.
 
 ### The finder
 
@@ -138,7 +139,7 @@ flowchart LR
 
 Never offered: a command that changes something (undo, hide, restart, sign in), an app's own ask (`[from app notes] ...`), a `!` command, a past ask that was stopped, failed or is waiting for the limit, and anything that covers less than `MIN_SCORE` (0.25) of the sentence. agentd looks only for an ask the person typed in the pill, not for one an app or an agent's own process sent, and not for the ask that hit the limit, whose line is the news.
 
-Matching is by words. A word of the sentence matches a word of a thing when they are the same (a trailing "s" ignored), when one starts the other (three letters or more), or when they are one slip of the fingers apart (five letters or more: one letter wrong, missing or extra, or two swapped). A match in the thing's title counts in full and a match in its other words counts half. The score is the share of the sentence's meaningful words that the thing covers, so a long sentence is not matched by one stray word. Words that carry no meaning (`finder.STOP`: "the", "my", "app", "open", ...) are left out, and a sentence with none left finds nothing. The best come first, apps before launcher words before past asks on a tie and newer asks first, and each thing is offered once. A past ask's label is cut to 60 characters and dated "today", "yesterday", "3 Sep" or "3 Sep 2025", never with a clock.
+Matching is by words. A word of the sentence matches a word of a thing when they are the same (a trailing "s" ignored), when one starts the other (three letters or more), or when they are one slip of the fingers apart (five letters or more: one letter wrong, missing or extra, or two swapped). A same word counts 1, a word that starts the other 0.6 and a one-slip word 0.5. A match in the thing's title counts at that value and a match in its other words at half of it, and each word of the sentence counts by its best match. The score is the sum over the sentence's meaningful words divided by their number, so a long sentence is not matched by one stray word, and `MIN_SCORE` (0.25) is the floor. Words that carry no meaning (`finder.STOP`: "the", "my", "app", "open", ...) are left out, and a sentence with none left finds nothing. The best come first, apps before launcher words before past asks on a tie and newer asks first, and each thing is offered once. A past ask's label is cut to 60 characters and dated "today", "yesterday", "3 Sep" or "3 Sep 2025", never with a clock.
 
 After the `queued` event of such an ask agentd broadcasts one `found` message. Its line is `rest.kept`. A press is `found_open`: agentd resolves the id from what it offered, never from what the client says, opens the thing, answers with the usual `local` events and lets go of the kept ask (`unqueued`). A past ask's log must be one of agentd's own under the state directory (`_own_turn_log`). When a press cannot open its thing, the ask stays kept and the same `found` is sent again, so the chips come back.
 
@@ -152,7 +153,7 @@ In the shell (`FoundChips.qml`, `PillState.found`) the chips are there while the
 
 - No test calls and no retry loops: one refusal is enough, and nothing more is sent until the reset, a press or a word.
 - No ring or counter on the stone, no amber mark, no red line and no card on the desk. Nothing is the person's to do, and "Raise the limit" is a button on the line and not a knock.
-- No automatic move to the other AI and none to paid credits. "use codex" is the person's own word, and "Raise the limit" only opens the provider's page.
+- No automatic move to the other AI, to the other Claude model or to paid credits. `use codex`, `use opus` and `use sonnet` are the person's own words, and "Raise the limit" only opens the provider's page.
 - No small local model. The finder is words and nothing else.
 
 ## Interfaces other pieces depend on
@@ -204,7 +205,8 @@ The piece adds no configuration key and no environment variable. `rest.json` fol
 | What | Where | Lifetime |
 |---|---|---|
 | Limits and hand pauses | `rest.json` in the state directory, `~/.local/state/bombadil/rest.json` by default | Survives a restart or a reboot. A limit lapses a minute after its time. |
-| The waiting asks, what a cut-off try had done, what the finder offered | agentd's memory: `pending`, `_resume_notes`, `_found`, `_found_said` | Lost when agentd restarts. |
+| The waiting asks, what a cut-off try had done, what the finder offered | agentd's memory: `pending`, `_resume_notes`, `_found`, `_found_said` | Lost when agentd restarts, for any reason (see [Known gaps](#known-gaps)). |
+| The conversation id and the model of the session (`use opus`, `use sonnet`) | `agentd-state.json` under `paths.runtime_dir()` (`/run/user/<uid>/bombadil` by default), written by `AgentD._save_state` after a turn that worked, when a dead conversation is dropped and when the model is switched, and read by `_load_state` when `serve()` starts, and only for the same provider | Survives a restart of agentd, so a cut-off ask still runs in the same conversation. Lost with the runtime directory, at a reboot. |
 | Which provider's Raise the limit was pressed, and the page its message named | agentd's memory: `_raised`, `_limit_urls` | Lost when agentd restarts. |
 | The wake-up at the reset | an `asyncio` task in agentd, `_rest_task`; no systemd unit | Rebuilt by `check_access` at start. |
 | The cut-off turn's record and the pause words | `turns.jsonl` (`requeued: true`, and `local` rows with `action: "rest"`) and the turn's log under `turns/` (the `rest` event) | Plain files. The finder reads past asks from them. |
@@ -270,14 +272,14 @@ tests/desktop/run.sh                               # needs docker and a claude b
 
 Tests that sample an animation in real time can fail on a loaded machine: rerun one alone before calling it a failure.
 
-## Not built yet
+## Known gaps
 
-Pieces 3 to 9 of [the brief](../design/poor-man-switch-brief.md#after-these-in-order) read piece 1's state, `rest.json` and the status message, and add none of their own.
+Pieces 3 to 9 of [the brief](../design/poor-man-switch-brief.md#after-these-in-order) read piece 1's state, `rest.json` and the status message, and add none of their own. Where each stands:
 
 | Piece | State in the code |
 |---|---|
 | 3. A warning line before the wall | Designed. `Claude._events` turns `rate_limit_event` into a `meta` event and `AgentD._on_event` keeps it in `_seen` for `limit()`: nothing shows `allowed_warning`, and the AI card rows carry no percentage. |
-| 4. Borrowing the other AI until the reset, and Opus to Sonnet | Designed. There is no "Use Codex until 15:00" button. `use codex` is `AgentD.choose`, which saves the provider and drops the conversation (`session_id = None`). |
+| 4. Borrowing the other AI until the reset, and Opus to Sonnet | Partly shipped. On `main` are the manual model words: `use opus` and `use sonnet` (`launcher.MODEL_WORDS`, `AgentD._switch_model`, `config.CLAUDE_MODELS`), with Sonnet as Claude's default model (`config.DEFAULT_MODELS`). Not built: the borrow, since there is no "Use Codex until 15:00" button and `use codex` is `AgentD.choose`, which saves the provider and drops the conversation (`session_id = None`); and the automatic move to the other model family when only one family's weekly limit is hit. A limit with `kind` `seven_day_opus` or `seven_day_sonnet` is stored like any other (`Claude.limit`, `rest.set_limit`) and rests the whole provider until its time. |
 | 5. Offline and outages in the same shape | Designed. `offline` is only a setup state for reaching the sign-in page, and `_wait_online` starts a sign-in when the network returns. |
 | 6. Apps' `[[does]]` rows, `AskButton` | Designed. Neither exists in `src` or `share`. |
 | 7. "Run again" on finished jobs, and recipes | Designed. Nothing in `shell` or `src` has either. |
@@ -286,9 +288,10 @@ Pieces 3 to 9 of [the brief](../design/poor-man-switch-brief.md#after-these-in-o
 
 The [Tips and desk defaults brief](../design/tips-and-desk-defaults-brief.md) is design only: it keeps its Tips card unmoved by the AI resting and lists `resting` among the stone's faces.
 
-## Known gaps
+Gaps in what is built:
 
-- **Waiting asks do not survive an agentd restart.** `pending` is only in memory (`src/bombadil/agentd.py`, `self.pending`), while a limit and a pause stay in `rest.json`. A reboot during a weekly limit keeps the state and loses the chips that were promised for its end.
+- **Waiting asks do not survive an agentd restart.** `pending` is only in memory (`src/bombadil/agentd.py`, `self.pending`), while a limit and a pause stay in `rest.json`. Any restart of agentd drops the chips that were promised for the end of a limit: a reboot, the Hyprland start hook (`systemctl --user restart bombadil-agentd` in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`), `Restart=always` of the user unit after a crash (`iso/airootfs/etc/systemd/user/bombadil-agentd.service`, [the session stays alive](session-services.md)) and the restart in `iso/airootfs/usr/local/bin/bombadil-setup` after it writes the config. The conversation id comes back from `agentd-state.json` and a limit or a pause from `rest.json`, but the queue does not.
+- **`use sonnet` does not lift a model's limit.** `AgentD._switch_model` changes `provider.model` and never touches `rest.json`, `rest.current(provider)` ignores the model, and `_runnable` holds every ask while access is `resting`. During a `seven_day_opus` limit the machine still rests the whole provider, and `use sonnet` answers "Using Sonnet from the next message." while the asks keep waiting for the limit's time.
 - **Nothing but agentd reads `rest.json`.** The Brain's descriptions still call the provider while the AI rests: `Describer._provider_run` runs `Provider.describe_command()` in a subprocess (`src/bombadil/brain/describe.py`), made only for what someone looks at, and nothing in it reads `rest.json` or a limit. A thing whose call failed is not tried again for `RETRY_S` (600 s). If the CLI exits 0 at a limit, which nobody has checked, its limit sentence would be stored as the description. The loop and the coding-session dots the brief names as readers are not built.
 - **`bombadil ask` exits 75** (`bin/bombadil`, `EX_TEMPFAIL`), where the brief says it prints the line once and keeps waiting.
 - **The finder does not find Mail.** `_app_things` reads `launcher.known_apps()`, which lists the person's apps directory and not the built-in Mail window, and the Mail entry of `launcher.entries` has kind `app`, which `_word_things` skips (`src/bombadil/finder.py`, `src/bombadil/launcher.py`). "check my email" is kept and finds nothing. The person's own words and the Brain's files are not sources either.
