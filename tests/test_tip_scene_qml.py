@@ -435,6 +435,7 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     start = beat_start(fx.TIMER, 2)
     s.seek(start + 75)
     card = s.item("card-watching")
+    assert card.property("transformOrigin") == QtQuick.QQuickItem.TransformOrigin.BottomLeft
     assert 0.6 < card.property("scale") < 1 and 0 < card.property("opacity") < 1       # the desk's own arrival
     s.seek(start + 160)
     assert card.property("scale") == 1 and card.property("opacity") == 1
@@ -450,6 +451,8 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     s = make(fx.MACHINE, "app")
     s.seek(s.duration)
     assert "The machine is fine" in [t for t, _, _ in s.texts()] and s.item("card-machine") is not None
+    origin = QtQuick.QQuickItem.TransformOrigin
+    assert s.item("card-machine").property("transformOrigin") == origin.BottomRight       # it arrives from its rail's corner
     s = make(fx.ROUTE, "app")
     s.seek(s.duration)
     assert [t for t, _, _ in s.texts() if t == "Install rust and set it up"]

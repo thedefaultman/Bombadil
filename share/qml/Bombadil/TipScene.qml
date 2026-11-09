@@ -246,7 +246,7 @@ Item {
             spacing: st.m.gap / 2 + 1
             Repeater {
                 model: st.f.cardsLeft.length
-                delegate: Card { required property int index; c: st.at(st.f.cardsLeft, index); m: st.m; ink: st.ink; onRight: false }
+                delegate: Card { required property int index; c: st.at(st.f.cardsLeft, index); m: st.m; ink: st.ink; fromRight: false }
             }
         }
         Column {
@@ -257,7 +257,7 @@ Item {
             spacing: st.m.gap / 2 + 1
             Repeater {
                 model: st.f.cardsRight.length
-                delegate: Card { required property int index; c: st.at(st.f.cardsRight, index); m: st.m; ink: st.ink; onRight: true }
+                delegate: Card { required property int index; c: st.at(st.f.cardsRight, index); m: st.m; ink: st.ink; fromRight: true }
             }
         }
 
@@ -795,7 +795,7 @@ Item {
         property var c
         property var m
         property bool ink: false
-        property bool onRight: false
+        property bool fromRight: false
         objectName: "card-" + c.kind
         width: m.cardW
         height: body.height + 2 * (m.small ? 5 : 8)
@@ -805,7 +805,7 @@ Item {
         border.color: Theme.border
         opacity: c.shown
         scale: 0.6 + 0.4 * c.arrive
-        transformOrigin: onRight ? Item.BottomRight : Item.BottomLeft
+        transformOrigin: fromRight ? Item.BottomRight : Item.BottomLeft
         readonly property string heading: c.kind === "now" && c.title !== "" ? c.title
                                          : c.kind === "now" ? "Now" : c.kind === "watching" ? "Watching" : "Machine"
         Column {
