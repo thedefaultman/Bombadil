@@ -7,3 +7,5 @@ cp /usr/bin/sway /usr/local/bin/sway   # the copy drops the file capability dock
 chown u /out
 cd /home/u
 sudo -u u -H env HOME=/home/u python3 -u /e2e/driver.py 2>&1 | tee /out/driver.log
+# What the desktop costs left alone (idle.py), once the driver is done with it
+sudo -u u -H env HOME=/home/u python3 -u /e2e/idle.py 2>&1 | tee /out/idle.log

@@ -2,7 +2,8 @@
 # The bar, agentd and the real Claude Code CLI in a headless sway session, driven by keystrokes
 # against a scripted Anthropic API (fake_api.py). Screenshots, logs and a pass/fail list land in
 # out/desktop. Covers what runs without Hyprland; the Super binds and how Hyprland focuses the drawer
-# need a real session (the VM smoke).
+# need a real session (the VM smoke). Then idle.py leaves the stack alone and checks what it costs
+# (docs/IDLE-COST.md): a couple of minutes more.
 #
 #   tests/desktop/run.sh     needs docker and a self-contained `claude` binary (CLAUDE_BIN=...)
 set -euo pipefail
@@ -21,3 +22,4 @@ fi
 docker run --rm -v "$root:/repo:ro" -v "$here:/e2e:ro" -v "$out:/out" -v "$claude:/opt/claude:ro" \
   bombadil-desktop-test bash /e2e/inside.sh
 grep -q "DONE pass=[0-9]* fail=0" "$out/driver.log"
+grep -q "IDLE-DONE pass=[0-9]* fail=0" "$out/idle.log"
