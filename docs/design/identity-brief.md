@@ -216,7 +216,7 @@ wrong half the time.
 
 - The shell and the app kit share one set of tokens (`share/qml/Bombadil/Theme.qml`), with Inter as the
   family everywhere; the bar starts through `bin/bombadil-shell` so Quickshell can find the kit's theme.
-- `shell/Stone.qml` draws the mark and `PillState.face` says which face it wears; the icons, the lockups,
+- `Kit.Stone` (`share/qml/Bombadil/Stone.qml`) draws the mark and `PillState.face` says which face it wears; the icons, the lockups,
   the repository's pictures and the GRUB theme are in the files table of
   [`docs/brand/README.md`](../brand/README.md), with what a real machine taught us.
 

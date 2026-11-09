@@ -94,7 +94,7 @@ QtObject {
     readonly property bool stoppable: busy || optimistic || setupState === "signing_in"
     onStoppableChanged: if (stoppable) aiOpen = false   // the stone is Stop now
 
-    // The mark's face (Stone.qml): what the machine is doing, in a word. The pill adds "listening" for
+    // The mark's face (Kit.Stone): what the machine is doing, in a word. The pill adds "listening" for
     // the screen that holds the keyboard.
     //   starting  since boot, until agentd first answers (not yet offline)
     //   offline   agentd was there and is gone, or never came

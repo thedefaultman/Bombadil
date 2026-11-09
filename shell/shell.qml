@@ -432,7 +432,7 @@ ShellRoot {
                         spacing: 8
 
                         // The stone: Bombadil's mark, in the dot's place. Its face says what the machine is
-                        // doing (Stone.qml); while a turn runs, hover turns it into Stop and a click stops
+                        // doing (Kit.Stone); while a turn runs, hover turns it into Stop and a click stops
                         // it; otherwise a click opens the AI card (and another closes it).
                         Rectangle {
                             id: dotBox
@@ -442,7 +442,7 @@ ShellRoot {
                             radius: 12
                             color: stoppable ? Kit.Theme.accentSoft : "transparent"
                             Behavior on implicitWidth { NumberAnimation { duration: Kit.Theme.fast } }
-                            Stone {
+                            Kit.Stone {
                                 id: stone
                                 objectName: "stone"
                                 visible: !dotBox.stoppable
