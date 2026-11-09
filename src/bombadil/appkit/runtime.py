@@ -24,7 +24,7 @@ from pathlib import Path
 from .. import apps, paths
 from . import engine as kit_engine
 from . import placement
-from .check import Collector
+from .check import Collector, refused_components
 from .context import AppContext, for_app
 
 WATCHED_SUFFIXES = {".qml", ".js", ".mjs", ".py", ".toml"}
@@ -221,7 +221,10 @@ class Host:
             self.app.aboutToReload.emit()   # Stores save now and restore in the new UI
         self._refresh_meta()
         self.engine.clearComponentCache()
-        obj = self._create() if self._load_backend(changed) else None
+        refused = refused_components(self.ctx)      # an internal component in an app of the user's
+        for line in refused:
+            self.collector.add("error", line)
+        obj = self._create() if not refused and self._load_backend(changed) else None
         focus, self._unfocused = self._unfocused, None
         if obj is None:
             if focus is not None and isValid(focus):

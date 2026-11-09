@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .. import apps
 from . import engine as kit_engine
 from .context import AppContext
 from .placement import kill_children
@@ -40,6 +41,54 @@ FATAL = re.compile(
     r"Type .* unavailable|Cannot anchor|No such file")
 WAIT_MS = 1200  # how long a check lets the app run before judging it (`--wait`)
 SETTLE_S = 25   # seconds a check may run past that before the watchdog ends it (tools gives up at 40)
+
+
+# Kit components that belong to Bombadil's own screens, not to the apps the agent writes: the pill's
+# stone, and the scenes of the Tips app. They are registered in the kit (the shell and the built-in apps
+# import them) but are not in the apps skill, and an app that uses one is refused here, so the agent gets
+# a plain error to fix instead of drawing a mark it was never meant to.
+INTERNAL_COMPONENTS = {
+    "Stone": "is the mark in Bombadil's pill, not an app component: use Icon for a symbol, "
+             "Badge or Meter for a status",
+    "TipScene": "plays Bombadil's own tips, not an app component: use Diagram for an explainer, "
+                "LineChart, BarChart or Ring for data",
+}
+
+_KIT_IMPORT = re.compile(
+    r"^[ \t]*import[ \t]+Bombadil(?:[ \t]+\d+(?:\.\d+)?)?(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$", re.MULTILINE)
+_COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
+def _blank(m: re.Match) -> str:
+    return re.sub(r"[^\n]", " ", m.group(0))   # a comment goes and its lines stay, so line numbers hold
+
+
+def refused_components(ctx: AppContext) -> list[str]:
+    """One `file.qml:line: Name ...` for each use of an internal kit component (INTERNAL_COMPONENTS) in an
+    app of the user's. The built-in apps under share/apps (the Tips app) may use them, and so may an app
+    with a component of its own by that name. A use is an object declaration: `Stone {` after
+    `import Bombadil`, or `Kit.Stone {` after `import Bombadil as Kit`."""
+    if apps.is_builtin(ctx.dir):
+        return []
+    out = []
+    for f in sorted(ctx.dir.rglob("*.qml")):
+        rel = f.relative_to(ctx.dir)
+        if rel.parts[0] == "data" or any(part.startswith(".") for part in rel.parts):
+            continue
+        try:
+            text = _COMMENTS.sub(_blank, f.read_text(errors="replace"))
+        except OSError:
+            continue
+        imports = [m.group(1) for m in _KIT_IMPORT.finditer(text)]     # an alias, or None for `import Bombadil`
+        for name, why in INTERNAL_COMPONENTS.items():
+            own = (f.parent / f"{name}.qml").exists() or (ctx.dir / f"{name}.qml").exists()
+            spellings = [rf"(?<![\w.]){re.escape(a)}\.{name}" for a in imports if a]
+            if None in imports and not own:
+                spellings.append(rf"(?<![\w.]){name}")
+            for spelling in spellings:
+                for m in re.finditer(rf"{spelling}\s*\{{", text):
+                    out.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}: {name} {why}")
+    return out
 
 
 class Collector:
