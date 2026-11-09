@@ -230,7 +230,7 @@ class SignIn:
             self._close_terminal()
         await self._settle()
         if phase in ("done", "cancelled", "timeout"):
-            # Finished or given up: the page slides back out, and its tab goes if others remain.
+            # Finished or given up: the page slides back out and its tab goes (a lone one becomes blank).
             await asyncio.to_thread(self._put_away)
         self._set(phase)
         return phase

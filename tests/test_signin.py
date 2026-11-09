@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from bombadil import providers, signin
+from bombadil import browser, providers, signin
+from test_browser import NoHyprland, devtools  # noqa: F401 (devtools is a fixture)
 
 
 class FakePanel:
@@ -84,7 +85,11 @@ class FakePanel:
         if self.close_raises:
             raise OSError("the debugging port did not answer")
         self.closed.append(tab_id)
-        if len(self.tabs_) > 1:
+        if len(self.tabs_) == 1 and self.tabs_[0]["id"] == tab_id:
+            # Closing the last tab would quit the browser: the real panel puts a blank one in its place.
+            self._n += 1
+            self.tabs_ = [{"id": f"t{self._n}", "url": "about:blank", "type": "page"}]
+        else:
             self.tabs_ = [t for t in self.tabs_ if t["id"] != tab_id]
 
 
@@ -367,3 +372,51 @@ async def test_a_tab_that_will_not_close_does_not_keep_the_panel_on_screen(fake,
     s = signin.SignIn(fake("auto"), panel=panel, env={"BROWSER": cmd}, poll=0.1)
     assert await _run(s, log) == "done"
     assert not panel.visible
+
+
+def _urls(panel):
+    return [t["url"] for t in panel.tabs()]
+
+
+@pytest.mark.asyncio
+async def test_calling_it_off_leaves_no_sign_in_page_in_the_browsers_only_tab(fake, devtools):
+    # The browser started on the page and has no other tab: the next time the panel opens it must
+    # not show the stale login, and the browser must stay up for the next page.
+    panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
+    s = signin.SignIn(fake("never"), panel=panel, grace=0.2, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    assert await _until(lambda: s.phase == "waiting" and s.tab)
+    assert len(_urls(panel)) == 1 and "/authorize" in _urls(panel)[0]
+    s.cancel()
+    assert await run == "cancelled"
+    assert _urls(panel) == ["about:blank"]
+
+
+@pytest.mark.asyncio
+async def test_calling_it_off_keeps_the_tabs_the_person_opened(fake, devtools):
+    from test_browser import Chromium
+    Chromium.tabs = [{"id": "Tmine", "type": "page", "url": "https://example.com/notes", "title": ""}]
+    panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
+    s = signin.SignIn(fake("never"), panel=panel, grace=0.2, poll=0.1)
+    run = asyncio.create_task(_run(s))
+    assert await _until(lambda: s.phase == "waiting" and s.tab)
+    s.cancel()
+    assert await run == "cancelled"
+    assert _urls(panel) == ["https://example.com/notes"]   # theirs alone: no blank tab beside it
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_that_timed_out_leaves_no_page_behind_either(fake, devtools):
+    panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
+    s = signin.SignIn(fake("never"), panel=panel, grace=0.2, poll=0.1, timeout=2)
+    assert await _run(s) == "timeout"
+    assert _urls(panel) == ["about:blank"]
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_that_finished_leaves_no_page_behind_either(fake, tmp_path):
+    cmd, log = _browser_script(tmp_path)
+    panel = FakePanel()
+    s = signin.SignIn(fake("auto"), panel=panel, env={"BROWSER": cmd})
+    assert await _run(s, log) == "done"
+    assert _urls(panel) == ["about:blank"] and panel.closed == ["t1"]
