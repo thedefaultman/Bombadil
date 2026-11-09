@@ -17,6 +17,8 @@ Item {
     property string namePrefix: "deskCard"
     default property alias content: body.data
     signal titleClicked()
+    // A card whose whole header is a button says so: a tap on the line under the title counts as one on it.
+    property bool captionTaps: false
 
     readonly property color edgeColor: edge === "machine" ? T.machine
                                      : edge === "ok" ? T.ok
@@ -129,6 +131,12 @@ Item {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         maximumLineCount: 1
+        HoverHandler { enabled: card.captionTaps; cursorShape: Qt.PointingHandCursor }
+        TapHandler {
+            enabled: card.captionTaps
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: card.titleClicked()
+        }
     }
 
     ColumnLayout {

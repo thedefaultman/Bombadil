@@ -19,6 +19,8 @@ use) are marked volatile and never count as a change.
 """
 
 import json
+import math
+import os
 import re
 import socket
 import subprocess
@@ -45,13 +47,23 @@ _OUTER = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sysmap-part")   #
 Run = Callable[..., "str | None"]
 
 
+def _slow() -> float:
+    """How many times longer than usual a capture may take on this machine: BOMBADIL_BUDGET_SCALE,
+    from 1 to 20. A machine that is slow all the time (a guest with no KVM, a very old laptop) sets it;
+    the picture then waits longer instead of coming back with nothing. Left alone, it is 1."""
+    try:
+        scale = float(os.environ.get("BOMBADIL_BUDGET_SCALE", "1"))
+    except ValueError:
+        return 1.0
+    return 1.0 if math.isnan(scale) else min(20.0, max(1.0, scale))
+
+
 class Unavailable(Exception):
     """Nothing could be read: the message is one plain sentence for the line."""
 
 
 def run(argv: list[str], timeout: float = BUDGET) -> str | None:
     """A command's output, or None when it is missing, fails or is too slow."""
-    import os
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False,
                            env={**os.environ, **_ENV}, stdin=subprocess.DEVNULL)
@@ -253,7 +265,11 @@ def capture_network(run_: Run = run, probe: Callable[[str], int | None] | None =
     The connection is given `probe_budget` when there is a link to reach it over (a cold DNS cache
     makes the first lookup slow); the rest answers within `budget`."""
     brand, host = PROVIDER_HOSTS.get(provider, PROVIDER_HOSTS["claude"])
-    probe = probe or _tcp_ms
+    # The check gets the time the capture will wait for it (less the lookup's own share), which is what a
+    # BOMBADIL_BUDGET_SCALE raises: a slow-failing first lookup may then be tried again, and a slow
+    # connect finishes. Never less than the usual 1.2 s (a receipt's snapshot waits only half a second
+    # for it, but lets the check run on).
+    probe = probe or (lambda h: _tcp_ms(h, timeout=max(PROBE_BUDGET, probe_budget) - 0.4))
     read = read or _read_text
     wireless = wireless or (lambda dev: Path(f"/sys/class/net/{dev}/wireless").exists())
     t0 = time.monotonic()
@@ -995,11 +1011,13 @@ def capture(kind: str, target: str = "", *, run_: Run = run, budget: float | Non
     """{"card": ..., "facts": [...]} for one part of the machine. Raises Unavailable, with one
     plain sentence, when it could not be read at all. `budget` is BUDGET unless the part is slow by
     nature (the boot)."""
+    scale = _slow() if budget is None else 1.0      # a budget that was asked for is exact
     if kind == "network":
-        return capture_network(run_, provider=provider, budget=BUDGET if budget is None else budget, **kw)
+        kw.setdefault("probe_budget", PROBE_BUDGET * scale)
+        return capture_network(run_, provider=provider, budget=BUDGET * scale if budget is None else budget, **kw)
     if kind == "boot":
-        return capture_boot(run_, BOOT_BUDGET if budget is None else budget)
-    budget = BUDGET if budget is None else budget
+        return capture_boot(run_, BOOT_BUDGET * scale if budget is None else budget)
+    budget = BUDGET * scale if budget is None else budget
     if kind == "service":
         if not target:
             raise Unavailable("Say which service.")

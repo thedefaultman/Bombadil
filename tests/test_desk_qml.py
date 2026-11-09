@@ -42,6 +42,7 @@ Window {
     property var actions: []
     property var opened: []
     property int machineChanges: 0
+    property int awayChanges: 0
     // What shell.qml does with a line from agentd: parse it, and hand it to the pill and the desk.
     function feed(line) {
         const ev = JSON.parse(line)
@@ -76,6 +77,7 @@ Window {
         onRowAction: (widget, key, action) => w.actions = w.actions.concat([[widget, key, action]])
         onRowOpen: (widget, key, opens) => w.opened = w.opened.concat([[widget, key, opens]])
         onMachineModelChanged: w.machineChanges += 1
+        onAwayModelChanged: w.awayChanges += 1
     }
     // What shell.qml puts in its windows: a rail each side, the pill, and the strips beside it.
     DeskRail { objectName: "railLeft"; parent: w.contentItem; desk: deskState; side: "left"
@@ -198,6 +200,10 @@ class Desk:
         """agentd's machine message, as the shell receives it: the memory line crossed, unless told otherwise."""
         self.send(**machine_msg(*table, **kw))
 
+    def back(self, *table, **kw):
+        """agentd's away message, as the shell receives it: three things, unless told otherwise."""
+        self.send(**away_msg(*table, **kw))
+
     def dev(self, sessions, attention, **kw):
         """The dev message PR #4 defines: the sessions and the keys that want you, in Tab's order."""
         self.send(type="dev", sessions=list(sessions), attention=list(attention), front=kw.get("front", ""),
@@ -252,6 +258,10 @@ class Desk:
     @property
     def machine(self):
         return self.prop("machineModel")
+
+    @property
+    def away(self):
+        return self.prop("awayModel")
 
     def parts(self, row):
         """The pieces of a stack row as drawn, left to right, as (x, width, colour) on its track."""
@@ -402,6 +412,32 @@ def machine_msg(*table, **kw):
            "strip": {"text": "memory 91%", "dot": "amber"}, "rows": list(table) or [MEMORY, DISK, CPU, NET]}
     msg.update(kw)
     return msg
+
+
+# The rows of agentd's away message (away.py has its shape): what failed, who is waiting, what finished, and the
+# one line that counts the rest.
+def away_row(key, title, sub="", tone="ok", button="", kind="dot"):
+    return {"key": key, "kind": kind, "title": title, "sub": sub, "tone": tone, "button": button}
+
+
+AWAY_FAILED = away_row("turn:7", "build the site", "the build broke", "red")
+AWAY_WAITING = away_row("dev:reviewer", "reviewer on Bombadil", "apply the migration?", "sessions", "Open")
+AWAY_JOB = away_row("job:ab12", "Build", "boom", "red", "Why?")
+AWAY_DONE = away_row("turn:5", "tidy the notes", "at 09:05", "ok")
+AWAY_MORE = away_row("more", "and 2 more", kind="plain", tone="you")
+AWAY_WHY = "since 09:05 · a click puts this away"
+
+
+def away_msg(*table, **kw):
+    rows_ = list(table) or [AWAY_FAILED, AWAY_WAITING, AWAY_DONE]
+    msg = {"type": "away", "since": T0 - 3600, "count": len(rows_), "why": AWAY_WHY, "rows": rows_}
+    msg.update(kw)
+    return msg
+
+
+def away_shown(row):
+    """An away row as the desk keeps it: a tap anywhere on it is the card having been seen."""
+    return shown(dict(row, opens="seen"))
 
 
 def shown(row):
@@ -879,6 +915,32 @@ def test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_do
     assert desk.pill.property("card") is not None
     desk.cover()
     assert desk.pill.property("card") is not None and desk.warnings == []
+
+
+def test_a_picture_beside_a_window_is_wider_than_the_pill(desk):
+    # The pill narrows to 360 beside a window; a picture asked for may take about 560 (shell.qml gives the
+    # card host `Math.max(360, pictureWidth)`), so its labels and rows read.
+    assert desk.prop("mode") == "open" and desk.prop("pictureWidth") == desk.prop("pillWidth")   # nothing in front: the pill's
+    desk.cover((700, 200, 500, 400))
+    assert desk.prop("pillWidth") == 360 and desk.prop("pictureWidth") == 560
+    desk.cover((0, 0, 1920, 1080, True))
+    assert desk.prop("capsule") and desk.prop("pictureWidth") == desk.prop("pillWidth") == 100   # the shell clamps to 360, and hides it
+    desk.cover()
+    assert desk.prop("pictureWidth") == desk.prop("pillWidth")
+
+
+def test_a_picture_beside_a_window_takes_what_the_rails_leave_on_a_smaller_screen(laptop):
+    # A 1280 screen with a card in full on each rail: 1280 - 2 * (300 + 12 + 16) = 624, so 560 fits;
+    # on a 1024 one the rails leave 368 and the picture gets that, never under the pill's 360.
+    laptop.turn(1, steps=TWO)
+    laptop.set("watchModel", rows(2))
+    laptop.cover((400, 100, 400, 300))
+    assert laptop.faces["now"] == laptop.faces["watching"] == "full"
+    assert laptop.prop("stageRoom") == 624 and laptop.prop("pictureWidth") == 560
+    laptop.resize(1024, 720)
+    laptop.cover((300, 100, 400, 300), (310, 110, 100, 100))      # another window on the stage
+    assert laptop.prop("stageRoom") == 368 and laptop.prop("pictureWidth") == 368     # what the rails leave
+    assert laptop.prop("pillWidth") == 360 and laptop.warnings == []
 
 
 def test_the_pill_takes_the_stage_less_the_strips(laptop):
@@ -3006,3 +3068,339 @@ def test_a_desk_message_with_folded_widgets_is_what_the_desk_reads(desk, home):
     assert (desk.faces["now"], desk.faces["watching"], desk.faces["needs"]) == ("full", "strip", "strip")
     assert [c["text"] for c in desk.prop("leftStrips")] == ["2 counting"]
     assert [c["text"] for c in desk.prop("rightStrips")] == ["2 need you"]
+
+
+# -- Away: what happened while the person was gone --
+
+def test_an_away_message_puts_the_card_on_the_right_rail_with_its_rows(desk):
+    assert desk.away is None and not desk.prop("present")["away"] and desk.faces["away"] == "hidden"
+    desk.back()
+    assert desk.away == {
+        "title": "While you were away", "why": AWAY_WHY,
+        "rows": [away_shown(r) for r in (AWAY_FAILED, AWAY_WAITING, AWAY_DONE)],
+        "strip": {"text": "back · 3 things", "dot": "", "ring": False, "outlined": False}}
+    assert desk.prop("present")["away"] and desk.faces["away"] == "full"
+    # The right rail's, from the pill up: needs you, then this, then the machine; alone it is the first.
+    assert desk.slots["away"] == {"side": "right", "x": 1920 - 316, "y": 1000 - 200, "w": 300, "h": 200}
+    desk.pump(0.4)
+    card = desk.item("deskCard-away")
+    assert desk.at(card) == (1920 - 316, 1000 - 200) and desk.shown("deskCard-away")
+    assert desk.inside(card, "rowsTitle").property("text") == "While you were away"
+    assert desk.inside(card, "rowsWhy").property("text") == AWAY_WHY
+    by_place = sorted(desk.items("rowsRow"), key=lambda r: desk.at(r)[1])
+    assert [r.property("key") for r in by_place] == ["turn:7", "dev:reviewer", "turn:5"]
+    assert [desk.inside(r, "rowsRowTitle").property("text") for r in by_place] == [
+        "build the site", "reviewer on Bombadil", "tidy the notes"]
+    assert [desk.inside(r, "rowsRowSub").property("text") for r in by_place] == [
+        "the build broke", "apply the migration?", "at 09:05"]
+    # A failure is red, who is waiting is the sessions' blue, what finished is green.
+    assert [desk.inside(r, "rowsDot").property("color").name() for r in by_place] == [
+        THEME["bad"], THEME["info"], THEME["good"]]
+    buttons = [desk.inside(r, "rowsButton") for r in by_place]
+    assert [b.property("text") if b else None for b in buttons] == [None, "Open", None]
+    assert all(desk.inside(r, "rowsRemove") is None and desk.inside(r, "rowsMeter") is None for r in by_place)
+    # Nothing here ticks: the card draws what agentd last said until it says something else.
+    assert not desk.prop("ticking") and not desk.prop("clockRunning")
+    desk.snap("away")
+
+
+def test_an_away_message_with_no_rows_takes_the_card_away_and_the_next_brings_it_back(desk):
+    desk.back()
+    desk.pump(0.4)
+    assert desk.shown("deskCard-away")
+    desk.send(type="away", since=0, count=0, why="", rows=[])
+    assert desk.away is None and not desk.prop("present")["away"]
+    assert desk.faces["away"] == "hidden" and "away" not in desk.slots
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-away") and desk.prop("rightStrips") == []
+    assert plain(desk.item("railRight").property("hitRects")) == []
+    desk.back()
+    assert desk.prop("present")["away"] and desk.faces["away"] == "full"
+    # A message that says nothing says no card, and so does one whose rows are not a list.
+    desk.send(type="away")
+    assert desk.away is None
+    desk.back()
+    for rows_ in ("all of them", 5, None, {"turn:7": AWAY_FAILED}, [None, 5]):
+        desk.back(rows=rows_)
+        assert desk.away is None, rows_
+        desk.back()
+
+
+def test_the_card_folds_away_with_what_it_last_said(desk):
+    desk.back()
+    desk.pump(0.4)
+    desk.set("foldMs", 400)
+    desk.send(type="away", rows=[])
+    desk.pump(0.1)
+    card = desk.item("deskCard-away")
+    assert 0 < card.property("opacity") < 1 and card.isVisible()          # on its way out
+    assert desk.inside(card, "rowsTitle").property("text") == "While you were away"
+    assert sorted(r.property("key") for r in desk.items("rowsRow")) == ["dev:reviewer", "turn:5", "turn:7"]
+    desk.pump(0.6)
+    assert not card.isVisible()
+    desk.back(AWAY_DONE)
+    desk.pump(0.6)
+    assert card.isVisible() and [r.property("key") for r in desk.items("rowsRow")] == ["turn:5"]
+
+
+def test_an_away_message_that_is_odd_is_cleaned(desk):
+    odd = [None, 5, "text", [], {"kind": "dot", "title": "no key"}, {"key": "", "kind": "dot"},
+           {"key": 7, "kind": "dot"}, {"key": "m", "kind": "meter", "title": "a kind Away does not have"},
+           {"key": "s", "kind": "stack"}, {"key": "g", "kind": "gauge"}, {"key": "n", "kind": None}, {"key": "bare"},
+           {"key": "a", "kind": "dot", "title": 5, "sub": ["x"], "tone": "purple", "button": "Do it"},
+           {"key": "b", "kind": "dot", "title": "b", "tone": 4, "pulse": True, "remove": True, "meter": 0.5,
+            "opens": "disk", "button": "Why?"},
+           {"key": "a", "kind": "dot", "title": "the same key twice"},
+           {"key": "c", "kind": "plain", "title": "c", "tone": "amber"},
+           {"key": "d", "kind": "dot", "title": "d"}, {"key": "e", "kind": "dot", "title": "e"},
+           {"key": "f", "kind": "plain", "title": "f"}, {"key": "past", "kind": "plain", "title": "past the sixth"}]
+    desk.send(**away_msg(*odd, why=5, count="many"))
+    m = desk.away
+    assert m["title"] == "While you were away" and m["why"] == ""
+    assert [r["key"] for r in m["rows"]] == ["a", "b", "c", "d", "e", "f"]              # six at most
+    a, b, c, d, e, f = m["rows"]
+    assert a == away_shown({"key": "a", "kind": "dot", "tone": "you"})            # words only as words, no such button
+    assert b == away_shown({"key": "b", "kind": "dot", "title": "b", "button": "Why?", "tone": "you"})
+    assert c["tone"] == "amber" and c["kind"] == "plain" and f["kind"] == "plain"
+    assert m["strip"]["text"] == "back · 6 things"                                        # no count: the rows are it
+    assert desk.prop("present")["away"] and desk.slots["away"]["h"] == 50 + 6 * 44 + 18
+    # Keys are only keys, whatever they are called.
+    desk.send(**away_msg(away_row("constructor", "g", sub=3), away_row("toString", "h", kind="plain")))
+    assert [r["key"] for r in desk.away["rows"]] == ["constructor", "toString"]
+    assert desk.away["rows"][0]["sub"] == ""
+    desk.pump(0.3)
+    assert desk.warnings == []
+
+
+def test_the_count_is_what_the_strip_says_and_the_rows_are_only_what_fits(desk):
+    for count, text in ((1, "back · 1 thing"), (2, "back · 2 things"), (9, "back · 9 things"), (0, "back · nothing new"),
+                        (-3, "back · nothing new"), (2.7, "back · 2 things"), ("2", "back · 3 things"),
+                        (None, "back · 3 things")):
+        desk.back(count=count)
+        assert desk.away["strip"]["text"] == text, count
+    desk.send_numbers(**away_msg(count="NaN!"))
+    assert desk.away["strip"]["text"] == "back · 3 things"
+    desk.send_numbers(**away_msg(count="Infinity!"))
+    assert desk.away["strip"]["text"] == "back · 3 things"
+    desk.back(AWAY_FAILED, AWAY_DONE, AWAY_MORE, count=7)                  # three rows, one of them "and 5 more"
+    assert desk.away["strip"]["text"] == "back · 7 things"
+    desk.send(**desk_msg(folded=True))
+    assert [(s["id"], s["text"]) for s in desk.prop("rightStrips")] == [("away", "back · 7 things")]
+    desk.pump(0.3)
+    assert desk.item("deskStrip-away").property("text") == "back · 7 things"
+    desk.snap("away-strip")
+
+
+def test_away_goes_to_its_strip_when_the_rail_has_no_room_and_the_chip_changes_in_place(laptop):
+    laptop.set("needsModel", rows(6))
+    laptop.back(*[away_row(f"turn:{i}", f"thing {i}") for i in range(6)], count=9)
+    assert laptop.faces["away"] == "strip" and "away" in laptop.slots
+    laptop.pump(0.3)
+    (strip,) = laptop.prop("rightStrips")
+    assert (strip["id"], strip["text"], strip["dot"], strip["ring"], strip["outlined"]) == (
+        "away", "back · 9 things", "", False, False)
+    chip = laptop.item("deskStrip-away")
+    assert chip.property("text") == "back · 9 things" and not laptop.shown("deskCard-away")
+    laptop.back(*[away_row(f"turn:{i}", f"thing {i}") for i in range(6)], count=10)
+    laptop.pump(0.05)
+    assert laptop.item("deskStrip-away") is chip and chip.property("text") == "back · 10 things"
+    laptop.set("needsModel", rows(2))
+    laptop.pump(0.3)
+    assert laptop.faces["away"] == "full" and laptop.prop("rightStrips") == []
+
+
+def test_a_button_does_what_it_says_and_then_the_card_is_seen(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    assert hello == [{"type": "desk", "op": "get"}]
+    desk.back(AWAY_FAILED, AWAY_WAITING, AWAY_JOB, AWAY_DONE)
+    desk.pump(0.4)
+    seen = {"type": "away", "op": "seen"}
+    desk.click(desk.inside(desk.card_row("dev:reviewer"), "rowsButton"))
+    assert desk.sent == hello + [{"type": "dev", "action": "open", "key": "reviewer"}, seen]
+    desk.click(desk.inside(desk.card_row("job:ab12"), "rowsButton"))
+    assert desk.sent[-2:] == [{"type": "jobs", "op": "why", "id": "ab12"}, seen]
+    assert desk.away is not None                              # agentd takes the card away, and says so
+    # It never reaches the model: the pill heard nothing, and no turn began.
+    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+
+
+def test_a_button_that_does_not_match_its_row_opens_nothing_and_still_means_seen(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    desk.back()
+    seen = {"type": "away", "op": "seen"}
+
+    def presses(widget, key, action):
+        QtCore.QMetaObject.invokeMethod(desk.desk, "rowAction", QtCore.Qt.DirectConnection,
+                                        QtCore.Q_ARG("QString", widget), QtCore.Q_ARG("QString", key),
+                                        QtCore.Q_ARG("QString", action))
+        desk.pump()
+    cases = (("turn:7", "Open"), ("turn:7", "Why?"), ("dev:", "Open"), ("job:", "Why?"), ("dev:reviewer", "Why?"),
+             ("job:ab12", "Open"), ("reviewer", "Open"), ("dev:reviewer", "Remove"), ("", "Open"))
+    for key, action in cases:
+        presses("away", key, action)
+    assert desk.sent == hello + [seen] * len(cases)
+    # Only Away's own rows: a press on another card's row is not Away's to answer.
+    presses("machine", "dev:reviewer", "Open")
+    presses("needs", "job:ab12", "Why?")
+    assert desk.sent == hello + [seen] * len(cases)
+
+
+def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    desk.back(AWAY_FAILED, AWAY_WAITING, AWAY_DONE, AWAY_MORE)
+    desk.pump(0.4)
+    seen = {"type": "away", "op": "seen"}
+    card = desk.item("deskCard-away")
+    done, more = desk.card_row("turn:5"), desk.card_row("more")
+    for target in (done, desk.inside(done, "rowsRowTitle"), more, desk.inside(card, "rowsTitle"),
+                   desk.inside(card, "rowsWhy")):               # the header is the title and the line under it
+        before = len(desk.sent)
+        desk.click(target)
+        assert desk.sent[before:] == [seen]
+    assert desk.sent[:1] == hello
+    # The shell keeps the card until agentd says it is gone, so a second tap before then says it again.
+    assert desk.away is not None
+    desk.send(type="away", since=0, count=0, why="", rows=[])
+    assert desk.away is None
+    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+
+
+def test_a_tap_on_another_cards_title_or_caption_leaves_away_alone(desk):
+    desk.set("connected", True)
+    desk.jobs(ISO, UPDATE)
+    desk.clock(10)
+    desk.dev([session("k1"), session("k2")], ["k1", "k2"])
+    desk.vitals()
+    desk.back()
+    desk.pump(0.4)
+    assert [desk.faces[w] for w in ("watching", "needs", "away", "machine")] == ["full"] * 4
+    for name in ("deskCard-watching", "deskCard-needs", "deskCard-machine"):
+        card = desk.item(name)
+        desk.click(desk.inside(card, "rowsTitle"))
+        desk.click(desk.inside(card, "rowsWhy"))
+    assert [m for m in desk.sent if m.get("type") == "away"] == [] and desk.away is not None
+
+
+def test_nothing_is_said_about_a_card_that_is_not_there(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    desk.call("awaySeen")
+    assert desk.sent == hello
+    desk.back()
+    desk.send(type="away", rows=[])
+    desk.call("awaySeen")
+    assert desk.sent == hello
+
+
+def test_the_same_away_message_is_no_change_and_a_different_one_is_one(desk):
+    desk.back()
+    before = desk.win.property("awayChanges")
+    desk.back()
+    desk.back()
+    assert desk.win.property("awayChanges") == before
+    desk.back(AWAY_FAILED)
+    assert desk.win.property("awayChanges") == before + 1
+
+
+def test_hide_away_puts_the_card_away_even_while_agentd_holds_it(desk):
+    desk.back()
+    desk.pump(0.3)
+    assert desk.faces["away"] == "full"
+    desk.send(**desk_msg(hidden=["away"]))
+    assert desk.faces["away"] == "hidden" and "away" not in desk.slots
+    assert not desk.prop("present")["away"] and desk.prop("rightStrips") == []
+    assert desk.away is not None                              # still held: it only has no face
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-away") and not desk.shown("deskStrip-away")
+    desk.send(**desk_msg(hidden=[]))
+    assert desk.faces["away"] == "full" and desk.slots["away"]["h"] == 200
+
+
+def test_the_socket_going_takes_the_away_card_and_a_reconnect_brings_it_back(desk):
+    desk.set("connected", True)
+    desk.back()
+    desk.pump(0.4)
+    assert desk.prop("present")["away"] and desk.shown("deskCard-away")
+    desk.call("lost")
+    assert desk.away is None and not desk.prop("present")["away"]
+    assert desk.faces["away"] == "hidden" and "away" not in desk.slots and desk.prop("rightStrips") == []
+    desk.pump(0.4)
+    assert not desk.shown("deskCard-away")
+    desk.call("lost")                                         # twice is the same
+    assert desk.away is None
+    desk.set("connected", True)                               # agentd sends the desk and the card again
+    desk.back()
+    assert desk.prop("present")["away"]
+
+
+def test_the_snapshot_says_what_the_away_card_holds(desk):
+    assert desk.call("snapshot")["away"] is None
+    desk.back()
+    snap = desk.call("snapshot")
+    assert snap["away"]["title"] == "While you were away"
+    assert [r["key"] for r in snap["away"]["rows"]] == ["turn:7", "dev:reviewer", "turn:5"]
+    assert snap["present"]["away"] and snap["faces"]["away"] == "full"
+
+
+def test_what_away_says_is_what_the_desk_draws(desk, tmp_path):
+    """Both ends of the away message joined: the real Away on one side, the real shell on the other."""
+    from bombadil.away import Away
+    log = tmp_path / "turns.jsonl"
+    rows_ = [{"t": T0 - 900, "prompt": "build the site", "ok": False, "result": "the build broke\nmore", "n": 7},
+             {"t": T0 - 800, "prompt": "tidy the notes", "ok": True, "result": "", "n": 8},
+             {"t": T0 - 700, "kind": "local", "prompt": "background job", "action": "job", "target": "Build",
+              "result": "Build failed: boom", "ok": False, "job": "ab12"}]
+    rows_ += [{"t": T0 - 600 + i, "prompt": f"errand {i}", "ok": True, "result": "", "n": 20 + i} for i in range(4)]
+    log.write_text("".join(json.dumps(r) + "\n" for r in rows_))
+    away = Away(path=tmp_path / "away.json", log=log, clock=lambda: T0)
+    msg = away.ask([session("k1", state="asked")], since=T0 - 3600, now=T0)
+    assert msg["type"] == "away" and msg["count"] == 8 and len(msg["rows"]) == 5       # 4 rows and "and 4 more"
+    desk.set("connected", True)
+    desk.send(**json.loads(json.dumps(msg)))
+    desk.pump(0.4)
+    model = desk.away
+    assert model["why"] == msg["why"] and model["strip"]["text"] == "back · 8 things"
+    assert [r["key"] for r in model["rows"]] == [r["key"] for r in msg["rows"]]
+    assert [r["kind"] for r in model["rows"]] == [r["kind"] for r in msg["rows"]]
+    assert [r["tone"] for r in model["rows"]] == [r["tone"] for r in msg["rows"]]
+    assert [r["button"] for r in model["rows"]] == [r["button"] for r in msg["rows"]]
+    assert [r["title"] for r in model["rows"]] == [r["title"] for r in msg["rows"]]
+    assert [r["sub"] for r in model["rows"]] == [r["sub"] for r in msg["rows"]]
+    assert {r["button"] for r in msg["rows"]} == {"", "Open", "Why?"}                    # every button it has
+    assert [r["key"] for r in msg["rows"]] == ["job:ab12", "turn:7", "dev:k1", "turn:23", "more"]
+    drawn = {r.property("key") for r in desk.items("rowsRow")}
+    assert drawn == {r["key"] for r in msg["rows"]}
+    # What its buttons say reaches the sessions and the jobs, as they ask for it.
+    hello = len(desk.sent)
+    desk.click(desk.inside(desk.card_row("dev:k1"), "rowsButton"))
+    desk.click(desk.inside(desk.card_row("job:ab12"), "rowsButton"))
+    assert desk.sent[hello:] == [{"type": "dev", "action": "open", "key": "k1"}, {"type": "away", "op": "seen"},
+                                 {"type": "jobs", "op": "why", "id": "ab12"}, {"type": "away", "op": "seen"}]
+    # And once agentd has the person's word that it was seen, the card is gone.
+    assert away.seen(now=T0 + 5) is True
+    desk.send(**json.loads(json.dumps(away.message())))
+    assert desk.away is None and desk.faces["away"] == "hidden"
+
+
+def test_away_loads_without_qml_warnings(desk):
+    desk.set("connected", True)
+    desk.back(AWAY_FAILED, AWAY_WAITING, AWAY_JOB, AWAY_DONE, AWAY_MORE)
+    desk.pump(0.4)
+    desk.click(desk.card_row("turn:5"))
+    desk.click(desk.inside(desk.card_row("dev:reviewer"), "rowsButton"))
+    desk.back(AWAY_DONE, count=1)
+    desk.back(away_row("none", "Nothing happened", kind="plain", tone="you"), count=0)
+    desk.cover((1200, 400, 700, 600))
+    desk.send(**desk_msg(folded=True))
+    desk.cover((0, 0, 1920, 1080, True))
+    desk.cover()
+    desk.send(**desk_msg(folded=False, hidden=["away"]))
+    desk.send(**desk_msg(hidden=[]))
+    desk.send(type="away", rows=[])
+    desk.back()
+    desk.call("lost")
+    desk.pump(0.5)
+    assert desk.warnings == []

@@ -127,14 +127,27 @@ check screenshot grab
 # Pictures from the machine: each is captured from this machine, reaches the bar (agentd says a bar
 # was there to draw it) and comes back as words. How long it took goes in the log: a capture over
 # 500 ms on real hardware is a finding, not a failure.
+# Without KVM a capture can run out of its time (6 to 10 s for `ip` or `systemd-analyze` while the
+# guest is still starting things: "ip did not answer", "systemd-analyze took longer than expected").
+# A slow machine is not a broken picture, so the pictures wait for the guest to be calm first, and a
+# capture that gave up is asked again with 4 times, then 12 times, the time (BOMBADIL_BUDGET_SCALE,
+# which the capture code reads) once the guest is calm again. A picture that comes back in the wrong
+# shape is a failure the first time; one that needed a longer wait says so in the log.
+calm() { awk '{exit !($1 < 1.5)}' /proc/loadavg; }
+wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"
 picture() {
-  local t0 out args="{\"kind\":\"$1\"}"
+  local t0 out try args="{\"kind\":\"$1\"}" scales=(1 4 12)
   [[ -n "${2:-}" ]] && args="{\"kind\":\"$1\",\"target\":\"$2\"}"
-  t0=$(date +%s%N)
-  out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
-    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
-    | as_user timeout 60 bombadil-os-mcp | tail -1) || return 1
-  echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms: ${out:0:400}" >&2
+  for try in 1 2 3; do
+    t0=$(date +%s%N)
+    out=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+      "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"system_map\",\"arguments\":$args}}" \
+      | as_user env BOMBADIL_BUDGET_SCALE="${scales[try-1]}" timeout 60 bombadil-os-mcp | tail -1) || return 1
+    echo "$1 took $(( ($(date +%s%N) - t0) / 1000000 )) ms (try $try, ${scales[try-1]}x the time): ${out:0:400}" >&2
+    grep -q 'shown above the bar' <<<"$out" && break
+    grep -q 'Could not read' <<<"$out" || return 1     # not a capture that gave up: no second try
+    wait_for 90 calm
+  done
   grep -q 'shown above the bar' <<<"$out" || return 1
   # The boot is more than its last line (the C-locale tree once read as the root alone).
   [[ "$1" != boot ]] || (( $(grep -oE '\\n[0-9.]+ (s|ms|min): ' <<<"$out" | wc -l) >= 3 ))
@@ -148,7 +161,6 @@ shot picture
 # Super+Escape stops a running turn and everything it started.
 # A key press only means something to a machine that is not flat out: under emulation an app that is
 # still starting can make the handover to the pill take longer than the test waits. Wait for calm.
-calm() { awk '{exit !($1 < 1.5)}' /proc/loadavg; }
 wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
 before=$(launcher_done browser "Opened the browser")
 keys meta_l
