@@ -1416,3 +1416,15 @@ def test_the_shell_draws_a_card_with_a_box_on_one_screen_and_not_while_typing_id
     assert "interval: pillState.composing ? 120000" in shell
     assert re.search(r"function onTyping\(\) \{ if \(win.summoned\) idle.restart\(\) \}", shell)
     assert "cardHost.item.preferredWidth" in shell
+
+
+def test_the_shell_declares_each_of_its_own_functions_and_signals_once():
+    """shell.qml cannot be loaded here, and a name declared twice in it (two branches each adding a helper) stops the
+    whole bar from loading, so it is looked for in the text: the root's own members are the ones at four spaces."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "shell" / "shell.qml").read_text()
+    names = re.findall(r"^    (?:function|signal)\s+(\w+)", src, re.MULTILINE)
+    names += re.findall(r"^    (?:readonly\s+)?property\s+\w+\s+(\w+)\s*[:\n]", src, re.MULTILINE)
+    twice = sorted({n for n in names if names.count(n) > 1})
+    assert twice == [], twice

@@ -81,10 +81,6 @@ ShellRoot {
     // there ("" = a picture, which every screen draws). Two boxes for one draft would be two people typing in one.
     property string cardScreen: ""
     signal cardKeysWanted(string name)
-    function hasScreen(name) {
-        for (const s of Quickshell.screens) if (s.name === name) return true
-        return false
-    }
     function focusedScreenName() {
         if (root.summonedOn !== "" && root.hasScreen(root.summonedOn)) return root.summonedOn
         const m = Hyprland.focusedMonitor
