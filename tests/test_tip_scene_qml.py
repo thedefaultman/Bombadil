@@ -593,6 +593,27 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     assert len(s.items("card-now")) == 1 and len(s.items("card-watching")) == 0
 
 
+def test_the_stage_card_says_a_task_and_its_step_whole_and_the_poster_card_keeps_one_line(make):
+    """The stage's card is 208 wide and wraps its heading and its why to two lines; the poster's has no room to
+    spare, so it keeps one line and elides. A tip's scene is never drawn with a clipped task on the stage."""
+    long_task = "Install rust and set it up on this machine"
+    tip = dict(fx.ROUTE, beats=[dict(b, title=long_task) if b.get("card") == "now" else b for b in fx.ROUTE["beats"]])
+    s = make(tip, "app")
+    s.seek(s.duration)
+    card = s.item("card-now")
+    assert card is not None and card.width() == 208
+    said = [i for i in s.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
+            and i.property("text") == long_task]
+    assert len(said) == 1 and said[0].property("lineCount") == 2 and not said[0].property("truncated")
+    assert not [i for i in s.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
+                and i.property("truncated")]
+    p = make(tip, "card")
+    p.seek(p.duration)
+    heading = [i for i in p.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
+               and i.property("text") == long_task]
+    assert len(heading) == 1 and heading[0].property("lineCount") == 1 and heading[0].property("truncated")
+
+
 def scene_box(s, item):
     """An item's rectangle in the scene's own coordinates: (left, top, right, bottom)."""
     p = item.mapToItem(s.scene, QtCore.QPointF(0, 0))

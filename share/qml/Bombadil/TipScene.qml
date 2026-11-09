@@ -95,7 +95,7 @@ Item {
     })
     readonly property var appM: ({
         w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 64, stone: 24, small: false,
-        text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 168,
+        text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 208,
         winW: 380, winH: 176, winTop: 14, winRadius: 12, slide: 28, picW: 440, boxH: 40, border: 1.5,
         stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12, pillMin: 160, chipH: 26
     })
@@ -913,6 +913,8 @@ Item {
                 text: cd.heading
                 color: Theme.fg
                 elide: Text.ElideRight
+                wrapMode: m.small ? Text.NoWrap : Text.Wrap          // the stage's card has the room to say a task whole
+                maximumLineCount: m.small ? 1 : 2
             }
             Text {
                 visible: !cd.ink && cd.c.why !== ""
@@ -922,6 +924,8 @@ Item {
                 text: cd.c.why
                 color: Theme.muted
                 elide: Text.ElideRight
+                wrapMode: m.small ? Text.NoWrap : Text.Wrap
+                maximumLineCount: m.small ? 1 : 2
             }
             Repeater {
                 model: cd.c.rows.length
