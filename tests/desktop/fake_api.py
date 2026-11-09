@@ -75,9 +75,10 @@ class H(BaseHTTPRequestHandler):
 
     def refuse(self, reset):
         """What the API says to a claude.ai login whose five-hour window is used up: a 429 with the unified
-        rate-limit headers and the body "Error". The real CLI (2.1.286) turns that into a rate_limit_event and
-        "You've hit your session limit · resets 3:45am (UTC)" and ends the turn at once; a busy API's plain
-        429 (an API key's) it retries ten times over three minutes first."""
+        rate-limit headers and the body "Error". The real CLI (2.1.319) turns that into a rate_limit_event and
+        "You've hit your 5-hour limit · resets 3:45am (UTC)" with api_error "usage_limit_reached" (2.1.286
+        said "session limit" and sent no code) and ends the turn at once; a busy API's plain 429 (an API
+        key's) it retries ten times over three minutes first."""
         body = json.dumps(
             {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}, "request_id": "req_e2e429"}
         ).encode()

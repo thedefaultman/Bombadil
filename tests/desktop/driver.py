@@ -831,9 +831,10 @@ check("and the stone is still: nothing waits, nothing is amber",
 
 # 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
 # claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
-# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
-# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
-# the same conversation: the first time the owner says so, the second time the clock does.
+# rate_limit_event and "You've hit your 5-hour limit" (api_error "usage_limit_reached"). The machine rests: the ask
+# waits as a chip, launcher words and "!" commands still run, nothing more is sent to the API, and once the plan is
+# back the same ask runs again in the same conversation: the first time the owner says so, the second time the clock
+# does.
 STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
 LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
 claude_ai = Path.home() / ".e2e-claude-ai"
@@ -1626,6 +1627,103 @@ time.sleep(0.8)
 st = desk_state()
 check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
       and st["stripped"] == [], (st["order"], st["stripped"]))
+
+# 13. Away: the card that says what happened while the person was gone. The turn log is agentd's own file, so the
+# section writes the rows a stretch away would have left (a turn that failed, a job that failed, a turn that went
+# well), asks for the card by name, puts it away with a tap of the virtual pointer, and asks again.
+turn_log = Path.home() / ".local" / "state" / "bombadil" / "turns.jsonl"
+left = time.time()
+with turn_log.open("a") as f:
+    for row in ({"t": left - 6, "prompt": "build the site", "ok": False, "result": "the build broke\nmore", "n": 901},
+                {"t": left - 5, "kind": "local", "prompt": "background job", "action": "job",
+                 "target": "Build the image", "result": "Build the image failed: no network", "ok": False,
+                 "job": "0a0b0c"},
+                {"t": left - 4, "prompt": "tidy the notes", "ok": True, "result": "", "n": 902}):
+        f.write(json.dumps(row) + "\n")
+summon()
+typ("show away")
+before = api_requests()
+n = mark()
+key("Return")
+asked = wait(ev("local", phase="done"), 10, n)
+check("asking for what happened while away answers in a line, with no model", asked and asked.get("ok")
+      and asked.get("text") == "Here is what happened while you were away." and api_requests() == before,
+      asked and asked.get("text"))
+key("Escape")
+time.sleep(1.5)
+st = desk_state()
+shot("47-desk-away")
+aw = st.get("away") or {}
+slot = (st.get("slots") or {}).get("away") or {}
+check("the Away card is up in full, on the right rail", st["present"]["away"] and st["faces"]["away"] == "full"
+      and slot.get("side") == "right", (st.get("faces"), slot))
+check("it says what failed first, then what went well, and why it is there",
+      [r["key"] for r in aw.get("rows", [])][:3] == ["job:0a0b0c", "turn:901", "turn:902"]
+      and aw["rows"][0]["button"] == "Why?" and aw["rows"][1]["sub"] == "the build broke"
+      and aw["why"].startswith("since ") and aw["why"].endswith("puts this away"), aw)
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+dots = {name: region_pixels("47-desk-away", box, colour) for name, colour in
+        (("red", "#d05555"), ("green", "#5fb36b"))}
+check("a failure is drawn red and what went well green", dots["red"] > 40 and dots["green"] > 20, dots)
+pointer(f"move {slot['x'] + 60} {slot['y'] + 22}")           # the title
+time.sleep(0.3)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+time.sleep(1.0)
+st = desk_state()
+check("a tap on the card puts it away, and nothing reached the model",
+      st["faces"]["away"] == "hidden" and not st["present"]["away"] and st.get("away") is None
+      and api_requests() == before, (st.get("faces"), st.get("away")))
+summon()
+typ("show away")
+n = mark()
+key("Return")
+wait(ev("local", phase="done"), 10, n)
+key("Escape")
+time.sleep(1.5)
+st = desk_state()
+shot("48-desk-away-nothing")
+check("what was seen is not news again: asked once more it says nothing happened",
+      [r["key"] for r in (st.get("away") or {}).get("rows", [])] == ["none"], st.get("away"))
+summon()
+typ("how's the machine?")
+n = mark()
+key("Return")
+wait(ev("local", phase="done"), 10, n)
+key("Escape")
+time.sleep(1.0)
+st = desk_state()
+check("the person's next ask puts it away too", st["faces"]["away"] == "hidden" and st.get("away") is None,
+      (st.get("faces"), st.get("away")))
+# The shell's half, with a card agentd did not build: five rows, three colours and a count of the rest.
+inject({"type": "away", "since": time.time() - 3600, "count": 7, "why": "since 09:05 · a click puts this away",
+        "rows": [
+            {"key": "turn:7", "kind": "dot", "title": "build the site", "sub": "the build broke", "tone": "red", "button": ""},
+            {"key": "dev:rev", "kind": "dot", "title": "reviewer on Bombadil", "sub": "apply the migration?",
+             "tone": "sessions", "button": "Open"},
+            {"key": "job:0a0b0c", "kind": "dot", "title": "Build the image", "sub": "no network", "tone": "red",
+             "button": "Why?"},
+            {"key": "turn:5", "kind": "dot", "title": "tidy the notes", "sub": "at 09:05", "tone": "ok", "button": ""},
+            {"key": "more", "kind": "plain", "title": "and 3 more", "sub": "", "tone": "you", "button": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("49-desk-away-rows")
+aw = st.get("away") or {}
+slot = (st.get("slots") or {}).get("away") or {}
+check("a card of five rows is drawn in full, and its chip would say seven things",
+      st["faces"]["away"] == "full" and len(aw.get("rows", [])) == 5 and slot.get("h") == 50 + 5 * 44 + 18
+      and aw["strip"]["text"] == "back · 7 things", (st.get("faces"), slot, aw.get("strip")))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+dots = {name: region_pixels("49-desk-away-rows", box, colour) for name, colour in
+        (("red", "#d05555"), ("blue", "#5b9bd5"), ("green", "#5fb36b"))}
+check("it draws a dot in each colour, and a button on the two rows that have one",
+      dots["red"] > 100 and dots["blue"] > 40 and dots["green"] > 20, dots)
+inject({"type": "away", "since": 0, "count": 0, "why": "", "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("and agentd saying there is none takes it away", st["faces"]["away"] == "hidden" and st.get("away") is None,
+      st.get("faces"))
 
 # 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
 # cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
