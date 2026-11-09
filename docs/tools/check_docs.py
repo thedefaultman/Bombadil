@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Check Bombadil's documentation: relative links and anchors, Mermaid diagrams, and leaks.
 
-    python3 docs/tools/check_docs.py [--mermaid] [--private-terms FILE] [--soft-terms FILE] [PATH ...]
+    python3 docs/tools/check_docs.py [--root DIR] [--mermaid] [--private-terms FILE] [--soft-terms FILE]
+                                     [--no-links] [--no-leaks] [PATH ...]
+
+--no-links skips the link and anchor checks and --no-leaks skips the leak checks, so
+`--no-links src shell iso scripts tests share bin` scans code and tests for leaks only.
 
 PATHs are files or directories under the repo root (default: docs, README.md, CONTRIBUTING.md,
 AGENTS.md). A PATH, --private-terms or --soft-terms file that does not exist is an error, never skipped.
@@ -10,7 +14,7 @@ puppeteer config file if the default browser needs flags such as --no-sandbox).
 Exit status is 1 when a link or anchor is broken, a diagram does not parse, or a hard leak is found,
 and 2 when the check could not run (a missing PATH or terms file, or no `mmdc` for --mermaid).
 
-Hard leaks (always checked): e-mail addresses, session/thread/message ids, claude.ai working URLs,
+Hard leaks (checked unless --no-leaks): e-mail addresses, session, message and account ids, claude.ai working URLs,
 the shared project folder's path, Windows and macOS user paths and home folders other than /home/user,
 and token shapes. Names of people or machines are not in this file: give them with --private-terms
 (one per line, case-insensitive, whole words, a hit is a failure; a line that starts with # is a
@@ -38,11 +42,13 @@ HARD = [
     ("user home path", re.compile(r"[A-Za-z]:\\Users\\|(?-i:/Users/(?!user/)[A-Za-z][\w.-]*/)|/home/(?!user\b)[a-z][a-z0-9_-]*/", re.I)),
     ("token", re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abp]-[0-9A-Za-z-]{10,}")),
 ]
-# GitHub no-reply addresses, the Claude commit trailer address and the example addresses in docs
-# (example.com, acme.*, and the reserved .example, .test and .invalid names) are not leaks.
+# GitHub no-reply addresses, the Claude commit trailer address, the example addresses in docs
+# (example.com, acme.*, and the reserved .example, .test and .invalid names) and systemd template
+# unit names such as getty@tty1.service are not leaks.
 EMAIL_OK = re.compile(
     r"^noreply@anthropic\.com$"
-    r"|@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|acme\.[a-z]+|users\.noreply\.github\.com|example|test|invalid)$",
+    r"|@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|acme\.[a-z]+|users\.noreply\.github\.com|example|test|invalid"
+    r"|service|socket|timer|mount|automount|target|path|scope|slice|device|swap)$",
     re.I,
 )
 

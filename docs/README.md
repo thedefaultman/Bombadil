@@ -19,7 +19,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | The session daemon, the queue, providers | Shipped | [agentd](architecture/agentd.md) |
 | The OS as tools for the agent | Shipped | [os-mcp](architecture/os-mcp.md) |
 | The pill, the line, the stone, chips, wallpaper | Partly shipped | [shell](architecture/shell.md) |
-| Cards in rails and strips, jobs | Partly shipped | [desk](architecture/desk.md) |
+| Cards in rails and strips, dragging them, jobs | Partly shipped | [desk](architecture/desk.md) |
 | Apps the agent writes, the kit and its skill | Partly shipped | [app kit](architecture/app-kit.md) |
 | The browser panel and signing in | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
 | Diagrams and reasons above the pill | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
@@ -59,4 +59,4 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 - [Writing a design brief](contributing/design-briefs.md).
 - [Testing the whole system in a VM](contributing/vm-testing.md): the smoke test that boots the real image, what it covers and its traps.
 - [The Mail contract](MAIL.md) and [the brain contract](BRAIN.md): the exact wire formats, states and rules that comments in the code point to. The pages for [Mail](architecture/mail.md) and [the brain](architecture/brain.md) say how each piece works; these two say what it promises.
-- `docs/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).
+- `docs/screens/` and `docs/mail/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).

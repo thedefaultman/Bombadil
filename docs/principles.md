@@ -1,19 +1,50 @@
 # Principles
 
+> **Status:** Partly shipped. The rules are the design's and stand whole. The code on `main` keeps most of them. Some parts of them need work that is not on `main`, and "Where the rules stand on main" says which: the voice, coding sessions and the word "ship", and the self-improvement loop (all In progress), and the single list of everything that runs on its own, the holding card, a history for each app, the "this" chip, the split between Bombadil's defaults and the person's settings, and a rollback after a failed start (all Designed).
+> **Code:** `share/qml/Bombadil/Theme.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/Stone.qml`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/launcher.py`, `src/bombadil/snapshots.py`, `src/bombadil/outbox.py`, `src/bombadil/jobs.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/sudoers.d/bombadil`
+> **Design:** the [design briefs](design/README.md), listed under "Where each rule was decided"
+> **Verified:** 2026-11-08 against `main` at `9d5c729`: every number on the page (200 ms, one line and four, 12 px, three things to learn, twelve questions) and the code behind each "in practice" sentence and each row of "Where the rules stand on main", read in the files named above and in `bin/bombadil`, `shell/shell.qml`, `shell/Wallpaper.qml`, `tests/test_agentd_rest.py` and `iso/airootfs/usr/local/bin/bombadil-install`. The rule texts were compared with the rule sections of the briefs they cite.
+
 Bombadil is a Linux distribution whose main interface is an AI agent. Its design rests on a small set
 of rules. They are why it feels the way it does, and a change that breaks one turns it into something
 else: a chatbot with a desktop around it, or a desktop with a chat sidebar. This page lists the rules,
-why each exists and what it asks of you when you build. Each one was decided in a design brief; the
-link at the end of every rule goes to where, with the full argument.
+why each exists and what it asks of you when you build. The twelve design briefs state rules of their
+own, and this page collects the rules that most of them decided. The link at the end of every rule goes
+to where it was decided, with the full argument; a rule that rests on the code more than on a brief says so.
 
 The line the project is held to: **stupidly simple to use, yet complete, capable and unique.** The
 operating system is for the AI, and the person using it is a passenger who gets things explained
-visually. A skill that lets the agent build native visual interactives in seconds is what makes it
-feel like an operating system and not a chat window.
+visually. A skill that lets the agent build native visual interactives is what makes it feel like an
+operating system and not a chat window.
+
+A rule is what the design holds. It does not say the code on `main` already keeps all of it: a part
+that is In progress or Designed is marked in the rule, and the next section lists them, so nobody looks
+for a greeting, a "ship" word or an Autopilot list that is not there.
 
 How to use this page: read it once before you design or change anything the person can see, and
 check your work against [the checklist at the end](#checking-a-change-against-the-principles). Pieces
 of the system link back here from their own pages, under "Principles it keeps".
+
+## Where the rules stand on main
+
+Five rules need no caveat for `main`: stupidly simple, 200 ms, the answer is the thing, colour says who
+and original. For the others:
+
+| Rule | Status | What `main` does | What it does not do |
+|---|---|---|---|
+| [The person is a passenger](#the-person-is-a-passenger) | Partly shipped | Each step is narrated in plain words, with its reason on hover, and the machine draws pictures of itself for the exact words listed under records before models. | The passenger brief's later pieces are designed: browser tools, promises, the holding card and the update turn. See [cards and pictures](architecture/cards-and-pictures.md). |
+| [Full access with undo](#full-access-with-undo) | Partly shipped | The agent runs as the person with passwordless sudo and the CLIs in their no-prompt modes. On an installed system a restore point of the system files is taken before every turn, the newest 30 are kept, and `undo` puts the files back at the next restart. | The live image has no restore points, and the home folder and apps have none. The installer's red button that names the disk is designed; `bombadil-install` asks for the disk's name to be typed unless it is given `--yes`. See [restore points](architecture/restore-points.md). |
+| [Real native apps](#real-native-apps) | Partly shipped | An app is a folder in `~/Apps/<name>/` that opens as a native window by name and reloads in place. | A history with undo for each app is designed. `~/Apps` is in no restore point, so undoing a turn that built an app leaves the app. See [app kit](architecture/app-kit.md). |
+| [One machine one conversation](#one-machine-one-conversation) | Shipped | Claude and Codex run the same `os-mcp` tools on the same files. | A switch of provider starts a fresh conversation: `agentd` drops the conversation id. See [agentd](architecture/agentd.md). |
+| [Recovery without the broken part](#recovery-without-the-broken-part) | Partly shipped | `Super+Escape` stops through agentd's socket, `bombadil undo` runs with no daemon, `Super+Ctrl+Escape` restarts the bar, and agentd, the bar and notifications restart when they die. | The rollback of a failed start, repair and reinstall from the stick and the rescue page are designed. See [session services](architecture/session-services.md) and [the installed OS](architecture/installed-os.md). |
+| [Records before models](#records-before-models) | Partly shipped | "why" during a turn, "why is this here", `history`, the closing line with Details and the pictures of the machine (`network`, `boot`, `disks`, `sound`, `screens`) answer with no model. | The holding card, `remember` and `forget` and the list of what runs on its own are designed. See [cards and pictures](architecture/cards-and-pictures.md) and [the brain](architecture/brain.md). |
+| [The person's press reaches people](#the-persons-press-reaches-people) | Partly shipped | The agent has no tool that sends. A mail draft leaves only on the person's press on the Mail window's Send, which `agentd` checks and refuses from inside a turn. | For everything else the rule is held by the system prompt and the design, not by a block: the agent has a shell, the network and sudo. Other kinds of press are designed. The word "ship" belongs to coding sessions, which are In progress. See [the security model](security-model.md#things-that-cross-to-other-people) and [coding sessions](architecture/coding-sessions.md). |
+| [Nothing runs unseen](#nothing-runs-unseen) | Partly shipped | A job, one-shot watcher or timer the agent starts is a transient user unit, a row on the desk's Watching card (at most 20 at once) with a stop that needs no model. The image's own background programs are units. | The single list (Autopilot) and promises, routines and watchers that survive a restart are designed. The self-improvement loop is In progress. A process the agent starts by hand is not listed. See [the desk](architecture/desk.md#the-jobs-registry) and [the loop](architecture/loop.md). |
+| [Plain files stay the truth](#plain-files-stay-the-truth) | Partly shipped | The Brain's index sits beside the files and can be rebuilt. Undo swaps the system root and leaves the home folder alone. | Updates, and the split of Bombadil's defaults in `/usr` from the person's short settings files, are designed: the skeleton's `hyprland.lua` is a whole config copied into the home at install. A refresh that keeps the home is In progress. An edited document landing beside its original is designed. See [the installed OS](architecture/installed-os.md). |
+| ["This" means what you see](#this-means-what-you-see) | Partly shipped | The Brain's words "brain" and "why is this here" read what is in front: the focused window, the browser tab, a terminal. | The chip that gives every ask the screen context is designed: nothing on `main` writes the `[Screen]` block. See [the brain](architecture/brain.md) and [the interaction model](ux/README.md). |
+| [Quiet at rest](#quiet-at-rest) | Partly shipped | The screen at rest is the wallpaper and the pill, and a widget appears only with something to say. Under `BOMBADIL_REDUCE_MOTION=1` the stone's roll, knock, glow and hop and the wallpaper's fade have a still version. | Nothing sets that variable. The lean, the desk's ring and fold, the strips' fade and the fades of the line, the picture and the AI card ignore it. The greeting and goodbye are In progress. See [the design system](design-system/README.md#reduced-motion) and [the voice](architecture/voice.md). |
+| [One design language](#one-design-language) | Partly shipped | The shell and the kit read `Theme.qml`, and a test fails a literal colour in a shell file. The shell's words are fixed strings in the plain register. | Voices that change a greeting are In progress. See [the design system](design-system/README.md) and [the voice](architecture/voice.md). |
+| [Degrade and recover](#degrade-and-recover) | Shipped | The bar waits for agentd and says so, the Brain looks at its logs every 60 seconds without a file watcher, a picture that cannot draw costs the pictures and not the bar, and while the AI rests, launcher words and `!` commands still run and asks wait. | Greetings and empty-place lines as local templates are In progress with the voice. |
 
 ## What the machine is
 
@@ -26,41 +57,49 @@ loop. A change that makes the person operate the machine (a settings page, a wiz
 works against this.
 
 In practice: the machine explains while it drives, a picture of the machine comes from the machine,
-and nothing needs a new key to learn. Decided in the
+and nothing needs an extra key to learn. Decided in the
 [passenger brief](design/passenger-brief.md#the-rules) and the [UX brief](design/ux-brief.md#the-rules).
 
 ### Full access with undo
 
 **The agent has full access, and safety is a restore point instead of a permission prompt.** The
-agent runs as the person, with passwordless sudo and the vendor CLIs in their full-auto modes: no
+agent runs as the person, with passwordless sudo and the vendor CLIs in their no-prompt modes: no
 prompts, no countdowns, no sandbox between the person and the AI. Two things replace guard rails.
-Every change shows in plain words as it happens, and a restore point is taken before every turn, so
-"undo" puts the system back and says exactly what it covered.
+Every change shows in plain words as it happens. On an installed system a restore point of the
+system files is taken before every agent turn, so "undo" puts those files back at the next restart
+and says exactly what it covered. It does not touch the person's home folder or apps, and the live
+image, which keeps no restore points, says that undo starts once Bombadil is installed.
 
 In practice: do not add a confirm dialog to something undo can reverse; make it visible and
-undoable instead. Steps that undo cannot follow are different, and the rules for those are
-[the person's press reaches people](#the-persons-press-reaches-people) and the installer's rule that
-nothing is erased that the person did not name. Decided in the [UX brief](design/ux-brief.md#the-rules),
-[foundation choices](design/foundation-choices.md) and the
+undoable instead. A step that undo cannot follow is not paused either: it turns red on the line with
+its exact command, Esc stops it, and the closing line says it cannot be undone
+([decision D-1428](decisions/limits-and-recovery.md#d-1428)). Two things do wait for the person:
+what leaves the machine, which is [the person's press](#the-persons-press-reaches-people), and
+erasing a disk, where nothing is erased that the person did not name (the installer asks for the
+disk's name to be typed; the red button that names it is designed). Decided in the
+[UX brief](design/ux-brief.md#the-rules), [foundation choices](design/foundation-choices.md) and the
 [installed OS brief](design/installed-os-brief.md#the-rules).
 
 ### Real native apps
 
 **What the agent makes is a real native app, never a web page on a port.** An app the agent writes is
-a native window built from the app kit, opened by name, changed by talking and rolled back on its
-own. That is what separates an operating system from a chatbot that writes code. The kit and the
-skill that teaches it exist so an app appears about a second after it is described.
+a native window built from the app kit, opened by name and changed by talking. That is what separates
+an operating system from a chatbot that writes code. The kit and the skill that teaches it exist so
+the window can appear as soon as the agent has written its files, with no compile step; the design
+aims at about a second. Rolling an app back on its own, with a history for each app, is designed and
+not built, and undo covers system files only.
 
-In practice: new capabilities for generated apps go in the kit and its skill, in the OS's look; a
+In practice: capabilities for generated apps go in the kit and its skill, in the OS's look; a
 feature that only works as a localhost web page does not ship. Decided in the
 [UX brief](design/ux-brief.md#the-rules) and [foundation choices](design/foundation-choices.md).
 
 ### One machine one conversation
 
-**One machine, one conversation, one memory the person can read.** There are no chat threads. What
-the OS can do lives in one tool server and in plain files, so Claude and Codex run it the same way
-and switching between them loses nothing. What the machine remembers is stored where the person can
-read it.
+**One machine, one conversation, one memory the person can read.** There is no list of separate
+chats. What the OS can do lives in one tool server and in plain files, so Claude and Codex run the
+same tools on the same files. What the machine made and recorded stays when the person switches
+provider, but the conversation does not: the other provider starts a fresh one. What the machine
+remembers is stored where the person can read it.
 
 In practice: put an ability in `os-mcp`, not in one provider's prompt; keep state in plain files or
 a rebuildable index. Decided in the [UX brief](design/ux-brief.md#the-rules) and the
@@ -69,9 +108,9 @@ a rebuildable index. Decided in the [UX brief](design/ux-brief.md#the-rules) and
 ### Recovery without the broken part
 
 **Stop, undo and rescue never go through the part that broke.** The agent can edit the shell, the
-compositor config and the session daemon itself, so stop, undo, the rollback after a bad start and
-repair must work without the model, the network or the graphical shell, and every way back keeps the
-person's files.
+compositor config and the session daemon itself, so stop, undo, the rollback after a bad start
+(designed) and repair (designed) must work without the model, the network or the graphical shell,
+and every way back keeps the person's files.
 
 In practice: a recovery path that needs the thing it recovers is not a recovery path. Decided in the
 [UX brief](design/ux-brief.md#the-rules), the
@@ -81,12 +120,14 @@ In practice: a recovery path that needs the thing it recovers is not a recovery 
 ### Records before models
 
 **Records answer before models, and the machine explains itself from what it kept.** "Why?", "what
-changed?", "what are you holding?" and "what runs on its own?" are answered first from what the
-machine recorded, instantly and offline. A reason is the sentence the agent wrote just before it
-acted, kept, not a second model's guess made afterwards. A picture of the machine is captured from
-the machine, never drawn by a model, because a passenger cannot check a drawing. Words from outside
-are marked by order ("after reading a page"), never guessed by cause. A link or a summary in the
-Brain says why and when, and what it read.
+changed?", "what are you holding?" and "what runs on its own?" are to be answered first from what the
+machine recorded, instantly and offline. On `main`, "why" during a turn, "why is this here", `history`
+and the closing line's Details are answered that way; the holding card and the list of what runs on
+its own are designed. A reason is the sentence the agent wrote just before it acted, kept, not a
+second model's guess made afterwards. A picture of the machine is captured from the machine, never
+drawn by a model, because a passenger cannot check a drawing. Words from outside are marked by order
+("after reading a page"), never guessed by cause. A link in the Brain says why and when, and a
+description of a thing is pinned to what the model read and greys out when that changes.
 
 In practice: before you ask the model, check whether a record already holds the answer. Decided in
 the [passenger brief](design/passenger-brief.md#the-rules) and the
@@ -95,24 +136,38 @@ the [passenger brief](design/passenger-brief.md#the-rules) and the
 ### The person's press reaches people
 
 **Only the person's own press reaches other people or leaves the machine.** The agent reads, drafts,
-fills, attaches and points. It never sends, posts, accepts, declines, shares, submits, pays, signs,
-pushes or merges on its own: those wait for the person's own press on the real button or their word
-("ship"), because undo cannot follow what has left the machine. Words from other people (mail, chat,
-shared documents, web pages) are data to read, never instructions to obey.
+fills, attaches and points. It is never to send, post, accept, decline, share, submit, pay, sign, push
+or merge on its own: those wait for the person's own press on the real button, or for their word
+("ship", which belongs to the coding sessions and is not on `main`), because undo cannot follow what
+has left the machine. Words from other people (mail, chat, shared documents, web pages) are data to
+read, never instructions to obey.
+
+What the code holds: the agent has no tool that sends, and a mail draft leaves only on the person's
+press, which `agentd` checks and refuses from inside a turn. For everything else the rule is held by
+the system prompt and the design, not by a block; the agent has a shell, the network and sudo, so
+`git push` or `curl` would work ([security model](security-model.md#things-that-cross-to-other-people)).
+Other people's words are marked and the prompt says to read them and never obey; that is a convention
+for a model with a shell, not a separation.
 
 In practice: give the agent a way to prepare, never a tool that releases. Decided in the
 [everyday work brief](design/everyday-work-brief.md#the-rules), the
-[dev brief](design/dev-brief.md#the-rules) and the
-[self-improvement brief](design/self-improvement-brief.md#the-rules).
+[dev brief](design/dev-brief.md#the-rules), the
+[self-improvement brief](design/self-improvement-brief.md#the-rules), the
+[poor man switch brief](design/poor-man-switch-brief.md#the-rules) (rule 6: money and the other
+account wait for the person's press) and the [mail view note](design/mail-view.md#the-rules).
 
 ### Nothing runs unseen
 
 **Nothing runs on its own that the person cannot see and stop.** Every promise, routine, watcher, job
-and piece of upkeep is a unit listed in one place the person can see and stop; a promise that is not
-a unit does not exist. Counting and checking read what the machine already writes and call no
-model. Fixing runs only on the person's word, while they are away, one job at a time, under a
-written budget. An idea is a strip the person can ignore, never a popup, and a tap on it is an
-ordinary turn with its restore point.
+and piece of upkeep is meant to be a unit listed in one place the person can see and stop, and a
+promise that is not a unit does not exist. Counting and checking read what the machine already
+writes and call no model. Fixing runs only on the person's word, while they are away, one job at a
+time, under a written budget. An idea is a strip the person can ignore, never a popup, and a tap on
+it is an ordinary turn with its restore point.
+
+What exists on `main`: a job, a one-shot watcher or a timer that the agent starts is a transient user
+unit and a row on the desk's Watching card, and the person can stop it without a model. The single
+list, promises that survive a restart and the self-improvement loop are designed or In progress.
 
 In practice: background work is a visible unit with an owner and a stop, and it never sits on the
 path of a turn. Decided in the [passenger brief](design/passenger-brief.md#the-rules), the
@@ -123,10 +178,12 @@ path of a turn. Decided in the [passenger brief](design/passenger-brief.md#the-r
 
 **Plain files stay the truth, and the person's home is never rewritten.** Folders are still folders,
 and every tool and both agents read them. Any index sits beside them and can be rebuilt; deleting it
-loses a view, not the person's data. Install, update, refresh and undo only add missing files to
-the person's home. Bombadil's defaults live in `/usr` and change with each update; the person's own
-settings live in short files that load those defaults, and no update overwrites them. An edited
-document lands beside its original.
+loses a view, not the person's data. Undo swaps the system root only, so the home folder and apps
+stay as they are. The installed OS brief adds that install, update and refresh only add missing
+files to the home, that Bombadil's defaults live in `/usr` and change with each update, and that the
+person's own settings live in short files that load those defaults, so no update overwrites them.
+That split is designed and not built. Until the home has its own restore points, an edited document
+is meant to land beside its original (designed).
 
 In practice: never write over a file the person made; put defaults where updates can replace them.
 Decided in the [brain brief](design/brain-brief.md#the-rules), the
@@ -139,13 +196,13 @@ Decided in the [brain brief](design/brain-brief.md#the-rules), the
 
 **One pill, and three things to learn: Super (or Alt+Space) to talk, Esc to stop, "undo" to go
 back.** Everything else appears when the person calls it and leaves when it is done, so nobody needs a
-manual. Nothing new to learn: every addition is a word in the pill, a hover, or a mark on something
+manual. Nothing extra to learn: every addition is a word in the pill, a hover, or a mark on something
 already on screen.
 
-In practice: if a feature needs a new key, a new window to find or a page of settings, look for the
+In practice: if a feature needs a key, a window to find or a page of settings, look for the
 version that is a word in the pill. Decided in the [UX brief](design/ux-brief.md#the-rules) and the
 [passenger brief](design/passenger-brief.md#the-rules). The exact keys are in
-[the shell doc](architecture/shell.md).
+[keys and timings](ux/keys-and-timings.md#keys) and [the shell doc](architecture/shell.md).
 
 ### Something true in 200 ms
 
@@ -155,7 +212,9 @@ The line above the pill says what is happening in plain words, and it keeps sayi
 goes on.
 
 In practice: show progress from the first event, not from the first model token; route fixed
-commands around the model. Decided in the [UX brief](design/ux-brief.md#the-rules).
+commands around the model. The pill draws "On it" on the keypress, and the headless desktop test
+fails if agentd's first event (`turn_start`) comes more than 200 ms after Enter. Decided in the
+[UX brief](design/ux-brief.md#the-rules).
 
 ### The answer is the thing
 
@@ -172,16 +231,20 @@ In practice: when a reply would be long, it is a card, a picture or an app. Deci
 window, the page in the browser panel, the selection. Nobody should have to describe their own
 screen to their own computer.
 
-In practice: give the agent the screen context with every ask. Decided in the
-[UX brief](design/ux-brief.md#the-rules).
+In practice: let "this" come from the machine, never from the person describing their screen. The
+Brain's words do it on `main`; the design also gives the agent the screen context with every ask,
+which is not built. Decided in the [UX brief](design/ux-brief.md#the-rules).
 
 ### Quiet at rest
 
-**The screen at rest is wallpaper and one pill, and every movement means one thing.** No splash, no
-logo wallpaper, no vitals strip. Widgets appear only when they have something to say and fold away
-for whatever the AI brings. Bombadil speaks when the person arrives or leaves and is silent at
-rest. A movement always means the same thing (rolling is working, a knock is waiting on you, a hop
-is done, a lean is listening) and has a still version for reduced motion.
+**The screen at rest is wallpaper and one pill, and every movement means one thing.** No splash and
+no vitals strip, and the wallpaper is dark surfaces with at most a ghost of the stone. Widgets appear
+only when they have something to say and fold away for whatever the AI brings. Bombadil is meant to
+speak only when the person arrives or leaves and to be silent at rest; the voice is In progress and
+not on `main`. A movement always means the same thing (rolling is working, a knock is waiting on you,
+a hop is done, a lean is listening) and is meant to have a still version for reduced motion. On `main`
+only the stone's roll, knock, glow and hop and the wallpaper's fade have one, and nothing turns it on
+by default.
 
 In practice: before you add an animation, a badge or a greeting, say what single thing it means and
 when it goes away. Decided in the [identity brief](design/identity-brief.md#the-rules), the
@@ -193,8 +256,10 @@ when it goes away. Decided in the [identity brief](design/identity-brief.md#the-
 
 **White is the person, orange is the machine acting, blue is a coding session.** Amber is a step
 that touches the system or something waiting on the person, red is failed, offline or cannot be
-undone, and green is connected. The accent orange is used for nothing the machine is not doing right
-now. Every state also reads without colour.
+undone, and green is connected. The accent orange is the machine's colour: besides the machine at
+work it marks only what is chosen or primary (the primary button, the focus ring, the selected tab),
+never decoration. The stone's states read without colour, by shape and movement, and a coloured
+status elsewhere has words beside it.
 
 In practice: pick colours from the tokens by meaning, never by taste. Decided in the
 [identity brief](design/identity-brief.md#the-rules) and the [desk brief](design/widgets-brief.md#the-rules);
@@ -203,10 +268,11 @@ the tokens are in the [design system](design-system/README.md).
 ### One design language
 
 **The shell and every app read the same tokens, the same kit and the same plain voice.** Nothing is
-styled one-off. Things that speak are round and things that hold have 12 px corners. Words are
-full sentences in sentence case that name what changed and how to take it back; there are no emoji,
-no "Oops" and no exclamation marks in system text. A voice may change the words of a greeting,
-never a fact, a count or an error.
+styled one-off. Things that speak are round and things that hold have 12 px corners (controls have 8).
+Words are plain full sentences in sentence case that name what changed and how to take it back; there
+are no emoji, no "Oops" and no exclamation marks in system text. A voice, once there is one, may
+change the words of a greeting, never a fact, a count or an error; voices are In progress and not on
+`main`.
 
 In practice: use `Theme` and the kit's components, and write system text in the plain register.
 Decided in the [identity brief](design/identity-brief.md#the-rules), the
@@ -225,36 +291,74 @@ In practice: do not add decoration to carry character; movement and wording carr
 
 ### Degrade and recover
 
-**Every piece degrades, and nothing waits on a model it does not need.** Greetings and empty-place
-lines are local templates that cost nothing at boot and work offline. The Brain works without its
-file watcher. A card host that cannot draw costs the cards, never the bar. A missing optional part
-costs a feature, not the machine.
+**Every piece degrades, and nothing waits on a model it does not need.** The bar waits for the agent
+daemon and says so. The Brain works without its file watcher, looking at its logs every 60 seconds. A
+picture host that cannot draw costs the pictures, never the bar. While the AI rests, apps, files,
+launcher words and `!` commands keep working and asks wait instead of failing. A missing optional part
+costs a feature, not the machine. Greetings and empty-place lines are meant to be local templates that
+cost nothing at boot and work offline; the voice is In progress and not on `main`.
 
 In practice: when you add a dependency, decide what the person sees when it is missing, and test
-that. Decided in the [voice brief](design/voice-brief.md#the-rules), the
-[brain brief](design/brain-brief.md#the-rules) and the [passenger brief](design/passenger-brief.md#the-rules).
+that. Decided in the [poor man switch brief](design/poor-man-switch-brief.md#the-rules) (rule 1: nothing
+you made stops when the AI does), the [UX brief](design/ux-brief.md#the-rules) (rule 7) and, for
+greetings, the [voice brief](design/voice-brief.md#the-rules) (rule 7). The watcher and the picture
+host were set in the code, not in a brief: see [the brain](architecture/brain.md),
+[the shell](architecture/shell.md) and [cards and pictures](architecture/cards-and-pictures.md).
 
 ## Checking a change against the principles
 
-Before you open a pull request for something the person can see or that acts on their machine, ask:
+Before you open a pull request for something the person can see or that acts on their machine, ask.
+Each question names the rules it tests.
 
-1. Is something true on screen within 200 ms, and does the line say what is happening in plain words?
-2. Can the person see what changed and take it back, and did a restore point cover it?
-3. Does anything ask permission? If so, is it only because undo cannot follow the step?
-4. Does anything leave the machine or reach another person? Then only the person's own press may release it.
-5. Does it work the same under Claude and Codex, through `os-mcp` and plain files?
-6. Is the result a card, a panel, a picture or a native app, not a paragraph and not a web page?
-7. Does it use the `Theme` tokens and the kit, with no literal colours or sizes?
-8. Is it quiet at rest, does each movement mean one thing, and is there a still version?
-9. Could a record answer this without a model?
+1. Is something true on screen within 200 ms of Enter, do open, stop and undo skip the model, and does
+   the line say what is happening in plain words? ([Something true in 200 ms](#something-true-in-200-ms))
+2. Can the person see what changed, in plain words, and take it back, and on an installed system did a
+   restore point cover it? ([The person is a passenger](#the-person-is-a-passenger),
+   [Full access with undo](#full-access-with-undo))
+3. Does anything ask permission or leave the machine? A step undo can reverse never asks. A step undo
+   cannot follow on the machine is shown in red with its exact command and is not paused. Only the
+   person's own press releases what leaves the machine or reaches another person, and the one wait
+   inside the machine is the installer naming the disk before it erases it.
+   ([Full access with undo](#full-access-with-undo),
+   [The person's press reaches people](#the-persons-press-reaches-people))
+4. Does it work the same under Claude and Codex, through `os-mcp` and plain files the person can read?
+   ([One machine one conversation](#one-machine-one-conversation))
+5. Does it write over a file the person made, rewrite their home folder, or put a default where an update
+   cannot replace it? ([Plain files stay the truth](#plain-files-stay-the-truth))
+6. Is the result a card, a panel, a picture or a native app, not a paragraph and not a web page, and can
+   the person reach it without a key, a window to find or a page of settings?
+   ([The answer is the thing](#the-answer-is-the-thing), [Real native apps](#real-native-apps),
+   [Stupidly simple](#stupidly-simple))
+7. Does it use the `Theme` tokens and the kit, with no literal colours or one-off type, colours picked by
+   meaning and system text in the plain register? ([One design language](#one-design-language),
+   [Colour says who](#colour-says-who))
+8. Is it quiet at rest, does each movement mean one thing and have a still version, and does the
+   character come from movement and wording, not from decoration, a face or a mascot?
+   ([Quiet at rest](#quiet-at-rest), [Original](#original))
+9. Could a record answer this without a model, and does "this" mean what is in front of the person rather
+   than something they must describe? ([Records before models](#records-before-models),
+   ["This" means what you see](#this-means-what-you-see))
 10. Does anything run on its own? Is it a unit the person can see and stop?
-11. If a dependency is missing, what does the person see, and is there a test for it?
+    ([Nothing runs unseen](#nothing-runs-unseen))
+11. If a dependency is missing, or the part that broke is the one you changed, what does the person see,
+    is there a test for it, and do stop, undo and rescue still work with no model, network or shell?
+    ([Degrade and recover](#degrade-and-recover), [Recovery without the broken part](#recovery-without-the-broken-part))
 12. Is the piece documented under `docs/architecture/`, and are the decision and its status recorded in
     [decisions](decisions/README.md) and [the roadmap](roadmap.md)?
 
 ## Where each rule was decided
 
-Every design brief opens with its rules. They are the source of this page.
+Every one of the twelve briefs has a section of rules, and the table below lists ten of them. The other
+two keep rules of their own that this page does not collect: the
+[poor man switch brief](design/poor-man-switch-brief.md#the-rules), whose rules 1 and 6 are cited
+under degrade and recover and the person's press, and the tips brief
+([Tips' own rules](design/tips-and-desk-defaults-brief.md#tips-own-rules)). The
+[mail view note](design/mail-view.md#the-rules) has six rules of its own too, and its rule 2 is the
+person's press for mail. [Foundation choices](design/foundation-choices.md) is cited for two rules
+because it records the stack choices behind them, and it has no rules section; nor do the notes on
+[boot and the wallpaper](design/boot-and-wallpaper.md), the [design system](design/design-system.md) and
+the [Rust question](design/rust-question.md). How much of each brief is built is in the status column
+of [the list of briefs](design/README.md#all-briefs).
 
 | Brief | Rules about |
 |---|---|
