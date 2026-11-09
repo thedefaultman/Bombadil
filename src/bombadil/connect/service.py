@@ -43,7 +43,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import paths, procs
+from .. import paths, plaintext, procs
 from . import driver as drv
 from . import protocol
 from .protocol import (
@@ -188,8 +188,7 @@ def turn_scope(pid: int) -> bool:
     """Is this process inside an agent turn's scope (procs.cgroup_of, as outbox.py asks it)? `cgroup_of` says "no"
     for a process whose cgroup it cannot read, which would let one that cannot be told pass for the person, so the
     file is read first: what cannot be read raises, and `_scoped` refuses that as the agent's."""
-    (procs.PROC / str(pid) / "cgroup").read_text()
-    return procs.cgroup_of(pid) is not None
+    return procs.in_turn_scope(pid)
 
 
 def _task_fields(raw) -> dict:
@@ -1009,6 +1008,9 @@ class Service:
             raise Refusal(CHANGED, "That is not what was pressed for. Look at it again, then press again. " + NOT_DONE)
         if kind not in drv.KINDS:
             raise Refusal(REFUSED, "That is not something I do. " + NOT_DONE)
+        if any(plaintext.has_hidden(w) for w in (content.values() if isinstance(content, dict) else [content])):
+            raise Refusal(REFUSED, "That has characters in it that draw as nothing, so what you read is not all of "
+                                   "what would go. " + NOT_DONE)
         live = self._doer(kind, target)
         if not protocol.valid_proposal_id(proposal):
             raise _bad("That press did not say which proposal it was. " + NOT_DONE)

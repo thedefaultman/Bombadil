@@ -28,6 +28,7 @@ from bombadil.connect import client as connect_client
 from bombadil.connect import manifest, slack_setup
 
 OPEN, APP, INSTALL = slack_setup.SAY_OPEN, slack_setup.SAY_APP, slack_setup.SAY_INSTALL
+RESUME, INSTALL_AGAIN = slack_setup.SAY_RESUME, slack_setup.SAY_INSTALL_AGAIN
 ALLOW, TOKEN, WALL = slack_setup.SAY_ALLOW, slack_setup.SAY_TOKEN, slack_setup.SAY_WALL
 FIRST, FIRST_MISSING = slack_setup.SAY_FIRST, slack_setup.SAY_FIRST_MISSING
 STOPPED = slack_setup.SAY_STOPPED
@@ -59,6 +60,7 @@ def make_stage(request, home, monkeypatch):
         else:
             stage = ChromiumStage(request.getfixturevalue("chrome_proc"), site)
             monkeypatch.setattr(manifest, "creation_url", lambda: stage.creation_url)
+            monkeypatch.setattr(manifest, "apps_url", lambda: stage.apps_url)
         made.append(stage)
         return stage
     yield make
@@ -115,9 +117,9 @@ class Recorder:
 class Run:
     """One `run_setup` in a thread, with the browser service its calls go to."""
 
-    def __init__(self, stage, state="ok", name="Acme", opener=None, with_service=True):
+    def __init__(self, stage, state="ok", name="Acme", opener=None, with_service=True, store=None):
         self.stage = stage
-        self.store: dict = {}
+        self.store: dict = {} if store is None else store
         self.taker = FakeConnect(self.store)                          # the browser service's: where `take` stores
         self.asked = FakeConnect(self.store, state=state, name=name)  # the recipe's own: it only asks
         self.runner = None
@@ -231,6 +233,27 @@ def test_the_pattern_takes_a_token_whole_and_not_the_word_set_against_it():
     assert re.search(slack_setup.token_pattern(manifest.APP_TOKEN_PREFIX), user) is None   # the other kind is not it
 
 
+@pytest.mark.parametrize("spelled", [
+    lambda prefix: prefix * 30000,                 # one run of dashes and spellings, 150 thousand characters
+    lambda prefix: (prefix + " ") * 25000,         # a spelling to each word
+    lambda prefix: (prefix + "1-") * 40000,        # parts that are never long enough
+    lambda prefix: prefix + "a-" * 70000,
+    lambda prefix: prefix + "a" * 150000 + "A",
+], ids=["one long run", "each word", "short parts", "dashes", "one long tail"])
+def test_the_pattern_takes_no_longer_than_the_text_is_long(spelled):
+    # It is run on the one thread that answers every caller of the browser service, over what a page holds: a page that
+    # spells the prefix over and over must not hold the service for seconds (a lazy dash-spanning prefix took 13 s
+    # over 80 thousand characters).
+    for prefix in (manifest.APP_TOKEN_PREFIX, manifest.USER_TOKEN_PREFIX):
+        pattern = re.compile(slack_setup.token_pattern(prefix))
+        text = spelled(prefix)
+        started = time.monotonic()
+        pattern.search(text)
+        assert time.monotonic() - started < 1.0, (prefix, len(text))
+        real = slack_pages.app_token() if prefix == manifest.APP_TOKEN_PREFIX else slack_pages.user_token()
+        assert pattern.search(text + " " + real).group(0) == real   # and the token after all of it is still found
+
+
 def test_it_asks_for_nothing_that_acts_and_presses_nothing_itself(make_stage, runs, monkeypatch):
     monkeypatch.setattr(slack_setup, "CREATE_WAIT_S", 2.0)
     stage = make_stage()
@@ -272,7 +295,8 @@ def test_the_tokens_go_through_take_and_nowhere_else(make_stage, runs, capsys, c
     for c in takes:
         assert c["result"] in ({"stored": True}, {"stored": False, "found": False,
                                                   "why": "Nothing on the page looks like that."})
-        assert set(c["args"]) == {"pattern", "into"}
+        assert set(c["args"]) == {"pattern", "into", "url"}          # the value is never an argument, only what to look for
+        assert c["args"]["url"].startswith(f"/apps/{slack_pages.APP_ID}")
     assert re.fullmatch(stored[0]["args"]["pattern"], tokens[0]) and re.fullmatch(stored[1]["args"]["pattern"], tokens[1])
     out, err = capsys.readouterr()
     everything = json.dumps({"calls": run.browserd.calls, "said": run.said, "result": result,
@@ -362,6 +386,65 @@ def test_an_administrators_approval_wall_is_said_once_and_ends_it(make_stage, ru
     assert run.store == {"app_token": site.app_token}   # what was done stays done; the connection is left in setup
     assert "Yours: Allow" not in run.browserd.pointed()
     assert stage.pointer_label() is None
+
+
+def test_the_next_run_after_the_wall_goes_on_in_the_app_it_made_not_in_a_second_one(make_stage, runs):
+    site = slack_pages.Site(wall=True)
+    stage = make_stage(site)
+    first = runs(stage).start()
+    make_the_app(stage)
+    make_the_app_token(stage)
+    until(lambda: INSTALL in first.said, 20, "the first token to be taken")
+    assert stage.press_pointed("Yours: Install") == "Install to Workspace"
+    assert first.done() == {"ok": False, "say": WALL}
+    assert first.store == {"app_token": site.app_token}
+    site.wall = False       # the administrator approved it
+    second = runs(stage, store=first.store, with_service=False).start()   # the same browser service
+    until(lambda: RESUME in second.said, 20, "the list of apps")
+    assert [c["args"]["url"] for c in second.browserd.calls if c["op"] == "open"] == [manifest.apps_url()]   # not the
+    # page that makes an app
+    assert second.said == [RESUME]
+    assert stage.press_pointed("Yours: Open") == "Bombadil"
+    until(lambda: INSTALL_AGAIN in second.said, 20, "what is left to be said")
+    install_the_app(stage)
+    assert second.done() == CONNECTED
+    assert second.said == [RESUME, INSTALL_AGAIN, ALLOW, TOKEN]
+    assert second.store == {"app_token": site.app_token, "user_token": site.user_token}
+    assert stage.pointer_label() is None
+
+
+def test_a_run_that_has_only_the_second_token_asks_for_the_first_in_the_app_it_is_shown(make_stage, runs):
+    site = slack_pages.Site()
+    stage = make_stage(site)
+    run = runs(stage, store={"user_token": site.user_token}).start()
+    until(lambda: RESUME in run.said, 20, "the list of apps")
+    assert stage.press_pointed("Yours: Open") == "Bombadil"
+    until(lambda: APP in run.said, 20, "the first token to be asked for")
+    make_the_app_token(stage)
+    assert run.done() == CONNECTED
+    assert run.store == {"app_token": site.app_token, "user_token": site.user_token}
+
+
+def test_a_token_on_another_apps_page_is_not_taken_the_two_come_from_one_app(make_stage, runs):
+    site = slack_pages.Site()
+    stage = make_stage(site)
+    run = runs(stage).start()
+    make_the_app(stage)
+    make_the_app_token(stage)
+    until(lambda: INSTALL in run.said, 20, "the first token to be taken")
+    stage.goto("other")      # the person opens another app of theirs by hand, which has a User OAuth Token on its page
+    before = len(run.browserd.calls)
+    until(lambda: len([c for c in run.browserd.calls[before:] if c["op"] == "take"]) >= 3, 10, "several looks")
+    time.sleep(1.0)
+    after = [c for c in run.browserd.calls[before:] if c["op"] == "take"]
+    assert all(c["args"]["url"].startswith("/apps/A0ACME1234") for c in after)       # asked for in the app it began with
+    assert not any((c.get("result") or {}).get("stored") for c in after)             # and none of them was taken
+    assert "user_token" not in run.store and run.thread.is_alive()
+    stage.goto("basic")      # and back to the one this was started for
+    install_the_app(stage)
+    assert run.done() == CONNECTED
+    assert run.store == {"app_token": site.app_token, "user_token": site.user_token}
+    assert site.other_user_token not in run.store.values()
 
 
 @pytest.mark.parametrize("state, note, expected", [

@@ -38,6 +38,11 @@ def manifest() -> dict:
     }
 
 
+def apps_url() -> str:
+    """Slack's own list of the person's apps, where an app they made before is opened from."""
+    return "https://api.slack.com/apps"
+
+
 def creation_url() -> str:
     """Slack's own "create an app from this manifest" page."""
     body = json.dumps(manifest(), separators=(",", ":"))

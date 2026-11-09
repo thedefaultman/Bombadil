@@ -303,6 +303,16 @@ def test_connected_here_with_nothing_connected_offers_every_service_and_mail_alo
     accepted(card), accepted(mail_only)
 
 
+def test_a_service_a_fork_names_in_one_list_and_not_the_other_still_gets_a_row(monkeypatch):
+    """Connected here must not fail for everyone because a service has a title and no offer yet."""
+    monkeypatch.setitem(cardmake.SERVICE_TITLES, "asana", "Asana")
+    card = cardmake.connected_card([])
+    row = next(r for r in card["rows"] if r["id"] == "add:asana")
+    assert row["title"] == "Asana" and row["sub"] and row["state"] == "gone"
+    accepted(card)
+    assert next(r for r in card["rows"] if r["id"] == "add:notion")["sub"] == "Makes pages and comments when you press."
+
+
 def test_a_connection_that_was_put_away_is_offered_again_and_a_row_that_is_not_one_is_skipped():
     card = cardmake.connected_card([conn(state="off"), {"state": "ok"}, "x", None], [{"email": "no id"}, None])
     assert [r["id"] for r in card["rows"]][:2] == ["conn:slack:w1", "add:slack"]

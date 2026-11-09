@@ -65,6 +65,15 @@ class FakeConnect:
         self.state, self.name, self.note = state, name, ""
         self.id = "slack:w1"
 
+    def _steps(self) -> list[dict]:
+        """What the Slack driver says is still to do, from the tokens stored (src/bombadil/connect/slack.py `steps`)."""
+        app, user = "app_token" in self.store, "user_token" in self.store
+        steps = [{"id": "create", "say": "Create the app."}] if not app and not user else []
+        steps += [{"id": "app_token", "say": "Make an app-level token."}] if not app else []
+        steps += [{"id": "install", "say": "Install the app."}, {"id": "user_token", "say": "Copy its token."}] \
+            if not user else []
+        return steps
+
     def request(self, op, timeout=2.0, **args):
         self.calls.append((op, dict(args)))
         if self.fail is not None:
@@ -77,5 +86,6 @@ class FakeConnect:
             state = self.state if ready else "setup"
             return {"connections": [{"id": self.id, "kind": "slack", "service": "slack",
                                      "name": self.name if state == "ok" else "", "state": state,
-                                     "note": self.note if state == "error" else ""}]}
+                                     "note": self.note if state == "error" else "",
+                                     "steps": self._steps() if state == "setup" else []}]}
         raise self.ConnectError("That is not something the fake knows.", "bad_request")

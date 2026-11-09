@@ -27,11 +27,14 @@ is invented.
   page).
 - **The press is the person's.** The agent has `propose`, which puts a draft on a card; it has no tool that
   posts, replies, creates or comments. The shell's press on the card's Send reaches agentd, which checks who
-  pressed and what, and only then asks the connection service to do that one thing (rule 2 of the design, and
+  pressed and what, and only then asks the connection service to do that one thing (rule 1 of the design, and
   `outbox.py`).
 - **Other people's words are read, never obeyed.** A message, a task title and a notification's text reach the
   model inside a mark that says they are other people's words, with invisible and direction-changing characters
-  removed. A turn that has read any of them is remembered, and what it proposes is held to what the person typed
+  removed (`plaintext.py` says which: the whole of Unicode's default-ignorable set, the tag block and the variation
+  selectors with it, keeping only the joiner and the selector an emoji is spelled with) and every line of a message
+  quoted with `> `, so that a line in a message that looks like the head of another cannot pass for one. A turn that
+  has read any of them is remembered, and what it proposes is held to what the person typed
   (the proposal says so, and the card flags a place the person has never received a message from).
 
 ## Processes
@@ -70,7 +73,8 @@ flowchart LR
 | Notifications | `shell/Notifications.qml` | Quickshell's `NotificationServer` in place of mako |
 
 Nothing waits for a connection: a caller that cannot reach the service says "Connections are not running yet" in
-its own line, agentd's pokes give up after 0.3 s, and a turn never blocks on Slack.
+its own line, agentd's calls to the service each carry a limit of their own (a second and a half to say what was
+read, up to twenty to add a connection and twenty-five for a press), and a turn never blocks on Slack.
 
 ## Files and state
 
@@ -84,7 +88,9 @@ its own line, agentd's pokes give up after 0.3 s, and a turn never blocks on Sla
 
 The service accepts a peer whose uid is 1000 to 59999 (override `BOMBADIL_CONNECT_UIDS=min-max`), and refuses any
 other. The agent runs as one of those uids, which is why `perform` has the checks below and why the tokens are in
-a store it cannot read.
+a store it cannot read. Four ops are the person's own and are refused (`refused`, "... is yours to do") to a peer
+inside an agent's turn before anything else: `add_connection`, `remove_connection`, `store_secret` and `seen`.
+`fake_inject` is in the op list for the fake engine only (the tests and the VM smoke): the real service refuses it.
 
 ## Wire protocol (`connect.sock`)
 
@@ -96,8 +102,11 @@ service revoked the token: the connection goes to `error` and says so), `rate_li
 `already` (that press was performed), `busy`, `changed` (the fingerprint is not what was pressed for),
 `unknown_outcome`, `internal`.
 
-**Connection** `{"id": "slack:T123"|"mcp:linear", "kind": "slack"|"mcp", "service", "name", "state": "ok"|"signin"|
-"setup"|"blocked"|"error"|"off", "note", "reads": str, "can_post": bool, "steps": [...], "open"?: url}`.
+**Connection** `{"id": "slack:w1"|"mcp:linear", "kind": "slack"|"mcp", "service", "name", "state": "ok"|"signin"|
+"setup"|"blocked"|"error"|"off", "note", "reads": str, "can_post": bool, "steps": [...], "task_fields"?: {...},
+"open"?: url}`. (A Slack connection's id is a counter, `slack:w<N>`; the workspace's own id is in the refs of its
+messages.) `task_fields` says which boxes a new task and a comment take in that service, from its recipe: cards and the
+agent's `connections` tool use it, and a connection that says none gets a title and a description.
 **Message** and **Task** are the shapes in `connect/driver.py` (`MESSAGE_KEYS`, `TASK_KEYS`). Every text field
 is cut and made plain by the service (`clean_message`, `clean_task`) whatever the driver gave.
 
@@ -119,7 +128,10 @@ is cut and made plain by the service (`clean_message`, `clean_task`) whatever th
 peer's uid is allowed; the peer is not inside an agent's turn (`procs.cgroup_of(pid)` is None, as in
 `outbox.py`; a peer whose `/proc/<pid>/cgroup` cannot be read is refused as `agent`, since `cgroup_of` would
 call it "not in a turn"); `fingerprint` equals `driver.fingerprint(kind, target, content)`
-worked out again here; the connection the target names exists, is `ok` and its driver can do `kind`; the
+worked out again here; none of the words in `content` holds a character that draws as nothing (`plaintext.has_hidden`,
+code `refused`: what the person read in the box has to be all of what goes; a draft never holds one, since
+`clean_content` takes them out first, so this is the last look for a press that did not come from agentd); the
+connection the target names exists, is `ok` and its driver can do `kind`; the
 `proposal` id has not been performed (a second press of the same id is answered `already` with no act, and
 the ids are kept in `connect.db`, so a restart does not forget); and no other `perform` of that id is running
 (`busy`, which is checked before `already`: a press in flight already has its row, and answering "may have gone"
@@ -158,9 +170,10 @@ manifest Bombadil prepares, and it keeps normal limits and can receive new messa
   housekeeping subtypes are not for the person, but a message carries `mine` (its sender is the person), so a thread
   shows "You" and the new-place warning can see the person's own posts. `reason` says which. Text is made plain (mentions, channel links and links
   become words; `&amp;`, `&lt;`, `&gt;` are undone). Names are looked up once and kept a day.
-- **Start**: after connecting, the driver backfills direct and group direct messages since the conversation's
-  `seen_ts` (at most 50 per conversation, `conversations.history`), so "what did I miss" is true after a restart.
-  Mentions and threads come from events only.
+- **Start**: after connecting, the driver backfills direct and group direct messages from other people: up to 100
+  such conversations (`conversations.list`), the last 20 messages of each from the last 14 days
+  (`conversations.history`), so "what did I miss" is true after a restart. What is unread is the service's to say
+  (its own `seen_ts`), not the driver's. Mentions and threads come from events only.
 - **`perform("slack_reply", target, content)`**: `target` is a message ref; `content` is the text (at most 3000
   characters). `chat.postMessage` with the user token to the ref's channel and `thread_ts` of its thread (or its
   own ts when it has none); the receipt line is `Posted in #launch · 11:04` or `Replied to Priya in a direct
@@ -179,11 +192,17 @@ same way. The person presses everything; Bombadil points and reads the two token
 the service, never through the model. The generate, install and read steps are one loop that takes whichever token appears and points at what
 is still missing, so pressing Install before generating the app token does not hang it; a pointer the page lost
 (reload, redraw) is drawn again on the next look. A token is recognised by its shape (`xapp-` or `xoxp-`, then
-dash-separated parts and a tail of at least 20 lowercase letters and digits) and only when it stands apart from the
-words beside it. If the workspace needs an administrator to approve apps, Slack says so on its page: the recipe says
-that once and ends, leaving the connection in `setup` with whatever token was already stored (the recipe has no way
-to set `blocked`), and the next "connect slack" picks up from there; Slack messages then come from Slack's own
-notifications (below). Cancelling (the typed words "stop" or "cancel") is answered within a second and takes the
+dash-separated parts and a tail of 20 to 100 lowercase letters and digits) and only when it stands apart from the
+words beside it. The pattern is written to take time in proportion to the page's text however a page spells it
+(a page that repeats the prefix cannot hold the browser service, which answers every caller on one thread). If the
+workspace needs an administrator to approve apps, Slack says so on its page: the recipe says that once and ends,
+leaving the connection in `setup` with whatever token was already stored (the recipe has no way to set `blocked`).
+The next "connect slack" does not make a second app: the connection's own steps say which token it holds, so the
+recipe opens Slack's list of the person's apps instead of the page that makes one, points at the app called Bombadil,
+and goes on from the app the person opens with only what is still missing. A run takes tokens only from pages of the
+one app it began with (`take` is told the address the page must have, and looks at it in the same look as the
+page), so an `xapp-` and an `xoxp-` from two different apps are never paired. Until the app is approved, Slack
+messages come from Slack's own notifications (below). Cancelling (the typed words "stop" or "cancel") is answered within a second and takes the
 pointer away. The recipe presses nothing and runs only fixed scripts. Unverified against Slack's real pages; it
 locates things by their visible words and by token shape and is tested against a page that imitates them, in a real
 headless Chromium and against a fake DevTools port.
@@ -206,10 +225,12 @@ unset and no recipe names one), so it is not used. `add_connection` starts the f
 listens on a loopback port for the redirect, which must carry `iss` where the server advertises it (the SDK refuses
 a redirect without it), exchanges the code, stores the tokens and pushes `connection` with state `ok`.
 
-A recipe per service (`share/connect/recipes/<service>.toml`) says where its server is, the scopes to ask for (read
-only where there is a choice), a sentence for `reads`, how to list what waits on the person (a tool name, its
+A recipe per service (`share/connect/recipes/<service>.toml`) says where its server is, the scopes to ask for (the
+read scopes always, and the write scopes whenever the recipe can create or comment, which all five can: so the consent
+page asks to write too, while a post still happens only when the person presses; Notion names no scope and the sign-in
+asks for the one its server advertises), a sentence for `reads`, how to list what waits on the person (a tool name, its
 arguments and how its answer maps to a Task), and how to create an item and add a comment (the tools and how the
-card's fields map to their arguments). Recipes are data so a fork can add a service; each carries
+card's fields map to their arguments). Recipes are data, so a fork adds a service with a file of its own and a name in `protocol.SERVICES`, `cardmake.SERVICE_TITLES`, `cardmake.OFFERS` and `service.SERVICE_NAMES` (two to twelve lowercase letters); Notion's recipe has no `[list]` on purpose (what waits on a person lives in some database of theirs), so it makes pages and comments and reads nothing; each carries
 `verified = false` until someone has run it against the live server. Nothing here has been run against a real
 Linear, Notion, Jira, Todoist or ClickUp: the driver is tested against a fake server written with the same SDK
 and a fake OAuth provider. The only contact with the real servers was unauthenticated, on 2026-11-08: all five
@@ -226,19 +247,22 @@ Linear") with the item's URL when the answer has one.
 ## The browser service (`bombadil-browserd`, read half)
 
 One user service holding one connection to the panel's Chromium over its DevTools websocket (`ws.py`; the HTTP
-side stays in `browser.py`). Socket `browserd.sock`, JSON lines as above, peers of the person's uid only.
+side stays in `browser.py`). Socket `browserd.sock`, JSON lines as above, peers of the person's uid only, and not a
+peer inside an agent's turn (its cgroup is a turn's scope, asked again for every request and failing closed; the answer
+is `refused` and the connection is closed). The one caller, agentd's setup recipe, is no turn's process. Without that a
+turn could open pages of its own choosing and, through `take`, write a token of its own choosing into any connection.
 
 | op | args | result |
 |---|---|---|
 | `status` | | `{"up": bool, "tabs": int}` |
 | `open` | `url` | `{"tab": {"id", "url"}}`: `browser.open_url`, so the panel slides in. A request with no `tab` afterwards means this page; if it was closed the answer is "That page is gone.", never the first page of the person's |
 | `tabs` | | `{"tabs": [{"id", "url", "title"}]}`; addresses are cut at 2000 characters (`protocol.MAX_URL`) here and in `open` |
-| `read` | `tab?`, `selector?` | `{"url", "title", "text", "untrusted": true}`: the page's visible text (at most 200 000 characters) or the selector's. Other people's words |
+| `read` | `tab?`, `selector?` | `{"url", "title", "text", "untrusted": true}`: the page's visible text (at most 200 000 characters) or the selector's. An element the page does not show (a hidden input, a box kept closed) is "nothing on the page matches that", as for `find` and `point`, and a password field is blank. Other people's words |
 | `find` | `tab?`, `text` | `{"found": bool, "rect": {x, y, w, h}}` of the visible button, link or input whose text or label matches |
 | `point` | `tab?`, `text` or `selector`, `label`, `ttl?` | `{"pointed": bool}`: an orange ring on the element and a pointer with a label chip beside it, drawn by an element the service injects (`pointer-events: none`, always on top), gone after `ttl` seconds (20), on `unpoint` or on a navigation |
 | `unpoint` | `tab?` | `{}` |
 | `wait` | `tab?`, `url?` (regex), `text?`, `timeout?` (30) | `{"matched": bool, "url"}`, polling every 300 ms |
-| `take` | `tab?`, `pattern`, `into: {"connection", "name"}` | `{"stored": bool, "found": bool, "why"?}`: the first match of the regex in the page's visible text or the values of its visible input fields (a hidden, not-yet-generated field is not read) goes straight to the connection service's `store_secret`; the value is never returned or logged |
+| `take` | `tab?`, `pattern`, `into: {"connection", "name"}`, `url?` (regex) | `{"stored": bool, "found": bool, "why"?}`: the first match of the regex in the page's visible text or the values of its visible input fields (a hidden, not-yet-generated field is not read) goes straight to the connection service's `store_secret`; the value is never returned or logged. With `url`, nothing is taken unless the page's address matches, decided in the same look as the text |
 
 It has no hands: it never clicks, types or navigates a page by itself (`open` is the one navigation, and it is the
 panel opening). Writing in a page, with the orange frame, is a later piece.
@@ -285,7 +309,7 @@ with `connect-result`; there is no tool that sends):
 | `messages_unread(limit?)` | the unread messages to the person, as text inside the other-people's-words mark, and shows the list card |
 | `message_thread(ref)` | one thread's messages, same mark; opens its message card |
 | `tasks_waiting(service?)` | the items that wait on the person, same mark |
-| `connections()` | what is connected and in what state (the service's own words, no tokens), and the boxes a new task or a comment takes in each service (use those keys with `propose`). It names no workspace, is not inside the other-people's-words mark and does not taint the turn |
+| `connections()` | what is connected and in what state (the service's own words, no tokens), and the boxes a new task or a comment takes in each service (use those keys with `propose`). It names no workspace and says nothing of what a connection reads (a workspace's name is its administrator's words), is not inside the other-people's-words mark and does not taint the turn |
 | `propose(kind, target, content)` | a proposal made `created_by: "agent"`, its card shown, the line "Reply to Priya is ready. Sending is yours." `content` is a string (a reply) or an object of the task's boxes. The place and the name in the line come from the service, never from the model, so there is no `where` argument |
 
 A turn that has called `messages_unread`, `message_thread`, `tasks_waiting` or a mail read tool is tainted until
@@ -308,6 +332,10 @@ here"; `connect slack`, `connect linear`, `connect notion`, `connect jira`, `con
 start the setup (the first step opens in the panel). These words win over an app of the person's with the same name
 (as mail's do), and `apps.create` refuses an app named `slack`, `messages`, `unread`, `connections` or `connected`
 (`apps.CLAIMED`), since it could never be opened from the pill; Tab offers `messages` and `connections` only.
+The `connect <service>` words are the person's own: a word written to agentd's socket from a process inside an agent's
+turn is answered "Connecting a service is yours to do. It cannot be done from an agent's turn." and does nothing.
+Typing `send it` (and the other words mail's use) while a reply or a ticket waits on a card is answered "Sending is
+yours. It's under the pointer." without a model and without a send, as it is for a mail draft.
 
 ## Cards
 
@@ -349,7 +377,10 @@ send button has the orange ring and "Yours: Send" while the proposal is `ready` 
 fingerprint) and the box still holds exactly the proposal's `content`; it waits (as Mail's does) until the box has
 drawn exactly what would be sent. A press carries the `fingerprint` the shell was last told for the content it
 draws. After an `edit` the shell keeps what the person is typing and takes only the proposal's state, `ready` and
-fingerprint from agentd's update. The ring waits 300 ms after the button becomes ready, so a click already on its
+fingerprint from agentd's update, with one exception: agentd takes characters that draw as nothing out of what a
+box holds (words pasted from a page often have some), and says what the box held in `cleaned_from` on its update.
+While the box still holds exactly that (nothing was typed after the edit it was about), the shell writes the cleaned
+words into it, so that what is read is all of what goes and the button is not left dark for a reason no one can see. The ring waits 300 ms after the button becomes ready, so a click already on its
 way to something else does not press. A box is read-only unless the proposal is `open`. A card takes the keyboard only
 after the person's Reply or a click in its box; a card with a box is drawn on the one screen the person was on when
 it arrived, and a newer card replaces one being typed in (the typed words are flushed to agentd first and kept there
@@ -358,7 +389,7 @@ as a draft). A card with a box is 560 wide, a list 480.
 **Connected here** is the list card "Connected here": each mail account (from the mail service), the Slack app and
 each tool, one row each with what it reads (`reads`), its state, and "Disconnect" (mail's `remove_account` or
 `remove_connection`); a service not yet connected is a quiet row with "Connect". It opens by its words only
-(`connections`, `connected`, ...), as a list card; the design calls for a holding card that lists it, and no such
+(`connections`, `connected`, ...), as a list card; a holding card that lists it would be a later piece, and no such
 card exists in the code yet.
 
 ## Notifications (replacing mako)
@@ -370,12 +401,12 @@ agentd says `{"type": "notification_invoke", "id", "action"?}` (the shell invoke
 a browser tab focuses it) or `{"type": "notification_close", "id"}`. agentd's `notifications.py` decides what
 the person sees: a notice with the sender and preview ("Priya Shah: Legal just signed off", source `notify`, ttl 10 s,
 30 s for critical) with Reply (a message card built from the notification, source `notification`) and Open
-(`notification_invoke`, so the page that sent it comes forward); at most one notice per app per two seconds (a
+(`notification_invoke` with the notification's `default` action, so the page that sent it comes forward; no other action of the app's is ever invoked from here); at most one notice per app per two seconds (a
 burst becomes "+N" on the last); no notice at all for a notification whose summary and body are empty. The
 notification text is other people's words; text that is not a string counts as empty, and a notification with the
 same shell id is an update, not a new notice. The bar holds at most 64 notifications (the oldest is dismissed when a
 65th arrives), cuts text at 2000 characters and actions at 8; one that arrives while agentd is away waits and is
-sent once. An invoke with no matching or default action dismisses it. `mako` leaves `iso/packages.x86_64` and `hyprland.lua`.
+sent once. An invoke with no matching or default action dismisses it, so Open on a notification that has no `default` action puts it away. `mako` leaves `iso/packages.x86_64` and `hyprland.lua`.
 
 ## The image
 
@@ -384,15 +415,17 @@ sent once. An invoke with no matching or default action dismisses it. `mako` lea
 `python-httpx` stays because `slack.py` imports it. The VM smoke imports `httpx`, `httpx2` and `MCPError` (which
 exists only in 2.x, so it is also a version guard). `wl-clipboard` and `libnotify` were already there; `mako` is gone.
 A snapshot rollback of the whole root also rolls back `/var/lib/bombadil-connect`: the tokens return to what they
-were then, and the ids of performed presses with them (a press the rollback undid can be pressed again, which is
-what undo means). `bombadil-connect.service`
+were then (one the person has since replaced or had revoked comes back, and the connection says so when the service
+refuses it), and the ids of the presses performed since are forgotten. A rollback cannot take back what went out: a
+post stays posted, and a proposal that was sent stays sent in the person's own state, which is in the home directory
+that a rollback does not touch, so it answers with its old receipt and asks the service nothing. `bombadil-connect.service`
 is a system unit (`User=bombadil-connect`, `StateDirectory=bombadil-connect` mode 0700, `RuntimeDirectory=bombadil-connect`,
 `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`,
 `MemoryMax=300M`, `Restart=on-failure`, and the kernel-facing keys systemd offers that the service does not need:
 `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, an empty
 `CapabilityBoundingSet`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`; not
 `ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), enabled by a symlink in `multi-user.target.wants`; the user comes from
-`/usr/lib/sysusers.d/bombadil-connect.conf`. `bombadil-browserd.service` is a user unit like mail's. `share/skills/bombadil-connect/SKILL.md`
+`/usr/lib/sysusers.d/bombadil-connect.conf`. `bombadil-browserd.service` is a user unit like mail's: it starts at login, before the session has a screen, so the session's `hyprland.start` hook hands it the display and the compositor's instance and starts it again, as it does for mail (opening a page starts Chromium on that display and slides the panel in), and `KillMode=process` lets a browser it started outlive a restart of the service. `share/skills/bombadil-connect/SKILL.md`
 tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills`.
 
 ## Modules

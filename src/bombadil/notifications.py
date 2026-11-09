@@ -77,7 +77,7 @@ class Held:
     app: str
     summary: str
     body: str
-    action: str | None        # what Open invokes: the notification's default action, else its first
+    action: str | None        # what Open invokes: the notification's default action, if it has one
     notice: int = 0           # the notice that says it
     carded: bool = False      # Reply showed it as a card, which may still be open
 
@@ -92,10 +92,12 @@ class Burst:
 
 
 def _action_of(actions) -> str | None:
-    """The action Open invokes: "default" when the notification has one (what a click on it does), else its first."""
+    """The action Open invokes: "default" when the notification has one (what a click on it does), else none. An
+    app's other actions are its own words ("Delete", "Archive"), not something a press on Open means, so they are
+    never invoked from here; with no default, Open puts the notification away."""
     ids = [a["id"] for a in actions if isinstance(a, dict) and isinstance(a.get("id"), str)
            and _ACTION.fullmatch(a["id"])] if isinstance(actions, list) else []
-    return "default" if "default" in ids else (ids[0] if ids else None)
+    return "default" if "default" in ids else None
 
 
 def _words(value, limit: int) -> str:

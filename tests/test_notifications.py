@@ -210,13 +210,13 @@ async def test_open_brings_the_page_forward_by_the_notifications_own_action_and_
 
 
 @pytest.mark.asyncio
-async def test_open_takes_the_first_action_when_there_is_no_default_and_none_when_there_are_none(rig):
-    rig.take(4, actions=[{"id": "view", "label": "View"}, {"id": "snooze", "label": "Snooze"}])
+async def test_open_never_takes_an_action_that_is_not_the_default(rig):
+    # "Delete" and "Archive" are the app's own words: a press on Open is not a press on either.
+    rig.take(4, actions=[{"id": "delete", "label": "Delete"}, {"id": "archive", "label": "Archive"}])
     await rig.notices.action(rig.notices.live()[0]["id"], "open")
     rig.take(5, app="Mail")
     await rig.notices.action(rig.notices.live()[0]["id"], "open")
-    assert rig.to_bar == [{"type": "notification_invoke", "id": 4, "action": "view"},
-                          {"type": "notification_invoke", "id": 5}]
+    assert rig.to_bar == [{"type": "notification_invoke", "id": 4}, {"type": "notification_invoke", "id": 5}]
 
 
 @pytest.mark.asyncio

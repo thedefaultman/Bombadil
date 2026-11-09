@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from . import paths
+from . import paths, plaintext
 from .connect.driver import KINDS, fingerprint
 from .connect.protocol import one_line
 
@@ -58,12 +58,19 @@ class ProposalError(ValueError):
     """The words that are not a proposal, as a sentence for whoever made it."""
 
 
+def _whole_text(text: str) -> str:
+    """Text as it can be kept and sent: nothing that draws as nothing, and no lone surrogate (half of a character that
+    a split emoji or an odd clipboard leaves, which no file and no service can take)."""
+    return plaintext.strip(text).encode("utf-8", "ignore").decode("utf-8")
+
+
 def clean_content(kind: str, content):
-    """The content as a proposal holds it: text for a reply, an object of text fields for a task."""
+    """The content as a proposal holds it: text for a reply, an object of text fields for a task. Characters that
+    draw as nothing are taken out (plaintext.py), so that what is read in the box is all of what would be sent."""
     if kind == "slack_reply":
         if not isinstance(content, str):
             raise ProposalError("A reply is text.")
-        return content[:MAX_CONTENT]
+        return _whole_text(content)[:MAX_CONTENT]
     if kind in ("task_create", "task_comment"):
         if not isinstance(content, dict):
             raise ProposalError("A task takes its fields, each as text.")
@@ -78,10 +85,26 @@ def clean_content(kind: str, content):
             # An empty box and a box that is not there are the same to every service, and the shell reports one
             # value per box it draws: a draft that does not name a box would never match what the card drew, and
             # its button would never light.
-            if value[:MAX_FIELD]:
-                out[key] = value[:MAX_FIELD]
+            value = _whole_text(value)[:MAX_FIELD]
+            if value:
+                out[key] = value
         return out
     raise ProposalError("That is not something I send.")
+
+
+def was_cleaned(kind: str, raw, cleaned):
+    """`raw` when taking characters out of it (or cutting it) changed it, so that a box that holds more than would
+    go can be given what would, and else None. The shell gives the box its words back only while the box still holds
+    exactly this."""
+    if kind == "slack_reply":
+        same = raw == cleaned
+    elif isinstance(raw, dict):
+        same = {k: v for k, v in ((k, "" if v is None else str(v)) for k, v in raw.items()) if v} == cleaned
+    else:
+        return None
+    if same or len(json.dumps(raw, ensure_ascii=False, default=str)) > 4 * MAX_CONTENT:
+        return None
+    return raw
 
 
 def empty_of(kind: str) -> object:
@@ -168,6 +191,7 @@ class Proposals:
         self._next = 1
         self._loaded = False
         self._told: dict[str, dict] = {}     # what the shell was last told, by id
+        self._recovered: list[str] = []      # sent when agentd stopped: ids that were `sending` and are now `unknown`
 
     @property
     def path(self) -> Path:
@@ -228,9 +252,11 @@ class Proposals:
             if p is None:
                 return None
             try:
-                p["content"] = clean_content(p["kind"], content)
+                cleaned = clean_content(p["kind"], content)
             except ProposalError:
                 return None
+            p["content"] = cleaned
+            self._mark_cleaned(p, content, cleaned)
             p.update(shown="", note="", updated=self.clock())
             self._refresh(p)
             self._save()
@@ -245,7 +271,9 @@ class Proposals:
             if p is None:
                 return None
             try:
-                p["shown"] = fingerprint(p["kind"], p["target"], clean_content(p["kind"], content))
+                cleaned = clean_content(p["kind"], content)
+                p["shown"] = fingerprint(p["kind"], p["target"], cleaned)
+                self._mark_cleaned(p, content, cleaned)
             except ProposalError:
                 p["shown"] = ""
             return self._told_out(p)
@@ -267,6 +295,13 @@ class Proposals:
             return out
 
     # -- the press --
+
+    def recovered(self) -> list[dict]:
+        """What the shell must be told after agentd restarted in the middle of a press: the proposals that were
+        being sent, now unsure, as they stand (a bar that was drawing them still says "Sending")."""
+        with self._lock:
+            self._load()
+            return [wire(p) for i in self._recovered if (p := self._items.get(i)) and p["state"] == "unknown"]
 
     def begin_send(self, id: str, again: bool = False) -> dict | None:
         """The press goes ahead: open (or, on the person's second choice, unsure) becomes `sending`. None when it
@@ -307,6 +342,15 @@ class Proposals:
         self._load()
         p = self._items.get(id) if isinstance(id, str) else None
         return p if p is not None and p["state"] == "open" else None
+
+    @staticmethod
+    def _mark_cleaned(p: dict, raw, cleaned) -> None:
+        """Say what the box held when it held characters that were taken out (it draws the same without them)."""
+        held = was_cleaned(p["kind"], raw, cleaned)
+        if held is None:
+            p.pop("cleaned_from", None)
+        else:
+            p["cleaned_from"] = held
 
     def _refresh(self, p: dict) -> None:
         """Fingerprint and warnings follow the content."""
@@ -362,8 +406,11 @@ class Proposals:
             if p is None or (p["state"] in CLOSED and now - p["updated"] > FORGET_AFTER):
                 continue
             if p["state"] == "sending":
-                # agentd stopped between asking and hearing back: it may have gone
-                p["state"] = "unknown"
+                # agentd stopped between asking and hearing back: it may have gone. What the person pressed on was
+                # what the card showed (a press is refused otherwise), so that is what it shows again, and pressing
+                # again stays theirs to choose.
+                p.update(state="unknown", shown=p["fingerprint"])
+                self._recovered.append(p["id"])
             self._items[p["id"]] = p
             self._next = max(self._next, _number(p["id"]) + 1)
 
@@ -415,13 +462,13 @@ class Proposals:
                 os.fchmod(fd, 0o600)
                 with os.fdopen(fd, "w") as f:
                     fd = -1
-                    f.write(json.dumps(doc, ensure_ascii=False))
+                    f.write(json.dumps(doc))      # escaped: a lone surrogate in any word cannot be written as text
             finally:
                 if fd >= 0:
                     os.close(fd)
             os.replace(tmp, path)
-        except OSError as e:
-            print(f"agentd: proposals file: {e}", file=sys.stderr)   # a table that cannot be kept still works
+        except (OSError, ValueError) as e:
+            print(f"agentd: proposals file: {type(e).__name__}: {e}", file=sys.stderr)   # a table that cannot be kept still works
 
 
 def _number(id: str) -> int:

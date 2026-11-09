@@ -203,6 +203,40 @@ def test_a_press_that_was_in_flight_when_agentd_stopped_may_have_gone(home, cloc
     assert Proposals(path, clock).get(p["id"])["state"] == "unknown"
 
 
+def test_what_was_being_sent_is_unsure_shows_what_was_pressed_on_and_is_told_to_the_bar_after_the_restart(home, clock):
+    path = home / "proposals.json"
+    table = Proposals(path, clock)
+    p = reply(table)
+    table.shown(p["id"], "Yes, the 14th works.")
+    table.begin_send(p["id"])
+    other = table.open("slack_reply", REF + "2", "Another.", where="#ops")        # still open: nothing to say of it
+    again = Proposals(path, clock)
+    [told] = again.recovered()
+    assert told["id"] == p["id"] and told["state"] == "unknown" and told["ready"] is False
+    assert told["shown"] == told["fingerprint"] == fingerprint("slack_reply", REF, "Yes, the 14th works.")
+    assert again.get(other["id"])["state"] == "open"
+    # It is the person's to press again, with the fingerprint of what they saw: the table agrees it is what was shown.
+    assert again.begin_send(p["id"], again=True)["state"] == "sending"
+    assert again.recovered() == []                                                  # it is being sent again: no longer unsure
+
+
+def test_a_lone_surrogate_from_the_shell_is_dropped_and_never_stops_the_table(home, clock, capsys):
+    """A split emoji or an odd clipboard can leave half of a character in a box. It cannot be sent or written, so it
+    goes like the characters that draw as nothing, and every later change to every proposal still works."""
+    table = Proposals(home / "proposals.json", clock)
+    p = reply(table)
+    half = chr(0xD800)
+    out = table.edit(p["id"], f"Yes{half}, the 14th{half} works.")
+    assert out["content"] == "Yes, the 14th works." and out["cleaned_from"] is not None
+    task = table.open("task_create", "linear", {"title": f"A{half}title"}, where="Linear")
+    assert task["content"] == {"title": "Atitle"}
+    other = reply(table, "Fine.")
+    assert table.begin_send(other["id"])["state"] == "sending" and "proposals file" not in capsys.readouterr().err
+    assert Proposals(home / "proposals.json", clock).get(p["id"])["content"] == "Yes, the 14th works."
+    # even one that is already in the table (a cleaned_from that holds it) is written, escaped
+    assert json.loads((home / "proposals.json").read_text())["proposals"]
+
+
 def test_a_file_that_cannot_be_written_costs_nothing(home, clock, capsys):
     (home / "gone").write_text("a file, so nothing can be made below it")
     table = Proposals(home / "gone" / "proposals.json", clock)
@@ -241,6 +275,31 @@ def test_an_edit_clears_what_was_drawn_until_the_shell_says_it_drew_the_new_word
     assert edited["content"] == "Yes, the 14th works for me." and edited["shown"] == "" and edited["ready"] is False
     assert edited["fingerprint"] == fingerprint("slack_reply", REF, "Yes, the 14th works for me.")
     assert table.shown(p["id"], "Yes, the 14th works for me.")["ready"] is True
+
+
+def test_characters_that_draw_as_nothing_are_taken_out_of_a_draft_and_the_box_is_told_what_it_held(table):
+    tags = "".join(chr(0xE0000 + ord(c)) for c in "the key")
+    p = table.open("slack_reply", REF, "Sounds good." + tags, created_by="agent")
+    assert p["content"] == "Sounds good." and "cleaned_from" not in p     # (an agent's words: nobody's box holds them)
+    held = "Yes" + chr(0x200B) + ", the 14th."
+    edited = table.edit(p["id"], held)
+    assert edited["content"] == "Yes, the 14th." and edited["cleaned_from"] == held
+    assert edited["fingerprint"] == fingerprint("slack_reply", REF, "Yes, the 14th.")
+    shown = table.shown(p["id"], held)                              # the box still holds them: lit for what would go
+    assert shown["ready"] is True and shown["cleaned_from"] == held
+    again = table.shown(p["id"], "Yes, the 14th.")                  # the shell wrote the clean words back
+    assert again["ready"] is True and "cleaned_from" not in again
+    assert "cleaned_from" not in table.edit(p["id"], "Yes, the 14th. Thanks.")
+    emoji = "On it \U0001f469" + chr(0x200D) + "\U0001f4bb"                # not hidden words: kept as they are
+    assert table.edit(p["id"], emoji)["content"] == emoji and "cleaned_from" not in table.get(p["id"])
+
+
+def test_a_task_boxs_hidden_characters_are_taken_out_and_an_empty_box_alone_is_not_a_cleaning(table):
+    p = table.open("task_create", "linear", {"title": "Fix it"})
+    boxes = {"title": "Fix it" + chr(0x200B), "description": ""}
+    assert table.edit(p["id"], boxes)["cleaned_from"] == boxes
+    assert table.get(p["id"])["content"] == {"title": "Fix it"}
+    assert "cleaned_from" not in table.edit(p["id"], {"title": "Fix it", "description": "", "due": None})
 
 
 def test_a_reply_with_nothing_in_it_is_never_ready(table):

@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx2
 import pytest
 import pytest_asyncio
 from connect_fakes.fake_mcp import FakeMcp, issue
@@ -409,6 +410,22 @@ async def test_a_token_the_server_expired_early_is_refreshed_and_the_request_is_
     assert signed_in.state == "ok" and len(rig.fake.registrations) == 1 and len(rig.fake.authorizations) == 1
 
 
+@pytest.mark.parametrize("status, code", [(503, "service_down"), (500, "service_down"), (429, "rate_limited")])
+async def test_a_token_endpoint_having_a_bad_moment_neither_signs_the_person_out_nor_throws_the_tokens_away(
+        rig, signed_in, status, code):
+    kept = rig.tokens()
+    rig.fake.expire_access_token()
+    rig.fake.token_status = status
+    with pytest.raises(DriverError) as raised:
+        await signed_in.tasks(10)
+    assert raised.value.code == code and signed_in.state == "ok" and signed_in.note == ""
+    assert rig.tokens() == kept and {"tokens", "client_info", "oauth_metadata"} <= set(rig.secrets.names())
+    assert len(rig.fake.registrations) == 1 and len(rig.fake.authorizations) == 1      # no second sign-in was started
+    rig.fake.token_status = None                      # and when it is itself again, the same tokens refresh
+    assert len(await signed_in.tasks(10)) == 2 and signed_in.state == "ok"
+    assert len(rig.fake.authorizations) == 1
+
+
 async def test_a_refresh_that_names_no_new_refresh_token_keeps_the_old_one(rig, signed_in):
     rig.fake.omit_refresh = True
     kept = rig.tokens()["refresh_token"]
@@ -783,6 +800,41 @@ async def test_a_refusal_before_the_tool_ran_is_a_driver_error(rig, signed_in, f
     assert rig.fake.created == []
 
 
+async def test_what_a_server_said_before_the_call_is_not_what_it_said_about_the_call(rig):
+    """A server that would not open its standalone stream (405) said nothing about a write that was cut off after it
+    went out: the write may have gone, and the person is not told it did not."""
+    attempt = mcpconn._Attempt()
+    await attempt.heard(httpx2.Response(405, request=httpx2.Request("GET", rig.fake.url)))
+    assert attempt.status == 405
+    attempt.arm()
+    call = httpx2.Request("POST", rig.fake.url, json={"jsonrpc": "2.0", "id": 3, "method": "tools/call"})
+    await attempt.note(call)
+    assert attempt.sent and attempt.status is None
+    failed = rig.driver()._failure([RuntimeError("the connection was reset")], attempt, True)
+    assert isinstance(failed, UnknownOutcome)
+    await attempt.heard(httpx2.Response(403, request=call))                  # the call's own answer does count
+    assert attempt.status == 403
+    assert type(rig.driver()._failure([RuntimeError("x")], attempt, True)) is DriverError
+
+
+async def test_a_lookup_made_on_the_way_to_a_write_that_never_answered_is_not_a_write_that_may_have_gone(rig):
+    rig.write_recipe(**{
+        '[list]\ntool = "list_my_issues"': '[context]\ntool = "whoami"\n\n[context.bind]\nsite = "sites.0.url"\n\n'
+                                           '[list]\ntool = "list_my_issues"',
+        'done = ["Done"]\n': 'done = ["Done"]\nurl_template = "{site}/browse/{id}"\n',
+        'due = "dueDate"\nurl = "url"\n': 'due = "dueDate"\n',
+        '[create]\ntool = "create_issue"\nnoun = "issue"\n': '[create]\ntool = "create_issue"\nnoun = "issue"\n'
+                                                           'arguments = { site = "{site}" }\n',
+    })
+    d, _ = await rig.connect(op_seconds=1.0)
+    d._vars = None
+    rig.fake.fault("whoami", "hang")                  # the read-only lookup never answers
+    with pytest.raises(DriverError) as raised:
+        await d.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
+    assert type(raised.value) is DriverError and raised.value.code == "service_down"
+    assert rig.fake.tool_runs("create_issue") == [] and rig.fake.created == []
+
+
 async def test_an_internal_error_after_the_tool_ran_is_an_unknown_outcome(rig, signed_in):
     rig.fake.fault("create_issue", "internal")
     with pytest.raises(UnknownOutcome):
@@ -961,7 +1013,7 @@ async def test_each_shipped_recipe_asks_for_what_its_server_offered_when_it_was_
     assert recipe.scope == scope and recipe.grants == grants
 
 
-async def test_the_recipes_are_the_five_services_and_a_fork_adds_one_by_adding_a_file(tmp_path, monkeypatch):
+async def test_the_recipes_are_the_five_services_and_a_forks_is_found_by_its_file(tmp_path, monkeypatch):
     monkeypatch.setenv("BOMBADIL_SHARE", str(tmp_path))
     assert recipes.available() == sorted(SHIPPED)
     folder = tmp_path / "connect" / "recipes"
@@ -969,6 +1021,8 @@ async def test_the_recipes_are_the_five_services_and_a_fork_adds_one_by_adding_a
     (folder / "asana.toml").write_text(RECIPE.replace("linear", "asana").replace("@URL@", "https://mcp.acme.test/mcp"))
     assert recipes.available() == sorted((*SHIPPED, "asana"))
     assert recipes.load("asana").name == "Linear" and recipes.load("asana").source == "asana.toml"
+    (folder / "jira-dc.toml").write_text(RECIPE.replace("@URL@", "https://mcp.acme.test/mcp"))   # a ref could not hold it
+    assert "jira-dc" not in recipes.available()
     (folder / "linear.toml").write_text(RECIPE.replace("@URL@", "https://mcp.acme.test/mcp").replace("Linear", "Ours"))
     assert recipes.load("linear").name == "Ours", "the installed share is looked in first"
 

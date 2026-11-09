@@ -13,6 +13,7 @@ import re
 import sys
 from urllib.parse import urlsplit
 
+from .. import plaintext
 from .driver import KINDS, MESSAGE_KEYS, STATES, TASK_KEYS  # noqa: F401  (re-exported for callers)
 
 # What a request that failed says in `code`, next to the sentence in `error`.
@@ -48,8 +49,6 @@ MAX_URL = 2000
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f  \ud800-\udfff]")   # not \t or \n
 _CONTROL_LINE = re.compile(r"[\x00-\x1f\x7f-\x9f  \ud800-\udfff]")
-# Invisible padding, and the marks that reorder text on screen: a name that has them can read as another name.
-INVISIBLE = re.compile("[­͏؜᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]")
 _REF = re.compile(r"[a-z]{2,12}:[A-Za-z0-9_.:@/+=-]{1,%d}" % (MAX_REF - 13))
 _ID = re.compile(r"[A-Za-z0-9_.:@/+=-]{1,80}")
 _CONNECTION_ID = re.compile(r"(slack|mcp):[A-Za-z0-9_.-]{1,60}")
@@ -73,14 +72,14 @@ class Refusal(Exception):
 def one_line(value, limit: int = MAX_NAME) -> str:
     """Somebody else's words as one plain line: no control, invisible or direction-changing characters and no
     lone surrogates (which cannot be stored or written), white space collapsed, at most `limit` characters."""
-    return " ".join(INVISIBLE.sub("", _CONTROL_LINE.sub(" ", str(value if value is not None else ""))).split())[:limit]
+    return " ".join(plaintext.strip(_CONTROL_LINE.sub(" ", str(value if value is not None else ""))).split())[:limit]
 
 
 def plain_text(value, limit: int = MAX_TEXT) -> str:
     """A message body: line breaks kept (one blank line at most), everything else as `one_line`, at most `limit`
     characters. Text that was cut ends with an ellipsis."""
-    text = INVISIBLE.sub("", _CONTROL.sub(" ", str(value if value is not None else "")).replace("\r\n", "\n")
-                         .replace("\r", "\n"))
+    text = plaintext.strip(_CONTROL.sub(" ", str(value if value is not None else "")).replace("\r\n", "\n")
+                           .replace("\r", "\n"))
     lines = [" ".join(line.split()) for line in text.split("\n")]
     out: list[str] = []
     for line in lines:

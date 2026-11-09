@@ -41,7 +41,7 @@ _KEY = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,39}")
 SERVICE_TITLES = {"slack": "Slack", "linear": "Linear", "notion": "Notion", "jira": "Jira", "todoist": "Todoist",
                   "clickup": "ClickUp"}
 OFFERS = {"slack": "Direct messages, mentions and threads.", "linear": "Issues assigned to you.",
-          "notion": "Pages and tasks that mention you.", "jira": "Issues assigned to you.",
+          "notion": "Makes pages and comments when you press.", "jira": "Issues assigned to you.",
           "todoist": "Tasks assigned to you and due soon.", "clickup": "Tasks assigned to you."}
 CONNECTION_STATES = {"ok": "ok", "signin": "active", "setup": "active", "blocked": "warn", "error": "bad",
                      "off": "gone"}
@@ -336,7 +336,8 @@ def connected_card(connections: list[dict], accounts: list[dict] | None = None, 
                             "disconnect", "Disconnect"))
     for service, title in SERVICE_TITLES.items():
         if service not in live:
-            rows.append(row_for(f"add:{service}", title, OFFERS[service], "gone", "connect", "Connect"))
+            rows.append(row_for(f"add:{service}", title, OFFERS.get(service, "What waits on you there."), "gone",
+                                "connect", "Connect"))
     return list_card(CONNECTED_ID, "Connected here", rows,
                      say or "This is what I read for you. Disconnect any of it and I stop at once.")
 

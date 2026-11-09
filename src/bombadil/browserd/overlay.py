@@ -12,7 +12,9 @@ so a test or a stand-in for Chromium can tell which script it was sent and read 
 
 What the scripts do:
 
-- `read`: the visible text of the page (`innerText`) or of one element, cut at `MAX_TEXT`.
+- `read`: the visible text of the page (`innerText`) or of one element, cut at `MAX_TEXT`. An element the person
+  cannot see (a hidden input, a box the page keeps closed) answers as nothing found, as it does for `find` and
+  `point`, and a password field is blank.
 - `find`: the visible button, link or input whose text, aria-label or placeholder matches, whole words
   preferred; its rectangle in the viewport.
 - `point`: ONE element (`#bombadil-pointer`, `position: fixed`, `pointer-events: none`, above everything) that
@@ -22,8 +24,9 @@ What the scripts do:
   a key, and it is built from DOM calls (text is `textContent`, never markup).
 - `unpoint`: takes the pointer away.
 - `probe`: the address and whether some words are on the page, for `wait`.
-- `collect`: the page's text and the values of the fields a person can see, for `take`: a field the page keeps
-  hidden (a collapsed box, a hidden input) holds nothing the person has been shown, so nothing of it is taken.
+- `collect`: the page's text and the values of the fields a person can see, and the address they are on, for `take`:
+  a field the page keeps hidden (a collapsed box, a hidden input) holds nothing the person has been shown, so
+  nothing of it is taken.
 
 A target that is wholly outside the window is scrolled into view when it is pointed at: a pointer to something
 nobody can see helps nobody, and a scroll changes nothing in the page.
@@ -106,7 +109,11 @@ _READ = r"""
   var el;
   try { el = a.selector ? document.querySelector(a.selector) : document.body; }
   catch (e) { return {error: 'selector'}; }
-  if (a.selector && !el) return {found: false, url: location.href, title: document.title, text: ''};
+  // What is not shown is not there: a hidden input or an element the page keeps hidden answers as nothing found, as it
+  // does for `find` and `point`. (The pointer is the service's own and may be off the screen the person is looking at.)
+  if (a.selector && (!el || (el.id !== a.pointer && !visibleRect(el)))) {
+    return {found: false, url: location.href, title: document.title, text: ''};
+  }
   var text = '';
   if (el) {
     var tag = el.tagName;
@@ -267,7 +274,7 @@ _COLLECT = r"""
     if (typeof v !== 'string' || !v) v = f.getAttribute('data-clipboard-text');
     if (v && v.length <= a.field_max) out.push(v);
   }
-  return {chunks: out};
+  return {chunks: out, url: location.href};
 """
 
 _BODIES = {"read": _READ, "find": _FIND, "point": _POINT, "unpoint": _UNPOINT, "probe": _PROBE,

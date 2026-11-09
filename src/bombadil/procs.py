@@ -95,6 +95,14 @@ def cgroup_of(pid: int) -> Path | None:
     return None
 
 
+def in_turn_scope(pid: int) -> bool:
+    """Is this process inside an agent turn's scope? `cgroup_of` says "no" for a process whose cgroup it cannot read,
+    which would let one that cannot be told pass for the person, so the file is read first: what cannot be read
+    raises, and the caller refuses that as the agent's."""
+    (PROC / str(pid) / "cgroup").read_text()
+    return cgroup_of(pid) is not None
+
+
 def scope_cgroup(unit: str | None, runner=subprocess.run) -> Path | None:
     """The cgroup of a turn's scope by its unit name, for when its first process is gone."""
     if not unit or not scope_supported():

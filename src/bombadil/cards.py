@@ -29,6 +29,8 @@ import re
 import time
 from pathlib import Path
 
+from . import plaintext
+
 SHAPES = ("chain", "layers", "compare", "timeline")
 STATES = ("ok", "warn", "bad", "new", "gone", "active")
 SIDES = ("before", "after")
@@ -274,19 +276,17 @@ _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9_-]{0,128}$")
 # Not \t or \n, which a message may hold; every other control, the line and paragraph separators, and lone surrogates.
 _CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 _CONTROL_LINE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
-# Invisible padding, and the marks that reorder text on screen: a name that has them can read as another name.
-_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 
 
 def _line(v, limit: int) -> str:
     """Somebody else's words as one plain line, cut at `limit` characters with an ellipsis."""
-    s = _INVISIBLE.sub("", _CONTROL_LINE.sub(" ", str(v if v is not None else "")))
+    s = plaintext.strip(_CONTROL_LINE.sub(" ", str(v if v is not None else "")))
     return _cut(" ".join(s.split()), limit)
 
 
 def _block(v, limit: int) -> str:
     """Somebody else's words with their line breaks (one blank line at most), cut like `_line`."""
-    s = _INVISIBLE.sub("", _CONTROL.sub(" ", str(v if v is not None else ""))).replace("\r\n", "\n").replace("\r", "\n")
+    s = plaintext.strip(_CONTROL.sub(" ", str(v if v is not None else ""))).replace("\r\n", "\n").replace("\r", "\n")
     lines = [" ".join(ln.split()) for ln in s.split("\n")]
     out: list[str] = []
     for ln in lines:
@@ -298,7 +298,7 @@ def _block(v, limit: int) -> str:
 def _typed(v, limit: int, at: str, errors: list[str]) -> str:
     """What would be sent, as it is: refused (not cut, not cleaned) when it is not plain or too long."""
     s = str(v if v is not None else "")
-    if _INVISIBLE.search(s) or _CONTROL.search(s) or "\r" in s:
+    if plaintext.has_hidden(s) or _CONTROL.search(s) or "\r" in s:
         errors.append(f"{at} has control, invisible or direction-changing characters; it is what would be sent, "
                       "so it cannot be made plain here")
         return ""

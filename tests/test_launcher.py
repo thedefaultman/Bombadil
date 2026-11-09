@@ -1214,9 +1214,15 @@ def test_no_other_word_is_taken_for_one_of_them(home):
         assert a is None or a.kind not in ("messages", "connect"), word
 
 
+def _app_from_before(title: str) -> None:
+    """An app of yours that was made before these words were the pill's own: `apps.create` refuses the name now."""
+    apps.create("Older", "import QtQuick\nItem {}\n")
+    apps.own_dir("older").rename(apps.own_dir(apps.slug(title)))
+
+
 @pytest.mark.parametrize("title", ["Slack", "Messages", "Connections", "Unread"])
 def test_an_app_of_yours_with_such_a_name_does_not_stand_in_front_of_the_word(home, title):
-    apps.create(title, "import QtQuick\nItem {}\n")
+    _app_from_before(title)
     app_list = apps.list_apps()
     a = launcher.match(title.lower(), app_list)
     assert a is not None and a.kind == "messages"
@@ -1226,7 +1232,7 @@ def test_an_app_of_yours_with_such_a_name_does_not_stand_in_front_of_the_word(ho
 
 
 def test_messages_and_connections_are_offered_for_tab_once_each_as_commands(home):
-    apps.create("Messages", "import QtQuick\nItem {}\n")                # yours, with the word's own name
+    _app_from_before("Messages")                                       # yours, with the word's own name
     entries = launcher.entries(apps.list_apps())
     for name, title in (("messages", "Messages"), ("connections", "Connections")):
         [e] = [e for e in entries if e["name"] == name]

@@ -47,10 +47,13 @@ class Service:
         self.answers: dict = {}
         self.errors: dict = {}
         self.down = False
+        self.pause = 0.0                      # how long each answer takes, so that two requests can overlap
         self.asked: list[tuple[str, dict]] = []
 
     async def request(self, op, timeout, **args):
         self.asked.append((op, args))
+        if self.pause:
+            await asyncio.sleep(self.pause)
         if self.down:
             raise connect_client.ConnectUnavailable("not there")
         if op in self.errors:
@@ -205,6 +208,31 @@ async def test_reply_still_works_with_no_service_and_says_nothing_it_cannot_know
     await h.says.push({"push": "message", "message": m})
     assert await h.notices.action(h.live()[0]["id"], "reply") is True
     assert h.cards[0]["reply"]["where"] == "#launch" and h.cards[0]["reply"]["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_the_first_key_in_a_card_on_screen_still_makes_its_box_when_the_service_cannot_be_asked(h):
+    """The bar's own request has no message to fall back on, but the card the person is looking at was drawn from the
+    thread: a service that is restarting or slow never turns their first key into "I could not find that message"."""
+    m = message()
+    h.service.answers["thread"] = {"messages": [message("0.1", text="Earlier"), m]}
+    await h.says.reply_to(m)
+    [first] = h.outbox.proposals.all()
+    h.outbox.proposals.discard(first["id"])
+    for fault in ("down", "slow"):
+        h.service.down = fault == "down"
+        if fault == "slow":
+            h.service.errors["thread"] = ("The service did not answer in time.", "timeout")
+        p = await h.says.open_proposal("slack_reply", m["ref"])
+        assert p["state"] == "open" and p["where"] == "#launch" and p["warnings"] == [], fault
+        assert [r["text"][:7] for r in h.cards[-1]["thread"]] == ["Earlier", "Legal j"], fault
+        h.outbox.proposals.discard(p["id"])
+    # the agent's own proposal is held to what the service says, and a message that was never drawn is not invented
+    h.service.down = True
+    with pytest.raises(watch.Unknown):
+        await h.says.open_proposal("slack_reply", m["ref"], created_by="agent", strict=True)
+    with pytest.raises(watch.Unknown, match="could not find that message"):
+        await h.says.open_proposal("slack_reply", "slack:T1/C1/9.9")
 
 
 @pytest.mark.asyncio
@@ -653,6 +681,78 @@ async def test_a_second_connect_slack_while_it_runs_changes_nothing(tmp_path):
     assert len(h.service.calls("add_connection")) == 1 and setup.called == ["slack:w1"]
     assert h.says.stop_setup() is True
     await until(lambda: h.says._flows == {})
+
+
+@pytest.mark.asyncio
+async def test_two_connect_slack_requests_at_once_make_one_setup_and_the_one_that_can_be_cancelled(tmp_path):
+    """A double press on the Connect row, or the word said twice: the second asks while the first is still waiting
+    for the connection service. Both used to start a walk through Slack's pages, and the first was lost to Cancel."""
+    setup = Setup(["Open the page."], wait=True)
+    h = Harness(tmp_path, setup=setup)
+    h.service.pause = 0.05
+    h.service.answers["connections"] = {"connections": []}
+    h.service.answers["add_connection"] = {"id": "slack:w1", "service": "slack", "state": "setup"}
+    got = await asyncio.gather(h.says.connect_service("slack"), h.says.connect_service("slack"))
+    assert sorted(got) == [(True, "Setting up Slack is already under way."),
+                           (True, "Setting up Slack. I will say each step.")]
+    assert len(h.service.calls("add_connection")) == 1
+    await until(lambda: setup.called == ["slack:w1"])
+    assert h.says.stop_setup() is True
+    assert setup.saw_cancel.wait(5)
+    await until(lambda: h.says._flows == {})
+    assert setup.called == ["slack:w1"]               # one walk, and it was the one that stopped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["unavailable", "refused", "no id"])
+async def test_a_setup_that_could_not_begin_gives_its_place_back(tmp_path, how):
+    setup = Setup([])
+    h = Harness(tmp_path, setup=setup)
+    h.service.answers["connections"] = {"connections": []}
+    if how == "unavailable":
+        h.service.down = True
+    elif how == "refused":
+        h.service.errors["add_connection"] = ("Not now.", "busy")
+    else:
+        h.service.answers["add_connection"] = {"state": "setup"}
+    got = await h.says.connect_service("slack")
+    assert got[0] is False and h.says._flows == {}
+    h.service.down, h.service.errors = False, {}
+    h.service.answers["add_connection"] = {"id": "slack:w1", "service": "slack", "state": "setup"}
+    assert await h.says.connect_service("slack") == (True, "Setting up Slack. I will say each step.")
+    await until(lambda: h.says._flows == {})
+    assert setup.called == ["slack:w1"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_still_works_when_the_setup_line_was_tapped_away_and_drawn_again(tmp_path):
+    setup = Setup(["Open the page."], wait=True)
+    h = Harness(tmp_path, setup=setup)
+    h.service.answers["connections"] = {"connections": [connection("slack:w1", state="setup")]}
+    await h.says.connect_service("slack")
+    await until(lambda: len(h.live()) == 1 and "Open the page." in h.lines_of()[0])
+    first = h.live()[0]["id"]
+    h.notices.dismiss(first)                                             # the person tapped the line away
+    h.says._progress(h.says._flows["slack"], "Press Create.")            # the next step's sentence draws it again
+    assert h.live()[0]["id"] != first and h.lines_of() == ["Press Create."]
+    [n] = h.live()
+    assert [a["id"] for a in n["actions"]] == ["cancel"]
+    assert await h.notices.action(n["id"], "cancel") is True             # and its Cancel is not a dead button
+    assert setup.saw_cancel.wait(5)
+    await until(lambda: h.says._flows == {})
+
+
+@pytest.mark.asyncio
+async def test_the_persons_own_cancel_is_said_and_goes_it_is_not_left_above_the_pill_as_an_error(tmp_path):
+    setup = Setup(["Open the page."], wait=True)
+    h = Harness(tmp_path, setup=setup)
+    h.service.answers["connections"] = {"connections": [connection("slack:w1", state="setup")]}
+    await h.says.connect_service("slack")
+    await until(lambda: len(h.live()) == 1 and "Open the page." in h.lines_of()[0])
+    assert h.says.stop_setup() is True
+    await until(lambda: h.says._flows == {})
+    [n] = h.live()
+    assert n["line"] == "Slack setup stopped." and n["tone"] == "done" and 0 < n["ttl"] <= 20
 
 
 @pytest.mark.asyncio

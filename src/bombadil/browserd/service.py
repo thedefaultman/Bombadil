@@ -13,7 +13,9 @@ Why it is shaped this way:
   supplied: callers pass data (a word, a selector, a regex), and the only code that reaches a page is the fixed
   set in overlay.py, with the data as a JSON literal. A request with an argument an op does not take is refused.
 - Only the person's own processes may ask: a peer of another uid is closed at once (SO_PEERCRED), and the socket
-  is 0600.
+  is 0600. A peer inside an agent's turn (its cgroup is a turn's scope, looked at again for every request, and
+  failing closed) is refused too: the one caller there is, agentd, is no turn's process, and a turn that could ask
+  would choose the pages and, through `take`, the token a connection is given.
 - A token goes one way. `take` runs the regex over the page's text and the values of its visible fields and hands
   the first match straight to the connection service's `store_secret`. The value is never returned, logged, put in an
   exception text or kept after the call; the answer says only whether it was stored, and why not in a sentence. `read` hides
@@ -24,7 +26,8 @@ Why it is shaped this way:
   ("That page is gone."): a pointer or a read is never moved over to another of the person's pages. Only when nothing
   was opened is it the first page the browser has.
 - Chromium not running, the debugging port closed, a tab that is gone or a page that does not answer are a sentence
-  and a code, never a crash. Codes: `bad_request`, `no_browser`, `no_tab`, `not_found`, `page`, `internal`.
+  and a code, never a crash. Codes: `bad_request`, `refused` (the asker is inside an agent's turn), `no_browser`,
+  `no_tab`, `not_found`, `page`, `internal`.
 - The HTTP side of the debugging port stays in browser.py (`DevTools`); this module takes the list of tabs from
   it and holds one websocket per tab it works on (cdp.py).
 """
@@ -45,10 +48,10 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .. import browser, paths, ws
+from .. import browser, paths, procs, ws
 from ..connect import client as connect_client
 from ..connect import protocol
-from ..connect.protocol import Refusal, answer_error, answer_ok, encode, one_line, plain_text
+from ..connect.protocol import REFUSED, Refusal, answer_error, answer_ok, encode, one_line, plain_text
 from . import cdp, overlay
 
 BAD_REQUEST = "bad_request"
@@ -69,7 +72,7 @@ OPS = ("status", "open", "tabs", "read", "find", "point", "unpoint", "wait", "ta
 # Every argument an op takes. A request with another is refused: callers pass data the service knows what to do with.
 ARGS = {"status": (), "open": ("url",), "tabs": (), "read": ("tab", "selector"), "find": ("tab", "text"),
         "point": ("tab", "text", "selector", "label", "ttl"), "unpoint": ("tab",),
-        "wait": ("tab", "url", "text", "timeout"), "take": ("tab", "pattern", "into")}
+        "wait": ("tab", "url", "text", "timeout"), "take": ("tab", "pattern", "into", "url")}
 
 LINE_LIMIT = 1 << 20
 MAX_CLIENTS = 16
@@ -99,14 +102,24 @@ def log(text) -> None:
     print(f"bombadil-browserd: {' '.join(str(text).split())}"[:300], file=sys.stderr, flush=True)
 
 
+def peer_creds(sock) -> tuple[int, int]:
+    """The pid and uid of the process on the other end of a unix socket, (0, -1) when the kernel cannot say."""
+    try:
+        pid, uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
+                                                             struct.calcsize("3i")))
+    except (OSError, AttributeError, struct.error):
+        return 0, -1
+    return pid, uid
+
+
 def peer_uid(sock) -> int:
     """The uid of the process on the other end of a unix socket, -1 when the kernel cannot say."""
-    try:
-        _pid, uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
-                                                              struct.calcsize("3i")))
-    except (OSError, AttributeError, struct.error):
-        return -1
-    return uid
+    return peer_creds(sock)[1]
+
+
+def turn_scope(pid: int) -> bool:
+    """Is this process inside an agent turn's scope? Fails closed: what cannot be read raises (see `_agents`)."""
+    return procs.in_turn_scope(pid)
 
 
 class AlreadyRunning(Exception):
@@ -185,7 +198,8 @@ class Service:
     service (`request`); `opener`: how a page is opened (`browser.open_url`). Tests give their own of each."""
 
     def __init__(self, devtools: browser.DevTools | None = None, connect=None, opener=None,
-                 socket_path: Path | None = None):
+                 socket_path: Path | None = None, in_turn=None):
+        self.in_turn = in_turn or turn_scope      # pid -> is it inside an agent's turn
         self.devtools = devtools or browser.DevTools()
         self.connect = connect or connect_client
         self.opener = opener or browser.open_url
@@ -267,8 +281,21 @@ class Service:
 
     # -- clients --
 
+    def _agents(self, pid: int) -> bool:
+        """Is whoever is on the other end inside an agent's turn, or not to be told from one? Fails closed: a process
+        that cannot be named or looked at, or that has gone, is the agent's. The only caller there is is agentd, which
+        is no turn's process; a turn that could ask would be reading and pointing at pages of its own choosing and,
+        through `take`, writing a token of its own choosing into a connection."""
+        if pid <= 0:
+            return True
+        try:
+            return bool(self.in_turn(pid))
+        except Exception:  # noqa: BLE001 - what cannot be told is refused
+            return True
+
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if len(self.clients) >= MAX_CLIENTS or peer_uid(writer.get_extra_info("socket")) != os.getuid():
+        pid, uid = peer_creds(writer.get_extra_info("socket"))
+        if len(self.clients) >= MAX_CLIENTS or uid != os.getuid():
             writer.close()
             return
         me = asyncio.current_task()
@@ -286,6 +313,10 @@ class Service:
                     break
                 if not line.strip():
                     continue
+                if self._agents(pid):   # asked again for every request: a process may join a turn after it connected
+                    writer.write(encode(answer_error(None, "The browser service answers the person, not an agent's "
+                                                           "turn.", REFUSED)))
+                    break
                 writer.write(encode(await self.answer(line)))
                 try:
                     await asyncio.wait_for(writer.drain(), DRAIN_S)
@@ -467,7 +498,8 @@ class Service:
     async def _op_read(self, req) -> dict:
         selector = _selector(req)
         session = await self._session(await self._target(req))
-        value = await self._run(session, "read", {"selector": selector, "max": overlay.MAX_TEXT})
+        value = await self._run(session, "read", {"selector": selector, "max": overlay.MAX_TEXT,
+                                                  "pointer": overlay.POINTER_ID})
         if value.get("error"):
             raise Refusal(BAD_REQUEST, "That selector is not valid CSS.")
         if not value.get("found"):
@@ -543,9 +575,14 @@ class Service:
                 or not protocol.valid_connection_id(into["connection"])
                 or not isinstance(into["name"], str) or not _NAME.fullmatch(into["name"])):
             raise Refusal(BAD_REQUEST, "That needs a connection and the name of the secret to put in it.")
+        # `url`, when given, is what the page's address must match: it is looked at in the same look as the text, so a
+        # page the person has gone on to between a caller's last look and this one is never taken from.
+        where = _regex(req["url"], "the address the page must have") if req.get("url") is not None else None
         session = await self._session(await self._target(req))
         page = await self._run(session, "collect", {"max": overlay.MAX_TEXT, "fields": overlay.MAX_FIELDS,
                                                     "field_max": overlay.MAX_FIELD})
+        if where is not None and not where.search(str(page.get("url") or "")):
+            return {"stored": False, "found": False, "why": NOTHING}
         value = None
         for chunk in page.get("chunks") or []:
             match = pattern.search(chunk) if isinstance(chunk, str) else None

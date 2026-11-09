@@ -57,6 +57,7 @@ class FakeStage:
         site.fake(self.chrome)
         self.devtools = browser.DevTools(port=self.chrome.port)
         self.creation_url = "https://api.slack.test/apps?new_app=1&manifest_json=%7B%7D"
+        self.apps_url = "https://api.slack.test/apps"
         self._marked = None
 
     def _tab(self) -> str | None:
@@ -129,6 +130,7 @@ class ChromiumStage:
         self.devtools = browser_.devtools
         self.pages = chromium.Pages(site.render)
         self.creation_url = site.creation_url(self.pages.base)
+        self.apps_url = f"{self.pages.base}/apps"
         self._cdp: chromium.Cdp | None = None
         self._cdp_tab: str | None = None
 

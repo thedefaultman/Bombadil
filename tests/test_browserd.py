@@ -10,6 +10,7 @@ reaches it.
 import asyncio
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -37,6 +38,7 @@ APP_PATTERN = r"xap" + r"p-[A-Za-z0-9-]{20,}"
 APP_INTO = {"connection": "slack:w1", "name": "app_token"}
 HIDDEN = "xox" + "b-" + "-".join(["4" * 12, "5" * 13, "6" * 24])   # a token-shaped value a page keeps out of sight
 HIDDEN_PATTERN = r"xox" + r"b-[A-Za-z0-9-]{20,}"
+CRUMB = "c7f29a" * 5      # a value a page carries for itself in a hidden input: not token-shaped, not for anyone to read
 
 
 class Served:
@@ -288,6 +290,22 @@ def test_a_value_never_comes_back_even_when_the_connection_service_says_it(serve
     assert TOKEN not in seen.out + seen.err and "RuntimeError" in seen.err   # the kind of failure is logged, not its text
 
 
+def test_take_only_takes_from_a_page_whose_address_is_the_one_asked_for(served):
+    """The address is looked at in the same look as the page's text, so a page the person has gone on to is never taken
+    from, whatever the caller saw a moment before."""
+    page = make_page(f"Token {TOKEN}")
+    served.open_page(page)
+    here = rf"{page.url.split('?')[0]}"
+    elsewhere = {"url": r"/apps/A0OTHER999(?:[/?#]|$)"}
+    assert served.request("take", pattern=APP_PATTERN, into=APP_INTO, **elsewhere) == {
+        "stored": False, "found": False, "why": "Nothing on the page looks like that."}
+    assert served.connect.calls == []
+    assert served.request("take", pattern=APP_PATTERN, into=APP_INTO, url=re.escape(here)) == {"stored": True}
+    assert served.connect.calls[0][1]["value"] == TOKEN
+    for bad in ("(", "", "a" * 400, 3):
+        assert served.refused("take", pattern=APP_PATTERN, into=APP_INTO, url=bad).code == "bad_request", bad
+
+
 def test_take_checks_what_it_is_asked_to_do(served):
     served.open_page(make_page(f"Token {TOKEN}"))
     for args in ({"pattern": "("}, {"pattern": ""}, {"pattern": "a" * 400},
@@ -309,18 +327,63 @@ def test_a_match_too_long_to_be_a_token_is_not_taken(served):
 def test_a_peer_of_another_uid_is_refused(served, monkeypatch):
     served.open_page(make_page())
     assert oct(paths.browserd_socket().stat().st_mode & 0o777) == "0o600"
-    real_peer_uid = service.peer_uid
-    monkeypatch.setattr(service, "peer_uid", lambda sock: os.getuid() + 1)
+    real = service.peer_creds
+    monkeypatch.setattr(service, "peer_creds", lambda sock: (os.getpid(), os.getuid() + 1))
     commands = len(served.chrome.commands)
     with pytest.raises(browserd.BrowserdUnavailable):
         served.request("read")
     assert served.runner.call(lambda: len(served.service.clients)) == 0
     assert len(served.chrome.commands) == commands   # nothing reached the browser
-    monkeypatch.setattr(service, "peer_uid", lambda sock: -1)   # the kernel could not say
+    monkeypatch.setattr(service, "peer_creds", lambda sock: (0, -1))   # the kernel could not say
     with pytest.raises(browserd.BrowserdUnavailable):
         served.request("tabs")
-    monkeypatch.setattr(service, "peer_uid", real_peer_uid)
+    monkeypatch.setattr(service, "peer_creds", real)
     assert served.request("status")["up"] is True
+
+
+@pytest.mark.parametrize("how", ["in a turn", "cannot be looked at", "unnamed"])
+def test_a_peer_inside_an_agents_turn_is_refused_for_every_op_and_nothing_reaches_the_browser_or_the_service(
+        served, monkeypatch, how):
+    """`take` writes a token of its own choosing into a connection, and `open` and `point` choose the page: a turn's
+    process may not ask, and what cannot be told from one is refused with it."""
+    served.open_page(make_page(f"Token {TOKEN}"))
+    commands = len(served.chrome.commands)
+    real = service.peer_creds
+    if how == "unnamed":
+        monkeypatch.setattr(service, "peer_creds", lambda sock: (0, os.getuid()))
+    else:
+        def turn(pid):
+            if how == "in a turn":
+                return True
+            raise FileNotFoundError(pid)
+        served.service.in_turn = turn
+    for op, args in (("status", {}), ("tabs", {}), ("read", {}), ("open", {"url": "https://api.slack.test/x"}),
+                     ("point", {"text": "Create", "label": "Here"}), ("take", {"pattern": APP_PATTERN, "into": APP_INTO})):
+        err = served.refused(op, **args)
+        assert err.code == "refused" and "not an agent's turn" in str(err), (op, str(err))
+    assert len(served.chrome.commands) == commands and served.chrome.opened == [] and served.connect.calls == []
+    monkeypatch.setattr(service, "peer_creds", real)
+    served.service.in_turn = lambda pid: False
+    assert served.request("status")["up"] is True                          # the person's own process still asks
+
+
+def test_a_process_that_joins_a_turn_after_it_connected_is_refused_at_its_next_request(served):
+    served.open_page(make_page())
+    sock = socket.socket(socket.AF_UNIX)
+    sock.connect(str(paths.browserd_socket()))
+    try:
+        reader = sock.makefile("rwb")
+        reader.write(b'{"id": 1, "op": "status"}\n')
+        reader.flush()
+        assert json.loads(reader.readline())["ok"] is True
+        served.service.in_turn = lambda pid: True        # (the same process, now in a turn)
+        reader.write(b'{"id": 2, "op": "status"}\n')
+        reader.flush()
+        answer = json.loads(reader.readline())
+        assert answer["ok"] is False and answer["code"] == "refused"
+        assert reader.readline() == b""                  # and the connection is closed
+    finally:
+        sock.close()
 
 
 def test_the_peer_uid_is_the_kernels_word_for_who_is_on_the_other_end(tmp_path):
@@ -642,6 +705,7 @@ PAGES = {
 <input id="name" placeholder="Token Name"><label>Scope <input id="scope"></label>
 <input id="tok" readonly value="{TOKEN}"><textarea id="note">{USER}</textarea>
 <div id="hidbox" style="display:none"><input id="hid" readonly value="{HIDDEN}"></div><input type="hidden" value="{HIDDEN}">
+<input type="hidden" name="crumb" value="{CRUMB}"><div id="closed" style="display:none">The closed box says {CRUMB}</div>
 <input style="visibility:hidden" value="{HIDDEN}"><button style="display:none" data-clipboard-text="{HIDDEN}">Copy</button>
 <p id="inline">The token is <code>{USER}</code> <button id="copy">Copy</button></p>
 <div style="height:2500px"></div><button id="far" style="margin-left:60px">Generate Token and Scopes</button>
@@ -765,6 +829,22 @@ def test_real_read_gives_the_visible_text_only(real):
     assert real.request("read", selector="#tok")["text"] == "[token hidden]"
     assert real.refused("read", selector="#nothing-like-this").code == "not_found"
     assert real.refused("read", selector="div[").code == "bad_request"
+
+
+def test_real_read_of_one_element_gives_what_the_person_can_see_and_nothing_the_page_keeps_hidden(real):
+    """A hidden input (a crumb the page carries for itself), an element that is not displayed, one that is invisible,
+    and a field in a closed box answer as nothing found, as they do for `find` and `point`; so does a selector that
+    names nothing. What is shown is read, and a box opened by the page is read once it is open."""
+    tab = real.open()
+    for selector in ("input[name=crumb]", "input[type=hidden]", "#closed", "#ghost", "#invisible", "#hid", "#hidbox"):
+        answer = real.refused("read", selector=selector)
+        assert answer.code == "not_found", selector
+        assert CRUMB not in str(answer)
+    assert CRUMB not in json.dumps(real.request("read"))          # nor does the page's text carry it
+    assert real.request("read", selector="#note")["text"] == "[token hidden]"      # a field that is shown is read
+    assert real.request("read", selector="#create")["text"] == "Create"
+    real.cdp(tab).evaluate("document.getElementById('closed').style.display = 'block'")
+    assert CRUMB in real.request("read", selector="#closed")["text"]               # once the page shows it
 
 
 def test_real_find_picks_the_visible_element_with_the_best_match(real):

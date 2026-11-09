@@ -56,6 +56,16 @@ Window {
         onHandOff: w.handOffs += 1
         onTyping: w.typings += 1
     }
+    // The same bar on a second screen, where the person is not: it holds the card with a face of its own (never drawn).
+    CardHost {
+        id: otherScreen
+        objectName: "cardHostElsewhere"
+        pill: pillState
+        onThisScreen: false
+        maxHeight: 560
+        anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: 12 }
+        width: 560
+    }
     CardHost {
         id: host
         objectName: "cardHost"
@@ -292,6 +302,7 @@ class Agentd:
                       "receipt": None, "note": "", "warnings": [], **draft}
         self.presses = []
         self.press_answer = None          # None: sent; else a dict for the press_result of a refused press
+        self.clean = None                 # a function taking characters out of the words (plaintext.strip), or none
 
     def fp(self):
         return fingerprint(self.draft["content"])
@@ -301,8 +312,17 @@ class Agentd:
         ready = d["state"] == "open" and bool(d["shown"]) and d["shown"] == self.fp() and \
             any((v.strip() if isinstance(v, str) else v) for v in (d["content"].values() if isinstance(d["content"], dict)
                                                                     else [d["content"]]))
-        return {"id": d["id"], "state": d["state"], "ready": ready, "fingerprint": self.fp(), "content": d["content"],
-                "receipt": d["receipt"], "warnings": d["warnings"], "note": d["note"]}
+        out = {"id": d["id"], "state": d["state"], "ready": ready, "fingerprint": self.fp(), "content": d["content"],
+               "receipt": d["receipt"], "warnings": d["warnings"], "note": d["note"]}
+        if d.get("cleaned_from") is not None:
+            out["cleaned_from"] = d["cleaned_from"]
+        return out
+
+    def take(self, raw):
+        """The words as the draft keeps them: cleaned, and what was cleaned is said (proposals.was_cleaned)."""
+        cleaned = self.clean(raw) if self.clean else raw
+        self.draft["cleaned_from"] = raw if cleaned != raw else None
+        return cleaned
 
     def tell(self):
         self.bar.proposal(**self.wire())
@@ -312,10 +332,10 @@ class Agentd:
             self.seen += 1
             if m.get("type") == "proposal" and m.get("id") == self.draft["id"]:
                 if m["op"] == "edit" and self.draft["state"] == "open":
-                    self.draft.update(content=m["content"], shown="")
+                    self.draft.update(content=self.take(m["content"]), shown="")
                     self.tell()
                 elif m["op"] == "shown":
-                    self.draft["shown"] = fingerprint(m["content"])
+                    self.draft["shown"] = fingerprint(self.take(m["content"]))
                     self.tell()
             elif m.get("type") == "press" and m.get("id") == self.draft["id"]:
                 self.presses.append(m)
@@ -631,6 +651,37 @@ def test_a_state_update_never_touches_what_is_being_typed(bar):
     assert reply_box(bar).property("text") == "Yes, the 14th. And thanks"
 
 
+def test_words_pasted_with_characters_that_draw_as_nothing_come_back_clean_and_the_button_lights(bar):
+    """What agentd takes out of a box (it draws the same without) is taken out of the box too, so that what is read is
+    all of what goes and the button is not dark for a reason nobody can see."""
+    agentd = open_message(bar)
+    agentd.clean = lambda words: re.sub("[\u200b\ufeff]", "", words)
+    focus(bar)
+    bar.type("Yes")
+    box = reply_box(bar)
+    box.setProperty("text", "Yes\u200b, the\ufeff 14th.")                 # a paste: the box now holds what it holds
+    agentd.settle()
+    assert box.property("text") == "Yes, the 14th."
+    bar.wait(lambda: lit(bar))
+    assert not [m for m in bar.sent_of("proposal") if m["op"] == "edit" and m["content"] == "Yes, the 14th."][1:]
+
+
+def test_what_was_typed_after_agentd_cleaned_an_earlier_edit_is_not_overwritten(bar):
+    agentd = open_message(bar)
+    agentd.clean = lambda words: words.replace("\u200b", "")
+    focus(bar)
+    bar.type("Yes")
+    box = reply_box(bar)
+    box.setProperty("text", "Yes\u200b")
+    bar.pump(0.4)                                    # the edit goes out
+    bar.key(QtCore.Qt.Key_End)
+    bar.type(" and")                                 # ...and the person goes on before the answer comes back
+    agentd.step()
+    assert box.property("text") == "Yes\u200b and"  # the answer was about words the box no longer holds: untouched
+    agentd.settle()
+    assert box.property("text") == "Yes and"         # the next edit was cleaned, and the box still held exactly it
+
+
 def test_a_box_the_person_emptied_does_not_get_the_old_words_back_from_a_late_answer(bar):
     bar.card(message_card())
     bar.wait(lambda: bar.sent_of("proposal"))
@@ -851,6 +902,92 @@ def test_a_card_that_goes_while_a_press_is_out_says_it_cannot_tell(bar):
     QtCore.QMetaObject.invokeMethod(bar.pill, "lost", QtCore.Qt.DirectConnection)
     assert bar.pill.property("pressLine").startswith("I lost touch with the agent while that went")
     assert bar.pill.property("pressOut") == "p3" and not lit(bar)
+
+
+def test_a_press_that_was_out_when_the_socket_dropped_can_be_made_again_once_agentd_is_back(bar):
+    """The button was dim for good before: nothing cleared the press that was out. Agentd's state of the draft decides
+    once it answers (it only sends from open): a draft that is still open lights it, one that may have gone does not."""
+    agentd = open_message(bar)
+    focus(bar)
+    bar.type("Yes.")
+    agentd.settle()
+    bar.wait(lambda: lit(bar))
+    bar.click(bar.item("sendButton"))
+    assert bar.pill.property("pressOut") == "p3"
+    QtCore.QMetaObject.invokeMethod(bar.pill, "lost", QtCore.Qt.DirectConnection)
+    bar.send(type="status", busy=False, provider="claude", queue=[])         # the connection is back
+    assert bar.pill.property("pressOut") == ""
+    agentd.draft["state"] = "open"
+    agentd.tell()                                                            # it never heard the press: still open
+    bar.wait(lambda: lit(bar))
+    # and when agentd restarted in the middle of it, it says the draft may have gone
+    agentd.draft["state"] = "unknown"
+    agentd.tell()
+    bar.wait(lambda: not lit(bar) and bar.shown("unknownLine"))
+    assert bar.warnings == []
+
+
+def test_a_draft_that_was_sent_does_not_lend_its_words_to_the_next_draft_of_the_same_card(bar):
+    """A comment or a reply was sent and the card stayed up with its receipt; the next draft of the same card (the
+    agent's, or a second Reply) must show its own words. The old ones were typed again into it and lit its button,
+    so one press posted them twice."""
+    agentd = open_message(bar)
+    focus(bar)
+    bar.type("Yes, lock the 14th.")
+    agentd.settle()
+    bar.wait(lambda: lit(bar))
+    bar.click(bar.item("sendButton"))
+    agentd.settle()
+    bar.wait(lambda: bar.text("receiptLine"))
+    bar.forget()
+    bar.card(message_card(reply=reply_block(proposal="p6", content="Done, shipped.", by="agent")))
+    bar.pump(0.5)
+    assert reply_box(bar).property("text") == "Done, shipped."
+    assert bar.sent_of("proposal", op="edit", id="p6") == []
+    assert not any(m.get("content") == "Yes, lock the 14th." for m in bar.sent_of("proposal"))
+    assert bar.warnings == []
+
+
+def test_a_draft_that_is_still_open_keeps_what_is_typed_when_the_card_is_given_a_new_one(bar):
+    agentd = open_message(bar)
+    focus(bar)
+    bar.type("Almost there")
+    bar.card(message_card(reply=reply_block(proposal="p7", content="", by="agent")))
+    bar.pump(0.5)
+    assert reply_box(bar).property("text") == "Almost there"           # what the person is writing is never written over
+    assert bar.sent_of("proposal", op="edit", id="p7")[-1]["content"] == "Almost there"
+    assert agentd and bar.warnings == []
+
+
+def test_what_was_typed_a_moment_before_another_card_replaces_this_one_is_said_to_its_own_draft(bar):
+    bar.card(message_card())
+    bar.wait(lambda: bar.sent_of("proposal"))
+    focus(bar)
+    bar.type("A pasted reply")
+    bar.forget()
+    bar.card(message_card(id="msg:other", reply=reply_block(proposal="p9", target="slack:w1/C2/1700000000.000300")))
+    bar.pump(0.5)
+    assert bar.sent_of("proposal", op="edit", id="p3") == [
+        {"type": "proposal", "op": "edit", "id": "p3", "content": "A pasted reply"}]
+    assert reply_box(bar).property("text") == ""                     # the next card starts empty
+    assert bar.sent_of("proposal", op="edit", id="p9") == []
+
+
+def test_only_the_screen_that_draws_the_box_says_whether_the_person_is_in_it(bar):
+    """Another screen holds a face with a stale mirror of the card and no focus: heard last, it said the person was
+    out of the box (the keyboard stayed with the bar) and still typing after the box was emptied (Esc kept the card)."""
+    agentd = open_message(bar)
+    focus(bar)
+    bar.type("abc")
+    agentd.settle()
+    assert bar.pill.property("composeFocus") is True and bar.pill.property("composeText") is True
+    for _ in range(3):
+        bar.key(QtCore.Qt.Key_Backspace)
+    agentd.settle()
+    assert bar.pill.property("composeText") is False and bar.pill.property("composeFocus") is True
+    bar.key(QtCore.Qt.Key_Escape)
+    assert bar.pill.property("card") is None and bar.win.property("handOffs") == 1
+    assert bar.warnings == []
 
 
 # -- the task card --

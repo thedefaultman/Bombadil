@@ -500,9 +500,16 @@ def test_the_browser_service_is_a_user_unit_that_starts_at_login_after_the_sessi
     assert unit["Unit"]["After"] == ["graphical-session.target"] and unit["Unit"]["StartLimitIntervalSec"] == ["0"]
     assert unit["Install"]["WantedBy"] == ["default.target"]
     assert _enabled_by(USER_UNITS / "default.target.wants/bombadil-browserd.service", "bombadil-browserd.service")
-    # It starts before there is a screen and needs none: nothing in the session hands it a display.
+    # The browser it starts for a page is the person's, so it outlives a restart of the service.
+    assert unit["Service"]["KillMode"] == ["process"]
+    # It starts before there is a screen, but opening a page needs one (Chromium's display, the panel's compositor):
+    # the session hands it both and starts it again, as it does for mail.
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
-    assert "bombadil-browserd" not in lua
+    start = lua[lua.index('hl.on("hyprland.start"'):]
+    start = start[:start.index("\nend)")]
+    line = next(part for part in start.split("hl.exec_cmd(") if "bombadil-browserd" in part)
+    assert "import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE" in line
+    assert line.index("import-environment") < line.index("restart bombadil-browserd.service")
 
 
 def test_the_build_links_the_connection_services_commands_into_usr_local_bin():

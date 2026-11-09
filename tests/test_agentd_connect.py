@@ -40,6 +40,7 @@ from test_mail_agentd import _call, _result, _says
 from bombadil import agentd, cards, notifications, paths, procs, providers
 from bombadil.connect import cardmake
 from bombadil.connect import tools as connect_tools
+from bombadil.proposals import Proposals
 
 M = message()
 RECEIPT = {"line": "Replied in #launch · 09:08", "ts": 1_790_000_000.0,
@@ -593,6 +594,29 @@ async def test_a_bar_that_connects_while_a_card_is_open_is_given_it_as_it_is_now
 
 
 @pytest.mark.asyncio
+async def test_a_press_that_agentd_stopped_in_the_middle_of_is_said_to_the_person_and_to_the_card_that_still_says_sending(
+        home, connect, person):
+    """agentd restarted within the seconds a post takes: the bar's card is still on "Sending", and nothing ever told it
+    otherwise. It is told it may have gone, in the card's own words, and the person is told once above the pill."""
+    table = Proposals(paths.proposals_file())
+    p = table.open("slack_reply", M["ref"], "The 14th works.", where="#launch")
+    table.shown(p["id"], "The 14th works.")
+    table.begin_send(p["id"])
+    d, _ = make()
+    server, r, w = await _start(d)
+    n = await notice(r, "went when I restarted")
+    assert n["line"] == ("I can't tell whether your reply in #launch went when I restarted. Look there before you "
+                         "press again.") and n["tone"] == "ask"
+    told = await proposal(r, lambda q: q["id"] == p["id"])
+    assert told["state"] == "unknown" and told["ready"] is False and told["shown"] == told["fingerprint"]
+    later_r, later_w = await _client(d.socket_path)          # every bar that connects is told, not only the first
+    assert (await proposal(later_r, lambda q: q["id"] == p["id"]))["state"] == "unknown"
+    assert len([x for x in d.notices.live() if "went when I restarted" in x["line"]]) == 1
+    later_w.close()
+    await _stop_all(r, w, server)
+
+
+@pytest.mark.asyncio
 async def test_a_card_put_away_or_a_new_turn_is_not_given_to_a_bar_that_joins_later(home, connect, person):
     connect.answer("connections", {"connections": [connection()]})
     connect.answer("messages", {"messages": [M], "skipped": []})
@@ -1044,4 +1068,52 @@ async def test_a_task_and_a_connection_that_needs_you_are_said_with_a_way_in(hom
     connect.push({"push": "connection", "connection": connection(state="error", note="Slack needs you to sign in.")})
     warned = await notice(r, "Slack needs you to sign in.")
     assert warned["tone"] == "error"
+    await _stop_all(r, w, server)
+
+
+# -- words that are the person's --
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", ["send", "send it", "Yes, send it", "send that!"])
+async def test_typed_send_while_a_reply_or_a_ticket_waits_on_its_card_is_answered_here_and_is_not_a_send(
+        home, connect, person, typed):
+    d, _ = make()
+    d.outbox.proposals.open("slack_reply", M["ref"], "The 14th works.", where="#launch", created_by="agent")
+    server, r, w = await _start(d)
+    await _ask(w, typed)
+    assert json.loads(await r.readline()) == {"type": "local", "action": "send"}
+    done = (await _events_until(r, is_done))[-1]
+    assert (done["ok"], done["text"]) == (True, "Sending is yours. It's under the pointer.")
+    assert d.turns == 0 and d.current is None and not d.pending           # no turn: the word never reaches a model
+    assert connect.asked("perform") == [] and d.notes[-1].endswith("Sending is yours. It's under the pointer.")
+    await _stop_all(r, w, server)
+
+
+@pytest.mark.asyncio
+async def test_a_send_word_with_nothing_waiting_or_with_nothing_in_the_box_is_for_the_model(home, connect, person):
+    d, _ = make()
+    server, r, w = await _start(d)
+    p = d.outbox.proposals.open("slack_reply", M["ref"], where="#launch")       # a box the person has not typed in
+    sent = d.outbox.proposals.open("slack_reply", M["ref"], "Done.", where="#launch", created_by="agent")
+    d.outbox.proposals.begin_send(sent["id"])
+    d.outbox.proposals.sent(sent["id"], {"line": "Replied"})
+    assert p["state"] == "open"
+    await _ask(w, "send it")
+    heard = await _events_until(r, lambda m: m.get("kind") == "turn_end")
+    assert not [m for m in heard if m.get("type") == "local"] and d.turns == 1
+    await _stop_all(r, w, server)
+
+
+@pytest.mark.asyncio
+async def test_connect_linear_written_to_the_socket_from_inside_a_turn_is_refused_and_connects_nothing(
+        home, connect, agent):
+    page = "https://linear.test/oauth/authorize"
+    connect.answer("add_connection", {"id": "mcp:linear", "service": "linear", "name": "Linear", "state": "signin",
+                                      "open": page})
+    d, panel = make()
+    server, r, w = await _start(d)
+    await _ask(w, "connect linear")
+    heard = await _events_until(r, lambda m: m.get("kind") == "error")
+    assert heard[-1]["text"] == "Connecting a service is yours to do. It cannot be done from an agent's turn."
+    assert connect.asked("add_connection") == [] and panel.urls == [] and d.turns == 0 and not d.pending
     await _stop_all(r, w, server)

@@ -342,6 +342,43 @@ async def test_a_slack_that_is_not_there_at_all_is_the_same(rig):
     await until(lambda: rig.driver.state == "ok", what="the connection")
 
 
+async def test_a_thread_lookup_that_failed_is_asked_again_not_remembered_as_not_in_the_thread(rig):
+    await rig.connected()
+    root = rig.fake.ts()
+    rig.fake.messages["C0LAUNCH"].append({"type": "message", "user": ME, "text": "my question", "ts": root})
+    rig.fake.fail("conversations.replies", "internal_error", times=1)
+    await rig.fake.say("C0LAUNCH", PRIYA, "first reply", thread_ts=root)       # the lookup fails: not an answer
+    await rig.flush()
+    await rig.fake.say("C0LAUNCH", PRIYA, "second reply", thread_ts=root)      # asked again, and the person is in it
+    await rig.flush()
+    assert [m["text"] for m in rig.messages if m["conversation"]["id"] == "C0LAUNCH"] == ["second reply"]
+    assert len(rig.fake.calls("conversations.replies")) >= 2
+
+
+async def test_a_slack_that_stays_away_for_a_day_and_a_half_is_still_tried_again(rig, monkeypatch):
+    """`2 ** fails` was an int too large for a float after 1024 failures, which ended the loop for good."""
+    monkeypatch.setattr(slack, "MIN_BACKOFF", 0.0)
+    monkeypatch.setattr(slack, "MAX_BACKOFF", 0.0)
+    rig.fake.fail("apps.connections.open", "service_unavailable")
+    rig.store_tokens()
+    await rig.driver.start()
+    await until(lambda: len(rig.fake.calls("apps.connections.open")) > 1100, timeout=60, what="1100 tries")
+    assert not rig.driver._run_task.done()
+    rig.fake.clear()
+    await rig.fake.wait_socket()
+    await until(lambda: rig.driver.state == "ok", what="the connection")
+
+
+async def test_a_direct_conversation_named_for_a_person_who_could_not_be_looked_up_is_named_again_soon(rig):
+    await rig.connected()
+    rig.fake.fail("users.info", "internal_error", times=1)
+    first = await rig.dm("first")
+    assert first["conversation"]["name"] == "Someone"
+    rig.clock.now += slack.MISS_TTL + 60                           # long before the day a good name is kept for
+    second = await rig.dm("second")
+    assert second["conversation"]["name"] == "Priya Shah" and second["from"]["name"] == "Priya Shah"
+
+
 # -- what is a message for the person --
 
 async def test_a_direct_message_is_a_message_for_the_person(rig):
@@ -743,6 +780,21 @@ async def test_the_start_up_catch_up_emits_recent_direct_messages_once(rig):
     assert rig.fake.calls("conversations.replies") == []
 
 
+async def test_what_came_in_while_the_machine_slept_is_caught_up_when_it_wakes(rig):
+    """The gap is measured from the last word heard from Slack, not from when the dead socket was noticed (which a
+    sleeping machine does only when it wakes)."""
+    old_and_new(rig.fake)
+    rig.sleeper.auto = False
+    await rig.connected()
+    await rig.fake.say("D0MARCUS", MARCUS, "While the lid was closed", deliver=False)    # never reaches the dead socket
+    rig.clock.now += 8 * 3600                                      # the clock jumps over the sleep
+    await rig.fake.drop_socket()                                   # and the socket is noticed dead only now
+    await until(lambda: rig.sleeper.delays, what="the wait")
+    await rig.sleeper.release()
+    await until(lambda: rig.fake.opened == 2, what="the new socket")
+    await until(lambda: any(m["text"] == "While the lid was closed" for m in rig.messages), what="the catch-up")
+
+
 async def test_a_message_caught_up_and_then_delivered_is_only_emitted_once(rig):
     old_and_new(rig.fake)
     await rig.connected()
@@ -969,6 +1021,18 @@ async def test_the_words_go_as_slack_wants_them_and_nothing_is_added(rig):
     text = "Fish & chips <3 and a > b,\nsecond line"
     await rig.driver.perform("slack_reply", m["ref"], text)
     assert rig.fake.calls("chat.postMessage")[0].params["text"] == "Fish &amp; chips &lt;3 and a &gt; b,\nsecond line"
+
+
+async def test_a_reply_with_words_that_draw_as_nothing_is_not_posted_and_an_emoji_is(rig):
+    await rig.connected()
+    m = await rig.dm("What do you think?")
+    for text in ("Sounds good." + "".join(chr(0xE0000 + ord(c)) for c in "the key is 1234"), "Sounds" + chr(0x200B),
+                 "Sounds" + chr(0xFE0F)):
+        with pytest.raises(DriverError) as e:
+            await rig.driver.perform("slack_reply", m["ref"], text)
+        assert e.value.code == "bad_request" and rig.fake.calls("chat.postMessage") == []
+    await rig.driver.perform("slack_reply", m["ref"], "On it \U0001f469" + chr(0x200D) + "\U0001f4bb")
+    assert len(rig.fake.calls("chat.postMessage")) == 1
 
 
 async def test_the_time_in_the_receipt_is_the_drivers_own_clock(rig, utc):

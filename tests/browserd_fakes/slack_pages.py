@@ -18,8 +18,9 @@ from . import fake_cdp
 APP_ID = "A0ACME1234"
 BASE = "https://api.slack.test"
 # Where each page lives, for a test that moves the person to one (the consent page is `/oauth`, a wall in its place).
-KINDS = {"create": "/apps", "basic": f"/apps/{APP_ID}/", "consent": "/oauth?client_id=1.2",
-         "tokens": f"/apps/{APP_ID}/oauth"}
+OTHER_APP_ID = "A0OTHER999"     # another app of the person's, which has a user token of its own
+KINDS = {"create": "/apps?new_app=1", "list": "/apps", "basic": f"/apps/{APP_ID}/", "consent": "/oauth?client_id=1.2",
+         "tokens": f"/apps/{APP_ID}/oauth", "other": f"/apps/{OTHER_APP_ID}/oauth"}
 
 
 def app_token() -> str:
@@ -28,6 +29,10 @@ def app_token() -> str:
 
 def user_token() -> str:
     return "xox" + "p-" + "-".join(["1" * 12, "2" * 13, "3" * 13, "a1b2c3d4" * 4])
+
+
+def other_user_token() -> str:
+    return "xox" + "p-" + "-".join(["4" * 12, "5" * 13, "6" * 13, "e5f6a7b8" * 4])
 
 
 STYLE = ("<style>body{font:16px system-ui,sans-serif;margin:24px}button{font:inherit;padding:8px 16px;margin:6px 8px 6px 0}"
@@ -45,6 +50,7 @@ class Site:
         self.wall, self.two_step, self.token_in_text = wall, two_step, token_in_text
         self.no_user_token, self.blank = no_user_token, blank
         self.app_token, self.user_token = app_token(), user_token()
+        self.other_user_token = other_user_token()
 
     # -- HTML, for a real browser --
 
@@ -52,17 +58,24 @@ class Site:
         if self.blank:
             return 200, _page("Slack", "<p>Loading</p>")
         if path == "/apps":
-            return 200, self._create()
+            return 200, self._create() if "new_app" in query else self._list()
         if path == f"/apps/{APP_ID}/":
             return 200, self._basic()
         if path == "/oauth":
             return 200, self._wall() if self.wall else self._consent()
         if path == f"/apps/{APP_ID}/oauth":
             return 200, self._tokens()
+        if path == f"/apps/{OTHER_APP_ID}/oauth":
+            return 200, self._tokens(self.other_user_token)
         return 404, _page("Not found", "<h1>Not found</h1>")
 
     def creation_url(self, base: str) -> str:
         return f"{base}/apps?new_app=1&manifest_json=%7B%22display_information%22%3A%7B%22name%22%3A%22Bombadil%22%7D%7D"
+
+    def _list(self) -> str:
+        return _page("Your Apps", "<h1>Your Apps</h1><p>Create New App</p>"
+                                  f"<a href=\"/apps/{APP_ID}/\">Bombadil</a><br>"
+                                  f"<a href=\"/apps/{OTHER_APP_ID}/\">Another app</a>")
 
     def _create(self) -> str:
         review = ("<h1>Review summary &amp; create your app</h1><p>Bombadil will have 10 user scopes.</p>"
@@ -101,8 +114,9 @@ class Site:
             "<h1>Request to install Bombadil</h1><p>Installing apps in Acme needs approval from a workspace "
             "administrator.</p><button>Submit Request</button>"))
 
-    def _tokens(self) -> str:
-        shown = "" if self.no_user_token else f"<input readonly value=\"{self.user_token}\"><button>Copy</button>"
+    def _tokens(self, token: str | None = None) -> str:
+        token = token or self.user_token
+        shown = "" if self.no_user_token else f"<input readonly value=\"{token}\"><button>Copy</button>"
         return _page("OAuth & Permissions", (
             "<h1>OAuth &amp; Permissions</h1><h2>OAuth Tokens for Your Workspace</h2><p>User OAuth Token</p>"
             f"{shown}<button>Reinstall to Workspace</button>"))
@@ -111,7 +125,7 @@ class Site:
 
     def fake(self, chrome: fake_cdp.FakeChrome, base: str = BASE) -> None:
         """Make the stand-in's tabs open on this site's first page (whatever address /json/new is given)."""
-        chrome.page_factory = lambda url: self.fake_page(chrome, "create", base)
+        chrome.page_factory = lambda url: self.fake_page(chrome, "create" if "new_app" in url else "list", base)
 
     def fake_page(self, chrome, which: str, base: str = BASE) -> fake_cdp.FakePage:
         """A new copy of one of the pages (`KINDS`), as the server sends it: nothing drawn on it, nothing pressed."""
@@ -119,19 +133,24 @@ class Site:
             return fake_cdp.FakePage(f"{base}/apps?new_app=1", "Slack", "Loading")
         if which == "create":
             return self._fake_create(chrome, base)
+        if which == "list":
+            return self._fake_list(chrome, base)
         if which == "basic":
             return self._fake_basic(chrome, base)
         if which == "consent":
             return self._wall_page(chrome, base) if self.wall else self._consent_page(chrome, base)
-        return self._fake_tokens(base)
+        return self._fake_tokens(base, self.other_user_token, OTHER_APP_ID) if which == "other" \
+            else self._fake_tokens(base)
 
     def fake_goto(self, chrome, tab_id: str, which: str, base: str = BASE) -> None:
         chrome.navigate(tab_id, self.fake_page(chrome, which, base))
 
     def fake_reload(self, chrome, tab_id: str, base: str = BASE) -> None:
         """The tab loads the page it shows again, fresh."""
-        path = urlsplit(chrome.page(tab_id).url).path
-        which = ("create" if path == "/apps" else "consent" if path == "/oauth"
+        url = urlsplit(chrome.page(tab_id).url)
+        path = url.path
+        which = (("create" if "new_app" in url.query else "list") if path == "/apps" else "consent" if path == "/oauth"
+                 else "other" if path == f"/apps/{OTHER_APP_ID}/oauth"
                  else "tokens" if path.endswith("/oauth") else "basic")
         self.fake_goto(chrome, tab_id, which, base)
 
@@ -151,6 +170,14 @@ class Site:
                                   "Create app from manifest\nPick a workspace to develop your app in.")
         first.elements = [E("Next", (700, 500, 90, 34), on_press=self._go(chrome, review)), E("Cancel", (580, 500, 90, 34))]
         return first
+
+    def _fake_list(self, chrome, base) -> fake_cdp.FakePage:
+        E = fake_cdp.FakeElement
+        page = fake_cdp.FakePage(f"{base}/apps", "Your Apps", "Your Apps\nCreate New App\nBombadil\nAnother app")
+        page.elements = [E("Create New App", (40, 100, 160, 34)),
+                         E("Bombadil", (40, 160, 90, 28), on_press=self._go(chrome, lambda: self._fake_basic(chrome, base))),
+                         E("Another app", (40, 200, 120, 28))]
+        return page
 
     def _fake_basic(self, chrome, base) -> fake_cdp.FakePage:
         E = fake_cdp.FakeElement
@@ -192,10 +219,10 @@ class Site:
         page.elements = [E("Submit Request", (400, 500, 140, 34))]
         return page
 
-    def _fake_tokens(self, base) -> fake_cdp.FakePage:
+    def _fake_tokens(self, base, token: str | None = None, app_id: str = APP_ID) -> fake_cdp.FakePage:
         E = fake_cdp.FakeElement
-        page = fake_cdp.FakePage(f"{base}/apps/{APP_ID}/oauth", "OAuth & Permissions",
+        page = fake_cdp.FakePage(f"{base}/apps/{app_id}/oauth", "OAuth & Permissions",
                                  "OAuth & Permissions\nOAuth Tokens for Your Workspace\nUser OAuth Token",
-                                 inputs=[] if self.no_user_token else [self.user_token])
+                                 inputs=[] if self.no_user_token else [token or self.user_token])
         page.elements = [E("Copy", (700, 300, 70, 34)), E("Reinstall to Workspace", (40, 360, 200, 34))]
         return page

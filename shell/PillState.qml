@@ -147,7 +147,9 @@ QtObject {
         if (mode === "closing") return stopped ? "stopped" : (source === "error" ? "rest" : "done")
         return "rest"
     }
-    onConnectedChanged: if (connected) seen = true
+    // Back from a drop: a press that was out when it dropped is no longer waited on. Agentd's state of the draft decides
+    // (it is asked to send only from open, so a press that did go is refused, and one that did not may be made again).
+    onConnectedChanged: if (connected) { seen = true; pressOut = "" }
 
     property string _result: ""
     property bool _resultOk: true
@@ -299,6 +301,10 @@ QtObject {
                 .map(w => ({ kind: String(w.kind || ""), text: _plain(w.text, 240) }))
         if (typeof p.note === "string") next.note = _plain(p.note, 240)
         if (p.content !== undefined && p.content !== null) next.content = p.content
+        // What the box held when agentd took characters out of it that draw as nothing (a paste from a page often has
+        // some): the face gives the box the cleaned words back while the box still holds exactly this.
+        if (p.cleaned_from !== undefined && p.cleaned_from !== null) next.cleaned_from = p.cleaned_from
+        else delete next.cleaned_from
         const c = Object.assign({}, card)
         c[key] = next
         card = c

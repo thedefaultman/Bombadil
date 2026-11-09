@@ -237,11 +237,16 @@ class Context:
 
 @dataclass
 class Flow:
-    """A Slack setup that is running in its thread."""
-    connection: str
+    """A Slack setup that is running in its thread (or about to be: its place is taken before its connection is)."""
+    connection: str = ""
     notice: int = 0
     cancel: threading.Event = field(default_factory=threading.Event)
     deadline: float = 0.0
+
+    async def stop(self, _action_id: str = "") -> bool:
+        """What the notice's Cancel does, however many times the notice is drawn again."""
+        self.cancel.set()
+        return False
 
 
 class Says:
@@ -273,6 +278,7 @@ class Says:
         self._by_conversation: OrderedDict[str, int] = OrderedDict()  # conversation -> its notice
         self._ready: OrderedDict[str, int] = OrderedDict()           # proposal id -> its "is ready" notice
         self._contexts: OrderedDict[str, Context] = OrderedDict()    # proposal id -> what its card is drawn from
+        self._drawn: OrderedDict[tuple, Context] = OrderedDict()     # (kind, target) -> what a card was last drawn from
         self._refs: OrderedDict[str, str] = OrderedDict()            # a card or row id that was hashed -> its ref
         self._bad: dict[str, str] = {}      # connection -> the state a warning was said for
         self._warned: dict[str, int] = {}   # connection -> its warning notice
@@ -502,6 +508,11 @@ class Says:
 
     async def show(self, ctx: Context, proposal: dict | None = None) -> bool:
         card = ctx.card(proposal)
+        if card is not None and (ctx.messages or ctx.task):
+            self._drawn[(ctx.kind, ctx.target)] = ctx
+            self._drawn.move_to_end((ctx.kind, ctx.target))
+            while len(self._drawn) > REMEMBER:
+                self._drawn.popitem(last=False)
         return await self.card(card) if card is not None else False
 
     # -- what the service knows --
@@ -510,6 +521,12 @@ class Says:
         """Where a proposal goes and what its card is drawn from. `fallback` is what the caller already holds (the
         message that was pushed), used when the service cannot be asked. `strict` raises `Unknown` for a target the
         service does not know, or cannot be asked about."""
+        if not fallback and not strict:
+            # The card the person is looking at already holds what it was drawn from: a service that cannot be asked
+            # just now (restarting, slow) never stops them writing in the box of a card that is on their screen.
+            seen = self._drawn.get((kind, target))
+            if seen is not None:
+                fallback = seen.messages if kind == "slack_reply" else [seen.task] if seen.task else []
         if kind == "slack_reply":
             return await self._reply_context(target, strict, fallback)
         return await self._task_context(kind, target, strict, fallback)
@@ -724,28 +741,38 @@ class Says:
         return True, f"Opening {title}'s page. Allow Bombadil there."
 
     async def _slack(self, title: str) -> tuple[bool, str]:
-        if "slack" in self._flows and self._flows["slack"].connection:
+        if "slack" in self._flows:
             return True, "Setting up Slack is already under way."
         try:
             setup = self._setup or _slack_setup()
         except ImportError:
             return False, SLACK_UNAVAILABLE
-        # A connection that was begun and never finished is picked up again, not left behind for a second one.
-        stale = next((c for c in await self._connections() if c.get("service") == "slack"
-                      and c.get("state") == "setup"), None)
-        conn = stale or await self.request("add_connection", 20, service="slack")
-        if not isinstance(conn, dict) or not valid_connection_id(conn.get("id")):
-            return False, "Slack would not start. Try again in a moment."
+        flow = Flow(deadline=time.monotonic() + SETUP_SECONDS)
+        self._flows["slack"] = flow   # the place is taken before anything is waited for: two requests make one setup
+        started = False
+        try:
+            # A connection that was begun and never finished is picked up again, not left behind for a second one.
+            stale = next((c for c in await self._connections() if c.get("service") == "slack"
+                          and c.get("state") == "setup"), None)
+            conn = stale or await self.request("add_connection", 20, service="slack")
+            if not isinstance(conn, dict) or not valid_connection_id(conn.get("id")):
+                return False, "Slack would not start. Try again in a moment."
+            flow.connection = conn["id"]
+            if flow.cancel.is_set():     # called off while the connection was being made
+                if not stale:
+                    self._spawn(self._drop(flow.connection))
+                return False, "Setup stopped."
+            result = self._start_slack(flow, setup, title)
+            started = True
+            return result
+        finally:
+            if not started and self._flows.get("slack") is flow:
+                del self._flows["slack"]
+
+    def _start_slack(self, flow: Flow, setup, title: str) -> tuple[bool, str]:
         loop = asyncio.get_running_loop()
-        flow = Flow(conn["id"], deadline=time.monotonic() + SETUP_SECONDS)
-
-        async def cancel(_action_id: str) -> bool:
-            flow.cancel.set()
-            return False
-
         flow.notice = self.notices.post("connect", f"Setting up {title}.", "step",
-                                        [{"id": "cancel", "label": "Cancel", "style": "quiet"}], 0, cancel)
-        self._flows["slack"] = flow
+                                        [{"id": "cancel", "label": "Cancel", "style": "quiet"}], 0, flow.stop)
 
         def beat(call, *args) -> None:
             try:
@@ -768,17 +795,20 @@ class Says:
     def _progress(self, flow: Flow, sentence) -> None:
         text = one_line(sentence, 200)
         if text and not self.notices.replace(flow.notice, line=text, tone="step"):
+            # The line was tapped away or pushed out by newer ones: it is drawn again, with a Cancel that still works.
             flow.notice = self.notices.post("connect", text, "step",
-                                            [{"id": "cancel", "label": "Cancel", "style": "quiet"}], 0, None)
+                                            [{"id": "cancel", "label": "Cancel", "style": "quiet"}], 0, flow.stop)
 
     def _finished(self, flow: Flow, result) -> None:
-        self._flows.pop("slack", None)
+        if self._flows.get("slack") is flow:
+            del self._flows["slack"]
         result = result if isinstance(result, dict) else {}
         ok = result.get("ok") is True
         text = one_line(result.get("say"), 200) or ("Slack is connected." if ok else "Slack setup stopped.")
-        if not self.notices.replace(flow.notice, line=text, tone="done" if ok else "error", actions=[],
-                                    ttl=30 if ok else 0, handler=None):
-            self.notices.post("connect", text, "done" if ok else "error", (), 30 if ok else 0)
+        # The person's own Cancel is not a failure to be left above the pill: it is said and goes.
+        tone, ttl = ("done", 30) if ok else ("done", 20) if flow.cancel.is_set() else ("error", 0)
+        if not self.notices.replace(flow.notice, line=text, tone=tone, actions=[], ttl=ttl, handler=None):
+            self.notices.post("connect", text, tone, (), ttl)
         if flow.cancel.is_set():
             self._spawn(self._drop(flow.connection))
         elif self.is_open(cardmake.CONNECTED_ID):

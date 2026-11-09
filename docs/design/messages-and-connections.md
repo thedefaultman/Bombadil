@@ -21,8 +21,8 @@ Mail drew the line (Bombadil's own views for what you glance at or answer in a s
 work inside a tool's own page, a program only where it beats the site) and this piece keeps to it.
 
 - **A message to you** (a direct message, a mention, a thread you are in) is a card with a reply box.
-- **A thing that waits on you in a work tool** (a ticket assigned to you, a page that mentions you) is a card
-  with its fields, and "make a ticket for Leo about the empty state, due Thursday" fills one whose button is
+- **A thing that waits on you in a work tool** (a ticket or a task assigned to you; Notion has no such list yet, it
+  only takes the pages and comments you press for) is a card with its fields, and "make a ticket for Leo about the empty state, due Thursday" fills one whose button is
   yours.
 - **Anything else a web page tells you** (a Teams message, a calendar reminder, a shop's notice) is the same
   line, built from the notification the page sent.
@@ -48,8 +48,11 @@ work inside a tool's own page, a program only where it beats the site) and this 
    Slack's terms forbid keeping or indexing a workspace's messages outside it; this keeps none.
 5. **Other people's words are read, never obeyed.** A message, a task's title and a notification reach the
    model inside a mark that says they are other people's words, with invisible and direction-changing
-   characters removed. A turn that has read any of them is remembered, and what it proposes is held to what
-   you typed: the card says so, and flags a place you have never received a message from.
+   characters removed (including the characters that draw as nothing and can spell a sentence: the tag block and
+   the variation selectors) and every line of a message quoted, so a line in a message that looks like the head
+   of another cannot pass for one. The same goes for what you send: a draft holds nothing that draws as nothing,
+   so what you read in the box is all of what goes. A turn that has read any of them is remembered, and what it
+   proposes is held to what you typed: the card says so, and flags a place you have never received a message from.
 6. **Every answer points at its source.** A card's "Open" opens the message or the ticket on the service's own
    page; a receipt opens what was posted.
 
@@ -63,7 +66,7 @@ work inside a tool's own page, a program only where it beats the site) and this 
   Slack messages come from Slack's notifications instead.
 - **Work tools through their own MCP servers.** Notion, Linear, Atlassian's Jira, Todoist and ClickUp each run
   an official server a person can allow alone with a browser sign-in. One driver speaks to all of them, from a
-  small recipe per service (a file a fork can add), so each consent page says "Bombadil" and the keys stay in
+  small recipe per service (a file, and a name in four lists, for a fork that adds one), so each consent page says "Bombadil" and the keys stay in
   the service, never in the agent's own tool list.
 - **Teams stays in its page.** Reading Teams through Microsoft's API needs an administrator in the default
   setup. Teams' own notifications carry a sender and a preview, which is enough for a line; the card's button
@@ -113,24 +116,61 @@ own user can open, which is a wall against everything of yours except `sudo`. Th
 pieces carry out: the agent loses `sudo`, agentd accepts presses only from the shell's own process, and then
 both of these are walls.
 
+The other doors a turn's process could try are closed the same way, by a check and not by a wall: the browser
+service answers no peer inside a turn (so a turn cannot have it open a page of its own choosing and take a token
+from it into a connection), the words that start a connection are not taken from a process of a turn, and typing
+"send it" is answered with where the button is whenever a reply or a ticket waits on a card, as it is for mail. A
+machine where turns run without a systemd scope (the probe at start did not work) cannot tell a turn's process from
+yours on any of these sockets; agentd says so once in its log when systemd is there and the probe failed.
+
 ## What changes in the rest of Bombadil
 
 - **Three card kinds** beside the diagram: message, task and list, checked by agentd and by the shell.
 - **agentd** gains proposals (what waits for a press), the press path for three more kinds, the five tools and
   the notices from connections and notifications.
-- **The image** gains `python-mcp`, `python-httpx` and `wl-clipboard`, loses `mako`, and gains the system unit
+- **The image** gains `python-mcp` and `python-httpx` (`wl-clipboard` was already there), loses `mako`, and gains the system unit
   `bombadil-connect` (its own user, `ProtectSystem=strict`, `ProtectHome`, no new privileges) and the user unit
   `bombadil-browserd`.
 - **Reserved words.** `slack`, `messages`, `unread` and `connections` open the cards without a model.
 
 ## What is checked and what is not
 
-(Filled in when the piece is verified.)
+**Checked, against fakes and against a real shell.**
+
+- Each part on its own: the connection service and its token store, the Slack driver against a fake Slack (the Web
+  API and Socket Mode), the work-tool driver against a fake server and a fake sign-in written with the same SDK, the
+  browser service and the Slack setup against a real headless Chromium showing pages that imitate Slack's, the
+  agent's five tools, proposals and the press, and the three card kinds drawn offscreen.
+- The service and agentd together, with nothing stubbed between them: a message becomes a line, Reply opens a card, the
+  draft lights only when it is what the card drew, one press performs once, a box that changed after it was drawn goes
+  nowhere, and a press from inside an agent's turn is refused by agentd and, on its own, by the service.
+- A real Quickshell in a headless compositor, with a virtual pointer and real keys: the bar's own notification server
+  owns the bus name and turns a page's notification into the line with Reply and Open; a click on Reply and the keys
+  that follow reach the card's box; the ring on Send lights only when agentd has the draft; a click on Send is one
+  receipt, and a second click sends nothing; Copy and open puts the typed words on the clipboard; the words `unread`
+  and `connections` open their cards; a task card draws; the shell logs no QML error.
+- Looking at the real shell found what the offscreen tests had not: the words of a reply that had been sent turned up
+  in the box of the next card; a service that was not connected yet was drawn struck out, as if it had been removed;
+  a task said its status and why twice; and a ticket the agent drafted could never light its button, because the card
+  drew an empty box for every field the draft did not name and so was never "exactly what the draft holds". Each is
+  fixed and has a test.
+
+**Not checked.** Nothing has run against a real Slack workspace, Notion, Linear, Jira, Todoist or ClickUp: the
+sign-in pages, the work tools' tool names and answer shapes (the recipes are marked unverified), Slack's real pages
+under the setup recipe, and the services' rate limits are all still guesses, and the first real account will say which.
+Not run either: a real Hyprland (keyboard focus for the card's box and the line behaves differently there than in the
+headless compositor), a browser's own notifications on the bus, the system unit under a real systemd, the Arch image
+with the new packages, a real agent turn using the new tools (and whether both CLIs accept the one tool whose content
+may be text or an object). The token store is a rule with a check, not yet a wall, for the reason above.
 
 ## Building on it
 
 - A **new work tool** is a recipe file in `share/connect/recipes/`: where its server is, what to ask for, which
-  tool lists what waits on you, which tools create an item and add a comment. No code.
+  tool lists what waits on you, which tools create an item and add a comment; and its name in the four lists
+  that carry a service's name and what it offers (`protocol.SERVICES`, `cardmake.SERVICE_TITLES`,
+  `cardmake.OFFERS`, `service.SERVICE_NAMES`). No other code.
 - A **new chat service** is a driver (`connect/driver.py` is the interface): what it reads, what a message for
-  you is, and one `perform`. Nothing else changes: the card, the press and the receipt are shared.
+  you is, and one `perform`. It also has to be told about: the service's registry of kinds (`service.REGISTRY`),
+  the form of a connection id, `driver.KINDS`, and the places that accept a reply only for the Slack kind
+  (`tools.py`, `watch.py`). The card, the press and the receipt are shared.
 - A **new card kind that can send** is an entry in the outbox's list of kinds, never a second way to send.

@@ -124,20 +124,37 @@ class _Attempt:
 
     def __init__(self):
         self.sent = False
+        self.armed = False          # the next call is the action itself, not a lookup made on the way to it
         self.done = False
         self.value = None
         self.status: int | None = None
+        self.refresh_status: int | None = None     # what the token endpoint said to a refresh, when one was made
         self._call: httpx2.Request | None = None
+
+    def arm(self) -> None:
+        """The request that is written next is the action: a lookup before it that never answered is not a write that
+        may have gone."""
+        self.armed = True
 
     async def note(self, request: httpx2.Request) -> None:
         try:
             if request.method == "POST" and b'"tools/call"' in request.content:
-                self.sent, self._call = True, request
+                # From here on only the call's own answer counts: what the server said to anything before it (a
+                # stream it would not open, a lookup) says nothing about how this went. It is a write that may have
+                # gone only when it is the action, not a lookup made on the way to it.
+                self._call, self.status = request, None
+                self.sent = self.sent or self.armed
         except httpx2.RequestNotRead:
             pass
 
     async def heard(self, response: httpx2.Response) -> None:
-        if not self.sent or response.request is self._call:
+        request = response.request
+        try:
+            if request.method == "POST" and b"grant_type=refresh_token" in request.content:
+                self.refresh_status = response.status_code
+        except httpx2.RequestNotRead:
+            pass
+        if self._call is None or request is self._call:
             self.status = response.status_code
 
     def hooks(self) -> dict:
@@ -368,6 +385,7 @@ class McpDriver(Driver):
         self._poller: asyncio.Task | None = None
         self._looked = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._attempt = _Attempt()           # the request being made (one at a time, under the lock)
         self._vars: dict | None = None
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._urls: OrderedDict[str, str] = OrderedDict()
@@ -610,7 +628,7 @@ class McpDriver(Driver):
         try:
             refresh = False
             while True:
-                attempt = _Attempt()
+                attempt = self._attempt = _Attempt()
                 try:
                     return await self._once(work, attempt, refresh)
                 except TimeoutError:
@@ -629,6 +647,13 @@ class McpDriver(Driver):
                         if not refresh and self._storage.can_refresh():
                             refresh = True      # once: the server turned the token down, so ask for a new one
                             continue
+                        if (attempt.refresh_status or 0) >= 500 or attempt.refresh_status == 429:
+                            # The token endpoint had a bad moment: the grant is not shown to be bad, so nothing is
+                            # thrown away and the person is not sent back to the browser.
+                            raise DriverError(
+                                f"{self.name} is asking for a pause. Try again in a minute." if attempt.refresh_status == 429
+                                else f"{self.name} is not answering.",
+                                "rate_limited" if attempt.refresh_status == 429 else "service_down") from None
                         await self._lost_access()
                         raise DriverError(f"{self.name} no longer accepts this connection. Allow it again on its page.",
                                           "auth") from None
@@ -835,6 +860,7 @@ class McpDriver(Driver):
                 recipes.put(asked, path, value)
             if item:
                 recipes.put(asked, action.target, item)
+            self._attempt.arm()      # the lookup above is made; what is written next is the action
             return variables, await self._call(session, action.tool, asked)
 
         variables, result = await self._run(work, write=True)

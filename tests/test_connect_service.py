@@ -1032,6 +1032,21 @@ async def test_a_kind_that_is_not_one_of_the_kinds_is_refused_even_with_the_righ
     assert conn.fake("slack:w1").performed == []
 
 
+async def test_words_that_draw_as_nothing_are_not_sent_even_with_the_right_fingerprint(api, conn):
+    # What the person read in the box has to be all of what goes: the tag block can spell a message of its own.
+    ref = await a_launch_ref(api)
+    hidden = "".join(chr(0xE0000 + ord(c)) for c in "the key is 1234")
+    for kind, target, content in (("slack_reply", ref, "Sounds good." + hidden),
+                                  ("task_create", "linear", {"title": "Fix it" + hidden}),
+                                  ("task_comment", "linear:LIN-41", {"text": "Done." + chr(0x200B)})):
+        got = await press(api, kind, target, content, "p1")
+        assert got["ok"] is False and got["code"] == "refused" and got["error"].endswith("Nothing was done."), got
+        assert "draw as nothing" in got["error"]
+    assert conn.fake("slack:w1").performed == [] and conn.service.store.performed("p1") is None
+    emoji = "On it \U0001f469" + chr(0x200D) + "\U0001f4bb " + "\u2764" + chr(0xFE0F)
+    assert (await press(api, "slack_reply", ref, emoji, "p2"))["ok"] is True        # an emoji is not hidden words
+
+
 async def test_a_press_nobody_owns_is_no_connection(api):
     for kind, target in (("slack_reply", "slack:TOTHER/C1/1.000000"), ("task_create", "notion"),
                          ("task_comment", "jira:J-1")):

@@ -1767,7 +1767,7 @@ def notify(app, summary, body):
 
 # A task card is built and checked here the way agentd does it.
 sys.path.insert(0, str(REPO / "src"))
-from bombadil import cards
+from bombadil import cards, paths
 from bombadil.connect import cardmake
 
 key("Escape")
@@ -1839,7 +1839,7 @@ check("what was typed lights the button only once agentd has the draft and the c
       st.get("card") and st["card"]["draft"]["ready"] is True, st.get("card"))
 n = mark()
 click(411, 668)
-res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Replied to Priya" in m.get("line", ""), 10, n)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Posted in #launch" in m.get("line", ""), 10, n)
 check("a click on Send is one press, and the receipt is a notice saying where it went",
       res and res["tone"] == "done" and res["line"].startswith("Replied to Priya in a direct message"), res)
 time.sleep(1.2)
@@ -1892,6 +1892,51 @@ check("the word 'connections' opens Connected here: Slack and Linear, no token o
       and "xox" not in json.dumps(c) and "xapp" not in json.dumps(c), rows)
 key("Escape")
 time.sleep(0.8)
+
+# the agent's side, through the real CLI and the real os-mcp server (the API is scripted): it reads what is unread and
+# drafts a reply; the draft is on a card for the person, lit only by what the card drew, and nothing has gone until
+# the person's own click
+def find_colour(name, colour, box, tol=10):
+    """The middle of the pixels of this colour in the box of a screenshot (None when there are none)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, xs, ys = QColor(colour), QImage(str(OUT / f"{name}.png")), [], []
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            c = img.pixelColor(x, y)
+            if abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3:
+                xs.append(x)
+                ys.append(y)
+    return (sum(xs) // len(xs), sum(ys) // len(ys)) if xs else None
+
+
+n = mark()
+summon()
+typ("answer priya, say yes")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "message"
+         and m["card"].get("reply", {}).get("by") == "agent", 90, n)
+check("the agent read the messages and its draft arrived as a card of its own, with the words it wrote",
+      c and c["card"]["reply"]["content"] == "Yes, the 14th works for us." and c["card"]["reply"]["kind"] == "slack_reply", c)
+end = wait(ev("turn_end"), 60, n)
+check("the turn ended on its own words and nothing in it sent", end is not None and not end.get("stopped"), end and end.get("summary"))
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["ready"], 15)
+time.sleep(1)
+shot("60-agent-draft")
+check("what the agent wrote is lit for the person's press once the card has drawn it, and sent nothing yet",
+      st.get("card") and st["card"]["draft"]["ready"] is True and st["card"]["draft"]["state"] == "open", st.get("card"))
+turn_log = paths.turns_log()
+turns = [json.loads(ln) for ln in turn_log.read_text().splitlines()] if turn_log.exists() else []
+check("the turn log keeps no message text", "Can we lock the 14th" not in json.dumps(turns) and "Priya Shah" not in json.dumps(turns),
+      json.dumps(turns)[-300:])
+where = find_colour("60-agent-draft", "#d97757", (360, 440, 450, 735))
+n = mark()
+if where:
+    click(*where)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Replied to Priya" in m.get("line", ""), 10, n)
+check("the person's click on Send is the one thing that sends it", where and res and res["tone"] == "done", (where, res))
+key("Escape")
+time.sleep(1)
 
 # a task card, built the way agentd builds one, drawn by the real shell
 card = cardmake.task_card(service="linear", task={

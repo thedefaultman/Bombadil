@@ -238,7 +238,7 @@ from .mail import client as mail_client
 from .mail import tools as mail_tools
 from .mail import watch as mail_watch
 from .notices import Notices, one_line
-from .proposals import ProposalError
+from .proposals import ProposalError, is_empty
 from .vitals import Vitals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
@@ -480,6 +480,15 @@ class AgentD:
         back = ' Say "use sonnet" to go back.' if choice == "opus" else ""
         return True, f"Using {title} from the next message.{back}"
 
+    def _say_recovered(self):
+        """A reply or task that was being sent when agentd stopped may or may not have gone: it is said, once, to
+        whoever is looking (the card, if it is still on a bar's screen, says it too: see `_client`)."""
+        for p in self.outbox.proposals.recovered():
+            noun = "reply" if p["kind"] == "slack_reply" else "task"
+            where = f" in {p['where']}" if p.get("where") else ""
+            self.notices.post("connect", f"I can't tell whether your {noun}{where} went when I restarted. Look there "
+                                         "before you press again.", "ask")
+
     # -- socket --
 
     async def serve(self):
@@ -488,8 +497,12 @@ class AgentD:
             self.socket_path.unlink()
         self._load_state()
         # Probe for systemd scopes now, not on the first Enter.
-        await asyncio.to_thread(procs.scope_supported)
+        if not await asyncio.to_thread(procs.scope_supported) and Path("/run/systemd/system").exists():
+            print("agentd: agent turns run without a systemd scope here, so the mail and connection services cannot "
+                  "tell an agent's process on their sockets from yours: only agentd's look at the running turn's own "
+                  "processes stands between a shell and a press", file=sys.stderr, flush=True)
         self._loop = asyncio.get_running_loop()
+        self._say_recovered()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
         worker = asyncio.create_task(self._worker())
         self._background(self.check_access(start=self.auto_signin))
@@ -521,6 +534,8 @@ class AgentD:
             card = self._late_card()
             if card is not None:   # a message, task or list card that is still open
                 await self._send(writer, {"type": "card", "card": card})
+            for proposal in self.outbox.proposals.recovered():   # a press that agentd stopped in the middle of
+                await self._send(writer, {"type": "proposal", "proposal": proposal})
             self._vitals_kick()
             if self.away.up:
                 await self._send(writer, self.away.message())
@@ -564,6 +579,15 @@ class AgentD:
                 draft = await self._draft_waiting()
                 if draft is not None:   # "send it" is not a send: the press is the person's
                     action = launcher.Action("send", draft["id"] if isinstance(draft.get("id"), str) else "")
+                elif self._proposal_waiting():   # a reply or a ticket on a card: the same answer, the same reason
+                    action = launcher.Action("send", "", "proposal")
+            if action is not None and action.kind == "connect" and not await self._persons(writer):
+                # Connecting a service is the person's own act (the service refuses it to a turn's process; this
+                # is the other way in, a word written to this socket from inside a turn).
+                await self._send(writer, {"type": "event", "kind": "error",
+                                          "text": "Connecting a service is yours to do. It cannot be done from an "
+                                                  "agent's turn."})
+                return
             if action is None and self.access == "choose":
                 # First boot asks which AI: typing its name answers too.
                 name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
@@ -1203,6 +1227,11 @@ class AgentD:
             return False
         return pid == proc.pid or pid in procs.descendants(proc.pid, procs.all_procs())
 
+    def _proposal_waiting(self) -> bool:
+        """Does a reply or a ticket wait on a card for the person's press? ("send it" is answered for it as it is
+        for a mail draft: a typed word never sends.)"""
+        return any(p.get("state") == "open" and not is_empty(p.get("content")) for p in self.outbox.proposals.all())
+
     async def _draft_waiting(self) -> dict | None:
         """The newest draft that waits for the person's press, if any. Asked of the service, since the person
         may have started it in the window themselves. No service, no draft. (The drafts view is a bare list,
@@ -1438,7 +1467,7 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
-        if action.kind in ("mail", "send"):
+        if action.kind in ("mail", "send") and action.verb != "proposal":
             self._mail_opened = time.monotonic()   # the service's echo of the show must not open the window again
         await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
                          phase="start", text=doing)

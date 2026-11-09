@@ -13,6 +13,12 @@ connection service (`connect`: it only asks for `connections`). The steps, each 
 4. on the OAuth & Permissions page take the `xoxp-` User OAuth Token into `user_token`;
 5. ask the connection service what became of the connection.
 
+A run that starts on a connection which already holds a token (an earlier one stopped at an administrator's approval
+wall, or gave up waiting for a page; one the person called off is taken back by agentd, with what it stored) does not
+make a second app: it opens Slack's list of the person's apps, points at
+the one called Bombadil and goes on from the app they open, with only what is still missing. Whichever app a run
+begins with is the only one it takes tokens from, so the two tokens always come from one app.
+
 Steps 2 to 4 are one loop that watches for both tokens, because a person does not always go in the order they were
 asked: pressing Install first is natural, and Slack lets them. Whichever token shows up is taken, and what is said and
 pointed at next is whatever is still missing.
@@ -36,7 +42,7 @@ The rules it keeps:
 
 It returns `{"ok": bool, "say": "one sentence"}`. The last sentence is returned, not passed to `say`: the caller says
 it. A wall leaves the connection as it was (in `setup`, with the first token stored): the next "connect slack" picks
-it up. Unverified against Slack's real pages: it finds things by their visible words and by token shape (see
+it up, in the same app. Unverified against Slack's real pages: it finds things by their visible words and by token shape (see
 tests/browserd_fakes/slack_pages.py for the pages it is tested against).
 """
 
@@ -54,6 +60,7 @@ from . import manifest, protocol
 APP_PAGE = r"/apps/A[A-Z0-9]+"
 TOKENS_PAGE = r"/apps/A[A-Z0-9]+/oauth"
 TOKENS_WORDS = "User OAuth Token"
+_APP_ID = re.compile(r"/apps/(A[A-Z0-9]+)")
 
 APP_TOKEN = ("app_token", manifest.APP_TOKEN_PREFIX)
 USER_TOKEN = ("user_token", manifest.USER_TOKEN_PREFIX)
@@ -78,6 +85,8 @@ STORE_GRACE_S = 0.3      # a token being taken when the person cancels is given 
 SETTLE_S = 0.2           # and a pointer being drawn this long to land, so it can be taken away again
 
 SAY_OPEN = "I've opened Slack's page to make the app. Press Create."
+SAY_RESUME = "Your Slack apps are open. Open the one called Bombadil and I'll go on from there."
+SAY_INSTALL_AGAIN = "The app has its first token. Press Install to Workspace."
 SAY_APP = ("The app is made. It needs a token to listen with: press Generate Token and Scopes under App-Level "
            "Tokens, name it anything, add the scope connections:write and press Generate.")
 SAY_INSTALL = "I have the first token and stored it. Now press Install to Workspace."
@@ -122,10 +131,15 @@ def _sentence(value, fallback: str) -> str:
 
 
 def token_pattern(prefix: str) -> str:
-    """A token as Slack writes it: the prefix, dash-separated parts and a tail of at least twenty lowercase letters
-    and digits. The tail ends where a lowercase letter or digit does not follow, so a word that a page sets right
-    against it ("...a1b2Copy", a button beside the token) is not taken along."""
-    return re.escape(prefix) + r"[A-Za-z0-9-]*?[a-z0-9]{20,}(?![a-z0-9])"
+    """A token as Slack writes it: the prefix, dash-separated parts and a tail of twenty to a hundred lowercase
+    letters and digits (a longer run is not a token, and a page cannot hide a real one behind it). The tail ends where a lowercase letter or digit does not follow, so a word that a page sets right
+    against it ("...a1b2Copy", a button beside the token) is not taken along.
+
+    The pattern is run by the browser service over whatever text a page holds, on the one thread that answers every
+    other caller, so it must never take longer than the text is long: a token starts only where no letter, digit or
+    dash comes before it (a page that spells the prefix over and over has one start for each run of them, not one for
+    each spelling), and every part is whole between its dashes, so nothing can be taken apart two ways."""
+    return r"(?<![A-Za-z0-9-])" + re.escape(prefix) + r"(?:[A-Za-z0-9]+-)*[a-z0-9]{20,100}(?![a-z0-9])"
 
 
 def _has_wall_words(text: str) -> bool:
@@ -140,7 +154,9 @@ class _Setup:
         self.cancelled = cancelled
         self.b = browserd
         self.c = connect
-        self.stored: list[str] = []                    # names of the secrets the browser service has stored
+        self.stored: list[str] = []                    # names of the secrets the connection holds
+        self.app: str | None = None                    # the app this run is for, from the first page it is on
+        self._url = ""                                 # the address the last matched wait saw
         self._up: tuple[str, float] | None = None      # the words the pointer is on, and since when
         self._pointed = False                          # a pointer was asked for at some point
         self._announced: set[str] = set()
@@ -155,15 +171,49 @@ class _Setup:
     def go(self) -> dict:
         if not (isinstance(self.cid, str) and protocol.valid_connection_id(self.cid) and self.cid.startswith("slack:")):
             raise _Stop(False, "That is not a Slack connection.")
-        self._connection()   # the connection is there, and the connection service is running, before anything opens
+        # The connection is there, and the connection service is running, before anything opens.
+        self.stored = self._held(self._connection())
+        if len(self.stored) < 2:
+            self._resume() if self.stored else self._begin()
+            self._tokens()
+        return self._finish()
+
+    def _begin(self) -> None:
         self._call("open", OPEN_S, url=manifest.creation_url())
         self._say(SAY_OPEN)
         self._phase()
         self._until(lambda: self._arrived(APP_PAGE), CREATE_WAIT_S, "the app being made", "Create",
                     (("Create", "Yours: Create", None), ("Next", "Yours: Next", None)))
+        self._pin()
         self._say(SAY_APP)
-        self._tokens()
-        return self._finish()
+
+    def _resume(self) -> None:
+        """The connection already holds a token: the app was made. Slack's list of the person's apps is opened and the
+        app they open from it is the one that is gone on with."""
+        self._call("open", OPEN_S, url=manifest.apps_url())
+        self._say(SAY_RESUME)
+        self._phase()
+        self._until(lambda: self._arrived(APP_PAGE), CREATE_WAIT_S, "your app being opened", manifest.APP_NAME,
+                    ((manifest.APP_NAME, "Yours: Open", None),))
+        self._pin()
+        self._say(SAY_APP if APP_TOKEN[0] not in self.stored else SAY_INSTALL_AGAIN)
+
+    @staticmethod
+    def _held(row: dict) -> list[str]:
+        """The tokens the connection holds already, from the steps it says are still to do: all of them when it says
+        there are none, and none when it does not say (or says the app is still to be made)."""
+        steps = row.get("steps")
+        if not isinstance(steps, list):
+            return []
+        todo = {s.get("id") for s in steps if isinstance(s, dict)}
+        if "create" in todo:
+            return []
+        return [name for name, _prefix in (APP_TOKEN, USER_TOKEN) if name not in todo]
+
+    def _pin(self) -> None:
+        """The app this run is for is the one whose page it arrived on."""
+        found = _APP_ID.search(self._url)
+        self.app = found.group(1) if found else None
 
     def _phase(self) -> None:
         """A new page's worth of work: the pointer of the last one goes, and what was said about it is forgotten."""
@@ -253,13 +303,19 @@ class _Setup:
         if words:
             args["text"] = words
         seen = self._look("wait", **args)
-        return bool(seen and seen.get("matched"))
+        if seen and seen.get("matched"):
+            self._url = str(seen.get("url") or "")
+            return True
+        return False
 
     def _take(self, prefix: str, name: str) -> bool:
         """Take the token off the page into the connection. Not abandoned the moment the person cancels: a token
         being stored is given a moment to be done."""
+        # Only from a page of the app this run is for: a token on another app's page, one the person has gone to by hand,
+        # is not taken (the two must come from one app). The browser service looks at the address as it reads the page.
+        where = {"url": rf"/apps/{re.escape(self.app)}(?:[/?#]|$)"} if self.app else {}
         got = self._call("take", CALL_S, grace=STORE_GRACE_S, pattern=token_pattern(prefix),
-                         into={"connection": self.cid, "name": name})
+                         into={"connection": self.cid, "name": name}, **where)
         if got.get("stored") is True:
             return True
         if got.get("found"):

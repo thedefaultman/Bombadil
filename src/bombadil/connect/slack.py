@@ -51,7 +51,7 @@ from typing import Any
 
 import httpx
 
-from .. import ws
+from .. import plaintext, ws
 from . import manifest
 from .driver import Driver, DriverError, Secrets, UnknownOutcome
 from .protocol import (
@@ -266,7 +266,7 @@ class SlackDriver(Driver):
         self._closed = False
         self._identified = False
         self._down = False                                    # the "can't reach Slack" error is showing
-        self._alive: float | None = None                      # when the last socket ended
+        self._alive: float | None = None                      # when a byte from Slack last arrived, on any socket
         self._http: httpx.AsyncClient | None = None
         self._gate = asyncio.Semaphore(CONCURRENT)
         self._lifecycle = asyncio.Lock()
@@ -537,7 +537,7 @@ class SlackDriver(Driver):
                     quick += 1
                     delay = 0.0
                 else:
-                    delay = min(MAX_BACKOFF, MIN_BACKOFF * 2 ** fails)
+                    delay = min(MAX_BACKOFF, MIN_BACKOFF * 2 ** min(fails, 16))   # (an int that large is not a float)
                     fails += 1
                 if (fails >= UNREACHABLE_AFTER or not self._identified) and not self._down:
                     self._unreachable()
@@ -570,9 +570,12 @@ class SlackDriver(Driver):
         """Read one socket until it ends: (how long it was up, why it ended)."""
         heard = [0]
         original = sock.reader.feed_data
+        before = self._alive      # the last time Slack was heard from, before this socket: the gap is measured from it
+        self._alive = self.clock()    # (the upgrade answer that opened this socket was Slack's word, too)
 
         def feed(data):
             heard[0] += 1
+            self._alive = self.clock()
             original(data)
 
         # ws.py hands back only whole messages, and answers pings and drops pongs itself; counting the bytes that
@@ -593,7 +596,7 @@ class SlackDriver(Driver):
                 kind = message.get("type")
                 if kind == "hello":
                     began = self.clock()
-                    self._hello()
+                    self._hello(before)
                 elif kind == "disconnect":
                     outcome = "disconnect"
                     break
@@ -604,7 +607,6 @@ class SlackDriver(Driver):
         finally:
             keep.cancel()
             self._sock = None
-            self._alive = self.clock()
             with contextlib.suppress(Exception):
                 await sock.close()
             await asyncio.gather(keep, return_exceptions=True)
@@ -634,12 +636,15 @@ class SlackDriver(Driver):
         except ws.WebSocketError:
             return
 
-    def _hello(self) -> None:
+    def _hello(self, heard_last: float | None) -> None:
+        """A socket said hello. What came in while there was none (a lid closed for hours, a router that forgot us) is
+        fetched when the last word from Slack is older than CATCH_UP_GAP: measured from the last byte that arrived,
+        not from when the dead socket was noticed, which a sleeping machine notices only when it wakes."""
         if self._down:
             self._down = False
             self._set_state("ok", "")
         self._first.set()
-        gap = None if self._alive is None else self.clock() - self._alive
+        gap = None if heard_last is None else self.clock() - heard_last
         if gap is None or gap > CATCH_UP_GAP:
             if self._backfill_task is None or self._backfill_task.done():
                 self._backfill_task = self._spawn(self._guard(self._backfill()))
@@ -717,9 +722,11 @@ class SlackDriver(Driver):
             return True
         if key in self._looked:
             return False
-        self._looked.put(key)
         body = await self._try("conversations.replies", {"channel": channel, "ts": root, "limit": 200})
-        for m in (body or {}).get("messages") or []:
+        if body is None:    # the lookup failed (a rate limit, a server error): it is not an answer, and is asked again
+            return False
+        self._looked.put(key)
+        for m in body.get("messages") or []:
             if isinstance(m, dict) and m.get("user") == self.user_id:
                 self._threads.put(key)
                 return True
@@ -801,6 +808,8 @@ class SlackDriver(Driver):
                 conv = {"id": channel, "kind": kind, "name": {
                     "dm": "a direct message", "group": "a group message", "channel": "a channel"}.get(
                         kind, "a private channel")}
+        if conv["name"] == "Someone":    # the other person's name could not be had: asked again soon, not tomorrow
+            ttl = MISS_TTL
         self._convs.put(channel, (conv, now + ttl))
         return conv
 
@@ -996,7 +1005,7 @@ class SlackDriver(Driver):
         if len(content) > MAX_REPLY:
             raise DriverError(f"That reply is over {MAX_REPLY} characters, which is more than I will post.",
                               BAD_REQUEST)
-        if _CONTROL.search(content):
+        if _CONTROL.search(content) or plaintext.has_hidden(content):
             raise DriverError("That reply has characters in it that I will not post.", BAD_REQUEST)
         return content
 

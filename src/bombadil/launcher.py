@@ -518,7 +518,10 @@ class Launcher:
 
     def _send(self, a: Action) -> tuple[bool, str]:
         # agentd says this only when a draft waits (is_send_word); the press itself is not here. The window
-        # comes in on the draft, so that what the line points at is there to be pointed at.
+        # comes in on the draft, so that what the line points at is there to be pointed at. A draft that is not
+        # mail (a reply, a ticket) is on a card in the bar, which is already in front of the person.
+        if a.verb == "proposal":
+            return True, SEND_LINE
         try:
             self.open_mail(**({"view": "drafts", "id": a.target} if a.target else {"view": "drafts"}))
         except Exception as e:  # noqa: BLE001 - the line is still true of the window the person has

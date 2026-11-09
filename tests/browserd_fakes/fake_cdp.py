@@ -43,6 +43,7 @@ class FakePage:
     inputs: list = field(default_factory=list)       # values of fields (a token shown in a box)
     elements: list = field(default_factory=list)
     selectors: dict = field(default_factory=dict)    # selector -> text it reads as
+    hidden_selectors: set = field(default_factory=set)   # selectors of elements the page keeps hidden
     overlay: dict | None = None
     loop: object = None
     hold_timers: bool = False                        # a page whose own timers do not run (a hidden tab)
@@ -100,7 +101,7 @@ class FakePage:
             if self.overlay is None:
                 return {"found": False, "url": self.url, "title": self.title, "text": ""}
             return {"found": True, "url": self.url, "title": self.title, "text": self.overlay["label"]}
-        if selector and selector not in self.selectors:
+        if selector and (selector not in self.selectors or selector in self.hidden_selectors):
             return {"found": False, "url": self.url, "title": self.title, "text": ""}
         text = self.selectors[selector] if selector else self.text
         return {"found": True, "url": self.url, "title": self.title, "text": text[: args["max"]]}
@@ -130,7 +131,7 @@ class FakePage:
         return {"url": self.url, "title": self.title, "has": has, "ready": "complete"}
 
     def script_collect(self, args: dict) -> dict:
-        return {"chunks": [self.text[: args["max"]], *self.inputs]}
+        return {"chunks": [self.text[: args["max"]], *self.inputs], "url": self.url}
 
 
 @dataclass

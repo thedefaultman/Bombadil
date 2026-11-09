@@ -4,7 +4,9 @@ through MCP").
 `mcpconn.McpDriver` is one driver for every service. What differs between Linear, Notion, Jira, Todoist and
 ClickUp is only where the server is, which scopes to ask for, which tool lists what waits on the person, which
 tools create an item and add a comment, and where in each answer the things Bombadil needs are. That is a TOML
-file per service, `share/connect/recipes/<service>.toml`, so a fork adds a service by adding a file.
+file per service, `share/connect/recipes/<service>.toml`. A fork adds a service by adding a file and naming the
+service in `protocol.SERVICES`, `cardmake.SERVICE_TITLES`, `cardmake.OFFERS` and `service.SERVICE_NAMES` (the rest of
+Bombadil knows the services by those names); the name is two to twelve lowercase letters, the shape of the prefix of a ref.
 
 A recipe is checked when it is loaded and a bad one raises `RecipeError` with a sentence that names the file and
 the key: a driver given one says so as its connection's note and does nothing else. `verified = false` is
@@ -37,7 +39,7 @@ EDITS = ("line", "text", "date")
 GRANTS = ("authorization_code", "refresh_token")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
-_SERVICE = re.compile(r"[a-z][a-z0-9_-]{0,30}")
+_SERVICE = re.compile(r"[a-z]{2,12}")        # the prefix of a ref (protocol.valid_ref): a task of any other would be dropped
 _TOOL = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
 _KEY = re.compile(r"[a-z][a-z0-9_]{0,30}")
 _PATH = re.compile(r"[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*")

@@ -14,6 +14,10 @@ hl.on("hyprland.start", function()
     -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
         .. " && systemctl --user restart bombadil-mail.service")
+    -- The browser service starts at login too, and opening a page for it needs the same: this session's
+    -- Wayland display to start Chromium on, and its Hyprland instance to slide the panel in.
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
+        .. " && systemctl --user restart bombadil-browserd.service")
     -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 

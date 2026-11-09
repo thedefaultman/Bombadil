@@ -153,6 +153,7 @@ class FakeMcp:
         self.token_ttl = 3600            # seconds an access token really lasts, and what it is told
         self.rotate = True               # a refresh answers with a new refresh token
         self.omit_refresh = False        # ... or, when this is set, with none (the old one stays good)
+        self.token_status: int | None = None   # when set, the token endpoint answers a refresh with this status
         self.structured = structured     # answers carry structured content as well as text
         self.cimd = cimd                 # advertises client_id_metadata_document_supported
         self.iss = iss                   # advertises authorization_response_iss_parameter_supported, and sends iss
@@ -405,6 +406,8 @@ class FakeMcp:
                     return JSONResponse({"error": "invalid_grant"}, status_code=400)
                 return JSONResponse(fake._issue(rec["client_id"], rec["scope"]))
             if form.get("grant_type") == "refresh_token":
+                if fake.token_status is not None:
+                    return JSONResponse({"error": "temporarily_unavailable"}, status_code=fake.token_status)
                 rec = fake._refresh.get(form.get("refresh_token", ""))
                 if rec is None or rec["client_id"] != form.get("client_id"):
                     return JSONResponse({"error": "invalid_grant"}, status_code=400)

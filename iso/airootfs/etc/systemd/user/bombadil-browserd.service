@@ -13,6 +13,8 @@ ExecStart=/usr/local/bin/bombadil-browserd
 # turns carry on, and the Slack setup says the browser service is not running until it is back.
 Restart=on-failure
 RestartSec=2
+# A page it opened may have started the person's browser: that keeps running when only this service restarts.
+KillMode=process
 
 [Install]
 WantedBy=default.target

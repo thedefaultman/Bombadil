@@ -47,7 +47,7 @@ Screenshots of the checks that take one (`SHOT name`) land in `out/test/`.
 
 ## What it covers
 
-The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the three user services and
+The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the two user services and
 that each is revived after being killed, the pill taking the keyboard from a Super tap and from
 Alt+Space, a launcher word running without a model, the browser panel sliding in and out, apps
 created and opened each in its own place, the sign-in round trip against a stand-in provider
