@@ -329,6 +329,8 @@ class Claude(Provider):
             # agent's own words, so not text.
             yield {"kind": "limit", "error": m["error"], "status": m.get("api_error_status"),
                    "api_error": m.get("api_error"),
+                   # The window the CLI itself names (2.1.319): which limit, and when it resets.
+                   "rate_limit": _obj(_obj(m.get("api_error_params")).get("rate_limit_info")) or None,
                    "text": "\n".join(b.get("text", "") for b in m.get("message", {}).get("content", [])
                                      if isinstance(b, dict) and b.get("type") == "text")}
         elif t == "rate_limit_event":
@@ -384,12 +386,14 @@ class Claude(Provider):
     # moment is a 529, an api_retry, or the notice "Server is temporarily limiting requests (not your
     # usage limit)".
     # 2.1.319, run against the scripted API as a claude.ai login (what the headless test captures): the
-    # same lines, but the quota's words name the window ("You've hit your 5-hour limit", "weekly
-    # limit", "Opus limit") and both the assistant message and the result carry `api_error`:
-    # "usage_limit_reached". `api_error` is the CLI's name for which 429 it was: that one, a used-up
-    # quota; "model_requires_usage_credits" and "long_context_credits_required", a model or a context
-    # size that needs paid credits (an entitlement check, also a 429 with error "rate_limit", and its
-    # window may read "rejected"), which is not a used-up quota.
+    # same lines, but the quota's words name the window ("You've hit your 5-hour limit"; the CLI's own
+    # table also has "weekly limit", "Opus limit", "Sonnet limit") and both the assistant message
+    # (with `api_error_params.rate_limit_info`, the window and its reset) and the result carry
+    # `api_error`: "usage_limit_reached". `api_error` is the CLI's name for which 429 it was: that one, a
+    # used-up plan or spend cap; "model_requires_usage_credits" and "long_context_credits_required", a
+    # model or a context size that needs paid credits (an entitlement check, also a 429 with error
+    # "rate_limit", and its window may read "rejected"), which is not a used-up quota. 429s that are
+    # neither (an org's policy, a throttle) carry no code at all.
     # Run against a local fake API (2.1.286, an API key, plain 429s): the CLI retries by itself, api_retry
     # events with error_status 429, error "rate_limit", max_retries 10 and a delay that doubles from half a
     # second, and ends the turn only after the last one, so a busy moment can take minutes to show as an
@@ -416,7 +420,7 @@ class Claude(Provider):
         if result.get("ok", True):
             return None
         notice = seen.get("notice") or {}
-        info = seen.get("rate_limit") or {}
+        info = seen.get("rate_limit") or notice.get("rate_limit") or {}
         text = rest.fold(result.get("text") or notice.get("text") or "")
         # An entitlement check, or the throttle, is not the account's quota running out.
         code = result.get("api_error") or notice.get("api_error")
@@ -428,9 +432,10 @@ class Claude(Provider):
         # The event says which window; only the refusal says it matters. A window that reads
         # "rejected" while paid credits carry on (isUsingOverage) is not one.
         rejected = info.get("status") == "rejected" and not info.get("isUsingOverage")
-        # A code this version does not know is not taken on the window's word alone: the words must say it.
-        trusted = not code or code in self.LIMIT_CODES
-        if not refused or not ((rejected and trusted) or self.QUOTA.search(text)):
+        # The code is the CLI's own word that the quota ran out. Without one, the window or the words say it; a
+        # code this version does not know is not taken on the window's word alone: the words must say it.
+        said = code in self.LIMIT_CODES or (rejected and not code) or self.QUOTA.search(text)
+        if not refused or not said:
             return None
         kind = info.get("rateLimitType") if rejected else ("overage" if info.get("overageStatus") == "rejected" else None)
         low = text.lower()

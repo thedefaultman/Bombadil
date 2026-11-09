@@ -107,13 +107,16 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
      assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
      `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
      the CLI's text ("hit your 5-hour limit", "hit your weekly limit", "out of usage credits",
-     "spend cap"; older versions said "session limit"). Newer versions also name which 429 it was in
-     `api_error`, on the assistant message and on the result: `usage_limit_reached` is the quota.
-     `model_requires_usage_credits` and `long_context_credits_required` are entitlement checks (also
-     429s, and their window can read `rejected`), which never rest the machine. A code this
-     version does not know is not taken on the window's word alone: the CLI's words must say it. No
-     code at all (older versions) is judged by the rule above. Run against the scripted API, the
-     CLI's lines for a used-up plan are in `tests/test_limit.py` (`_real_319`).
+     "monthly spend limit"; older versions said "session limit"). Newer versions also name which 429
+     it was in `api_error`, on the assistant message and on the result: `usage_limit_reached` says by
+     itself that the plan or spend cap ran out (the window and its reset can come from the assistant
+     message's `api_error_params`). `model_requires_usage_credits` and `long_context_credits_required`
+     are entitlement checks (also 429s, and their window can read `rejected`), which never rest the
+     machine. A code this version does not know is not taken on the window's word alone: the CLI's
+     words must say it. No code at all, as older versions send, and as a newer one does for a 429 that
+     is no limit (an org's policy), is judged by the rule above, so an uncoded 429 whose window reads
+     `rejected` still rests. Run against the scripted API, the CLI's lines for a used-up plan are in
+     `tests/test_limit.py` (`_real_319`); a real used-up plan has not been seen.
    - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
      exceeded".
    - Not a limit: an entitlement check (`api_error` `model_requires_usage_credits` or

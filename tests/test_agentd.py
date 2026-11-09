@@ -2794,8 +2794,7 @@ async def test_a_limit_is_said_plainly_with_the_providers_reset_time_after_it(ho
         agentd.LIMIT_TEXT + "\nCredit balance is too low"]
 
 
-@pytest.mark.parametrize("window", ["5-hour limit", "weekly limit", "Opus limit", "Sonnet limit", "Fable limit",
-                                    "usage credit limit"])
+@pytest.mark.parametrize("window", ["5-hour limit", "weekly limit", "Opus limit", "Sonnet limit", "usage credit limit"])
 def test_every_window_newer_claude_code_names_is_said_plainly(window):
     said = f"You've hit your {window} \u00b7 resets 2:50am (UTC)"
     assert agentd._limit_text(said) == agentd.LIMIT_TEXT + "\n" + said

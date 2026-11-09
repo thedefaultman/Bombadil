@@ -230,7 +230,7 @@ WATCHDOG_TICK = 5.0
 # own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
 # Anything else is passed through as it came.
 LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit", "session limit",
-               "5-hour limit", "weekly limit", "opus limit", "sonnet limit", "fable limit", "usage credit limit",
+               "5-hour limit", "weekly limit", "opus limit", "sonnet limit", "usage credit limit",
                "shared budget", "out of usage credits", "spend cap", "out of credits", "quota exceeded")
 LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
 # Checked first: the throttle notice says "not your usage limit", which a limit word would also catch.
