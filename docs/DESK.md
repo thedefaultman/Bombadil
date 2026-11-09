@@ -91,6 +91,11 @@ under 360 px; 360 px with a window in front; a capsule under a full-screen windo
 the pill (docs/pictures.md) follows the same room but is not narrowed with the pill: beside a window it
 may take about 560 px (less when the rails leave less; `DeskState.pictureTarget`).
 
+Under reduced motion the fold, the strips' fade, the pill's width and the wash are instant and the ring holds
+still; the timings above (`foldMs`, the 400 ms wait, `pillAnimMs`) stay as they are, and each animation
+takes its duration through `Kit.Theme.duration(...)`. [`MOTION.md`](MOTION.md) has the rule, the table and how
+a new card honours it.
+
 ## The needs-you mark
 
 Something waits for the person when `needsModel` has a row: a coding session asked a question, or

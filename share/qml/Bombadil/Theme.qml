@@ -87,11 +87,18 @@ QtObject {
     readonly property int titleSize: 22
     readonly property int displaySize: 34
 
-    // Motion
-    readonly property int fast: 120
-    readonly property int normal: 200
-    readonly property int slow: 300
+    // Motion (docs/MOTION.md). `fast`, `normal` and `slow` are the animation durations, in ms: 0 under
+    // reduced motion, so a component that animates with them honours it with nothing more, and so does
+    // an app's own `Behavior` that uses them. Any other duration goes through `duration(ms)`.
+    readonly property int fast: reducedMotion ? 0 : 120
+    readonly property int normal: reducedMotion ? 0 : 200
+    readonly property int slow: reducedMotion ? 0 : 300
     readonly property real pulseLow: 0.3           // the dimmest a pulsing thing gets (reduced motion)
+    // Reduced motion: the shell and the app runtime set it from BOMBADIL_REDUCE_MOTION=1 when they start,
+    // so every surface reads one switch. Writable, false until something sets it. A component that
+    // animates by its own timing reads it, or calls `duration(ms)`, which is `ms` or 0.
+    property bool reducedMotion: false
+    function duration(ms) { return reducedMotion ? 0 : ms }
 
     // `Button { icon.source: Theme.icon("copy") }`; names are the files in icons/.
     function icon(name) { return Qt.resolvedUrl("icons/" + name + ".svg") }

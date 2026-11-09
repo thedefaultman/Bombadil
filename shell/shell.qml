@@ -23,8 +23,10 @@ ShellRoot {
     property string summonedOn: ""
     property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
-    // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
+    // Reduced motion (BOMBADIL_REDUCE_MOTION=1): the stone pulses instead of rolling and knocking, and
+    // everything else that moves goes instant. The kit's Theme holds the switch for every surface.
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
+    Binding { target: Kit.Theme; property: "reducedMotion"; value: root.reducedMotion }
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
@@ -38,7 +40,7 @@ ShellRoot {
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
     // The ground under everything: the wallpaper, on every screen.
-    Wallpaper { reducedMotion: root.reducedMotion }
+    Wallpaper { reducedMotion: Kit.Theme.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -433,7 +435,7 @@ ShellRoot {
                             color: shown ? Kit.Theme.glassRaised : Kit.Theme.glassChip
                             border.width: 1
                             border.color: shown ? Kit.Theme.accent : Kit.Theme.border
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: Kit.Theme.duration(150) } }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
@@ -515,7 +517,7 @@ ShellRoot {
                                 anchors.centerIn: parent
                                 // The screen that holds the keyboard leans toward what you type.
                                 face: win.summoned && pillState.face === "rest" ? "listening" : pillState.face
-                                reducedMotion: root.reducedMotion
+                                reducedMotion: Kit.Theme.reducedMotion
                             }
                             Row {
                                 id: stopRow
