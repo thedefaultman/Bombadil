@@ -326,7 +326,6 @@ function frameAt(c, t, still) {
         var cd = s.cards[s.cardOrder[i]]
         var arrive = clamp01((t - cd.since) / CARD_ARRIVE_MS)
         var shown = s.foldSince >= 0 ? (s.folded ? 1 - fp : fp) : 1
-        if (s.foldSince >= 0 && !s.folded && cd.since > s.foldSince) shown = 1
         cards.push({ kind: cd.kind, rows: cd.rows, title: cd.title, why: cd.why, arrive: arrive, shown: shown * arrive })
     }
     f.cards = cards

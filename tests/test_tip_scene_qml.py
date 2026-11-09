@@ -623,6 +623,21 @@ def test_a_folded_strip_stands_clear_of_the_pill_at_both_densities(make, tip, de
         assert abs((scene_box(s, strip)[1] + scene_box(s, strip)[3]) / 2 - (pill[1] + pill[3]) / 2) < 0.6
 
 
+def test_no_strip_of_any_fixture_overlaps_the_pill_at_any_frame_it_stands(make):
+    seen = 0
+    for tip in (t for t in fx.ALL if any(b.get("fold") for b in t["beats"])):         # the scenes that fold
+        for density in ("card", "app"):
+            s = make(tip, density)
+            for ms in range(0, int(s.duration) + 1, 250):
+                s.seek(ms)
+                pill = scene_box(s, s.item("pill"))
+                for strip in s.items("strip"):
+                    if strip.isVisible() and s.frame["fold"]["p"] >= 1:
+                        seen += 1
+                        assert scene_box(s, strip)[2] < pill[0], (tip["id"], density, ms)
+    assert seen > 10
+
+
 def test_the_pill_is_whole_before_a_fold_and_after_it_is_taken_back(make):
     tip = copy.deepcopy(fx.FOLDS)
     tip["beats"].append({"fold": False, "tag": "template"})

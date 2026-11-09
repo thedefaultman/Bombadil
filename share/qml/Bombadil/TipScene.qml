@@ -27,8 +27,9 @@ import "TipScene.js" as Scene
 //   numbers. It never plays.
 // app (576 x 324, and the captions in a row under it): plays. The 24 px stone in its real colours
 //   (orange only where it acts), a 52 px pill, 16 px text, a 15 px line. The three phase captions sit
-//   under the stage, the current one in fg. Under reducedMotion it shows three stills side by side
-//   (each the last frame of its phase) with their captions, and play() settles at once.
+//   under the stage, the current one in fg. Under reducedMotion it shows three stills (each the last frame
+//   of its phase, at the card's size, flowing onto a second row where three do not fit) with their
+//   captions, and play() settles at once.
 Item {
     id: root
 
