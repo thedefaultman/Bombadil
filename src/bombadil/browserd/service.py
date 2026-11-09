@@ -14,12 +14,15 @@ Why it is shaped this way:
   set in overlay.py, with the data as a JSON literal. A request with an argument an op does not take is refused.
 - Only the person's own processes may ask: a peer of another uid is closed at once (SO_PEERCRED), and the socket
   is 0600.
-- A token goes one way. `take` runs the regex over the page's text and its fields' values and hands the first match
-  straight to the connection service's `store_secret`. The value is never returned, logged, put in an exception
-  text or kept after the call; the answer says only whether it was stored, and why not in a sentence. `read` hides
+- A token goes one way. `take` runs the regex over the page's text and the values of its visible fields and hands
+  the first match straight to the connection service's `store_secret`. The value is never returned, logged, put in an
+  exception text or kept after the call; the answer says only whether it was stored, and why not in a sentence. `read` hides
   anything shaped like a Slack token too, so no answer of this service carries one.
 - A page's words are other people's words: `read` answers them with `untrusted: true`, made plain (no control or
   direction-changing characters), and nothing here acts on them.
+- A request with no `tab` is about the page `open` made last. When that page has been closed it is gone, said once
+  ("That page is gone."): a pointer or a read is never moved over to another of the person's pages. Only when nothing
+  was opened is it the first page the browser has.
 - Chromium not running, the debugging port closed, a tab that is gone or a page that does not answer are a sentence
   and a code, never a crash. Codes: `bad_request`, `no_browser`, `no_tab`, `not_found`, `page`, `internal`.
 - The HTTP side of the debugging port stays in browser.py (`DevTools`); this module takes the list of tabs from
@@ -329,7 +332,9 @@ class Service:
         return tabs
 
     async def _target(self, req) -> dict:
-        """The tab a request is about: the one it names, else the one `open` made last, else the first."""
+        """The tab a request is about: the one it names, else the one `open` made last, else (when nothing was opened)
+        the first. A tab `open` made that has since been closed is gone, said once: not whichever page of the
+        person's is first, which a pointer or a read must never land on by mistake."""
         tabs = await self._tabs()
         wanted = _tab_id(req)
         if wanted is not None:
@@ -337,10 +342,15 @@ class Service:
             if tab is None:
                 raise Refusal(NO_TAB, GONE)
             return tab
-        tab = next((t for t in tabs if t["id"] == self.current), None) or (tabs[0] if tabs else None)
-        if tab is None:
+        if self.current is not None:
+            tab = next((t for t in tabs if t["id"] == self.current), None)
+            if tab is None:
+                self.current = None
+                raise Refusal(NO_TAB, GONE)
+            return tab
+        if not tabs:
             raise Refusal(NO_TAB, NO_PAGE)
-        return tab
+        return tabs[0]
 
     async def _session(self, tab: dict) -> cdp.Session:
         """The tab's lasting connection, made when first needed. Only a debugging address on this computer is used."""
@@ -372,8 +382,6 @@ class Service:
         session = self.sessions.pop(tab_id, None)
         if session is not None:
             await session.close()
-        if self.current == tab_id:
-            self.current = None
 
     def _event(self, session: cdp.Session, method: str, params: dict) -> None:
         # The page is replaced: what was drawn on it went with it, and its timer has nothing to take away.

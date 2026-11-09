@@ -17,8 +17,6 @@ QtObject {
     signal cardKeys()
     // The person typed in a card's box: whoever holds the keyboard for it (the bar's idle timer) starts waiting again.
     signal typing()
-    // Words for the clipboard: a notification's card copies what the person wrote, and opens the page it came from.
-    signal copyText(string text)
 
     property bool connected: false
     property bool busy: false
@@ -92,6 +90,10 @@ QtObject {
     // a box) missed. A receipt is not asked for: it fades with its line. Esc or × puts both away.
     readonly property bool pictureStays: !!card && !card.receipt && !card.partial
     property double cardAt: 0
+    // Which card, and how many times agentd has handed the bar a whole card (not a change of a draft): a face that
+    // drew the same card before tells agentd again what it has drawn, since agentd may have lost it meanwhile.
+    readonly property string cardId: card && typeof card.id === "string" ? card.id : ""
+    property int cardEpoch: 0
     // The kinds of card the bar draws. A diagram is the machine's or the agent's; the rest come from connections
     // (agentd checks them with cards.py before they get here) and have faces of their own (CardHost).
     readonly property var cardKinds: ["diagram", "message", "task", "list"]
@@ -108,6 +110,7 @@ QtObject {
     // click on it sends nothing, and the line agentd said of a press it refused (shown under the button).
     property string pressOut: ""
     property string pressLine: ""
+    property string pressLineFor: ""    // the proposal that line is about: it goes when that one is typed in again
     // When the person last pressed Reply (a chip on a notice, a button on a card, a row that opens a thread): the
     // card with a box that comes of it, in the seconds after, takes the keyboard. One the agent opened takes nothing.
     property double _askedAt: 0
@@ -172,8 +175,12 @@ QtObject {
             return
         }
         if (cardKinds.indexOf(c.type) < 0) return
+        if (c.type !== "diagram" && (typeof c.id !== "string" || c.id === "")) return   // (a face keys its box on it)
+        // Another card: what the last press said, and a press still out, were about that one.
+        if (!card || card.id !== c.id) { pressLine = ""; pressLineFor = "" }
         card = c
         cardAt = _now()
+        cardEpoch += 1
         // A receipt comes just after the closing line: read the two together, so both start their time now.
         if (c.receipt && mode === "closing") { lineAt = cardAt; fadeAfter = Math.max(fadeAfter, 15000) }
         // The card that comes of the person's Reply takes the keyboard; one that arrives on its own waits for a click.
@@ -217,7 +224,14 @@ QtObject {
         composeId = id; composeFocus = focused; composeText = hasText
     }
 
-    function noteTyped() { typing() }
+    // A word typed in a box: the bar's idle wait starts again, and what the last press said is old news.
+    function noteTyped() {
+        pressLine = ""; pressLineFor = ""
+        typing()
+    }
+
+    // A click in a card's box: the bar takes the keyboard for it (a bar that is not summoned gets no keys).
+    function wantKeys() { cardKeys() }
 
     // Reply on a card that has no draft yet: agentd opens one and sends the card again with its box.
     function openReply(kind, target) {
@@ -229,6 +243,7 @@ QtObject {
     // The box changed, and the box drew it: agentd keeps the draft, and says when what it holds is what was drawn.
     // Nothing is said while the socket is down (the face says it again when it is back).
     function proposalEdit(id, content) {
+        if (pressLineFor === id) { pressLine = ""; pressLineFor = "" }
         if (connected) outgoing({ type: "proposal", op: "edit", id: id, content: content })
     }
     function proposalShown(id, content) {
@@ -241,7 +256,7 @@ QtObject {
         if (pressOut === id) return false
         if (_offline()) return false
         pressOut = id
-        pressLine = ""
+        pressLine = ""; pressLineFor = ""
         const m = { type: "press", kind: kind, id: id, fingerprint: fingerprint }
         if (again === true) m.again = true
         outgoing(m)
@@ -250,19 +265,18 @@ QtObject {
 
     // A button on a card or one of its rows: agentd does it (open, connect, disconnect). Opening a card from a row
     // may be a Reply, so it counts as one.
-    function cardAction(cardId, action, row) {
+    function cardAction(cardId, action, row, text) {
         if (_offline()) return
-        if (action === "open") _askedAt = _now()
+        // (a card's own "Open in Slack" leaves for another window, and a card that comes after it was not asked for)
+        if (action === "open" && row !== undefined && row !== null && row !== "") _askedAt = _now()
         const m = { type: "card_action", card: cardId, action: action }
         if (row !== undefined && row !== null && row !== "") m.row = row
+        if (typeof text === "string") m.text = text
         outgoing(m)
     }
 
-    // "Copy and open": the words go to the clipboard here, and agentd opens the page they were for.
-    function copyOpen(cardId, text) {
-        copyText(text)
-        cardAction(cardId, "copy_open", "")
-    }
+    // "Copy and open": agentd puts the words on the clipboard (wl-copy) and brings forward the page they are for.
+    function copyOpen(cardId, text) { cardAction(cardId, "copy_open", "", String(text)) }
 
     // agentd's word on a proposal: the open card takes its state, whether it is lit, its fingerprint, receipt, warnings
     // and note, and its content (the face decides whether that goes in the box: never over what is being typed).
@@ -271,11 +285,13 @@ QtObject {
         const key = card.type === "task" ? "proposal" : card.type === "message" ? "reply" : ""
         const r = key === "" ? null : card[key]
         if (!r || r.proposal !== p.id) return
-        if (pressOut === p.id) pressOut = ""   // agentd has said what became of it
+        // Agentd has said what became of a press once the draft is no longer open: an update that says it still is
+        // (the box's own echo) is not an answer, and the button stays dim until one comes.
+        if (pressOut === p.id && typeof p.state === "string" && p.state !== "open") pressOut = ""
         if (p.state === "discarded") { card = null; return }
         const next = Object.assign({}, r)
         if (typeof p.state === "string") next.state = p.state
-        next.ready = p.ready === true || (p.ready === undefined && p.state === "open" && !!p.shown && p.shown === p.fingerprint)
+        next.ready = p.ready === true    // only agentd's word lights a button
         if (typeof p.fingerprint === "string") next.fingerprint = p.fingerprint
         if (p.receipt === null || (p.receipt && typeof p.receipt === "object")) next.receipt = p.receipt
         if (Array.isArray(p.warnings))
@@ -299,10 +315,11 @@ QtObject {
             next.state = "sent"
             next.ready = false
             next.receipt = ev.receipt && typeof ev.receipt === "object" ? ev.receipt : { line: _plain(ev.line, 240) || "Sent." }
-            pressLine = ""
+            pressLine = ""; pressLineFor = ""
         } else {
             if (ev.code === "unknown_outcome") { next.state = "unknown"; next.ready = false }
             pressLine = ev.code === "unknown_outcome" ? "" : (_plain(ev.line, 240) || "That did not go. Nothing was sent.")
+            pressLineFor = pressLine === "" ? "" : id
         }
         const c = Object.assign({}, card)
         c[key] = next
@@ -679,8 +696,11 @@ QtObject {
 
     // What the line is saying, for `quickshell ipc call line state` (the VM smoke test and the desktop test).
     function snapshot() {
+        const r = _replyOf(card)
         return { mode: mode, line: line, flash: flash, noticeShown: noticeShown, notices: notices,
-                 card: card ? { id: card.id, type: card.type, title: card.title } : null }
+                 card: card ? { id: card.id, type: card.type, title: card.title,
+                                draft: r ? { proposal: r.proposal || "", state: r.state, ready: r.ready === true } : null }
+                            : null }
     }
 
     function submit(text) {
@@ -731,7 +751,7 @@ QtObject {
         found = null; _foundOwed = false; _gone = []   // its chips reach nobody; its turn numbers may start over
         if (card && card.partial) card = null   // a half-drawn picture will not be finished
         // A press that was out may have gone: the button stays dim until agentd says what became of it, and says so.
-        if (pressOut !== "") pressLine = "I lost touch with the agent while that went, so I can't tell whether it did."
+        if (pressOut !== "") { pressLine = "I lost touch with the agent while that went, so I can't tell whether it did."; pressLineFor = pressOut }
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000

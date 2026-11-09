@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import pytest_asyncio
@@ -263,21 +264,21 @@ async def a_launch_ref(api) -> str:
 class Scripted(Driver):
     """A driver with knobs, each test's own subclass (see `scripted`)."""
     kind = "scripted"
-    secret_rules = {"app_token": "xa" + "pp-", "user_token": "xo" + "xp-"}
+    secret_rules: ClassVar[dict] = {"app_token": "xa" + "pp-", "user_token": "xo" + "xp-"}
     prefix = "scripted:"
     fail_starts = 0              # the first this many starts raise
-    start_emits: list = []
+    start_emits: ClassVar[list] = []
     pause_start = 0.0
     changed_raises = False
     can = True
-    known: list = []
-    items: list = []
+    known: ClassVar[list] = []
+    items: ClassVar[list] = []
     messages_delay = 0.0
     perform_result: object = None
     perform_raises = None
     perform_delay = 0.0
     thread_raises = None
-    thread_result: list = []
+    thread_result: ClassVar[list] = []
     kinds = ("slack_reply", "task_create", "task_comment")
 
     def __init__(self, conn, secrets, emit, clock):
@@ -351,7 +352,10 @@ def scripted(**knobs):
 
 
 async def start_with(places, started, drivers=None, **kw) -> Connect:
-    """A service with no fake engine whose connections are made from `drivers` ({kind: class})."""
+    """A service with no fake engine whose connections are made from `drivers` ({kind: class}). Its clock is the
+    test's, as for `conn`: the ring drops what is older than 14 days by the service's own clock, so a message dated
+    NOON is only in it while that clock says it is NOON."""
+    kw.setdefault("clock", Clock())
     c = await Connect.start(places, engine="", registry=drivers, **kw)
     started.append(c)
     return c
@@ -384,6 +388,10 @@ async def test_the_socket_is_open_to_everyone_and_the_state_is_private(conn):
     assert stat.S_IMODE(os.stat(conn.service.socket_path).st_mode) == 0o666
     assert stat.S_IMODE(os.stat(conn.service.state_dir).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(conn.service.db_path).st_mode) == 0o600
+    names = os.listdir(conn.service.state_dir)       # the database, its -wal and -shm while it is open, its lock
+    assert "connect.db" in names and len(names) >= 3
+    for name in names:
+        assert stat.S_IMODE(os.stat(conn.service.state_dir / name).st_mode) == 0o600, name
 
 
 async def test_a_peer_outside_the_uid_range_is_refused_and_closed(places, started):
@@ -471,6 +479,14 @@ async def test_the_fake_workspace_is_not_made_again_once_the_person_has_removed_
     second = await Connect.start(places, clock=Clock())
     started.append(second)
     ids = [x["id"] for x in (await (await second.client()).call("connections"))["connections"]]
+    assert ids == ["mcp:linear"]
+
+
+async def test_a_store_that_already_holds_connections_is_not_given_the_fake_ones(places, started):
+    seed(places, ("mcp:linear", "mcp", "linear", "ok"))
+    c = await Connect.start(places, clock=Clock())
+    started.append(c)
+    ids = [x["id"] for x in (await (await c.client()).call("connections"))["connections"]]
     assert ids == ["mcp:linear"]
 
 
@@ -678,14 +694,14 @@ async def test_an_injected_message_with_less_than_a_whole_message_is_made_up_and
 async def test_what_a_driver_hands_over_is_cleaned_before_anyone_sees_it(api, conn):
     watcher = await conn.client()
     await watcher.call("subscribe")
-    hostile = "Hi\x00 there\x1b[31m ‮evil‬​⁦ done" + "x" * 5000
-    await inject(api, hostile, ts=NOON + 9, **{"from": {"id": "U0X", "name": "Priya‮ Shah\x07"}, "extra": "no",
+    hostile = "Hi\x00 there\x1b[31m \u202eevil\u202c\u200b\u2066 done" + "x" * 5000
+    await inject(api, hostile, ts=NOON + 9, **{"from": {"id": "U0X", "name": "Priya\u202e Shah\x07"}, "extra": "no",
                                              "mentions_me": 1, "web_url": "javascript:alert(1)"})
     pushed = (await watcher.push("message"))["message"]
     listed = (await api.call("messages"))["messages"][0]
     for m in (pushed, listed):
         assert set(m) == set(protocol.MESSAGE_KEYS)
-        assert not any(c in m["text"] for c in "\x00\x1b‮‬​⁦")
+        assert not any(c in m["text"] for c in "\x00\x1b\u202e\u202c\u200b\u2066")
         assert m["text"].startswith("Hi there") and len(m["text"]) == protocol.MAX_TEXT and m["text"].endswith("…")
         assert m["from"]["name"] == "Priya Shah" and m["web_url"] is None and m["mentions_me"] is True
 
@@ -695,7 +711,7 @@ async def test_a_message_without_words_or_a_usable_ref_is_not_kept(api, conn):
     await watcher.call("subscribe")
     before = len((await api.call("messages"))["messages"])
     await api.call("fake_inject", message=message("", ts=NOON + 1))
-    await api.call("fake_inject", message=message("​ \x00", ts=NOON + 2))
+    await api.call("fake_inject", message=message("\u200b \x00", ts=NOON + 2))
     await api.call("fake_inject", message={**message("no ref"), "ref": "no spaces allowed"})
     await watcher.quiet("message")
     assert len((await api.call("messages"))["messages"]) == before
@@ -745,6 +761,17 @@ async def test_the_driver_is_asked_for_messages_only_when_the_ring_has_none_of_t
     assert [m["text"] for m in (await api.call("messages"))["messages"]] == ["Also the driver", "From the driver"]
     cls.instances[0].emit({"push": "message", "message": message("Pushed", ts=NOON, ref="slack:TX/D0/3.000000")})
     assert [m["text"] for m in (await api.call("messages"))["messages"]] == ["Pushed"]     # the ring has the say
+
+
+async def test_what_a_driver_remembers_is_held_to_the_rings_age_too(places, started):
+    stale = message("a month ago", ts=NOON - 30 * 86400, ref="slack:TX/D0/1.000000")
+    fresh = message("two days ago", ts=NOON - 2 * 86400, ref="slack:TX/D0/2.000000")
+    cls = scripted(known=[stale, fresh])
+    c = await start_with(places, started, {"slack": cls})
+    api = await c.client()
+    cid = (await api.call("add_connection", service="slack"))["id"]
+    c.live(cid).record["state"] = "ok"
+    assert [m["text"] for m in (await api.call("messages", limit=100))["messages"]] == ["two days ago"]
 
 
 async def test_a_driver_that_does_not_answer_is_skipped_with_its_state_and_the_rest_are_not_held_up(places, started):
@@ -909,7 +936,7 @@ async def test_tasks_are_asked_of_the_drivers_each_time_and_slack_has_none(api, 
 
 async def test_a_tool_that_fails_or_is_slow_or_not_ready_is_skipped_with_its_state_and_note(places, started):
     class Failing(Scripted):
-        instances: list = []
+        instances: ClassVar[list] = []
         starts = 0
 
         async def tasks(self, limit=30):
@@ -927,6 +954,18 @@ async def test_a_tool_that_fails_or_is_slow_or_not_ready_is_skipped_with_its_sta
     assert [(s["connection"], s["state"]) for s in got["skipped"]] == [("mcp:linear", "ok"), ("mcp:notion", "error")]
     assert got["skipped"][1]["note"].startswith("Notion no longer") and got["skipped"][0]["note"]
     assert not any(CANARY in ln.decode() for ln in api.seen_lines)
+
+
+async def test_a_task_is_of_the_service_of_the_connection_that_gave_it_whatever_it_says(places, started):
+    cls = scripted(items=[{"ref": "linear:L-1", "service": "jira", "title": "Claims to be Jira's"}])
+    c = await start_with(places, started, {"mcp": cls})
+    api, watcher = await c.client(), await c.client()
+    await watcher.call("subscribe")
+    cid = (await api.call("add_connection", service="linear"))["id"]
+    c.live(cid).record["state"] = "ok"
+    assert [(t["ref"], t["service"]) for t in (await api.call("tasks"))["items"]] == [("linear:L-1", "linear")]
+    cls.instances[0].emit({"push": "task", "item": {"ref": "linear:L-2", "service": "notion", "title": "Pushed"}})
+    assert (await watcher.push("task"))["item"]["service"] == "linear"
 
 
 async def test_a_slow_tool_does_not_hold_up_the_others(places, started):
@@ -1140,6 +1179,24 @@ async def test_a_peer_that_cannot_be_told_is_refused_as_the_agents(api, conn, mo
     assert conn.fake("slack:w1").performed == []
 
 
+async def test_a_peer_whose_cgroup_cannot_be_read_is_refused_as_the_agents_and_one_that_can_is_told_apart(
+        api, conn, monkeypatch, tmp_path):
+    ref = await a_launch_ref(api)
+    fake_proc = tmp_path / "proc"
+    fake_proc.mkdir()
+    monkeypatch.setattr(procs, "PROC", fake_proc)               # nothing of this process to read in it
+    assert procs.cgroup_of(os.getpid()) is None                 # which procs alone takes for "not in a turn"
+    assert (await press(api, "slack_reply", ref, "hello", "p1"))["code"] == "agent"
+    here = fake_proc / str(os.getpid())
+    here.mkdir()
+    (here / "cgroup").write_text("0::/user.slice/user-1000.slice/session-3.scope\n")
+    assert (await press(api, "slack_reply", ref, "hello", "p1"))["ok"] is True
+    (here / "cgroup").write_text("0::/user.slice/user-1000.slice/bombadil-turn-7.scope\n")
+    monkeypatch.setattr(procs, "CGROUP_ROOT", tmp_path / "cgroup")
+    assert (await press(api, "slack_reply", ref, "hello", "p2"))["code"] == "agent"
+    assert len(conn.fake("slack:w1").performed) == 1
+
+
 async def test_a_peer_that_has_gone_or_was_never_named_is_the_agents(conn):
     class Writer:
         transport = None
@@ -1183,6 +1240,18 @@ async def test_the_sentence_of_an_unknown_outcome_is_the_drivers_own(places, sta
     got = await press(api, "slack_reply", "scripted:1", "hello", "p1")
     assert (got["code"], got["error"]) == ("unknown_outcome", sentence)
     assert c.service.store.performed("p1")["outcome"] == "unknown" and cls.instances[0].performs == []
+
+
+async def test_a_refusal_that_says_unknown_outcome_in_its_code_is_taken_at_its_word(places, started):
+    cls = scripted(perform_raises=DriverError("Slack did not say whether that went.", "unknown_outcome"))
+    c = await start_with(places, started, {"slack": cls})
+    api = await c.client()
+    cid = (await api.call("add_connection", service="slack"))["id"]
+    c.live(cid).record["state"] = "ok"
+    got = await press(api, "slack_reply", "scripted:1", "hello", "p1")
+    assert (got["code"], got["error"]) == ("unknown_outcome", "Slack did not say whether that went.")
+    assert c.service.store.performed("p1")["outcome"] == "unknown"
+    assert (await press(api, "slack_reply", "scripted:1", "hello", "p1"))["code"] == "already"
 
 
 async def test_an_outcome_that_is_not_known_is_recorded_answered_and_never_retried(api, conn):
@@ -1236,7 +1305,7 @@ async def test_a_press_is_written_down_before_the_driver_is_asked(places, starte
     seen = []
 
     class Looks(Scripted):
-        instances: list = []
+        instances: ClassVar[list] = []
         starts = 0
 
         async def perform(self, kind, target, content):
@@ -1271,7 +1340,7 @@ async def test_a_service_that_stops_in_the_middle_of_a_press_remembers_it_may_ha
 
 
 async def test_a_receipt_is_one_plain_line_and_a_page_only_when_it_is_one(places, started):
-    cls = scripted(perform_result={"line": "Posted\nin #launch ‮· 11:04", "web": {"name": "Slack", "url": "file:///x"}})
+    cls = scripted(perform_result={"line": "Posted\nin #launch \u202e· 11:04", "web": {"name": "Slack", "url": "file:///x"}})
     c = await start_with(places, started, {"slack": cls})
     api = await c.client()
     cid = (await api.call("add_connection", service="slack"))["id"]
@@ -1430,7 +1499,7 @@ async def test_a_driver_that_does_not_start_is_started_again_with_a_pause_that_g
 
 
 async def test_the_pause_before_a_driver_starts_again():
-    assert [service._backoff(n) for n in range(0, 9)] == [2.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
+    assert [service._backoff(n) for n in range(9)] == [2.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0, 60.0]
 
 
 async def test_a_driver_that_starts_again_and_says_it_is_well_clears_the_error(places, started):
@@ -1443,6 +1512,26 @@ async def test_a_driver_that_starts_again_and_says_it_is_well_clears_the_error(p
     cid = (await api.call("add_connection", service="slack"))["id"]
     await until(lambda: c.live(cid).record["state"] == "ok")
     assert c.service.store.connection(cid)["state"] == "ok" and c.service.store.connection(cid)["note"] == ""
+
+
+@pytest.mark.parametrize("stable, pauses", [(1000.0, [2.0, 4.0, 8.0]), (0.0, [2.0, 2.0, 2.0])])
+async def test_the_pauses_start_over_only_after_a_driver_has_been_up_for_a_while(places, started, monkeypatch, stable,
+                                                                                  pauses):
+    monkeypatch.setattr(service, "STABLE_S", stable)
+    cls = scripted(start_emits=[{"push": "state", "state": "ok", "note": ""}])
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        await asyncio.sleep(0.01)
+    c = await start_with(places, started, {"slack": cls}, sleep=sleep)
+    api = await c.client()
+    cid = (await api.call("add_connection", service="slack"))["id"]
+    for n in range(3):
+        await until(lambda n=n: len(cls.instances) == n + 1 and c.live(cid).record["state"] == "ok")
+        cls.instances[n].emit({"push": "died"})
+    await until(lambda: len(sleeps) >= 3)
+    assert sleeps[:3] == pauses
 
 
 async def test_a_driver_that_says_it_died_is_stopped_and_started_again(places, started):
@@ -1548,7 +1637,7 @@ async def test_what_a_driver_says_about_its_state_is_written_down_and_pushed_onl
 
 async def test_a_driver_that_fails_when_asked_about_itself_does_not_break_the_connection_list(places, started):
     class Broken(Scripted):
-        instances: list = []
+        instances: ClassVar[list] = []
         starts = 0
 
         def reads(self):

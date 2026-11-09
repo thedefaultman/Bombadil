@@ -33,6 +33,8 @@ THREAD_TEXT = 1_200
 MAX_ROWS = 12
 ROW_TITLE, ROW_SUB, ROW_WHEN = 60, 100, 24
 MAX_FIELDS = 12             # a task card's boxes and rows together, as cards.py allows
+MAX_FIELD_TEXT = 5_000      # what one box of a task holds, as cards.py allows
+MAX_NAME = 24               # a first name in one of Bombadil's own sentences
 _CARD_ID = re.compile(r"[A-Za-z0-9_.:@/+=-]{1,200}")   # as cards.py takes them
 _KEY = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,39}")
 
@@ -44,6 +46,7 @@ OFFERS = {"slack": "Direct messages, mentions and threads.", "linear": "Issues a
 CONNECTION_STATES = {"ok": "ok", "signin": "active", "setup": "active", "blocked": "warn", "error": "bad",
                      "off": "gone"}
 ACCOUNT_STATES = {"ok": "ok", "syncing": "active", "signin": "active", "blocked": "warn", "error": "bad"}
+ACCOUNT_WAITING = {"syncing": "Getting your mail.", "signin": "Waiting for you to sign in."}
 # The boxes of a task card when the service has not said which it has.
 DEFAULT_FIELDS = {"task_create": [{"key": "title", "label": "Title", "edit": "line"},
                                   {"key": "description", "label": "Description", "edit": "text"}],
@@ -66,8 +69,18 @@ def who_of(message: dict) -> str:
 
 
 def first_name(name: str) -> str:
+    """The first word of a name, for a sentence that is Bombadil's own ("Reply to Priya"): short, so that a name
+    made of a sentence cannot take the line over."""
     words = one_line(name, 60).split()
-    return words[0].strip(",") if words else "someone"
+    word = words[0].strip(",") if words else ""
+    return (word if len(word) <= MAX_NAME else word[:MAX_NAME - 1] + "…") if word else "someone"
+
+
+def title_of(message: dict) -> str:
+    """"Priya Shah in #launch"; a direct message has no place to name, so it is "Priya Shah"."""
+    conv = message.get("conversation") if isinstance(message.get("conversation"), dict) else {}
+    who = who_of(message)
+    return who if conv.get("kind") == "dm" else f"{who} in {where_of(message)}"
 
 
 def where_of(message: dict) -> str:
@@ -167,7 +180,7 @@ def message_card(messages: list[dict], ref: str | None = None, proposal: dict | 
         reply = idle_block("slack_reply", target["ref"], where)
         say = f"{first_name(who)} wrote in {where}."
     url = web_url(target.get("web_url"))
-    return {"type": "message", "id": card_id("msg", target["ref"]), "title": one_line(f"{who} in {where}", MAX_TITLE),
+    return {"type": "message", "id": card_id("msg", target["ref"]), "title": one_line(title_of(target), MAX_TITLE),
             "source": "connect", "thread": [_thread_row(m) for m in thread[-THREAD_ROWS:]], "reply": reply,
             "open": {"kind": "url", "value": url} if url else None, "say": _say(say)}
 
@@ -176,10 +189,10 @@ def notification_card(seq: int, app: str, summary: str, body: str, now: float) -
     """A notification as a card whose reply is a copy: Bombadil can show it and hand its words to the page that sent
     it, and cannot answer it."""
     app = one_line(app, 40) or "the app"
-    who = one_line(summary, 60) or app
-    return {"type": "message", "id": card_id("msg", f"n{seq}"), "title": one_line(f"{who} in {app}", MAX_TITLE),
+    who = one_line(summary, 60)
+    return {"type": "message", "id": card_id("msg", f"n{seq}"), "title": one_line(f"{who} in {app}" if who else app, MAX_TITLE),
             "source": "notification",
-            "thread": [{"ref": f"notify:{seq}", "from": who, "text": plain_text(body or summary, THREAD_TEXT),
+            "thread": [{"ref": f"notify:{seq}", "from": who or app, "text": plain_text(body or summary, THREAD_TEXT),
                         "ts": float(now), "mine": False, "unread": True}],
             "reply": {"proposal": None, "kind": "copy", "where": app, "content": ""}, "open": None,
             "say": _say(f"Copy and open takes your words to {app}.")}
@@ -194,14 +207,17 @@ def field_spec(kind: str, task_fields) -> list[dict]:
     given = task_fields.get(part) if isinstance(task_fields, dict) else None
     spec = []
     for f in given if isinstance(given, list) else []:
-        if isinstance(f, dict) and one_line(f.get("key"), 40):
+        if isinstance(f, dict) and _KEY.fullmatch(one_line(f.get("key"), 40)):
             spec.append({"key": one_line(f["key"], 40), "label": one_line(f.get("label") or f["key"], 40),
                          "edit": f.get("edit") if f.get("edit") in EDITS else "line"})
     return spec[:MAX_FIELDS] or [dict(f) for f in DEFAULT_FIELDS[kind]]
 
 
 def _row(key: str, label: str, value, edit) -> dict:
-    return {"key": key, "label": one_line(label, 40), "value": plain_text(value, 2_000), "edit": edit}
+    """A row of a task card. A box (`edit` set) holds exactly what the proposal holds, since that is what would
+    go; a row that only says something is made plain and cut."""
+    text = str(value if value is not None else "")[:MAX_FIELD_TEXT] if edit else plain_text(value, 2_000)
+    return {"key": key, "label": one_line(label, 40), "value": text, "edit": edit}
 
 
 def task_card(*, service: str, task: dict | None = None, proposal: dict | None = None,
@@ -251,17 +267,39 @@ def list_card(key: str, title: str, rows: list[dict], say: str) -> dict:
             "rows": rows[:MAX_ROWS], "say": _say(say)}
 
 
-def unread_card(messages: list[dict], now: float | None = None) -> dict:
-    """The unread messages, newest first, each opening its own message card."""
-    rows = []
-    for m in [m for m in messages if isinstance(m, dict) and isinstance(m.get("ref"), str)][:MAX_ROWS]:
-        rows.append({"id": card_id("msg", m["ref"]), "title": one_line(f"{who_of(m)} in {where_of(m)}", ROW_TITLE),
-                     "sub": preview(m.get("text"), ROW_SUB), "when": when_of(m.get("ts"), now),
-                     "state": "new" if m.get("unread") is not False else "ok", "actions": [],
-                     "opens": {"kind": "card", "value": card_id("msg", m["ref"])}})
+def unread_card(messages: list[dict], now: float | None = None, skipped=()) -> dict:
+    """The unread messages, newest first, each opening its own message card. `skipped` names the connections that
+    could not be read (their ids, or the service's own rows), said in the card's sentence."""
+    rows, seen = [], set()
+    for m in [m for m in messages if isinstance(m, dict) and isinstance(m.get("ref"), str)]:
+        key = card_id("msg", m["ref"])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({"id": key, "title": one_line(title_of(m), ROW_TITLE), "sub": preview(m.get("text"), ROW_SUB),
+                     "when": when_of(m.get("ts"), now), "state": "new" if m.get("unread") is not False else "ok",
+                     "actions": [], "opens": {"kind": "card", "value": key}})
+        if len(rows) == MAX_ROWS:
+            break
     count = len(rows)
-    return list_card(UNREAD_ID, "Unread messages", rows,
-                     f"{count} unread message{'s' if count != 1 else ''}, newest first.")
+    say = f"{count} unread message{'s' if count != 1 else ''}, newest first." if count else "Nothing unread right now."
+    missed = _names_of(skipped)
+    if missed:
+        say += f" {missed} could not be read."
+    return list_card(UNREAD_ID, "Unread messages", rows, say)
+
+
+def _names_of(skipped) -> str:
+    """"Slack" or "Slack and Linear" for the connections that were not read: a connection id (`slack:w1`,
+    `mcp:linear`) or one of the service's own rows says which."""
+    titles: list[str] = []
+    for item in skipped or ():
+        cid = item.get("connection") if isinstance(item, dict) else item
+        kind, _, rest = str(cid or "").partition(":")
+        title = service_title("slack" if kind == "slack" else rest) if kind in ("slack", "mcp") and rest else ""
+        if title and title not in titles:
+            titles.append(title)
+    return " and ".join([", ".join(titles[:-1]), titles[-1]] if len(titles) > 1 else titles)
 
 
 def row_for(key: str, title: str, sub: str, state: str, action: str, label: str) -> dict:
@@ -279,7 +317,7 @@ def connected_card(connections: list[dict], accounts: list[dict] | None = None, 
         state = a.get("state") if a.get("state") in ACCOUNT_STATES else "error"
         unread = a.get("unread") if isinstance(a.get("unread"), int) and not isinstance(a.get("unread"), bool) else 0
         sub = "Reads your mail" + (f", {unread} unread." if unread else ".") if state == "ok" else \
-            one_line(a.get("note"), ROW_SUB) or "Not working yet."
+            one_line(a.get("note"), ROW_SUB) or ACCOUNT_WAITING.get(state, "Not working yet.")
         rows.append(row_for(f"mail:{one_line(a['id'], 30)}", a.get("email") or a.get("name") or "Mail account", sub,
                             ACCOUNT_STATES[state], "disconnect", "Disconnect"))
     live = set()
@@ -304,4 +342,4 @@ def connected_card(connections: list[dict], accounts: list[dict] | None = None, 
 
 __all__ = ["card_id", "connected_card", "connection_title", "field_spec", "first_name",
            "idle_block", "list_card", "message_card", "notification_card", "preview", "refreshed", "reply_block",
-           "service_title", "task_card", "unread_card", "when_of", "where_of", "who_of"]
+           "service_title", "task_card", "title_of", "unread_card", "when_of", "where_of", "who_of"]

@@ -22,6 +22,7 @@ the time of a message, the label of the button), it is worked out here once, so 
 text twin are made from the same words.
 """
 
+import itertools
 import json
 import math
 import re
@@ -217,7 +218,7 @@ def validate_diagram(spec: dict) -> tuple[dict | None, list[str]]:
         return None, errors
 
     if shape == "chain" and not links and spec.get("linked", True) is not False:
-        links = [{"from": a["id"], "to": b["id"]} for a, b in zip(nodes, nodes[1:])]
+        links = [{"from": a["id"], "to": b["id"]} for a, b in itertools.pairwise(nodes)]
     if shape == "layers":
         nodes = rank_layers(nodes, links)
     if shape == "compare":
@@ -271,10 +272,10 @@ _PROPOSAL_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 _KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,39}$")
 _FINGERPRINT_RE = re.compile(r"^[A-Za-z0-9_-]{0,128}$")
 # Not \t or \n, which a message may hold; every other control, the line and paragraph separators, and lone surrogates.
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f  \ud800-\udfff]")
-_CONTROL_LINE = re.compile("[\x00-\x1f\x7f-\x9f  \ud800-\udfff]")
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
+_CONTROL_LINE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff]")
 # Invisible padding, and the marks that reorder text on screen: a name that has them can read as another name.
-_INVISIBLE = re.compile("[­͏؜᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]")
+_INVISIBLE = re.compile("[\u00ad\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 
 
 def _line(v, limit: int) -> str:
@@ -509,6 +510,7 @@ def validate_message(spec, now: float | None = None) -> tuple[dict | None, list[
     if errors:
         return None, errors
     card["via"] = _via({**card, "type": "message"})
+    card["lines"] = _state_lines(card["via"])
     card["text"] = text_of(card)
     return card, []
 
@@ -566,6 +568,7 @@ def validate_task(spec, now: float | None = None) -> tuple[dict | None, list[str
     if errors:
         return None, errors
     card["via"] = _via(card)
+    card["lines"] = _state_lines(card["via"])
     card["text"] = text_of(card)
     return card, []
 
@@ -739,15 +742,22 @@ def rank_layers(nodes: list[dict], links: list[dict]) -> list[dict]:
 
 # -- the text twin --
 
+SENDING_LINE = "Sending…"
 UNKNOWN_LINE = "I can't tell whether that went. Look in {via} before you press again."
 LIST_STATE_WORDS = {"warn": "needs a look", "bad": "not working", "new": "new", "gone": "gone", "active": "in use"}
+
+
+def _state_lines(via: str) -> dict:
+    """The two sentences a draft's state can say that the receipt does not: the card carries them, so the face
+    (which hears of a state change from agentd without a new card) says them in the words the text twin does."""
+    return {"sending": SENDING_LINE, "unknown": UNKNOWN_LINE.format(via=via)}
 
 
 def state_line(reply: dict, via: str) -> str:
     """What a draft's state says under its box: nothing while it is open."""
     state = reply.get("state")
     if state == "sending":
-        return "Sending…"
+        return SENDING_LINE
     if state == "sent":
         return (reply.get("receipt") or {}).get("line") or "Sent."
     if state == "unknown":

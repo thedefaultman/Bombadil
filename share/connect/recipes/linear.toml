@@ -1,12 +1,14 @@
 # Linear, through its official remote MCP server.
 #
-# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
-# documents; nothing was registered or authorized):
-#   - POST https://mcp.linear.app/mcp answers 401 with WWW-Authenticate carrying resource_metadata and
-#     scope="read write".
+# Looked at on 2026-11-08 without signing in (an unauthenticated initialize request and the well-known documents;
+# nothing was registered or authorized). Every address below still answered:
+#   - POST https://mcp.linear.app/mcp answers 401 with WWW-Authenticate carrying resource_metadata (the path-specific
+#     address, which answers) and scope="read write".
 #   - Protected-resource metadata names https://mcp.linear.app as the authorization server, scopes read and write.
 #   - Authorization-server metadata: authorize, token and register endpoints on mcp.linear.app, S256 PKCE, public
-#     clients allowed, authorization_code and refresh_token grants, client_id_metadata_document_supported = true.
+#     clients allowed (token_endpoint_auth_methods has "none"), authorization_code, refresh_token and jwt-bearer
+#     grants, client_id_metadata_document_supported = true, and authorization_response_iss_parameter_supported =
+#     true: the redirect back must carry iss, and the SDK refuses one that does not (the driver passes it on).
 #
 # A guess, from memory of Linear's published tool list and not looked at on the live server: every tool name, every
 # argument name and the shape of every answer below (where in the answer the list, the ids and the urls are, and

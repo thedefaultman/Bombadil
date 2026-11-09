@@ -45,13 +45,12 @@ def _at(ts: float) -> str:
 
 class FakeDriver(Driver):
     kind = "fake"
-    secret_rules = dict(SLACK_RULES)
 
     def __init__(self, conn, secrets, emit, clock):
         super().__init__(conn, secrets, emit, clock)
         self.is_slack = conn.get("kind") == "slack"
         self.service = str(conn.get("service") or "")
-        self.secret_rules = dict(SLACK_RULES) if self.is_slack else {}
+        self.secret_rules = dict(SLACK_RULES) if self.is_slack else {}   # per connection: a tool takes no token
         self.team = "T" + "".join(c for c in str(conn.get("id", "")).split(":")[-1].upper() if c.isalnum())
         self.display = str(conn.get("name") or self.service.title())
         self.performed: list[tuple] = []         # (kind, target, content) of every press that was done

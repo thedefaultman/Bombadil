@@ -62,7 +62,7 @@ class FakeConnect:
         self.store = {} if store is None else store
         self.calls: list[tuple[str, dict]] = []
         self.fail: Exception | None = None
-        self.state, self.name = state, name
+        self.state, self.name, self.note = state, name, ""
         self.id = "slack:w1"
 
     def request(self, op, timeout=2.0, **args):
@@ -76,5 +76,6 @@ class FakeConnect:
             ready = {"app_token", "user_token"} <= set(self.store)
             state = self.state if ready else "setup"
             return {"connections": [{"id": self.id, "kind": "slack", "service": "slack",
-                                     "name": self.name if state == "ok" else "", "state": state, "note": ""}]}
+                                     "name": self.name if state == "ok" else "", "state": state,
+                                     "note": self.note if state == "error" else ""}]}
         raise self.ConnectError("That is not something the fake knows.", "bad_request")

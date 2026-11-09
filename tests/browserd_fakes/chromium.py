@@ -7,15 +7,19 @@ with that reason.
 """
 
 import asyncio
+import contextlib
 import glob
 import http.server
 import json
+import os
+import pwd
 import shutil
 import socket
 import subprocess
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 from bombadil import browser, ws
 
@@ -25,11 +29,15 @@ class ChromiumUnavailable(Exception):
 
 
 def chromium_path() -> str | None:
-    for pattern in ("/opt/pw-browsers/chromium-*/chrome-linux/chrome", "/opt/pw-browsers/chromium*/chrome-linux/chrome"):
-        found = sorted(glob.glob(pattern))
+    """A Chromium to start: the one Playwright's cache holds (named by PLAYWRIGHT_BROWSERS_PATH, else in the account's
+    own cache, whatever HOME a test has set; its folder is `chrome-linux` or `chrome-linux64` depending on the
+    version), else the one on the path."""
+    own = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".cache" / "ms-playwright"
+    for root in (os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), str(own)):
+        found = sorted(glob.glob(f"{root}/chromium-*/chrome-linux*/chrome")) if root else []
         if found:
             return found[-1]
-    return shutil.which("chromium")
+    return shutil.which("chromium") or shutil.which("chromium-browser")
 
 
 def free_port() -> int:
@@ -147,9 +155,7 @@ class Cdp:
         self.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="left", clickCount=1)
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):   # the browser may be gone already
             self._run(self._sock.close())
-        except Exception:  # noqa: BLE001 - the browser may be gone already
-            pass
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(5)

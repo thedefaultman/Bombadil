@@ -246,6 +246,8 @@ class Outbox:
         again = again and p["state"] == "unknown"
         if p["state"] == "unknown" and not again:
             return PressResult(False, _unknown_connect(kind, p["target"]), code="unknown_outcome")
+        if p["state"] == "sending":
+            return PressResult(False, "That is already being sent.", code="busy")
         if p["state"] not in ("open", "unknown"):
             return PressResult(False, "That was put away. " + NOT_SENT, code="changed")
         if is_empty(p["content"]):

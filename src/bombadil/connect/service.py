@@ -185,7 +185,10 @@ def _peer_pidfd(sock) -> int | None:
 
 
 def turn_scope(pid: int) -> bool:
-    """Is this process inside an agent turn's scope (procs.cgroup_of, as outbox.py asks it)?"""
+    """Is this process inside an agent turn's scope (procs.cgroup_of, as outbox.py asks it)? `cgroup_of` says "no"
+    for a process whose cgroup it cannot read, which would let one that cannot be told pass for the person, so the
+    file is read first: what cannot be read raises, and `_scoped` refuses that as the agent's."""
+    (procs.PROC / str(pid) / "cgroup").read_text()
     return procs.cgroup_of(pid) is not None
 
 
@@ -397,15 +400,18 @@ class Service:
 
     def _seed_fake(self) -> None:
         """A store that is new starts with a workspace and a tool already connected, so nothing needs an account.
-        Once only: what the person disconnects stays disconnected."""
+        Once only: what the person disconnects stays disconnected, and a store that already holds connections is
+        not new, so nothing is added beside them."""
         if self.store.get_meta("fake_seeded"):
             return
         from . import fake
         now = self.clock()
-        self.store.add_connection(f"slack:w{self.store.next_number('slack')}", "slack", "slack", fake.WORKSPACE, "ok",
-                                  "", now)
-        self.store.add_connection("mcp:linear", "mcp", "linear", SERVICE_NAMES["linear"], "ok", "", now + 0.001)
-        self.store.set_meta("fake_seeded", "1")
+        with self.store.tx():
+            if not self.store.connections():
+                self.store.add_connection(f"slack:w{self.store.next_number('slack')}", "slack", "slack",
+                                          fake.WORKSPACE, "ok", "", now)
+                self.store.add_connection("mcp:linear", "mcp", "linear", SERVICE_NAMES["linear"], "ok", "", now + 0.001)
+            self.store.set_meta("fake_seeded", "1")
 
     def _take_locks(self) -> None:
         """One service per database and one per socket: two on the same tokens and press list would each believe
@@ -619,7 +625,7 @@ class Service:
             if message is not None:
                 self._add_message(message)
         elif kind == "task":
-            item = protocol.clean_task({"service": live.record["service"], **(push.get("item") or {})}, live.id)
+            item = protocol.clean_task({**(push.get("item") or {}), "service": live.record["service"]}, live.id)
             if item is not None:
                 self._broadcast({"push": "task", "item": item})
         elif kind == "died":
@@ -870,6 +876,7 @@ class Service:
                 raise Refusal(NOT_FOUND, "There is no such connection.")
             lives = [live for live in lives if live.id == wanted]
         self._expire()
+        cutoff = self.clock() - RING_AGE_S   # what a driver remembers is held to the ring's age too
         rows: list[dict] = []
         skipped: list[dict] = []
         asked: list[Live] = []
@@ -886,7 +893,7 @@ class Service:
             if not isinstance(got, list):
                 skipped.append(self._skipped(live, "It did not answer in time."))
                 continue
-            rows += [m for m in (protocol.clean_message(raw, live.id) for raw in got) if m]
+            rows += [m for m in (protocol.clean_message(raw, live.id) for raw in got) if m and m["ts"] >= cutoff]
         flagged = [self._flagged(m) for m in {m["ref"]: m for m in rows}.values() if m["ts"] > since]
         flagged = [m for m in flagged if m["unread"] or not unread]
         flagged.sort(key=lambda m: (-m["ts"], m["ref"]))
@@ -973,7 +980,7 @@ class Service:
             elif not isinstance(got[live.id], list):
                 skipped.append(self._skipped(live, "It did not answer in time."))
             else:
-                items += [t for t in (protocol.clean_task({"service": live.record["service"], **raw}, live.id)
+                items += [t for t in (protocol.clean_task({**raw, "service": live.record["service"]}, live.id)
                                       for raw in got[live.id] if isinstance(raw, dict)) if t]
         return {"items": items[:limit], "skipped": skipped}
 
@@ -1051,11 +1058,14 @@ class Service:
         except drv.UnknownOutcome as e:
             outcome, trouble = "unknown", Refusal(UNKNOWN_OUTCOME, str(e))
         except drv.DriverError as e:
-            try:
-                self.store.forget_performed(proposal)   # nothing went: the person may press it again
-            except sqlite3.Error as err:
-                log(f"could not take a press back ({type(err).__name__}); it stays as one that may have gone")
-            raise Refusal(e.code if e.code in CODES else REFUSED, str(e)) from None
+            if e.code == UNKNOWN_OUTCOME:   # a driver that says so in its code has said it may have gone
+                outcome, trouble = "unknown", Refusal(UNKNOWN_OUTCOME, str(e))
+            else:
+                try:
+                    self.store.forget_performed(proposal)   # nothing went: the person may press it again
+                except sqlite3.Error as err:
+                    log(f"could not take a press back ({type(err).__name__}); it stays as one that may have gone")
+                raise Refusal(e.code if e.code in CODES else REFUSED, str(e)) from None
         except Exception as e:  # noqa: BLE001 - after the driver was asked, nothing is known (this includes a timeout)
             log(f"{kind}: the driver failed ({type(e).__name__})")
             outcome, trouble = "unknown", Refusal(UNKNOWN_OUTCOME, UNKNOWN_SENTENCE)

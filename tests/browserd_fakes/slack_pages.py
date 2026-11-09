@@ -5,13 +5,21 @@ The story, as the recipe expects Slack's to go: a "create an app" page with Crea
 Basic Information page with Install to Workspace near the top and, far down, App-Level Tokens with Generate Token and
 Scopes, which opens a box with a name, Add Scope and Generate, after which the token shows in a field; a consent page
 with Allow; and the OAuth & Permissions page showing the User OAuth Token in a field. With `wall`, the consent page is
-instead the one that says an administrator must approve apps. All names are invented (workspace "Acme"), and the two
-tokens are built here at run time, never written whole.
+instead the one that says an administrator must approve apps. `two_step` puts a workspace choice (Next) before Create,
+`token_in_text` shows the first token as words rather than in a field, `no_user_token` leaves the second token off its
+page, and `blank` makes every page an empty "Loading" one, with nothing on it to press. All names are invented
+(workspace "Acme"), and the two tokens are built here at run time, never written whole.
 """
+
+from urllib.parse import urlsplit
 
 from . import fake_cdp
 
 APP_ID = "A0ACME1234"
+BASE = "https://api.slack.test"
+# Where each page lives, for a test that moves the person to one (the consent page is `/oauth`, a wall in its place).
+KINDS = {"create": "/apps", "basic": f"/apps/{APP_ID}/", "consent": "/oauth?client_id=1.2",
+         "tokens": f"/apps/{APP_ID}/oauth"}
 
 
 def app_token() -> str:
@@ -32,13 +40,17 @@ def _page(title: str, body: str, script: str = "") -> str:
 
 
 class Site:
-    def __init__(self, wall: bool = False, two_step: bool = False, token_in_text: bool = False):
+    def __init__(self, wall: bool = False, two_step: bool = False, token_in_text: bool = False,
+                 no_user_token: bool = False, blank: bool = False):
         self.wall, self.two_step, self.token_in_text = wall, two_step, token_in_text
+        self.no_user_token, self.blank = no_user_token, blank
         self.app_token, self.user_token = app_token(), user_token()
 
     # -- HTML, for a real browser --
 
     def render(self, path: str, query: str) -> tuple[int, str]:
+        if self.blank:
+            return 200, _page("Slack", "<p>Loading</p>")
         if path == "/apps":
             return 200, self._create()
         if path == f"/apps/{APP_ID}/":
@@ -90,16 +102,38 @@ class Site:
             "administrator.</p><button>Submit Request</button>"))
 
     def _tokens(self) -> str:
+        shown = "" if self.no_user_token else f"<input readonly value=\"{self.user_token}\"><button>Copy</button>"
         return _page("OAuth & Permissions", (
             "<h1>OAuth &amp; Permissions</h1><h2>OAuth Tokens for Your Workspace</h2><p>User OAuth Token</p>"
-            f"<input readonly value=\"{self.user_token}\"><button>Copy</button>"
-            "<button>Reinstall to Workspace</button>"))
+            f"{shown}<button>Reinstall to Workspace</button>"))
 
     # -- the same pages for the fake debugging port --
 
-    def fake(self, chrome: fake_cdp.FakeChrome, base: str = "https://api.slack.test") -> None:
+    def fake(self, chrome: fake_cdp.FakeChrome, base: str = BASE) -> None:
         """Make the stand-in's tabs open on this site's first page (whatever address /json/new is given)."""
-        chrome.page_factory = lambda url: self._fake_create(chrome, base)
+        chrome.page_factory = lambda url: self.fake_page(chrome, "create", base)
+
+    def fake_page(self, chrome, which: str, base: str = BASE) -> fake_cdp.FakePage:
+        """A new copy of one of the pages (`KINDS`), as the server sends it: nothing drawn on it, nothing pressed."""
+        if self.blank:
+            return fake_cdp.FakePage(f"{base}/apps?new_app=1", "Slack", "Loading")
+        if which == "create":
+            return self._fake_create(chrome, base)
+        if which == "basic":
+            return self._fake_basic(chrome, base)
+        if which == "consent":
+            return self._wall_page(chrome, base) if self.wall else self._consent_page(chrome, base)
+        return self._fake_tokens(base)
+
+    def fake_goto(self, chrome, tab_id: str, which: str, base: str = BASE) -> None:
+        chrome.navigate(tab_id, self.fake_page(chrome, which, base))
+
+    def fake_reload(self, chrome, tab_id: str, base: str = BASE) -> None:
+        """The tab loads the page it shows again, fresh."""
+        path = urlsplit(chrome.page(tab_id).url).path
+        which = ("create" if path == "/apps" else "consent" if path == "/oauth"
+                 else "tokens" if path.endswith("/oauth") else "basic")
+        self.fake_goto(chrome, tab_id, which, base)
 
     def _go(self, chrome, page):
         return lambda tab_id: chrome.go(tab_id, page() if callable(page) else page)
@@ -162,6 +196,6 @@ class Site:
         E = fake_cdp.FakeElement
         page = fake_cdp.FakePage(f"{base}/apps/{APP_ID}/oauth", "OAuth & Permissions",
                                  "OAuth & Permissions\nOAuth Tokens for Your Workspace\nUser OAuth Token",
-                                 inputs=[self.user_token])
+                                 inputs=[] if self.no_user_token else [self.user_token])
         page.elements = [E("Copy", (700, 300, 70, 34)), E("Reinstall to Workspace", (40, 360, 200, 34))]
         return page

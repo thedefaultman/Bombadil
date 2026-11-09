@@ -4,7 +4,8 @@ imitation pages, or the fake debugging port showing models of them (see slack_pa
 The person presses what Bombadil points at and nothing else (apart from the steps Bombadil does not point at). On
 Chromium the person finds the pointer's ring in the page and clicks the middle of it with a real mouse event, so
 whatever is drawn over the button is in the way if it takes clicks; on the fake port it presses the element the
-pointer is on.
+pointer is on. The person can also do what a person does to a page that Bombadil does not ask for: go to another of
+the site's pages (`goto`), load the one it is on again (`reload`), close it (`close_page`).
 """
 
 import time
@@ -56,6 +57,7 @@ class FakeStage:
         site.fake(self.chrome)
         self.devtools = browser.DevTools(port=self.chrome.port)
         self.creation_url = "https://api.slack.test/apps?new_app=1&manifest_json=%7B%7D"
+        self._marked = None
 
     def _tab(self) -> str | None:
         return next(iter(self.chrome.tabs), None)
@@ -83,8 +85,36 @@ class FakeStage:
         element = until(ready, timeout, f"the button {text!r}")
         self.chrome.press(self._tab(), element)
 
+    def pointer_label(self) -> str | None:
+        over = self.pointed()
+        return None if over is None else over["label"]
+
     def page_text(self) -> str:
         return self.chrome.page(self._tab()).text
+
+    def mark_page(self) -> None:
+        """Remember the page that is shown, to tell later whether it is still that one (not loaded again)."""
+        self._marked = self.chrome.page(self._tab())
+
+    def is_marked_page(self) -> bool:
+        tab = self._tab()
+        return tab is not None and self.chrome.page(tab) is self._marked
+
+    def goto(self, which: str) -> None:
+        self.site.fake_goto(self.chrome, self._tab(), which)
+
+    def reload(self) -> None:
+        self.site.fake_reload(self.chrome, self._tab())
+
+    def close_page(self) -> None:
+        self.chrome.close_tab(self._tab())
+
+    def opened(self) -> list[str]:
+        """The addresses the browser was asked to open."""
+        return list(self.chrome.opened)
+
+    def url(self) -> str:
+        return self.chrome.page(self._tab()).url
 
     def close(self) -> None:
         self.chrome.stop()
@@ -136,8 +166,39 @@ class ChromiumStage:
         at = until(ready, timeout, f"the button {text!r}")
         self.cdp().click(at["x"], at["y"])
 
+    def pointer_label(self) -> str | None:
+        now = self.pointed()
+        return now["label"] if now and now["visible"] == "visible" else None
+
     def page_text(self) -> str:
         return self.cdp().evaluate("document.body.innerText")
+
+    def mark_page(self) -> None:
+        self.cdp().evaluate("window.__shown = true")
+
+    def is_marked_page(self) -> bool:
+        try:
+            return self.cdp().evaluate("window.__shown === true") is True
+        except (RuntimeError, OSError, TimeoutError, AssertionError):
+            return False   # the page is being replaced just now
+
+    def goto(self, which: str) -> None:
+        self.cdp().evaluate(f"location.href = {slack_pages.KINDS[which]!r}")
+
+    def reload(self) -> None:
+        self.cdp().evaluate("location.reload()")
+
+    def close_page(self) -> None:
+        self.cdp()
+        tab = self._cdp_tab
+        self.devtools.close(tab)
+        until(lambda: all(t["id"] != tab for t in self.devtools.tabs()), 10, "the page to close")
+
+    def opened(self) -> list[str]:
+        return list(self.pages.requests)
+
+    def url(self) -> str:
+        return self.cdp().evaluate("location.href")
 
     def close(self) -> None:
         if self._cdp is not None:

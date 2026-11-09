@@ -2,22 +2,30 @@
 
 Linear, Notion, Atlassian's Jira, Todoist and ClickUp each run an official remote MCP server that a person
 allows with a browser sign-in. `McpDriver` is the connection to any of them; what differs between the services is a
-recipe (`recipes.py`, `share/connect/recipes/<service>.toml`). The driver is built on the official Python SDK: the
-Streamable HTTP client, `ClientSession`, and its OAuth client provider, whose token store is `self.secrets`.
+recipe (`recipes.py`, `share/connect/recipes/<service>.toml`). The driver is built on the official Python SDK, written
+against `mcp` 2.3.0 (what Arch ships as python-mcp): the Streamable HTTP client, `ClientSession`, and its OAuth client
+provider, whose token store is `self.secrets`. That SDK talks HTTP through `httpx2` (a dependency of `mcp`, not the
+`httpx` the rest of Bombadil uses), and the names here are the 2.x ones (`MCPError`, `AuthorizationCodeResult`,
+`is_error`, `structured_content`); nothing here runs on 1.x.
 
 How it is shaped, and why:
 
 - **Sign-in.** With no tokens `start()` begins the flow in a task of its own: a listener on 127.0.0.1 (a port of its
   own) for the redirect, then the SDK's discovery, registration and authorization. The SDK registers "Bombadil"
   dynamically; when the server says it takes a client metadata document and an address for ours is given
-  (`BOMBADIL_CLIENT_METADATA_URL`, or the recipe's `client_metadata_url`) that address is the client id instead.
-  The authorization address is not opened here: it becomes the one step the person sees, `steps()`, and the state
-  is `signin`. When the browser comes back, the code is exchanged, the tokens are stored through `Secrets` (under
-  `tokens` and `client_info`), and the state is `ok`.
+  (`BOMBADIL_CLIENT_METADATA_URL`, or the recipe's `client_metadata_url`) that address is the client id instead. No
+  such address is published yet, so today every sign-in registers. The authorization address is not opened here: it
+  becomes the one step the person sees, `steps()`, and the state is `signin`. When the browser comes back (with the
+  `iss` the server names, which the SDK insists on when the server says it sends one), the code is exchanged, the
+  tokens are stored through `Secrets` (under `tokens` and `client_info`), and the state is `ok`.
 - **One connection per request.** The SDK's Streamable HTTP transport ends the whole session when any one request
   fails, so a session kept open for hours would be one that is mostly dead. A request here opens a connection,
-  initializes, asks, and closes. That costs a round trip a few times an hour and means a failure has one cause and
-  nothing to repair. Requests run one at a time, so a refresh of the token is never done twice.
+  initializes, asks, and closes. The handshake is the `initialize` of the older protocol revisions, which the SDK
+  still speaks, not the `server/discover` of 2026-07-28: no real server has been asked which it wants, and one that
+  accepted only the newer would need `mode="auto"` here. That costs a round trip a few times an hour and means a
+  failure has one cause and nothing to repair. Requests run one at a time, so a refresh of the token is never
+  done twice, and each has an OAuth provider of its own (they share only the token store): the SDK's provider holds
+  a lock from sending a request until the server answers, so a call given up on would otherwise hold up the next.
 - **Refresh is the SDK's.** The stored time the access token runs out is kept with it (the SDK only knows it for
   tokens it has just received), so a restart refreshes on time. The SDK does not refresh on a 401, so when one
   comes back the driver makes it refresh once and asks again; a refresh that fails, or a server that wants the
@@ -26,9 +34,12 @@ How it is shaped, and why:
   call runs in the background and `emit`s a `task` push for each item not seen before in this run. The first poll
   is silent, so a start-up is not a flood. Nothing else happens without a press.
 - **Writing is only `perform`.** One tool call per press, with only the fields the recipe lists. A tool that says
-  no (`isError`) or a request refused before it was written is a `DriverError`; a request that was written and
+  no (`is_error`) or a request refused before it was written is a `DriverError`; a request that was written and
   then failed or timed out (30 s) is `UnknownOutcome`, and nothing retries. A request that cannot have been
-  written (the server could not be reached, a timeout before the call went out) is never `UnknownOutcome`.
+  written (the server could not be reached, a timeout before the call went out) is never `UnknownOutcome`. The 2.x
+  transport turns a bad HTTP status into a stand-in `MCPError` that no longer says which status it was, so the
+  status is taken from the connection itself (`_Attempt`), and an error that is not plainly the server saying
+  "not that" (an internal error, a dropped stream) counts as a failure after the write.
 - **Nothing secret leaves.** Tokens are only in `Secrets`; they are not in a push, a receipt, a note, an exception's
   sentence or a log line. A sentence for the person is made of this module's own words; what a service said is
   quoted as its own, cut and plain. The SDK logs tracebacks of a failed sign-in whose text can quote the other
@@ -51,13 +62,12 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from urllib.parse import parse_qsl, urlsplit
 
-import httpx
-from mcp import ClientSession, types
-from mcp.client.auth import OAuthClientProvider
+import httpx2
+from mcp import ClientSession, MCPError, types
+from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, OAuthFlowError
 from mcp.client.auth.utils import is_valid_client_metadata_url
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthMetadata, OAuthToken
-from mcp.shared.exceptions import McpError
 
 from . import recipes
 from .driver import Driver, DriverError, Secrets, UnknownOutcome
@@ -67,6 +77,9 @@ MAX_FIELD = 20000       # characters of any one box the person filled in
 MAX_SHOWN = 200         # characters of a service's own words in a sentence
 MAX_PUSHED = 20         # new tasks announced by one poll at most
 _ME = types.Implementation(name="bombadil", version="0.1.0")
+# The JSON-RPC errors that mean the server looked at a call and turned it away. Any other (an internal error, a
+# dropped stream, an answer that would not parse) may have come after the tool ran.
+_TURNED_AWAY = (types.METHOD_NOT_FOUND, types.INVALID_PARAMS)
 _PLACEHOLDER_URI = "http://127.0.0.1/callback"     # for requests that never sign in; the SDK wants one
 
 
@@ -79,7 +92,7 @@ class _Plain(logging.Filter):
         return True
 
 
-for _name in ("mcp.client.auth.oauth2", "mcp.client.streamable_http"):
+for _name in ("mcp.client.auth.oauth2", "mcp.client.streamable_http", "mcp.client.session"):
     logging.getLogger(_name).addFilter(_Plain())
 
 
@@ -105,19 +118,30 @@ class _Unusable(Exception):
 
 
 class _Attempt:
-    """What one request got as far as, so a failure can be told apart: before the call was written, or after."""
+    """What one request got as far as, so a failure can be told apart: before the call was written, or after, and
+    what status the server answered with (the 2.x transport turns a bad one into a stand-in `MCPError` that does not
+    say). Before the call goes out `status` is the last answer to anything; after, only the call's own."""
 
     def __init__(self):
         self.sent = False
         self.done = False
         self.value = None
+        self.status: int | None = None
+        self._call: httpx2.Request | None = None
 
-    async def note(self, request: httpx.Request) -> None:
+    async def note(self, request: httpx2.Request) -> None:
         try:
             if request.method == "POST" and b'"tools/call"' in request.content:
-                self.sent = True
-        except httpx.RequestNotRead:
+                self.sent, self._call = True, request
+        except httpx2.RequestNotRead:
             pass
+
+    async def heard(self, response: httpx2.Response) -> None:
+        if not self.sent or response.request is self._call:
+            self.status = response.status_code
+
+    def hooks(self) -> dict:
+        return {"request": [self.note], "response": [self.heard]}
 
 
 class _PinnedScope(OAuthClientMetadata):
@@ -179,10 +203,7 @@ class _Storage:
             return None
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
-        before = self._read("tokens") or {}
-        if not tokens.refresh_token and before.get("refresh_token"):
-            tokens.refresh_token = before["refresh_token"]      # a refresh that does not name one keeps the old
-        body = tokens.model_dump(mode="json", exclude_none=True)
+        body = tokens.model_dump(mode="json", exclude_none=True)       # the SDK keeps the old refresh token itself
         if tokens.expires_in is not None:
             body["expires_at"] = time.time() + int(tokens.expires_in)
         self.secrets.set("tokens", json.dumps(body))
@@ -221,8 +242,9 @@ def _page(status: int, text: str) -> bytes:
 
 class _Listener:
     """A listener on 127.0.0.1 that answers the one request the sign-in ends with: `GET /callback?code=...&state=...`
-    (or `error=`). It takes only a request whose `state` is the one the authorization address carried, answers the
-    browser once it knows whether the sign-in worked, and has no other page."""
+    (or `error=`), and `iss=...` when the server names itself (RFC 9207), which the SDK checks. It takes only a request
+    whose `state` is the one the authorization address carried, answers the browser once it knows whether the
+    sign-in worked, and has no other page."""
 
     def __init__(self, name: str, port: int = 0):
         self.name = name
@@ -242,11 +264,11 @@ class _Listener:
     def expect(self, state: str | None) -> None:
         self._state = state
 
-    async def code(self) -> tuple[str, str]:
-        code, state, error = await self._came
+    async def code(self) -> AuthorizationCodeResult:
+        code, state, error, iss = await self._came
         if error:
             raise _Denied(error)
-        return code, state
+        return AuthorizationCodeResult(code=code, state=state, iss=iss)
 
     def finish(self, ok: bool) -> None:
         if not self._outcome.done():
@@ -292,9 +314,9 @@ class _Listener:
             return 410, "That sign-in was already used. You can close this tab."
         self._used = True
         if query.get("error"):
-            self._came.set_result(("", query["state"], query["error"]))
+            self._came.set_result(("", query["state"], query["error"], None))
             return 200, f"{self.name} did not allow Bombadil. You can close this tab."
-        self._came.set_result((query["code"], query["state"], None))
+        self._came.set_result((query["code"], query["state"], None, query.get("iss")))
         try:
             ok = await asyncio.wait_for(asyncio.shield(self._outcome), 20)
         except TimeoutError:
@@ -311,6 +333,10 @@ def _leaves(exc: BaseException) -> list[BaseException]:
 
 def _quoted(text: str) -> str:
     return one_line(text, MAX_SHOWN).replace('"', "'")
+
+
+def _a(noun: str) -> str:
+    return f"{'an' if noun[:1].lower() in 'aeiou' else 'a'} {noun}"
 
 
 class McpDriver(Driver):
@@ -340,9 +366,8 @@ class McpDriver(Driver):
         self._flow_task: asyncio.Task | None = None
         self._listener: _Listener | None = None
         self._poller: asyncio.Task | None = None
-        self._first = asyncio.Event()
+        self._looked = asyncio.Event()
         self._lock = asyncio.Lock()
-        self._auth: OAuthClientProvider | None = None
         self._vars: dict | None = None
         self._seen: OrderedDict[str, None] = OrderedDict()
         self._urls: OrderedDict[str, str] = OrderedDict()
@@ -383,10 +408,10 @@ class McpDriver(Driver):
         if not self._storage.has_tokens():
             await self._signin("", reset=True)
             return
-        self._first.clear()
+        self._looked.clear()
         self._poller = asyncio.ensure_future(self._poll_loop())
         with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._first.wait(), self.start_seconds)
+            await asyncio.wait_for(self._looked.wait(), self.start_seconds)
         if self.state not in ("ok", "signin"):
             self._set_state("ok", "")
 
@@ -411,7 +436,7 @@ class McpDriver(Driver):
             return
         try:
             self.emit(push)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - whatever listens never breaks the driver
             log(f"{self.service}: a push was not taken ({type(exc).__name__})")
 
     # -- the sign-in --
@@ -424,7 +449,7 @@ class McpDriver(Driver):
                     grant_types=list(recipe.grants), response_types=doc["response_types"],
                     client_name=doc["client_name"], scope=recipe.scope or None)
         address = os.environ.get("BOMBADIL_CLIENT_METADATA_URL") or recipe.client_metadata_url
-        return OAuthClientProvider(recipe.url, meta, self._storage, redirect, callback, timeout=self.signin_seconds,
+        return OAuthClientProvider(recipe.url, meta, self._storage, redirect, callback,
                                    client_metadata_url=address if is_valid_client_metadata_url(address) else None)
 
     def _drop_flow(self) -> None:
@@ -439,7 +464,7 @@ class McpDriver(Driver):
         self._drop_flow()
         if reset:
             self._storage.clear()
-        self._auth = self._vars = None
+        self._vars = None
         address: asyncio.Future = asyncio.get_running_loop().create_future()
         task = self._flow_task = asyncio.ensure_future(self._flow(address))
         await asyncio.wait({address, task}, timeout=self.address_seconds, return_when=asyncio.FIRST_COMPLETED)
@@ -462,31 +487,34 @@ class McpDriver(Driver):
             if not address.done():
                 address.set_result(shown)
 
-        async def callback() -> tuple[str, str]:
+        async def callback() -> AuthorizationCodeResult:
             try:
                 return await asyncio.wait_for(listener.code(), self.signin_seconds)
             except TimeoutError:
                 raise _TimedOut() from None
 
+        attempt = _Attempt()
         try:
             auth = self._provider(await listener.open(), redirect, callback)
-            async with httpx.AsyncClient(auth=auth, follow_redirects=True,
-                                         timeout=httpx.Timeout(30.0, connect=10.0)) as client:
-                async with streamable_http_client(self.recipe.url, http_client=client) as (read, write, _):
-                    async with ClientSession(read, write, client_info=_ME) as session:
-                        await session.initialize()
-                        worked = True
-                        if auth.context.oauth_metadata is not None:
-                            self._storage.set_metadata(auth.context.oauth_metadata)
-                        listener.finish(True)
-                        self._steps = []
-                        self._set_state("ok", "")
-                        self._launch_poller()
+            async with (
+                httpx2.AsyncClient(auth=auth, timeout=httpx2.Timeout(30.0, connect=10.0),
+                                   headers={"User-Agent": "Bombadil"}, event_hooks=attempt.hooks()) as client,
+                streamable_http_client(self.recipe.url, http_client=client) as (read, write),
+                ClientSession(read, write, client_info=_ME) as session,
+            ):
+                await session.initialize()
+                worked = True
+                if auth.context.oauth_metadata is not None:
+                    self._storage.set_metadata(auth.context.oauth_metadata)
+                listener.finish(True)
+                self._steps = []
+                self._set_state("ok", "")
+                self._launch_poller()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - every way a sign-in can fail ends in a state and a note
             if not worked:
-                self._flow_failed(exc)
+                self._flow_failed(exc, attempt)
             else:
                 log(f"{self.service}: closing the sign-in connection failed ({type(exc).__name__})")
         finally:
@@ -503,17 +531,16 @@ class McpDriver(Driver):
             return 0
         return port if 0 < port < 65536 else 0
 
-    def _flow_failed(self, exc: BaseException) -> None:
+    def _flow_failed(self, exc: BaseException, attempt: _Attempt) -> None:
         name, leaves = self.name, _leaves(exc)
         denied = next((x for x in leaves if isinstance(x, _Denied)), None)
-        status = next((x.response.status_code for x in leaves if isinstance(x, httpx.HTTPStatusError)), None)
         if denied is not None and denied.error == "access_denied":
             state, note = "blocked", f"{name} did not allow Bombadil. Connect it again if you meant to."
-        elif status == 403:
+        elif attempt.status == 403:
             state, note = "blocked", f"{name} would not let Bombadil in. An administrator may have to allow it."
         elif any(isinstance(x, _TimedOut) for x in leaves):
             state, note = "error", f"{name} was not allowed in time. Connect it again."
-        elif any(isinstance(x, httpx.TransportError) for x in leaves):
+        elif any(isinstance(x, httpx2.TransportError) for x in leaves):
             state, note = "error", f"{name} can't be reached right now. Connect it again later."
         else:
             state, note = "error", f"{name}'s sign-in did not finish. Connect it again."
@@ -528,28 +555,30 @@ class McpDriver(Driver):
 
     # -- one request --
 
-    def _ops_provider(self) -> OAuthClientProvider:
-        if self._auth is None:
-            async def stop_here(*_):
-                raise _Signin()
-            self._auth = self._provider(_PLACEHOLDER_URI, stop_here, stop_here)
-            self._auth.context.token_expiry_time = self._storage.expires_at()
-            self._auth.context.oauth_metadata = self._storage.metadata()
-        return self._auth
+    def _ops_provider(self, refresh: bool) -> OAuthClientProvider:
+        """The SDK's OAuth provider for one request, signed in from the token store (`refresh` says the stored token
+        is to be treated as run out). Never shared: its lock is held from sending a request until the server has
+        answered, so one that was given up on while the server said nothing would hold up every request after it, and
+        the SDK's own closing request with it. What the requests share is the token store."""
+        async def stop_here(*_):
+            raise _Signin()
+        auth = self._provider(_PLACEHOLDER_URI, stop_here, stop_here)
+        auth.context.token_expiry_time = 1.0 if refresh else self._storage.expires_at()
+        auth.context.oauth_metadata = self._storage.metadata()
+        return auth
 
-    async def _session(self, work: Callable[[ClientSession], Awaitable], attempt: _Attempt):
-        client = httpx.AsyncClient(auth=self._ops_provider(), follow_redirects=True,
-                                   timeout=httpx.Timeout(30.0, connect=10.0), headers={"User-Agent": "Bombadil"},
-                                   event_hooks={"request": [attempt.note]})
-        async with client, streamable_http_client(self.recipe.url, http_client=client) as (read, write, _):
-            async with ClientSession(read, write, client_info=_ME) as session:
-                await session.initialize()
-                attempt.value = await work(session)
-                attempt.done = True
-                return attempt.value
+    async def _session(self, work: Callable[[ClientSession], Awaitable], attempt: _Attempt, refresh: bool):
+        client = httpx2.AsyncClient(auth=self._ops_provider(refresh), timeout=httpx2.Timeout(30.0, connect=10.0),
+                                    headers={"User-Agent": "Bombadil"}, event_hooks=attempt.hooks())
+        async with (client, streamable_http_client(self.recipe.url, http_client=client) as (read, write),
+                    ClientSession(read, write, client_info=_ME) as session):
+            await session.initialize()
+            attempt.value = await work(session)
+            attempt.done = True
+            return attempt.value
 
-    async def _once(self, work, attempt: _Attempt):
-        task = asyncio.ensure_future(self._session(work, attempt))
+    async def _once(self, work, attempt: _Attempt, refresh: bool):
+        task = asyncio.ensure_future(self._session(work, attempt, refresh))
         try:
             done, _ = await asyncio.wait({task}, timeout=self.op_seconds)
         except asyncio.CancelledError:
@@ -579,16 +608,16 @@ class McpDriver(Driver):
         except TimeoutError:
             raise DriverError(f"{self.name} is still busy with the last request. Try again in a moment.", "busy") from None
         try:
-            refreshed = False
+            refresh = False
             while True:
                 attempt = _Attempt()
                 try:
-                    return await self._once(work, attempt)
+                    return await self._once(work, attempt, refresh)
                 except TimeoutError:
                     if attempt.done:
                         return attempt.value
                     raise self._unfinished(attempt, write) from None
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - sorted by what it was and how far the request got
                     if attempt.done:
                         log(f"{self.service}: closing the connection failed ({type(exc).__name__})")
                         return attempt.value
@@ -596,11 +625,9 @@ class McpDriver(Driver):
                     sentence = next((x for x in leaves if isinstance(x, DriverError)), None)
                     if sentence is not None:
                         raise sentence from None
-                    if any(isinstance(x, _Signin) or (isinstance(x, httpx.HTTPStatusError)
-                                                      and x.response.status_code == 401) for x in leaves):
-                        if not refreshed and self._auth is not None and self._storage.can_refresh():
-                            refreshed = True
-                            self._auth.context.token_expiry_time = 1.0      # the SDK refreshes what it thinks is old
+                    if any(isinstance(x, _Signin) for x in leaves):
+                        if not refresh and self._storage.can_refresh():
+                            refresh = True      # once: the server turned the token down, so ask for a new one
                             continue
                         await self._lost_access()
                         raise DriverError(f"{self.name} no longer accepts this connection. Allow it again on its page.",
@@ -615,30 +642,29 @@ class McpDriver(Driver):
         return DriverError(f"{self.name} is not answering.", "service_down")
 
     def _failure(self, leaves: list[BaseException], attempt: _Attempt, write: bool) -> DriverError:
-        name = self.name
-        for leaf in leaves:
-            if isinstance(leaf, McpError):
-                return DriverError(f'{name} said no: "{_quoted(leaf.error.message)}"', "refused")
-        for leaf in leaves:
-            if isinstance(leaf, httpx.HTTPStatusError):
-                status = leaf.response.status_code
-                if status == 429:
-                    return DriverError(f"{name} is asking for a pause. Try again in a minute.", "rate_limited")
-                if 400 <= status < 500:
-                    return DriverError(f"{name} refused that.", "refused")
-                return self._unfinished(attempt, write)
-        if any(isinstance(x, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)) for x in leaves):
+        name, status = self.name, attempt.status
+        if status == 429:
+            return DriverError(f"{name} is asking for a pause. Try again in a minute.", "rate_limited")
+        turned_away = next((x for x in leaves if isinstance(x, MCPError) and x.code in _TURNED_AWAY), None)
+        if turned_away is not None:
+            return DriverError(f'{name} said no: "{_quoted(turned_away.message)}"', "refused")
+        if status is not None and 400 <= status < 500:
+            return DriverError(f"{name} refused that.", "refused")
+        if any(isinstance(x, OAuthFlowError) for x in leaves):
+            # only the sign-in side of a 401 raises these, and a 401 means the call was turned away, not run
+            return DriverError(f"{name} is not answering.", "service_down")
+        if any(isinstance(x, (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout)) for x in leaves):
             return DriverError(f"{name} can't be reached right now.", "service_down")
         log(f"{self.service}: a request failed ({', '.join(type(x).__name__ for x in leaves)})")
         return self._unfinished(attempt, write)
 
     async def _call(self, session: ClientSession, tool: str, arguments: dict) -> types.CallToolResult:
-        # `send_request` rather than `call_tool`: the latter asks the server for its tool list first to check the
+        # `send_request` rather than `call_tool`: the latter asks the server for its tool list afterwards to check the
         # answer against a schema, and an answer that fails the check would lose what a press has already done.
         result = await session.send_request(
-            types.ClientRequest(types.CallToolRequest(params=types.CallToolRequestParams(name=tool, arguments=arguments))),
+            types.CallToolRequest(params=types.CallToolRequestParams(name=tool, arguments=arguments)),
             types.CallToolResult)
-        if result.isError:
+        if result.is_error:
             said = " ".join(c.text for c in result.content if isinstance(c, types.TextContent))
             raise DriverError(f'{self.name} said no: "{_quoted(said)}"' if said.strip() else f"{self.name} said no.",
                               "refused")
@@ -648,8 +674,8 @@ class McpDriver(Driver):
     def _answers(result: types.CallToolResult) -> list:
         """What a tool answered, as data: its structured content, and the JSON in its text."""
         found = []
-        if result.structuredContent is not None:
-            found.append(result.structuredContent)
+        if result.structured_content is not None:
+            found.append(result.structured_content)
         text = "".join(c.text for c in result.content if isinstance(c, types.TextContent))
         if text.strip():
             try:
@@ -746,9 +772,9 @@ class McpDriver(Driver):
         while not self._closed:
             try:
                 await self._poll_once()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - a look that fails is tried again, never ends the poll
                 log(f"{self.service}: a look at the service failed ({type(exc).__name__})")
-            self._first.set()
+            self._looked.set()
             if self.recipe.listing is None:
                 return
             await asyncio.sleep(self.poll_interval)
@@ -814,7 +840,7 @@ class McpDriver(Driver):
         variables, result = await self._run(work, write=True)
         try:
             return self._receipt(kind, target, action, variables, result)
-        except Exception as exc:       # it went; whatever is wrong with the answer, the person is told it did
+        except Exception as exc:  # noqa: BLE001 - it went; whatever is wrong with the answer, the person is told it did
             log(f"{self.service}: an answer could not be read ({type(exc).__name__})")
             return {"line": f"Done in {self.name}"}
 
@@ -845,10 +871,11 @@ class McpDriver(Driver):
             url = web_url(recipes.fill(action.url_template, {**variables, "id": recipes.label(raw, 80)}))
         if kind == "task_create":
             ident = recipes.label(raw)
-            line = f"Created {ident} in {self.name}" if ident else f"Created a {action.noun} in {self.name}"
+            line = f"Created {ident} in {self.name}" if ident else f"Created {_a(action.noun)} in {self.name}"
         else:
             ident = recipes.label(target.split(":", 1)[1])
-            line = f"Commented on {ident} in {self.name}" if ident else f"Commented on a {action.noun} in {self.name}"
+            line = (f"Commented on {ident} in {self.name}" if ident
+                    else f"Commented on {_a(action.noun)} in {self.name}")
             url = url or self._urls.get(target)
         receipt = {"line": line}
         if url:

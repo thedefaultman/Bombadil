@@ -96,6 +96,10 @@ class FakePage:
         selector = args.get("selector")
         if selector and selector.startswith("::bad"):
             return {"error": "selector"}
+        if selector == f"#{overlay.POINTER_ID}":   # the pointer the service drew is on the page like any element
+            if self.overlay is None:
+                return {"found": False, "url": self.url, "title": self.title, "text": ""}
+            return {"found": True, "url": self.url, "title": self.title, "text": self.overlay["label"]}
         if selector and selector not in self.selectors:
             return {"found": False, "url": self.url, "title": self.title, "text": ""}
         text = self.selectors[selector] if selector else self.text

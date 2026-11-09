@@ -14,14 +14,14 @@ import os
 import socket
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
-import httpx
 import pytest
 import pytest_asyncio
+from connect_fakes.fake_mcp import FakeMcp, issue
 
 from bombadil.connect import mcpconn, recipes
 from bombadil.connect.driver import DriverError, Secrets, UnknownOutcome
-from connect_fakes.fake_mcp import FakeMcp, issue
 
 pytestmark = pytest.mark.asyncio
 
@@ -140,15 +140,17 @@ class Rig:
         self.drivers.append(d)
         return d
 
-    async def connect(self, **tune) -> tuple[mcpconn.McpDriver, str]:
-        """A driver, signed in the way a person does it: open the address, allow it. Returns it and what the page said."""
-        d = self.driver(**tune)
+    async def connect(self, secrets: Secrets | None = None, **tune) -> tuple[mcpconn.McpDriver, str]:
+        """A driver, signed in the way a person does it: open the address, allow it. Returns it and what the page said,
+        once its first look at the service is over (so a fault a test sets next is not eaten by that look)."""
+        d = self.driver(secrets, **tune)
         await d.start()
         assert d.state == "signin", (d.state, d.note)
         self.fake.approve()
         status, page = await self.fake.browse(d.steps()[0]["open"])
         assert status == 200
         await until(lambda: d.state == "ok", "the sign-in to finish")
+        await asyncio.wait_for(d._looked.wait(), 10)
         return d, page
 
     def states(self) -> list[str]:
@@ -209,6 +211,20 @@ async def refused(port: int) -> bool:
     return False
 
 
+async def closed(port: int, timeout: float = 10.0) -> bool:
+    """Whether nothing listens on the port any more, given the time a flow takes to wind up after it is `ok`."""
+    deadline = time.monotonic() + timeout
+    while not await refused(port):
+        if time.monotonic() > deadline:
+            return False
+        await asyncio.sleep(0.02)
+    return True
+
+
+def port_of(redirect: str) -> int:
+    return int(urlsplit(redirect).port)
+
+
 # -- the sign-in --
 
 async def test_start_without_tokens_waits_for_the_person_at_an_address(rig):
@@ -237,10 +253,7 @@ async def test_the_redirect_finishes_the_flow_and_the_tokens_are_in_secrets(rig)
     assert tokens["expires_at"] > time.time()
     assert d.can_post()
     assert [r["grant_type"] for r in rig.fake.token_requests] == ["authorization_code"]
-    assert await refused(int(FakeMcp.query_of(rig.fake.last_authorization()["redirect_uri"].join(["?u=", ""]))
-                             .get("u", 0) or 0) or 1) or True
-    port = int(rig.fake.last_authorization()["redirect_uri"].split(":")[2].split("/")[0])
-    assert await refused(port), "the listener is closed when the flow is over"
+    assert await closed(port_of(rig.fake.last_authorization()["redirect_uri"])), "the listener goes when the flow is over"
 
 
 async def test_a_denial_is_blocked_and_nothing_is_kept(rig):
@@ -260,28 +273,64 @@ async def test_only_the_answer_the_flow_waits_for_is_taken(rig):
     address = d.steps()[0]["open"]
     redirect = FakeMcp.query_of(address)["redirect_uri"]
     state = FakeMcp.query_of(address)["state"]
-    async with httpx.AsyncClient(trust_env=False) as browser:
-        assert (await browser.get(redirect + "?code=abc&state=not-the-state")).status_code == 400
-        assert (await browser.get(redirect + "?code=abc")).status_code == 400
-        assert (await browser.get(redirect.replace("/callback", "/elsewhere") + "?code=abc")).status_code == 404
-        assert (await browser.post(redirect + "?code=abc&state=" + state)).status_code == 405
+
+    async def status_of(url: str, method: str = "GET") -> int:
+        return (await FakeMcp.request(url, method))[0]
+
+    assert await status_of(redirect + "?code=abc&state=not-the-state") == 400
+    assert await status_of(redirect + "?code=abc") == 400
+    assert await status_of(redirect.replace("/callback", "/elsewhere") + "?code=abc") == 404
+    assert await status_of(redirect + "?code=abc&state=" + state, "POST") == 405
     assert d.state == "signin", "none of those finished it"
     rig.fake.approve()
     status, _ = await rig.fake.browse(address)
     assert status == 200
     await until(lambda: d.state == "ok", "the sign-in to finish")
-    async with httpx.AsyncClient(trust_env=False) as browser:
-        with pytest.raises(httpx.ConnectError):
-            await browser.get(redirect + "?code=abc&state=" + state)
+    assert await closed(port_of(redirect)), "a second answer has nowhere to go"
+
+
+async def test_a_server_that_does_not_say_it_names_itself_on_the_redirect_still_signs_in(make_rig):
+    rig = await make_rig(iss=False)
+    d, _ = await rig.connect()
+    assert d.state == "ok" and "iss" not in rig.fake.last_authorization()
+
+
+async def _answer_the_redirect_by_hand(rig, d, extra: str) -> tuple[int, str]:
+    """What the browser would send back, but made up: the real code is not used, so only the SDK's checks decide."""
+    address = d.steps()[0]["open"]
+    query = FakeMcp.query_of(address)
+    status, _, page = await FakeMcp.request(f"{query['redirect_uri']}?code=made-up&state={query['state']}{extra}")
+    return status, page
+
+
+@pytest.mark.parametrize("extra", ["", "&iss=https%3A%2F%2Felsewhere.acme.test"], ids=["no iss", "another iss"])
+async def test_a_redirect_that_lacks_the_iss_the_server_promised_or_has_another_ends_the_sign_in(rig, extra):
+    d = rig.driver()
+    await d.start()
+    port = port_of(FakeMcp.query_of(d.steps()[0]["open"])["redirect_uri"])
+    status, page = await _answer_the_redirect_by_hand(rig, d, extra)
+    assert status == 200 and "could not finish connecting" in page
+    await until(lambda: d.state == "error", "the refusal")
+    assert d.note == "Linear's sign-in did not finish. Connect it again." and d.steps() == []
+    assert rig.fake.token_requests == [] and "tokens" not in rig.secrets.names()
+    assert await closed(port)
+
+
+async def test_a_server_that_turns_the_sign_in_away_with_403_is_blocked(rig):
+    rig.fake.fault("rpc:initialize", "403")
+    d = rig.driver()
+    await d.start()
+    assert d.state == "blocked" and d.steps() == []
+    assert d.note == "Linear would not let Bombadil in. An administrator may have to allow it."
 
 
 async def test_a_person_who_never_comes_back_leaves_an_error(rig):
     d = rig.driver(signin_seconds=0.3)
     await d.start()
+    port = port_of(FakeMcp.query_of(d.steps()[0]["open"])["redirect_uri"])
     await until(lambda: d.state == "error", "the sign-in to give up")
     assert d.note == "Linear was not allowed in time. Connect it again." and d.steps() == []
-    port = int(FakeMcp.query_of(rig.fake.last_authorization() or {"redirect_uri": "x:x:0"}).get("x", "0") or 0)
-    assert port == 0 or await refused(port)
+    assert await closed(port), "the listener goes with the flow"
 
 
 async def test_a_server_that_cannot_be_reached_is_an_error_with_a_plain_note(rig):
@@ -367,7 +416,6 @@ async def test_a_refresh_that_names_no_new_refresh_token_keeps_the_old_one(rig, 
         stored = rig.tokens()
         stored["expires_at"] = 1.0
         rig.secrets.set("tokens", json.dumps(stored))
-        signed_in._auth = None
         assert len(await signed_in.tasks(10)) == 2
         assert rig.tokens()["refresh_token"] == kept
     assert [r["grant_type"] for r in rig.fake.token_requests] == ["authorization_code"] + ["refresh_token"] * 2
@@ -445,16 +493,23 @@ async def test_an_answer_that_is_not_shaped_as_the_recipe_says_is_an_error_not_a
 
 
 async def test_a_lookup_the_recipe_asks_for_first_is_made_once_and_fills_what_follows(rig):
-    rig.write_recipe(text=RECIPE.replace("[create]", '[context]\ntool = "whoami"\n\n[context.bind]\nsite = "sites.0.url"\n'
-                                         '\n[create]', 1).replace('url = "url"\n\n[[list.fields]]',
-                                                                  'url_template = "{site}/browse/{id}"\n\n[[list.fields]]', 1)
-                     .replace('ref = "identifier"', 'ref = "identifier"', 1).replace('\nurl = "url"\n\n[[list', '\n\n[[list', 1))
+    rig.write_recipe(**{
+        '[list]\ntool = "list_my_issues"': '[context]\ntool = "whoami"\n\n[context.bind]\nsite = "sites.0.url"\n\n'
+                                           '[list]\ntool = "list_my_issues"',
+        'done = ["Done"]\n': 'done = ["Done"]\nurl_template = "{site}/browse/{id}"\n',
+        'due = "dueDate"\nurl = "url"\n': 'due = "dueDate"\n',
+        '[create]\ntool = "create_issue"\nnoun = "issue"\n': '[create]\ntool = "create_issue"\nnoun = "issue"\n'
+                                                           'arguments = { site = "{site}" }\n',
+    })
     d, _ = await rig.connect()
     items = await d.tasks(5)
     assert [t["url"] for t in items] == ["https://acme.tracker.test/browse/LIN-7",
                                          "https://acme.tracker.test/browse/LIN-9"]
     await d.tasks(5)
-    assert len(rig.fake.tool_runs("whoami")) == 1
+    receipt = await d.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
+    assert rig.fake.tool_runs("create_issue") == [{"title": "A title", "team": "Launch", "site": "https://acme.tracker.test"}]
+    assert len(rig.fake.tool_runs("whoami")) == 1, "asked once, for the polls and the press alike"
+    assert receipt["line"] == "Created LIN-42 in Linear"
 
 
 async def test_tasks_is_empty_until_the_connection_is_ok_and_for_a_recipe_with_no_list(rig):
@@ -485,27 +540,41 @@ async def test_the_poll_is_silent_at_first_and_then_announces_each_new_item_once
 
 async def test_a_poll_that_fails_changes_nothing_and_the_next_one_goes_on(rig):
     d, _ = await rig.connect(poll_interval=0.05)
+    looks, inner = [], d._poll_once
+
+    async def counted():
+        looks.append(1)
+        await inner()
+
+    d._poll_once = counted
     await rig.fake.stop()
     seen = len(rig.pushes)
-    await asyncio.sleep(0.4)
+    await until(lambda: len(looks) >= 3, "three polls to have failed")
     assert d.state == "ok" and len(rig.pushes) == seen and d._poller is not None and not d._poller.done()
+
+
+async def test_a_poll_that_finds_the_tokens_revoked_asks_the_person_again(rig):
+    d, _ = await rig.connect(poll_interval=0.05)
+    rig.fake.revoke_everything()
+    await until(lambda: d.state == "signin", "the poll to notice")
+    assert rig.states() == ["signin", "ok", "signin"] and len(d.steps()) == 1 and "tokens" not in rig.secrets.names()
+    assert d.note == "Linear no longer accepts this connection. Allow it again on its page."
 
 
 async def test_stop_ends_the_flow_the_listener_and_the_poll_and_nothing_is_said_afterwards(rig):
     waiting = rig.driver()
     await waiting.start()
     redirect = FakeMcp.query_of(waiting.steps()[0]["open"])["redirect_uri"]
-    port = int(redirect.split(":")[2].split("/")[0])
+    port = port_of(redirect)
     flow = waiting._flow_task
     await waiting.stop()
     assert flow.done() and await refused(port) and waiting.steps() == []
-    said = len(rig.pushes)
     d, _ = await rig.connect(poll_interval=0.05)
     said = len(rig.pushes)
     await d.stop()
     runs = len(rig.fake.tool_runs("list_my_issues"))
     rig.fake.issues.append(issue(14, "Arrives after stop"))
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(0.3)        # an absence cannot be waited for: six poll intervals without a look is the proof
     assert len(rig.fake.tool_runs("list_my_issues")) == runs and len(rig.pushes) == said and d._poller.done()
 
 
@@ -515,6 +584,7 @@ async def test_the_client_is_registered_as_bombadil_when_no_document_is_given(ri
     await rig.connect()
     [registered] = rig.fake.registrations
     assert registered["client_name"] == "Bombadil" and registered["token_endpoint_auth_method"] == "none"
+    assert registered["application_type"] == "native" and registered["response_types"] == ["code"]
     assert registered["scope"] == "read write" and registered["grant_types"] == ["authorization_code", "refresh_token"]
 
 
@@ -550,7 +620,7 @@ async def test_the_recipe_can_carry_the_address_of_the_document(make_rig):
 async def test_a_fixed_callback_port_can_be_asked_for(rig, monkeypatch):
     port = free_port()
     monkeypatch.setenv("BOMBADIL_CONNECT_CALLBACK_PORT", str(port))
-    d, _ = await rig.connect()
+    await rig.connect()
     assert rig.fake.registrations[0]["redirect_uris"] == [f"http://127.0.0.1:{port}/callback"]
     monkeypatch.setenv("BOMBADIL_CONNECT_CALLBACK_PORT", "not a port")
     assert mcpconn.McpDriver._callback_port() == 0
@@ -604,6 +674,7 @@ async def test_commenting_calls_the_tool_once_and_the_receipt_names_the_task(rig
     assert receipt == {"line": "Commented on LIN-7 in Linear",
                        "web": {"name": "Linear", "url": "https://tracker.acme.test/acme/issue/LIN-7#comment-1"}}
     assert rig.fake.tool_runs("add_comment") == [{"issueId": "LIN-7", "body": "Legal replied: the 14th is fine."}]
+    assert [t for t, _ in rig.fake.tool_calls if t != "list_my_issues"] == ["add_comment"], "one call, and no other"
 
 
 async def test_a_receipt_without_an_address_in_the_answer_uses_the_task_page_the_driver_has_seen(rig):
@@ -622,6 +693,10 @@ async def test_an_answer_the_driver_cannot_read_still_gives_a_receipt_because_th
     d, _ = await rig.connect()
     receipt = await d.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
     assert receipt == {"line": "Created an issue in Linear"}
+
+
+async def test_a_receipt_says_a_or_an_as_a_person_would():
+    assert [mcpconn._a(noun) for noun in ("issue", "page", "task", "item")] == ["an issue", "a page", "a task", "an item"]
 
 
 async def test_a_required_box_left_empty_is_bad_request_and_nothing_is_called(rig, signed_in):
@@ -690,14 +765,38 @@ async def test_no_answer_in_time_is_an_unknown_outcome_and_the_call_is_not_repea
         await signed_in.perform("task_comment", "linear:LIN-7", {"body": "Hello"})
     assert time.monotonic() - started < 5
     assert len(rig.fake.tool_runs("add_comment")) == 1
-    assert signed_in._stragglers == set() or all(t.done() or True for t in signed_in._stragglers)
+    assert len(await signed_in.tasks(5)) == 2, "the request given up on does not hold up the next one"
+    await signed_in.stop()
+    assert not signed_in._stragglers, "and stopping the driver ends it"
 
 
-async def test_a_refusal_before_the_tool_ran_is_a_driver_error(rig, signed_in):
-    rig.fake.fault("create_issue", "429")
+@pytest.mark.parametrize("fault, code, said", [
+    ("429", "rate_limited", "Linear is asking for a pause. Try again in a minute."),
+    ("403", "refused", "Linear refused that."),
+    ("reject", "refused", 'Linear said no: "Invalid arguments for that tool."'),
+], ids=["429", "403", "invalid params"])
+async def test_a_refusal_before_the_tool_ran_is_a_driver_error(rig, signed_in, fault, code, said):
+    rig.fake.fault("create_issue", fault)
     with pytest.raises(DriverError) as raised:
         await signed_in.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
-    assert type(raised.value) is DriverError and raised.value.code == "rate_limited"
+    assert type(raised.value) is DriverError and raised.value.code == code and str(raised.value) == said
+    assert rig.fake.created == []
+
+
+async def test_an_internal_error_after_the_tool_ran_is_an_unknown_outcome(rig, signed_in):
+    rig.fake.fault("create_issue", "internal")
+    with pytest.raises(UnknownOutcome):
+        await signed_in.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
+    assert len(rig.fake.created) == 1 and len(rig.fake.tool_runs("create_issue")) == 1
+
+
+async def test_a_tool_the_server_does_not_have_is_a_refusal_with_its_words_quoted(rig):
+    rig.write_recipe(**{'tool = "create_issue"': 'tool = "make_issue"'})
+    d, _ = await rig.connect()
+    with pytest.raises(DriverError) as raised:
+        await d.perform("task_create", "linear", {"title": "A title", "team": "Launch"})
+    assert type(raised.value) is DriverError and raised.value.code == "refused"
+    assert str(raised.value).startswith('Linear said no: "') and "make_issue" in str(raised.value)
     assert rig.fake.created == []
 
 
@@ -707,6 +806,19 @@ async def test_reading_that_times_out_is_never_an_unknown_outcome(rig, signed_in
     with pytest.raises(DriverError) as raised:
         await signed_in.tasks(5)
     assert type(raised.value) is DriverError and raised.value.code == "service_down"
+
+
+@pytest.mark.parametrize("status, code, said", [
+    ("403", "refused", "Linear refused that."),
+    ("429", "rate_limited", "Linear is asking for a pause. Try again in a minute."),
+    ("500", "service_down", "Linear is not answering."),
+], ids=["403", "429", "500"])
+async def test_what_the_server_answered_with_is_what_a_read_says_and_it_is_never_unknown(rig, signed_in, status, code, said):
+    rig.fake.fault("list_my_issues", status)
+    with pytest.raises(DriverError) as raised:
+        await signed_in.tasks(5)
+    assert type(raised.value) is DriverError and raised.value.code == code and str(raised.value) == said
+    assert signed_in.state == "ok", "a hiccup is not a lost connection"
 
 
 async def test_a_press_for_something_not_this_connections_or_not_possible_now_is_refused(rig):
@@ -722,7 +834,7 @@ async def test_a_press_for_something_not_this_connections_or_not_possible_now_is
         assert raised.value.code == "refused"
     assert [t for t, _ in rig.fake.tool_calls if t != "list_my_issues"] == []
     rig.write_recipe(text=RECIPE[:RECIPE.index("[comment]")])
-    only_create, _ = await rig.connect()
+    only_create, _ = await rig.connect(MemorySecrets())
     with pytest.raises(DriverError) as raised:
         await only_create.perform("task_comment", "linear:LIN-7", {"body": "x"})
     assert str(raised.value) == "Linear can't do that from here."
@@ -763,14 +875,18 @@ async def test_no_token_or_code_is_in_any_push_receipt_exception_note_log_or_fil
     with pytest.raises(UnknownOutcome) as raised:
         await d.perform("task_create", "linear", {"title": "Again", "team": "Launch"})
     seen.append(str(raised.value))
-    stored = rig.tokens()
-    canaries = [stored["access_token"], stored["refresh_token"], *rig.fake.issued_codes,
-                json.loads(rig.secrets.get("client_info")).get("client_id", "")]
+    first = rig.tokens()
+    rig.fake.expire_access_token()
+    seen.append(await d.tasks(5))           # refreshed on the way: a second pair of tokens
+    second = rig.tokens()
+    assert second["access_token"] != first["access_token"]
+    await until(lambda: len(rig.fake.tool_runs("list_my_issues")) >= 4, "the background poll to have run")
+    canaries = [first["access_token"], first["refresh_token"], second["access_token"], second["refresh_token"],
+                *rig.fake.issued_codes, json.loads(rig.secrets.get("client_info")).get("client_id", "")]
     rig.fake.revoke_everything()
     with pytest.raises(DriverError) as raised:
         await d.tasks(5)
     seen.append(str(raised.value))
-    await asyncio.sleep(0.2)
     await d.stop()
     seen += [rig.pushes, d.note, d.steps(), d.reads(), d.task_fields()]
     # the address the person opens is the one place the client id is; it is not a secret and is not scanned for
@@ -778,8 +894,6 @@ async def test_no_token_or_code_is_in_any_push_receipt_exception_note_log_or_fil
     scanned += "".join(p.read_text() for p in tmp_path.rglob("*") if p.is_file())
     for canary in canaries[:-1]:
         assert canary and canary not in scanned.replace(canaries[-1], ""), "a secret leaked"
-    for name in ("tokens", "client_info"):
-        assert name in rig.secrets.names() or name == "tokens"
 
 
 async def test_hand_made_tokens_are_not_leaked_either_when_the_server_refuses_them(rig, caplog, capfd):
@@ -829,8 +943,22 @@ async def test_each_shipped_recipe_loads_validates_and_says_it_is_not_verified(s
     if r.comment:
         assert r.comment.target
     text = (REPO_SHARE / "recipes" / f"{service}.toml").read_text()
-    assert "verified = false" in text and "2026-10-01" in text and "guess" in text.lower()
+    assert "verified = false" in text and "2026-11-08" in text and "guess" in text.lower()
     assert r.scope == " ".join(dict.fromkeys(list(r.scopes) + (list(r.write_scopes) if r.can_post else [])))
+
+
+@pytest.mark.parametrize("service, scope, grants", [
+    ("linear", "read write", ("authorization_code", "refresh_token")),
+    ("notion", "", ("authorization_code", "refresh_token")),
+    ("jira", "read:jira-work offline_access write:jira-work", ("authorization_code", "refresh_token")),
+    ("todoist", "data:read_write", ("authorization_code", "refresh_token")),
+    ("clickup", "read write", ("authorization_code",)),
+])
+async def test_each_shipped_recipe_asks_for_what_its_server_offered_when_it_was_looked_at(service, scope, grants,
+                                                                                         monkeypatch):
+    monkeypatch.setenv("BOMBADIL_SHARE", "/nonexistent")
+    recipe = recipes.load(service)
+    assert recipe.scope == scope and recipe.grants == grants
 
 
 async def test_the_recipes_are_the_five_services_and_a_fork_adds_one_by_adding_a_file(tmp_path, monkeypatch):
@@ -849,6 +977,7 @@ async def test_the_client_metadata_document_is_bombadils_own(monkeypatch):
     monkeypatch.setenv("BOMBADIL_SHARE", "/nonexistent")
     doc = json.loads((REPO_SHARE / "client-metadata.json").read_text())
     assert doc["client_name"] == "Bombadil" and doc["token_endpoint_auth_method"] == "none"
+    assert doc["application_type"] == "native", "what the 2.x client says about itself when it registers"
     assert all(u.startswith(("http://127.0.0.1", "http://[::1]")) and u.endswith("/callback")
                for u in doc["redirect_uris"])
     assert doc["client_id"] == "", "the address it is published at is filled in where it is published"
@@ -857,36 +986,28 @@ async def test_the_client_metadata_document_is_bombadils_own(monkeypatch):
                                          "response_types": ["code"]}
 
 
+SERVER = '[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
+ONE_FIELD = 'fields=[{key="a",label="A",edit="line"}]\n'
+CREATE = f'[create]\ntool="t"\n{ONE_FIELD}'
+
 BROKEN = {
     "no server table": ("[list]\ntool = 'x'\n", "[server] is missing."),
-    "verified not written": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\n[create]\ntool="t"\n'
-                             'fields=[{key="a",label="A",edit="line"}]\n', "verified must be written down"),
-    "http away from this machine": ('[server]\nservice="x"\nname="X"\nurl="http://x.test/mcp"\nreads="r"\nverified=false\n'
-                                    '[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"}]\n', "url must be an https"),
-    "service is not the file's": ('[server]\nservice="y"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                                  '[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"}]\n', "service must be"),
-    "nothing to do": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n',
-                      "needs at least one of"),
-    "edit unknown": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                     '[create]\ntool="t"\nfields=[{key="a",label="A",edit="rich"}]\n', "edit must be one of"),
-    "duplicate keys": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                       '[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"},{key="a",label="B",edit="line"}]\n',
-                       "its own key"),
-    "comment names no target": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                                '[comment]\ntool="t"\nfields=[{key="a",label="A",edit="line"}]\n', "target must name"),
-    "placeholder nothing fills": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                                  '[create]\ntool="t"\narguments={a="{cloud_id}"}\nfields=[{key="a",label="A",edit="line"}]\n',
+    "verified not written": (SERVER.replace("verified=false\n", "") + CREATE, "verified must be written down"),
+    "http away from this machine": (SERVER.replace("https", "http") + CREATE, "url must be an https"),
+    "service is not the file's": (SERVER.replace('service="x"', 'service="y"') + CREATE, "service must be"),
+    "nothing to do": (SERVER, "needs at least one of"),
+    "edit unknown": (SERVER + '[create]\ntool="t"\nfields=[{key="a",label="A",edit="rich"}]\n', "edit must be one of"),
+    "duplicate keys": (SERVER + '[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"},'
+                                '{key="a",label="B",edit="line"}]\n', "its own key"),
+    "comment names no target": (SERVER + f'[comment]\ntool="t"\n{ONE_FIELD}', "target must name"),
+    "placeholder nothing fills": (SERVER + f'[create]\ntool="t"\narguments={{a="{{cloud_id}}"}}\n{ONE_FIELD}',
                                   "nothing provides"),
-    "list without a map": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                           '[list]\ntool="t"\nitems="a"\n', "[map] is missing"),
-    "bad path": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                 '[list]\ntool="t"\nitems="a b"\n[list.map]\nref="id"\ntitle="t"\n', "dotted path"),
-    "scope with a space": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
-                           'scopes=["a b"]\n[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"}]\n',
-                           "list of scope names"),
-    "grants without the code grant": ('[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\n'
-                                      'verified=false\ngrants=["refresh_token"]\n[create]\ntool="t"\n'
-                                      'fields=[{key="a",label="A",edit="line"}]\n', "grants must be"),
+    "list placeholder nothing fills": (SERVER + '[list]\ntool="t"\nitems="a"\narguments={a="{nope}"}\n'
+                                                '[list.map]\nref="id"\ntitle="t"\n', "nothing provides"),
+    "list without a map": (SERVER + '[list]\ntool="t"\nitems="a"\n', "[map] is missing"),
+    "bad path": (SERVER + '[list]\ntool="t"\nitems="a b"\n[list.map]\nref="id"\ntitle="t"\n', "dotted path"),
+    "scope with a space": (SERVER + 'scopes=["a b"]\n' + CREATE, "list of scope names"),
+    "grants without the code grant": (SERVER + 'grants=["refresh_token"]\n' + CREATE, "grants must be"),
 }
 
 

@@ -1,13 +1,15 @@
 """A work tracker's MCP server and its OAuth server, in one process, for the MCP driver's tests.
 
-It is written with the same official SDK the driver is (FastMCP over Streamable HTTP) and nothing else: no real
-network, one port on 127.0.0.1 that the test binds itself. What it plays:
+It is written with the same official SDK the driver is (mcp 2.3.0: `MCPServer` over Streamable HTTP, served by uvicorn)
+and nothing else: no real network, one port on 127.0.0.1 that the test binds itself. What it plays:
 
 - The sign-in: protected-resource metadata and `WWW-Authenticate` on a 401, authorization-server metadata, dynamic
   client registration, an authorization endpoint that records what it was asked and waits for the test to call
   `approve()` (or `deny()`), and a token endpoint for the code and refresh grants with PKCE checked. The endpoints
   are under /oauth/, not where a client that guesses would look, as with ClickUp, Todoist and Atlassian. Codes and tokens
-  are made at run time, so none is written in this file.
+  are made at run time, so none is written in this file. Like Linear, Notion and ClickUp it says, by default, that it
+  puts `iss` on the redirect (RFC 9207), and the 2.x client refuses a redirect that lacks it; `iss=False` plays
+  Todoist and Atlassian, which do not say so.
 - Expiry and revocation the test controls: `expire_access_token()` (the server stops honouring what it issued, though
   the client was told it lasts longer), `revoke_everything()`, and `token_ttl` for tokens that really run out.
 - Tools shaped like a tracker's: `list_my_issues`, `create_issue`, `add_comment`, `whoami` (a lookup a recipe can
@@ -15,8 +17,9 @@ network, one port on 127.0.0.1 that the test binds itself. What it plays:
 - What went on: `requests` (every HTTP request with the JSON-RPC method and tool it carried and the status it got),
   `tool_calls` (what each tool was actually run with), `registrations`, `authorizations`, `token_requests`.
 - Faults, one shot per tool: `fault("create_issue", "500")` runs the tool and then answers 500, `"hang"` runs it and
-  never answers, `"429"` refuses before running it. `fault("rpc:initialize", "hang")` does the same to a JSON-RPC
-  method that is not a tool call.
+  never answers, `"internal"` runs it and answers a JSON-RPC internal error (status 200), a status such as `"429"` or
+  `"403"` refuses before running it, and `"reject"` answers a JSON-RPC invalid-params error without running it.
+  `fault("rpc:initialize", "hang")` does the same to a JSON-RPC method that is not a tool call.
 
 `browse(url)` is the person's browser: it opens the authorization address, waits for the decision and follows the
 redirect to the driver's loopback listener, answering what that listener said.
@@ -32,17 +35,14 @@ import socket
 import time
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-import httpx
 import uvicorn
-from pydantic import AnyHttpUrl
-from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
-
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 
 def issue(n: int, title: str, status: str = "In Progress", due: str | None = None) -> dict:
@@ -81,6 +81,7 @@ class _Spy:
         self.fake.requests.append(entry)
         body = b""
         fault = None
+        rpc_id = None
         if scope["method"] == "POST" and scope["path"] == "/mcp":
             more = True
             while more:
@@ -92,6 +93,7 @@ class _Spy:
             except ValueError:
                 rpc = {}
             if isinstance(rpc, dict):
+                rpc_id = rpc.get("id")
                 entry["rpc"] = rpc.get("method")
                 fault = self.fake._faults.pop(f"rpc:{rpc.get('method')}", None)
                 if rpc.get("method") == "tools/call":
@@ -116,32 +118,44 @@ class _Spy:
         async def discard(message):
             return None
 
-        if fault == "429":
-            entry["status"] = 429
-            await send({"type": "http.response.start", "status": 429, "headers": [(b"content-length", b"0")]})
-            await send({"type": "http.response.body", "body": b""})
+        async def answer(status: int, content: bytes = b"", kind: bytes = b"text/plain") -> None:
+            entry["status"] = status
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [(b"content-type", kind), (b"content-length", str(len(content)).encode())]})
+            await send({"type": "http.response.body", "body": content})
+
+        def error(code: int, message: str) -> bytes:
+            return json.dumps({"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}).encode()
+
+        if fault is not None and fault.isdigit() and fault != "500":
+            await answer(int(fault))
             return
-        if fault in ("500", "hang"):
+        if fault == "reject":
+            await answer(200, error(-32602, "Invalid arguments for that tool."), b"application/json")
+            return
+        if fault in ("500", "hang", "internal"):
             await self.app(scope, replay, discard)       # the tool runs; the person is told nothing
             if fault == "hang":
                 entry["status"] = "hung"
                 await self.fake._release.wait()
                 return
-            entry["status"] = 500
-            await send({"type": "http.response.start", "status": 500, "headers": [(b"content-length", b"0")]})
-            await send({"type": "http.response.body", "body": b""})
+            if fault == "internal":
+                await answer(200, error(-32603, "Internal error"), b"application/json")
+                return
+            await answer(500)
             return
         await self.app(scope, replay, note)
 
 
 class FakeMcp:
     def __init__(self, *, scopes=("read", "write"), cimd: bool = False, json_response: bool = False,
-                 structured: bool = True):
+                 structured: bool = True, iss: bool = True):
         self.token_ttl = 3600            # seconds an access token really lasts, and what it is told
         self.rotate = True               # a refresh answers with a new refresh token
         self.omit_refresh = False        # ... or, when this is set, with none (the old one stays good)
-        self.structured = structured     # answers carry structuredContent as well as text
+        self.structured = structured     # answers carry structured content as well as text
         self.cimd = cimd                 # advertises client_id_metadata_document_supported
+        self.iss = iss                   # advertises authorization_response_iss_parameter_supported, and sends iss
         self.scopes = list(scopes)
         self.json_response = json_response
         self.issues: list[dict] = [issue(7, "Confirm the launch date with legal", due="2026-10-14"),
@@ -204,12 +218,30 @@ class FakeMcp:
 
     async def browse(self, url: str) -> tuple[int, str]:
         """The person's browser: open the authorization address, wait for the decision, follow the redirect."""
-        async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=30) as browser:
-            first = await browser.get(url)
-            if first.status_code not in (302, 303, 307):
-                return first.status_code, first.text
-            last = await browser.get(first.headers["location"])
-            return last.status_code, last.text
+        status, headers, text = await self.request(url)
+        if status not in (302, 303, 307):
+            return status, text
+        status, _, text = await self.request(headers["location"])
+        return status, text
+
+    @staticmethod
+    async def request(url: str, method: str = "GET") -> tuple[int, dict, str]:
+        """One HTTP request over a bare socket, answered as (status, lower-case headers, text). The browser is not an HTTP
+        library on purpose: those log the address of every request, and the redirect back carries the code."""
+        parts = urlsplit(url)
+        reader, writer = await asyncio.open_connection(parts.hostname, parts.port)
+        try:
+            target = parts.path + (f"?{parts.query}" if parts.query else "")
+            writer.write(f"{method} {target} HTTP/1.1\r\nHost: {parts.netloc}\r\nContent-Length: 0\r\n"
+                         "Connection: close\r\n\r\n".encode())
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.read(-1), 30)
+        finally:
+            writer.close()
+        head, _, body = raw.partition(b"\r\n\r\n")
+        lines = head.decode("latin-1").split("\r\n")
+        headers = {key.strip().lower(): value.strip() for key, _, value in (line.partition(":") for line in lines[1:])}
+        return int(lines[0].split()[1]), headers, body.decode("utf-8", "replace")
 
     # -- life --
 
@@ -217,16 +249,16 @@ class FakeMcp:
         self._sock = socket.socket()
         self._sock.bind(("127.0.0.1", 0))
         self.port = self._sock.getsockname()[1]
-        mcp = FastMCP(
-            "Acme Tracker", host="127.0.0.1", port=self.port, json_response=self.json_response, log_level="WARNING",
-            token_verifier=_Verifier(self),
-            auth=AuthSettings(issuer_url=AnyHttpUrl(self.origin), resource_server_url=AnyHttpUrl(self.url),
-                              required_scopes=["read"]),
-            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+        mcp = MCPServer(
+            "Acme Tracker", log_level="WARNING", token_verifier=_Verifier(self),
+            auth=AuthSettings(issuer_url=self.origin, resource_server_url=self.url,     # strings keep a root issuer bare
+                              required_scopes=["read"], validate_token_resource=False),
         )
         self._tools(mcp)
         self._routes(mcp)
-        app = _Spy(mcp.streamable_http_app(), self)
+        app = _Spy(mcp.streamable_http_app(
+            json_response=self.json_response, host="127.0.0.1",
+            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False)), self)
         config = uvicorn.Config(app, log_level="warning", access_log=False, lifespan="on",
                                 timeout_graceful_shutdown=1)
         self._server = _Server(config)
@@ -260,10 +292,10 @@ class FakeMcp:
     def _answer(self, data) -> CallToolResult:
         text = TextContent(type="text", text=json.dumps(data))
         if self.structured and isinstance(data, dict):
-            return CallToolResult(content=[text], structuredContent=data)
+            return CallToolResult(content=[text], structured_content=data)
         return CallToolResult(content=[text])
 
-    def _tools(self, mcp: FastMCP) -> None:
+    def _tools(self, mcp: MCPServer) -> None:
         fake = self
 
         @mcp.tool()
@@ -272,12 +304,14 @@ class FakeMcp:
             return fake._answer({"issues": fake.issues[:limit]})
 
         @mcp.tool()
-        async def create_issue(title: str, description: str = "", team: str = "") -> CallToolResult:
+        async def create_issue(title: str, description: str = "", team: str = "", site: str = "") -> CallToolResult:
             args = {"title": title}
             if description:
                 args["description"] = description
             if team:
                 args["team"] = team
+            if site:
+                args["site"] = site
             fake.tool_calls.append(("create_issue", args))
             fake._next += 1
             made = issue(fake._next, title, "Todo")
@@ -299,11 +333,11 @@ class FakeMcp:
         @mcp.tool()
         async def broken(note: str = "") -> CallToolResult:
             fake.tool_calls.append(("broken", {"note": note} if note else {}))
-            return CallToolResult(content=[TextContent(type="text", text="Team not found.")], isError=True)
+            return CallToolResult(content=[TextContent(type="text", text="Team not found.")], is_error=True)
 
     # -- the OAuth server --
 
-    def _routes(self, mcp: FastMCP) -> None:
+    def _routes(self, mcp: MCPServer) -> None:
         fake = self
 
         @mcp.custom_route("/.well-known/oauth-authorization-server", methods=["GET"])
@@ -316,6 +350,8 @@ class FakeMcp:
                    "code_challenge_methods_supported": ["S256"], "token_endpoint_auth_methods_supported": ["none"]}
             if fake.cimd:
                 doc["client_id_metadata_document_supported"] = True
+            if fake.iss:
+                doc["authorization_response_iss_parameter_supported"] = True
             return JSONResponse(doc)
 
         @mcp.custom_route("/oauth/register", methods=["POST"])
@@ -347,7 +383,7 @@ class FakeMcp:
                 waiting = asyncio.get_running_loop().create_future()
                 fake._waiting.append(waiting)
                 decision = await waiting
-            state = {"state": q["state"]} if "state" in q else {}
+            state = ({"state": q["state"]} if "state" in q else {}) | ({"iss": fake.origin} if fake.iss else {})
             if decision == "deny":
                 return RedirectResponse(redirect + "?" + urlencode({"error": "access_denied", **state}), 302)
             code = secrets.token_urlsafe(24)

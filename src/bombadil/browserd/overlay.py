@@ -22,7 +22,8 @@ What the scripts do:
   a key, and it is built from DOM calls (text is `textContent`, never markup).
 - `unpoint`: takes the pointer away.
 - `probe`: the address and whether some words are on the page, for `wait`.
-- `collect`: the page's text and the values of its fields, for `take`.
+- `collect`: the page's text and the values of the fields a person can see, for `take`: a field the page keeps
+  hidden (a collapsed box, a hidden input) holds nothing the person has been shown, so nothing of it is taken.
 
 A target that is wholly outside the window is scrolled into view when it is pointed at: a pointer to something
 nobody can see helps nobody, and a scroll changes nothing in the page.
@@ -260,7 +261,9 @@ _COLLECT = r"""
   out.push(String(t).slice(0, a.max));
   var fields = document.querySelectorAll('input, textarea, [data-clipboard-text]');
   for (var i = 0; i < fields.length && i < a.fields; i++) {
-    var f = fields[i], v = f.value;
+    var f = fields[i];
+    if (!visibleRect(f)) continue;
+    var v = f.value;
     if (typeof v !== 'string' || !v) v = f.getAttribute('data-clipboard-text');
     if (v && v.length <= a.field_max) out.push(v);
   }

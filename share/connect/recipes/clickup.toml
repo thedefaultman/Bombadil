@@ -1,13 +1,16 @@
 # ClickUp, through its official remote MCP server.
 #
-# Looked at on 2026-10-01 without signing in (an unauthenticated initialize request and the two well-known
-# documents; nothing was registered or authorized):
-#   - POST https://mcp.clickup.com/mcp answers 401 with WWW-Authenticate carrying resource_metadata.
-#   - Protected-resource metadata names https://mcp.clickup.com as the authorization server, scopes read and write.
-#   - Authorization-server metadata: authorize, token and register endpoints on mcp.clickup.com, S256 PKCE, public
-#     clients only (token_endpoint_auth_methods is just "none"), and one grant, authorization_code. No
+# Looked at on 2026-11-08 without signing in (an unauthenticated initialize request and the well-known documents;
+# nothing was registered or authorized). Every address below still answered:
+#   - POST https://mcp.clickup.com/mcp answers 401 with WWW-Authenticate: Bearer error="invalid_token" carrying
+#     resource_metadata.
+#   - Protected-resource metadata names https://mcp.clickup.com as the authorization server, scopes read and write
+#     (its resource is the bare origin, which the SDK accepts as the parent of the /mcp address).
+#   - Authorization-server metadata: authorize, token and register endpoints under /oauth/ on mcp.clickup.com, S256
+#     PKCE, public clients only (token_endpoint_auth_methods is just "none"), and one grant, authorization_code. No
 #     refresh_token grant is advertised, so the recipe does not ask for one and a lapsed sign-in means signing in
-#     again. client_id_metadata_document_supported is not advertised: registration is the dynamic kind.
+#     again. client_id_metadata_document_supported is not advertised: registration is the dynamic kind. It says
+#     authorization_response_iss_parameter_supported = true: the redirect back must carry iss.
 #
 # A guess, and a weak one, because nothing about ClickUp's tools was looked at and my memory of them is not to be
 # trusted: every tool name, every argument name and the shape of every answer below. They follow the clickup_

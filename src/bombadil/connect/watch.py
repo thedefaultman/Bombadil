@@ -7,9 +7,10 @@ proposal, press, launcher word and card button agentd handles, into notices abov
 Why it is shaped this way:
 
 - Connections are optional and must cost nothing when absent, as mail is (mail/watch.py, which this follows):
-  `Watch` makes one connection attempt every RETRY_SECONDS and says nothing when it fails, tests silence with a
-  `status` request, and nothing a push does can hold the reading for long. It is written out here and not inherited,
-  because the socket, the idle request and the words in its log are all the other service's.
+  `Watch` says nothing when the service is not there, looks again after RETRY_SECONDS and then less often (each wait
+  twice the last, up to MAX_RETRY_SECONDS; a service that was there is looked for again soon), tests silence with a
+  `status` request, and nothing a push does can hold the reading for long. It is written out here and not
+  inherited, because the socket, the idle request and the words in its log are all the other service's.
 - One notice per thing. A new message in a conversation replaces that conversation's notice, a message whose ref was
   said is not said again, and a message older than two minutes when it is pushed (a backfill after a reconnect) is
   not said at all: the unread list is where it waits. One receipt per press, whichever of the press and the
@@ -29,6 +30,7 @@ and a proposal holds only the person's own reply), or read a token.
 """
 
 import asyncio
+import contextlib
 import json
 import sys
 import threading
@@ -46,6 +48,7 @@ from . import client as connect_client
 from .protocol import SERVICES, conversation_key, valid_connection_id, valid_ref, web_url
 
 RETRY_SECONDS = 5.0
+MAX_RETRY_SECONDS = 30.0
 IDLE_SECONDS = 45.0
 PONG_SECONDS = 10.0
 ANSWER_SECONDS = 5.0      # the subscribe answer
@@ -105,6 +108,19 @@ def said(e: Exception, wrote: bool = False) -> str:
     return DOWN
 
 
+def valid_target(kind, target) -> bool:
+    """Is this a place a proposal of this kind can go to? A message for a reply, a task for a comment, a service
+    that has tasks for a new one. Only the shape: whether the service knows it is asked when the card is made."""
+    if not isinstance(target, str):
+        return False
+    tool = target.split(":", 1)[0] in SERVICES and not target.startswith("slack:")
+    if kind == "slack_reply":
+        return target.startswith("slack:") and valid_ref(target)
+    if kind == "task_create":
+        return target in SERVICES and target != "slack"
+    return kind == "task_comment" and tool and valid_ref(target)
+
+
 def _json(line: bytes) -> dict:
     try:
         msg = json.loads(line)
@@ -118,22 +134,27 @@ class Watch:
     watching goes on."""
 
     def __init__(self, handle: Callable[[dict], Awaitable[None]], retry: float = RETRY_SECONDS,
-                 idle: float = IDLE_SECONDS):
+                 idle: float = IDLE_SECONDS, max_retry: float = MAX_RETRY_SECONDS):
         self.handle = handle
         self.retry = retry
+        self.max_retry = max_retry
         self.idle = idle
         self.connected = False
 
     async def run(self) -> None:
+        wait = self.retry
         while True:
             try:
                 await self._session()
             except (OSError, ValueError, asyncio.IncompleteReadError):
-                pass   # not there, or it went away: the next attempt is in a few seconds
+                pass   # not there, or it went away: the next attempt is later
             except Exception as e:  # noqa: BLE001 - connections are optional: whatever it was, try again, never end
                 print(f"agentd: connect watch: {type(e).__name__}", file=sys.stderr)   # the type, never the push
+            if self.connected:
+                wait = self.retry   # it was there and went: a restart of the service is soon
             self.connected = False
-            await asyncio.sleep(self.retry)
+            await asyncio.sleep(wait)
+            wait = min(max(wait * 2, self.retry), max(self.max_retry, self.retry))
 
     async def _session(self) -> None:
         reader, writer = await asyncio.open_unix_connection(str(paths.connect_socket()), limit=LINE_LIMIT)
@@ -275,7 +296,10 @@ class Says:
         place of the last. A message the person has already read, or an old one, is left to the unread list."""
         if not isinstance(m, dict) or not isinstance(m.get("ref"), str) or m.get("unread") is False:
             return
-        if not _number(m.get("ts")) or self.clock() - m["ts"] > OLD_SECONDS or not _first(self._said, m["ref"]):
+        # A time far ahead of now is as odd as one long past, and not a message to say.
+        if not _number(m.get("ts")) or not abs(self.clock() - m["ts"]) <= OLD_SECONDS:
+            return
+        if not _first(self._said, m["ref"]):
             return
         key = conversation_key(m["ref"])
         line = _message_line(m)
@@ -373,12 +397,12 @@ class Says:
         else:
             self._bad.pop(cid, None)
             self._dismiss(self._warned.pop(cid, None))
-            if state == "ok" and signing is not None:
+            if signing is not None and state == "ok":
                 self.notices.replace(signing, line=f"{title} is connected.", tone="done", actions=[], ttl=20)
-            elif state == "ok" and signing is None:
-                pass
-            elif signing is not None:
+            elif signing is not None and state in ("signin", "setup"):
                 self._signing[cid] = signing   # still signing in: the notice stands
+            else:
+                self._dismiss(signing)         # put away meanwhile: there is nothing left to allow
         if self.is_open(cardmake.CONNECTED_ID):
             await self.show_connected()
 
@@ -450,6 +474,8 @@ class Says:
         agent's: the target must be something the service knows (`Unknown`). Raises proposals.ProposalError for
         content that is not text."""
         ctx = await self.context(kind, target, strict=strict, fallback=fallback)
+        if kind == "slack_reply" and not ctx.messages:
+            raise Unknown("I could not find that message any more.")   # no card to draw: no empty proposal either
         props = self.outbox.proposals
         p = self._open_proposal(kind, target) if created_by == PERSON and content is None else None
         if p is None:
@@ -568,9 +594,6 @@ class Says:
         ctx.where = cardmake.where_of(next(m for m in thread if m["ref"] == ctx.target))
         return await self.show(ctx, self._open_proposal("slack_reply", ctx.target))
 
-    async def show_tasks(self) -> None:
-        return None
-
     def _ref_of(self, card_id: str, ref: str) -> None:
         self._refs[card_id] = ref
         while len(self._refs) > REMEMBER:
@@ -599,12 +622,10 @@ class Says:
         except (connect_client.ConnectUnavailable, connect_client.ConnectError) as e:
             down = said(e)
         accounts = []
-        try:
+        with contextlib.suppress(Exception):   # mail is optional: no mail service is no mail rows
             got = await self.mail_request("accounts", 3)
             accounts = [a for a in (got.get("accounts") if isinstance(got, dict) else None) or []
                         if isinstance(a, dict)]
-        except Exception:  # noqa: BLE001 - mail is optional: no mail service is no mail rows
-            pass
         if down and not accounts:
             return False, down
         say = f"{down} Only mail is listed." if down else ""
@@ -627,6 +648,7 @@ class Says:
         if action == "open" and isinstance(row, str) and row.startswith("msg:"):
             ref = self._refs.get(row) or row[len("msg:"):]
             if not valid_ref(ref):
+                await self.say("I could not find that message any more.", False)
                 return
             await self.saw(ref)
             ctx = await self.context("slack_reply", ref)
@@ -651,7 +673,9 @@ class Says:
                 name = next((cardmake.connection_title(c) for c in await self._connections() if c.get("id") == key),
                             "that connection")
                 await self.request("remove_connection", 6, id=key)
-                self._flows.pop(key.split(":", 1)[-1], None)
+                flow = self._flows.get("slack")
+                if flow is not None and flow.connection == key:
+                    flow.cancel.set()   # the app it was making is gone: the walk through its pages stops
                 return True, f"Disconnected {name}. I no longer read it."
             if kind == "mail" and key:
                 got = await self.mail_request("accounts", 3)
@@ -777,7 +801,7 @@ class Says:
         task.add_done_callback(self._background.discard)
 
     def stop_setup(self) -> bool:
-        """The person said cancel (or Esc): a setup that is running stops at its next wait. True when one was."""
+        """The person said stop or cancel: a setup that is running stops at its next wait. True when one was."""
         flow = self._flows.get("slack")
         if flow is None:
             return False

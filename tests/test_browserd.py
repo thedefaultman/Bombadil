@@ -10,9 +10,13 @@ reaches it.
 import asyncio
 import json
 import os
+import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from browserd_fakes import chromium, slack_pages
@@ -24,11 +28,15 @@ from bombadil import browser, paths
 from bombadil.browserd import cdp, overlay, service
 from bombadil.browserd import client as browserd
 from bombadil.connect import client as connect_client
+from bombadil.connect import manifest, protocol
 
+COMMAND = Path(__file__).resolve().parents[1] / "bin" / "bombadil-browserd"
 TOKEN = slack_pages.app_token()
 USER = slack_pages.user_token()
 APP_PATTERN = r"xap" + r"p-[A-Za-z0-9-]{20,}"
 APP_INTO = {"connection": "slack:w1", "name": "app_token"}
+HIDDEN = "xox" + "b-" + "-".join(["4" * 12, "5" * 13, "6" * 24])   # a token-shaped value a page keeps out of sight
+HIDDEN_PATTERN = r"xox" + r"b-[A-Za-z0-9-]{20,}"
 
 
 class Served:
@@ -132,7 +140,7 @@ def test_open_takes_web_addresses_only(served, url):
 
 
 def test_read_gives_the_visible_text_as_other_peoples_words(served):
-    text = "Hello​ there‮\x07 \nsecond line\n\n\n\nthird"
+    text = "Hello\u200b there\u202e\x07 \nsecond line\n\n\n\nthird"
     served.open_page(make_page(text, selectors={"#note": "A note"}))
     page = served.request("read")
     assert page["untrusted"] is True and page["url"].startswith("https://api.slack.test/")
@@ -373,6 +381,24 @@ def test_a_tab_that_is_gone_is_a_sentence(served):
     assert served.refused("read", tab="../x").code == "bad_request"
 
 
+def test_a_page_open_made_that_is_closed_is_gone_and_no_other_page_is_read_in_its_place(served):
+    """With no `tab` a request means the page `open` made. When that page is closed it is "gone", said once: the
+    person's other pages are not the ones a pointer or a read was meant for."""
+    other = served.open_page(FakePage("https://example.test/mail", "Mail", "Words that are not for this"))
+    served.chrome.page_factory = lambda url: make_page()
+    tab = served.request("open", url="https://api.slack.test/apps?new_app=1")["tab"]["id"]
+    assert served.request("read")["text"] == "Make the app"
+    served.chrome.close_tab(tab)
+    for op, args in (("read", {}), ("find", {"text": "Create"}), ("point", {"text": "Create", "label": "Yours: Create"}),
+                     ("wait", {"text": "x", "seconds": 0}), ("unpoint", {}), ("take", {"pattern": "a", "into": APP_INTO})):
+        served.runner.call(lambda: setattr(served.service, "current", tab))   # as it was when the page was closed
+        e = served.refused(op, **args)
+        assert (str(e), e.code) == ("That page is gone.", "no_tab"), op
+    assert all(t != other for t, _expression in served.chrome.evaluated)   # nothing was run on the other page
+    assert served.runner.call(lambda: served.service.current) is None
+    assert served.request("read")["text"] == "Words that are not for this"   # nothing opened since: the first page
+
+
 def test_a_tab_closed_while_waiting_ends_the_wait_with_a_sentence(served):
     tab = served.open_page(make_page())
     served.request("read")
@@ -511,6 +537,99 @@ def test_the_client_times_out_on_a_service_that_does_not_answer(tmp_path):
         server.close()
 
 
+# -- the command --
+
+class Command:
+    """`bin/bombadil-browserd` run from the checkout as a process, answering on the test's own socket."""
+
+    def __init__(self, devtools_port: int):
+        self.proc = subprocess.Popen([sys.executable, str(COMMAND)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True,
+                                     env={**os.environ, "BOMBADIL_DEVTOOLS_PORT": str(devtools_port)})
+
+    def wait_for_it(self) -> "Command":
+        def up():
+            assert self.proc.poll() is None, f"the command stopped ({self.proc.returncode}): {self.proc.stderr.read()}"
+            try:
+                return browserd.request("status", 2.0)
+            except browserd.BrowserdUnavailable:
+                return None
+        until(up, 20, "the command to answer")
+        return self
+
+    def stop(self, sig=signal.SIGTERM) -> tuple[int, str]:
+        """Signal it and say how it ended: the exit status and what it wrote."""
+        if self.proc.poll() is None:
+            self.proc.send_signal(sig)
+        try:
+            self.proc.wait(15)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait()
+            raise AssertionError("the command did not stop on the signal") from None
+        out, err = self.proc.communicate()
+        return self.proc.returncode, out + err
+
+
+@pytest.fixture
+def command(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_CONNECT_SOCKET", str(home / "no-connect.sock"))   # nothing here is the real one
+    made = []
+
+    def start(port: int) -> Command:
+        made.append(Command(port))
+        return made[-1].wait_for_it()
+    yield start
+    for c in made:
+        if c.proc.poll() is None:
+            c.proc.kill()
+            c.proc.wait()
+        for pipe in (c.proc.stdout, c.proc.stderr):
+            pipe.close()
+
+
+def test_the_command_answers_from_a_checkout_and_stops_clean_on_sigterm(served, command):
+    served.chrome.page_factory = lambda url: make_page(f"Token {TOKEN}")
+    served.runner.stop()   # the test's own in-process service gives way to the command on the same socket
+    proc = command(served.chrome.port)
+    assert paths.browserd_socket().is_socket() and oct(paths.browserd_socket().stat().st_mode & 0o777) == "0o600"
+    assert browserd.request("status") == {"up": True, "tabs": 0}
+    tab = browserd.request("open", url="https://api.slack.test/apps?new_app=1")["tab"]
+    assert tab["url"] == "https://api.slack.test/apps?new_app=1"
+    assert browserd.request("read")["text"] == "Token [token hidden]"
+    assert browserd.request("point", text="Create", label="Yours: Create") == {"pointed": True}
+    assert served.chrome.overlay(tab["id"])["label"] == "Yours: Create"
+    # nothing is listening for the connection service in this test: the take says so in a sentence, and no word of
+    # what was on the page is in what the command wrote
+    got = browserd.request("take", pattern=APP_PATTERN, into=APP_INTO)
+    assert got == {"stored": False, "found": True, "why": "Connections are not running yet."}
+    status, written = proc.stop()
+    assert status == 0, written
+    assert TOKEN not in written and "Traceback" not in written
+    assert not paths.browserd_socket().exists()
+    with pytest.raises(browserd.BrowserdUnavailable):
+        browserd.request("status")
+
+
+def test_a_second_command_on_the_same_socket_says_so_and_leaves_the_first_alone(served, command):
+    served.runner.stop()
+    first = command(served.chrome.port)
+    second = Command(served.chrome.port)
+    second.proc.wait(20)   # it ends by itself
+    status, written = second.stop()
+    assert status == 1 and "already answering" in written and "Traceback" not in written
+    assert browserd.request("status")["up"] is True   # the first is untouched
+    assert first.stop()[0] == 0
+
+
+@pytest.mark.parametrize("args, status", [(["--help"], 0), (["--nope"], 2)])
+def test_the_command_takes_no_arguments(home, args, status):
+    done = subprocess.run([sys.executable, str(COMMAND), *args], capture_output=True, text=True, timeout=30,
+                          stdin=subprocess.DEVNULL, check=False)
+    assert done.returncode == status and done.stdout.startswith("bombadil-browserd"), done
+    assert not paths.browserd_socket().exists()   # and it did not start answering
+
+
 # -- a real Chromium --
 
 PAGES = {
@@ -522,6 +641,8 @@ PAGES = {
 <button id="cancel">Cancel</button><a id="link" href="/other">Install to Workspace</a>
 <input id="name" placeholder="Token Name"><label>Scope <input id="scope"></label>
 <input id="tok" readonly value="{TOKEN}"><textarea id="note">{USER}</textarea>
+<div id="hidbox" style="display:none"><input id="hid" readonly value="{HIDDEN}"></div><input type="hidden" value="{HIDDEN}">
+<input style="visibility:hidden" value="{HIDDEN}"><button style="display:none" data-clipboard-text="{HIDDEN}">Copy</button>
 <p id="inline">The token is <code>{USER}</code> <button id="copy">Copy</button></p>
 <div style="height:2500px"></div><button id="far" style="margin-left:60px">Generate Token and Scopes</button>
 </body></html>""",
@@ -614,11 +735,21 @@ def near(a: dict, b: dict, slack: float = 1.5) -> bool:
 
 
 def test_real_open_makes_a_tab_with_the_whole_address(real):
-    url = real.pages.base + "/make?" + "&".join(f"k{i}=%7B%22v%22%3A{i}%7D" for i in range(120))
-    assert len(url) > 1500
+    """The manifest address Slack is opened on is about a thousand characters; the browser gets any address whole,
+    and what the service says about a tab is cut at the length every address in its answers is cut at."""
+    url = real.pages.base + "/make?" + manifest.creation_url().split("?", 1)[1]
+    assert len(url) > 900
     tab = real.request("open", url=url)["tab"]
-    until(lambda: real.request("wait", url=r"/make\?k0=", seconds=1)["matched"], 20, "the page to load")
+    until(lambda: real.request("wait", url=r"/make\?new_app=1&manifest_json=", seconds=1)["matched"], 20,
+          "the page to load")
     assert next(t for t in real.request("tabs")["tabs"] if t["id"] == tab["id"])["url"] == url
+    longer = real.pages.base + "/make?" + "&".join(f"k{i}=%7B%22v%22%3A{i}%7D" for i in range(120))
+    assert len(longer) > protocol.MAX_URL
+    other = real.request("open", url=longer)["tab"]
+    until(lambda: real.request("wait", url=r"/make\?k0=", seconds=1)["matched"], 20, "the longer page to load")
+    assert next(t for t in real.proc.devtools.tabs() if t["id"] == other["id"])["url"] == longer   # the browser's own
+    cut = next(t for t in real.request("tabs")["tabs"] if t["id"] == other["id"])["url"]
+    assert longer.startswith(cut) and len(cut) == protocol.MAX_URL
     assert real.request("status")["up"] is True
 
 
@@ -729,6 +860,17 @@ def test_real_pointer_scrolls_to_a_button_nobody_can_see_and_points_at_it(real):
     assert 0 <= ring["y"] < 800
 
 
+def test_real_a_selector_is_css_and_nothing_else(real):
+    tab = real.open()
+    hostile = ("a{}", "</script><script>window.pwned = 1</script>", "x'); window.pwned = 1; ('", "a;b", "[onclick=",
+               ":nonsense(", "@import url(x)", "a, b, c{", "*) {")
+    for selector in hostile:
+        assert real.refused("read", selector=selector).code == "bad_request", selector
+        assert real.refused("point", selector=selector, label="Yours: x").code == "bad_request", selector
+    assert real.cdp(tab).evaluate("typeof window.pwned") == "undefined"
+    assert real.request("read", selector="button[id='create']")["text"] == "Create"   # a real selector is taken as one
+
+
 def test_real_pointer_by_selector(real):
     tab = real.open()
     assert real.request("point", selector="#cancel", label="Yours: Cancel", ttl=30) == {"pointed": True}
@@ -760,6 +902,18 @@ def test_real_take_reads_a_token_off_the_page_into_the_connection_service(real, 
     assert real.request("take", pattern=r"xoxb-[A-Za-z0-9-]{20,}", into=APP_INTO)["found"] is False
 
 
+def test_real_take_does_not_take_what_the_page_keeps_hidden(real):
+    """A collapsed box or a hidden input is not something the person has been shown: a token-shaped value in one is
+    not the token the page is about to give. It is taken once the page shows it."""
+    tab = real.open()
+    got = real.request("take", pattern=HIDDEN_PATTERN, into=APP_INTO)
+    assert got == {"stored": False, "found": False, "why": "Nothing on the page looks like that."}
+    assert real.connect.calls == []
+    real.cdp(tab).evaluate("document.getElementById('hidbox').style.display = 'block'")
+    assert real.request("take", pattern=HIDDEN_PATTERN, into=APP_INTO) == {"stored": True}
+    assert real.connect.calls[0][1]["value"] == HIDDEN
+
+
 def test_real_a_tab_closed_is_a_sentence(real):
     tab = real.open("/other")
     real.request("read", tab=tab)
@@ -767,6 +921,28 @@ def test_real_a_tab_closed_is_a_sentence(real):
     until(lambda: all(t["id"] != tab for t in real.proc.devtools.tabs()), 10, "the tab to close")
     e = real.refused("read", tab=tab)
     assert (str(e), e.code) == ("That page is gone.", "no_tab")
+
+
+def test_real_the_command_works_against_a_real_browser_and_stops_on_sigterm(home, chrome_proc, command):
+    pages = chromium.Pages(render)
+    proc = command(chrome_proc.port)
+    try:
+        tab = browserd.request("open", 30.0, url=pages.base + "/make")["tab"]
+        until(lambda: browserd.request("wait", 20.0, url="/make$", text="generate token", seconds=1)["matched"], 20,
+              "the page to load")
+        assert "Make the app" in browserd.request("read", 20.0)["text"]
+        assert browserd.request("point", 20.0, text="Create", label="Yours: Create", ttl=5) == {"pointed": True}
+        assert browserd.request("unpoint", 20.0) == {}
+        got = browserd.request("take", 20.0, pattern=APP_PATTERN, into=APP_INTO)
+        assert got == {"stored": False, "found": True, "why": "Connections are not running yet."}
+        status, written = proc.stop()
+        assert status == 0, written
+        assert TOKEN not in written and USER not in written and not paths.browserd_socket().exists()
+    finally:
+        pages.stop()
+        for t in chrome_proc.devtools.tabs():
+            if t["id"] == tab["id"] and len(chrome_proc.devtools.tabs()) > 1:
+                chrome_proc.devtools.close(t["id"])
 
 
 def test_real_no_browser_is_a_sentence(home):

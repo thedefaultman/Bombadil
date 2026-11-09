@@ -15,11 +15,9 @@ import time
 import pytest
 
 from bombadil.connect import client
-from bombadil.connect.client import Connection, ConnectError, ConnectUnavailable
+from bombadil.connect.client import ConnectError, Connection, ConnectUnavailable
 from bombadil.connect.driver import Driver, fingerprint
 from bombadil.connect.service import Service
-
-NOON = 1_790_000_000.0
 
 
 class Hangs(Driver):

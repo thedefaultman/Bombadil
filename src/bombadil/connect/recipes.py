@@ -385,13 +385,13 @@ def parse(raw: dict, where: str, service: str | None = None) -> Recipe:
         unknown = (placeholders(listing.arguments) - names - {"limit"}) | (
             placeholders(listing.url_template) - names - {"id"})
         if unknown:
-            bad(f"[list] uses {{{sorted(unknown)[0]}}}, which nothing provides.")
+            bad(f"[list] uses {{{min(unknown)}}}, which nothing provides.")
     create, comment = action_of("create"), action_of("comment")
     for section, action in (("create", create), ("comment", comment)):
         if action is not None:
             unknown = (placeholders(action.arguments) - names) | (placeholders(action.url_template) - names - {"id"})
             if unknown:
-                bad(f"[{section}] uses {{{sorted(unknown)[0]}}}, which nothing provides.")
+                bad(f"[{section}] uses {{{min(unknown)}}}, which nothing provides.")
     if context is not None and placeholders(context.arguments):
         bad("[context] arguments cannot use placeholders.")
     if listing is None and create is None and comment is None:

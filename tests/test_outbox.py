@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
-from mail_stub import mail_service  # noqa: F401 - the `mail` fixture
+from mail_stub import StubMail, mail_service  # noqa: F401 - the `mail` fixture
 
 from bombadil import outbox, paths, procs
 from bombadil.outbox import Outbox, PressResult
@@ -457,3 +457,331 @@ def test_a_file_that_cannot_be_written_costs_the_sentence_once_per_process(home,
     (home / "file").write_text("x")
     assert outbox.tell_once("z", "Hi.") == "Hi." and outbox.tell_once("z", "Hi.") == ""
     assert "told.json" in capsys.readouterr().err
+
+
+# -- the proposal performers: a reply, a new task, a comment (docs/CONNECT.md) --
+
+REF = "slack:T1/C1/1727780000.000100"
+POSTED = {"line": "Posted in #launch · 11:04", "web": {"name": "Slack", "url": "https://acme.test/archives/C1/p1"}}
+
+
+class StubConnect(StubMail):
+    """connect.sock: the same lines as mail.sock (docs/CONNECT.md), so the same stand-in answers it."""
+
+    def fail(self, op: str, sentence: str, code: str = "internal") -> None:
+        super().fail(op, sentence, code)
+
+
+@pytest.fixture(name="connect")
+def connect_service(home, monkeypatch):
+    path = home / "run" / "connect.sock"
+    monkeypatch.setenv("BOMBADIL_CONNECT_SOCKET", str(path))
+    stub = StubConnect(path).start()
+    yield stub
+    stub.stop()
+
+
+def drawn(box, content="Yes, the 14th works.", kind="slack_reply", target=REF):
+    """A proposal that is open and that the shell has said it drew: what a press is for."""
+    p = box.proposals.open(kind, target, content, where="#launch")
+    return box.proposals.shown(p["id"], content)
+
+
+def only_state(box, id):
+    return box.proposals.get(id)["state"]
+
+
+@pytest.mark.asyncio
+async def test_the_three_kinds_of_a_proposal_are_performers_and_nothing_else_sends(home):
+    assert set(Outbox().performers) == {"mail", *outbox.KINDS}
+    assert set(outbox.KINDS) == {"slack_reply", "task_create", "task_comment"}
+
+
+@pytest.mark.asyncio
+async def test_a_reply_press_asks_the_service_once_with_the_proposal_and_its_fingerprint(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert r.ok and r.line == POSTED["line"] and r.code == ""
+    assert r.receipt == {**POSTED, "proposal": p["id"]}
+    [asked] = connect.asked("perform")
+    assert {k: asked[k] for k in ("op", "kind", "target", "content", "fingerprint", "proposal")} == {
+        "op": "perform", "kind": "slack_reply", "target": REF, "content": "Yes, the 14th works.",
+        "fingerprint": p["fingerprint"], "proposal": p["id"]}
+    sent = box.proposals.get(p["id"])
+    assert sent["state"] == "sent" and sent["receipt"]["line"] == POSTED["line"] and sent["ready"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind, target, content, receipt, where", [
+    ("task_create", "linear", {"title": "Fix the login page", "description": "It loops."},
+     {"line": "Created LIN-42 in Linear"}, "Linear"),
+    ("task_comment", "linear:LIN-42", {"body": "Looks right to me."}, {"line": "Commented on LIN-42"}, "Linear"),
+    ("task_comment", "notion:abc123", {"body": "Done."}, {"line": "Commented on the page"}, "Notion"),
+])
+async def test_a_task_press_passes_its_boxes_as_they_are(home, connect, kind, target, content, receipt, where):
+    connect.answer("perform", {"receipt": receipt})
+    box = Outbox()
+    p = drawn(box, content, kind, target)
+    r = await box.press(kind, p["id"], p["fingerprint"], 10)
+    assert r.ok and r.line == receipt["line"]
+    [asked] = connect.asked("perform")
+    assert (asked["kind"], asked["target"], asked["content"]) == (kind, target, content)
+    connect.fail("perform", "x", "unknown_outcome")
+    q = drawn(box, content, kind, target)
+    again = await box.press(kind, q["id"], q["fingerprint"], 10)
+    assert again.line == f"I can't tell whether that went. Look in {where} before you press Send again."
+
+
+@pytest.mark.asyncio
+async def test_the_press_is_written_down_with_no_words_of_the_message(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    box = Outbox()
+    p = drawn(box, "Yes, the 14th works. Priya Shah can sign.")
+    await box.press("slack_reply", p["id"], p["fingerprint"], 4242)
+    [row] = rows()
+    assert row.pop("t") > 1_700_000_000
+    assert row == {"kind": "slack_reply", "id": p["id"], "fingerprint": p["fingerprint"], "ok": True, "code": "",
+                   "pid": 4242, "src": "agentd"}
+    assert "14th" not in paths.press_log().read_text() and "Priya" not in paths.press_log().read_text()
+
+
+def _other_fingerprint(box, p):
+    return "slack_reply", p["id"], "0" * 64
+
+
+def _never_drawn(box, p):
+    q = box.proposals.open("slack_reply", REF, "Yes.")
+    return "slack_reply", q["id"], q["fingerprint"]
+
+
+def _drawn_other_words(box, p):
+    box.proposals.shown(p["id"], "Yes, the 15th works.")
+    return "slack_reply", p["id"], p["fingerprint"]
+
+
+def _edited_after_it_was_drawn(box, p):
+    box.proposals.edit(p["id"], "Yes, the 14th works for me.")      # the press still carries the old words' hash
+    return "slack_reply", p["id"], p["fingerprint"]
+
+
+def _edited_and_not_yet_drawn(box, p):
+    new = box.proposals.edit(p["id"], "Yes, the 14th works for me.")
+    return "slack_reply", p["id"], new["fingerprint"]               # the right hash, for words nobody saw drawn
+
+
+def _nothing_in_it(box, p):
+    q = box.proposals.open("slack_reply", REF)
+    box.proposals.shown(q["id"], "")
+    return "slack_reply", q["id"], q["fingerprint"]
+
+
+def _put_away(box, p):
+    box.proposals.discard(p["id"])
+    return "slack_reply", p["id"], p["fingerprint"]
+
+
+def _of_another_kind(box, p):
+    return "task_comment", p["id"], p["fingerprint"]
+
+
+def _that_does_not_exist(box, p):
+    return "slack_reply", "p99", p["fingerprint"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arrange", [
+    _other_fingerprint, _never_drawn, _drawn_other_words, _edited_after_it_was_drawn, _edited_and_not_yet_drawn,
+    _nothing_in_it, _put_away, _of_another_kind, _that_does_not_exist])
+async def test_a_press_that_is_not_for_what_the_card_showed_is_turned_away_and_asks_nothing(home, connect, arrange):
+    box = Outbox()
+    p = drawn(box)
+    kind, id_, fp = arrange(box, p)
+    r = await box.press(kind, id_, fp, 10)
+    assert not r.ok and r.code == "changed" and "Nothing was sent." in r.line
+    assert connect.asked("perform") == [] and not box.was_pressed(kind, id_)
+    assert [x["code"] for x in rows()] == ["changed"]
+
+
+@pytest.mark.asyncio
+async def test_a_turned_away_press_leaves_the_proposal_as_it_was_and_the_right_one_goes(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    box = Outbox()
+    p = drawn(box)
+    assert (await box.press("slack_reply", p["id"], "0" * 64, 10)).code == "changed"
+    assert only_state(box, p["id"]) == "open" and box.proposals.get(p["id"])["ready"] is True
+    assert (await box.press("slack_reply", p["id"], p["fingerprint"], 10)).ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fp", ["", None, "f" * 129])
+async def test_a_press_that_does_not_say_what_it_is_for_asks_nothing(home, connect, fp):
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], fp, 10)
+    assert not r.ok and r.code == "bad_request" and connect.asked("perform") == []
+
+
+@pytest.mark.asyncio
+async def test_a_press_from_inside_an_agents_turn_is_refused_and_the_proposal_stays_open(home, connect, monkeypatch):
+    scope = Path("/sys/fs/cgroup/user.slice/bombadil-turn-1-2-3.scope")
+    monkeypatch.setattr(procs, "cgroup_of", lambda pid: scope if pid == 777 else None)
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 777)
+    assert not r.ok and r.code == "agent" and "sending is yours" in r.line and "Nothing was sent" in r.line
+    assert connect.asked("perform") == [] and only_state(box, p["id"]) == "open"
+    assert [(x["ok"], x["code"], x["pid"]) for x in rows()] == [(False, "agent", 777)]
+    connect.answer("perform", {"receipt": POSTED})
+    assert (await box.press("slack_reply", p["id"], p["fingerprint"], 778)).ok          # the person's own press
+
+
+@pytest.mark.asyncio
+async def test_a_press_from_a_process_nobody_can_tell_is_refused(home, connect):
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], None)
+    assert not r.ok and r.code == "no_peer" and connect.asked("perform") == []
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_is_sending_while_the_service_works_and_a_second_press_is_turned_away(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    connect.delay("perform", 0.4)
+    box = Outbox()
+    p = drawn(box)
+    first = asyncio.create_task(box.press("slack_reply", p["id"], p["fingerprint"], 10))
+    deadline = time.monotonic() + 5
+    while only_state(box, p["id"]) != "sending" and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    assert only_state(box, p["id"]) == "sending" and box.proposals.get(p["id"])["ready"] is False
+    second = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert not second.ok and second.code == "busy"
+    assert (await first).ok
+    assert len(connect.asked("perform")) == 1 and only_state(box, p["id"]) == "sent"
+
+
+@pytest.mark.asyncio
+async def test_pressed_twice_one_after_the_other_it_is_one_act_and_the_same_receipt(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    box = Outbox()
+    p = drawn(box)
+    first = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    second = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert first.ok and second.ok and second.receipt == first.receipt
+    assert len(connect.asked("perform")) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_outcome_nobody_knows_is_said_with_where_to_look_and_never_tried_again(home, connect):
+    connect.fail("perform", "Slack did not say.", "unknown_outcome")
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert not r.ok and r.code == "unknown_outcome"
+    assert r.line == "I can't tell whether that went. Look in Slack before you press Send again."
+    assert only_state(box, p["id"]) == "unknown" and box.proposals.get(p["id"])["note"] == r.line
+    assert box.was_pressed("slack_reply", p["id"])
+    again = await box.press("slack_reply", p["id"], p["fingerprint"], 10)       # the same words, no choice made
+    assert again.code == "unknown_outcome" and len(connect.asked("perform")) == 1
+    assert [x["code"] for x in rows()] == ["unknown_outcome", "unknown_outcome"]
+
+
+@pytest.mark.asyncio
+async def test_the_persons_own_second_choice_is_a_new_attempt_with_an_id_of_its_own(home, connect):
+    connect.fail("perform", "Slack did not say.", "unknown_outcome")
+    box = Outbox()
+    p = drawn(box)
+    await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    box.proposals.shown(p["id"], p["content"])                  # the card drew it again
+    connect.answer("perform", {"receipt": POSTED})
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10, again=True)
+    assert r.ok and r.receipt["proposal"] == p["id"]
+    first, second = connect.asked("perform")
+    assert (first["proposal"], second["proposal"]) == (p["id"], f"{p['id']}-2")
+    assert second["fingerprint"] == p["fingerprint"] and only_state(box, p["id"]) == "sent"
+
+
+@pytest.mark.asyncio
+async def test_again_is_nothing_when_nothing_was_unsure(home, connect):
+    connect.answer("perform", {"receipt": POSTED})
+    box = Outbox()
+    p = drawn(box)
+    assert (await box.press("slack_reply", p["id"], p["fingerprint"], 10, again=True)).ok
+    assert [a["proposal"] for a in connect.asked("perform")] == [p["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["already", "internal"])
+async def test_a_service_that_says_it_was_done_already_or_failed_inside_is_an_unknown_outcome(home, connect, code):
+    connect.fail("perform", "That one was done.", code)
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert not r.ok and r.code == "unknown_outcome" and only_state(box, p["id"]) == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_service_that_stops_answering_after_it_was_asked_may_have_done_it(home, connect, monkeypatch):
+    monkeypatch.setattr(outbox, "CONNECT_SECONDS", 0.3)
+    connect.delay("perform", "hang")
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert not r.ok and r.code == "unknown_outcome" and "Look in Slack" in r.line
+    assert only_state(box, p["id"]) == "unknown" and len(connect.asked("perform")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code, said", [
+    ("blocked", "Slack needs an administrator to approve this."), ("auth", "Slack no longer accepts this connection."),
+    ("rate_limited", "Slack is slow. Try again in a moment."), ("refused", "That is too long for Slack."),
+    ("no_connection", "There is no such connection."), ("service_down", "Slack did not answer."),
+])
+async def test_a_refusal_opens_it_again_with_the_services_own_sentence_and_goes_when_tried_again(
+        home, connect, code, said):
+    connect.fail("perform", said, code)
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert (r.ok, r.line, r.code) == (False, said, code)
+    back = box.proposals.get(p["id"])
+    assert back["state"] == "open" and back["note"] == said and back["content"] == "Yes, the 14th works."
+    assert back["ready"] is True and not box.was_pressed("slack_reply", p["id"])    # nothing went, so it can again
+    connect.answer("perform", {"receipt": POSTED})
+    assert (await box.press("slack_reply", p["id"], p["fingerprint"], 10)).ok
+    assert only_state(box, p["id"]) == "sent"
+
+
+@pytest.mark.asyncio
+async def test_a_service_that_is_not_there_was_never_asked_and_the_proposal_stays_open(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_CONNECT_SOCKET", str(home / "run" / "nobody.sock"))
+    box = Outbox()
+    p = drawn(box)
+    r = await box.press("slack_reply", p["id"], p["fingerprint"], 10)
+    assert not r.ok and r.code == "service_down" and r.line == "Connections are not running yet. Nothing was sent."
+    assert only_state(box, p["id"]) == "open" and not box.was_pressed("slack_reply", p["id"])
+
+
+@pytest.mark.asyncio
+async def test_a_press_that_is_cancelled_while_the_service_works_is_an_outcome_nobody_knows(home, connect):
+    connect.delay("perform", "hang")
+    box = Outbox()
+    p = drawn(box)
+    task = asyncio.create_task(box.press("slack_reply", p["id"], p["fingerprint"], 10))
+    deadline = time.monotonic() + 5
+    while not connect.asked("perform") and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    connect.hang_up()       # the thread that was waiting for the service ends now, not at its own timeout
+    assert only_state(box, p["id"]) == "unknown" and box.was_pressed("slack_reply", p["id"])
+
+
+def test_the_sentence_about_the_press_is_said_once_with_the_first_proposal_and_kept_apart_from_mails(home):
+    assert outbox.told_connect_press() == "I never press Send for you. Change anything in it first if you like."
+    assert outbox.told_connect_press() == ""
+    assert outbox.told_mail_press() != ""                     # mail's own first draft still hears it
+    assert json.loads((paths.state_dir() / "told.json").read_text()).keys() == {"connect-press", "mail-press"}

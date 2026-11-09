@@ -69,6 +69,10 @@ def clean_content(kind: str, content):
             raise ProposalError("A task takes its fields, each as text.")
         out = {}
         for key, value in list(content.items())[:MAX_FIELDS]:
+            if value is None:
+                value = ""       # a box the person has not typed in, as the shell reports it
+            elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                value = str(value)
             if not isinstance(key, str) or not _KEY.fullmatch(key) or not isinstance(value, str):
                 raise ProposalError("A task takes its fields, each as text.")
             out[key] = value[:MAX_FIELD]
@@ -345,7 +349,7 @@ class Proposals:
             if not isinstance(doc, dict) or doc.get("version") != VERSION or not isinstance(doc.get("proposals"), list):
                 raise ValueError("not a table of this version")
             items = [self._record(raw) for raw in doc["proposals"]]
-        except (ValueError, TypeError, KeyError, RecursionError):
+        except (ValueError, TypeError, KeyError, RecursionError, OverflowError):
             self._set_aside(path, text)
             return
         self._next = max(1, int(doc["next"])) if isinstance(doc.get("next"), int) else 1
