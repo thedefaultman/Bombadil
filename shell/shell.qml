@@ -6,7 +6,8 @@
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
 // Above the pill's left end, a chip per project holds a dot per coding session; when one waits
 // for you the pill's empty line says so, and Tab goes there.
-// Everything else on screen is a panel or an app the agent opened.
+// Everything else on screen is a panel or an app the agent opened. The bar also owns the desktop's notification
+// name (Notifications.qml), and sends what arrives to agentd, which decides what the person sees.
 import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
@@ -66,6 +67,39 @@ ShellRoot {
         respectInhibitors: false
         enabled: pillState.mode === "welcome" && pillState.touchedAt === 0
         onIsIdleChanged: if (!isIdle) pillState.touched()
+    }
+
+    // The notification server, in place of mako. It draws nothing: each notification goes to agentd, which decides
+    // what the person sees. Loaded on its own, so a Quickshell without the service costs the notifications and
+    // nothing else.
+    Loader {
+        id: notifications
+        source: "Notifications.qml"
+        Binding { target: notifications.item; property: "link"; value: root.connected; when: notifications.item !== null }
+        Connections {
+            target: notifications.item
+            function onOutgoing(msg) { root.write(msg) }
+        }
+    }
+
+    // The screen that has the card with a box in it, where the person is when it arrives and for as long as it is
+    // there ("" = a picture, which every screen draws). Two boxes for one draft would be two people typing in one.
+    property string cardScreen: ""
+    signal cardKeysWanted(string name)
+    function focusedScreenName() {
+        if (root.summonedOn !== "" && root.hasScreen(root.summonedOn)) return root.summonedOn
+        const m = Hyprland.focusedMonitor
+        if (m && root.hasScreen(m.name)) return m.name
+        return Quickshell.screens.length > 0 ? Quickshell.screens[0].name : ""
+    }
+    Connections {
+        target: pillState
+        function onCardIdChanged() { root.cardScreen = pillState.cardId === "" ? "" : root.focusedScreenName() }
+        // The person pressed Reply, or clicked in the card's box: the bar on the card's screen takes the keyboard and
+        // the box has it. (A card an agent opened asks for nothing, so it never takes the keys from what is typed.)
+        function onCardKeys() {
+            root.cardKeysWanted(root.hasScreen(root.cardScreen) ? root.cardScreen : root.focusedScreenName())
+        }
     }
 
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
@@ -193,6 +227,7 @@ ShellRoot {
         try { ev = JSON.parse(message) } catch (e) { return }
         pillState.handle(ev)
         deskState.handle(ev)
+        if (notifications.item) notifications.item.handle(ev)
         devState.handle(ev)   // only its own "dev" messages
     }
 
@@ -202,16 +237,11 @@ ShellRoot {
         root.agentd.flush()
     }
 
-    // The screen whose pill takes the keyboard: the focused monitor's, else the first.
-    function focusedScreenName() {
-        const m = Hyprland.focusedMonitor
-        return m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
-    }
-
     // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
     // focused screen takes the keyboard. A second tap gives it back.
     function summon(text) {
-        const name = root.focusedScreenName()
+        const m = Hyprland.focusedMonitor
+        const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
         root.cardKeys = false
         if (text) {
             // Words to finish: always take the keyboard, never toggle it away. A card holding the keys
@@ -248,8 +278,8 @@ ShellRoot {
         root.summonedOn = root.cardOn
     }
 
-    // The pill on the focused screen takes the keyboard and keeps it: no toggle, for what asks for it
-    // (the Widgets card), not for a tap on Super. The keys are the pill's, as they are after a tap on Super.
+    // The pill that was typed into (else the one on the focused screen) takes the keyboard and keeps it: no toggle,
+    // for what asks for it (the Widgets card), not for a tap on Super. The keys are the pill's, as after a tap on Super.
     function takeKeyboard() { root.cardKeys = false; root.summonedOn = root.focusedScreenName() }
 
     // Running apps, for the chips above the prompt. Each app window lives in its own special
@@ -348,14 +378,36 @@ ShellRoot {
                 Region { item: stripsRight }
             }
 
+            // The card's box is to have the keyboard when this bar gets it, not the pill's field.
+            property bool boxNext: false
             onSummonedChanged: {
-                // The card, when it is up here, is where typing goes; the pill stays one click away.
                 if (summoned) {
-                    if (root.cardKeys && personaCard.shown) personaCard.takeKeys()
+                    if (boxNext) focusBox()
+                    // The persona card, when it is up here, is where typing goes; the pill stays one click away.
+                    else if (root.cardKeys && personaCard.shown) personaCard.takeKeys()
                     else input.forceActiveFocus()
-                }
+                } else boxNext = false
                 grab.active = summoned
                 takeDraft()
+            }
+            function focusBox() {
+                boxNext = false
+                // (a frame later: the card may have been drawn in this same turn of the loop)
+                Qt.callLater(() => { if (!(cardHost.item && cardHost.item.focusBox())) input.forceActiveFocus() })
+            }
+            Connections {
+                target: root
+                function onCardKeysWanted(name) {
+                    if (name !== win.modelData.name) return
+                    const had = win.summoned
+                    win.boxNext = true
+                    root.summonedOn = name
+                    if (had) win.focusBox()      // (already summoned: nothing changes below to do it)
+                }
+            }
+            Connections {
+                target: pillState
+                function onTyping() { if (win.summoned) idle.restart() }
             }
             function takeDraft() {
                 if (!summoned || root.draft === "") return
@@ -407,7 +459,8 @@ ShellRoot {
                 // Summoned and left alone: give the keyboard back to the windows. Typing starts
                 // the wait again; text already typed stays in the pill.
                 id: idle
-                interval: input.text === "" ? 20000 : 60000
+                // (a person writing a reply in a card is not idle, and a longer pause is a person thinking)
+                interval: pillState.composing ? 120000 : (input.text === "" ? 20000 : 60000)
                 // Not while a card is up: the Widgets card is read at the person's pace, and the persona card is
                 // waiting for an answer that is slow to type; the keyboard stays.
                 running: win.summoned && !widgetsCard.shown && !personaCard.shown
@@ -444,8 +497,12 @@ ShellRoot {
                     visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
                     // As wide as the pill, so it stays between the desk's rails; beside a window, up to
-                    // about 560 where the rails leave the room (the pill is 360 then).
-                    Layout.maximumWidth: Math.max(360, win.pictureMax)
+                    // about 560 where the rails leave the room (the pill is 360 then). A message or a task needs less.
+                    Layout.maximumWidth: {
+                        const wide = Math.max(360, win.pictureMax)
+                        const want = cardHost.item ? cardHost.item.preferredWidth : 0
+                        return want > 0 ? Math.min(want, wide) : wide
+                    }
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
@@ -453,6 +510,11 @@ ShellRoot {
                     // after): the picture may take 60% of the screen, and the two together would push its top off a
                     // small one.
                     Binding { target: cardHost.item; property: "suppressed"; value: win.capsule || widgetsCard.shown; when: cardHost.item !== null }
+                    // A card with a box is drawn on one screen (a picture, on every one: the host knows which is which).
+                    Binding {
+                        target: cardHost.item; property: "onThisScreen"; when: cardHost.item !== null
+                        value: root.cardScreen === "" || root.cardScreen === win.modelData.name || !root.hasScreen(root.cardScreen)
+                    }
                 }
 
                 StatusLine {

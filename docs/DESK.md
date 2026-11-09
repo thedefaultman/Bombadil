@@ -226,7 +226,8 @@ sequenceDiagram
   elsewhere (`HyprlandFocusGrab`), a tap on Super, Enter and the drawer taking the keyboard all close it. Typing
   closes it, as it puts the AI card away; opening the AI card closes it, so only one card sits over the pill;
   the small × closes it; and a dropped socket closes it, because a press would reach nobody. Each `widgets/open`
-  takes the keyboard again (`takeKeyboard()`, which unlike a tap on Super never toggles it away). The pill's idle
+  takes the keyboard again (`takeKeyboard()`, which unlike a tap on Super never toggles it away) on the screen
+  that was typed into, else the focused monitor's (the same `focusedScreenName()` the card with a box uses). The pill's idle
   timer, which gives the keyboard back after twenty seconds, is held while the card is shown: it is read at the
   person's pace.
 - **It sits in the bar's window,** between the AI card and the pill, in the window's input mask like the AI card.

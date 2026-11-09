@@ -12,6 +12,11 @@ QtObject {
     signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
+    // A card with a box wants the keyboard: the person pressed Reply and this is the card that came of it, or
+    // clicked in a box. The bar takes the keyboard on the screen they are on and gives it to the box.
+    signal cardKeys()
+    // The person typed in a card's box: whoever holds the keyboard for it (the bar's idle timer) starts waiting again.
+    signal typing()
     // agentd asked what to call the user: the card is up and wants the keyboard.
     signal asked()
     // Super while the card holds the keyboard: the keys go to the pill's field (shell.qml).
@@ -91,6 +96,31 @@ QtObject {
     // a box) missed. A receipt is not asked for: it fades with its line. Esc or × puts both away.
     readonly property bool pictureStays: !!card && !card.receipt && !card.partial
     property double cardAt: 0
+    // Which card, and how many times agentd has handed the bar a whole card (not a change of a draft): a face that
+    // drew the same card before tells agentd again what it has drawn, since agentd may have lost it meanwhile.
+    readonly property string cardId: card && typeof card.id === "string" ? card.id : ""
+    property int cardEpoch: 0
+    // The kinds of card the bar draws. A diagram is the machine's or the agent's; the rest come from connections
+    // (agentd checks them with cards.py before they get here) and have faces of their own (CardHost).
+    readonly property var cardKinds: ["diagram", "message", "task", "list"]
+
+    // A message or task card has a box the person writes in, and a button that sends what is in it.
+    // `composeId` is the card whose box the person is in (it has the keyboard, or words in it): that card is not
+    // taken away by a window opening or by the next turn the way a picture is, because the person is in the
+    // middle of something. A face tells the pill through compose(); it is false for any other card.
+    property string composeId: ""
+    property bool composeFocus: false
+    property bool composeText: false
+    readonly property bool composing: !!card && composeId !== "" && card.id === composeId && (composeFocus || composeText)
+    // The proposal whose press is out: the Send button is dimmed from the press until agentd answers, so a second
+    // click on it sends nothing, and the line agentd said of a press it refused (shown under the button).
+    property string pressOut: ""
+    property string pressLine: ""
+    property string pressLineFor: ""    // the proposal that line is about: it goes when that one is typed in again
+    // When the person last pressed Reply (a chip on a notice, a button on a card, a row that opens a thread): the
+    // card with a box that comes of it, in the seconds after, takes the keyboard. One the agent opened takes nothing.
+    property double _askedAt: 0
+    readonly property int askGrace: 8000
     // The AI card, which a click on the stone opens when no turn runs: one row per AI with its
     // switch. aiRows is agentd's "ai" message: [{name, title, state, text, on, enabled, current}].
     property var aiRows: []
@@ -135,7 +165,9 @@ QtObject {
         if (mode === "closing") return stopped ? "stopped" : (source === "error" ? "rest" : "done")
         return "rest"
     }
-    onConnectedChanged: if (connected) seen = true
+    // Back from a drop: a press that was out when it dropped is no longer waited on. Agentd's state of the draft decides
+    // (it is asked to send only from open, so a press that did go is refused, and one that did not may be made again).
+    onConnectedChanged: if (connected) { seen = true; pressOut = "" }
 
     property string _result: ""
     property bool _resultOk: true
@@ -163,15 +195,161 @@ QtObject {
             if (card && card.id === c.id) card = null
             return
         }
-        if (c.type !== "diagram") return
+        if (cardKinds.indexOf(c.type) < 0) return
+        if (c.type !== "diagram" && (typeof c.id !== "string" || c.id === "")) return   // (a face keys its box on it)
+        // Another card: what the last press said, and a press still out, were about that one.
+        if (!card || card.id !== c.id) { pressLine = ""; pressLineFor = "" }
         card = c
         cardAt = _now()
+        cardEpoch += 1
         // A receipt comes just after the closing line: read the two together, so both start their time now.
         if (c.receipt && mode === "closing") { lineAt = cardAt; fadeAfter = Math.max(fadeAfter, 15000) }
+        // The card that comes of the person's Reply takes the keyboard; one that arrives on its own waits for a click.
+        if (_replyOf(c) !== null && _askedAt !== 0 && cardAt - _askedAt <= askGrace && _replyOf(c).by !== "agent") {
+            _askedAt = 0
+            cardKeys()
+        }
     }
 
-    // Esc or the card's ×.
-    function dismissCard() { card = null }
+    // Where a card's draft stands: a message card's `reply`, a task card's `proposal`; null for any other card.
+    function _replyOf(c) {
+        const r = c && c.type === "message" ? c.reply : c && c.type === "task" ? c.proposal : null
+        return r && typeof r === "object" ? r : null
+    }
+
+    // A card with a box that the person is in is kept through what would put a picture away.
+    function _keepsCard() { return composing }
+
+    // Esc or the card's ×. A message or task card tells agentd it was put away, and an empty box goes with it; one with
+    // words in it stays as a draft that agentd keeps.
+    function dismissCard() {
+        const c = card
+        if (c && (c.type === "message" || c.type === "task" || c.type === "list")) {
+            const r = _replyOf(c)
+            const kept = composing
+            if (connected) {
+                outgoing({ type: "card_action", card: c.id, action: "dismiss" })
+                if (r && r.proposal && r.kind !== "copy" && r.state === "open" && !(composeId === c.id && composeText))
+                    outgoing({ type: "proposal", op: "discard", id: r.proposal })
+            }
+            // The box held the keyboard: it goes back to the windows.
+            if (kept && composeFocus) handOff()
+        }
+        card = null
+    }
+
+    // -- the draft in a card's box --
+
+    // A face tells the pill whether the person is in its box (has the keyboard, or has words in it).
+    function compose(id, focused, hasText) {
+        composeId = id; composeFocus = focused; composeText = hasText
+    }
+
+    // A word typed in a box: the bar's idle wait starts again, and what the last press said is old news.
+    function noteTyped() {
+        pressLine = ""; pressLineFor = ""
+        typing()
+    }
+
+    // A click in a card's box: the bar takes the keyboard for it (a bar that is not summoned gets no keys).
+    function wantKeys() { cardKeys() }
+
+    // Reply on a card that has no draft yet: agentd opens one and sends the card again with its box.
+    function openReply(kind, target) {
+        if (_offline()) return
+        _askedAt = _now()
+        outgoing({ type: "proposal", op: "open", kind: kind, target: target })
+    }
+
+    // The box changed, and the box drew it: agentd keeps the draft, and says when what it holds is what was drawn.
+    // Nothing is said while the socket is down (the face says it again when it is back).
+    function proposalEdit(id, content) {
+        if (pressLineFor === id) { pressLine = ""; pressLineFor = "" }
+        if (connected) outgoing({ type: "proposal", op: "edit", id: id, content: content })
+    }
+    function proposalShown(id, content) {
+        if (connected) outgoing({ type: "proposal", op: "shown", id: id, content: content })
+    }
+
+    // The press on a card's Send, Create or Comment. One per proposal until agentd answers (a double click, or a
+    // click while the first is out, sends nothing). `fingerprint` is the one agentd last sent for the content on screen.
+    function press(kind, id, fingerprint, again) {
+        if (pressOut === id) return false
+        if (_offline()) return false
+        pressOut = id
+        pressLine = ""; pressLineFor = ""
+        const m = { type: "press", kind: kind, id: id, fingerprint: fingerprint }
+        if (again === true) m.again = true
+        outgoing(m)
+        return true
+    }
+
+    // A button on a card or one of its rows: agentd does it (open, connect, disconnect). Opening a card from a row
+    // may be a Reply, so it counts as one.
+    function cardAction(cardId, action, row, text) {
+        if (_offline()) return
+        // (a card's own "Open in Slack" leaves for another window, and a card that comes after it was not asked for)
+        if (action === "open" && row !== undefined && row !== null && row !== "") _askedAt = _now()
+        const m = { type: "card_action", card: cardId, action: action }
+        if (row !== undefined && row !== null && row !== "") m.row = row
+        if (typeof text === "string") m.text = text
+        outgoing(m)
+    }
+
+    // "Copy and open": agentd puts the words on the clipboard (wl-copy) and brings forward the page they are for.
+    function copyOpen(cardId, text) { cardAction(cardId, "copy_open", "", String(text)) }
+
+    // agentd's word on a proposal: the open card takes its state, whether it is lit, its fingerprint, receipt, warnings
+    // and note, and its content (the face decides whether that goes in the box: never over what is being typed).
+    function _takeProposal(p) {
+        if (!p || typeof p !== "object" || typeof p.id !== "string" || !card) return
+        const key = card.type === "task" ? "proposal" : card.type === "message" ? "reply" : ""
+        const r = key === "" ? null : card[key]
+        if (!r || r.proposal !== p.id) return
+        // Agentd has said what became of a press once the draft is no longer open: an update that says it still is
+        // (the box's own echo) is not an answer, and the button stays dim until one comes.
+        if (pressOut === p.id && typeof p.state === "string" && p.state !== "open") pressOut = ""
+        if (p.state === "discarded") { card = null; return }
+        const next = Object.assign({}, r)
+        if (typeof p.state === "string") next.state = p.state
+        next.ready = p.ready === true    // only agentd's word lights a button
+        if (typeof p.fingerprint === "string") next.fingerprint = p.fingerprint
+        if (p.receipt === null || (p.receipt && typeof p.receipt === "object")) next.receipt = p.receipt
+        if (Array.isArray(p.warnings))
+            next.warnings = p.warnings.filter(w => w && typeof w.text === "string")
+                .map(w => ({ kind: String(w.kind || ""), text: _plain(w.text, 240) }))
+        if (typeof p.note === "string") next.note = _plain(p.note, 240)
+        if (p.content !== undefined && p.content !== null) next.content = p.content
+        // What the box held when agentd took characters out of it that draw as nothing (a paste from a page often has
+        // some): the face gives the box the cleaned words back while the box still holds exactly this.
+        if (p.cleaned_from !== undefined && p.cleaned_from !== null) next.cleaned_from = p.cleaned_from
+        else delete next.cleaned_from
+        const c = Object.assign({}, card)
+        c[key] = next
+        card = c
+    }
+
+    // What became of a press, said to the one who pressed.
+    function _pressResult(ev) {
+        const id = String(ev.id === undefined || ev.id === null ? "" : ev.id)
+        if (pressOut === id) pressOut = ""
+        const key = card && card.type === "task" ? "proposal" : card && card.type === "message" ? "reply" : ""
+        if (key === "" || !card[key] || card[key].proposal !== id) return
+        const next = Object.assign({}, card[key])
+        if (ev.ok === true) {
+            next.state = "sent"
+            next.ready = false
+            next.receipt = ev.receipt && typeof ev.receipt === "object" ? ev.receipt : { line: _plain(ev.line, 240) || "Sent." }
+            pressLine = ""; pressLineFor = ""
+        } else {
+            if (ev.code === "unknown_outcome") { next.state = "unknown"; next.ready = false }
+            pressLine = ev.code === "unknown_outcome" ? "" : (_plain(ev.line, 240) || "That did not go. Nothing was sent.")
+            pressLineFor = pressLine === "" ? "" : id
+        }
+        const c = Object.assign({}, card)
+        c[key] = next
+        card = c
+    }
 
     // A window opened on the stage, however: Super+Enter, an app, a panel, the Brain. A picture left
     // over the middle of the screen would sit on top of it (and at the pill's width, which a window
@@ -182,10 +360,10 @@ QtObject {
     readonly property int windowGrace: 2500
     readonly property int clickGrace: 5000
     function windowOpened() {
-        if (!card || card.partial) return
+        if (!card || card.partial || _keepsCard()) return
         const t = _now()
         if (t - cardAt < windowGrace || t - clickedAt < clickGrace) return
-        card = null
+        dismissCard()
     }
 
     // A click on a box that names a thing: a file, a service, a package, a page or a turn.
@@ -224,6 +402,10 @@ QtObject {
         if (ev.type === "notice_end") { _noticeEnd(ev.id); return }
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
         if (ev.type === "found") { _takeFound(ev); return }
+        // A card for the bar (as the event below, from agentd itself), a draft that changed, an answer to a press.
+        if (ev.type === "card") { _takeCard(ev.card); return }
+        if (ev.type === "proposal") { _takeProposal(ev.proposal); return }
+        if (ev.type === "press_result") { _pressResult(ev); return }
         if (ev.type === "summon") {
             summoned(typeof ev.text === "string" ? ev.text : "")
             // The pill comes up: say why the AI does not answer, unless a line is being read.
@@ -262,7 +444,7 @@ QtObject {
             _takeCard(ev.card)
             break
         case "turn_start":
-            card = null
+            if (!_keepsCard()) card = null   // (a box the person is writing in stays: they are in the middle of it)
             // "Claude is back. Running your 3 waiting asks." goes on being said over the turn it starts.
             if (_backLine !== "" && mode === "local" && line === _backLine) { flash = line; flashAt = lineAt; flashFor = fadeAfter }
             _setQueue(queue.filter(q => q.turn !== ev.turn))
@@ -326,10 +508,10 @@ QtObject {
         case "local":
             // A picture that could not be drawn puts the last one away: the error under a picture of
             // something else reads as if it were about that picture.
-            if (ev.action === "picture" && ev.phase === "done" && ev.ok === false) card = null
+            if (ev.action === "picture" && ev.phase === "done" && ev.ok === false && !_keepsCard()) card = null
             // A window the launcher just opened (the Brain, an app, a panel) takes the stage: a picture
             // left over the middle of the screen would sit on top of it.
-            if (ev.phase === "done" && ev.ok === true && ev.verb === "open"
+            if (ev.phase === "done" && ev.ok === true && ev.verb === "open" && !_keepsCard()
                     && (ev.action === "brain" || ev.action === "app" || ev.action === "panel")) card = null
             if (mode === "working" && !optimistic) {
                 // "why" answered from the reason the agent gave: long enough to read it.
@@ -589,7 +771,11 @@ QtObject {
     // never be handed a chip that was drawn for the one before.
     function noticeAction(id, action) {
         if (_offline()) return
-        handOff()   // Reply and Open slide a window in, and it must be able to take the keyboard
+        // A window slides in (Reply and Open for mail), and it must be able to take the keyboard. A Reply on a
+        // message or a notification opens a card in the bar instead: the card that comes takes it back.
+        const shown = notices.find(x => x.id === id)
+        if (action === "reply" && shown && (shown.source === "connect" || shown.source === "notify")) _askedAt = _now()
+        handOff()
         // agentd ends the notice as it answers: a notice the pointer is still on goes then, not when it leaves.
         const acted = {}
         for (const n of notices) if (n.id === id || _acted[n.id] === true) acted[n.id] = true   // none for a gone one
@@ -605,7 +791,11 @@ QtObject {
 
     // What the line is saying, for `quickshell ipc call line state` (the VM smoke test and the desktop test).
     function snapshot() {
-        return { mode: mode, line: line, flash: flash, noticeShown: noticeShown, notices: notices }
+        const r = _replyOf(card)
+        return { mode: mode, line: line, flash: flash, noticeShown: noticeShown, notices: notices,
+                 card: card ? { id: card.id, type: card.type, title: card.title,
+                                draft: r ? { proposal: r.proposal || "", state: r.state, ready: r.ready === true } : null }
+                            : null }
     }
 
     function submit(text) {
@@ -662,6 +852,8 @@ QtObject {
         aiOpen = false   // its switches reach nobody now
         found = null; _foundOwed = false; _gone = []   // its chips reach nobody; its turn numbers may start over
         if (card && card.partial) card = null   // a half-drawn picture will not be finished
+        // A press that was out may have gone: the button stays dim until agentd says what became of it, and says so.
+        if (pressOut !== "") { pressLine = "I lost touch with the agent while that went, so I can't tell whether it did."; pressLineFor = pressOut }
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
@@ -764,7 +956,7 @@ QtObject {
     // Esc: put the line and the picture away.
     function dismiss() {
         _putLineAway()
-        card = null
+        dismissCard()
     }
 
     // A finished line nobody is looking at fades, and takes a receipt picture with it; a picture the

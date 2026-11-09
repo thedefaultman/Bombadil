@@ -729,7 +729,13 @@ def test_shell_qml_takes_the_keyboard_for_the_card_without_toggling_it_away():
     take = code.split("function takeKeyboard()", 1)[1].split("\n", 1)[0]
     assert "root.summonedOn = root.focusedScreenName()" in take and "===" not in take and "?" not in take
     assert "root.cardKeys = false" in take            # the keys are the pill's, not a persona card's
-    assert "const name = root.focusedScreenName()" in code.split("function summon(text)", 1)[1].split("}", 1)[0]
+    # The screen the keys go to is the one typed into (a pill already summoned), else the focused monitor's: the
+    # shell's own helper for the card with a box, shared here. A tap on Super still reads the focused monitor itself,
+    # which is how it moves the keys to another screen.
+    pick = code.split("function focusedScreenName()", 1)[1].split("\n    }", 1)[0]
+    assert pick.index("root.summonedOn") < pick.index("Hyprland.focusedMonitor")
+    assert code.count("function focusedScreenName()") == 1
+    assert "const m = Hyprland.focusedMonitor" in code.split("function summon(text)", 1)[1].split("}", 1)[0]
 
 
 def test_shell_qml_has_the_card_open_only_while_the_pill_holds_the_keyboard():

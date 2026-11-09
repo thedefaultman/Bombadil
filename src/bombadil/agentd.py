@@ -65,6 +65,16 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                                                         the person's press on a Send button; answered
                                                         with press_result (outbox.py). "again" is for a
                                                         send whose outcome was unknown, pressed on purpose
+                   {"type": "press", "kind": "slack_reply"|"task_create"|"task_comment", "id": proposal,
+                    "fingerprint": fp}                  the same press for a reply, a new task or a comment
+                   {"type": "connect-tool", "id": s, "turn": n, "op": "unread"|"thread"|"tasks"|"connections"|
+                    "propose", ...}                     the os-mcp connection tools; answered with connect-result
+                   {"type": "proposal", "op": "open"|"edit"|"shown"|"discard", ...}
+                                                        the box of a reply or a task on a card (proposals.py)
+                   {"type": "card_action", "card": id, "row"?: id, "action": "open"|"disconnect"|"connect"|
+                    "copy_open"|"dismiss"}              a button on a card or on one of its rows
+                   {"type": "notification", "id": n, "app", "summary", "body", "urgency", "icon", "actions"}
+                                                        from the bar's notification server (notifications.py)
                    {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
                    {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
@@ -113,6 +123,14 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         the answer to a mail-tool, to its sender only
                    {"type": "press_result", "kind", "id", "ok": bool, "line": "...", "code": "",
                     "receipt": {...}|null}              the answer to a press, to its sender only
+                   {"type": "connect-result", "id": s, "ok": bool, "text": "..."}
+                                                        the answer to a connect-tool, to its sender only
+                   {"type": "card", "card": {...}}      a message, task or list card (cards.py, connect/cardmake.py),
+                                                        or {"id", "gone": true}; one that is open is sent again to
+                                                        a bar that connects later
+                   {"type": "proposal", "proposal": {...}}  a reply or task draft changed (to everyone)
+                   {"type": "notification_invoke", "id": n, "action"?: s}   the bar invokes that notification
+                   {"type": "notification_close", "id": n}   the bar lets that notification go
                    {"type": "notice", "id": n, "source": "mail", "line": "...", "tone": "step"|"ask"|
                     "done"|"error", "actions": [{"id", "label", "style": "primary"|"quiet"}], "ttl": s,
                     "at": epoch}                        a line another service says above the pill
@@ -172,6 +190,15 @@ part of any agent's turn (outbox.py), lets a draft go. A typed "send it" while a
 answered at once with where the button is. agentd also listens to the mail service (mail/watch.py) and
 says new mail, drafts and receipts as notices; with no mail service that costs one failed connect
 every few seconds.
+
+Messages and connections are a third service (docs/CONNECT.md), wired the same way. The connect-tool reads
+messages and tasks and drafts replies in the turn that is running (connect/tools.py) and can never send: a press on
+a card's Send, which the outbox (outbox.py) takes only from a client that is not part of any agent's turn, is the
+one way a proposal goes. The messages from the bar that change anything (a card's buttons, the box of a proposal, a
+notification) are the person's too, and are refused to a process of a turn. agentd listens to the connection
+service (connect/watch.py) and says new messages, receipts and trouble as notices and cards, the bar's
+notifications become notices (notifications.py), and a service that is not there costs a failed connect every few
+seconds at most and "Connections are not running yet" in the line of whoever asked.
 
 Jobs are background commands, watchers and timers the agent starts with the `job` tool (jobs.py):
 transient systemd user units that outlive the turn. The job-tool's `start` needs the turn that is
@@ -244,16 +271,21 @@ import urllib.parse
 from dataclasses import replace
 from pathlib import Path
 
-from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, outbox, paths, procs, providers, rest,
+from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, notifications, outbox, paths, procs, providers, rest,
                signin, snapshots, sysmap, voice, watch)
 from .away import Away
 from .brain import client as brain_client
+from .connect import cardmake as connect_cards
+from .connect import tools as connect_tools
+from .connect import watch as connect_watch
+from .connect.driver import KINDS as CONNECT_KINDS
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
 from .mail import client as mail_client
 from .mail import tools as mail_tools
 from .mail import watch as mail_watch
 from .notices import Notices, one_line
+from .proposals import ProposalError, is_empty
 from .tips import BANG, Tips, job_keys, local_keys, read_facts, tool_keys
 from .vitals import Vitals
 
@@ -313,6 +345,16 @@ MAIL_ANSWER_CHARS = 60_000  # the most text one mail tool answers with
 LINE_LIMIT = 4 << 20
 MAIL_NOT_KEPT = "[mail text not kept]"   # what stands in the turn's log for what mail_read and mail_search said
 MAIL_TEXT_TOOLS = ("mail_read", "mail_search")
+# The same for what the connection tools read (messages, tasks): the tool's name -> what stands in its place.
+NOT_KEPT = {**{tool: MAIL_NOT_KEPT for tool in MAIL_TEXT_TOOLS},
+            **{tool: connect_tools.NOT_KEPT for tool in connect_tools.TEXT_TOOLS}}
+# What a press is called, and what the agent is told it did (no word of the message or the place: other people's).
+CONNECT_BUTTONS = {"slack_reply": "Send", "task_create": "Create", "task_comment": "Comment"}
+CONNECT_PRESSED = {"slack_reply": "the person pressed Send on your reply",
+                   "task_create": "the person pressed Create on your new task",
+                   "task_comment": "the person pressed Comment on your comment"}
+# What a launcher word about messages or connections is told to the next turn as (never what it showed).
+CONNECT_NOTES = {"unread": "showed the unread messages", "connected": "showed what is connected"}
 # What a click on a Machine row opens (vitals.py names the rows that open anything).
 VITALS_OPENS = {"disk": "disks"}
 # The desk's ops that the line above the pill answers for: the Widgets card's presses.
@@ -435,7 +477,17 @@ class AgentD:
         # Who is on the other end of each connection: True once it is known to have been inside an agent's
         # turn when it connected (or could not be told), which is final. See _persons.
         self._peers: dict[asyncio.StreamWriter, asyncio.Future] = {}
-        self._mail_reads: dict[str, None] = {}      # ids of this turn's mail_read and mail_search calls
+        self._mail_reads: dict[str, str] = {}       # ids of this turn's calls that read mail or messages -> what stands in their place
+        # Messages and connections: what the connection service says unasked and what agentd says about it (Says), the
+        # agent's tools (the broker shares mail's ledger of who has read other people's words), the bar's
+        # notifications, and the card that is on screen, which a bar that connects later is given.
+        self.outbox.proposals.on_change = self._proposal_changed
+        self.connect_says = connect_watch.Says(self.notices, self.outbox, self._connect_card, self._connect_say,
+                                               self.open_url, self._card_is_open)
+        self.connect = connect_tools.Broker(self.connect_says, mail=self.mail)
+        self._connect_watch = connect_watch.Watch(self.connect_says.push)
+        self.notifier = notifications.Notifier(self.notices, self._enqueue_all, self._connect_card)
+        self._open_card: dict | None = None         # the message, task or list card the bar was last given, as made
         # The machine's readings. BOMBADIL_VITALS=0 turns the card off (the tests do, so nothing reads /proc).
         self.vitals = vitals if vitals is not None else (Vitals() if os.environ.get("BOMBADIL_VITALS") != "0"
                                                          else None)
@@ -506,6 +558,15 @@ class AgentD:
         back = ' Say "use sonnet" to go back.' if choice == "opus" else ""
         return True, f"Using {title} from the next message.{back}"
 
+    def _say_recovered(self):
+        """A reply or task that was being sent when agentd stopped may or may not have gone: it is said, once, to
+        whoever is looking (the card, if it is still on a bar's screen, says it too: see `_client`)."""
+        for p in self.outbox.proposals.recovered():
+            noun = "reply" if p["kind"] == "slack_reply" else "task"
+            where = f" in {p['where']}" if p.get("where") else ""
+            self.notices.post("connect", f"I can't tell whether your {noun}{where} went when I restarted. Look there "
+                                         "before you press again.", "ask")
+
     # -- socket --
 
     async def serve(self):
@@ -514,17 +575,23 @@ class AgentD:
             self.socket_path.unlink()
         self._load_state()
         # Probe for systemd scopes now, not on the first Enter.
-        await asyncio.to_thread(procs.scope_supported)
+        if not await asyncio.to_thread(procs.scope_supported) and Path("/run/systemd/system").exists():
+            print("agentd: agent turns run without a systemd scope here, so the mail and connection services cannot "
+                  "tell an agent's process on their sockets from yours: only agentd's look at the running turn's own "
+                  "processes stands between a shell and a press", file=sys.stderr, flush=True)
         self._loop = asyncio.get_running_loop()
+        self._say_recovered()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
         tasks = [asyncio.create_task(t) for t in (self._worker(), self._watch_apps(), self._mail_watch.run(),
-                                                  self._dev_signals(), self._dev_watch(), self._follow_focus())]
+                                                  self._connect_watch.run(), self._dev_signals(), self._dev_watch(),
+                                                  self._follow_focus())]
         self._background(self.check_access(start=self.auto_signin))
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
             try:
                 await server.serve_forever()
             finally:
+                self.connect_says.close()
                 for task in (*tasks, self._jobs_task, self._notices_task, self._rest_task, self._vitals_task,
                              self._tips_timer):
                     if task is not None:
@@ -578,6 +645,11 @@ class AgentD:
             await self._send(writer, self._setup_msg())
             for notice in self.notices.live():   # what nobody has ended yet, like the setup line
                 await self._send(writer, notice)
+            card = self._late_card()
+            if card is not None:   # a message, task or list card that is still open
+                await self._send(writer, {"type": "card", "card": card})
+            for proposal in self.outbox.proposals.recovered():   # a press that agentd stopped in the middle of
+                await self._send(writer, {"type": "proposal", "proposal": proposal})
             await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
             self._vitals_kick()
             await self._tips_hello(writer)
@@ -603,6 +675,15 @@ class AgentD:
                 draft = await self._draft_waiting()
                 if draft is not None:   # "send it" is not a send: the press is the person's
                     action = launcher.Action("send", draft["id"] if isinstance(draft.get("id"), str) else "")
+                elif self._proposal_waiting():   # a reply or a ticket on a card: the same answer, the same reason
+                    action = launcher.Action("send", "", "proposal")
+            if action is not None and action.kind == "connect" and not await self._persons(writer):
+                # Connecting a service is the person's own act (the service refuses it to a turn's process; this
+                # is the other way in, a word written to this socket from inside a turn).
+                await self._send(writer, {"type": "event", "kind": "error",
+                                          "text": "Connecting a service is yours to do. It cannot be done from an "
+                                                  "agent's turn."})
+                return
             if action is None and self.access == "choose":
                 # First boot asks which AI: typing its name answers too.
                 name = launcher._lookup(launcher.normalize(text), launcher.PROVIDER_WORDS)
@@ -688,6 +769,14 @@ class AgentD:
             await self._send(writer, await self._mail_tool(msg))
         elif t == "press":
             self._background(self._press(msg, writer))
+        elif t == "connect-tool":
+            await self._send(writer, await self._connect_tool(msg))
+        elif t == "proposal":
+            await self._proposal_op(msg, writer)
+        elif t == "card_action":
+            self._background(self._card_action(msg, writer))
+        elif t == "notification":
+            await self._notification(msg, writer)
         elif t == "notice_action":
             self._background(self._notice_action(msg.get("id"), msg.get("action"), writer))
         elif t == "notice_dismiss":
@@ -1374,6 +1463,8 @@ class AgentD:
         self._enqueue_all(msg)
         if msg["type"] == "notice":
             self._notices_kick()
+        elif msg["type"] == "notice_end":
+            self.notifier.notice_ended(msg["id"])
 
     def _notices_kick(self):
         if self.notices.next_expiry() is not None and (self._notices_task is None or self._notices_task.done()):
@@ -1455,12 +1546,19 @@ class AgentD:
         result = await self.outbox.press(kind, id_, msg.get("fingerprint"), _peer_pid(writer),
                                          again=msg.get("again") is True,
                                          was_agent=peer is None or await peer)   # (no look made: not the person)
-        self.says.pressed(result)
+        connect = kind in CONNECT_KINDS
+        if connect:
+            self.connect_says.pressed(kind, id_, result)
+        else:
+            self.says.pressed(result)
         if result.ok:
             # Not said again on the line (the receipt is), but the agent should know what happened to its draft.
-            # The line names a recipient as the mail gave it, and notes reach the model as the user's own word.
-            self.notes = [*self.notes, f"the person pressed Send: {one_line(result.line, 160)}"][-10:]
-        self._log_line({"t": time.time(), "kind": "local", "prompt": "pressed Send", "action": "press",
+            # The line names a recipient as the mail gave it, and notes reach the model as the user's own word. A
+            # connection's receipt names a person or a place the same way, so what the agent is told is fixed words.
+            told = CONNECT_PRESSED[kind] if connect else f"the person pressed Send: {one_line(result.line, 160)}"
+            self.notes = [*self.notes, told][-10:]
+        self._log_line({"t": time.time(), "kind": "local",
+                        "prompt": f"pressed {CONNECT_BUTTONS[kind]}" if connect else "pressed Send", "action": "press",
                         "target": (id_ if isinstance(id_, str) else "")[:128], "result": result.line,
                         "ok": result.ok})
         await self._send(writer, {"type": "press_result", "kind": kind if isinstance(kind, str) else "",
@@ -1474,6 +1572,11 @@ class AgentD:
         if proc is None or proc.returncode is not None:
             return False
         return pid == proc.pid or pid in procs.descendants(proc.pid, procs.all_procs())
+
+    def _proposal_waiting(self) -> bool:
+        """Does a reply or a ticket wait on a card for the person's press? ("send it" is answered for it as it is
+        for a mail draft: a typed word never sends.)"""
+        return any(p.get("state") == "open" and not is_empty(p.get("content")) for p in self.outbox.proposals.all())
 
     async def _draft_waiting(self) -> dict | None:
         """The newest draft that waits for the person's press, if any. Asked of the service, since the person
@@ -1502,6 +1605,149 @@ class AgentD:
             await asyncio.to_thread(self.launcher.open_mail_window)
         except Exception as e:  # noqa: BLE001 - nobody asked agentd for this one: it is a line, not an error
             print(f"agentd: the Mail window: {type(e).__name__}: {e}", file=sys.stderr)
+
+    # -- messages and connections --
+
+    async def _connect_tool(self, msg: dict) -> dict:
+        """The os-mcp connection tools. They work in the turn that is running, like mail's, and are answered to the
+        one client that asked. Nothing here sends: a proposal waits for the person's press (outbox.py)."""
+        def result(ok: bool, text: str) -> dict:
+            return {"type": "connect-result", "id": msg.get("id"), "ok": ok, "text": text}
+        turn = msg.get("turn")
+        if self.current is None or isinstance(turn, bool) or turn != self.current or self.stopping:
+            return result(False, "That turn is over, so connections stay as they are.")
+        typed = mail_tools.typed_words(self.turn_prompt or "")   # the person's own words, as for a mail draft
+
+        def alive() -> bool:
+            return self.current == turn and not self.stopping
+        try:
+            ok, text = await self.connect.call(turn, str(msg.get("op", "")), msg, typed, alive, self.session_id,
+                                               self._read_outside())
+        except Exception as e:  # noqa: BLE001 - a tool call is always answered
+            print(f"agentd: connect-tool: {type(e).__name__}: {e}", file=sys.stderr)
+            return result(False, f"Connections failed: {launcher._reason(e)}")
+        return result(ok, text[:connect_tools.ANSWER_CHARS])
+
+    def _read_outside(self) -> bool:
+        """Has the running turn read anything that is neither the person's words nor this machine's own files (a page,
+        the screen, a request from a session)? What it then proposes is held to the words the person typed."""
+        return self.narrator is not None and any(r.outside for r in self.narrator.reads)
+
+    async def _proposal_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The box of a reply or a task on a card (proposals.py). Every one is the person's own act (a draft made
+        as theirs, the content they drew, what they put away), so none is for a process inside an agent's turn.
+        What changed goes to every client from `_proposal_changed`."""
+        op, id_ = msg.get("op"), msg.get("id")
+        if op not in ("open", "edit", "shown", "discard") or not await self._persons(writer):
+            return
+        props = self.outbox.proposals
+        if op == "open":
+            kind, target = msg.get("kind"), msg.get("target")
+            if kind in CONNECT_KINDS and connect_watch.valid_target(kind, target):
+                self._background(self._open_reply(kind, target))   # asks the service what the card is drawn from
+        elif isinstance(id_, str):
+            if op == "discard":
+                props.discard(id_)
+            else:
+                (props.edit if op == "edit" else props.shown)(id_, msg.get("content"))
+
+    async def _open_reply(self, kind: str, target: str):
+        try:
+            await self.connect_says.open_proposal(kind, target)
+        except (connect_watch.Unknown, ProposalError) as e:
+            await self._connect_say(str(e), False)
+
+    def _proposal_changed(self, p: dict):
+        """Proposals.on_change: a proposal is not what the bar was last told, so every client is told. A change made
+        in a thread of agentd's hops to the loop first."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            if self._loop is not None:
+                try:
+                    self._loop.call_soon_threadsafe(self._tell_proposal, p)
+                except RuntimeError:
+                    pass   # the loop is closed: agentd is stopping
+            return
+        self._tell_proposal(p)
+
+    def _tell_proposal(self, p: dict):
+        self.connect_says.proposal_changed(p)
+        self._enqueue_all({"type": "proposal", "proposal": p})
+
+    async def _card_action(self, msg: dict, writer: asyncio.StreamWriter):
+        """A button on a card, or on one of its rows. It never reaches the model, and it is the person's: Disconnect
+        and Connect change what is read, so a process of an agent's turn has neither."""
+        card, row, action = msg.get("card"), msg.get("row"), msg.get("action")
+        if not isinstance(card, str) or action not in cards.ACTIONS or not await self._persons(writer):
+            return
+        if action == "dismiss":
+            self.notifier.dismissed(card)
+            if self._open_card is not None and self._open_card.get("id") == card:
+                self._open_card = None
+        elif action == "copy_open":
+            text = msg.get("text")
+            if isinstance(text, str) and text.strip() and not await asyncio.to_thread(notifications.copy_text, text):
+                await self._connect_say("I could not copy that. Your words are still in the box.", False)
+            elif not self.notifier.copy_open(card):
+                await self._connect_say("The app that sent that is not holding it any more.", False)
+        else:
+            await self.connect_says.card_action(card, row if isinstance(row, str) and row else None, action)
+
+    async def _notification(self, msg: dict, writer: asyncio.StreamWriter):
+        """A notification from the bar's server. It is other programs' words, said as a notice; one from a process of
+        an agent's turn is not the bar's."""
+        if await self._persons(writer):
+            self.notifier.take(msg)
+
+    async def _connect_card(self, card: dict) -> bool:
+        """Show a message, task or list card (made by connect/cardmake.py): checked again here, kept for a bar that
+        connects later, and sent to every client. True when somebody is there to draw it."""
+        shown, errors = cards.accept(card)
+        if shown is None:
+            print(f"agentd: a connection card was refused: {(errors or ['?'])[0][:120]}", file=sys.stderr)
+            return False
+        self._open_card = card
+        await self.broadcast({"type": "card", "card": shown})
+        return bool(self.clients)
+
+    def _late_card(self) -> dict | None:
+        """The open message, task or list card as it would be drawn now (its proposal has moved on since), for a bar
+        that has just connected; None when there is none, or its proposal was put away."""
+        raw = self._open_card
+        if raw is None:
+            return None
+        block = raw.get("reply") if raw.get("type") == "message" else raw.get("proposal")
+        proposal = self.outbox.proposals.get(block["proposal"]) \
+            if isinstance(block, dict) and isinstance(block.get("proposal"), str) else None
+        if proposal is not None and proposal["state"] == "discarded":
+            return None
+        return cards.accept(connect_cards.refreshed(raw, proposal))[0]
+
+    def _card_is_open(self, card_id: str) -> bool:
+        return self._open_card is not None and self._open_card.get("id") == card_id
+
+    async def _connect_say(self, text: str, ok: bool = True):
+        """One line in the pill about connections, from nobody's turn."""
+        await self.event("local", turn=None, action="connections", phase="done", ok=ok, text=text)
+
+    async def _connect_word(self, action: launcher.Action, typed: str):
+        """A launcher word about messages or connections ("slack", "what is connected", "connect linear"): a card or
+        the start of a setup, with the connection service asked from a thread and never waited for."""
+        await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
+                         phase="start", text=self.launcher.doing(action))
+        try:
+            ok, text = await self.connect_says.word(action.kind, action.target)
+        except Exception as e:  # noqa: BLE001 - one plain line, whatever broke
+            print(f"agentd: {action.kind} word: {type(e).__name__}: {e}", file=sys.stderr)
+            ok, text = False, f"{self.launcher.failed(action)}: {launcher._reason(e)}"
+        await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
+                         phase="done", ok=ok, text=text)
+        if ok:
+            said = f"started connecting {action.title}" if action.kind == "connect" else CONNECT_NOTES[action.target]
+            self.notes = [*self.notes, f"{typed!r}: {said}"][-10:]
+        self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": action.kind,
+                        "target": action.target, "result": text[:200], "ok": ok})
 
     # -- things that never wait for the model --
 
@@ -1540,10 +1786,14 @@ class AgentD:
             self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "rest",
                             "target": action.target, "result": text, "ok": True})
             return
+        if action.kind in ("messages", "connect"):
+            await self._connect_word(action, typed)
+            return
         if action.kind == "stop":
             stopping = await self.stop(by_person=True)
+            setting_up = self.connect_says.stop_setup()   # "cancel" ends a Slack setup that is walking through its pages
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
-                             text="Stopping." if stopping else "Nothing is running.")
+                             text="Stopping." if stopping or setting_up else "Nothing is running.")
             return
         if action.kind == "voice":
             await self.voice.word(typed)
@@ -1569,7 +1819,7 @@ class AgentD:
         doing = self.launcher.doing(action)
         # A shutdown says goodbye in the start text: the done text may come after the power is gone.
         bye = await self.voice.goodbye() if action.kind == "shutdown" else ""
-        if action.kind in ("mail", "send"):
+        if action.kind in ("mail", "send") and action.verb != "proposal":
             self._mail_opened = time.monotonic()   # the service's echo of the show must not open the window again
         await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
                          phase="start",
@@ -1600,10 +1850,13 @@ class AgentD:
         """Send a finished card to the bars. One drawn while it streamed keeps that card's id, so
         the bar swaps the picture in place."""
         self._card_seq += 1
+        self._open_card = None   # the bar has one card: a picture takes the place of a message, task or list
         await self.event("card", turn=turn, card={**card, "id": card_id or f"card-{self._card_seq}"})
 
     async def _card_message(self, msg: dict, writer: asyncio.StreamWriter):
-        card, errors = cards.accept(msg.get("card"))
+        # A picture only: any process of the person's can write here, and a message card made by the agent would be
+        # words dressed as somebody else's. The connection cards are agentd's own (_connect_card).
+        card, errors = cards.accept(msg.get("card"), diagrams_only=True)
         if card is None:
             await self._send(writer, {"type": "card_ack", "shown": False, "errors": errors})
             return
@@ -2473,6 +2726,8 @@ class AgentD:
                 self._tips_timer.cancel()   # the card turns after this turn, not in the middle of it
                 self._tips_timer = None
             self.mail.begin(turn_id, self.session_id)   # a conversation that has read mail still holds it
+            self.connect.begin(turn_id, self.session_id)   # ... or messages (one ledger, so a second say changes nothing)
+            self._open_card = None   # the bar puts its card away when a turn starts (unless a box is being written in)
             self._limit = self._limit_rest = None
             self._requeued = False
             self._seen, self._cut = {}, []
@@ -2486,6 +2741,7 @@ class AgentD:
                 stopped = self.stopping
                 self.current = None
                 self.mail.end(turn_id, self.session_id)   # what it read stays with the conversation it resumes into
+                self.connect.end(turn_id, self.session_id)
                 self.narrator = None
                 self._files = None
                 self.plan_msg = None
@@ -2863,17 +3119,17 @@ class AgentD:
         """What mail_read and mail_search said is other people's words, and Bombadil writes none of it down:
         events are logged to the turn's file and sent to every client, so the answer is replaced by a
         placeholder before it is either (the model has had it, which is all it is for). An error stays: its
-        words are ours."""
+        words are ours. What the connection tools read (messages, tasks) is the same."""
         kind = ev.get("kind")
         if kind == "tool" and ev.get("id") and str(ev.get("name") or "").startswith("mcp__") \
-                and str(ev["name"]).rsplit("__", 1)[-1] in MAIL_TEXT_TOOLS:
-            self._mail_reads[str(ev["id"])] = None
+                and str(ev["name"]).rsplit("__", 1)[-1] in NOT_KEPT:
+            self._mail_reads[str(ev["id"])] = NOT_KEPT[str(ev["name"]).rsplit("__", 1)[-1]]
             while len(self._mail_reads) > 256:
                 self._mail_reads.pop(next(iter(self._mail_reads)))
         elif kind == "tool_result" and ev.get("id") is not None and str(ev["id"]) in self._mail_reads:
-            del self._mail_reads[str(ev["id"])]
+            placeholder = self._mail_reads.pop(str(ev["id"]))
             if not ev.get("error"):
-                return {**ev, "output": MAIL_NOT_KEPT}
+                return {**ev, "output": placeholder}
         return ev
 
     def _log(self, prompt, result, snap, cmd, stopped=False, summary="", read=None, n=None, unit=None,

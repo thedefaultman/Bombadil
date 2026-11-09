@@ -83,16 +83,30 @@ def descendants(root: int, procs: dict[int, Proc]) -> set[int]:
     return out
 
 
+# The scopes an agent runs in: a turn of the machine's own agent, and a coding session (dev.py). Both are the
+# agent's hands, not the person's, so what only the person does (a press on a card, a chip on a notice) is
+# refused to a process in either.
+AGENT_SCOPES = ("bombadil-turn-", "bombadil-dev-")
+
+
 def cgroup_of(pid: int) -> Path | None:
-    """The cgroup v2 directory of a process, when it is a turn scope of ours."""
+    """The cgroup v2 directory of a process, when it is an agent's scope of ours (a turn's or a coding session's)."""
     try:
         for line in (PROC / str(pid) / "cgroup").read_text().splitlines():
             if line.startswith("0::"):
                 path = CGROUP_ROOT / line[3:].lstrip("/")
-                return path if path.name.startswith("bombadil-turn-") else None
+                return path if path.name.startswith(AGENT_SCOPES) else None
     except OSError:
         pass
     return None
+
+
+def in_turn_scope(pid: int) -> bool:
+    """Is this process inside an agent turn's scope? `cgroup_of` says "no" for a process whose cgroup it cannot read,
+    which would let one that cannot be told pass for the person, so the file is read first: what cannot be read
+    raises, and the caller refuses that as the agent's."""
+    (PROC / str(pid) / "cgroup").read_text()
+    return cgroup_of(pid) is not None
 
 
 def scope_cgroup(unit: str | None, runner=subprocess.run) -> Path | None:

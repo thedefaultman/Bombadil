@@ -3240,7 +3240,7 @@ def test_the_words_widgets_open_the_card_and_ask_for_the_keyboard_every_time(des
     assert desk.prop("widgetsOpen") is False and desk.win.property("widgetsAsked") == 2
     desk.call("openWidgets")                                # the shell's own: no one is asked for the keyboard
     assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 2
-    assert plain(desk.win.property("pillSent")) == [] and desk.sent == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.sent == []   # (the hello is not a prompt)
 
 
 def test_only_open_opens_the_card_and_nothing_closes_it_from_agentd(desk):
