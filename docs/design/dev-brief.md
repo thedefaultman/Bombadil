@@ -1,10 +1,10 @@
 # Building on Bombadil
 
-> **Status:** In progress. Pieces 1 and 2 have code that is not on `main`. Piece 3 has only its plain own copy and the `BOMBADIL_SESSION` gate in that code (they come with piece 1); the rest of piece 3 and pieces 4 to 6 are designed and have no code.  
-> **Code:** none of the six pieces is on `main`. They change `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/mcp_server.py`, `bin/bombadil` and `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, and build on `src/bombadil/procs.py`, `src/bombadil/snapshots.py`, `shell/PillState.qml` and `shell/QueueChips.qml`, which they leave as they are (a new `shell/SessionChips.qml` is planned beside `QueueChips.qml`). Where each piece stands is kept in the roadmap and the coding-sessions architecture page.  
+> **Status:** In progress. Pieces 1 and 2 are built in the open coding-sessions pull request and are not on `main`. Piece 3 is In progress there for its own copy of the code and the `BOMBADIL_SESSION` variable, and Designed for the rest of the fence. Pieces 4 to 6 are Designed and have no code on `main` or on any branch. The steps before piece 1 (the status-line and app-kit merges, and agentd and Quickshell as systemd user services) are done on `main`. Each piece below says what is built and where it differs from the design.  
+> **Code:** none of the six pieces is on `main`. They change `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/mcp_server.py`, `bin/bombadil` and `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, and build on `src/bombadil/procs.py`, `src/bombadil/snapshots.py`, `shell/PillState.qml` and `shell/QueueChips.qml`, which they leave as they are (`shell/SessionChips.qml` sits beside `QueueChips.qml` in the pull request). The pull request adds `src/bombadil/dev.py`, `bin/bombadil-signal`, `shell/DevState.qml`, `shell/SessionPeek.qml`, `share/zellij/config.kdl` and the managed hook files for Claude Code and Codex; it leaves `src/bombadil/mcp_server.py` alone, because piece 5 is designed. `main` already holds the listening side: the desk's Needs you card reads agentd's `dev` message, the brain can read the registry file, the Machine card has a line for the sessions' memory ceiling, and agentd accepts a prompt marked `asked_by`, which the desk shows. Nothing on `main` sends that message, writes the registry or sets the ceiling. Where each piece stands is kept in the roadmap and the coding-sessions architecture page.  
 > **Design:** [Building on Bombadil, the page](pages/building-on-bombadil.html)  
 > **Decided by:** the project owner, 2026-09-27  
-> **Verified:** 2026-10-01 against `main` at `26843d3`: the status above and the list "In the code today", where on `main` a foot window opens from the `SUPER + Return` binding (`hl.dsp.exec_cmd`) or the terminal panel, and `hl.exec_cmd` starts `agentd` and `bombadil-shell`. The vendor facts under "Checked today" are dated 27 Sep 2026 and were not re-checked.
+> **Verified:** 2026-11-08 against `main` at `7176e55`: the status above, the steps before piece 1, the piece status lines and the list "In the code today", where on `main` a foot window opens from the `SUPER + Return` binding (`hl.dsp.exec_cmd`) or the terminal panel, and `hl.exec_cmd` hands the session's environment to the user manager and restarts the `bombadil-agentd` and `bombadil-shell` units. The built parts of pieces 1 to 3 were read in the coding-sessions pull request at `812d436`. The vendor facts under "Checked today" are dated 27 Sep 2026 and were not re-checked.
 
 You tap Super and type "claude acme". A terminal rises with the real Claude Code already in that project, and you work in it exactly as you do today. Close the window and nothing stops. Beside the pill, one small chip per project keeps a dot for each session: moving while it works, lit when it is your turn, red when it failed. Type a name and that session comes back mid-sentence. Each session runs as you, without sudo, in the checkout or in its own copy when another session already has it, with its own ports, so the pill's one conversation and its undo stay exactly as you confirmed them. When a session needs the system changed, it asks the pill and one key says yes. The vendors' own Linux apps install like any app, but the flow is the terminal on the desk and the Claude app on the phone, which buzzes only when it is your turn. No new keys. You learn a few words: the names you give things, "end", "ship" and "undo this".
 
@@ -22,7 +22,7 @@ This is the second experience brief. It sits on top of the first one ([How Bomba
 
 ## Build these first
 
-Six pieces, in this order. The first two are useful on day one with the sessions a person already runs. The third is what lets parallel sessions exist without breaking the confirmed undo model, and everything after it reads from the first three. Before any of this: merge the status-line and app-kit changes (both edit shell.qml and the system prompt, and both are on main as of 2026-10-01), and move agentd and Quickshell to systemd user services, which the first brief already asks for.
+Six pieces, in this order. The first two are useful on day one with the sessions a person already runs. The third is what lets parallel sessions exist without breaking the confirmed undo model, and everything after it reads from the first three. Before any of this: merge the status-line and app-kit changes (both edit shell.qml and the system prompt, and both are on main as of 2026-10-01), and move agentd and Quickshell to systemd user services, which the first brief already asks for. All of that is done on `main`: `bombadil-agentd.service` and `bombadil-shell.service` restart with `Restart=always` since 2026-10-07. `foot --server` is not a unit on `main`; the pull request starts it from `hyprland.lua`.
 
 ### 1. A session outlives its window and comes back by name
 
@@ -34,6 +34,8 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 
 **Effort:** L
 
+**Status:** In progress, in the open coding-sessions pull request. Built there: the registry, one systemd scope per session under `bombadil-dev-<project>.slice` around an invisible zellij session, the tools run as described (`claude -n`, `claude --resume <id>`, `codex --no-daemon`, `codex resume <id>`, through `mise exec` when `mise` is installed), the foot window as a viewer only, a second session on a repository in its own `git worktree`, `claude|codex|shell <project> [role]` and `end <name>` in the launcher, and sessions that come back asleep after a restart and resume by id. Built differently from the design: zellij's serialization is off (each tool resumes its own conversation), `foot --server` starts from `hyprland.lua` and is not a socket-activated unit, each viewer has its own app id and no `--toplevel-tag`, and the keyboard spike ran as a desktop test under sway that checks only Shift+Enter. The `tmux` fallback is not built.
+
 ### 2. Dots that tell you whose turn it is
 
 **What you see:** Left of the pill, one small chip per project, with a dot for each session. A dot moves while its session works, sits lit when it is your turn (it asked something, or finished and you have not looked), turns red when it failed, and dims when it is asleep. When a dot lights up while you are elsewhere, one line appears in the pill ("reviewer on Bombadil: run the migration?") and Tab takes you there; several at once merge into one line ("api and reviewer are waiting"), and pressing Tab again walks to the next one, ending with "Nothing needs you." Tab walks the your-turn lines first; a session's request for the machine ([Do it], piece 3) is always the last stop and never merges into the walk. The session in front of you never announces itself. Hovering a dot shows its last few plain lines without opening it. "what's running?" opens a card with one row per session: tool, state, since when, last sentence, files changed, memory. Above 80% of a usage limit, one line says "Claude 5-hour limit at 84%, resets 15:00." With more than three projects the chips fold into one ("4 projects · 1 waiting").
@@ -43,6 +45,8 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 **What changes:** A managed drop-in at /etc/claude-code/managed-settings.d/50-bombadil.json adds async command hooks for session start and end, each prompt, permission requests, the AskUserQuestion pre-hook, stop, failure and folder change, all running `bombadil-signal`, a tiny program writing to agentd's socket. The immediate "your turn" signal comes from PermissionRequest and the AskUserQuestion pre-hook, because Notification's permission_prompt fires about six seconds late and idle_prompt about a minute late. Every hook drops events carrying BOMBADIL_OS=1, because managed hooks also fire inside agentd's own turns. While any background Claude session exists, `claude agents --json --all` reconciles the states. Codex gets the same events as managed hooks in /etc/codex/requirements.toml (SessionStart, UserPromptSubmit, PermissionRequest, Stop, Interrupt, SessionEnd; trusted by policy, so no trust prompt), plus `notify` for agent-turn-complete in the skel config. Plain shells and test runs report through foot's [desktop-notifications] command with inhibit-when-focused off, and Hyprland's bell and urgent events are the last fallback. agentd follows activewindowv2 to know which window is in front, and broadcasts a new dev event family that carries no turn id, so PillState's single-turn logic is untouched; SessionChips.qml sits beside QueueChips.qml, and turns.jsonl gets kind:"dev" rows so Rewind shows session starts and ends. Claude's meter comes from a default status-line command in skel that forwards rate_limits to agentd; Codex has no supported read yet, so its limit shows only when a session hits it.
 
 **Effort:** M
+
+**Status:** In progress, in the same pull request. Built there: the managed hooks for Claude Code and for Codex (`requirements.toml` and `notify`) reporting through `bombadil-signal`, which skips `BOMBADIL_OS=1` and spools events while agentd is down; the `dev` message; the dots, chips and hover peek; the your-turn line, merged lines, Tab's walk and the fold above three projects; the desk's Needs you rows; sessions started by hand listed as "yours"; and `kind:"dev"` rows in `turns.jsonl` for a session that ended or crashed. Not built: the usage-limit line and the status-line meter, the `claude agents --json --all` reconcile, a folder-change hook, foot's desktop notifications and the bell fallback for plain shells, and "what's running?" as a card (it lists plain lines in the details drawer). Built differently from the design: Codex's `notify` sits in `/etc/codex/config.toml`, not in the skel config.
 
 ### 3. The fence: no sudo, an own copy, and one door to the machine
 
@@ -54,6 +58,8 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 
 **Effort:** L
 
+**Status:** Two parts are In progress, in the same pull request: the own copy of the code (a second session on a repository gets a `git worktree` at `~/Projects/.work/<repo>/<role>`, without the `.worktreeinclude` copy or the reflinked build folders) and `BOMBADIL_SESSION=1` in each session's environment, which nothing reads yet. The rest is Designed and has no code on `main` or on any branch: the `setpriv --no-new-privs` fence, the ports, `COMPOSE_PROJECT_NAME` and `BOMBADIL_DB`, the memory and CPU limits and zram, `bombadil-worktree`, the `~/Projects` subvolume, `bombadil ask` as the door, the developer note and `crossSessionInbound`.
+
 ### 4. Undo per session
 
 **What you see:** With builder's window in front, tap Super and type "undo this". The line says "Undone. 2 files in builder on Bombadil back as before 'drop the old cleanup'. README.md skipped, you changed it since." "undo builder" works from anywhere, and "redo" puts it back. A bare "undo" still means what it always meant: the machine's last turn, and it never touches your projects; with a session in front, its line says what it undid on the machine and adds "builder untouched; say undo this for it." The session's next prompt carries a note saying what you undid, and the vendors' own Esc Esc rewind keeps working inside the terminal.
@@ -63,6 +69,8 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 **What changes:** On both vendors, the UserPromptSubmit and Stop hooks run `bombadil-checkpoint pre|post`: `git add -A` into a persistent per-role index file (.git/bombadil/<role>.index, so it stays fast on big repositories), then write-tree and commit-tree, saved as refs/bombadil/<role>/<n>/pre and post. HEAD, the branch and the working tree are never touched, and the post step runs asynchronously. Undo restores each file whose content still matches its post state and lists the rest, which is the first brief's own rule for home undo. Ignored files (node_modules, databases) are not covered, and the line says so. The launcher's _undo (launcher.py) handles "undo this" and "undo <name>" locally, with the session named by the "this" chip or the word. Checkpoints are kept for 7 days after a session ends.
 
 **Effort:** M
+
+**Status:** Designed. No `bombadil-checkpoint`, no `refs/bombadil` and no "undo this" on `main` or on any branch.
 
 ### 5. Handing words across, at the desk and from the phone
 
@@ -74,6 +82,8 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 
 **Effort:** S to M
 
+**Status:** Designed. None of the six os-mcp tools, the `bombadil-dev` MCP server, `remoteControlAtStartup` or the presence file exists on `main` or on any branch. The open installed-OS pull request adds `bombadil remote`, a separate remote-control session run in `tmux`; it is not the phone view of the coding sessions.
+
 ### 6. Try it, read the change, ship it
 
 **What you see:** With api in front, "run it" starts the project's dev server as a dot ("api :4012") and opens the page beside the session in its own small browser window. "what did builder change?" answers "7 files, +240 −60, mostly the snapshot cleanup" with a Diff button that opens the diff in a terminal beside the session; when two live sessions changed the same file, the line adds "also changed by kit: shell.qml". If the project names a check, it runs in the background after each turn, its result shows on the dot and in the hover peek, and a new failure goes back to the session once, marked "(from Bombadil check)"; the same failure twice turns the dot red. "ship builder" tells builder to commit, then Bombadil pushes and opens the pull request, and the dot reads "PR 418". After the merge the dot reads "merged · Clean up", and "clean up" removes the copies that merged and are clean. "land builder" merges locally when there is no remote.
@@ -84,9 +94,11 @@ Six pieces, in this order. The first two are useful on day one with the sessions
 
 **Effort:** M
 
+**Status:** Designed. None of `BOMBADIL_SHIP`, the pre-push hook, the overlap marks, the preview window, the check job or "clean up" exists on `main` or on any branch.
+
 ## A working day
 
-This is how a day should feel once the six pieces above and the best of the rest are built. Most of it does not exist yet.
+This is how a day should feel once the six pieces above and the best of the rest are built. Most of it is not on `main` yet: the dots and the return by name are in an open pull request, and the rest is designed.
 
 **07:40, in bed.** The Claude app on the phone shows that batch on Bombadil finished overnight and that api on Acme is waiting on a question. They answer "yes, use the new table" from the phone.
 
@@ -226,6 +238,8 @@ Each of these forks. I picked a default and say why; the other options are liste
 
 ### In the code today
 
+All four hold on `main` on 2026-11-08. The coding-sessions pull request changes the first for a session started by name, and leaves the other three as they are; `SUPER + Return` there still opens a plain foot window.
+
 - Every coding session is a bare foot window started from hl.exec_cmd in hyprland.lua, so it dies with its window and with the compositor.
 - Stop kills anything in the turn's process tree outside PROTECTED_ARGS, including a session the agent started for you.
 - snapshots.py covers the root config only, and nothing under ~ can be undone; the checkout in ~/Projects has no way back at all.
@@ -292,4 +306,4 @@ These are the facts the design rests on, checked against the vendors' current do
 - foot's [desktop-notifications] command receives OSC 9, 99 and 777 with the app id, title and body, and --toplevel-tag matches Hyprland's xdg_tag rule field. zellij 0.45 has `subscribe` with JSON output and a web client with read-only tokens. Hyprland 0.56 on Arch uses the Lua config and emits bell and urgent events. Quickshell has no terminal widget of its own; qmltermwidget for Qt 6 exists in Arch, untested inside Quickshell.
 - systemd user units get memory, pids and cpu delegation out of the box, so slice limits work without root changes. NoNewPrivileges cannot be set on a scope unit, and a service unit whose zellij client forks would need RemainAfterExit, which is why the fence is `setpriv` inside the scope; its no-new-privs flag also breaks rootless podman's newuidmap, hence the socket outside the fence.
 
-**Unverified, and to test in the VM before piece 1 or 3:** zellij passing the kitty keyboard protocol, mouse and OSC notifications (with host_notification_protocol set) through to foot; `setpriv --no-new-privs` side effects beyond sudo and newuidmap (FUSE, browser sandboxes in tests, Codex's bubblewrap); whether managed hooks fire inside the Codex desktop app; that a copy made with `git worktree add` under ~/Projects/.work passes Claude's worktree check; the Codex daemon's socket path; whether a Codex thread loaded by one client can be attached by `codex --remote`.
+**Unverified, and to test in the VM before piece 1 or 3:** zellij passing the kitty keyboard protocol, mouse and OSC notifications (with host_notification_protocol set) through to foot; `setpriv --no-new-privs` side effects beyond sudo and newuidmap (FUSE, browser sandboxes in tests, Codex's bubblewrap); whether managed hooks fire inside the Codex desktop app; that a copy made with `git worktree add` under ~/Projects/.work passes Claude's worktree check; the Codex daemon's socket path; whether a Codex thread loaded by one client can be attached by `codex --remote`. In the coding-sessions pull request the first item is checked for Shift+Enter only, by a desktop test with real foot and zellij under a headless sway, not Hyprland; the rest are still unverified.

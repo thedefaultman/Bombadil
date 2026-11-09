@@ -1,10 +1,14 @@
 # Should Bombadil use Rust?
 
-> **Status:** Partly shipped. The decision holds on `main`, which has no Rust. The two fixes it assigns to the agent daemon are built in unmerged work, and the other four belong to the brain (its watcher and its folder view), which is not on `main` either.  
-> **Code:** nothing to build for the decision itself: `main` has no `.rs` file and no `Cargo.toml`. The problems it names sit in `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `src/bombadil/providers.py` and `src/bombadil/agentd.py`. The watcher is not on `main`.  
+> **Status:** Partly shipped. The decision holds on `main`, which has no Rust. Of the six problems it says to fix in Python, four are built on `main`; the other two are open in the brain's watcher.  
+> Shipped: the decision itself (no Rust of ours on `main` or on any remote branch); problem 1, the agent daemon restarted by a user unit; problem 2, an unreadable CLI line skipped; problem 3, the watcher's lines batched by writer; problem 6, the folder view's index named. The brain is on `main`, and so is its watcher.  
+> Designed, no code on `main` or on any branch: problems 4 and 5, the watcher's only loop and its privileges; and a Rust watcher, which the Decision paragraph makes conditional. Idea: a Rust compositor ("later").  
+> Built differently from the decision: problem 3 sends the writer's chain once per run of events by one writer, not once per process (section 7).  
+> In progress, not on `main`: the coding-session host and the hook signal and session wrapper that sections 1 and 4 mention.  
+> **Code:** nothing to build for the decision itself: `main` has no `.rs` file and no `Cargo.toml`. The fixes are in `iso/airootfs/etc/systemd/user/bombadil-agentd.service` and `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` (problem 1), `src/bombadil/providers.py` and `src/bombadil/agentd.py` (problem 2), and `src/bombadil/brain/watch.py` and `src/bombadil/brain/focus.py` (problems 3 and 6). Problems 4 and 5 sit in `src/bombadil/brain/watch.py` and `iso/airootfs/etc/systemd/system/bombadil-brain-watch.service`.  
 > **Design:** [Foundation choices](foundation-choices.md) (section 2, the compositor; section 5, Rust interface toolkits rejected), [Bombadil's Brain](brain-brief.md) (the watcher)  
 > **Decided by:** the project owner, 2026-09-30 (option a, in the Decision paragraph below)  
-> **Verified:** 2026-10-01 against `main` at `26843d3`: the status above, that no Rust is on `main` or on any remote branch, and the state of problems 1 and 2 on `main` (section 7). The line counts, timings and Rust figures in sections 1 to 4, the file names and line numbers in section 5, and the claims about the brain's watcher and the coding-session host (work that is not on `main`) are the survey's of 2026-09-30 and were not measured again.
+> **Verified:** 2026-11-08 against `main` at `7176e55`: the status above, that no Rust is on `main` or on any remote branch, the state of problems 1 to 6 on `main` and on every branch that has the brain (section 7), that the coding-session host and its hook signal and session wrapper are not on `main`, and the 892 lines of the session wrapper in section 4. The line counts, timings and Rust figures in sections 1 to 4 (the 892 lines excepted), the watcher's libc calls and kernel structs, and the file names and line numbers in section 5 are the survey's of 2026-09-30 and were not measured again.
 
 Answer to the project owner's question of 2026-09-29: should Bombadil use Rust for some of this work, what languages is it written in, and what is Rust. Written 2026-09-30 from a read-only survey of main (d9dde3b) and all 12 remote branches, with measurements. No code was changed.
 
@@ -25,6 +29,8 @@ Our own code at the time of the survey (tracked source, docs excluded):
 | Bash | 482 | | installer, rollback, ISO build, VM scripts |
 | Lua | 72 | | Hyprland config |
 | Small bits | | | SQL (brain's SQLite with FTS5), TOML, JSON, systemd units, KDL (zellij layout, unmerged), SVG icons, one Windows .cmd |
+
+The brain and the app kit, the two biggest additions in the table's third column, are both on `main` as of 2026-11-08; the counts are the survey's.
 
 **Rust of ours: zero**, on every branch (no .rs file, no Cargo.toml on any of the 12 heads).
 
@@ -59,7 +65,7 @@ All on a 4-core Linux VM with Python 3.11 (not Arch, not btrfs, no real model tu
 | Piece | Verdict | Why |
 |---|---|---|
 | Custom compositor | **Rust, later** | Smithay is Rust; already the plan ([foundation-choices.md](foundation-choices.md) section 2). No code yet. |
-| Brain root file watcher (watch.py, fanotify.py, forks.py, in src/bombadil/brain/ and not yet on main) | **Rust, later** | The only piece that runs as root for the whole uptime and talks straight to the kernel (5 libc calls, 11 hand-copied kernel structs), behind a clean socket. Wait until the brain merges, runs on real btrfs, and its protocol is written down. |
+| Brain root file watcher (watch.py, fanotify.py, forks.py, in src/bombadil/brain/, on `main` since 2026-09-30) | **Rust, later** | The only piece that runs as root for the whole uptime and talks straight to the kernel (5 libc calls, 11 hand-copied kernel structs), behind a clean socket. Wait until the brain merges, runs on real btrfs, and its protocol is written down. |
 | Tiny one-shot clients (Super tap; hook signal and session wrapper, which are in unmerged work) | Rust only if a compiler enters the build anyway | 64 ms vs 3 ms per tap, 25 ms vs 1.5 ms per hook, nothing a person notices. |
 | agentd, narrator, providers, launcher, os-mcp, Stop | Stay Python | Mostly waiting on the model; still edited on six branches; [the self-improvement brief](self-improvement-brief.md) lets the agent mend these, which needs no build step. |
 | Brain service (index, search, Focus) | Stay Python | Its slow spots are SQL. |
@@ -69,7 +75,7 @@ All on a 4-core Linux VM with Python 3.11 (not Arch, not btrfs, no real model tu
 
 ## 5. The real problems found (none are about language)
 
-File names and line numbers in this section are those of the survey. `watch.py` and `focus.py` in items 3 to 6 are in `src/bombadil/brain/`, which is not on `main`; section 7 says where each item stands.
+File names and line numbers in this section are those of the survey. `watch.py` and `focus.py` in items 3 to 6 are in `src/bombadil/brain/`, which was not on `main` when the survey was written and is on `main` as of 2026-11-08; section 7 says where each item stands.
 
 A Rust rewrite would copy each of these, so they come first:
 
@@ -90,15 +96,17 @@ A Rust rewrite would copy each of these, so they come first:
 
 ## 7. Where this stands
 
-Added 2026-10-01 against `main` at `26843d3`. Sections 1 to 6 are the survey as written on 2026-09-30.
+Added 2026-10-01 against `main` at `26843d3` and brought up to date on 2026-11-08 against `main` at `7176e55`. Sections 1 to 6 are the survey as written on 2026-09-30.
 
 | Part of the decision | State | Evidence |
 |---|---|---|
 | Keep Python and QML, write no Rust of ours | Shipped | No `.rs` file and no `Cargo.toml` in the tree (`find . -name '*.rs' -o -name Cargo.toml` finds nothing), and none on any remote branch. `iso/packages.x86_64` lists no Rust toolchain. |
-| Problem 1: restart agentd after a crash | In progress, not on `main` | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` line 8 still starts it with `hl.exec_cmd("agentd")`, and no unit in the tree sets `Restart=`. The fix, a systemd user unit, is built in unmerged work. |
-| Problem 2: one unreadable CLI line ends the turn | In progress, not on `main` | `Claude._events` in `src/bombadil/providers.py` (lines 287 and 294) still calls `.get` on `message` without checking its type, and the `pump` function inside `AgentD.turn` in `src/bombadil/agentd.py` (line 1335) does not guard `source.parse`. `Claude.parse` raises `AttributeError` on `{"type":"assistant","message":"..."}`. The fix is built in unmerged work. |
-| Problems 3 and 6: the watcher's repeated bytes and the folder view's index | In progress, not on `main` | The brain and its watcher (`src/bombadil/brain/watch.py` in unmerged work) are not on `main`. `src/bombadil/watch.py` on `main` is the `bombadil watch` turn viewer, a different module. In the unmerged work the watcher batches events by writer (`batch_line` in `watch.py`) and the last-writers query uses `INDEXED BY events_thing_t` (`focus.py`), which fixes problems 3 and 6. |
-| Problems 4 and 5: the watcher's only loop and its privileges | Designed, no code on any branch (2026-10-01) | In the unmerged watcher the catch-up and generation reads still run on its only loop, the socket is still mode 0666, and its unit has no `CapabilityBoundingSet`, `NoNewPrivileges` or `ProtectSystem`. |
-| A Rust watcher, a Rust compositor | Not built | No brain watcher and no compositor of ours is on `main`, in any language. The compositor is a direction in [foundation-choices.md](foundation-choices.md) section 2; the Rust watcher is conditional on the triggers in the Decision paragraph above. |
+| Problem 1: restart agentd after a crash | Shipped | `iso/airootfs/etc/systemd/user/bombadil-agentd.service` sets `Restart=always`, `RestartSec=1` and `StartLimitIntervalSec=0`, and `hyprland.lua` (line 10) restarts `bombadil-agentd bombadil-shell mako` through `systemctl --user` in place of `hl.exec_cmd("agentd")`, so the bar and the notifications come back too. The conversation also survives a restart: `_load_state` and `_save_state` in `src/bombadil/agentd.py` keep the provider's conversation id and the model in `agentd-state.json` under the runtime directory, though not across a reboot or a later login. Tests: `tests/test_iso_profile.py` and the smoke check `agentd-comes-back` in `iso/airootfs/usr/local/bin/bombadil-smoke`. |
+| Problem 2: one unreadable CLI line ends the turn | Shipped | The assistant and user branches of `Claude._events` in `src/bombadil/providers.py` read `message` through `_obj` (lines 341 and 350), and the `pump` function inside `AgentD.turn` in `src/bombadil/agentd.py` (line 2193) passes `source.parse` through `_safely`, which logs a line it cannot read and skips it, so `{"type":"assistant","message":"..."}` no longer ends the turn. The rate-limit branch of `Claude._events` (line 330) still calls `.get` on `message` directly; `_safely` catches that. Tests: `tests/test_providers.py` (`test_a_line_of_the_wrong_shape_reads_as_nothing_not_an_error`, `test_the_answer_after_an_odd_line_is_still_read`) and `tests/test_agentd.py`. |
+| Problems 3 and 6: the watcher's repeated bytes and the folder view's index | Shipped; problem 3 built differently from the decision | The brain and its watcher are on `main`. `src/bombadil/watch.py` is the `bombadil watch` turn viewer, a different module. `batch_line` and `Hub.deliver_run` in `src/bombadil/brain/watch.py` send the writer's chain once for a run of consecutive events by one writer within one read of the kernel's queue (at most 1,000 events), and the brain unpacks the line with `_unbatch` in `src/bombadil/brain/service.py`; the decision said once per process, and each line stands alone so a spool or a late reader needs nothing before it. The last-writers query in `src/bombadil/brain/focus.py` (line 955) uses `INDEXED BY events_thing_t`. Tests: `tests/test_brain_watch.py` and `tests/test_brain_focus.py` (line 613 checks the query plan). The line format is in [BRAIN.md](../BRAIN.md). |
+| Problems 4 and 5: the watcher's only loop and its privileges | Designed, no code on `main` or on any branch (2026-11-08) | In `src/bombadil/brain/watch.py` on `main`, `Btrfs._run` runs `btrfs subvolume find-new` with `subprocess.run` (timeout 120 s) from `read_markers` every 60 s, and `catch_up` runs once before the loop accepts a client, all on the watcher's only loop. The socket is still mode 0666 (`Watcher.listen`), and `bombadil-brain-watch.service` has no `CapabilityBoundingSet`, `NoNewPrivileges` or `ProtectSystem`. The watcher and its unit are the same file on every branch that has the brain. |
+| A Rust watcher | Designed, conditional, no code | No `.rs` file exists. The triggers in the Decision paragraph above are not recorded as met: the brain has merged and its protocol is written in [BRAIN.md](../BRAIN.md), but no lag from a big write is recorded, and the watcher's VM check (`tests/vm/samples/brain-watch/`, check 8) measures throughput on 20,000 files, not the machine's lag. |
+| A Rust compositor | Idea | No compositor of ours exists, in any language, on `main` or on any branch. It is a direction ("later") in [foundation-choices.md](foundation-choices.md) section 2, not a design. |
+| The coding-session host, its hook signal and its session wrapper | In progress, not on `main` | `src/bombadil/dev.py` (892 lines), `bin/bombadil-signal` and `share/zellij/config.kdl` exist only in unmerged work, and `iso/packages.x86_64` on `main` does not list zellij. |
 
 [The roadmap](../roadmap.md) tracks the unmerged work; [Bombadil's Brain](brain-brief.md) holds the brain's design.

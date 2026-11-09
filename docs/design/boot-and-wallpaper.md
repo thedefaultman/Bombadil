@@ -1,9 +1,9 @@
 # Boot and the wallpaper
 
-> **Status:** Shipped. The quiet console, Hyprland's opaque ground colour, the wallpaper and the user's own picture are on `main`. The stone in the wallpaper is an open taste choice (see the end of the page).
+> **Status:** Shipped. The quiet console (the live entry and the installed system's GRUB drop-in), the greetd line that keeps Hyprland's start-up text off the console, Hyprland's opaque ground colour, the wallpaper and the user's own picture are on `main`. The stone in the wallpaper is an open taste choice (see the end of the page). The GRUB password screen on the mark and the removal of GRUB's two `Loading` lines are listed under "Not here" and are In progress with the installed OS work, which is not on `main`: the installer on `main` installs no GRUB theme, deletes no `Loading` line and does not encrypt the disk. Lock and login screens as the pill are Designed.
 > **Code:** `shell/Wallpaper.qml`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py`, `scripts/console-palette.py`, `iso/efiboot/loader/entries/01-bombadil.conf`, `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`, `iso/airootfs/etc/greetd/config.toml`, `tests/test_wallpaper.py`, `tests/test_boot_console.py`
 > **Design:** [The Bombadil mark](identity-brief.md) and the [design system](../design-system/README.md) set the colours; [Shell](../architecture/shell.md) and [ISO and install](../architecture/iso-and-install.md) describe the parts this page touches
-> **Verified:** 2026-10-01 against `main` at `6150431`: the paths above exist and the sections below are the note that shipped with the change.
+> **Verified:** 2026-11-08 against `main` at `7176e55`: the status above, the paths above, and the status statements in the stages table and under "Not here". The rest of the page is the note that shipped with the change and was not re-checked on this date.
 
 From the moment the computer powers on to the desk at rest, every screen is in the design system:
 the dark ground (`#101214`), the text colour (`#e6e8eb`), and the orange (`#d97757`) only on the
@@ -17,7 +17,7 @@ the mark is in [`brand/`](../brand/).
 | --- | --- | --- |
 | Firmware | The maker's own logo, or nothing. Not ours to change. | the machine |
 | Boot loader, live stick | systemd-boot's text menu for three seconds. It has no pictures; the first entry boots by itself. | `iso/efiboot/loader/` |
-| Boot loader, installed | GRUB, hidden unless Esc is held at power-on; with the disk encrypted it asks for the password on the mark in the ground colour. | `share/grub/bombadil/`, wired by the installed-system build |
+| Boot loader, installed | GRUB, hidden unless Esc is held at power-on; with the disk encrypted it asks for the password on the mark in the ground colour. | `share/grub/bombadil/`, wired by the installed-system build (In progress, not on `main`: on `main` the menu is hidden, and the theme and the encrypted disk are not there) |
 | Kernel and start-up | An empty console in the ground colour. Nothing is printed unless a start fails; no cursor, no kernel logo, no Hyprland banner. | the kernel parameters in this page, `greetd/config.toml` |
 | The desk | The wallpaper under the cards, the pill and every window. | `hyprland.lua`, `shell/Wallpaper.qml` |
 
@@ -162,18 +162,25 @@ text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is n
 
 - **The GRUB theme** (`share/grub/bombadil/`) is the identity work's picture and is wired into the
   installed system by the installed-system build. Its README says how. It shows when GRUB asks for the
-  disk password.
+  disk password. Status: In progress. The picture and its README are on `main`, and nothing on `main`
+  installs them. The installed OS work puts the picture and the Inter font on the EFI partition and sets
+  the picture as GRUB's background with a script in `/etc/grub.d`, and leaves `theme.txt` unwired,
+  because GRUB applies a theme only when its menu shows, which is after the password. That differs
+  from the `GRUB_THEME` drop-in the README on `main` describes.
 - **GRUB's own two lines** on an installed system, `Loading Linux linux ...` and `Loading initial
   ramdisk ...`, show for a moment after the firmware logo. They are `echo` lines that `grub-mkconfig`'s
   `10_linux` writes into `grub.cfg`, and Arch's grub (2.16) has no switch for them, so no kernel or
   GRUB variable here can hide them. Whoever writes `grub.cfg` (the installed-system build, and the hook
   that regenerates it after a kernel update) can delete them from the generated file, with
   `grub-mkconfig` run in the C locale so the text is the English one:
-  `sed -i "/^[[:space:]]*echo[[:space:]]*'Loading /d" /boot/grub/grub.cfg`.
+  `sed -i "/^[[:space:]]*echo[[:space:]]*'Loading /d" /boot/grub/grub.cfg`. Status: In progress. No
+  step of the installer on `main` deletes them. The installed OS work does, with a script that runs
+  `grub-mkconfig` in the C locale and then this `sed`.
 - **The live stick's loader** is systemd-boot, which draws text only. A graphical menu would mean
   moving the live image to GRUB too; the live menu is three seconds and one entry, so it stays.
 - **The firmware's logo** before any of this. Some machines let the person turn it off.
 - **Lock and login screens** become the pill (a separate piece of the installed-system design).
+  Status: Designed. Nothing on `main` draws either; greetd signs the user in on its own.
 
 ## Checking it
 
