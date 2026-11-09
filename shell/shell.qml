@@ -4,6 +4,8 @@
 // while it works and how the turn ended, and, when nothing else has it, a notice another service
 // asked agentd to say (new mail). The pill is also the launcher: an app or panel name
 // ("passwords", "browser") opens at once, and undo and stop never wait for the model.
+// Above the pill's left end, a chip per project holds a dot per coding session; when one waits
+// for you the pill's empty line says so, and Tab goes there.
 // Everything else on screen is a panel or an app the agent opened.
 import Quickshell
 import Quickshell.Io
@@ -21,8 +23,10 @@ ShellRoot {
     property string summonedOn: ""
     property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
-    // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
+    // Reduced motion (BOMBADIL_REDUCE_MOTION=1): the stone pulses instead of rolling and knocking, and
+    // everything else that moves goes instant. The kit's Theme holds the switch for every surface.
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
+    Binding { target: Kit.Theme; property: "reducedMotion"; value: root.reducedMotion }
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
@@ -36,7 +40,7 @@ ShellRoot {
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
     // The ground under everything: the wallpaper, on every screen.
-    Wallpaper { reducedMotion: root.reducedMotion }
+    Wallpaper { reducedMotion: Kit.Theme.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -59,6 +63,12 @@ ShellRoot {
     }
     Binding { target: deskState; property: "screenWidth"; value: root.deskScreenObject ? root.deskScreenObject.width : 1920 }
     Binding { target: deskState; property: "screenHeight"; value: root.deskScreenObject ? root.deskScreenObject.height : 1080 }
+    // The rails stop where the bar's zone starts, and that zone grows with the rows of chips above the pill.
+    readonly property int deskZone: {
+        for (const w of bars.instances) if (w.onDesk) return w.exclusiveZone
+        return 64
+    }
+    Binding { target: deskState; property: "rowZone"; value: root.deskZone }
     HyprCover { desk: deskState; screenName: root.deskScreen }
     Variants {
         model: Quickshell.screens
@@ -98,6 +108,20 @@ ShellRoot {
         function state(): string { return JSON.stringify(pillState.snapshot()) }
     }
 
+    // The coding sessions (dev.py): their dots, and the line the pill shows while one waits.
+    DevState {
+        id: devState
+        onOutgoing: msg => root.write(msg)
+    }
+    IpcHandler {
+        target: "dev"
+        // Where the first screen's chips sit, as JSON.
+        function chips(): string {
+            const w = bars.instances.length > 0 ? bars.instances[0] : null
+            return JSON.stringify(w ? w.chipsGeometry() : {})
+        }
+    }
+
     // agentd may start after the shell or restart under it. A Quickshell Socket that failed
     // to connect does not retry, so each attempt is a fresh Socket.
     property var agentd: null
@@ -113,7 +137,7 @@ ShellRoot {
                 root.connected = connected
                 deskState.connected = connected
                 if (connected) pillState.connected = true
-                else { pillState.lost(); deskState.lost() }
+                else { pillState.lost(); deskState.lost(); devState.lost() }
             }
         }
     }
@@ -130,6 +154,7 @@ ShellRoot {
         try { ev = JSON.parse(message) } catch (e) { return }
         pillState.handle(ev)
         deskState.handle(ev)
+        devState.handle(ev)   // only its own "dev" messages
     }
 
     function write(msg) {
@@ -190,6 +215,7 @@ ShellRoot {
     }
 
     Variants {
+        id: bars
         model: Quickshell.screens
         PanelWindow {
             id: win
@@ -201,9 +227,18 @@ ShellRoot {
             readonly property bool onDesk: modelData.name === root.deskScreen
             readonly property bool capsule: onDesk && deskState.capsule
             readonly property real pillMax: onDesk ? deskState.pillWidth : Kit.Theme.pillMaxWidth
+            // A picture beside a window is wider than the pill (see DeskState.pictureTarget).
+            readonly property real pictureMax: onDesk ? deskState.pictureWidth : Kit.Theme.pillMaxWidth
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
+            // Where the session chips sit against the pill, for the desktop test (`quickshell ipc call dev chips`).
+            function chipsGeometry() {
+                const c = sessionChips.mapToItem(null, 0, 0)
+                const p = pillBox.mapToItem(null, 0, 0)
+                return { visible: sessionChips.visible, x: c.x, y: c.y, width: sessionChips.width,
+                         height: sessionChips.height, pillX: p.x, pillY: p.y, pillWidth: pillBox.width }
+            }
             WlrLayershell.layer: WlrLayer.Overlay
             WlrLayershell.namespace: "bombadil-bar"
             // On Hyprland the pill takes keys only while summoned (a tap on Super, or a click on the
@@ -219,6 +254,7 @@ ShellRoot {
                 : (summoned ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.OnDemand)
             // The prompt bar, plus the app chips while apps run, so windows never cover them.
             exclusiveZone: 64 + (appChips.visible ? appChips.implicitHeight + column.spacing : 0)
+                           + (sessionRow.visible ? sessionRow.implicitHeight + column.spacing : 0)
             // Clicks go through the transparent parts of the bar to the windows behind it.
             mask: Region {
                 Region { item: cardHost }
@@ -226,6 +262,7 @@ ShellRoot {
                 Region { item: foundChips.visible ? foundChips : null }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
+                Region { item: sessionChips.visible ? sessionChips : null }   // (a hidden item keeps its last place)
                 Region { item: appChips }
                 Region { item: aiCard.visible ? aiCard : null }
                 Region { item: pillBox }
@@ -299,8 +336,9 @@ ShellRoot {
                     id: cardHost
                     visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
-                    // As wide as the pill, so it stays between the desk's rails.
-                    Layout.maximumWidth: Math.max(360, win.pillMax)
+                    // As wide as the pill, so it stays between the desk's rails; beside a window, up to
+                    // about 560 where the rails leave the room (the pill is 360 then).
+                    Layout.maximumWidth: Math.max(360, win.pictureMax)
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
@@ -347,6 +385,36 @@ ShellRoot {
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                 }
 
+                // A hovered dot's last few lines, over its chip. It takes no clicks.
+                SessionPeek {
+                    id: sessionPeek
+                    dev: devState
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: implicitWidth
+                    // Over its chip, at the pill's left end.
+                    Layout.leftMargin: Math.max(0, Math.min(sessionChips.x, column.width - implicitWidth))
+                    Layout.rightMargin: 0
+                }
+
+                // The sessions' chips, above the pill's left end (the desk's strips keep the row beside it).
+                Item {
+                    id: sessionRow
+                    // Not sessionChips.visible: a child is only visible while its parent is, so the row
+                    // would never come back once hidden.
+                    visible: devState.sessions.length > 0
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: win.pillMax
+                    Layout.alignment: Qt.AlignHCenter
+                    implicitHeight: sessionChips.implicitHeight
+                    SessionChips {
+                        id: sessionChips
+                        dev: devState
+                        x: 14
+                        width: implicitWidth
+                        height: implicitHeight
+                    }
+                }
+
                 // Running apps: a chip per app. Click slides it in or out, × quits it.
                 RowLayout {
                     id: appChips
@@ -367,7 +435,7 @@ ShellRoot {
                             color: shown ? Kit.Theme.glassRaised : Kit.Theme.glassChip
                             border.width: 1
                             border.color: shown ? Kit.Theme.accent : Kit.Theme.border
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: Kit.Theme.duration(150) } }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
@@ -449,7 +517,7 @@ ShellRoot {
                                 anchors.centerIn: parent
                                 // The screen that holds the keyboard leans toward what you type.
                                 face: win.summoned && pillState.face === "rest" ? "listening" : pillState.face
-                                reducedMotion: root.reducedMotion
+                                reducedMotion: Kit.Theme.reducedMotion
                             }
                             Row {
                                 id: stopRow
@@ -473,10 +541,16 @@ ShellRoot {
                                 font.family: Kit.Theme.fontFamily
                                 anchors.fill: parent
                                 enabled: !win.capsule   // hidden in the capsule: nothing can be typed blind
-                                // While the AI rests the empty field says so: what still works, and when asks run.
-                                placeholderText: pillState.face === "starting" ? "Starting" : (root.connected ? (pillState.restHint || "Ask anything") : "Waiting for agentd…")
+                                // While a coding session waits for you, the empty pill says so ("reviewer on
+                                // Bombadil: run the migration?") and Tab goes there; else, while the AI rests,
+                                // it says what still works and when asks run.
+                                placeholderText: pillState.face === "starting" ? "Starting"
+                                                 : (!root.connected ? "Waiting for agentd…"
+                                                    : (devState.line !== "" ? devState.line + "   ⇥"
+                                                       : (pillState.restHint || "Ask anything")))
                                 color: Kit.Theme.fg
-                                placeholderTextColor: Kit.Theme.muted
+                                placeholderTextColor: devState.line !== "" && root.connected && pillState.face !== "starting"
+                                                      ? Kit.Theme.accentInk : Kit.Theme.muted
                                 font.pixelSize: Kit.Theme.promptSize
                                 background: null
                                 focus: true
@@ -492,8 +566,14 @@ ShellRoot {
                                     if (win.summoned) idle.restart()
                                     if (text !== "") pillState.closeAi()
                                 }
-                                // Tab takes the suggested name: "pass" + Tab = "passwords".
+                                // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
+                                // pill it walks to the next session waiting for you.
                                 Keys.onTabPressed: {
+                                    if (text === "" && devState.sessions.length > 0) {
+                                        devState.next()
+                                        root.release()
+                                        return
+                                    }
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }

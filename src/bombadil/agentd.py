@@ -16,6 +16,14 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "close_details"}            put the drawer away (Esc in the pill)
                    {"type": "summon", "text"?: "..."}   ask the bar to take the keyboard (Super), with
                                                         words to finish in the pill (the Brain's Ask)
+                   {"type": "summon", "text": "...", "tip": true, "id": "make-an-app"}
+                                                        a tip's button: the same, but the pill keeps words the
+                                                        person typed and has not sent; Enter sending these
+                                                        words unedited tries the tip (see Tips, below)
+                   {"type": "tips", "op": "turn", "dir": 1|-1}  the Tips card's arrows and wheel
+                   {"type": "tips", "op": "open", "id": "<tip>"|"", "play": bool}
+                                                        open the Tips app on that tip (Tips, below)
+                   {"type": "tips", "op": "list"}       the Tips app's one-shot: answered with the list
                    {"type": "open", "kind": "path"|"unit"|"package"|"url"|"turn", "value": "..."}
                                                         open what a box in a picture names; answered
                                                         by a "local" event with action "open"
@@ -38,6 +46,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
                                                         the os-mcp `desk` tool; answered with desk-result
                    {"type": "jobs", "op": "get"}        the jobs table (also sent after `desk get`)
+                   {"type": "away", "op": "get"|"seen"}  the Away card again; or: the person has seen it
                    {"type": "jobs", "op": "stop"|"dismiss"|"why", "id": job}
                                                         stop a job (systemctl, never the model), drop a
                                                         finished one's row, show its output in the drawer
@@ -53,6 +62,9 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
                    {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
+                   {"type": "dev", "action": "next"|"open"|"end"|"why", "key": "..."}
+                                                        coding sessions: Tab's walk, a dot's click
+                   {"type": "dev-signal", ...}          a coding tool's hook (bombadil-signal)
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
                     "local"|"card"|"plan", "turn": n, ...}
@@ -67,7 +79,16 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         while resting, for an ask typed in the pill that has to wait:
                                                         up to three things on this computer it nearly names (none:
                                                         the line says so); only offered, a press opens one
-                   {"type": "summon", "text"?: "..."}
+                   {"type": "summon", "text"?: "...", "tip"?: true}
+                   {"type": "dev", "sessions": [...], "front", "attention", "line"}
+                                                        the coding sessions, for the dots (dev.py)
+                   {"type": "tips", "present": bool, "card": {"id", "line", "words", "marks", "why", "index",
+                    "count", "tip": {the whole row}} | null}
+                                                        the Tips card: once to each client that connects, and
+                                                        to all of them when it changes, never when it did not
+                   {"type": "tips", "list": [{"id", "section", "order", "line", "words", "marks", "card",
+                    "tried", "new", "captions", "beats"}]}
+                                                        the answer to a list, to its sender only
                    {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "rails": {...},
                     "order": {...}, "screen": ""}       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
@@ -156,6 +177,23 @@ is close to its line. It broadcasts the message when it differs from the last on
 again; {"type": "vitals", "op": "open", "row": "disk"} draws the disks picture (a click on that row), with
 no model. "show machine" and "how's the machine" raise the card on request (desk.on_ask).
 
+The Away card is one message, {"type": "away", "since", "count", "why", "rows"} (away.py has the whole shape;
+rows [] means no card). It is what the turn log and the coding sessions say happened since the person was
+last seen: "show away" builds it (desk.on_ask), the moment they come back from a break will (away.Away.back),
+and it is gone once they click it ({"type": "away", "op": "seen"}) or type their next ask.
+{"type": "away", "op": "get"} asks for it again. Nothing in it reaches the model.
+
+Tips (tips.py, docs/TIPS.md) are rows in share/tips/tips.toml that say what a new person can ask. agentd decides
+which this machine can back (the AI chosen and not signed out, the disk, the apps and projects, the desk), keeps
+~/.local/state/bombadil/tips.json (it is the only writer: the first-ready date, the days the person typed in the
+pill, the tips tried, the tips known, the tip the app opens on) and sends the shell one `tips` message when the
+card is not what it was told. The card is the first tip not tried, in the person's first week of use; it turns on
+an arrow and 12 seconds (TIPS_TURN_AFTER) after a turn that tried a tip ends. A tip is tried, with no model, when
+a button's words are sent unedited, or when what agentd saw matches the tip's `tried_when`: the launcher action
+that ran, a tool the turn used, a job started, a "!" command (tips.py lists the forms). Showing a tip never counts.
+`open` only stores the tip for the app and calls Tips.on_open, which the Tips app's piece wires; no window opens
+here. BOMBADIL_TIPS=0 turns Tips off.
+
 Resting. A provider that refuses an ask because the account is out (a plan window used up, a spending
 cap hit: providers.limit(), never a busy moment) puts the machine in the state "resting": the turn goes
 back to the front of the queue with a note of what it had already changed, nothing more is sent until
@@ -188,10 +226,12 @@ import subprocess
 import sys
 import time
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 
-from . import (browser, cards, config, finder, launcher, narrate, outbox, paths, procs, providers, rest, signin, snapshots,
-               sysmap, watch)
+from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, outbox, paths, procs, providers, rest,
+               signin, snapshots, sysmap, watch)
+from .away import Away
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
@@ -199,6 +239,7 @@ from .mail import client as mail_client
 from .mail import tools as mail_tools
 from .mail import watch as mail_watch
 from .notices import Notices, one_line
+from .tips import BANG, Tips, job_keys, local_keys, read_facts, tool_keys
 from .vitals import Vitals
 
 # Provider events that only feed the live line; clients get the "status" events made from them.
@@ -230,8 +271,8 @@ WATCHDOG_TICK = 5.0
 # own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
 # Anything else is passed through as it came.
 LIMIT_WORDS = ("usage limit", "spend limit", "spending limit", "credit balance", "hit your limit", "session limit",
-               "weekly limit", "opus limit", "sonnet limit", "shared budget", "out of usage credits", "spend cap",
-               "out of credits", "quota exceeded")
+               "5-hour limit", "weekly limit", "opus limit", "sonnet limit", "usage credit limit",
+               "shared budget", "out of usage credits", "spend cap", "out of credits", "quota exceeded")
 LIMIT_TEXT = "This account has hit a usage or spending limit. Try again after it resets, or raise the limit."
 # Checked first: the throttle notice says "not your usage limit", which a limit word would also catch.
 RATE_WORDS = ("rate limit", "rate_limit", "too many requests", "not your usage limit")
@@ -259,6 +300,13 @@ MAIL_NOT_KEPT = "[mail text not kept]"   # what stands in the turn's log for wha
 MAIL_TEXT_TOOLS = ("mail_read", "mail_search")
 # What a click on a Machine row opens (vitals.py names the rows that open anything).
 VITALS_OPENS = {"disk": "disks"}
+# After a turn that tried a tip (or a word that did) the Tips card turns to the next tip this long after it
+# ends.
+TIPS_TURN_AFTER = 12.0
+# The AI is something to teach with while it is ready or resting (setup, above).
+TIPS_AI_STATES = ("ready", "resting")
+# How often agentd looks at ~/Apps to tell the bar (and Tips) that an app came or went.
+APPS_POLL = 3.0
 
 
 class AgentD:
@@ -266,14 +314,21 @@ class AgentD:
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
                  jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
-                 vitals: Vitals | None = None):
+                 vitals: Vitals | None = None, sessions: dev.Dev | None = None, away: Away | None = None,
+                 tips: Tips | None = None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
         # One desk: the launcher's words, the shell and the agent's tool all change this one.
         self.desk = desk or getattr(launch, "desk_state", None) or Desk().load()
-        self.launcher = launch or launcher.Launcher(snaps=self.snaps, desk=self.desk)
+        # Coding sessions (dev.py): their dots, and the words that bring them back.
+        self.dev = sessions if sessions is not None else dev.Dev()
+        self.dev.on_change = self._dev_changed
+        self._dev_dirty = False
+        self._dev_last: dict | None = None
+        self._signals: asyncio.Queue = asyncio.Queue()
+        self.launcher = launch or launcher.Launcher(snaps=self.snaps, desk=self.desk, sessions=self.dev)
         self.stopper = stopper or procs.Stopper()
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
@@ -369,7 +424,23 @@ class AgentD:
         self._vitals_task: asyncio.Task | None = None
         self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
         self._vitals_last: dict | None = None       # what the shell was last told
-        self.desk.on_ask = self._vitals_asked
+        self.desk.on_ask = self._desk_asked
+        # Tips (docs/TIPS.md): what a new person can ask, and what this one has been taught. agentd is the
+        # only writer of tips.json. The desk says whether Tips is put away, and (once the desk can keep a
+        # widget) whether it is kept. BOMBADIL_TIPS=0 turns Tips off (the tests do: no client is sent a card).
+        self.tips = tips if tips is not None else (
+            Tips(hidden=lambda: "tips" in self.desk.hidden,
+                 kept=lambda: "tips" in getattr(self.desk, "kept", ()))
+            if os.environ.get("BOMBADIL_TIPS") != "0" else None)
+        self._tips_last: dict | None = None         # what the shell was last told
+        self._tips_lock = asyncio.Lock()            # one look at the machine at a time
+        self._tips_timer: asyncio.TimerHandle | None = None   # turns the card after a turn that tried a tip
+        self._tips_tried = False                    # a turn or a word tried a tip since the card last turned
+        self._tips_calls: dict[str, str] = {}       # the running turn's tool calls by id, until their results
+        # What happened while the person was gone. Their asks to the pill are how agentd knows they were there.
+        self.away = away if away is not None else Away()
+        self._typed_last: float | None = None       # when the person last typed to the pill
+        self._typed_before: float | None = None     # ...and the time before that: when they were last seen there
 
     # -- state that outlives a restart --
 
@@ -427,17 +498,16 @@ class AgentD:
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
-        worker = asyncio.create_task(self._worker())
+        tasks = [asyncio.create_task(t) for t in (self._worker(), self._watch_apps(), self._mail_watch.run(),
+                                                  self._dev_signals(), self._dev_watch(), self._follow_focus())]
         self._background(self.check_access(start=self.auto_signin))
-        watcher = asyncio.create_task(self._watch_apps())
-        mail = asyncio.create_task(self._mail_watch.run())
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
             try:
                 await server.serve_forever()
             finally:
-                for task in (worker, watcher, mail, self._jobs_task, self._notices_task, self._rest_task,
-                             self._vitals_task):
+                for task in (*tasks, self._jobs_task, self._notices_task, self._rest_task, self._vitals_task,
+                             self._tips_timer):
                     if task is not None:
                         task.cancel()
 
@@ -446,13 +516,11 @@ class AgentD:
         self.clients[writer] = queue
         sender = asyncio.create_task(self._sender(writer, queue))
         self._peers[writer] = self._look_at(writer)
+        # The greeting is written beside the reading. A client that sends its line and leaves (a key
+        # bind, a script) makes a greeting write to its closed socket fail, and a failed write
+        # makes the next read raise even with its line already in the buffer: read first.
+        greeting = asyncio.create_task(self._greet(writer))
         try:
-            await self._send(writer, self._status())
-            await self._send(writer, await self._entries_msg())
-            await self._send(writer, self._setup_msg())
-            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
-                await self._send(writer, notice)
-            self._vitals_kick()
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -460,6 +528,7 @@ class AgentD:
                     continue
                 if not isinstance(msg, dict):
                     continue
+                await greeting   # the greeting goes out before any answer
                 try:
                     await self.handle(msg, writer)
                 except Exception as e:  # noqa: BLE001 - one bad message never costs the connection
@@ -469,6 +538,7 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            greeting.cancel()
             self._peers.pop(writer, None)
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
@@ -480,6 +550,24 @@ class AgentD:
             sender.cancel()
             writer.close()
 
+    async def _greet(self, writer: asyncio.StreamWriter):
+        """What a client hears on connecting: status, entries, setup, the coding sessions, the Away card."""
+        try:
+            await self._send(writer, self._status())
+            await self._send(writer, await self._entries_msg())
+            await self._send(writer, self._setup_msg())
+            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
+                await self._send(writer, notice)
+            await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
+            self._vitals_kick()
+            await self._tips_hello(writer)
+            if self.away.up:
+                await self._send(writer, self.away.message())
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a client missing its greeting still has its connection
+            print(f"agentd: greeting: {type(e).__name__}: {e}", file=sys.stderr)
+
     async def handle(self, msg: dict, writer: asyncio.StreamWriter):
         t = msg.get("type")
         if t == "prompt":
@@ -487,6 +575,9 @@ class AgentD:
             if not text:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
+            await self._typed(msg, writer)
+            if not msg.get("asked_by") and _app_of(text) is None and await self._persons(writer):
+                self._tips_typed(text)   # the person typed in the pill: a day of use, perhaps a tip tried
             action = await self._match(text)
             if action is None and launcher.is_send_word(text):
                 draft = await self._draft_waiting()
@@ -527,7 +618,7 @@ class AgentD:
                 # Asked for something while signed out: sign in, and the ask runs after.
                 self._background(self.start_signin())
         elif t in ("stop", "cancel"):
-            await self.stop()
+            await self.stop(by_person=True)
         elif t == "unqueue":
             await self._unqueue(msg.get("turn"))
         elif t == "found_open":
@@ -544,7 +635,17 @@ class AgentD:
             self._background(self.open_thing(msg.get("kind"), msg.get("value")))
         elif t == "summon":
             text = _pill_words(msg.get("text"))
-            await self.broadcast({"type": "summon", **({"text": text} if text else {})})
+            tip = msg.get("tip") is True
+            if tip and text and self.tips is not None:
+                self.tips.summoned(text, msg.get("id"))   # a tip's button: Enter, unedited, tries the tip
+            summon = {"type": "summon", **({"text": text} if text else {})}
+            if tip:
+                summon["tip"] = True   # the pill keeps words the person typed and has not sent
+            await self.broadcast(summon)
+        elif t == "dev-signal":
+            self._signals.put_nowait(msg)
+        elif t == "dev":
+            self._background(self.dev_action(str(msg.get("action", "")), str(msg.get("key", ""))))
         elif t == "card":
             await self._card_message(msg, writer)
         elif t == "desk":
@@ -555,6 +656,10 @@ class AgentD:
             await self._jobs_op(msg, writer)
         elif t == "vitals":
             await self._vitals_op(msg, writer)
+        elif t == "tips":
+            await self._tips_op(msg, writer)
+        elif t == "away":
+            await self._away_op(msg, writer)
         elif t == "job-tool":
             await self._send(writer, await self._job_tool(msg))
         elif t == "mail-tool":
@@ -615,7 +720,7 @@ class AgentD:
 
     async def _entries_msg(self) -> dict:
         try:
-            entries = await asyncio.to_thread(launcher.entries)
+            entries = await asyncio.to_thread(launcher.entries, None, self.dev)
         except Exception as e:  # noqa: BLE001 - a broken app folder must not cost the bar its words
             print(f"agentd: launcher entries: {type(e).__name__}: {e}", file=sys.stderr)
             entries = launcher.entries([])
@@ -624,22 +729,24 @@ class AgentD:
     async def _match(self, text: str) -> launcher.Action | None:
         try:
             # "why" is a launcher word only while a turn runs: then it asks about the step in front of you.
-            return await asyncio.to_thread(launcher.match, text, None, self.current is not None)
+            return await asyncio.to_thread(launcher.match, text, None, self.dev, self.current is not None)
         except Exception as e:  # noqa: BLE001 - when in doubt the agent gets the text
             print(f"agentd: launcher match: {type(e).__name__}: {e}", file=sys.stderr)
             return None
 
     async def _watch_apps(self):
-        """Tell the bar when an app appears or goes, so it can complete the new name."""
+        """Tell the bar when an app, a project or a session name appears or goes, so it can
+        complete the new name."""
         while True:
-            await asyncio.sleep(3)
+            await asyncio.sleep(APPS_POLL)
             try:
-                key = await asyncio.to_thread(_apps_key)
+                key = await asyncio.to_thread(lambda: (_apps_key(), _names_key(self.dev)))
                 if key != self._entries_key:
                     first = self._entries_key is None
                     self._entries_key = key
                     if not first:
                         await self.broadcast(await self._entries_msg())
+                        await self._tips_refresh()   # {app} may be another app now
             except Exception as e:  # noqa: BLE001 - keep watching whatever one look found
                 print(f"agentd: watching apps: {type(e).__name__}: {e}", file=sys.stderr)
 
@@ -691,6 +798,98 @@ class AgentD:
         task.add_done_callback(done)
         return task
 
+    # -- coding sessions --
+
+    def _dev_changed(self):
+        """dev.Dev changed something the bar shows; called from whichever thread did it."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._dev_soon)
+
+    def _dev_soon(self):
+        if not self._dev_dirty:
+            self._dev_dirty = True
+            self._background(self._dev_broadcast())
+
+    async def _dev_broadcast(self):
+        await asyncio.sleep(0.03)   # a burst of hook events goes out as one message
+        self._dev_dirty = False
+        snap = await asyncio.to_thread(self.dev.snapshot)
+        if snap != self._dev_last:
+            self._dev_last = snap
+            await self.broadcast(snap)
+
+    async def _dev_signals(self):
+        """The tools' hooks, one at a time and in order: a prompt then its stop must not swap."""
+        for m in await asyncio.to_thread(dev.take_spool):
+            self._signals.put_nowait(m)
+        while True:
+            m = await self._signals.get()
+            try:
+                s = await asyncio.to_thread(self.dev.signal, m)
+            except Exception as e:  # noqa: BLE001 - one odd event never stops the dots
+                print(f"agentd: dev signal {m.get('event')!r}: {type(e).__name__}: {e}", file=sys.stderr)
+                continue
+            if s is not None and m.get("event") == "exit":
+                how = "stopped unexpectedly" if s.state == "failed" else "ended"
+                try:
+                    self._log_line({"t": time.time(), "kind": "dev", "action": how, "target": s.key,
+                                    "result": f"{s.title} {how}."})
+                except OSError as e:   # a full or read-only disk loses the log line, not the dots
+                    print(f"agentd: dev log: {e}", file=sys.stderr)
+
+    async def _dev_watch(self):
+        """Notice sessions that went away without a word (a crash, a kill from outside)."""
+        while True:
+            await asyncio.sleep(3)
+            try:
+                await asyncio.to_thread(self.dev.check)
+            except Exception as e:  # noqa: BLE001
+                print(f"agentd: checking sessions: {type(e).__name__}: {e}", file=sys.stderr)
+
+    async def _follow_focus(self):
+        """Which window is in front, from Hyprland's event socket: the session in front never
+        announces itself, and looking at a finished one is what makes it seen."""
+        while True:
+            path = hypr.events_path()
+            if path is None or not path.exists():
+                await asyncio.sleep(5)
+                continue
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(path))
+                try:
+                    # The events say only what changes: ask once what is in front now.
+                    await asyncio.to_thread(self.dev.look_at_front)
+                    while line := await reader.readline():
+                        ev, _, data = line.decode(errors="replace").rstrip("\n").partition(">>")
+                        cls = data.split(",", 1)[0]
+                        # The pill taking the keyboard is no window: the session stays in front.
+                        if ev == "activewindow" and cls:
+                            await asyncio.to_thread(self.dev.focused, cls)
+                finally:
+                    writer.close()
+            except (OSError, ValueError) as e:
+                print(f"agentd: Hyprland events: {e}", file=sys.stderr)
+            await asyncio.sleep(2)
+
+    async def dev_action(self, action: str, key: str):
+        """A dot clicked, Tab from the empty pill, a session's "Why?"."""
+        s = self.dev.sessions.get(key)
+        if action == "next":
+            ok, text = await asyncio.to_thread(self.dev.next)
+        elif s is None:
+            ok, text = False, "That session is gone."
+        elif action == "open":
+            ok, text = await asyncio.to_thread(self.dev.bring, s)
+        elif action == "end":
+            ok, text = await asyncio.to_thread(self.dev.end, s)
+        elif action == "why" and s.why:
+            await asyncio.to_thread(self.launcher.details, [launcher._bombadil(), "dev", "why", s.key])
+            ok, text = True, f"Opened the last screen of {s.title}."
+        else:
+            return
+        await self.event("local", turn=None, action="session", target=key, phase="done", ok=ok, text=text)
+
     # -- the desk --
 
     def _desk_changed(self):
@@ -714,6 +913,7 @@ class AgentD:
             self._desk_last = state
             await self.broadcast(state)
             self._vitals_kick()   # Machine put away stops the sampling; shown again starts it
+            self._tips_soon()     # Tips put away, or kept, is the desk's to say
 
     async def _desk_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the desk, or changes it (a click on a strip, a card dragged somewhere)."""
@@ -727,6 +927,8 @@ class AgentD:
             await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
             if self.vitals is not None and self.vitals.message()["present"]:
                 await self._send(writer, self.vitals.message())
+            if self.away.up:
+                await self._send(writer, self.away.message())
             return
         if op not in ("fold", "unfold", "hide", "show", "move"):
             return
@@ -780,6 +982,50 @@ class AgentD:
         if self._vitals_task is None or self._vitals_task.done():
             self._vitals_task = asyncio.create_task(self._vitals_loop())
 
+    def _desk_asked(self, widget: str):
+        """Desk.on_ask, from a worker thread: "show machine" and "show away" raise their card on request."""
+        if widget == "away":
+            self._away_asked()
+        else:
+            self._vitals_asked(widget)
+
+    def _away_sessions(self) -> list[dict]:
+        """The coding sessions' views, as the `dev` message sends them: the dots' own, so a question that
+        waited or a session that finished while the person was gone is a row of the Away card."""
+        return self.dev.snapshot()["sessions"]
+
+    def _away_asked(self):
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(lambda: self._background(self._away_show()))
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
+    async def _away_show(self):
+        msg = await asyncio.to_thread(self.away.ask, self._away_sessions(), self._typed_before)
+        await self.broadcast(msg)
+
+    async def _typed(self, msg: dict, writer: asyncio.StreamWriter):
+        """An ask came in: when it is the person's, they are here, so what Away held is seen, and the time is
+        kept (the ask before this one is when they were last known to be at the pill). An ask from a coding
+        session comes with a name; one from a process in an agent's turn is told by who connected."""
+        who = msg.get("asked_by")
+        if isinstance(who, str) and _WHO.fullmatch(who):
+            return
+        if not await self._persons(writer):
+            return
+        self._typed_before, self._typed_last = self._typed_last, time.time()
+        if self.away.up and self.away.seen():
+            await self.broadcast(self.away.message())
+
+    async def _away_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the card again, or says the person has seen it (a click on it)."""
+        op = str(msg.get("op", ""))
+        if op == "get":
+            await self._send(writer, self.away.message())
+        elif op == "seen" and self.away.seen():
+            await self.broadcast(self.away.message())
+
     def _vitals_asked(self, widget: str):
         """Desk.on_ask, from a worker thread: "show machine" raises the card even when nothing is wrong."""
         if widget != "machine" or self.vitals is None:
@@ -822,6 +1068,8 @@ class AgentD:
             return
         self._vitals_last = msg
         await self.broadcast(msg)
+        if msg.get("present"):
+            self._tips_card_seen()
 
     async def _vitals_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the card again, or clicks a row that opens something (the disk)."""
@@ -835,6 +1083,123 @@ class AgentD:
             if kind is not None:
                 action = launcher.Action("picture", kind, "open", launcher.PICTURE_TITLES[kind])
                 self._background(self.picture(action, "the machine card"))
+
+    # -- tips --
+
+    async def _tips_refresh(self) -> bool:
+        """Look at what this machine can back now (the AI, the disk, the apps and projects, the desk) and tell
+        the shell when the card is not what it was told. True when it was told."""
+        if self.tips is None:
+            return False
+        try:
+            # One look at a time, and what only agentd knows (the AI, the disk) is read after the folders are,
+            # not before: a look that was slow must not tell the shell what was true when it began.
+            async with self._tips_lock:
+                folders = await asyncio.to_thread(read_facts)
+                self.tips.facts = replace(
+                    folders, installed=bool(self.snaps.available),
+                    ai=self._title() if self.chosen and self.access in TIPS_AI_STATES else "")
+                return await self._tips_send()
+        except Exception as e:  # noqa: BLE001 - Tips never costs agentd a client, a turn or a setup
+            print(f"agentd: tips: {type(e).__name__}: {e}", file=sys.stderr)
+            return False
+
+    async def _tips_send(self) -> bool:
+        msg = self.tips.message()
+        if msg == self._tips_last:
+            return False
+        await self.broadcast(msg)
+        self._tips_last = msg   # (after: a card that could not be sent was not told to anyone)
+        return True
+
+    def _tips_soon(self):
+        """Something that decides what Tips shows changed (setup, the desk, an app, a tip tried)."""
+        if self.tips is not None:
+            self._background(self._tips_refresh())
+
+    async def _tips_hello(self, writer: asyncio.StreamWriter):
+        """A client that connects is told the card once, even when the others were told it already."""
+        if self.tips is None:
+            return
+        try:
+            # (a refresh that sent sent it to every client; one that failed leaves nothing to tell)
+            if not await self._tips_refresh() and self._tips_last is not None:
+                await self._send(writer, self._tips_last)
+        except Exception as e:  # noqa: BLE001 - a card that cannot be sent never costs the client its connection
+            print(f"agentd: tips: {type(e).__name__}: {e}", file=sys.stderr)
+
+    async def _tips_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The card's arrows and wheel, a press on its title or picture, and the Tips app's one-shot list."""
+        op = str(msg.get("op", ""))
+        if self.tips is None:
+            return
+        if op == "turn":
+            if self.tips.turn(msg.get("dir")):
+                await self._tips_send()
+        elif op == "open":
+            await self._tips_refresh()
+            self.tips.open(msg.get("id"), msg.get("play") is True)
+        elif op == "list":
+            await self._tips_refresh()
+            await self._send(writer, {"type": "tips", "list": self.tips.listing()})
+            await self._tips_send()   # a tip that has now been in front of the person may be on the card
+
+    def _tips_typed(self, text: str):
+        """The person typed in the pill: a day of use, and a tip tried when these are the words its button put
+        there or its own."""
+        if self.tips is None:
+            return
+        used = self.tips.use()
+        tried = self.tips.sent(text)
+        if tried:
+            self._tips_tried = True
+            self._tips_arm()
+        if used or tried:
+            self._tips_soon()
+
+    def _tips_saw(self, *keys: str):
+        """agentd saw something a tip counts as tried (a launcher action, a tool, a job, a "!" command)."""
+        if self.tips is not None and self.tips.saw(*keys):
+            self._tips_tried = True
+            self._tips_arm()
+            self._tips_soon()
+
+    def _tips_card_seen(self):
+        if self.tips is not None and self.tips.card_seen():
+            self._tips_soon()
+
+    def _tips_tool(self, ev: dict):
+        """A tool the turn used counts when it worked: the call waits for its result to come without an error
+        (a call with no id has no result to wait for)."""
+        kind = ev.get("kind")
+        if self.tips is None:
+            return
+        if kind == "tool":
+            if ev.get("id") is None:
+                self._tips_saw(*tool_keys(ev.get("name")))
+            elif len(self._tips_calls) < 64:
+                self._tips_calls[str(ev["id"])] = str(ev.get("name") or "")
+        elif kind == "tool_result" and not ev.get("error"):
+            name = self._tips_calls.pop(str(ev.get("id")), None)
+            if name:
+                self._tips_saw(*tool_keys(name))
+
+    def _tips_arm(self):
+        """When a turn or a word tried a tip, turn the card to the next one TIPS_TURN_AFTER seconds after the
+        turn ends (a word with no turn: after it). A turn that is running arms it when it ends."""
+        if self._tips_timer is not None:
+            self._tips_timer.cancel()
+            self._tips_timer = None
+        if self._tips_tried and self.current is None:
+            self._tips_timer = asyncio.get_running_loop().call_later(TIPS_TURN_AFTER, self._tips_turn)
+
+    def _tips_turn(self):
+        self._tips_timer = None
+        if self.current is not None:
+            return   # another turn began: its end arms the timer again
+        self._tips_tried = False
+        if self.tips.advance():
+            self._tips_soon()
 
     # -- jobs --
 
@@ -871,6 +1236,8 @@ class AgentD:
         if table != self._jobs_last:
             self._jobs_last = table
             await self.broadcast(table)
+            if table["jobs"]:
+                self._tips_card_seen()   # Watching has something to count
 
     async def _job_ended(self, rec: dict):
         """One line in the pill, as a launcher word's answer is, and a note for the next prompt."""
@@ -882,7 +1249,7 @@ class AgentD:
             note += f" (its output is in {log})" if log is not None else ""
         self.notes = [*self.notes, note][-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
-                        "target": rec["title"], "result": text, "ok": ok})
+                        "target": rec["title"], "result": text, "ok": ok, "job": rec["id"]})
 
     async def _jobs_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the table, or acts on a row: × stops a running job, × on a finished one
@@ -911,7 +1278,7 @@ class AgentD:
             text = f"Stopped {rec['title']}."
             self.notes = [*self.notes, f"background job {rec['id']}: {text}"][-10:]
             self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
-                            "target": rec["title"], "result": text, "ok": True})
+                            "target": rec["title"], "result": text, "ok": True, "stopped": True})
 
     async def _jobs_why(self, job_id):
         argv = await asyncio.to_thread(self.jobs.why, job_id)
@@ -941,6 +1308,7 @@ class AgentD:
                                               msg.get("kind") or "job", msg.get("seconds"))
                 self._jobs_kick()
                 self._jobs_soon()
+                self._tips_saw(*job_keys(rec["kind"]))
                 return result(True, started_text(rec, await asyncio.to_thread(self.jobs.log_path, rec["id"])))
             if op == "list":
                 return result(True, await asyncio.to_thread(self.jobs.listing))
@@ -1127,12 +1495,13 @@ class AgentD:
             return
         if action.kind == "rest":
             text = await self.rest_word(action)
-            await self.event("local", turn=None, action="rest", target=action.target, phase="done", ok=True, text=text)
+            await self.event("local", turn=None, action="rest", target=action.target, verb=action.verb,
+                             phase="done", ok=True, text=text)
             self._log_line({"t": time.time(), "kind": "local", "prompt": typed, "action": "rest",
                             "target": action.target, "result": text, "ok": True})
             return
         if action.kind == "stop":
-            stopping = await self.stop()
+            stopping = await self.stop(by_person=True)
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
                              text="Stopping." if stopping else "Nothing is running.")
             return
@@ -1305,11 +1674,13 @@ class AgentD:
     def _busy(self) -> bool:
         return self.current is not None
 
-    async def stop(self) -> bool:
+    async def stop(self, by_person: bool = False) -> bool:
         """End the running turn and everything it started. False when nothing runs.
 
         Returns at once; the stopper works in the background. A turn still saving its restore
-        point is marked, and ends before its CLI starts."""
+        point is marked, and ends before its CLI starts. `by_person` is Esc or the word "stop": the one way of
+        stopping that the Esc tip counts as tried (undo, restart and a setup card's cancel stop a turn too,
+        and none of them is the person pressing Esc)."""
         if self.current is None:
             # Nothing runs but the sign-in: Esc cancels that.
             if self.signin is not None and self.signin.running:
@@ -1323,6 +1694,8 @@ class AgentD:
         if self.stopping:
             return True
         self.stopping = True
+        if by_person:
+            self._tips_saw(*local_keys("stop"))   # Esc, or the word, on a turn that runs
         self._stopped_line = self.narrator.stopped_line() if self.narrator else "Stopped."
         if self.proc is not None:
             self._background(self._stop_proc(self.proc, self._unit))
@@ -1425,7 +1798,10 @@ class AgentD:
         await self.broadcast(self._setup_msg())
         await self.broadcast(self._status())
         if state == "ready":
+            if self.tips is not None:
+                self.tips.ready()   # the day the first week begins, the first time
             self._wake.set()
+        self._tips_soon()       # what Tips can teach follows the setup
 
     async def check_access(self, start: bool = False, announce: bool = False):
         """Is the provider picked and signed in? `start` signs in at once when it is not."""
@@ -2018,6 +2394,10 @@ class AgentD:
             self._signed_out = False
             self._turn_provider = self.provider
             self._turn_notes = []
+            self._tips_calls = {}
+            if self._tips_timer is not None:
+                self._tips_timer.cancel()   # the card turns after this turn, not in the middle of it
+                self._tips_timer = None
             self.mail.begin(turn_id, self.session_id)   # a conversation that has read mail still holds it
             self._limit = self._limit_rest = None
             self._requeued = False
@@ -2038,6 +2418,8 @@ class AgentD:
                 self.proc = None
                 self.stopping = False
                 await self.broadcast(self._status())
+                self._tips_arm()    # a turn that tried a tip turns the card a while after it ends
+                self._tips_soon()   # and it may have made an app or a project
             if self._limit is not None:
                 await self._rest_turn(turn_id, prompt)
             if self._signed_out and self._turn_provider is self.provider:
@@ -2047,6 +2429,12 @@ class AgentD:
     async def event(self, kind: str, **fields):
         fields.setdefault("turn", self.current)
         msg = {"type": "event", "kind": kind, **fields}
+        # A launcher action that worked is something a tip counts. (Stop is counted where a turn is really
+        # stopped: "Nothing is running." is not a try.)
+        if (kind == "local" and fields.get("phase") == "done" and fields.get("ok") and fields.get("action")
+                and fields["action"] != "stop"):
+            self._tips_saw(*local_keys(str(fields["action"]), str(fields.get("target") or ""),
+                                       str(fields.get("verb") or "open")))
         log = self.turn_logs.get(fields["turn"]) if fields["turn"] is not None else None
         if log is not None and not (kind == "status" and fields.get("source") != "step"):
             _append(log, {"t": time.time(), **msg})
@@ -2071,6 +2459,8 @@ class AgentD:
         # Something true on screen before snapper, which can take a second.
         await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)
         await self.broadcast(self._status())
+        if shell and not asked_by:
+            self._tips_saw(*BANG)   # the person typed it; a helper's "!" teaches nobody
         if not shell and not self.provider.installed:
             await self.event("error", text=f"{self.provider.binary} is not installed yet: press Super+Return "
                                            "and run bombadil-setup")
@@ -2131,6 +2521,9 @@ class AgentD:
             source = self.provider
         env = {**os.environ, **source.env()}
         env["BROWSER"] = _bombadil_browser()   # a link the agent opens slides the browser panel in
+        # The machine's own agent: the coding tools' managed hooks fire in its turns too, and
+        # bombadil-signal skips them by this mark.
+        env["BOMBADIL_OS"] = "1"
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
@@ -2318,6 +2711,7 @@ class AgentD:
                         pass
             return pending_session, reported_error
         ev = self._without_mail_text(ev)
+        self._tips_tool(ev)
         try:
             line = self.narrator.on_event(ev) if self.narrator else None
         except Exception as e:  # noqa: BLE001 - odd input costs a line, never the turn
@@ -2328,6 +2722,8 @@ class AgentD:
                 # What the turn has changed so far, for the desk's "1 package and 2 files so far".
                 line = {**line, "touched": self.narrator.touched_counts(),
                         "touched_text": self.narrator.touched_text()}
+                if line.get("risk"):
+                    self._tips_card_seen()   # a step that touches the system raises Now
             await self.event("status", **line)
         if self._files is not None:
             try:
@@ -2349,6 +2745,8 @@ class AgentD:
         if plan is not None and not self.stopping:
             self.plan_msg = {"type": "event", "kind": "plan", "turn": self.current, "steps": plan}
             await self.event("plan", steps=plan)
+            if len(plan) >= 2:
+                self._tips_card_seen()   # a plan of two steps raises Now
         if kind in LINE_ONLY:
             return pending_session, reported_error
         if kind == "result":
@@ -2707,6 +3105,10 @@ def _apps_key():
         return ()
     return tuple(sorted((p.name, (p / "app.toml").stat().st_mtime if (p / "app.toml").exists() else 0)
                         for p in root.iterdir() if (p / "main.qml").exists()))
+
+
+def _names_key(d: dev.Dev):
+    return tuple(sorted(e["name"] for e in d.names()))
 
 
 def main(argv: list[str] | None = None) -> int:

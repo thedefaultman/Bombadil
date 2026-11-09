@@ -47,13 +47,13 @@ def test_a_limit_lapses_a_minute_after_its_time_and_a_reader_never_sees_it_after
     assert rest.limit("claude", AT + 600 + rest.RESET_GRACE - 1) is not None
     assert rest.limit("claude", AT + 600 + rest.RESET_GRACE) is None
     assert rest.read(AT + 700)["providers"] == {}
-    assert rest.due("claude") == AT + 600 + rest.RESET_GRACE
+    assert rest.due("claude", AT) == AT + 600 + rest.RESET_GRACE
 
 
 def test_a_limit_with_no_time_lasts_until_it_is_cleared(home):
     rest.set_limit("codex", rest.Limit("spend", None, None), AT)
     assert rest.limit("codex", AT + 10 ** 7).why == "spend"
-    assert rest.due("codex") is None
+    assert rest.due("codex", AT) is None
     rest.clear_limit("codex")
     assert rest.limit("codex", AT) is None
     rest.clear_limit("codex")   # nothing there: nothing to say

@@ -348,6 +348,8 @@ def test_the_default_run_uses_the_configured_provider(store, home, monkeypatch):
     [(cmd, kw)] = calls
     assert cmd[:2] == ["codex", "exec"] and "big-model" not in cmd and cmd[-1] == "-"
     assert kw["timeout"] == 60 and "#!/bin/sh" in kw["input"]
+    # Not a coding session: the tools' managed hooks skip a run marked as the machine's own.
+    assert kw["env"]["BOMBADIL_OS"] == "1"
     row = store.description(f["id"])
     assert row["text"] == "A shell script that starts the VPN." and row["model"] == "codex"
     d.close()

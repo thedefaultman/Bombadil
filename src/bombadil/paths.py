@@ -49,6 +49,15 @@ def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
 
 
+def projects_dir() -> Path:
+    return _env_path("BOMBADIL_PROJECTS", home() / "Projects")
+
+
+def dev_dir() -> Path:
+    """Where the coding sessions' registry and last screens live."""
+    return state_dir() / "dev"
+
+
 def is_turn_row(row) -> bool:
     """Is this row of turns.jsonl a turn? The log also holds launcher actions (kind "local")
     and the self-improvement loop's rows (kind "improve"); a turn's row has no kind, so any
@@ -70,6 +79,17 @@ def desk_file() -> Path:
 
 def jobs_dir() -> Path:
     return state_dir() / "jobs"
+
+
+def tips_file() -> Path:
+    """What the Tips card has taught: the day it began, the days of use, the tips tried (tips.py)."""
+    return state_dir() / "tips.json"
+
+
+def tips_table() -> Path:
+    """The tips themselves: share/tips beside this package, so a checkout runs its own and the ISO runs
+    /usr/share/bombadil/share/tips."""
+    return Path(__file__).resolve().parents[2] / "share" / "tips" / "tips.toml"
 
 
 def mail_socket() -> Path:

@@ -113,7 +113,7 @@ Item {
 
     Behavior on lean {
         enabled: stone.animate
-        NumberAnimation { duration: 240; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.16, 1, 0.3, 1, 1, 1] }
+        NumberAnimation { duration: stone.reducedMotion ? 0 : 240; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.16, 1, 0.3, 1, 1, 1] }
     }
 
     // The b rides: it slides with the stone's centre but never tilts.
