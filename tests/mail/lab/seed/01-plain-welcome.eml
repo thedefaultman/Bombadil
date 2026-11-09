@@ -1,0 +1,15 @@
+From: Alice Example <alice@example.org>
+To: Lab Tester <test@example.test>
+Subject: Welcome to the lab
+Date: Mon, 28 Sep 2026 09:00:00 +0000
+Message-ID: <welcome-1@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+Hello Tester,
+
+this is a plain text message used by the Bombadil Mail lab.
+It contains the marker word PLAINBODYMARKER so tests can find it.
+
+Alice

@@ -49,6 +49,11 @@ def builtin_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "share" / "apps"
 
 
+# Built-in apps nothing may replace: the Mail window carries the person's press on Send, so an app
+# of the same name (made by the agent, or dropped into ~/Apps) must never run in its place.
+RESERVED = frozenset({"mail"})
+
+
 def own_dir(name: str) -> Path:
     """Where an app of yours lives, and where create() writes."""
     if not NAME_RE.match(name):
@@ -60,7 +65,7 @@ def app_dir(name: str) -> Path:
     """The app to run: yours, else a built-in one of that name. Making an app with a built-in
     app's name (the agent rewriting the Brain for you) takes its place."""
     own = own_dir(name)
-    if not (own / "main.qml").exists() and (builtin_dir() / name / "main.qml").exists():
+    if name in RESERVED or (not (own / "main.qml").exists() and (builtin_dir() / name / "main.qml").exists()):
         return builtin_dir() / name
     return own
 
@@ -102,6 +107,8 @@ def create(title: str, qml: str, python: str | None = None, description: str = "
            files: dict[str, str] | None = None, icon: str = "") -> App:
     """Write the app files. The agent calls this (via os-mcp) with QML it wrote."""
     name = slug(title)
+    if name in RESERVED:
+        raise ValueError(f"{name!r} is one of Bombadil's own apps and cannot be replaced: pick another name")
     d = own_dir(name)
     extra = {_extra_path(rel): text for rel, text in (files or {}).items()}
     for rel, text in extra.items():

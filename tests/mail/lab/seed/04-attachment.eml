@@ -1,0 +1,30 @@
+From: Carol Accounts <carol@example.com>
+To: test@example.test
+Subject: Invoice 4711
+Date: Tue, 29 Sep 2026 11:30:00 +0000
+Message-ID: <invoice-4711@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="MIXED-BOUNDARY-1"
+
+--MIXED-BOUNDARY-1
+Content-Type: text/plain; charset=utf-8
+
+Please find the invoice attached. ATTACHBODYMARKER
+--MIXED-BOUNDARY-1
+Content-Type: application/pdf; name="invoice-4711.pdf"
+Content-Disposition: attachment; filename="invoice-4711.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKMSAwIG9iajw8L1R5cGUvQ2F0YWxvZz4+ZW5kb2JqCnRyYWlsZXI8PC9Sb290IDEg
+MCBSPj4KJSVFT0YKAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKiss
+LS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2Rl
+ZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2e
+n6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX
+2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==
+--MIXED-BOUNDARY-1
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+Content-Transfer-Encoding: 7bit
+
+attachment notes.txt body
+--MIXED-BOUNDARY-1--

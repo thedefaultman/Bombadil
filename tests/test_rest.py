@@ -232,3 +232,17 @@ def test_coming_back_says_what_runs_now():
     assert rest.back("Claude", 1) == "Claude is back. Running your waiting ask."
     assert rest.back("Claude", 3) == "Claude is back. Running your 3 waiting asks."
     assert rest.trying("Claude", 2) == "Trying Claude again. Running your 2 waiting asks."
+
+
+def test_the_line_for_a_kept_ask_says_when_it_runs_and_whether_anything_on_the_computer_matches():
+    timed = rest.Rest("claude", "limit", "five_hour", AT + 3600, AT)
+    assert rest.kept(timed, "Claude", True, AT, UTC) == "Kept for 13:30. Found on this computer:"
+    assert rest.kept(timed, "Claude", False, AT, UTC) == "Kept for 13:30. Nothing on this computer matches."
+    week = rest.Rest("claude", "limit", "seven_day", _at(2026, 10, 3, 9, 0), AT)
+    assert rest.kept(week, "Claude", True, AT, UTC) == "Kept for Saturday 09:00. Found on this computer:"
+    bare = rest.Rest("claude", "spend", None, None, AT)
+    assert rest.kept(bare, "Codex", True) == "Kept until Codex is back. Found on this computer:"
+    paused = rest.Rest("claude", "hand", since=AT)
+    assert rest.kept(paused, "Claude", False) == "Kept until you resume Claude. Nothing on this computer matches."
+    for text in (rest.kept(timed, "Claude", True, AT, UTC), rest.kept(paused, "Claude", False)):
+        assert len(text) < 100 and "\u2014" not in text

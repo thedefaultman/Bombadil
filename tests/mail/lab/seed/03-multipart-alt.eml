@@ -1,0 +1,18 @@
+From: Bob Builder <bob@example.net>
+To: Lab Tester <test@example.test>
+Cc: carol@example.com
+Subject: Lunch on Friday?
+Date: Tue, 29 Sep 2026 08:15:00 +0000
+Message-ID: <lunch-1@example.net>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="ALT-BOUNDARY-1"
+
+--ALT-BOUNDARY-1
+Content-Type: text/plain; charset=utf-8
+
+Shall we have lunch on Friday? ALTPLAINMARKER
+--ALT-BOUNDARY-1
+Content-Type: text/html; charset=utf-8
+
+<div>Shall we have <i>lunch</i> on Friday? ALTHTMLMARKER</div>
+--ALT-BOUNDARY-1--

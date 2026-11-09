@@ -105,6 +105,18 @@ def test_an_ask_made_while_resting_does_not_wait_for_the_reset(home):
     assert (done.returncode, done.stdout, done.stderr) == (75, "", RESTING_LINE + "\n")
 
 
+def test_what_the_finder_offers_for_a_kept_ask_is_not_the_terminals_business(home):
+    """agentd tells every client what it found for a waiting ask; a terminal just says it is kept and goes."""
+    done = ask(home, RESTING, [
+        {"type": "queued", "turn": 8},
+        event("queued", 8, prompt="tidy my notes"),
+        {"type": "found", "turn": 8, "prompt": "tidy my notes", "line": "Kept for 15:00. Found on this computer:",
+         "matches": [{"id": "1", "kind": "app", "label": "Notes", "hint": "App"}]},
+        status("resting", [{"turn": 8, "prompt": "tidy my notes", "wait": "15:00"}], rest={"note": "At 15:00"}),
+    ], "tidy my notes")
+    assert (done.returncode, done.stdout, done.stderr) == (75, "", RESTING_LINE + "\n")
+
+
 def test_a_paused_ai_says_so_the_same_way(home):
     line = "Claude is paused. Your apps and files still work."
     done = ask(home, [status("resting"), {"type": "entries", "entries": []}, setup("resting", line)], [

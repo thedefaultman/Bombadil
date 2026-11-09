@@ -1,0 +1,10 @@
+From: Weekly News <newsletter@news.example.org>
+To: test@example.test
+Subject: Weekly newsletter
+Date: Mon, 28 Sep 2026 10:00:00 +0000
+Message-ID: <news-1@news.example.org>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+<html><body><h1>Weekly news</h1><p>This mail has <b>only</b> an HTML part. HTMLONLYMARKER</p><p><a href="https://example.org/x">a link</a></p></body></html>

@@ -308,6 +308,18 @@ def cut_off(title: str, found: Rest, touched: str = "", at: float | None = None,
     return f"{title} hit its {word} partway{after}. It carries on once the limit is {'raised' if found.why == 'spend' else 'lifted'}."
 
 
+def kept(rest: Rest, title: str, found: bool, at: float | None = None, tz: tzinfo | None = None) -> str:
+    """The line for an ask that has to wait while the AI rests, once the finder has looked: when it runs,
+    then what on this computer the sentence nearly names (`found`: there is something to offer)."""
+    if rest.why == "hand":
+        said = f"Kept until you resume {title}."
+    elif rest.until is None:
+        said = f"Kept until {title} is back."
+    else:
+        said = f"Kept for {when(rest.until, at, tz)}."
+    return said + (" Found on this computer:" if found else " Nothing on this computer matches.")
+
+
 def _running(waiting: int) -> str:
     return "" if waiting <= 0 else " Running your " + ("waiting ask." if waiting == 1 else f"{waiting} waiting asks.")
 

@@ -8,6 +8,7 @@
 #                                     # the installer with a password: GRUB is asked for it once, nothing asks again
 #   MODE=refresh OLD_ISO=old.iso scripts/test-vm.sh
 #                                     # install with OLD_ISO, refresh the disk with this ISO, boot it, put the old system back
+#   MODE=installed scripts/test-vm.sh # boot the disk the last install run left (its second boot), at the password prompt too
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 #
 # The install modes need an ISO built with BOMBADIL_TEST_ENTRIES=1 (scripts/build-in-container.sh), which has
@@ -32,7 +33,7 @@ accel=(-accel tcg,thread=multi -cpu "${QEMU_CPU:-Nehalem}")
 [[ -w /dev/kvm ]] && accel=(-enable-kvm -cpu host)
 disk="$out/disk.qcow2"
 case "$mode" in
-  live) ;;
+  live|installed) ;;
   install|install-encrypted|refresh) rm -f "$disk"; qemu-img create -q -f qcow2 "$disk" 40G ;;
   *) echo "unknown MODE=$mode"; exit 2 ;;
 esac
@@ -116,13 +117,13 @@ boot() {
     for shot in $(grep -ao "BOMBADIL-SMOKE: SHOT [a-z0-9-]*" "$log" | awk '{print $3}'); do
       [[ -f "$out/$name-$shot.png" ]] || python3 "$root/scripts/qmp.py" "$qmp" screenshot "$out/$name-$shot.png" || true
     done
-    # ...and key presses: "BOMBADIL-SMOKE: KEYS <n> <qcode>..." (a Super tap, a word), each once.
+    # ...and key presses: "BOMBADIL-SMOKE: KEYS <boot>-<n> <qcode>..." (a Super tap, a word), each once.
     while read -r n keys; do
       [[ -f "$out/$name.keys.$n" ]] && continue
       touch "$out/$name.keys.$n"
       # shellcheck disable=SC2086
       python3 "$root/scripts/qmp.py" "$qmp" send-keys $keys || true
-    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
+    done < <(grep -ao "BOMBADIL-SMOKE: KEYS [0-9a-f]*-[0-9]* [a-z0-9_+ ]*" "$log" | cut -d' ' -f3-)
     if (( $(date +%s) - start > timeout )); then echo "$name: timed out after ${timeout}s"; break; fi
     sleep 2
   done
@@ -179,6 +180,22 @@ case "$mode" in
       -drive file="$disk",if=virtio,format=qcow2
     logs=("$out/old-install.serial.log" "$out/refresh.serial.log" "$out/refreshed.serial.log")
     ;;
+  installed)
+    # The disk an earlier MODE=install or MODE=install-encrypted run left: boot it again. For an undo round trip
+    # that was cut short (the emulator died as it rebooted): the system remembers its phase, so this is the
+    # second boot, which checks that the undo took.
+    [[ -f "$disk" ]] || { echo "no $disk: run MODE=install or MODE=install-encrypted first"; exit 2; }
+    [[ -f "$out/installed.serial.log" ]] && cp "$out/installed.serial.log" "$out/installed-first.serial.log"
+    if grep -aq "Enter passphrase" "$out/installed-first.serial.log" 2>/dev/null; then
+      # An encrypted disk: GRUB asks again, and the password is typed to it as in the run that made it.
+      KEYBOARD=(-device qemu-xhci -device usb-kbd)
+      TYPE_WHEN="Enter passphrase" TYPE_TEXT="correct-horse-battery-staple" \
+        MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
+    else
+      MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
+    fi
+    logs=("$out/installed.serial.log")
+    ;;
   live)
     need_entries "$iso" "console=ttyS0,115200 bombadil.smoke"
     MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -boot d -no-reboot
@@ -193,4 +210,6 @@ if [[ "$mode" == refresh ]]; then
   exit
 fi
 for l in "${logs[@]}"; do grep -aqE "BOMBADIL-SMOKE: DONE pass=[0-9]+ fail=0" "$l" || exit 1; done
+# The sign-in checks skip themselves on a machine that has a provider chosen; a fresh ISO has none.
+if grep -aq "BOMBADIL-SMOKE: SKIP signin" "${logs[0]}"; then echo "the sign-in checks were skipped on a fresh ISO"; exit 1; fi
 ! grep -aq "BOMBADIL-SMOKE: FAIL" "${logs[@]}"

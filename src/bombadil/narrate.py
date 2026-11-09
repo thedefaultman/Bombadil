@@ -369,8 +369,13 @@ def _pkg_step(prog: str, argv: list[str]) -> Step | None:
         return Step(f"Looking up {what}")
     if op in ("S", "U") and names:
         n = _names(names)
+        if op == "S" and ("u" in flags or "--sysupgrade" in long):
+            # `pacman -Syu ffmpeg` installs ffmpeg and brings every other package up to date (the
+            # only supported way to install on Arch). The line says so: it is not a quiet install.
+            return Step(f"Updating the system and installing {n}{aur}", f"Updated the system and installed {n}",
+                        touched={"package": tuple(names)})
         return Step(f"Installing {n}{aur}", f"Installed {n}", touched={"package": tuple(names)})
-    if op == "S" and "u" in flags:
+    if op == "S" and ("u" in flags or "--sysupgrade" in long):
         return Step("Updating the system", "Updated the system")
     if op == "S" and "y" in flags:
         return Step("Refreshing the package lists")
@@ -915,7 +920,7 @@ def _os_tool(tool: str, a: dict) -> Step | None:
             to = f" to the {a['rail']} rail" if a.get("rail") in desk.RAILS else ""
             return Step(f"Moving {widget}{to}")
         if op in ("fold", "unfold"):
-            return Step(f"{op.capitalize()}ing the desk")
+            return Step(f"{op.capitalize()}ing {widget}" if a.get("widget") else f"{op.capitalize()}ing the desk")
         return Step("Looking at the desk")
     if tool == "job":
         op = str(a.get("op") or "")
@@ -935,6 +940,18 @@ def _os_tool(tool: str, a: dict) -> Step | None:
     if tool == "open_url":
         host = _host(str(a.get("url", "")))
         return Step(f"Opening {host}" if host else "Opening the browser")
+    # Mail: lines only. Nothing here claims a change (a draft is the person's to send), so no
+    # closing sentence and no Undo.
+    if tool == "mail_search":
+        return Step("Looking through your mail")
+    if tool == "mail_read":
+        return Step("Reading a mail")
+    if tool == "mail_mark":
+        return Step("Marking the mail that needs a reply")
+    if tool == "mail_draft":
+        return Step("Writing a draft")
+    if tool == "mail_show":
+        return Step("Opening Mail")
     return None
 
 
@@ -1261,8 +1278,8 @@ def reason_from(text: str) -> str:
 class Read:
     """Something the turn read, and whether it came from outside the machine's own files."""
     label: str            # "wireguard.com/quickstart", "notes.txt", "coding session api on Latchkey"
-    kind: str             # web, file, search, screen, session, app
-    outside: bool         # a web page, a downloaded file, the page on screen, a request from a session or app
+    kind: str             # web, file, search, screen, session, app, mail
+    outside: bool         # a web page, a downloaded file, the page on screen, a mail, a request from a session or app
     origin: str = ""      # for a downloaded file, the host it came from
 
     def as_dict(self) -> dict:
@@ -1372,6 +1389,9 @@ def tool_reads(name: str, a: dict | None) -> list[Read]:
         return [Read(_quote(a["query"], 50), "search", True)] if a.get("query") else []
     if name == "Bash":
         return command_reads(str(a.get("command", "")))
+    if name in ("mcp__bombadil-os__mail_read", "mcp__bombadil-os__mail_search"):
+        # Other people's words: a step that follows says "after reading a mail".
+        return [Read("a mail" if name.endswith("_read") else "your mail", "mail", True)]
     return []
 
 

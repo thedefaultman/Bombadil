@@ -1,0 +1,20 @@
+[Unit]
+Description=Bombadil mail: the Mail window's service, and the Thunderbird it keeps unseen
+Documentation=file:///usr/share/bombadil/src/bombadil/mail/service.py
+# Nothing depends on mail, so it is never given up on: without this, five quick failures (a locked
+# disk at login, a Thunderbird that will not start yet) leave it stopped until the next login.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bombadil-mail
+# A service that dies leaves the pill, turns and apps as they are: agentd retries its connection
+# every few seconds and says nothing until mail is back. Thunderbird is in this unit's cgroup, so
+# it goes with the service and comes back with it.
+Restart=on-failure
+RestartSec=2
+# Behind the desktop: fetching and indexing mail must not make the pill wait.
+Nice=5
+
+[Install]
+WantedBy=default.target
