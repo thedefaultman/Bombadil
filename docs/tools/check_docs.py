@@ -7,12 +7,15 @@
 --no-links skips the link and anchor checks and --no-leaks skips the leak checks, so
 `--no-links src shell iso scripts tests share bin` scans code and tests for leaks only.
 
-PATHs are files or directories under the repo root (default: docs, README.md, CONTRIBUTING.md,
-AGENTS.md). A PATH, --private-terms or --soft-terms file that does not exist is an error, never skipped.
+PATHs are files or directories under the repo root, written relative to it (default: docs, README.md,
+CONTRIBUTING.md, AGENTS.md). A PATH, --private-terms or --soft-terms file that does not exist, or a
+PATH outside the repo root, is an error, never skipped. Only files with a suffix in TEXT_SUFFIXES (and
+LICENSE) are read; images, and scripts without a suffix, are not.
 --mermaid renders every diagram with Mermaid's CLI (`mmdc`; set MMDC to its path and MMDC_CONFIG to a
 puppeteer config file if the default browser needs flags such as --no-sandbox).
-Exit status is 1 when a link or anchor is broken, a diagram does not parse, or a hard leak is found,
-and 2 when the check could not run (a missing PATH or terms file, or no `mmdc` for --mermaid).
+Exit status is 1 when a link or anchor is broken, a code fence is never closed, a diagram does not
+parse, or a hard leak is found, and 2 when the check could not run (a missing PATH or terms file, a PATH
+outside the repo root, or no `mmdc` for --mermaid).
 
 Hard leaks (checked unless --no-leaks): e-mail addresses, session, message and account ids, claude.ai working URLs,
 the shared project folder's path, Windows and macOS user paths and home folders other than /home/user,
@@ -65,14 +68,19 @@ def slug(heading: str) -> str:
     return h.replace(" ", "-")
 
 
-def md_lines(text: str):
-    """Yield (line number, line, in_code): in_code is true for fence lines and the lines between them."""
-    fence = None  # (character, length) of the open fence
+def md_lines(text: str, unclosed: list[int] | None = None):
+    """Yield (line number, line, in_code): in_code is true for fence lines and the lines between them.
+
+    A fence that is still open at the end of the text is appended to `unclosed` (its line number): the rest
+    of the file is then read as code, so its links and headings are not checked.
+    """
+    fence = None  # (character, length, line number) of the open fence
     for n, line in enumerate(text.splitlines(), 1):
-        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        # A backtick fence's info string has no backtick: "```x```" is a code span, not a fence.
+        m = re.match(r"^\s*(`{3,}(?![^\n]*`)|~{3,})", line)
         if fence is None:
             if m:
-                fence = (m.group(1)[0], len(m.group(1)))
+                fence = (m.group(1)[0], len(m.group(1)), n)
                 yield n, line, True
                 continue
             yield n, line, False
@@ -80,6 +88,8 @@ def md_lines(text: str):
             yield n, line, True
             if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and re.match(r"^\s*[`~]+\s*$", line):
                 fence = None
+    if fence is not None and unclosed is not None:
+        unclosed.append(fence[2])
 
 
 def md_anchors(text: str) -> set[str]:
@@ -106,16 +116,17 @@ def srcset_urls(value: str) -> list[str]:
 class HtmlRefs(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
-        self.refs: list[str] = []
+        self.refs: list[tuple[int, str]] = []  # (line number, target)
         self.ids: set[str] = set()
 
     def handle_starttag(self, tag, attrs):
         d = dict(attrs)
+        line = self.getpos()[0]
         for k in ("href", "src", "poster"):
             if d.get(k):
-                self.refs.append(d[k])
+                self.refs.append((line, d[k]))
         if d.get("srcset"):
-            self.refs.extend(srcset_urls(d["srcset"]))
+            self.refs.extend((line, r) for r in srcset_urls(d["srcset"]))
         if d.get("id"):
             self.ids.add(d["id"])
         if d.get("name") and tag == "a":
@@ -215,6 +226,11 @@ def main() -> int:
     else:
         targets = [t for t in ("docs", "README.md", "CONTRIBUTING.md", "AGENTS.md") if (root / t).exists()]
     problems = [f"no such file or folder: {t}" for t in targets if not (root / t).exists()]
+    problems += [
+        f"outside the repository root: {t}"
+        for t in targets
+        if (root / t).exists() and root not in (root / t).resolve().parents and (root / t).resolve() != root
+    ]
     problems += [f"terms file not found: {f}" for f in (a.private_terms, a.soft_terms) if f and not os.path.exists(f)]
     if problems:
         for msg in problems:
@@ -249,8 +265,10 @@ def main() -> int:
         u = urlparse(ref)
         if u.scheme in ("http", "https", "mailto", "data", "tel", "javascript"):
             return
+        if u.scheme and ref[len(u.scheme) + 1:].startswith("//"):
+            return  # some other kind of address: ftp://, ssh://
         if u.scheme:
-            return
+            u = urlparse("./" + ref)  # "file.md:12" is a path with a colon in it, not a scheme
         path = unquote(u.path)
         frag = unquote(u.fragment)
         if path == "":
@@ -286,17 +304,22 @@ def main() -> int:
             continue
         if not a.no_links:
             if suffix == ".md":
+                open_fences: list[int] = []
+                for _ in md_lines(text, open_fences):
+                    pass
+                for n in open_fences:
+                    errors.append(f"{rel}:{n}: code fence is never closed, so the links below it are not checked")
                 for n, r in md_links(text):
                     check_ref(f, n, r)
             elif suffix in (".html", ".htm"):
                 hp = HtmlRefs()
                 hp.feed(text)
-                for r in hp.refs:
+                for n, r in hp.refs:
                     if r.startswith("#"):
                         if r[1:] and r[1:] not in hp.ids:
-                            errors.append(f"{rel}: missing in-page anchor {r}")
+                            errors.append(f"{rel}:{n}: missing in-page anchor {r}")
                         continue
-                    check_ref(f, 0, r)
+                    check_ref(f, n, r)
         if suffix == ".md" and a.mermaid:
             for n, b in mermaid_blocks(text):
                 mmd_jobs.append((f, n, b))
