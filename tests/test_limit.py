@@ -1,9 +1,11 @@
 """providers.limit(): did the account refuse a turn for its limit, or was it a busy moment?
 
-The Claude lines are shaped the way Claude Code 2.1.286 writes them (read from its binary, not captured
-from a real limit): a rate_limit_event, an assistant message with error "rate_limit", and a result with
-api_error_status 429. Only a real refusal that also shows quota evidence counts; a window that merely
-reads "rejected", an entitlement check, the throttle notice and a 529 never do.
+The Claude lines are shaped the way Claude Code writes them: a rate_limit_event, an assistant message with
+error "rate_limit", and a result with api_error_status 429 (2.1.286, read from its binary). 2.1.319, run
+against the scripted API as a claude.ai login, names the window as "5-hour limit" and carries
+api_error "usage_limit_reached" on the assistant message and the result (see REAL_319). Only a real refusal
+that also shows quota evidence counts; a window that merely reads "rejected", an entitlement check, the
+throttle notice and a 529 never do. Neither version ran against a real used-up plan.
 """
 
 import json
@@ -56,6 +58,7 @@ def _run(provider, *lines):
 
 
 SESSION = "You've hit your session limit · resets 3:30pm (UTC)"
+FIVE_HOUR = "You've hit your 5-hour limit · resets 3:30pm (UTC)"
 
 
 # -- Claude: what counts --
@@ -66,6 +69,53 @@ def test_a_five_hour_window_used_up_is_a_limit_with_the_time_the_event_gave():
                        _assistant(SESSION), _result(SESSION))
     assert got == rest.Limit("limit", "five_hour", RESET, SESSION, rest.RAISE_PAGES["claude"])
     assert result["api_error_status"] == 429 and result["ok"] is False
+
+
+def _real_319(text=FIVE_HOUR, **info):
+    """What 2.1.319 sent for a used-up five-hour window (captured in the headless test): the event with its
+    unified windows, an assistant message with the code and its params, and the result with the code."""
+    info = {"status": "rejected", "resetsAt": RESET, "rateLimitType": "five_hour", "overageStatus": "rejected",
+            "overageDisabledReason": "org_level_disabled", "isUsingOverage": False,
+            "unifiedWindows": {"five_hour": {"utilization": 1, "resetsAt": RESET}}, **info}
+    return (_event(**info),
+            _assistant(text, api_error="usage_limit_reached", api_error_status=429, request_id="req_1",
+                       api_error_params={"rate_limit_info": info}),
+            _result(text, api_error="usage_limit_reached"))
+
+
+def test_a_used_up_plan_as_claude_code_2_1_319_sends_it_is_a_limit_with_the_time_the_event_gave():
+    got, result = _run(providers.Claude("x"), *_real_319())
+    assert got == rest.Limit("limit", "five_hour", RESET, FIVE_HOUR, rest.RAISE_PAGES["claude"])
+    assert result["api_error"] == "usage_limit_reached" and result["api_error_status"] == 429
+
+
+def test_that_assistant_message_is_the_accounts_notice_and_not_what_the_agent_said():
+    events = list(providers.Claude("x").events(list(_real_319())))
+    assert [e["kind"] for e in events] == ["meta", "limit", "result"]   # no "text"
+    assert events[1]["api_error"] == "usage_limit_reached" and events[1]["text"] == FIVE_HOUR
+
+
+@pytest.mark.parametrize("said, kind", [
+    ("You've hit your 5-hour limit · resets 3:30pm (UTC)", "five_hour"),
+    ("You've hit your weekly limit · resets 3:30pm (UTC)", "seven_day"),
+    ("You've hit your Opus limit · resets 3:30pm (UTC)", "seven_day_opus"),
+    ("You've hit your Sonnet limit · resets 3:30pm (UTC)", "seven_day_sonnet"),
+])
+def test_the_window_is_named_by_the_words_when_there_is_no_event(said, kind):
+    got, _ = _run(providers.Claude("x"), _assistant(said, api_error="usage_limit_reached"),
+                  _result(said, api_error="usage_limit_reached"))
+    assert got.why == "limit" and got.kind == kind and got.until == RESET
+
+
+def test_a_code_this_version_does_not_know_needs_the_words_and_not_the_window_alone():
+    claude = providers.Claude("x")
+    said = "Something about your plan changed"
+    window = _event(status="rejected", resetsAt=RESET, rateLimitType="five_hour", isUsingOverage=False)
+    got, _ = _run(claude, window, _assistant(said, api_error="plan_changed"), _result(said, api_error="plan_changed"))
+    assert got is None
+    got, _ = _run(claude, window, _assistant(FIVE_HOUR, api_error="plan_changed"),
+                  _result(FIVE_HOUR, api_error="plan_changed"))
+    assert got == rest.Limit("limit", "five_hour", RESET, FIVE_HOUR, rest.RAISE_PAGES["claude"])
 
 
 def test_the_time_is_read_from_the_words_when_there_is_no_event_as_with_an_api_key():
@@ -147,6 +197,19 @@ def test_an_entitlement_check_is_not_the_quota():
     said = "This model requires usage credits"
     got, _ = _run(providers.Claude("x"), _assistant(said, api_error="model_requires_usage_credits"),
                   _result(said, api_error="model_requires_usage_credits"))
+    assert got is None
+
+
+@pytest.mark.parametrize("code, said", [
+    ("model_requires_usage_credits", "This model requires usage credits · run /extra-usage"),
+    ("long_context_credits_required", "API Error: Usage credits required for 1M context · run /extra-usage"),
+    ("model_requires_usage_credits", "You've hit your Fable limit · resets 3:30pm (UTC)"),
+])
+def test_an_entitlement_check_is_not_the_quota_even_when_it_is_a_429_with_a_rejected_window(code, said):
+    got, _ = _run(providers.Claude("x"),
+                  _event(status="rejected", resetsAt=RESET, rateLimitType="seven_day_overage_included",
+                         isUsingOverage=False),
+                  _assistant(said, api_error=code), _result(said, api_error=code))
     assert got is None
 
 
@@ -246,7 +309,7 @@ def test_the_refusal_is_not_the_agents_reply_and_the_event_and_retry_notices_are
     assert not p.is_progress(_line(type="system", subtype="api_retry"))   # a retry is not progress
 
 
-def test_an_assistant_error_with_an_api_error_is_left_to_the_ordinary_path():
+def test_an_assistant_error_that_is_an_entitlement_check_is_left_to_the_ordinary_path():
     p = providers.Claude("x")
     events = list(p.events([_assistant("This model requires usage credits", api_error="model_requires_usage_credits")]))
     assert [e["kind"] for e in events] == ["text"]

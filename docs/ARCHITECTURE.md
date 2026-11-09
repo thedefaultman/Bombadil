@@ -106,11 +106,18 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    - Claude: the refusal is an HTTP 429 (`api_error_status`), or `terminal_reason` `api_error` under an
      assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
      `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
-     the CLI's text ("hit your session limit", "out of usage credits", "spend cap").
+     the CLI's text ("hit your 5-hour limit", "hit your weekly limit", "out of usage credits",
+     "spend cap"; older versions said "session limit"). Newer versions also name which 429 it was in
+     `api_error`, on the assistant message and on the result: `usage_limit_reached` is the quota.
+     `model_requires_usage_credits` and `long_context_credits_required` are entitlement checks (also
+     429s, and their window can read `rejected`), which never rest the machine. A code this
+     version does not know is not taken on the window's word alone: the CLI's words must say it. No
+     code at all (older versions) is judged by the rule above. Run against the scripted API, the
+     CLI's lines for a used-up plan are in `tests/test_limit.py` (`_real_319`).
    - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
      exceeded".
-   - Not a limit: a result that carries `api_error` (an entitlement check such as
-     `model_requires_usage_credits`), the throttle notice ("not your usage limit"), "high load", a
+   - Not a limit: an entitlement check (`api_error` `model_requires_usage_credits` or
+     `long_context_credits_required`), the throttle notice ("not your usage limit"), "high load", a
      529, a short `api_retry`, the context window, a budget cap, Codex's retried "rate limit
      exceeded:", and anything a `!command` prints. The `rate_limit_event` alone never rests the machine
      (the CLI re-sends it, and a window can read `rejected` while credits pay): it says which window

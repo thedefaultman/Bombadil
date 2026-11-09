@@ -2794,6 +2794,18 @@ async def test_a_limit_is_said_plainly_with_the_providers_reset_time_after_it(ho
         agentd.LIMIT_TEXT + "\nCredit balance is too low"]
 
 
+@pytest.mark.parametrize("window", ["5-hour limit", "weekly limit", "Opus limit", "Sonnet limit", "Fable limit",
+                                    "usage credit limit"])
+def test_every_window_newer_claude_code_names_is_said_plainly(window):
+    said = f"You've hit your {window} \u00b7 resets 2:50am (UTC)"
+    assert agentd._limit_text(said) == agentd.LIMIT_TEXT + "\n" + said
+
+
+def test_an_entitlement_check_is_passed_through_as_it_came():
+    said = "Usage credits required for 1M context \u00b7 run /extra-usage to turn them on"
+    assert agentd._limit_text(said) == said
+
+
 @pytest.mark.asyncio
 async def test_a_bare_rate_limit_is_a_busy_moment_not_the_account(home):
     assert await _errors_for("hello", _failing("429 rate limit exceeded, retry later")) == [agentd.RATE_TEXT]
