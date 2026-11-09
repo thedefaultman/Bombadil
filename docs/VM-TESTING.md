@@ -59,8 +59,9 @@ restore points being created and pruned, the installer, and the installed system
 change across a reboot.
 
 At the end of the live checks the session is left alone and `idle-cpu` samples Hyprland, the bar, the
-daemon and the brain for 20 s: together they must use under 10% of a core (`IDLE_CPU_LIMIT`,
-`IDLE_CPU_SECONDS`), and the check prints the numbers either way (a `NOTE` line). A bar that redraws
+daemon and the brain in three slices of 10 s (`IDLE_CPU_SECONDS`): together they must use under 30% of a
+core in the middle slice (`IDLE_CPU_LIMIT`; the virtual machine's compositor draws in software under TCG, so
+this is not the 10% of the headless test), and the check prints all three either way (a `NOTE` line). A bar that redraws
 without end makes Hyprland draw without end too, and a software compositor turns each frame into
 real CPU, so this is where the whole of it shows; see [`IDLE-COST.md`](IDLE-COST.md).
 
