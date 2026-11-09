@@ -51,7 +51,7 @@ Window {
     PillState {
         id: pillState
         objectName: "pill"
-        onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onOutgoing: msg => { if (msg.type !== "bar") w.sent = w.sent.concat([msg]) }   // (the bar's hello is not what is under test)
         onCardKeys: w.keys += 1
         onHandOff: w.handOffs += 1
         onTyping: w.typings += 1
@@ -1187,7 +1187,7 @@ Item {
     property var sent: []
     Notifications {
         objectName: "notes"
-        onOutgoing: msg => w.sent = w.sent.concat([msg])
+        onOutgoing: msg => { if (msg.type !== "bar") w.sent = w.sent.concat([msg]) }   // (the bar's hello is not what is under test)
     }
 }
 """
