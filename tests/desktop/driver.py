@@ -2088,11 +2088,14 @@ pointer("press")
 time.sleep(0.15)
 pointer("release")
 gone = wait(lambda m: m.get("type") == "tips" and m.get("present") is False, 10, n)
+said = wait(ev("local", phase="done", target="tips"), 5, n)
 time.sleep(1.2)
 st = desk_state()
 shot("47-tips-put-away")
 check("the x puts Tips away: the card goes and agentd stops saying it",
       gone and st["faces"]["tips"] == "hidden" and "tips" in st["hidden"], (st.get("faces"), st.get("hidden")))
+check("and the line says the way back, as the words \"hide tips\" do",
+      said and said.get("text") == "Put Tips away. Say tips to see them again.", said)
 check("the Tips card raised no QML error",
       not [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text()).splitlines()
            if re.search(r"TipsCard|Tips[A-Z]\w*\.qml", ln) and re.search(r"\.qml\[|\.qml:\d+|Unable to assign|TypeError", ln)],

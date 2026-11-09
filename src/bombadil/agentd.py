@@ -945,6 +945,10 @@ class AgentD:
             self.notes = [*self.notes, f"at the desk: {text}"][-10:]
             self._log_line({"t": time.time(), "kind": "local", "prompt": "at the desk", "action": "desk",
                             "target": str(msg.get("widget") or ""), "result": text, "ok": True})
+            if op == "hide" and msg.get("widget") == "tips":
+                # Tips leaves with no strip to bring it back, so its x says the way, as "hide tips" does.
+                await self.event("local", turn=None, action="desk", target="tips", verb="hide", phase="done",
+                                 ok=True, text=text)
 
     async def _desk_tool(self, msg: dict) -> dict:
         """The os-mcp `desk` tool. It works in the turn that is running, and only when that

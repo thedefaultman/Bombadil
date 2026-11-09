@@ -481,6 +481,21 @@ async def test_the_default_tips_hear_of_the_desk_putting_them_away_and_keeping_t
     assert soon == [1, 1]                       # and so is any other change of the desk: Tips looks again
 
 
+@pytest.mark.asyncio
+async def test_the_x_on_the_card_says_the_way_back_as_the_word_does_and_other_widgets_say_nothing(home):
+    d = machine()
+    server, r, w, _ = await _serve(d)
+    await _say(w, {"type": "desk", "op": "hide", "widget": "tips"})
+    done = (await _events_until(r, _done))[-1]
+    assert done["text"] == "Put Tips away. Say tips to see them again." and done["ok"] is True
+    assert done["action"] == "desk" and done["target"] == "tips"
+    await _say(w, {"type": "desk", "op": "hide", "widget": "tips"})            # already put away: nothing to say
+    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})         # a gesture is its own answer
+    assert [m for m in await _heard(r, 0.5) if _done(m)] == []
+    w.close()
+    server.cancel()
+
+
 # -- a day of use --
 
 @pytest.mark.asyncio

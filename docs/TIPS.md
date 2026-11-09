@@ -355,7 +355,7 @@ as for any full card, so the line above it never covers it.
 | presses the arrows, or turns the wheel | `{"type": "tips", "op": "turn", "dir": 1 or -1}` | agentd sends the card for the next tip; the shell crossfades to it. The shell never turns the card itself. |
 | presses the title, "All tips ›" | `{"type": "tips", "op": "open", "id": "<tip>", "play": false}` | the Tips app opens on that tip |
 | presses the picture | the same with `"play": true` | the app opens on that tip, playing |
-| presses the x | `{"type": "desk", "op": "hide", "widget": "tips"}` (the same door as "hide tips") | agentd keeps it in `desk.toml`, sends the desk and then `present: false` |
+| presses the x | `{"type": "desk", "op": "hide", "widget": "tips"}` (the same door as "hide tips") | agentd keeps it in `desk.toml`, says "Put Tips away. Say tips to see them again." on the line (a gesture is its own answer for other cards, but this one has no strip to bring it back), sends the desk and then `present: false` |
 | presses the button | `{"type": "summon", "text": "<words>", "tip": true, "id": "<tip>"}` | agentd remembers the words for that tip and tells every bar; see below |
 
 ### The button, and the pill
