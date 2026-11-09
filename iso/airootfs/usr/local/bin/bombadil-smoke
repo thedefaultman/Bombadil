@@ -52,6 +52,7 @@ audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[
 apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
+drawer_away() { ! special_shown "$1"; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
 # No details window and no drawer showing (a failed hyprctl never counts as gone).
 drawer_gone() {
@@ -175,6 +176,15 @@ SHOT_WAIT=1 shot after-alt-space
 keys b r o w s e r ret
 check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
 check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
+# Super+Return opens a terminal on the desktop. A window that opens while a drawer shows lands inside the
+# drawer and leaves with it, so the drawer that shows (here the browser's) is put away first.
+check terminal-with-a-drawer-showing mcp_call show_panel '{"name":"browser"}'
+check terminal-drawer-shown wait_for 60 special_shown browser
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
+keys meta_l+ret
+check super-return-terminal wait_for 60 has_client 'c["class"]=="foot" and not c["workspace"]["name"].startswith("special:")'
+check super-return-puts-the-drawer-away wait_for 30 drawer_away browser
+as_user pkill -x foot
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
 check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
 shot pill-working
@@ -342,6 +352,7 @@ not_checking() { ! setup_is checking; }
 cdp_tab() { python3 -c 'import json, re, sys, urllib.request as u
 t = json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20))
 print([x.get("url") for x in t]); sys.exit(not any(re.search(sys.argv[1], x.get("url", "")) for x in t if x.get("type") == "page"))' "$1"; }
+no_cdp_tab() { ! cdp_tab "$1" >/dev/null; }
 panel_away() { ! special_shown browser; }
 gone() { ! pgrep -u user -f "$1"; }
 # restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
@@ -438,6 +449,11 @@ if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   check signin-page-again page_again_or_diag
   shot signin-page-again
   check signin-esc-cancels called_off fake
+  # Called off, the login page is put away: no tab on it, another tab in its place (the browser's last tab
+  # is never closed, since that would quit it and leave the panel waiting for a window), the window still there.
+  check signin-page-put-away wait_for 30 no_cdp_tab '/authorize'
+  check signin-a-tab-stays cdp_tab '.'
+  check signin-browser-stays has_client 'c["class"]=="bombadil-browser"'
   check signin-cli-ended wait_for 30 gone fake_signin.py
   # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
   check signin-times-out times_out
@@ -452,6 +468,63 @@ if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   check agentd-restored agentd_unit_again
   agentd_log
 fi
+
+# Left alone, the session costs next to nothing. Hyprland, the bar, the daemon and the brain are watched
+# together, because a bar that redraws forever makes Hyprland draw forever too (docs/IDLE-COST.md): in this
+# very VM that was Hyprland at 265% and the bar at 97% of a core with nothing on screen. Everything is left
+# alone for a while first, since the apps and the browser this run started are still settling.
+idle_share() {
+  python3 - "${IDLE_CPU_LIMIT:-10}" "${IDLE_CPU_SECONDS:-20}" <<'PY'
+import os, sys, time
+limit, seconds, clk = float(sys.argv[1]), float(sys.argv[2]), os.sysconf("SC_CLK_TCK")
+MUST = ("Hyprland", "quickshell")           # found by the name of the process
+ALSO = ("agentd", "bombadil-brain")         # scripts: found by the name of the file they run
+def watched():
+    found = {}
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+            args = open(f"/proc/{p}/cmdline").read().split("\0")
+        except OSError:
+            continue
+        if comm in MUST:
+            found[int(p)] = comm
+        for name in ALSO:
+            if any(os.path.basename(a) == name for a in args[:3]):
+                found[int(p)] = name
+    return found
+def ticks(pid):
+    total = 0
+    try:
+        for t in os.listdir(f"/proc/{pid}/task"):
+            raw = open(f"/proc/{pid}/task/{t}/stat").read()
+            f = raw[raw.rindex(")") + 2:].split()
+            total += int(f[11]) + int(f[12])
+    except OSError:
+        pass
+    return total
+before = {pid: (name, ticks(pid)) for pid, name in watched().items()}
+t0 = time.monotonic()
+time.sleep(seconds)
+dt = time.monotonic() - t0
+share = {}
+for pid, (name, then) in before.items():
+    share[name] = share.get(name, 0.0) + max(0, ticks(pid) - then) / clk / dt * 100
+total = sum(share.values())
+print("idle for %.0f s, percent of one core: %s, together %.1f (limit %g)" % (
+    dt, ", ".join("%s %.1f" % kv for kv in sorted(share.items())), total, limit))
+missing = [name for name in MUST if name not in share]
+if missing:
+    print("not running:", ", ".join(missing))
+sys.exit(total >= limit or bool(missing))
+PY
+}
+wait_for 240 calm || say "NOTE the machine was still busy when the idle cost was measured"
+sleep 30
+check idle-cpu idle_share
+say "NOTE $(tr '\n' ' ' </tmp/smoke.idle-cpu.log)"
 
 if [[ "$mode" == "install" ]]; then
   check install bash -c 'BOMBADIL_INSTALL_CMDLINE="console=tty0 console=ttyS0,115200 bombadil.smoke=undo" bombadil-install /dev/vda --yes'
