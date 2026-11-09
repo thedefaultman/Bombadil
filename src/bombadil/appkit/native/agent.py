@@ -1,8 +1,14 @@
 """`Agent`: the app's line to agentd, the same session the user talks to in the bar.
 
-Newline-delimited JSON over agentd's Unix socket (see agentd.py). The singleton is made,
-and connects, the first time an app's QML mentions `Agent`; it retries every 3 s while
-agentd is away. `check` never connects or sends.
+Newline-delimited JSON over agentd's Unix socket (see agentd.py). The singleton is made the first time
+an app's QML mentions `Agent`, and connects the first time the app reads one of its properties or asks;
+it retries every 3 s while agentd is away. An app that only drafts (`draft`, below) never holds a
+connection open. `check` never connects or sends.
+
+`draft(text)` puts words in the pill and nothing more: a one-shot {"type": "summon", "text", "tip": true}
+on a connection of its own that closes as soon as the line is written. The pill takes the keyboard with the
+cursor at the end, keeps what the person had typed and not sent, and Enter sends the words as the person's
+own ask. It is how a button can offer a sentence to say without saying it (the Tips app's buttons).
 
 agentd answers each prompt with {"type": "queued", "turn": id} on this connection only, and
 tags every event with its turn id, so the app follows its own turns by id. That also
@@ -29,6 +35,47 @@ from ... import paths
 from ..context import AppContext
 from . import MAJOR, MINOR, URI
 
+SHOT_SECONDS = 2.0      # a one-shot line that is not written by then is given up on
+
+
+class _OneShot(QObject):
+    """One line to agentd on a connection that exists for it alone: connect, write, close. It is its own
+    object so that it outlives the call and is gone when it is done; an agentd that is away or slow costs
+    nothing but the line."""
+
+    def __init__(self, parent: QObject, path: str, line: bytes):
+        super().__init__(parent)
+        self._line = line
+        self._over = False
+        self._socket = QLocalSocket(self)
+        self._socket.connected.connect(self._write)
+        self._socket.errorOccurred.connect(self._done)
+        self._socket.bytesWritten.connect(self._written)
+        self._timeout = QTimer(self)
+        self._timeout.setSingleShot(True)
+        self._timeout.timeout.connect(self._done)
+        self._timeout.start(int(SHOT_SECONDS * 1000))
+        self._socket.connectToServer(path)
+
+    def _write(self):
+        self._socket.write(self._line)
+        self._socket.flush()
+
+    def _written(self, _n):
+        if self._socket.bytesToWrite() == 0:
+            self._done()
+
+    def _done(self, *_):
+        if self._over:
+            return
+        self._over = True
+        self._timeout.stop()
+        if self._socket.state() == QLocalSocket.LocalSocketState.ConnectedState:
+            self._socket.disconnectFromServer()
+        else:
+            self._socket.abort()
+        self.deleteLater()
+
 
 class Agent(QObject):
     connectedChanged = Signal()
@@ -39,9 +86,10 @@ class Agent(QObject):
     replyChanged = Signal()
     replied = Signal(str, arguments=["text"])
 
-    def __init__(self, ctx: AppContext):
+    def __init__(self, ctx: AppContext, lazy: bool = False):
         super().__init__()
         self._ctx = ctx
+        self._lazy = lazy               # the QML singleton: connects when the app first asks for its state
         self._started = False
         self._connected = False
         self._busy = False
@@ -190,12 +238,35 @@ class Agent(QObject):
         else:
             self._outbox.append(text)
 
-    connected = Property(bool, lambda self: self._connected, notify=connectedChanged)
-    busy = Property(bool, lambda self: self._busy, notify=busyChanged)
-    provider = Property(str, lambda self: self._provider, notify=providerChanged)
-    note = Property(str, lambda self: self._note, notify=noteChanged)
-    ready = Property(bool, lambda self: self._ready, notify=readyChanged)
-    reply = Property(str, lambda self: self._reply, notify=replyChanged)
+    @Slot(str)
+    @Slot(str, str)
+    def draft(self, text: str, tip: str = ""):
+        """Put these words in the pill, with the cursor at the end, and send nothing: the person's Enter
+        sends them, Esc drops them. Never replaces words the person typed and has not sent. `tip` is the
+        id of the Tips tip the words belong to, so agentd can tell when they were sent as they were. A
+        one-shot on a connection of its own, which closes when the line is written; nothing is queued, so
+        with agentd away nothing happens. Never in `check`."""
+        words = str(text) if text else ""
+        if not words.strip() or self._ctx.check:
+            return
+        msg = {"type": "summon", "text": words, "tip": True}
+        if tip:
+            msg["id"] = str(tip)
+        _OneShot(self, str(paths.socket_path()), (json.dumps(msg) + "\n").encode())
+
+    def _live(self, attr: str):
+        """What a property of the QML singleton says. The first look connects (an app that only drafts
+        never does)."""
+        if self._lazy:
+            self.start()
+        return getattr(self, attr)
+
+    connected = Property(bool, lambda self: self._live("_connected"), notify=connectedChanged)
+    busy = Property(bool, lambda self: self._live("_busy"), notify=busyChanged)
+    provider = Property(str, lambda self: self._live("_provider"), notify=providerChanged)
+    note = Property(str, lambda self: self._live("_note"), notify=noteChanged)
+    ready = Property(bool, lambda self: self._live("_ready"), notify=readyChanged)
+    reply = Property(str, lambda self: self._live("_reply"), notify=replyChanged)
 
 
 _instance: Agent | None = None      # the latest one made, for Python callers and tests
@@ -204,8 +275,7 @@ _instance: Agent | None = None      # the latest one made, for Python callers an
 def register(ctx: AppContext) -> None:
     def make(engine):
         global _instance
-        _instance = Agent(ctx)
-        _instance.start()
+        _instance = Agent(ctx, lazy=True)
         return _instance
 
     qmlRegisterSingletonType(Agent, URI, MAJOR, MINOR, "Agent", make)
