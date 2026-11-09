@@ -36,6 +36,7 @@ Window {
     property int screens: 1
     property var summons: []
     property int handOffs: 0
+    property int keys: 0
     // What shell.qml does with a line from agentd (lists arrive as they do from a parsed line).
     function feed(line) { pillState.handle(JSON.parse(line)) }
     PillState {
@@ -44,6 +45,7 @@ Window {
         onOutgoing: msg => w.sent = w.sent.concat([msg])
         onSummoned: text => w.summons = w.summons.concat([text])
         onHandOff: w.handOffs += 1
+        onCardKeys: w.keys += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
@@ -685,6 +687,7 @@ def test_the_agents_words_on_the_line_start_at_a_word_not_in_the_middle_of_one(b
 
 def test_a_picture_the_machine_drew_says_so(bar):
     import test_sysmap as fixtures
+
     from bombadil import sysmap
     card = sysmap.capture_boot(fixtures.fake({"systemd-analyze critical-chain": fixtures.CHAIN,
                                               "systemd-analyze time": fixtures.TIME}))["card"]
@@ -887,7 +890,7 @@ def test_nothing_is_sent_to_agentd_while_it_is_away(bar):
     assert len(bar.sent) == n and bar.pill.property("flash") == "Not connected to the agent yet."
 
 
-@pytest.mark.parametrize("card", [None, 3, "a string", {"type": "list", "id": "x"}, {"gone": True}])
+@pytest.mark.parametrize("card", [None, 3, "a string", {"type": "checklist", "id": "x"}, {"gone": True}])
 def test_odd_cards_change_nothing(bar, card):
     _card_event(bar, _diagram())
     bar.send(kind="card", turn=None, card=card)
@@ -905,9 +908,9 @@ def test_a_tall_picture_scrolls_inside_the_bar_instead_of_running_off_the_screen
     bar.snap("card-tall")
 
 
-CHOOSE = dict(type="setup", state="choose", line="Which AI should run this computer?", tone="ask",
-              actions=[{"id": "provider:claude", "label": "Claude", "style": "big"},
-                       {"id": "provider:codex", "label": "Codex", "style": "big"}])
+CHOOSE = {"type": "setup", "state": "choose", "line": "Which AI should run this computer?", "tone": "ask",
+              "actions": [{"id": "provider:claude", "label": "Claude", "style": "big"},
+                       {"id": "provider:codex", "label": "Codex", "style": "big"}]}
 
 
 def test_first_boot_asks_which_ai_with_two_big_chips(bar):
@@ -980,8 +983,8 @@ def test_signed_in_is_said_once_and_fades(bar):
 
 
 def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
-    signed_out = dict(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
-                      actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    signed_out = {"type": "setup", "state": "signed_out", "line": "Sign in to Claude to start.", "tone": "step",
+                      "actions": [{"id": "signin", "label": "Sign in", "style": "primary"}]}
     bar.send(**signed_out)
     bar.call("submit", "!ls")
     bar.send(kind="turn_start", turn=1, prompt="!ls")
@@ -1005,7 +1008,7 @@ def test_a_line_that_fades_before_sign_in_brings_the_setup_back_and_leaves_a_pic
     assert bar.pill.property("card") is None
 
 
-READY = dict(type="setup", state="ready", tone="done", actions=[])
+READY = {"type": "setup", "state": "ready", "tone": "done", "actions": []}
 
 
 def test_switching_to_another_ai_says_so(bar):
@@ -1078,3 +1081,90 @@ def test_a_notice_that_ends_while_one_screen_reads_it_stays_on_all_until_the_poi
     QtTest.QTest.mouseMove(bar.win, QtCore.QPoint(5, 5))
     bar.pump(0.8)
     assert not any(it.isVisible() for it in bar.items("statusLine", visible_only=False))
+
+
+# -- the cards that come from the person's connections (message, task, list), at the pill's level --
+
+def _connect_card(kind="message", id="msg:n1", **over):
+    """A card as agentd sends it, made by the validator that guards the bar."""
+    from bombadil import cards
+    base = {
+        "message": {"type": "message", "id": id, "title": "Priya Shah in #launch", "source": "connect", "say": "Reply.",
+                    "thread": [{"ref": "slack:w1/C1/1", "from": "Priya Shah", "text": "Can we lock the 14th?",
+                                "ts": time.time() - 30, "mine": False, "unread": True}],
+                    "reply": {"proposal": "p1", "kind": "slack_reply", "target": "slack:w1/C1/1", "where": "#launch",
+                              "content": "", "warnings": [], "fingerprint": "", "ready": False, "state": "open",
+                              "by": "person", "receipt": None, "note": ""}},
+        "list": {"type": "list", "id": id, "title": "Unread messages", "source": "connect", "say": "Two unread.",
+                 "rows": [{"id": "r1", "title": "Priya Shah in #launch", "sub": "Can we lock the 14th?", "when": "",
+                           "state": "new", "actions": [], "opens": {"kind": "card", "value": "msg:n1"}}]},
+    }[kind]
+    out, errors = cards.accept({**base, **over})
+    assert out is not None, errors
+    return out
+
+
+def _card_id(bar):
+    card = bar.pill.property("card")
+    card = card.toVariant() if hasattr(card, "toVariant") else card
+    return card["id"] if card else None
+
+
+def _snapshot(bar):
+    value = bar.call("snapshot")
+    return value.toVariant() if hasattr(value, "toVariant") else value
+
+
+def _feed(bar, **msg):
+    QtCore.QMetaObject.invokeMethod(bar.win, "feed", QtCore.Q_ARG("QVariant", json.dumps(msg)))
+    bar.pump()
+
+
+def test_one_card_at_a_time_whatever_its_kind_and_a_gone_for_an_older_one_takes_nothing(bar):
+    _card_event(bar, _diagram())
+    _feed(bar, type="card", card=_connect_card())
+    assert _card_id(bar) == "msg:n1" and bar.shown("messageFace") and not bar.shown("cardDiagram")
+    _feed(bar, type="card", card=_connect_card("list", id="list:unread"))
+    assert _card_id(bar) == "list:unread" and bar.shown("listFace") and not bar.shown("messageFace")
+    _feed(bar, type="card", card={"id": "msg:n1", "gone": True})
+    assert _card_id(bar) == "list:unread"
+    _feed(bar, type="card", card={"id": "list:unread", "gone": True})
+    assert bar.pill.property("card") is None
+    assert bar.warnings == []
+
+
+def test_a_card_of_the_connections_without_an_id_is_not_drawn(bar):
+    _feed(bar, type="card", card={"type": "message", "title": "No id", "thread": []})
+    _feed(bar, type="card", card={"type": "list", "id": "", "title": "Empty id", "rows": []})
+    assert bar.pill.property("card") is None and not bar.shown("cardHost")
+
+
+def test_the_line_state_says_where_a_cards_draft_stands_for_the_smoke_and_the_desktop_test(bar):
+    _feed(bar, type="card", card=_connect_card())
+    assert _snapshot(bar)["card"] == {"id": "msg:n1", "type": "message", "title": "Priya Shah in #launch",
+                                "draft": {"proposal": "p1", "state": "open", "ready": False}}
+    _feed(bar, type="card", card=_connect_card("list", id="list:unread"))
+    assert _snapshot(bar)["card"]["draft"] is None
+
+
+def test_a_row_that_opens_a_thread_is_a_reply_but_the_cards_own_way_out_is_not(bar):
+    _feed(bar, type="card", card=_connect_card("list", id="list:unread"))
+    bar.call("cardAction", "list:unread", "open", "", None)           # "Open in Slack" on the card itself
+    _feed(bar, type="card", card=_connect_card())
+    assert bar.win.property("keys") == 0
+    _feed(bar, type="card", card=_connect_card("list", id="list:unread"))
+    bar.call("cardAction", "list:unread", "open", "r1", None)         # a row that opens a thread
+    _feed(bar, type="card", card=_connect_card())
+    assert bar.win.property("keys") == 1
+    assert [m for m in bar.sent if m["type"] == "card_action"] == [
+        {"type": "card_action", "card": "list:unread", "action": "open"},
+        {"type": "card_action", "card": "list:unread", "action": "open", "row": "r1"}]
+
+
+def test_what_the_person_copies_goes_with_the_card_action_and_nothing_else_does(bar):
+    _feed(bar, type="card", card=_connect_card())
+    bar.call("copyOpen", "msg:n1", "Yes, the 14th.")
+    bar.call("cardAction", "msg:n1", "dismiss", "", 42)
+    assert [m for m in bar.sent if m["type"] == "card_action"] == [
+        {"type": "card_action", "card": "msg:n1", "action": "copy_open", "text": "Yes, the 14th."},
+        {"type": "card_action", "card": "msg:n1", "action": "dismiss"}]

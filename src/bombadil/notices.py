@@ -25,6 +25,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from . import plaintext
+
 MAX_NOTICES = 4
 MAX_ACTIONS = 3
 MAX_LINE = 200
@@ -43,8 +45,8 @@ Handler = Callable[[str], Awaitable[bool | None]]
 def one_line(text, limit: int = MAX_LINE) -> str:
     """Words as a line: whitespace and control characters folded to single spaces, then cut.
     What a notice says is often someone else's subject line, so nothing in it can start another
-    line or turn the text around."""
-    s = " ".join(_CONTROL.sub(" ", str(text)).split())
+    line, turn the text around or hide words in characters that draw as nothing."""
+    s = " ".join(plaintext.strip(_CONTROL.sub(" ", str(text))).split())
     return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
 
 

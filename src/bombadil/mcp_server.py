@@ -175,6 +175,9 @@ class OsTools:
         from .mail import tools as mail_tools  # mail_search, mail_read, mail_mark, mail_draft, mail_show
         mail_tools.register(self)
 
+        from .connect import tools as connect_tools  # messages_unread, message_thread, tasks_waiting, ...
+        connect_tools.register(self)
+
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
         app_tools.register(self)   # last: the tools of the app kit are listed together, at the end
 

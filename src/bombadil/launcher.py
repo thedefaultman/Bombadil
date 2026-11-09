@@ -5,7 +5,9 @@ or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "w
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
 only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
 agent. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
-every inbox at once, and the service behind it is asked, never waited for.
+every inbox at once, and the service behind it is asked, never waited for. Messages and connections have
+words too ("slack", "unread", "connections", "connect linear"): they open a card or start a setup, which
+agentd does, since the connection service is asked there and never waited for.
 Everything else goes to the agent. The list is deliberately exact (after lowercasing and
 trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
 two brains that sometimes disagree.
@@ -28,6 +30,8 @@ from pathlib import Path, PurePosixPath
 from . import apps, browser, dev, hypr, paths, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
+from .connect.cardmake import SERVICE_TITLES
+from .connect.protocol import SERVICES
 from .desk import WIDGETS, Desk
 from .mail import client as mail_client
 
@@ -100,6 +104,16 @@ SEND_BEFORE = ("yes", "yeah", "ok", "okay", "please", "go ahead and")
 SEND_AFTER = ("now", "please")
 SEND_LINE = "Sending is yours. It's under the pointer."
 MAIL_SHADOWED = "an app of yours called mail stands in front of Mail; rename it to open Mail"
+# Messages and connections (docs/CONNECT.md). The words that open the unread messages and "Connected here", and the
+# ones that start connecting a service. They are matched before the person's own apps, as Mail's are, so that each
+# always means the same thing; none is the name of a built-in app, so apps.RESERVED has nothing to add for them.
+CONNECT_VIEWS = {"unread": ["slack", "messages", "unread", "what did i miss", "what did i miss on slack"],
+                 "connected": ["connections", "connected", "whats connected", "what is connected"]}
+CONNECT_TITLES = {"unread": "your unread messages", "connected": "Connected here"}
+CONNECT_VERB = "connect"
+CONNECT_ENTRIES = {"messages": "Messages", "connections": "Connections"}   # what Tab offers, by name
+# An app of yours named like one of these words cannot be opened from the pill any more, so Tab does not offer it.
+CONNECT_CLAIMED = frozenset(w for words in CONNECT_VIEWS.values() for w in words)
 # Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
 # ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
 # longer or different goes to the agent, which has system_map for the same pictures.
@@ -374,6 +388,9 @@ def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = 
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
+    connect = _connect_action(apostrophe) if apostrophe.isascii() else None
+    if connect is not None:
+        return connect
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
@@ -395,6 +412,22 @@ def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = 
             if util and (verbs or word == t):
                 return Action(util)
     return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
+
+
+def _connect_action(t: str) -> Action | None:
+    """"slack", "show messages", "what's connected" -> the card that opens; "connect linear" -> the setup of that
+    service. Exactly these words: "connect to wifi" or "connect slack to the launch channel" are for the agent.
+    `t` is the lowercased text, apostrophes as they came."""
+    t = t.replace("'", "")
+    service = t[len(CONNECT_VERB) + 1:] if t.startswith(CONNECT_VERB + " ") else None
+    if service in SERVICES:
+        return Action("connect", service, "open", SERVICE_TITLES.get(service, service.capitalize()))
+    for verbs in (OPEN_VERBS, ()):
+        word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
+        view = _lookup(word, CONNECT_VIEWS) if word else None
+        if view is not None:
+            return Action("messages", view, "open", CONNECT_TITLES[view])
+    return None
 
 
 def is_send_word(text: str) -> bool:
@@ -435,7 +468,7 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
     widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
-           for a in app_list if a.name != MAIL_APP]
+           for a in app_list if a.name != MAIL_APP and a.name not in CONNECT_CLAIMED]
     out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": list(MAIL_WORDS["mail"])})
     if dev_names is not None:
         out += dev_names.names()
@@ -447,6 +480,8 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
+    out += [{"name": name, "title": title, "kind": "command", "words": [name]}
+            for name, title in CONNECT_ENTRIES.items()]
     return out
 
 
@@ -497,6 +532,10 @@ class Launcher:
             return f"Drawing {action.title}"
         if action.kind == "widget":
             return f"Putting {action.title} " + ("on the desk" if action.verb == "open" else "away")
+        if action.kind == "messages":
+            return f"Opening {action.title}" if action.target == "connected" else "Looking at your messages"
+        if action.kind == "connect":
+            return f"Setting up {action.title}"
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
@@ -521,6 +560,10 @@ class Launcher:
         if action.kind == "widget":
             return (f"Could not put {action.title or action.target} "
                     + ("on the desk" if action.verb == "open" else "away"))
+        if action.kind == "messages":
+            return "Could not open what is connected" if action.target == "connected" else "Could not read your messages"
+        if action.kind == "connect":
+            return f"Could not set up {action.title}"
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
@@ -589,7 +632,10 @@ class Launcher:
 
     def _send(self, a: Action) -> tuple[bool, str]:
         # agentd says this only when a draft waits (is_send_word); the press itself is not here. The window
-        # comes in on the draft, so that what the line points at is there to be pointed at.
+        # comes in on the draft, so that what the line points at is there to be pointed at. A draft that is not
+        # mail (a reply, a ticket) is on a card in the bar, which is already in front of the person.
+        if a.verb == "proposal":
+            return True, SEND_LINE
         try:
             self.open_mail(**({"view": "drafts", "id": a.target} if a.target else {"view": "drafts"}))
         except Exception as e:  # noqa: BLE001 - the line is still true of the window the person has

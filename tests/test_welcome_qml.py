@@ -500,6 +500,7 @@ def test_shell_qml_only_reaches_for_what_pillstate_and_the_line_declare():
     assert used <= pill, used - pill
     # Handlers on the PillState block and on Connections to it name real signals and properties.
     signals = set(re.findall(r"\bsignal\s+(\w+)", (SHELL / "PillState.qml").read_text()))
+    signals |= set(re.findall(r"\bsignal\s+(\w+)", shell))   # (and the shell's own: a Connections to the root)
     handlers = set(re.findall(r"\bon([A-Z]\w*)\s*:", _block(shell, "PillState {")))
     handlers |= set(re.findall(r"function\s+on([A-Z]\w*)\s*\(", shell))
     handlers -= {"RawEvent", "DraftChanged"}   # Hyprland's signal and the shell's own draft, on their own Connections
