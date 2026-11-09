@@ -399,6 +399,12 @@ def test_codex_hands_the_turn_to_the_tool_too():
     assert "BOMBADIL_TURN" in providers.MCP_ENV and "BOMBADIL_SOCKET" in providers.MCP_ENV
 
 
+def test_codex_hands_a_slow_machines_capture_scale_to_the_tool_too():
+    # system_map captures inside the os-mcp process, so a machine that sets BOMBADIL_BUDGET_SCALE for
+    # agentd needs it there too, on Codex as on Claude (whose children inherit the whole environment).
+    assert "BOMBADIL_BUDGET_SCALE" in providers.MCP_ENV
+
+
 def test_the_mail_tools_are_listed_and_there_is_no_way_to_send():
     tools = {t["name"]: t for t in rpc(make(), "tools/list")["result"]["tools"]}
     mail = {name for name in tools if name.startswith("mail_")}

@@ -155,13 +155,20 @@ QtObject {
     // must not let the pill widen for the 400 ms the cards take to come back.
     readonly property bool anyFull: widgetIds.some(id => present[id] && mode !== "immersive" && !folded
                                                         && !narrow && _stack.fit[id] === true)
+    readonly property real stageRoom: Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
+                                                                              + T.stripGap + T.railMargin)))
     readonly property real pillTarget: mode === "immersive" ? 100
         : mode === "shared" ? 360
-        : Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
-                                                        + T.stripGap + T.railMargin)))
+        : stageRoom
+    // A picture above the pill is the conversation's, not the pill's: beside a window the pill narrows to
+    // 360, but a picture asked for may take about 560 (less on a screen whose rails and strips leave
+    // less room), so its labels and rows read. Without a window it is as wide as the pill.
+    readonly property real pictureTarget: mode === "shared" ? Math.min(560, stageRoom) : pillTarget
     property int pillAnimMs: 150
     property real pillWidth: pillTarget
     Behavior on pillWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
+    property real pictureWidth: pictureTarget
+    Behavior on pictureWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
 
     // -- the rails --
 

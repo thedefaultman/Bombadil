@@ -672,6 +672,11 @@ time.sleep(1.2)
 shot("23-picture-beside-window")
 shared = glass_pixels(500, 480, 200)
 check("a picture asked for beside a window still shows", shared > 20, shared)
+# The pill is 360 beside a window (460 to 820 on this 1280 screen); the picture takes about 560 (360 to 920).
+inside_l, outside_l = glass_pixels(368, 480, 200), glass_pixels(340, 480, 200)
+inside_r, outside_r = glass_pixels(912, 480, 200), glass_pixels(940, 480, 200)
+check("beside a window the picture is wider than the pill, about 560 px", inside_l > 60 and inside_r > 60 and outside_l < 10 and outside_r < 10,
+      f"left {inside_l}/{outside_l}, right {inside_r}/{outside_r}")
 desk_ipc("cover", full)
 time.sleep(1.0)
 st = desk_state()
