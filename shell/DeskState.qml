@@ -18,7 +18,8 @@ QtObject {
     signal windowOpened()
     // A button or a small x on a rows card was pressed, or a row that opens something was tapped.
     // DeskState answers the ones that are its own (Why? and the x on Watching, Open on Needs you, the
-    // disk on Machine); the signals stay open for anyone else.
+    // disk on Machine, and on Away its Open and Why? and a tap on a row, which says it was seen); the
+    // signals stay open for anyone else.
     signal rowAction(string widget, string key, string action)
     signal rowRemove(string widget, string key)
     signal rowOpen(string widget, string key, string opens)
@@ -31,7 +32,7 @@ QtObject {
     // Never a prompt: agentd shows what is behind the row and answers nothing else.
     onRowOpen: (widget, key, opens) => {
         if (widget === "machine" && opens !== "") outgoing({ type: "vitals", op: "open", row: opens })
-        else if (widget === "away" && opens === "seen") awaySeen()      // a tap anywhere on Away is having looked
+        else if (widget === "away" && opens === "seen") awaySeen()      // a tap on an Away row is having looked
     }
 
     // Left rail first, in the default order, then right.
@@ -66,8 +67,8 @@ QtObject {
     property string nowStripText: "working"
     // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, parts, pulse,
     // button, remove, opens}]} and an optional strip: {text, dot, ring, mark, textColor, outlined}.
-    // Watching, Needs you and Machine are filled from agentd's `jobs`, `dev` and `machine` messages
-    // (below), the others by later pieces.
+    // Watching, Needs you, Away and Machine are filled from agentd's `jobs`, `dev`, `away` and `machine`
+    // messages (below), Alive by a later piece.
     property var watchModel: ({ title: "Watching", why: "", rows: [] })
     property var needsModel: ({ title: "Needs you", why: "", rows: [] })
     property var awayModel: null
@@ -839,7 +840,7 @@ QtObject {
 
     // What a row may say: dots and plain lines, a button that is one of these. A row is agentd's words, so
     // only its shape is held here: known kinds, known tones, no row without a key, nothing past the sixth.
-    // Every row "opens" its own having been seen: a tap anywhere on the card puts it away.
+    // Every row "opens" its own having been seen: a tap on a row puts the card away (so does one on its header).
     readonly property var awayButtons: ["Open", "Why?"]
     readonly property int awayMaxRows: 6
 

@@ -31,6 +31,7 @@ flowchart LR
         D[coding sessions]
         K[desk.py / desk.toml]
         V[vitals.py samples /proc, /sys, statfs]
+        W[away.py reads the turn log]
     end
     subgraph shell
         S[shell.qml handle]
@@ -41,13 +42,13 @@ flowchart LR
         ST[Stone in the pill]
     end
     H[Hyprland] -- windows --> C[HyprCover] -- setWindows --> DS
-    A & J & D & K & V --> S
+    A & J & D & K & V & W --> S
     S --> P
     S --> DS
     DS --> R
     DS --> T
     DS -- needsYou --> P --> ST
-    DS -- outgoing: jobs, dev, desk, vitals --> agentd
+    DS -- outgoing: jobs, dev, desk, vitals, away --> agentd
 ```
 
 ## What agentd and the shell say to each other
@@ -210,7 +211,7 @@ the last changes nothing.
 
 The Away card answers "what happened while I was gone?". It sits on the right rail between Needs you and
 Machine, its chip says `back · 4 things`, and it lists what finished, who is waiting, what failed and what
-changed, the most urgent first. It leaves once it has been seen: a tap anywhere on it, or the person's next
+changed, the most urgent first. It leaves once it has been seen: a tap on a row or its header, or the person's next
 ask. `away.py` reads the turn log and the sessions and decides; the shell draws what the one `away`
 message says and knows nothing about turns or sessions.
 
@@ -230,9 +231,9 @@ chip counts everything found, not the rows shown.
 
 | Kind | It is | Tone | Second line | Button |
 | --- | --- | --- | --- | --- |
-| failed | a turn that ended in an error, or a background job that ended failed | red | the first line of what went wrong | `Why?` on a job (shows its output) |
+| failed | a turn that ended in an error or without finishing, a background job that ended failed, or a coding session that failed and was not looked at | red | the first line of what went wrong (a session: the line it last said) | `Why?` on a job that ended in the last day (its output is not kept longer), `Open` on a session |
 | waiting | a coding session that has asked something | the sessions' blue | what it asked | `Open` |
-| finished | a turn or a job that ended well, or a session that finished and was not looked at | green | when (`at 09:05`, with the weekday when it was not today); for a job, the line it ended with | `Open` on a session |
+| finished | a turn or a job that ended well, or a session that finished and was not looked at | green | when (`at 09:05`, with the weekday when it was not today); for a job or a session, the line it ended with | `Open` on a session |
 | changed | a turn that changed files and said what it did | orange | the time | none |
 
 Left out: what the person ran themselves (`!`), what an app asked, a turn or a job they stopped, a turn waiting
@@ -245,9 +246,10 @@ was (never further back than a week), and answers "Here is what happened while y
 nothing did, the card is one line, `Nothing happened`. A card that is up is sent to every bar, to a bar that
 connects later, and with `desk get`.
 
-**When it goes.** A tap on any row, the title or a button (`seen`, which a button sends after doing what it
-says), or the next thing the person types at the pill. An ask from a coding session (it comes with a name) or from a process inside an agent's
-turn does not count as the person being there. agentd remembers when it was last seen in
+**When it goes.** A tap on a row, on the title or the line under it, or on a button (`seen`, which a button
+sends after doing what it says), or the next thing the person types at the pill. An ask from a coding
+session (it comes with a name) or from a process inside an agent's turn does not count as the person being
+there. agentd remembers when it was last seen in
 `~/.local/state/bombadil/away.json`, so a restart does not bring back what was seen.
 
 **What the shell does with the message.** A row kind other than `dot` or `plain` is dropped, as is one with

@@ -1,11 +1,12 @@
 """The Away widget's list: what happened while the person was gone, in the order they would want it.
 
-The sources are the ones agentd already keeps: the rows of turns.jsonl (turns that ended, and the
-background jobs that did), and the coding sessions agentd is told about. `items` is pure: it is handed
+The sources are the rows of turns.jsonl (turns that ended, and the background jobs that did) and the
+coding sessions' views, as the shell's `dev` message has them. `items` is pure: it is handed
 the rows, the sessions, the time the person left and the time now, and gives back what is worth a row.
 `Away` holds the card between "the person came back" and "they have seen it", remembers when that last
-was, and builds the one `away` message the shell draws. agentd owns the triggers: the person asking
-for it ("show away"), and the moment they come back from a break.
+was, and builds the one `away` message the shell draws. agentd owns the triggers. Today that is the
+person asking for it ("show away"); `Away.back` is what the moment they come back from a break will call,
+and the sessions are what `AgentD._away_sessions` will hand over, when agentd has either to say.
 
 Nothing here raises on a row it cannot make sense of, and nothing here reaches the model.
 """
@@ -16,6 +17,7 @@ import time
 from pathlib import Path
 
 from . import paths
+from .jobs import KEEP as JOB_KEPT      # a job's record and its output are deleted this long after it ended
 
 LOOKBACK = 24 * 3600        # how far back the card looks when it was never seen
 MAX_LOOKBACK = 7 * 24 * 3600
@@ -41,7 +43,7 @@ def _first_line(text) -> str:
 def _number(value, default=0.0) -> float:
     try:
         n = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):     # a number too big for a float is no time either
         return default
     return n if n == n and abs(n) != float("inf") else default
 
@@ -81,14 +83,16 @@ def read_tail(path: Path | None = None, limit: int = TAIL) -> list[dict]:
 def _turn_item(row: dict, t: float) -> dict | None:
     prompt = row.get("prompt")
     prompt = prompt.strip() if isinstance(prompt, str) else ""
-    # Not what the person ran themselves ("!"), not what an app asked, not a turn they stopped or one
-    # that is waiting for a limit to lift (it has not ended), and not one that was cut off.
+    ok = row.get("ok")
+    # Not what the person ran themselves ("!"), not what an app asked, and not a turn they stopped or one
+    # that is waiting for a limit to lift (it has not ended). A turn whose CLI went away without a result
+    # has no verdict (ok None): the person saw an error, so it did not finish, and it is news.
     if (not prompt or prompt.startswith(("!", "[from app")) or row.get("stopped") or row.get("requeued")
-            or row.get("ok") not in (True, False)):
+            or ok not in (True, False, None)):
         return None
     n = row.get("n")
     key = "turn:" + (str(n) if isinstance(n, int) and not isinstance(n, bool) else str(int(t)))
-    if row["ok"] is False:
+    if ok is not True:
         return {"key": key, "kind": "failed", "title": _cut(prompt),
                 "sub": _cut(_first_line(row.get("result"))) or "It did not finish.", "t": t}
     wrote = row["files"].get("wrote") if isinstance(row.get("files"), dict) else None
@@ -98,14 +102,14 @@ def _turn_item(row: dict, t: float) -> dict | None:
     return {"key": key, "kind": "finished", "title": _cut(prompt), "sub": "", "t": t}
 
 
-def _job_item(row: dict, t: float) -> dict | None:
+def _job_item(row: dict, t: float, now: float) -> dict | None:
     if row.get("action") != "job" or row.get("stopped"):
         return None     # the person stopped it themselves: that is not news
     failed = row.get("ok") is False
     job = row.get("job")
     item = {"key": "job:" + (str(job) if job else str(int(t))), "kind": "failed" if failed else "finished",
             "title": _cut(row.get("target") or "A job"), "sub": _cut(_first_line(row.get("result"))), "t": t}
-    if failed and job:
+    if failed and job and now - t <= JOB_KEPT:      # "Why?" shows its output, which is not kept for ever
         item["job"] = str(job)
     return item
 
@@ -145,7 +149,7 @@ def items(rows, sessions=(), *, since: float, now: float) -> list[dict]:
         if t <= since or t > now + 60:
             continue
         if row.get("kind") == "local":
-            item = _job_item(row, t)
+            item = _job_item(row, t, now)
         elif paths.is_turn_row(row):
             item = _turn_item(row, t)
         else:

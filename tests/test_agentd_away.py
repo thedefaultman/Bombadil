@@ -126,8 +126,8 @@ async def test_what_was_seen_is_not_news_again_and_agentd_remembers_it_across_a_
     seen_at = d.away.seen_at
     await _say(w, {"type": "desk", "op": "show", "widget": "away"})      # nothing has happened since
     card = await _card(r)
-    assert _titles(card) == ["Nothing happened"] and card["since"] == pytest.approx(seen_at)
-    assert _daemon().away.seen_at == pytest.approx(seen_at)             # a new agentd starts from there
+    assert _titles(card) == ["Nothing happened"] and card["since"] == pytest.approx(seen_at, abs=1e-6)
+    assert _daemon().away.seen_at == pytest.approx(seen_at, abs=1e-6)             # a new agentd starts from there
     w.close()
     server.cancel()
 
@@ -201,7 +201,10 @@ async def test_the_card_reaches_back_to_the_ask_before_this_one(home):
     await _ask(w, "show away")
     card = await _card(r)
     assert d._typed_before == first and d._typed_last > first
-    assert card["since"] == pytest.approx(first)
+    assert card["since"] == pytest.approx(first, abs=1e-6)
+    # The first ask's own turn ended after it, so it is in the card only when the card reaches back that far
+    # (from the later ask it would not be).
+    assert "tell me a joke" in _titles(card)
     assert "a newer build" in _titles(card) and "an old build" not in _titles(card)
     w.close()
     server.cancel()

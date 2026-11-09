@@ -138,7 +138,9 @@ Item {
                     onRowAction: (key, action) => rail.desk.rowAction(cell.modelData, key, action)
                     onRowRemove: key => rail.desk.rowRemove(cell.modelData, key)
                     onRowOpen: (key, opens) => rail.desk.rowOpen(cell.modelData, key, opens)
-                    // A click on Away's title is the person having seen it (it has no Time to open yet).
+                    // A click on Away's title or the line under it is the person having seen it (it has no Time
+                    // to open yet).
+                    captionTaps: cell.modelData === "away"
                     onTitleClicked: if (cell.modelData === "away") rail.desk.awaySeen()
                 }
             }

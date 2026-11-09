@@ -65,12 +65,19 @@ def test_a_failed_turn_says_how_it_ended():
     assert i["sub"] == "It did not finish."
 
 
+def test_a_turn_whose_cli_went_away_with_no_result_did_not_finish_and_is_news():
+    (i,) = items([turn(ok=None, result="", n=3)], since=LEFT, now=NOW)
+    assert (i["key"], i["kind"], i["sub"]) == ("turn:3", "failed", "It did not finish.")
+
+
 @pytest.mark.parametrize("row", [
     turn(prompt="!ls -la"),                         # the person ran it themselves
     turn(prompt="[from app notes] summarize"),      # an app asked
     turn(stopped=True),                             # the person stopped it
     turn(requeued=True),                            # waiting for a limit to lift: it has not ended
-    turn(ok=None),                                  # cut off
+    turn(ok=None, stopped=True),                    # no verdict, and the person stopped it
+    turn(ok=None, requeued=True),                   # no verdict, and waiting for a limit to lift
+    turn(ok="yes"),                                 # not a verdict
     turn(prompt="   "),
     turn(t=LEFT - 1),                               # before they left
     turn(t=LEFT),                                   # at the moment they left
@@ -104,6 +111,14 @@ def test_a_job_that_ended_while_away_is_a_row_and_a_failed_one_can_say_why():
     assert (bad["kind"], bad["key"], bad["job"], bad["title"]) == ("failed", "job:b2", "b2", "Build")
 
 
+def test_why_is_offered_only_while_the_job_and_its_output_are_still_kept():
+    day = away.JOB_KEPT
+    got = {i["key"]: i for i in items([job(t=NOW - day + 60, job="new", ok=False), job(t=NOW - day - 60, job="old", ok=False)],
+                                      since=NOW - 7 * 86400, now=NOW)}
+    assert got["job:new"]["job"] == "new"
+    assert got["job:old"]["kind"] == "failed" and "job" not in got["job:old"]       # still news, but nothing to show
+
+
 def test_a_job_the_person_stopped_is_not_news_and_other_local_rows_are_not_jobs():
     assert items([job(stopped=True, result="Stopped Ubuntu ISO.")], since=LEFT, now=NOW) == []
     assert items([{"t": LEFT + 5, "kind": "local", "action": "desk", "prompt": "at the desk", "ok": True}],
@@ -126,6 +141,14 @@ def test_a_session_that_asks_is_waiting_and_has_an_open_button_to_act_on():
     (i,) = items([], [session()], since=LEFT, now=NOW)
     assert (i["kind"], i["key"], i["session"], i["title"], i["sub"]) == (
         "waiting", "dev:bombadil/reviewer", "bombadil/reviewer", "reviewer on Bombadil", "Apply the migration?")
+
+
+def test_the_waiting_are_newest_first_by_when_they_began_to_wait_and_a_time_that_makes_no_sense_is_now():
+    got = items([], [session("old", since=NOW - 900), session("new", since=NOW - 60)], since=LEFT, now=NOW)
+    assert keys(got) == ["dev:new", "dev:old"]
+    for odd in (None, "x", float("nan"), float("inf"), 10**400, 0, -5, NOW + 5000):
+        (i,) = items([], [session(since=odd)], since=LEFT, now=NOW)
+        assert i["t"] == NOW, odd
 
 
 def test_a_session_that_finished_or_failed_unseen_is_a_row_and_a_seen_one_is_not():
@@ -163,7 +186,13 @@ def test_the_same_key_is_one_row_and_the_last_word_wins():
 
 
 @pytest.mark.parametrize("junk", [None, "x", 4, [], {"t": "soon"}, {"t": float("nan")}, {"t": float("inf"), "prompt": "x"},
-                                   {"prompt": "no time", "ok": True}, {"t": LEFT + 5, "prompt": 7, "ok": True}])
+                                   {"prompt": "no time", "ok": True}, {"t": LEFT + 5, "prompt": 7, "ok": True},
+                                   # a row that is whole but for its time: only the time is what makes it junk
+                                   {"t": float("nan"), "prompt": "x", "ok": True},
+                                   {"t": float("inf"), "prompt": "x", "ok": True},
+                                   {"t": "soon", "prompt": "x", "ok": True},
+                                   {"t": 10**400, "prompt": "x", "ok": True},
+                                   {"t": None, "prompt": "x", "ok": True}])
 def test_a_row_it_cannot_make_sense_of_is_skipped_and_the_rest_still_count(junk):
     assert keys(items([junk, turn(n=1)], since=LEFT, now=NOW)) == ["turn:1"]
 
@@ -174,6 +203,12 @@ def test_read_tail_gives_the_rows_oldest_first_and_drops_what_it_cannot_read(tmp
     log = tmp_path / "turns.jsonl"
     log.write_text(json.dumps(turn(n=1)) + "\n" + "{not json\n" + "[1, 2]\n" + json.dumps(turn(n=2)) + "\n"
                    + '{"t": 3, "pro')     # cut by a crash
+    assert [r["n"] for r in read_tail(log)] == [1, 2]
+
+
+def test_a_row_nested_past_what_json_can_read_is_dropped_and_the_rows_around_it_are_not(tmp_path):
+    log = tmp_path / "turns.jsonl"
+    log.write_text(json.dumps(turn(n=1)) + "\n" + "[" * 200_000 + "\n" + json.dumps(turn(n=2)) + "\n")
     assert [r["n"] for r in read_tail(log)] == [1, 2]
 
 
@@ -277,7 +312,8 @@ def test_the_message_is_a_copy(card):
     assert card.up
 
 
-@pytest.mark.parametrize("text", ["", "{", "[]", '{"seen_at": "soon"}', '{"seen_at": -4}', '{"seen_at": null}', "null"])
+@pytest.mark.parametrize("text", ["", "{", "[]", '{"seen_at": "soon"}', '{"seen_at": -4}', '{"seen_at": null}', "null",
+                                  '{"seen_at": Infinity}', '{"seen_at": NaN}', '{"seen_at": 1e999}'])
 def test_a_state_file_that_says_nothing_sensible_is_no_memory(tmp_path, text):
     (tmp_path / "away.json").write_text(text)
     assert Away(path=tmp_path / "away.json", log=tmp_path / "none", clock=lambda: NOW).seen_at is None

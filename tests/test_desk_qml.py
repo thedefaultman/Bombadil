@@ -3229,7 +3229,8 @@ def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
     seen = {"type": "away", "op": "seen"}
     card = desk.item("deskCard-away")
     done, more = desk.card_row("turn:5"), desk.card_row("more")
-    for target in (done, desk.inside(done, "rowsRowTitle"), more, desk.inside(card, "rowsTitle")):
+    for target in (done, desk.inside(done, "rowsRowTitle"), more, desk.inside(card, "rowsTitle"),
+                   desk.inside(card, "rowsWhy")):               # the header is the title and the line under it
         before = len(desk.sent)
         desk.click(target)
         assert desk.sent[before:] == [seen]
@@ -3239,6 +3240,22 @@ def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
     desk.send(type="away", since=0, count=0, why="", rows=[])
     assert desk.away is None
     assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+
+
+def test_a_tap_on_another_cards_title_or_caption_leaves_away_alone(desk):
+    desk.set("connected", True)
+    desk.jobs(ISO, UPDATE)
+    desk.clock(10)
+    desk.dev([session("k1"), session("k2")], ["k1", "k2"])
+    desk.vitals()
+    desk.back()
+    desk.pump(0.4)
+    assert [desk.faces[w] for w in ("watching", "needs", "away", "machine")] == ["full"] * 4
+    for name in ("deskCard-watching", "deskCard-needs", "deskCard-machine"):
+        card = desk.item(name)
+        desk.click(desk.inside(card, "rowsTitle"))
+        desk.click(desk.inside(card, "rowsWhy"))
+    assert [m for m in desk.sent if m.get("type") == "away"] == [] and desk.away is not None
 
 
 def test_nothing_is_said_about_a_card_that_is_not_there(desk):
