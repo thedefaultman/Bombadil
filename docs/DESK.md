@@ -87,7 +87,9 @@ because Hyprland sends no event while a floating window is dragged. The slot a c
 reserved while it is folded, so the cards above it do not slide down.
 
 The pill follows the desk: 900 px at most, less what the strips and a card on each side take, never
-under 360 px; 360 px with a window in front; a capsule under a full-screen window.
+under 360 px; 360 px with a window in front; a capsule under a full-screen window. A picture above
+the pill (docs/pictures.md) follows the same room but is not narrowed with the pill: beside a window it
+may take about 560 px (less when the rails leave less; `DeskState.pictureTarget`).
 
 ## The needs-you mark
 
