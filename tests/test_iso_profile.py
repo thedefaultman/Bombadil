@@ -419,8 +419,9 @@ def test_nothing_on_the_image_starts_or_configures_a_notification_daemon():
     shipped = [p for tree in ("etc/skel/.config", "etc/systemd", "etc/xdg", "etc/greetd") for p in
                (ISO / "airootfs" / tree).rglob("*") if p.is_file() and not p.is_symlink()]
     assert shipped
+    DAEMON_WORD = r"\b(" + "|".join(NOTIFICATION_DAEMONS) + r")\b"
     named = [p.relative_to(ISO).as_posix() for p in shipped
-             if re.search(r"\b(%s)\b" % "|".join(NOTIFICATION_DAEMONS),
+             if re.search(DAEMON_WORD,
                           "\n".join(line for line in p.read_text().splitlines()
                                     if not line.lstrip().startswith(("#", "--"))))]
     assert named == []

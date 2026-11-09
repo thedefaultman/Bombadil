@@ -71,10 +71,20 @@ def test_what_is_not_a_proposal_is_refused_in_a_sentence(table, kind, target, co
     assert table.all() == []
 
 
-def test_a_task_takes_its_fields_as_text_and_a_box_not_typed_in_is_empty(table):
-    p = table.open("task_create", "linear", {"title": "Ship it", "description": None, "estimate": 3})
-    assert p["content"] == {"title": "Ship it", "description": "", "estimate": "3"}
+def test_a_task_takes_its_fields_as_text_and_a_box_not_typed_in_is_not_there(table):
+    p = table.open("task_create", "linear", {"title": "Ship it", "description": None, "estimate": 3, "due": ""})
+    assert p["content"] == {"title": "Ship it", "estimate": "3"}
     assert p["fingerprint"] == fingerprint("task_create", "linear", p["content"])
+
+
+def test_what_the_card_drew_with_an_empty_box_for_every_box_is_the_draft_the_agent_made(table):
+    # The shell reports one value per box it draws, "" for the ones nobody filled in; the button lights only when
+    # that is the same draft, so an empty box and a missing one must not tell the two apart.
+    p = table.open("task_create", "linear", {"title": "Ship it", "due": "2026-10-09"})
+    shown = table.shown(p["id"], {"title": "Ship it", "description": "", "due": "2026-10-09"})
+    assert shown["ready"] is True
+    edited = table.edit(p["id"], {"title": "Ship it", "description": "", "due": "2026-10-09"})
+    assert edited["content"] == {"title": "Ship it", "due": "2026-10-09"} and edited["fingerprint"] == p["fingerprint"]
 
 
 def test_ids_are_never_reused_and_the_counter_survives_a_restart(home, clock):

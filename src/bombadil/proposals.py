@@ -75,7 +75,11 @@ def clean_content(kind: str, content):
                 value = str(value)
             if not isinstance(key, str) or not _KEY.fullmatch(key) or not isinstance(value, str):
                 raise ProposalError("A task takes its fields, each as text.")
-            out[key] = value[:MAX_FIELD]
+            # An empty box and a box that is not there are the same to every service, and the shell reports one
+            # value per box it draws: a draft that does not name a box would never match what the card drew, and
+            # its button would never light.
+            if value[:MAX_FIELD]:
+                out[key] = value[:MAX_FIELD]
         return out
     raise ProposalError("That is not something I send.")
 
