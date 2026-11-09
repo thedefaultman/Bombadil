@@ -84,7 +84,7 @@ MACHINE = {
 # A command with no AI: its output on the line, in mono.
 BANG = {
     "id": "fixture-bang", "line": "Run a command without the AI.", "words": "!uname -r", "marks": [],
-    "captions": ["You type !", "It runs", "You see it"],
+    "captions": ["You type bang", "It runs", "You see it"],
     "beats": [
         {"key": "bang"},
         {"type": "!uname -r"},
@@ -203,10 +203,24 @@ UNDO = {
     ],
 }
 
+# Things taken away again: the counter stopped, a line cleared, a window slid out.
+CLEARS = {
+    "id": "fixture-clears", "line": "Things leave when they are done.", "words": "", "marks": [],
+    "captions": ["It counts", "It stops", "It is gone"],
+    "beats": [
+        {"stone": "working", "line": "Working on it", "tag": "template", "counter": True},
+        {"window": "Notes", "tag": "model", "doc": True},
+        {"hold": 1100},
+        {"line": "Still working", "tag": "template", "counter": False},
+        {"line": ""},
+        {"window": False},
+    ],
+}
+
 # A very short scene, for the tests that play in real time.
 SHORT = {
     "id": "fixture-short", "line": "Short.", "words": "", "marks": [], "captions": ["One", "Two", "Three"],
     "beats": [{"key": "enter"}, {"hold": 100}, {"line": "Done.", "tag": "caption"}],
 }
 
-ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, FOLDS, UNDO, SHORT]
+ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, FOLDS, UNDO, CLEARS, SHORT]

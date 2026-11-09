@@ -427,6 +427,26 @@ def test_animate_off_leans_and_holds_the_glow_without_easing(app, tmp_path):
         close(m)
 
 
+def test_animate_off_wins_over_reduced_motion_nothing_pulses_or_fades(app, tmp_path):
+    """Reduced motion swaps the roll for a pulse and the hop for a fade; a stone that does not animate has
+    neither, because it is posed by its host a frame at a time."""
+    m = build(app, tmp_path, "animate: false; reducedMotion: true")
+    try:
+        for face in ("working", "starting", "done", "needs", "rest"):
+            m.set(face=face)
+            m.pump(0.1)
+            assert running_things(m.win) == [], face
+    finally:
+        close(m)
+    m = build(app, tmp_path, "reducedMotion: true; face: \"working\"")           # animated: the pulse is what runs
+    try:
+        assert running_things(m.win), "an animated stone under reduced motion still pulses"
+        m.set(animate=False)
+        assert running_things(m.win) == []
+    finally:
+        close(m)
+
+
 INKED = ("rest", "listening", "working", "needs", "done", "stopped", "resting", "offline", "starting")
 
 
@@ -441,7 +461,10 @@ def test_ink_draws_every_face_in_fg_with_no_state_colour(app, tmp_path):
                 assert not hues(img, THEME[tone], 40), (face, tone)
             assert len(hues(img, THEME["fg"], 40)) > 20, face      # and it is drawn
         m.set(face="needs")
-        assert near(m.at(12, 8), THEME["fg"])                   # the glow is ink too, not amber
+        assert near(m.at(12, 8), THEME["fg"])                   # the body is ink ...
+        glow = QtGui.QColor(m.at(2, 13))                        # ... and so is the glow outside it, not amber
+        ground = QtGui.QColor(GROUND)
+        assert glow.red() > ground.red() + 10 and abs(glow.red() - glow.blue()) < 8, glow.name()
         m.snap("ink-needs")
         m.set(face="rest")
         m.snap("ink-rest")
@@ -533,6 +556,22 @@ def test_small_cut_stays_inside_the_stone_and_a_third_of_a_turn_leaves_it_as_it_
         m.set(turn=0, lean=6)
         leaning = m.image()
         assert silhouette(leaning) != before and len(cut16(leaning)) > 10
+    finally:
+        close(m)
+
+
+def test_small_squashes_about_its_foot_so_it_stays_on_the_ground_it_stands_on(app, tmp_path):
+    """The hop squashes the stone about where it stands: the 16 px drawing's foot is its bottom edge, so a squash
+    changes its top and its sides and leaves its bottom row where it was."""
+    m = build(app, tmp_path, "small: true; animate: false")
+    try:
+        at_rest = box(silhouette(m.image()))
+        assert at_rest == (0, 0, 15, 15)
+        m.set(hopSx=1.1, hopSy=0.84)
+        _x0, y0, _x1, y1 = box(silhouette(m.image()))
+        assert y1 == 15 and y0 > 0                       # the foot holds, the top comes down
+        m.set(hopSx=0.97, hopSy=1.04, hopY=-3)           # the stretch at the top of the hop leaves the ground
+        assert box(silhouette(m.image()))[3] < 15
     finally:
         close(m)
 

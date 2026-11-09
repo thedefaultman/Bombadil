@@ -873,6 +873,7 @@ Item {
                     // a poster: a dot and a bar. The app: the words, the figure, the meter.
                     Rectangle {
                         id: dot
+                        objectName: "cardDot"
                         visible: cd.c.kind === "now" || cd.ink
                         x: 0; anchors.verticalCenter: parent.verticalCenter
                         width: 6; height: 6; radius: 3
@@ -908,11 +909,13 @@ Item {
                         color: Theme.fg
                     }
                     Rectangle {
+                        objectName: "meter"
                         visible: !cd.ink && cd.c.kind === "machine"
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                         width: parent.width * 0.45; height: 6; radius: 3
                         color: Theme.raised
                         Rectangle {
+                            objectName: "meterFill"
                             width: parent.width * Math.max(0, Math.min(100, Number(cr.d.value) || 0)) / 100
                             height: parent.height; radius: 3
                             color: Theme.muted

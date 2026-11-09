@@ -37,7 +37,7 @@ Window {
     property int finishedCount: 0
     Kit.TipScene {
         id: scene; objectName: "scene"; x: 12; y: 12
-        density: "%s"; reducedMotion: %s
+        %s
         onFinished: win.finishedCount += 1
     }
 }
@@ -48,7 +48,9 @@ class Scene:
     def __init__(self, app, tmp_path, tip, density="card", reduced=False):
         self.app = app
         qml = tmp_path / "scene.qml"
-        qml.write_text(HARNESS % (KIT.as_uri(), GROUND, density, "true" if reduced else "false"))
+        # density None: the scene's own defaults (a card, with motion on)
+        props = "" if density is None else f'density: "{density}"; reducedMotion: {"true" if reduced else "false"}'
+        qml.write_text(HARNESS % (KIT.as_uri(), GROUND, props))
         self.engine = QtQml.QQmlApplicationEngine()
         self.warnings = []
         self.engine.warnings.connect(lambda ws: self.warnings.extend(w.toString() for w in ws))
@@ -234,11 +236,11 @@ def test_seek_clamps_and_stops_the_clock(make):
 def test_the_frame_at_a_chosen_t_is_the_same_every_time(make):
     s = make(fx.BUILD, "app")
     s.seek(3000)
-    a = s.image()
+    a, frame = s.image(), s.frame
     s.seek(500)
+    assert s.frame != frame
     s.seek(3000)
-    assert s.image() == a
-    assert s.frame == plain(s.prop("frame"))
+    assert s.image() == a and s.frame == frame                      # the same t, the same frame, the same picture
 
 
 # -- every beat, as frames --
@@ -426,9 +428,15 @@ def test_window_rows_arrive_one_after_another_and_a_reload_adds_a_column_in_plac
     shown = beat_start(fx.CHANGE, 4)
     s.seek(shown - 1)
     before = s.item("window").property("y"), s.item("window").property("x")
-    assert s.frame["win"]["cols"] == []
+    assert s.frame["win"]["cols"] == [] and len(s.frame["win"]["rows"]) == 3
+    s.seek(shown + 100)                                      # a fresh window would be sliding in, and empty
+    win = s.frame["win"]
+    assert win["slide"] == 1 and len(win["rows"]) == 3 and all(r["alpha"] == 1 for r in win["rows"])
+    assert (s.item("window").property("y"), s.item("window").property("x")) == before
+    assert len(s.items("windowRow")) == 3
     s.seek(shown + 600)
     assert (s.item("window").property("y"), s.item("window").property("x")) == before        # in place: no slide
+    assert len(s.items("windowRow")) == 3
     cols = s.frame["win"]["cols"]
     assert cols[0]["head"] == "Due" and cols[0]["cells"] == ["Oct 3", "Oct 6", "Oct 9"] and cols[0]["alpha"] == 1
     assert s.frame["win"]["slide"] == 1
@@ -490,9 +498,68 @@ def test_a_window_holds_the_rows_the_validator_lets_it_have(make):
     assert s.item("windowRows").y() + s.item("windowRows").height() <= s.item("window").height() - 1
 
 
+def test_a_line_is_cleared_a_window_slides_out_and_the_counter_stops(make):
+    s = make(fx.CLEARS, "app")
+    s.seek(beat_start(fx.CLEARS, 2) + 1000)
+    assert s.frame["line"]["secs"] >= 1 and s.item("lineCounter") is not None and s.item("window") is not None
+    s.seek(beat_start(fx.CLEARS, 3) + 500)                       # counter = false: the words stay, the count goes
+    assert s.frame["line"]["text"] == "Still working" and s.frame["line"]["secs"] == -1
+    assert s.item("lineCounter") is None and s.frame["stone"]["face"] == "working"
+    s.seek(beat_start(fx.CLEARS, 4) + 100)                       # line = "": nothing is on the line
+    assert s.frame["line"] is None and s.item("line") is None and s.item("window") is not None
+    out = beat_start(fx.CLEARS, 5)
+    s.seek(out)
+    assert s.frame["win"]["slide"] == 1
+    s.seek(out + 150)                                            # window = false: it slides out in 300 ms
+    assert 0 < s.frame["win"]["slide"] < 1 and s.item("window") is not None
+    s.seek(out + 300)
+    assert s.frame["win"] is None and s.item("window") is None
+    s.seek(s.duration)
+    assert s.frame["win"] is None and s.frame["line"] is None
+    assert s.duration == tip_scene.duration(fx.CLEARS["beats"])
+
+
+def test_columns_come_in_one_every_200_ms_and_a_window_can_slide_from_the_right(make):
+    tip = {"id": "cols", "captions": ["a", "b", "c"], "beats": [
+        {"window": "W", "tag": "model", "from": "right", "rows": ["a", "b"],
+         "columns": [["One", "1", "2"], ["Two", "3", "4"]]}]}
+    s = make(tip, "app")
+    start = 300 + 2 * 200                                          # the slide, then the rows, then the columns
+    s.seek(start + 100)
+    one, two = s.frame["win"]["cols"]
+    assert 0 < one["alpha"] < 1 and two["alpha"] == 0
+    s.seek(start + 300)
+    one, two = s.frame["win"]["cols"]
+    assert one["alpha"] == 1 and 0 < two["alpha"] < 1
+    s.seek(start + 500)
+    assert [c["alpha"] for c in s.frame["win"]["cols"]] == [1, 1]
+    s.seek(50)
+    far = s.item("window").property("x")
+    s.seek(300)
+    assert s.item("window").property("x") < far                    # it comes in from the right edge
+    assert s.item("window").property("x") + s.item("window").property("width") <= s.item("stage").width()
+
+
+def test_the_cards_unfold_and_the_strips_fade_out_as_they_do(make):
+    tip = copy.deepcopy(fx.TIMER)
+    tip["beats"].append({"fold": False, "tag": "template"})
+    s = make(tip, "app")
+    back = beat_start(tip, len(tip["beats"]) - 1)
+    s.seek(back - 1)
+    assert s.item("strips").property("opacity") == 1
+    s.seek(back + 75)                                              # half way: the strip is still there, fading
+    strips = s.item("strips")
+    assert strips is not None and 0.3 < strips.property("opacity") < 0.7 and s.item("strip") is not None
+    assert 0 < s.item("card-watching").property("opacity") < 1
+    s.seek(back + 300)
+    assert s.item("strip") is None and s.item("card-watching").property("opacity") == 1
+
+
 def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     s = make(fx.TIMER, "app")
     start = beat_start(fx.TIMER, 2)
+    s.seek(beat_start(fx.TIMER, 3) + 100)                       # told again, the card is changed in place, not drawn twice
+    assert len(s.items("card-watching")) == 1
     s.seek(start + 75)
     card = s.item("card-watching")
     assert card.property("transformOrigin") == QtQuick.QQuickItem.TransformOrigin.BottomLeft
@@ -511,12 +578,19 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     s = make(fx.MACHINE, "app")
     s.seek(s.duration)
     assert "The machine is fine" in [t for t, _, _ in s.texts()] and s.item("card-machine") is not None
+    meters = sorted(s.items("meter"), key=lambda i: i.mapToScene(QtCore.QPointF(0, 0)).y())
+    assert [round(m.childItems()[0].width() / m.width(), 2) for m in meters] == [0.42, 0.61, 0.12]
     origin = QtQuick.QQuickItem.TransformOrigin
     assert s.item("card-machine").property("transformOrigin") == origin.BottomRight       # it arrives from its rail's corner
     s = make(fx.ROUTE, "app")
     s.seek(s.duration)
     assert [t for t, _, _ in s.texts() if t == "Install rust and set it up"]
     assert s.item("card-now") is not None
+    dots = sorted((d for d in s.items("cardDot") if d.isVisible()), key=lambda i: i.mapToScene(QtCore.QPointF(0, 0)).y())
+    assert [QtGui.QColor(d.property("color")).name() for d in dots][:2] == [
+        QtGui.QColor(THEME["good"]).name(), QtGui.QColor(THEME["accent"]).name()]      # done, then the step it is on
+    assert QtGui.QColor(dots[2].property("color")).alpha() == 0                          # the next step is a ring
+    assert len(s.items("card-now")) == 1 and len(s.items("card-watching")) == 0
 
 
 def scene_box(s, item):
@@ -622,8 +696,22 @@ def test_a_picture_card_streams_its_boxes_in_and_lights_one(make):
     x0, y0 = int(top_left.x()), int(top_left.y())
     assert colour_count(ring, "warn", 14, (x0 + 8, y0, x0 + int(lit.width()) - 8, y0 + 2)) > 8      # its 2 px ring
     s = make(fx.DISK, "app")
+    start = beat_start(fx.DISK, 3)
+    s.seek(start + 300 + 100)                                             # bars grow one after another
+    grow = [b["grow"] for b in s.frame["pic"]["bars"]]
+    assert 0 < grow[0] < 1 and grow[1] == 0 and grow[2] == 0
     s.seek(s.duration)
-    assert len(s.items("bar")) == 3
+    assert len(s.items("bar")) == 3 and [b["grow"] for b in s.frame["pic"]["bars"]] == [1, 1, 1]
+    bars = sorted(s.items("bar"), key=lambda i: i.mapToScene(QtCore.QPointF(0, 0)).y())
+    fills = [b.childItems()[0] for b in bars]
+    assert [round(f.width() / b.width(), 2) for f, b in zip(fills, bars, strict=True)] == [0.62, 0.91, 0.12]
+    img = s.image()
+
+    def box_of(item):
+        p = item.mapToScene(QtCore.QPointF(0, 0))
+        return int(p.x()) + 4, int(p.y()), int(p.x() + item.width() * 0.9), int(p.y() + item.height())
+
+    assert colour_count(img, "warn", 14, box_of(bars[1])) > 20 and colour_count(img, "warn", 14, box_of(bars[0])) == 0
     s.snap("app-end")
 
 
@@ -648,6 +736,7 @@ def test_the_poster_is_the_last_frame(make, tip):
     assert card.prop("phase") == 2
     card.snap("card")
     app.snap("app-end")
+    make(tip, "app", True).snap("stills")
 
 
 def test_the_card_is_272_by_153_with_a_16_px_ink_stone_and_a_32_px_pill(make):
@@ -858,10 +947,12 @@ def test_the_app_shows_its_three_captions_with_the_current_one_in_fg(make):
         s.seek(t)
         colours = [QtGui.QColor(s.item(f"caption-{i}").property("color")).name() for i in range(3)]
         assert [c == QtGui.QColor(THEME["fg"]).name() for c in colours] == [i == current for i in range(3)], t
+    for t in (200, 900, 1500, 2500, 3500):                              # pictures of the scene in motion
+        s.seek(t)
+        s.snap(f"app-{t}")
     cap = s.item("caption-0")
     assert cap.mapToItem(s.scene, QtCore.QPointF(0, 0)).y() >= 324          # under the stage
     assert cap.property("font").pixelSize() == 12
-    s.snap("app-mid")
 
 
 def test_the_stage_and_the_card_set_every_text_in_inter(make):
@@ -904,6 +995,17 @@ def test_the_stills_are_the_last_frame_of_each_phase(make):
     assert wins == ["Tickets"]
 
 
+def test_a_phase_that_ends_on_enter_is_drawn_before_the_key_lands(make):
+    tip = {"id": "enter-first", "captions": ["a", "b", "c"], "beats": [
+        {"type": "hello"}, {"key": "enter"},
+        {"stone": "working", "line": "On it", "tag": "template", "phase": 1}, {"hold": 400},
+        {"line": "Done.", "tag": "model", "phase": 2, "stone": "done"}]}
+    assert tip_scene.validate(tip) == []
+    s = make(tip, "app", reduced=True)
+    assert s.item("still-0").findChild(QtCore.QObject, "pillText").property("text") == "hello"    # unsent
+    assert s.item("still-1").findChild(QtCore.QObject, "pillText").property("text") == ""            # sent: the words left
+
+
 def test_reduced_motion_plays_nothing_and_settles_at_once(make):
     s = make(fx.BUILD, "app", reduced=True)
     s.call("play")
@@ -911,6 +1013,8 @@ def test_reduced_motion_plays_nothing_and_settles_at_once(make):
     assert s.prop("t") == s.duration
     s.pump(0.1)
     assert s.win.property("finishedCount") == 1
+    s.seek(0)                                                       # the stills are the payoff, whatever t says
+    assert s.frame["ended"] is True and s.prop("phase") == 2 and s.frame["line"]["text"] == "Made Tickets. It is open now."
 
 
 # -- nothing runs while not playing --
@@ -962,6 +1066,27 @@ def test_playing_runs_one_animation_and_nothing_else_then_emits_finished_and_hol
     s.pump(0.4)
     assert s.image() == last and s.win.property("finishedCount") == 1          # it holds, and does not loop
     assert s.prop("t") == s.duration
+
+
+def test_play_at_the_end_starts_from_the_top(make):
+    s = make(fx.SHORT, "app")
+    s.seek(s.duration)
+    s.call("play")
+    assert s.prop("playing") and s.prop("t") < s.duration / 2
+    s.pump(1.6)
+    assert not s.prop("playing") and s.prop("t") == s.duration and s.win.property("finishedCount") == 1
+
+
+def test_a_scene_with_no_properties_is_a_card_with_motion_on_by_default(make):
+    s = make(fx.BUILD, None)
+    assert (s.prop("density"), s.prop("reducedMotion")) == ("card", False)
+    assert (s.scene.width(), s.scene.height()) == (272.0, 153.0) and s.prop("poster") is True
+    s.call("play")                                                  # a poster: it settles at once and never plays
+    assert not s.prop("playing") and s.prop("t") == s.duration
+    s.set(density="app")                                            # and as a stage with motion on it plays
+    s.seek(0)
+    s.call("play")
+    assert s.prop("playing") and running_things(s.win) == ["QQuickNumberAnimation"]
 
 
 def test_the_clock_runs_in_real_time_and_replay_starts_again(make):

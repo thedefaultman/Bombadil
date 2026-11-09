@@ -14,7 +14,7 @@ that works and the exact vocabulary a beat is written in. Why a tip moves at all
 | `share/qml/Bombadil/TipScene.js` | A `.pragma library` that says what is on the mini screen at any time `t`: `compile(beats)` lays the beats end to end, `frameAt(compiled, t)` returns the frame. It draws nothing and runs nothing. |
 | `share/qml/Bombadil/Stone.qml` | `Kit.Stone`, the mark: the pill's stone and the scenes' stone. See [The stone in the kit](#the-stone-in-the-kit). |
 | `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. `tests/test_tips.py` calls `validate(row, allow_empty=True)` on every row of `share/tips/tips.toml`, so a bad scene in the table fails there. |
-| `tests/tip_fixtures.py` | Fifteen tips written for the tests, which between them use every beat, key and modifier. |
+| `tests/tip_fixtures.py` | Sixteen tips written for the tests, which between them use every beat, key and modifier. |
 | `tests/test_tip_scene_qml.py`, `tests/test_tip_scene.py` | The renderer's frames, sizes and "nothing runs" tests, and the validator's. |
 
 ## Why storyboards, not video
