@@ -3,15 +3,18 @@
 
     python3 docs/tools/check_docs.py [--mermaid] [--private-terms FILE] [--soft-terms FILE] [PATH ...]
 
-PATHs are files or directories under the repo root (default: docs, README.md, CONTRIBUTING.md).
+PATHs are files or directories under the repo root (default: docs, README.md, CONTRIBUTING.md,
+AGENTS.md). A PATH, --private-terms or --soft-terms file that does not exist is an error, never skipped.
 --mermaid renders every diagram with Mermaid's CLI (`mmdc`; set MMDC to its path and MMDC_CONFIG to a
 puppeteer config file if the default browser needs flags such as --no-sandbox).
-Exit status is 1 when a link or anchor is broken, a diagram does not parse, or a hard leak is found.
+Exit status is 1 when a link or anchor is broken, a diagram does not parse, or a hard leak is found,
+and 2 when the check could not run (a missing PATH or terms file, or no `mmdc` for --mermaid).
 
 Hard leaks (always checked): e-mail addresses, session/thread/message ids, claude.ai working URLs,
-the shared project folder's path, Windows user paths, and token shapes. Names of people or machines
-are not in this file: give them with --private-terms (one per line, case-insensitive, whole words,
-a hit is a failure) and --soft-terms (a hit is listed for a human to judge, never a failure).
+the shared project folder's path, Windows and macOS user paths and home folders other than /home/user,
+and token shapes. Names of people or machines are not in this file: give them with --private-terms
+(one per line, case-insensitive, whole words, a hit is a failure; a line that starts with # is a
+comment) and --soft-terms (a hit is listed for a human to judge, never a failure).
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ import argparse
 import html
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -168,7 +172,7 @@ def mermaid_blocks(text: str) -> list[tuple[int, str]]:
 
 
 def load_terms(path: str | None) -> list[re.Pattern]:
-    if not path or not os.path.exists(path):
+    if not path:
         return []
     pats = []
     for line in Path(path).read_text().splitlines():
@@ -200,7 +204,16 @@ def main() -> int:
     ap.add_argument("--no-leaks", action="store_true")
     a = ap.parse_args()
     root = Path(a.root).resolve()
-    targets = a.paths or ["docs", "README.md", "CONTRIBUTING.md"]
+    if a.paths:
+        targets = a.paths
+    else:
+        targets = [t for t in ("docs", "README.md", "CONTRIBUTING.md", "AGENTS.md") if (root / t).exists()]
+    problems = [f"no such file or folder: {t}" for t in targets if not (root / t).exists()]
+    problems += [f"terms file not found: {f}" for f in (a.private_terms, a.soft_terms) if f and not os.path.exists(f)]
+    if problems:
+        for msg in problems:
+            print(f"check_docs: {msg}", file=sys.stderr)
+        return 2
     hard_terms, soft_terms = load_terms(a.private_terms), load_terms(a.soft_terms)
     files = [f for f in iter_files(root, targets)]
     errors: list[str] = []
@@ -300,6 +313,9 @@ def main() -> int:
     if a.mermaid and mmd_jobs:
         mmdc = os.environ.get("MMDC", "mmdc")
         cfg = os.environ.get("MMDC_CONFIG")
+        if shutil.which(mmdc) is None:
+            print(f"check_docs: cannot render diagrams: {mmdc!r} not found (install @mermaid-js/mermaid-cli or set MMDC)", file=sys.stderr)
+            return 2
         with tempfile.TemporaryDirectory() as td:
             for i, (f, n, b) in enumerate(mmd_jobs):
                 src = Path(td) / f"d{i}.mmd"
@@ -307,7 +323,11 @@ def main() -> int:
                 cmd = [mmdc, "-q", "-i", str(src), "-o", str(Path(td) / f"d{i}.svg")]
                 if cfg:
                     cmd[1:1] = ["-p", cfg]
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+                try:
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+                except subprocess.TimeoutExpired:
+                    errors.append(f"{f.relative_to(root)}:{n}: mermaid does not render: timed out after 180 s")
+                    continue
                 if r.returncode != 0:
                     msg = (r.stderr or r.stdout).strip().splitlines()
                     short = next((l for l in msg if "error" in l.lower() or "Parse" in l), msg[0] if msg else "failed")

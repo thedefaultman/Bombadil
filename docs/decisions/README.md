@@ -54,7 +54,7 @@ The words in the Built column are the roadmap's, and each links to it.
 | [Designed](../roadmap.md) | Decided, with no code. |
 | n/a | Nothing to build on its own: a cut idea, an open question or a rule that applies to everything. |
 
-Built is the state the brief reported for that decision, read against the `main` this documentation was verified at and the unmerged branches on the remote on 2026-10-01. A brief can lag the code, so work that was on a branch when a brief was written may be on `main` now: the first two pieces of the poor man switch were merged into `main` on 2026-10-01, after that check, so their rows read In progress or Designed until the roadmap and the architecture page are verified against the merge. The [roadmap](../roadmap.md) is the live record, and where the two differ it is the one to believe.
+Built is the state of each decision on `main` at `9d5c729` and on the unmerged branches on the remote, checked on 2026-11-09. The Built column was refreshed once, for the work that has shipped since the log was first written: the brain, the Machine card and the vitals, dragging cards on the desk, resting when the AI runs out of plan and the finder, the first piece of mail, and the session services. A row whose decision asks for more than what shipped reads Partly shipped, and a row the refresh could not confirm kept its old word. A brief can lag the code, and the log is not re-checked on every change: the [roadmap](../roadmap.md) is the live record, and where the two differ it is the one to believe.
 
 ## How to add a decision
 
