@@ -58,6 +58,9 @@ echo bombadil > /etc/hostname
 id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user
 mkdir -p /home/user && cp -aT /etc/skel /home/user && chown -R user: /home/user
 passwd -d user
+# Lingering keeps the user's systemd running through a compositor crash or a logout, so coding
+# sessions (each in its own scope) outlive the session that started them.
+mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/user
 systemctl enable greetd NetworkManager
 # snapper wants to create /.snapshots itself; let it, then put the @snapshots subvolume there.
 rmdir /.snapshots 2>/dev/null || true
@@ -77,8 +80,10 @@ grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id=Bombadil 
 grub-mkconfig -o /boot/grub/grub.cfg
 CH
 # Signed in on the live system: the sign-in and the chosen AI come along, so the installed
-# system starts signed in (the brief's "sign in once").
-for f in .claude .claude.json .codex .config/bombadil; do
+# system starts signed in (the brief's "sign in once"). So do the desk's places and what Tips has
+# taught (the days of use, the tips tried), so the first week does not begin again on the disk.
+for f in .claude .claude.json .codex .config/bombadil \
+         .local/state/bombadil/desk.toml .local/state/bombadil/tips.json; do
   [[ -e "/home/user/$f" ]] || continue
   mkdir -p "/mnt/home/user/$(dirname "$f")"
   cp -aT "/home/user/$f" "/mnt/home/user/$f"

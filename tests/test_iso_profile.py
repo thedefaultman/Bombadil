@@ -166,6 +166,41 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
     assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')
 
 
+def test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught(tmp_path):
+    import subprocess
+    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    start = script.index("for f in .claude .claude.json")
+    end = script.index("arch-chroot /mnt chown", start)
+    live, disk = tmp_path / "live", tmp_path / "disk"
+    state = live / ".local/state/bombadil"
+    state.mkdir(parents=True)
+    (state / "tips.json").write_text('{"first_ready": "2026-11-09", "days": ["2026-11-09"]}')
+    (state / "desk.toml").write_text('hidden = ["machine"]\n')
+    (state / "turns.jsonl").write_text("a turn\n")            # the log of turns stays with the live session
+    (live / ".config/bombadil").mkdir(parents=True)
+    (live / ".config/bombadil/config.toml").write_text('provider = "claude"\n')
+    # The loop copies /home/user (the live home) to /mnt/home/user (the disk's): run it on two folders.
+    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
+    subprocess.run(["bash", "-e", "-c", loop], check=True)
+    kept = {str(p.relative_to(disk)): p.read_text() for p in disk.rglob("*") if p.is_file()}
+    assert kept == {
+        ".local/state/bombadil/tips.json": '{"first_ready": "2026-11-09", "days": ["2026-11-09"]}',
+        ".local/state/bombadil/desk.toml": 'hidden = ["machine"]\n',
+        ".config/bombadil/config.toml": 'provider = "claude"\n'}
+
+
+def test_a_live_system_with_nothing_to_carry_over_installs_all_the_same(tmp_path):
+    import subprocess
+    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    start = script.index("for f in .claude .claude.json")
+    end = script.index("arch-chroot /mnt chown", start)
+    live, disk = tmp_path / "live", tmp_path / "disk"
+    live.mkdir()
+    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
+    subprocess.run(["bash", "-e", "-c", loop], check=True)
+    assert not disk.exists()
+
+
 def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
     import re
     smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
@@ -369,3 +404,79 @@ def test_the_smoke_test_covers_mail_and_parses():
         assert f"check {name} " in text, name
     # The fake engine is what the smoke runs on: no account exists on the ISO, and nothing may reach one.
     assert "BOMBADIL_MAIL_ENGINE=fake" in text
+
+
+# -- the smoke's picture checks, in a guest with no KVM --
+
+GAVE_UP = "Could not read the network: ip did not answer."
+DRAWN = "Your network is up.\\n(shown above the bar)"
+BOOT_DRAWN = "What takes longest when you boot\\n2.5 s: tmpfiles\\n2.1 s: nsresourced\\n1 s: NetworkManager\\n(shown above the bar)"
+
+
+def _run_picture(tmp_path, answers, kind="network", target=""):
+    """The smoke's own picture() function, in bash, with os-mcp stood in for by `answers` (one per try,
+    the last one repeated). Returns (exit code, the scales each try asked for, what wait_for was given)."""
+    import subprocess
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    start = smoke.index("picture() {")
+    body = smoke[start:smoke.index("\n}\n", start) + 3]
+    (tmp_path / "answers").write_text("\n".join(answers) + "\n")
+    script = f'''
+d={tmp_path}
+say() {{ echo "SAY $*"; }}
+wait_for() {{ echo "$*" >>"$d/waits"; return 0; }}
+calm() {{ return 0; }}
+as_user() {{
+  cat >/dev/null
+  local n; n=$(( $(cat "$d/count" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$d/count"
+  echo "$2" >>"$d/scales"
+  local line; line=$(sed -n "${{n}}p" "$d/answers"); [[ -n "$line" ]] || line=$(tail -1 "$d/answers")
+  echo "$line"
+}}
+{body}
+picture {kind} {target}
+echo "RC=$?"
+'''
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    rc = int(re.search(r"RC=(\d+)", r.stdout).group(1))
+    read = lambda name: (tmp_path / name).read_text().split() if (tmp_path / name).exists() else []
+    return rc, read("scales"), read("waits"), r.stderr
+
+
+def test_a_capture_that_gave_up_in_a_busy_guest_is_asked_again_with_more_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [GAVE_UP, GAVE_UP, DRAWN])
+    assert rc == 0
+    assert scales == ["BOMBADIL_BUDGET_SCALE=1", "BOMBADIL_BUDGET_SCALE=4", "BOMBADIL_BUDGET_SCALE=12"]
+    assert waits == ["90", "calm", "90", "calm"]                 # the guest is let settle before each new try
+    assert "(try 3, 12x the time)" in log and "ip did not answer" in log
+
+
+def test_a_capture_that_works_the_first_time_asks_once_with_the_usual_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [DRAWN])
+    assert (rc, scales, waits) == (0, ["BOMBADIL_BUDGET_SCALE=1"], [])
+    assert "(try 1, 1x the time)" in log
+
+
+def test_a_capture_that_never_answers_fails_after_three_tries(tmp_path):
+    rc, scales, _, _ = _run_picture(tmp_path, [GAVE_UP])
+    assert rc == 1 and len(scales) == 3
+
+
+def test_a_picture_in_the_wrong_shape_fails_at_once_and_is_not_asked_again(tmp_path):
+    rc, scales, waits, _ = _run_picture(tmp_path, ["something else entirely"])
+    assert (rc, len(scales), waits) == (1, 1, [])
+    # The boot must still be more than its last line, whatever the wait.
+    rc, scales, _, _ = _run_picture(tmp_path / "b", ["The boot took 10 s.\\n10.1 s: graphical.target\\n(shown above the bar)"], "boot") \
+        if (tmp_path / "b").mkdir() is None else (None, None, None, None)
+    assert rc == 1 and len(scales) == 1
+    (tmp_path / "c").mkdir()
+    assert _run_picture(tmp_path / "c", [GAVE_UP, BOOT_DRAWN], "boot")[0] == 0
+
+
+def test_the_smoke_waits_for_a_calm_guest_before_its_pictures_and_defines_calm_once():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert smoke.count("calm() {") == 1
+    waited = smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"')
+    assert smoke.index("calm() {") < waited < smoke.index("for kind in network boot disks sound screens")
+    assert smoke.index("calm() {") < smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"')
+    assert "BOMBADIL_BUDGET_SCALE" in smoke

@@ -1,9 +1,12 @@
 [Unit]
 Description=Bombadil live: create the session user
 Before=greetd.service
+After=systemd-logind.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/bin/sh -c 'id user >/dev/null 2>&1 || useradd -m -G wheel,video,input,audio user; passwd -d user'
+# Coding sessions live in the user's own systemd, which lingering keeps through a compositor crash.
+ExecStart=/usr/bin/loginctl enable-linger user
 [Install]
 WantedBy=multi-user.target
