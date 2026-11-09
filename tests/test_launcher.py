@@ -120,7 +120,7 @@ def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
     rank = {"app": 0, "panel": 1, "widget": 2, "command": 3}
     assert kinds == sorted(kinds, key=rank.get)   # apps, then panels, widgets and commands
     widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
-    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
+    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine", "tips"]
     assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
                                 "words": ["needs", "needs you"]}
     assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]

@@ -133,7 +133,7 @@ class OsTools:
 
         @t("desk",
            "Arrange the desk: the widgets in the two rails beside the pill (now, watching, needs, away, "
-           "machine, alive). This works ONLY when the person asked for the desk or a widget in their own "
+           "machine, tips, alive). This works ONLY when the person asked for the desk or a widget in their own "
            "words this turn (\"put watching on the right\", \"hide machine\", \"fold the desk\"). In any "
            "other turn it is refused and nothing changes; never rearrange the desk on your own. Ops: show and "
            "hide a widget (needs cannot be hidden); move a widget to a rail (left or right) and a rank "

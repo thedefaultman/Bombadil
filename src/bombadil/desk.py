@@ -46,6 +46,9 @@ WIDGETS: dict[str, Widget] = {w.id: w for w in (
     Widget("needs", "Needs you", ("needs you", "needs"), "right"),
     Widget("away", "Away", ("away", "while you were away"), "right"),
     Widget("machine", "Machine", ("machine",), "right"),
+    # The least urgent, so the top of the right rail: it shows a new person what to ask, in their first week
+    # (docs/TIPS.md). "show tips" is not a desk word: it opens the Tips app (launcher.py).
+    Widget("tips", "Tips", ("tips",), "right"),
 )}
 # The only place two sessions' requests can be answered together, so it cannot be put away.
 ALWAYS = ("needs",)
@@ -55,6 +58,8 @@ OPT_IN = ("alive",)
 # brings the card up even when nothing is wrong ("how's the machine": for a while; "show away": until it is
 # seen, with "nothing happened" when that is so). The sentence is the answer.
 ASKABLE = {"machine": "Here is the machine.", "away": "Here is what happened while you were away."}
+# What putting a widget away adds to its sentence, when the person would not otherwise know the way back.
+HIDE_NOTES = {"tips": " Say tips to see them again."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
 _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
@@ -64,7 +69,7 @@ _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!wr
 # right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
 _DESK_ASK = re.compile(
     r"\b(?:show|hide|put|keep|pin|move|bring|fold|unfold)\s+(?:(?:up|back|the|my)\s+)*"
-    r"(?:now|watching|needs you|machine|alive|while you were away)\b(?!')"
+    r"(?:now|watching|needs you|machine|alive|tips|while you were away)\b(?!')"
     r"(?=\s*$|\s*,"
     r"|\s+(?:on|to|in|into|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 
@@ -197,7 +202,7 @@ class Desk:
             if wid in self.hidden:
                 return True, f"{name} is already put away.", False
             self.hidden.add(wid)
-            return True, f"Put {name} away.", True
+            return True, f"Put {name} away." + HIDE_NOTES.get(wid, ""), True
         if op in ("fold", "unfold"):
             want = op == "fold"
             if want == (wid in self.stripped):

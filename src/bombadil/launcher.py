@@ -133,6 +133,8 @@ HIDE_VERBS = ("hide", "put away")
 # A widget takes only the verbs that mean a thing on the screen: "start now" and "run now" are
 # sentences for the agent, not the desk.
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
+# A widget the launcher only puts away: "show tips" opens the Tips app, which is not the desk's to answer.
+HIDE_ONLY_WIDGETS = {"tips"}
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
@@ -419,7 +421,7 @@ def _widget_action(t: str, app_list: list) -> Action | None:
     for verbs, verb in WIDGET_VERBS:
         word = _strip_verb(t, verbs)
         widget = _lookup(word, WIDGET_WORDS) if word is not None else None
-        if widget is not None:
+        if widget is not None and not (verb == "open" and widget in HIDE_ONLY_WIDGETS):
             return Action("widget", widget, verb, WIDGET_TITLES[widget])
     if t.startswith("put ") and t.endswith(" away"):
         word = t[4:-5].removeprefix("the ")
