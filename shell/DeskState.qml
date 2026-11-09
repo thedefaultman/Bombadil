@@ -37,7 +37,7 @@ QtObject {
     }
 
     // Left rail first, in the default order, then right.
-    readonly property var widgetIds: ["now", "watching", "alive", "needs", "away", "machine"]
+    readonly property var widgetIds: ["now", "watching", "alive", "needs", "away", "machine", "tips"]
 
     // -- inputs --
 
@@ -56,8 +56,9 @@ QtObject {
     property bool folded: false
     property var hidden: []
     property var stripped: []           // folded by hand: a strip whatever the room, and no slot in its rail
-    property var rails: ({ now: "left", watching: "left", alive: "left", needs: "right", away: "right", machine: "right" })
-    property var order: ({ left: ["now", "watching", "alive"], right: ["needs", "away", "machine"] })
+    property var rails: ({ now: "left", watching: "left", alive: "left", needs: "right", away: "right", machine: "right",
+                           tips: "right" })
+    property var order: ({ left: ["now", "watching", "alive"], right: ["needs", "away", "machine", "tips"] })
     property string screen: ""          // "" = the shell's first screen
 
     // -- what the faces read --
@@ -75,6 +76,9 @@ QtObject {
     property var awayModel: null
     property var machineModel: null
     property var aliveModel: null
+    // Tips: agentd's `tips` card, {id, line, words, marks, why, index, count, tip}, or null while it has
+    // nothing to say to a new person. What the card draws; whether it shows is tipsPresent (below).
+    property var tipsModel: null
 
     // -- the turn Now follows --
 
@@ -138,8 +142,30 @@ QtObject {
     readonly property bool awayPresent: _rows(awayModel) > 0 && !isHidden("away")
     readonly property bool machinePresent: _rows(machineModel) > 0 && !isHidden("machine")
     readonly property bool alivePresent: _rows(aliveModel) > 0 && !isHidden("alive")
+
+    // Tips is for a new person's first week, and it never takes a calm screen by surprise. It is there when
+    // agentd says it has something to say, the person has not put it away, and setup is over (ready, or the AI
+    // resting: the desk does not react to the rest). It first appears only when the shell is calm: no turn
+    // runs, and the pill's line (the ready, welcome or hello line, or the closing line of the turn that ran
+    // while the person typed through sign-in) has faded. Once it is up it stays through turns and lines, and
+    // goes the moment agentd, the person or setup says so. docs/TIPS.md has the table.
+    property bool cardsUp: false       // a card of the first minutes is up (the persona card, the recovery key)
+    readonly property bool tipsWanted: tipsModel !== null && !isHidden("tips") && pill !== null
+                                       && (pill.setupState === "ready" || pill.setupState === "resting")
+    readonly property bool tipsCalm: pill !== null && pill.mode === "idle" && !pill.stoppable
+                                     && _phase === "idle" && !cardsUp
+    property bool _tipsUp: false
+    readonly property bool tipsPresent: tipsWanted && _tipsUp
+    function _tipsSettle() {
+        if (!tipsWanted) _tipsUp = false
+        else if (tipsCalm) _tipsUp = true
+    }
+    onTipsWantedChanged: _tipsSettle()
+    onTipsCalmChanged: _tipsSettle()
+
     readonly property var present: ({ now: nowPresent, watching: watchingPresent, needs: needsPresent,
-                                      away: awayPresent, machine: machinePresent, alive: alivePresent })
+                                      away: awayPresent, machine: machinePresent, alive: alivePresent,
+                                      tips: tipsPresent })
 
     // -- the modes: what the windows on the stage do to the desk --
 
@@ -190,6 +216,9 @@ QtObject {
              : id === "machine" ? machineModel : id === "alive" ? aliveModel : null
     }
 
+    // The Tips card is the same height for every tip, so the cards above it never jump.
+    readonly property int tipsHeight: 290
+
     // How tall a widget's full face is: Now by its steps, a rows card by its rows.
     function heightOf(id) {
         if (id === "now") {
@@ -197,6 +226,7 @@ QtObject {
                  + (nowModel.caption ? nowCaptionHeight : 0)
         }
         if (id === "alive") return 168
+        if (id === "tips") return tipsHeight
         const m = _model(id)
         let h = 50 + 18
         for (const r of (m && m.rows ? m.rows : [])) h += r.kind === "meter" || r.kind === "stack" ? 34 : 44
@@ -389,6 +419,8 @@ QtObject {
             s.text = "back · " + n + (n === 1 ? " thing" : " things")
         } else if (id === "alive") {
             s.text = n + " alive"
+        } else if (id === "tips") {
+            s.text = "tips"      // no dot: a tip is nobody's, and colour says who
         }
         return m && m.strip ? Object.assign(s, m.strip) : s
     }
@@ -434,6 +466,7 @@ QtObject {
         if (ev.type === "dev") { _applyDev(ev); return }
         if (ev.type === "machine") { _applyMachine(ev); return }
         if (ev.type === "away") { _applyAway(ev); return }
+        if (ev.type === "tips") { _applyTips(ev); return }
         if (ev.type === "status") {
             if (ev.busy && ev.turn !== undefined && ev.turn !== null && _phase === "idle") {
                 // The bar (re)connected in the middle of a turn; agentd sends its plan next.
@@ -514,6 +547,8 @@ QtObject {
         if (machineModel !== null) machineModel = null
         // Nor what Away held: it is agentd's, and a bar that connects is told it again.
         if (awayModel !== null) awayModel = null
+        // Nor Tips, which is agentd's to say: it tells a bar that connects.
+        if (tipsModel !== null) tipsModel = null
     }
 
     onConnectedChanged: {
@@ -895,6 +930,54 @@ QtObject {
         awaySeen()
     }
 
+    // -- Tips: what agentd says about the card, and what the card asks --
+
+    // The card as the shell keeps it: the words are agentd's, only the shape is held here. A card with no id or
+    // no line is no card. `tip` is the whole row, which the picture draws its scene from.
+    function _cleanTip(c) {
+        if (!c || typeof c !== "object" || _text(c.id) === "" || _text(c.line) === "") return null
+        const strings = list => (Array.isArray(list) ? list : []).filter(x => typeof x === "string" && x !== "")
+        const marks = strings(c.marks).slice(0, 3)
+        const row = c.tip && typeof c.tip === "object" ? c.tip : ({})
+        const tip = Object.assign({}, row, { id: _text(c.id), line: _text(c.line), words: _text(c.words),
+                                             marks: marks, captions: strings(row.captions),
+                                             beats: Array.isArray(row.beats) ? row.beats : [] })
+        const n = v => typeof v === "number" && isFinite(v) ? Math.max(0, Math.floor(v)) : 0
+        return { id: _text(c.id), line: _text(c.line), words: _text(c.words), marks: marks, why: _text(c.why),
+                 index: n(c.index), count: n(c.count), tip: tip }
+    }
+
+    // agentd's tips message is the card, or says there is none. The list the Tips app asks for goes to that
+    // app's own connection, never here. Left alone when nothing changed.
+    function _applyTips(ev) {
+        if (ev.list !== undefined) return
+        const next = ev.present === true ? _cleanTip(ev.card) : null
+        if (JSON.stringify(next) !== JSON.stringify(tipsModel)) tipsModel = next
+    }
+
+    // An arrow or the wheel: one tip on (1) or back (-1). The card changes when agentd's answer comes.
+    function tipsTurn(dir) {
+        if (tipsModel !== null) outgoing({ type: "tips", op: "turn", dir: dir < 0 ? -1 : 1 })
+    }
+
+    // The title, the picture ("play") and "All tips ›" open the Tips app on a tip; the strip on its first.
+    function tipsOpen(id, play) {
+        outgoing({ type: "tips", op: "open", id: String(id || ""), play: play === true })
+    }
+
+    // The button: the exact words go to the pill and wait there (nothing runs on a click), through agentd, which
+    // remembers them for the tip and tells every bar. Only the card's own tip: a press on one that has gone sends
+    // nothing.
+    function tipsTry(id) {
+        if (tipsModel === null || tipsModel.id !== id || tipsModel.words === "") return
+        outgoing({ type: "summon", text: tipsModel.words, tip: true, id: tipsModel.id })
+    }
+
+    // A press on a strip. Tips' opens the app; the other strips are not wired to a press yet.
+    function stripClicked(id) {
+        if (id === "tips") tipsOpen("", false)
+    }
+
     // -- what the desk asks agentd to do (the state comes back as a `desk` message) --
 
     // "desk": every card folds to its strip, and back.
@@ -1039,6 +1122,7 @@ QtObject {
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
             now: { visible: nowVisible, phase: _phase, model: nowModel },
             watching: watchModel, needs: needsModel, machine: machineModel, away: awayModel, needsYou: needsYou,
+            tips: tipsModel,
             face: pill ? pill.face : "", drag: drag, dropTarget: dropTarget, settling: settling
         }
     }

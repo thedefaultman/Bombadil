@@ -8,8 +8,9 @@ QtObject {
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
     // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
-    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
-    signal summoned(string text)
+    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this). `tip` is a
+    // tip's button (the Tips card, the Tips app): its words wait for the person, and never replace theirs.
+    signal summoned(string text, bool tip)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
 
@@ -203,7 +204,7 @@ QtObject {
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
         if (ev.type === "found") { _takeFound(ev); return }
         if (ev.type === "summon") {
-            summoned(typeof ev.text === "string" ? ev.text : "")
+            summoned(typeof ev.text === "string" ? ev.text : "", ev.tip === true)
             // The pill comes up: say why the AI does not answer, unless a line is being read.
             if (resting && setupLine) {
                 if (foundShown) return   // the line of what was found is being read: it stays
@@ -712,6 +713,18 @@ QtObject {
             }
         }
         return ""
+    }
+
+    // What the pill holds after a summon with words, given what it holds now. Words an app put there (the
+    // Brain's "Ask about this") replace what was typed. A tip's words (`tip`) fill an empty pill only: words
+    // the person typed and has not sent stay, and nothing is lost. A tip whose words end in an ellipsis
+    // ("In Tickets, add…") fills the words before it and a space, so the cursor waits for the person's detail.
+    function summonText(current, text, tip) {
+        const words = String(text || "")
+        if (words === "") return String(current || "")
+        if (tip !== true) return words
+        if (String(current || "").trim() !== "") return String(current)
+        return /…\s*$/.test(words) ? words.replace(/\s*…\s*$/, "") + " " : words
     }
 
     // What an exact launcher word would open ("Passwords"), or "" when it goes to the agent.

@@ -22,6 +22,7 @@ ShellRoot {
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
     property string draft: ""          // words an app put in the pill, taken by the summoned pill
+    property bool draftTip: false      // they are a tip's: they wait in an empty pill and never replace typed words
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
     // Reduced motion (BOMBADIL_REDUCE_MOTION=1): the stone pulses instead of rolling and knocking, and
     // everything else that moves goes instant. The kit's Theme holds the switch for every surface.
@@ -32,7 +33,7 @@ ShellRoot {
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
-        onSummoned: text => root.summon(text)
+        onSummoned: (text, tip) => root.summon(text, tip)
         onHandOff: root.release()
     }
 
@@ -165,11 +166,12 @@ ShellRoot {
 
     // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
     // focused screen takes the keyboard. A second tap gives it back.
-    function summon(text) {
+    function summon(text, tip) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
         if (text) {
             // Words to finish: always take the keyboard, never toggle it away.
+            root.draftTip = tip === true
             root.draft = text
             root.summonedOn = name
             return
@@ -277,8 +279,10 @@ ShellRoot {
             }
             function takeDraft() {
                 if (!summoned || root.draft === "") return
-                input.text = root.draft
-                input.cursorPosition = input.text.length
+                // A tip's words wait in an empty pill and leave typed words alone (PillState.summonText).
+                const kept = root.draftTip && input.text.trim() !== ""
+                input.text = pillState.summonText(input.text, root.draft, root.draftTip)
+                if (!kept) input.cursorPosition = input.text.length
                 root.draft = ""
             }
             Connections {

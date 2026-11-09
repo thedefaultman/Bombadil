@@ -35,6 +35,7 @@ Window {
     property var sent: []
     property int screens: 1
     property var summons: []
+    property var summonTips: []
     property int handOffs: 0
     // What shell.qml does with a line from agentd (lists arrive as they do from a parsed line).
     function feed(line) { pillState.handle(JSON.parse(line)) }
@@ -42,7 +43,7 @@ Window {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
-        onSummoned: text => w.summons = w.summons.concat([text])
+        onSummoned: (text, tip) => { w.summons = w.summons.concat([text]); w.summonTips = w.summonTips.concat([tip]) }
         onHandOff: w.handOffs += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
@@ -568,6 +569,61 @@ def test_a_summon_can_carry_words_for_the_pill(bar):
     summons = bar.win.property("summons")
     summons = summons.toVariant() if hasattr(summons, "toVariant") else summons
     assert list(summons) == ["", "About ~/Documents/lease.pdf: "]
+
+
+def _summons(bar, name="summons"):
+    value = bar.win.property(name)
+    return list(value.toVariant() if hasattr(value, "toVariant") else value)
+
+
+def test_a_summon_says_whether_it_is_a_tips_button(bar):
+    """agentd broadcasts a tip's button as a summon with tip true; the Brain's "Ask about this" and Super carry
+    none. Only the JSON true is a tip."""
+    bar.send(type="summon")
+    bar.send(type="summon", text="About ~/Documents/lease.pdf: ")
+    bar.send(type="summon", text="Make me a ticketing app", tip=True)
+    bar.send(type="summon", text="Make me a ticketing app", tip="yes")
+    bar.send(type="summon", text="Make me a ticketing app", tip=1)
+    assert _summons(bar) == ["", "About ~/Documents/lease.pdf: ", "Make me a ticketing app",
+                             "Make me a ticketing app", "Make me a ticketing app"]
+    assert _summons(bar, "summonTips") == [False, False, True, False, False]
+
+
+@pytest.mark.parametrize("current, text, tip, want", [
+    # an empty pill takes whatever it is given, with the cursor at the end (the bar puts it there)
+    ("", "Make me a ticketing app", True, "Make me a ticketing app"),
+    ("", "Make me a ticketing app", False, "Make me a ticketing app"),
+    ("   ", "How am I connected?", True, "How am I connected?"),
+    # a tip's words never replace what the person typed and has not sent
+    ("install docker and", "Make me a ticketing app", True, "install docker and"),
+    ("a", "How's the machine?", True, "a"),
+    # the Brain's "Ask about this" (no tip) still replaces them, as it always did
+    ("install docker and", "About ~/Documents/lease.pdf: ", False, "About ~/Documents/lease.pdf: "),
+    # a button that ends in an ellipsis fills the words before it and a space for the person's detail
+    ("", "In Tickets, add…", True, "In Tickets, add "),
+    ("", "In Tickets, add …", True, "In Tickets, add "),
+    ("", "In Tickets, add… ", True, "In Tickets, add "),
+    ("typed", "In Tickets, add…", True, "typed"),
+    ("", "In Tickets, add…", False, "In Tickets, add…"),        # only a tip's words are read as an ask to finish
+    # nothing to put in: the pill is as it was
+    ("typed", "", True, "typed"),
+    ("", "", False, ""),
+])
+def test_what_a_summon_puts_in_the_pill(bar, current, text, tip, want):
+    assert bar.call("summonText", current, text, tip) == want
+
+
+def test_the_bar_hands_the_tip_flag_to_the_pill_and_takes_the_draft_through_it():
+    """shell.qml is Quickshell's, so it cannot load offscreen: what it must do is read from its source. The tip's
+    flag goes from the pill's summon to the draft before the draft (whose change takes it), and the draft is taken
+    by PillState.summonText, which keeps typed words for a tip."""
+    shell = (SHELL / "shell.qml").read_text()
+    assert "onSummoned: (text, tip) => root.summon(text, tip)" in shell
+    assert shell.index("root.draftTip = tip === true") < shell.index("root.draft = text")
+    assert "input.text = pillState.summonText(input.text, root.draft, root.draftTip)" in shell
+    # typed words that stay keep their cursor; filled ones get it at the end
+    assert 'const kept = root.draftTip && input.text.trim() !== ""' in shell
+    assert "if (!kept) input.cursorPosition = input.text.length" in shell
 
 
 def _hover_line(bar):

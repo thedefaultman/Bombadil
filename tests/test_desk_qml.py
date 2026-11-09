@@ -26,7 +26,7 @@ QtTest = pytest.importorskip("PySide6.QtTest", exc_type=ImportError)
 ROOT = Path(__file__).resolve().parents[1]
 SHELL = ROOT / "shell"
 CARDS = SHELL
-CARD_FILES = ["DeskCard.qml", "NowCard.qml", "RowsCard.qml", "DeskStrip.qml"]
+CARD_FILES = ["DeskCard.qml", "NowCard.qml", "RowsCard.qml", "TipsCard.qml", "DeskStrip.qml"]
 DESK_FILES = ["DeskState.qml", "DeskRail.qml", "DeskStrips.qml", "DeskDrag.qml", "PillState.qml", "DeskTheme.js"]
 
 HARNESS = """
