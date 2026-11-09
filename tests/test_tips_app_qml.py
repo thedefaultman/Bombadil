@@ -566,9 +566,14 @@ def test_under_reduced_motion_the_stage_is_three_stills_with_their_captions_and_
         out["fg"] = theme.property("fg").name()
         rects = [scene_rect(it) for it in caps]
         out["row"] = [abs(r[1] - rects[0][1]) < 1 for r in rects]
-        out["left_to_right"] = [rects[i][0] < rects[i + 1][0] for i in range(2)]
+        out["left_to_right"] = rects[0][0] < rects[1][0]        # the second stands right of the first
         out["inside_stage"] = [r[0] >= 16 - 1 and r[2] <= 592 + 1 for r in rects]
+        out["second_row"] = [abs(rects[2][0] - rects[0][0]) < 1, rects[2][1] > rects[0][3]]
         out["scene_rect"] = scene_rect(find("scene"))
+        out["card_size"] = [scene_rect(find("still-%d" % i))[2:] for i in range(3)]
+        line, box = scene_rect(find("tipLine")), scene_rect(find("stageBox"))
+        out["clear"] = [out["scene_rect"][3] <= line[1] - 4, out["scene_rect"][1] >= box[1] - 6]
+        out["line_stays"] = [box[3] - box[1], line[1] - box[3]]
         shot("stills")
         key(Qt.Key.Key_Space)
         spin(300)
@@ -584,7 +589,12 @@ def test_under_reduced_motion_the_stage_is_three_stills_with_their_captions_and_
     assert out["playing"] is False and out["clock"][0] == out["clock"][1] > 0
     assert out["replay"] is False
     assert out["captions"] == ["You ask", "It builds", "You have it"]
-    assert out["row"] == [True] * 3 and out["left_to_right"] == [True, True] and out["inside_stage"] == [True] * 3
+    # the stills are the card's size (272 px), so on the stage's 576 px two stand across and the third under the first
+    assert out["row"] == [True, True, False] and out["left_to_right"] is True
+    assert out["second_row"] == [True, True] and out["inside_stage"] == [True] * 3
+    assert [round(r[0] - l) for r, l in zip(out["card_size"], (16, 300, 16))] == [272] * 3
+    assert out["clear"] == [True, True], "the taller stills touch neither the title above nor the line below"
+    assert out["line_stays"] == [350, 12], "the line and the button stand where they do while a tip plays"
     assert out["colours"] == [out["fg"]], "no phase is in front under three stills: every caption is the ink"
     assert out["space"][0] is False and out["next"][1] is False and out["next"][2] is True
     assert out["log"] == ["hide", "summon"] and out["button_still_works"] == "picture"

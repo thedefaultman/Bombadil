@@ -319,9 +319,10 @@ own details go.
 The window never holds the keyboard by a control: the buttons take no focus, so Space and Enter are always the
 window's own keys. Keys with Ctrl, Alt or Meta are not the window's.
 
-**Reduced motion.** With `Theme.reducedMotion` (docs/MOTION.md) the stage is three stills side by side, each the
-last frame of its phase, each with its caption, drawn at once; nothing plays, so Replay and Space have nothing to
-do. The button and the list work as always.
+**Reduced motion.** With `Theme.reducedMotion` (docs/MOTION.md) the stage is three stills, each the
+last frame of its phase, each with its caption, drawn at once; they are the card's size, so on the stage's 576 px two
+stand across and the third under the first (the stage's box is centred on them and the line and the button stay
+where they were); nothing plays, so Replay and Space have nothing to do. The button and the list work as always.
 
 **While the AI rests** the list does not change and the button still fills the pill: a tip needs agentd to be
 there, not the AI to answer (what the person then sends waits in the queue like any ask). The window shows nothing

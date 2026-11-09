@@ -107,6 +107,9 @@ AppWindow {
 
             // The stage, and under it the three phase captions (the scene draws both). Its height is the one the
             // scene has while it plays, so that the line and the button do not move when the stills show instead.
+            // The stills are the card's size and wrap (two across, one under on 576 px), 10 px taller than this box;
+            // the scene is centred in it, so they take 5 px of the gap above and of the one below and touch neither
+            // the title nor the line.
             Item {
                 objectName: "stageBox"
                 Layout.preferredWidth: 576
