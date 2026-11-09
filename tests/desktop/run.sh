@@ -12,14 +12,17 @@ root="$(cd "$here/../.." && pwd)"
 claude="$(readlink -f "${CLAUDE_BIN:-$(command -v claude)}")"
 out="${OUT:-$root/out/desktop}"
 rm -rf "$out"; mkdir -p "$out"
-if ! docker image inspect bombadil-desktop-test >/dev/null 2>&1; then
+# The image is named after its Dockerfile, so a change to the Dockerfile builds a new one instead of running
+# the stale one a cached name would give (a missing tool, "No such file: git", until `docker rmi`).
+image="bombadil-desktop-test:$(sha256sum "$here/Dockerfile" | cut -c1-12)"
+if ! docker image inspect "$image" >/dev/null 2>&1; then
   # Behind a proxy: export HTTPS_PROXY and BOMBADIL_HOST_NET=1, as for scripts/build-in-container.sh.
   build=(--build-arg "HTTPS_PROXY=${HTTPS_PROXY:-}" --build-arg "https_proxy=${HTTPS_PROXY:-}"
          --build-arg "HTTP_PROXY=${HTTP_PROXY:-}" --build-arg "http_proxy=${HTTP_PROXY:-}")
   [[ "${BOMBADIL_HOST_NET:-}" ]] && build+=(--network host)
-  docker build -q "${build[@]}" -t bombadil-desktop-test "$here" >/dev/null
+  docker build -q "${build[@]}" -t "$image" "$here" >/dev/null
 fi
 docker run --rm -v "$root:/repo:ro" -v "$here:/e2e:ro" -v "$out:/out" -v "$claude:/opt/claude:ro" \
-  bombadil-desktop-test bash /e2e/inside.sh
+  "$image" bash /e2e/inside.sh
 grep -q "DONE pass=[0-9]* fail=0" "$out/driver.log"
 grep -q "IDLE-DONE pass=[0-9]* fail=0" "$out/idle.log"
