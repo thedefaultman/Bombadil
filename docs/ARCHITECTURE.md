@@ -45,7 +45,12 @@ credentials exactly as it would in a terminal of yours (`signin.py`).
    still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
    an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
    status` or `codex login status`. A browser that cannot open the page is an error the pill
-   shows with "Open it again", not a quiet success.
+   shows with "Open it again", not a quiet success. However it ends (done, cancelled, timed
+   out), the sign-in puts its own tab away. When that tab is the browser's only one, closing
+   it would quit Chromium and leave the panel waiting for a window that is going away, so a
+   blank tab (`about:blank`) takes its place first (`browser.close_spare_tab`); the next time
+   the panel opens it shows nothing stale, never the login page. Once the page is away the
+   pill's Show button does nothing (`signin.show()` is for a live login only).
 5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
    Wi-Fi, and the sign-in starts once the host answers.
 6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again
@@ -106,10 +111,14 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    - Claude: the refusal is an HTTP 429 (`api_error_status`), or `terminal_reason` `api_error` under an
      assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
      `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
-     the CLI's text ("hit your session limit", "out of usage credits", "spend cap").
+     the CLI's text ("hit your session limit", "hit your 5-hour limit", "out of usage credits", "spend
+     cap"). A CLI that types the refusal (Claude Code 2.1.319: `api_error` `usage_limit_reached` on the
+     assistant message and the result, with the same shape as the event in `api_error_params.
+     rate_limit_info`) is the evidence by itself. The headless desktop test runs the real CLI against a
+     scripted 429 and caught the day this changed, so a CLI update that rewords a limit fails it.
    - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
      exceeded".
-   - Not a limit: a result that carries `api_error` (an entitlement check such as
+   - Not a limit: a result that carries any other `api_error` (an entitlement check such as
      `model_requires_usage_credits`), the throttle notice ("not your usage limit"), "high load", a
      529, a short `api_retry`, the context window, a budget cap, Codex's retried "rate limit
      exceeded:", and anything a `!command` prints. The `rate_limit_event` alone never rests the machine

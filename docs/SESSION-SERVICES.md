@@ -46,6 +46,27 @@ copy can race the first.
 Alt+Space exists for a machine whose host keeps the Super key (a virtual machine's window on
 Windows opens the host's Start menu).
 
+**How a tap reaches the pill.** The tap and Alt+Space are Hyprland *global shortcuts* answered inside
+the bar's own process. `hyprland.lua` binds a release of Super to `hl.dsp.global("bombadil:pill-release")`
+and Alt+Space to `bombadil:pill-press`; `shell/PillKeys.qml` registers a `GlobalShortcut` with each of
+those names and calls `PillState.summon()`, the same function a bar message from `bombadil pill` calls.
+They used to run `bombadil pill`, a Python start and a round trip through the daemon, and on a loaded
+machine the first letters typed after the tap went to the window underneath before the pill had the
+keyboard. Two things to know when changing it:
+
+- A name says which edge the bar listens to, and Hyprland does nothing, and says nothing, for a name no
+  client registered. There is no fallback on purpose (a fallback that also ran `bombadil pill` would be
+  the slow path again). The guard is the VM smoke: `pill-shortcuts-registered` asks `hyprctl
+  globalshortcuts` for both names before a key depends on them, and a tap that did nothing prints the
+  list in its `DIAG` line. `tests/test_iso_profile.py` holds the names in the lua and in the QML together.
+- The bar makes each shortcut once. The protocol refuses a second registration of the same appid and
+  name and the client that comes second crashes, so `PillKeys.qml` is not made per screen.
+
+`bombadil pill` still works, for scripts and for a session without Hyprland (the headless desktop test).
+**An installed system keeps its own copy of `hyprland.lua`** (`~/.config/hypr/hyprland.lua`), which does
+not change when the skeleton does: until the new lines are copied into it, a tap keeps running
+`bombadil pill` and Super+Return keeps running plain `foot`, both as they were.
+
 Setup and the terminal client's hints restart the daemon through systemd too (`systemctl --user
 restart bombadil-agentd`), so a settings change and a crash take the same path.
 
