@@ -443,6 +443,10 @@ def test_the_stone_leans_at_once_under_reduced_motion(app, tmp_path):
 ALLOWED = {
     ("ScrollBar.qml", "duration: 600"): (1, "a wait before the bar hides; the fade after it uses Theme.normal"),
     ("ScrollIndicator.qml", "duration: 600"): (1, "a wait before the indicator hides; the fade uses Theme.normal"),
+    # A working coding session's dot pulses its opacity, 1 to 0.3 and back: the pulse is what the stone falls back
+    # to under reduced motion, so it is already the still-friendly form and nothing in it moves.
+    ("SessionChips.qml", "loops: Animation.Infinite"): (1, "the working dot's opacity pulse, the form the stone falls back to"),
+    ("SessionChips.qml", "duration: 600"): (2, "the two halves of that pulse"),
 }
 
 MOTION = re.compile(r"(?:^|[\s:;{}])(Behavior|Transition|[A-Z]\w*(?:Animation|Animator))(?:\s+on\s+[\w.]+)?\s*$")

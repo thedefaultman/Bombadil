@@ -87,6 +87,7 @@ the same `make_engine`, so a check sees what the window sees.
 | The line above the pill, the picture above it, the AI card, the chips | fade 200 ms, grow 120 ms, border colours 120 to 300 ms | instant |
 | The bar's app chips and the pill's border | colour eases over 150 and 300 ms | instant |
 | Style controls (buttons, switches, checkboxes, sliders, fields, tabs, menus, popups, dialogs, tooltips, stack pushes, scrollbars fading) | 120 to 200 ms fades, slides and colours | instant |
+| A coding session's dot, working | its opacity pulses 1 to 0.3 and back, 1.2 s | the same pulse: it is the form the stone falls back to, and nothing in it moves |
 | A scrollbar hiding | waits 600 ms, then fades | waits 600 ms, then hides; the wait is not movement |
 | `BusyIndicator` | an arc turns | the arc holds still and pulses, as the stone does |
 | `ProgressBar`, indeterminate | a segment sweeps across | the segment holds in the middle and pulses |
