@@ -225,6 +225,8 @@ ShellRoot {
             readonly property bool onDesk: modelData.name === root.deskScreen
             readonly property bool capsule: onDesk && deskState.capsule
             readonly property real pillMax: onDesk ? deskState.pillWidth : Kit.Theme.pillMaxWidth
+            // A picture beside a window is wider than the pill (see DeskState.pictureTarget).
+            readonly property real pictureMax: onDesk ? deskState.pictureWidth : Kit.Theme.pillMaxWidth
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
@@ -332,8 +334,9 @@ ShellRoot {
                     id: cardHost
                     visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
-                    // As wide as the pill, so it stays between the desk's rails.
-                    Layout.maximumWidth: Math.max(360, win.pillMax)
+                    // As wide as the pill, so it stays between the desk's rails; beside a window, up to
+                    // about 560 where the rails leave the room (the pill is 360 then).
+                    Layout.maximumWidth: Math.max(360, win.pictureMax)
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
