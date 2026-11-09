@@ -10,8 +10,9 @@ the desk, the app kit and every app, and a test that fails when a new animation 
 
 1. **Every movement has a still version.** Under reduced motion nothing slides, fades, grows, sweeps, spins or
    breathes. A change happens at once. What used to say "working" with a roll says it with one pulse of
-   opacity instead (1 to `pulseLow` and back, 500 ms each way); that is the only movement that stays, because a
-   machine at work with nothing alive on the screen reads as a frozen one.
+   opacity instead (1 to `pulseLow` and back, 500 ms each way). That pulse, and the stone's fade when a turn is
+   done, are the only movement that stays: a machine at work with nothing alive on the screen reads as a frozen
+   one.
 2. **One switch.** `Theme.reducedMotion` in the kit's `Theme.qml`, a writable bool, false until something sets
    it. The shell and the app runtime set it from `BOMBADIL_REDUCE_MOTION=1`; nothing else reads the variable.
 3. **The tokens carry it.** `Theme.fast`, `normal` and `slow` (120, 200 and 300 ms) read 0 under reduced motion,
@@ -22,7 +23,8 @@ the desk, the app kit and every app, and a test that fails when a new animation 
 Why a switch at all: some people feel sick, lose their place or cannot read while a screen moves; a remote or
 software-rendered session (the VM, a thin client) shows motion as stutter; and on this desk motion means "the
 machine is acting", so motion that is only decoration is noise. The widgets brief already asked for it ("with
-reduced motion all of it is instant"); the code honoured it only in the stone and the wallpaper until this page.
+reduced motion all of it is instant"); before the switch lived in the Theme, only the stone and the wallpaper
+honoured it.
 
 ## Turning it on
 
