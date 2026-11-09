@@ -242,6 +242,17 @@ def _result_text(content) -> str:
     return "" if content is None else json.dumps(content)
 
 
+# What Claude Code 2.1.319 calls a refusal by the account's own limit (a plan window or a spend cap). Older
+# versions left the assistant message and the result untyped, and said it in words and a rate_limit_event.
+USAGE_LIMIT = "usage_limit_reached"
+
+
+def _rate_limit_info(m) -> dict | None:
+    """The limit a typed refusal names (api_error_params.rate_limit_info), shaped like a rate_limit_event's."""
+    info = _obj(m.get("api_error_params")).get("rate_limit_info")
+    return info if isinstance(info, dict) else None
+
+
 def _future(epoch) -> float | None:
     """A time from the provider (epoch seconds) if it is still to come."""
     return float(epoch) if isinstance(epoch, (int, float)) and not isinstance(epoch, bool) \
@@ -322,11 +333,14 @@ class Claude(Provider):
             # "Not logged in · Please run /login" and its kin: the login is gone. The result
             # line that follows carries the words; this is the structured sign.
             yield {"kind": "signed_out"}
-        elif t == "assistant" and m.get("error") in ("rate_limit", "billing_error") and not m.get("api_error"):
+        elif t == "assistant" and m.get("error") in ("rate_limit", "billing_error") \
+                and m.get("api_error") in (None, "", USAGE_LIMIT):
             # The account said no: its words are the result's too, and which kind of no it was (a
             # used-up quota, or a busy moment) is decided with the result (limit()). Not the
-            # agent's own words, so not text.
+            # agent's own words, so not text. A CLI that types the refusal (usage_limit_reached) says
+            # which limit and when in api_error_params, in the shape of a rate_limit_event.
             yield {"kind": "limit", "error": m["error"], "status": m.get("api_error_status"),
+                   "api_error": m.get("api_error"), "rate_limit": _rate_limit_info(m),
                    "text": "\n".join(b.get("text", "") for b in m.get("message", {}).get("content", [])
                                      if isinstance(b, dict) and b.get("type") == "text")}
         elif t == "rate_limit_event":
@@ -366,10 +380,13 @@ class Claude(Provider):
                 # A Stop leaves the CLI's own diagnostic in errors[] with result null
                 # ({"is_error": true, "terminal_reason": "aborted_streaming"}): not words for the user.
                 text = "\n".join(line for line in lines if not line.startswith(DIAGNOSTIC))
-            yield {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
-                   "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
-                   "num_turns": m.get("num_turns"), "api_error_status": m.get("api_error_status"),
-                   "api_error": m.get("api_error"), "api_error_code": m.get("api_error_code")}
+            result = {"kind": "result", "ok": ok, "text": text, "session_id": m.get("session_id"),
+                      "subtype": m.get("subtype"), "terminal_reason": m.get("terminal_reason"),
+                      "num_turns": m.get("num_turns"), "api_error_status": m.get("api_error_status"),
+                      "api_error": m.get("api_error"), "api_error_code": m.get("api_error_code")}
+            if _rate_limit_info(m):
+                result["rate_limit"] = _rate_limit_info(m)
+            yield result
 
     # -- running out --
     #
@@ -388,6 +405,12 @@ class Claude(Provider):
     # error. Under a host's unattended-retry settings it did not end at all: a rejected rate_limit_event, then
     # api_retry events whose retry_delay_ms was the hours until resetsAt (see waiting()). A real
     # subscription limit was not run.
+    # Claude Code 2.1.319 (the desktop test caught it: the machine stopped resting at a plan limit) types the
+    # refusal. The assistant message and the result carry api_error "usage_limit_reached" and api_error_params
+    # {rate_limit_info: {status, rateLimitType, resetsAt, isUsingOverage}} (read from its binary, and run against
+    # the fake API with a claude.ai login), the notice says "You've hit your 5-hour limit" in place of "session
+    # limit", and a rate_limit_event may not come. The other refusals that share error rate_limit (an
+    # organization that turned the service off, a throttle) keep their own api_error and stay no quota.
 
     QUOTA = re.compile(
         r"you've hit your [^.\n]*?\b(?:limit|budget)\b|usage limit reached|out of (?:extra )?usage|"
@@ -396,7 +419,7 @@ class Claude(Provider):
     BUSY = re.compile(r"not your usage limit|temporarily limiting requests|high load|overloaded|try again in a (?:minute|moment)",
                       re.I)
     SPENDING = re.compile(r"spend|credit|budget|extra usage|out of usage|monthly usage limit", re.I)
-    WINDOWS = (("session limit", "five_hour"), ("weekly limit", "seven_day"), ("opus limit", "seven_day_opus"),
+    WINDOWS = (("5-hour limit", "five_hour"), ("session limit", "five_hour"), ("weekly limit", "seven_day"), ("opus limit", "seven_day_opus"),
                ("sonnet limit", "seven_day_sonnet"), ("fable limit", "seven_day_overage_included"),
                ("usage credit limit", "overage"))
 
@@ -404,18 +427,20 @@ class Claude(Provider):
         if result.get("ok", True):
             return None
         notice = seen.get("notice") or {}
-        info = seen.get("rate_limit") or {}
+        info = seen.get("rate_limit") or notice.get("rate_limit") or result.get("rate_limit") or {}
         text = rest.fold(result.get("text") or notice.get("text") or "")
-        # An entitlement check, or the throttle, is not the account's quota running out.
-        if result.get("api_error") or notice.get("api_error") or self.BUSY.search(text):
+        # An entitlement check, or the throttle, is not the account's quota running out. A refusal the CLI
+        # itself types as the account's own limit (usage_limit_reached) is.
+        typed = {result.get("api_error"), notice.get("api_error")} - {None, ""}
+        if typed - {USAGE_LIMIT} or self.BUSY.search(text):
             return None
         status = result.get("api_error_status") or notice.get("status")
-        refused = status == 429 or (result.get("terminal_reason") == "api_error"
-                                    and notice.get("error") in ("rate_limit", "billing_error"))
+        refused = status == 429 or USAGE_LIMIT in typed or (
+            result.get("terminal_reason") == "api_error" and notice.get("error") in ("rate_limit", "billing_error"))
         # The event says which window; only the refusal says it matters. A window that reads
         # "rejected" while paid credits carry on (isUsingOverage) is not one.
         rejected = info.get("status") == "rejected" and not info.get("isUsingOverage")
-        if not refused or not (rejected or self.QUOTA.search(text)):
+        if not refused or not (rejected or USAGE_LIMIT in typed or self.QUOTA.search(text)):
             return None
         kind = info.get("rateLimitType") if rejected else ("overage" if info.get("overageStatus") == "rejected" else None)
         low = text.lower()

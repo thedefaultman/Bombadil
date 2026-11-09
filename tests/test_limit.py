@@ -150,6 +150,56 @@ def test_an_entitlement_check_is_not_the_quota():
     assert got is None
 
 
+# -- Claude Code 2.1.319 types the refusal (api_error "usage_limit_reached", api_error_params) --
+
+FIVE_HOUR = "You've hit your 5-hour limit · resets 3:30pm (UTC)"
+
+
+def _typed(text, info=None, **more):
+    """The assistant message and the result, as the CLI that types a used-up plan writes them."""
+    params = {"api_error_params": {"rate_limit_info": info}} if info else {}
+    return (_assistant(text, api_error="usage_limit_reached", **params),
+            _result(text, api_error="usage_limit_reached", **params, **more))
+
+
+def test_a_typed_refusal_is_the_limit_with_the_window_and_time_it_names_and_no_event_before_it():
+    info = dict(status="rejected", resetsAt=RESET, rateLimitType="five_hour", isUsingOverage=False)
+    got, result = _run(providers.Claude("x"), *_typed(FIVE_HOUR, info))
+    assert got == rest.Limit("limit", "five_hour", RESET, FIVE_HOUR, rest.RAISE_PAGES["claude"])
+    assert result["api_error"] == "usage_limit_reached" and result["rate_limit"] == info
+
+
+def test_a_typed_refusal_with_no_window_in_it_is_read_from_its_words():
+    got, _ = _run(providers.Claude("x"), *_typed(FIVE_HOUR))
+    assert got.why == "limit" and got.kind == "five_hour" and got.until == RESET
+    weekly = "You've hit your weekly limit · resets Oct 3, 9am (UTC)"
+    got, _ = _run(providers.Claude("x"), *_typed(weekly))
+    assert got.kind == "seven_day"
+
+
+def test_a_typed_refusal_of_the_spend_cap_is_a_spend_limit():
+    info = dict(status="rejected", rateLimitType="overage", isUsingOverage=False)
+    got, _ = _run(providers.Claude("x"), *_typed("You've hit your usage credit limit", info))
+    assert got.why == "spend" and got.kind == "overage"
+
+
+def test_a_typed_refusal_is_the_limit_even_when_the_status_is_missing():
+    # (the type is the CLI saying it was the account's own limit, so the status is not needed to believe it)
+    got, _ = _run(providers.Claude("x"), *_typed(FIVE_HOUR, status=None))
+    assert got is not None and got.kind == "five_hour"
+
+
+def test_a_typed_refusal_is_not_the_agents_reply():
+    events = list(providers.Claude("x").events([_typed(FIVE_HOUR)[0]]))
+    assert [e["kind"] for e in events] == ["limit"] and events[0]["api_error"] == "usage_limit_reached"
+
+
+def test_other_typed_refusals_are_still_no_quota():
+    for kind in ("model_requires_usage_credits", "org_level_disabled", "network_edge_blocked"):
+        got, _ = _run(providers.Claude("x"), _assistant(FIVE_HOUR, api_error=kind), _result(FIVE_HOUR, api_error=kind))
+        assert got is None, kind
+
+
 @pytest.mark.parametrize("said", [
     "Server is temporarily limiting requests (not your usage limit) · Try again in a moment",
     "API Error: 429 under high load; try again in a minute",
