@@ -52,8 +52,9 @@ ALWAYS = ("needs",)
 # Opt in: it is on the desk only after "show alive".
 OPT_IN = ("alive",)
 # Widgets that are present only with something to say, and that "show" is also a question to: the word
-# brings the card up for a while even when nothing is wrong ("how's the machine"). The sentence is the answer.
-ASKABLE = {"machine": "Here is the machine."}
+# brings the card up even when nothing is wrong ("how's the machine": for a while; "show away": until it is
+# seen, with "nothing happened" when that is so). The sentence is the answer.
+ASKABLE = {"machine": "Here is the machine.", "away": "Here is what happened while you were away."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
 _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
