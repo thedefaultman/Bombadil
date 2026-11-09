@@ -248,7 +248,7 @@ Item {
     // Two knocks tipping 8 degrees to the right, then a wait, on a 1.6 s beat; the glow breathes
     // 0.25 to 0.6 and back on the same beat.
     SequentialAnimation {
-        running: stone.cueing
+        running: stone.cueing && !stone.reducedMotion
         loops: Animation.Infinite
         NumberAnimation { target: stone; property: "knock"; to: 8; duration: 192; easing.type: Easing.OutQuad }
         NumberAnimation { target: stone; property: "knock"; to: 0; duration: 160; easing.type: Easing.InQuad }
@@ -258,7 +258,7 @@ Item {
         onStopped: stone.knock = 0
     }
     SequentialAnimation {
-        running: stone.cueing
+        running: stone.cueing && !stone.reducedMotion
         loops: Animation.Infinite
         NumberAnimation { target: stone; property: "glowOpacity"; from: 0.25; to: 0.6; duration: 560; easing.type: Easing.InOutSine }
         NumberAnimation { target: stone; property: "glowOpacity"; to: 0.25; duration: 1040; easing.type: Easing.InOutSine }
