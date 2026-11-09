@@ -128,9 +128,9 @@ out["dropped"] = old.parentItem() is None
                    "footer": [True, 400, 280], "dropped": True}
 
 
-# What the person types as soon as the window is up, and where it lands: a window opened from the pill's
-# chip is not the active one until the compositor focuses it, which `late` stands in for (another window
-# has the keyboard when it opens and gives it up later).
+# What the person types as soon as the window is up, and where it lands. A window opened from the pill's
+# chip is not the active one until the compositor focuses it, which `late` stands in for: another window has
+# the keyboard when it opens and gives it up later.
 TYPING = """
 from PySide6.QtQuick import QQuickWindow
 if LATE:
@@ -141,8 +141,6 @@ if LATE:
     out["waiting"] = not root.isActive()
     spin(300)
     root.requestActivate()
-else:
-    out["waiting"] = True
 wait_until(root.isActive)
 spin(300)
 for ch in "git":
@@ -152,7 +150,7 @@ out["typed"] = {name: root.property(name).property("text") for name in FIELDS}
 """
 
 
-def typing(home, content, fields, late):
+def typing(home, content, fields, late=False):
     """An AppWindow with `content` in a window; like the runtime, the window asks the root for the keyboard."""
     qml = """
 import QtQuick.Controls
@@ -169,14 +167,22 @@ Window {
     return run(home, qml, TYPING.replace("LATE", str(late)).replace("FIELDS", repr(fields)))
 
 
-@pytest.mark.parametrize("late", [False, True], ids=["active", "late"])
+@pytest.mark.parametrize("late", [False, True], ids=["at-open", "late"])
 def test_appwindow_opens_with_the_keyboard_in_its_first_search_field(home, late):
     """Nothing asked for the focus, so typing went nowhere until the person clicked the field."""
     out = typing(home, """
         actions: [SearchField { id: headerField }]
         SearchField { id: bodyField }
         Text { text: "content" }""", ["header", "body"], late)
-    assert out == {"waiting": True, "typed": {"header": "git", "body": ""}}
+    assert out["typed"] == {"header": "git", "body": ""}
+    assert out.get("waiting", True) is True      # (late: it really was not the active window when it opened)
+
+
+def test_appwindow_gives_the_search_field_the_first_in_the_menu_bar_header_and_footer_slots_then_the_title_row(home):
+    out = typing(home, """
+        actions: [SearchField { id: titleField }]
+        footer: SearchField { id: footerField }""", ["title", "footer"])
+    assert out["typed"] == {"title": "", "footer": "git"}
 
 
 FOCUSED_BY_THE_APP = {
@@ -187,23 +193,23 @@ FOCUSED_BY_THE_APP = {
 }
 
 
-@pytest.mark.parametrize("late", [False, True], ids=["active", "late"])
+@pytest.mark.parametrize("late", [False, True], ids=["at-open", "late"])
 @pytest.mark.parametrize("how", FOCUSED_BY_THE_APP.values(), ids=FOCUSED_BY_THE_APP.keys())
 def test_appwindow_leaves_a_field_the_app_focuses_itself_alone(home, how, late):
     """A login form or a compose box asks for the keyboard; the Search field must not take it."""
     out = typing(home, "actions: [SearchField { id: searchField }]\n" + how, ["search", "app"], late)
-    assert out == {"waiting": True, "typed": {"search": "", "app": "git"}}
+    assert out["typed"] == {"search": "", "app": "git"}
 
 
 def test_appwindow_skips_a_search_field_that_opts_out(home):
     out = typing(home, "actions: [SearchField { id: headerField; focusOnOpen: false }]\n"
-                       "SearchField { id: bodyField }", ["header", "body"], False)
-    assert out == {"waiting": True, "typed": {"header": "", "body": "git"}}
+                       "SearchField { id: bodyField }", ["header", "body"])
+    assert out["typed"] == {"header": "", "body": "git"}
 
 
 def test_appwindow_without_a_search_field_leaves_the_keyboard_where_it_was(home):
-    out = typing(home, "TextField { id: appField }\nText { text: \"content\" }", ["app"], False)
-    assert out == {"waiting": True, "typed": {"app": ""}}
+    out = typing(home, "TextField { id: appField }\nText { text: \"content\" }", ["app"])
+    assert out["typed"] == {"app": ""}
 
 
 def test_appwindow_does_not_give_the_keyboard_to_a_search_field_that_shows_later(home):
@@ -211,8 +217,87 @@ def test_appwindow_does_not_give_the_keyboard_to_a_search_field_that_shows_later
     the master password: the field that came up must not take the keyboard."""
     out = typing(home, "actions: [SearchField { id: searchField; visible: false }]\n"
                        "Timer { running: true; interval: 30; onTriggered: searchField.visible = true }",
-                 ["search"], False)
-    assert out == {"waiting": True, "typed": {"search": ""}}
+                 ["search"])
+    assert out["typed"] == {"search": ""}
+
+
+def test_appwindow_takes_the_keyboard_once_not_on_every_activation(home):
+    """The person (or the app) put the keyboard somewhere that is no field; the window going away and coming
+    back must not hand it to the Search field again."""
+    out = typing(home, "actions: [SearchField { id: searchField }]", ["search"])
+    assert out["typed"] == {"search": "git"}
+    out = run(home, """
+import QtQuick.Controls
+Window {
+    width: 500; height: 400; visible: true
+    property Item search: searchField
+    AppWindow {
+        id: kit
+        anchors.fill: parent
+        actions: [SearchField { id: searchField }]
+    }
+    Component.onCompleted: kit.forceActiveFocus()
+}""", """
+from PySide6.QtQuick import QQuickWindow
+wait_until(root.isActive)
+spin(300)
+field = root.property("search")
+out["first"] = field.property("activeFocus")
+field.setProperty("focus", False)    # the keyboard falls back to the app's root: no field has it
+other = QQuickWindow()
+other.resize(100, 100)
+other.show()
+other.requestActivate()
+wait_until(lambda: not root.isActive())
+root.requestActivate()
+wait_until(root.isActive)
+spin(300)
+out["again"] = field.property("activeFocus")
+""")
+    assert out == {"first": True, "again": False}
+
+
+def test_appwindow_leaves_the_apps_own_choice_when_a_hot_reload_comes_while_the_window_is_inactive(home):
+    """A reload while the person is in their editor makes the UI in a window that lost the keyboard: the
+    window's focus item is gone, so nothing says where the app put the focus, and the app's own choice
+    (focus: true) must still win over the Search field."""
+    out = run(home, """
+import QtQuick.Controls
+Window {
+    id: win
+    width: 500; height: 400; visible: true
+    property Item search: null
+    property Item app: null
+    function reload() { ld.active = true; ld.item.forceActiveFocus() }
+    Loader {
+        id: ld
+        anchors.fill: parent
+        active: false
+        sourceComponent: AppWindow {
+            actions: [SearchField { id: searchField; Component.onCompleted: win.search = searchField }]
+            TextField { id: appField; focus: true; Component.onCompleted: win.app = appField }
+        }
+    }
+}""", """
+from PySide6.QtQuick import QQuickWindow
+wait_until(root.isActive)
+other = QQuickWindow()
+other.resize(100, 100)
+other.show()
+other.requestActivate()
+wait_until(lambda: not root.isActive())
+out["inactive"] = not root.isActive()
+QMetaObject.invokeMethod(root, "reload")
+spin(300)
+root.requestActivate()
+wait_until(root.isActive)
+spin(300)
+for ch in "git":
+    QTest.keyClick(root, ch)
+spin(50)
+out["typed"] = {name: root.property(name).property("text") for name in ("search", "app")}
+""")
+    assert out == {"inactive": True, "typed": {"search": "", "app": "git"}}
 
 
 # -- ItemList --
