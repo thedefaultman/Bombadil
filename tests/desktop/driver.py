@@ -1521,7 +1521,7 @@ check("a card let go in the middle of the screen stays where it was",
       and wait(lambda m: m.get("type") == "desk", 0.5, n) is None, (st["order"], st.get("drag")))
 
 # put the desk back as it was, for what follows
-send({"type": "desk", "op": "move", "widget": "machine", "rail": "right"})
+send({"type": "desk", "op": "move", "widget": "machine", "rail": "right", "rank": 2})   # (before Tips, which is last)
 send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
 inject({"type": "jobs", "jobs": []})
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
