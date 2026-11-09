@@ -26,7 +26,7 @@ def reduced_motion() -> bool:
     return os.environ.get("BOMBADIL_REDUCE_MOTION") == "1"
 
 
-def set_reduced_motion(engine, on: bool | None = None) -> bool:
+def set_reduced_motion(engine) -> bool:
     """Put the switch on this engine's `Theme` (a QML singleton, one instance per engine), so a kit
     component or an app reads `Theme.reducedMotion` and `Theme.fast` honour it. The instance is made
     here, on first ask, and it lives as long as the engine: a reload does not make a new one.
@@ -36,7 +36,7 @@ def set_reduced_motion(engine, on: bool | None = None) -> bool:
     theme = engine.singletonInstance("Bombadil", "Theme")
     if not isinstance(theme, QObject):   # an invalid QJSValue: the module was not found
         return False
-    theme.setProperty("reducedMotion", reduced_motion() if on is None else on)
+    theme.setProperty("reducedMotion", reduced_motion())
     return True
 
 

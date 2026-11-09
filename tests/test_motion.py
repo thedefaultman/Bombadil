@@ -111,14 +111,10 @@ def test_the_theme_is_not_reduced_until_something_sets_it(app, tmp_path):
     assert not warnings, warnings
 
 
-def test_the_theme_source_says_what_the_docs_say():
+def test_the_theme_switch_is_writable_and_false_by_default():
+    # Writable (not readonly): the shell and the runtime write it. What the tokens do with it is the test above.
     text = THEME_QML.read_text()
-    # Writable (not readonly), false by default: the shell and the runtime write it.
     assert re.search(r"^\s*property bool reducedMotion: false\b", text, re.MULTILINE)
-    # The three motion tokens follow it, so `duration: Theme.fast` is enough for a component.
-    for name, ms in (("fast", 120), ("normal", 200), ("slow", 300)):
-        assert re.search(rf"readonly property int {name}: reducedMotion \? 0 : {ms}\b", text), name
-    assert "function duration(ms) { return reducedMotion ? 0 : ms }" in text
 
 
 # -- the shell and the runtime set it --
@@ -130,8 +126,8 @@ def test_the_shell_sets_the_theme_from_the_variable_and_hands_it_on(app, tmp_pat
                         re.MULTILINE)
     assert binding, "shell.qml does not bind Kit.Theme.reducedMotion"
     # The stone and the wallpaper follow the Theme now, not the shell's own copy of the variable.
-    assert "Wallpaper { reducedMotion: Kit.Theme.reducedMotion }" in shell
-    assert len(re.findall(r"^\s*reducedMotion: Kit\.Theme\.reducedMotion$", shell, re.MULTILINE)) == 1
+    assert re.search(r"Wallpaper \{[^}]*\breducedMotion: Kit\.Theme\.reducedMotion\b", shell)
+    assert re.search(r"^\s*reducedMotion: Kit\.Theme\.reducedMotion$", shell, re.MULTILINE)   # the stone, at least
     assert "reducedMotion: root.reducedMotion" not in shell
 
     # The very Binding line, in a root that has the shell's property: Quickshell is not needed to see that a
@@ -188,7 +184,7 @@ def test_a_kit_that_cannot_be_found_leaves_the_runtime_working(app):
     saved = os.environ.pop("QML2_IMPORT_PATH", None)
     try:
         engine = QtQml.QQmlApplicationEngine()      # no import path of its own, and none in the environment
-        assert kit_engine.set_reduced_motion(engine, True) is False
+        assert kit_engine.set_reduced_motion(engine) is False
     finally:
         if saved is not None:
             os.environ["QML2_IMPORT_PATH"] = saved
@@ -201,8 +197,9 @@ import QtQuick.Controls
 Item {
     width: 220; height: 80
     property bool reduced: Theme.reducedMotion
-    BusyIndicator { id: busy; running: true; width: 24; height: 24 }
-    ProgressBar { id: bar; indeterminate: true; y: 40; width: 200 }
+    property bool going: true
+    BusyIndicator { id: busy; running: parent.going; width: 24; height: 24 }
+    ProgressBar { id: bar; indeterminate: parent.going; y: 40; width: 200 }
     property Item arc: busy.contentItem.children[0]
     property Item segment: bar.contentItem.children[1]
 }
@@ -215,11 +212,22 @@ for _ in range(10):
     spin(110)
     samples.append([round(root_arc.property("rotation"), 1), round(root_arc.property("opacity"), 2),
                     round(root_segment.property("opacity"), 2), round(root_segment.property("width"), 1)])
+out["track"] = root_segment.parentItem().property("width")
 out["reduced"] = root.property("reduced")
 out["rotations"] = sorted({s[0] for s in samples})
 out["arc_opacity"] = [min(s[1] for s in samples), max(s[1] for s in samples)]
 out["segment_opacity"] = [min(s[2] for s in samples), max(s[2] for s in samples)]
 out["segment_widths"] = len({s[3] for s in samples})
+out["segment_width"] = samples[-1][3]
+"""
+
+# Stop them in the middle of a pulse: the opacity they were left at must come back to 1.
+STOP = """
+root_arc, root_segment = root.property("arc"), root.property("segment")
+out["dipped"] = wait_until(lambda: root_arc.property("opacity") < 0.8 and root_segment.property("opacity") < 0.8)
+root.setProperty("going", False)
+spin(100)
+out["after"] = [root_arc.property("opacity"), root_segment.property("opacity")]
 """
 
 
@@ -237,9 +245,17 @@ def test_a_spinner_and_an_indeterminate_bar_pulse_under_reduced_motion(home, mon
     out = run_kit(home, BUSY, SAMPLE)
     assert out["reduced"] is True
     assert out["rotations"] == [0]                           # the arc holds still
-    assert out["segment_widths"] == 1                        # so does the segment
+    assert out["segment_widths"] == 1                        # so does the segment, and it is there to be seen
+    assert 0 < out["segment_width"] < out["track"], out
     for low, high in (out["arc_opacity"], out["segment_opacity"]):
         assert low < 0.6 and high > 0.8, out                 # and both pulse, one second a round, as the stone does
+
+
+def test_a_pulse_stopped_in_the_middle_leaves_the_spinner_and_the_bar_whole(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_REDUCE_MOTION", "1")
+    out = run_kit(home, BUSY, STOP)
+    assert out["dipped"] is True
+    assert out["after"] == [1, 1]                            # not left dim at wherever the pulse was
 
 
 # -- the desk --
@@ -346,6 +362,63 @@ def test_a_card_built_under_reduced_motion_has_a_still_ring(cards):
     (card,) = cards.show(("now", "now", now_card()))
     ring = cards.one(card, "nowRing")
     assert ring.isVisible() and ring_samples(cards, ring, 4) == [(1.2, 0.6)] * 4
+
+
+DIAGRAM = """
+import QtQuick
+import Bombadil
+Item {
+    width: 900; height: 600
+    Diagram { id: d; objectName: "diagram"; x: 14; y: 14; width: parent.width - 28 }
+}
+"""
+
+
+def find_item(root, name):
+    todo = [root]
+    while todo:
+        item = todo.pop()
+        if item.objectName() == name:
+            return item
+        todo.extend(item.childItems())
+    return None
+
+
+@MODES
+def test_the_diagram_moves_its_boxes_only_with_motion(app, tmp_path, reduced):
+    from bombadil import cards
+    qml = tmp_path / "diagram.qml"
+    qml.write_text(DIAGRAM)
+    engine = QtQml.QQmlApplicationEngine()
+    comp = QtQml.QQmlComponent(engine, QtCore.QUrl.fromLocalFile(str(qml)))
+    root = comp.create()
+    assert root is not None, [e.toString() for e in comp.errors()]
+    reduce(engine, reduced)
+
+    def pump(ms):
+        loop = QtCore.QEventLoop()
+        QtCore.QTimer.singleShot(ms, loop.quit)
+        loop.exec()
+
+    diagram = find_item(root, "diagram")
+    spec, errors = cards.validate_diagram({"shape": "chain", "title": "How a VPN works",
+                                           "nodes": [{"label": "Laptop"}, {"label": "Tunnel"}, {"label": "Internet"}]})
+    assert spec is not None, errors
+    diagram.setProperty("spec", spec)
+    pump(400)
+    box = find_item(root, "box-n2")
+    start = (box.property("x"), box.property("width"))
+    diagram.setProperty("width", 300)                        # the row narrows: the box moves and shrinks
+    seen = []
+    for _ in range(8):
+        pump(20)
+        seen.append((box.property("x"), box.property("width")))
+    pump(400)
+    final = (box.property("x"), box.property("width"))
+    assert final != start
+    between = [v for v in seen if v not in (start, final)]
+    assert (not between) if reduced else between, (start, seen, final)
+    reduce(engine, False)
 
 
 # -- the stone, and the shell's other changes --
