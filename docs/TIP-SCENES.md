@@ -14,7 +14,7 @@ that works and the exact vocabulary a beat is written in. Why a tip moves at all
 | `share/qml/Bombadil/TipScene.js` | A `.pragma library` that says what is on the mini screen at any time `t`: `compile(beats)` lays the beats end to end, `frameAt(compiled, t)` returns the frame. It draws nothing and runs nothing. |
 | `share/qml/Bombadil/Stone.qml` | `Kit.Stone`, the mark: the pill's stone and the scenes' stone. See [The stone in the kit](#the-stone-in-the-kit). |
 | `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. `tests/test_tips.py` calls `validate(row, allow_empty=True)` on every row of `share/tips/tips.toml`, so a bad scene in the table fails there. |
-| `tests/tip_fixtures.py` | Sixteen tips written for the tests, which between them use every beat, key and modifier. |
+| `tests/tip_fixtures.py` | Seventeen tips written for the tests, which between them use every beat, key and modifier. |
 | `tests/test_tip_scene_qml.py`, `tests/test_tip_scene.py` | The renderer's frames, sizes and "nothing runs" tests, and the validator's. |
 
 ## Why storyboards, not video
@@ -109,7 +109,7 @@ that are elided. A keycap pressed while strips stand is drawn in the margin on t
 its lock screen under the title. It holds three rows on the card's poster and four on the stage, which is why
 the validator allows a window three (`MAX_WINDOW_ROWS`); a `card` may have more.
 
-## The nine beats
+## The ten beats
 
 A scene is a list of beats, played one after the other. A beat is a table. Its drawing keys say what happens, its
 modifier keys say how; the keys of one beat happen together, so the beat lasts as long as its longest one, and
@@ -121,6 +121,7 @@ modifier keys say how; the keys of one beat happen together, so the beat lasts a
 | `type` | words typed into the mini pill, 25 characters a second | `ghost`, `phase` |
 | `stone` | the stone takes a face: `rest`, `listening`, `working`, `needs`, `done`, `stopped` or `resting` | `phase` |
 | `line` | the line above the pill; `""` clears it | `tag`, `tone`, `command`, `counter`, `buttons`, `phase` |
+| `queue` | asks that wait, as grey chips above the line; `[]` takes them away | `tag`, `wait`, `phase` |
 | `window` | an app window slides in from its drawer (a title); `false` or `""` slides it out | `tag`, `rows`, `columns`, `lock`, `doc`, `reload`, `from`, `phase` |
 | `card` | a desk card: `watching`, `now` or `machine` | `tag`, `rows`, `title`, `why`, `phase` |
 | `picture` | a picture card above the line (its title) | `tag`, `boxes` or `bars`, `lit`, `phase` |
@@ -143,6 +144,8 @@ A beat needs at least one drawing key, and a modifier needs a drawing key it goe
 | `command` | a string | With `line`: the command, in mono. |
 | `counter` | `true`, `false`, or a number of seconds | With `line`: the seconds counter, which counts while the stone works. A number starts it from there. `false` stops it. |
 | `buttons` | one or two labels, such as `["Undo", "Details"]` | With `line`: the line's buttons. They are tagged `template`. |
+| `queue` | a list of at most two asks, or `[]` | Asks the machine keeps while it cannot run them: a grey chip for each, between the line and the pill, holding the ask in the user's own words (they are `typed`). `[]` takes them away. |
+| `wait` | a string | With `queue`: the small word on each chip that says why it waits ("paused"). Without it a chip says "next". Needs a `tag`. |
 | `window` | a title, or `false` or `""` | An app window slides in from its drawer in 300 ms. A title with `reload` and a window already open changes it in place. |
 | `rows` | strings, or `[label, value]` lists | With `window`: its rows, at most three, arriving 200 ms apart. With `card`: its rows (see `card`). |
 | `columns` | `[heading, cell, cell, ...]` lists | With `window`: columns added to the rows, one every 200 ms. |
@@ -200,6 +203,7 @@ holds a shipped tip to 6 to 8 s. The numbers are in `tip_scene.py`, mirrored in 
 | `card` | 800 ms: 150 ms of arrival and a pause |
 | `picture` | 300 ms to slide on, 320 ms per box or bar, then 600 ms to read |
 | `fold` | 1000 ms, the fade 150 ms |
+| `queue` | 300 ms, the fade 200 ms |
 | `hold` | what it says |
 
 Slides take 300 ms on the system's curve, (0.16, 1, 0.3, 1), which does not overshoot; fades take 200 ms. Nothing

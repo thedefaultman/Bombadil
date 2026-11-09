@@ -6,9 +6,9 @@ Python: the tips table tests call `validate(tip)` on every row, and `tests/test_
 `duration()` agrees with the QML's own clock to the millisecond. It is standard library only, so agentd
 and the tests can import it without Qt. docs/TIP-SCENES.md is the same vocabulary for people.
 
-A beat is a table. Its drawing keys say what happens (`key`, `type`, `stone`, `line`, `window`, `card`,
-`picture`, `fold`, `hold`); its modifier keys say how (`tag`, `tone`, `rows`, ...). Beats play one after
-the other; the keys inside one beat happen together.
+A beat is a table. Its drawing keys say what happens (`key`, `type`, `stone`, `line`, `queue`, `window`,
+`card`, `picture`, `fold`, `hold`); its modifier keys say how (`tag`, `tone`, `rows`, ...). Beats play one
+after the other; the keys inside one beat happen together.
 """
 
 from __future__ import annotations
@@ -25,15 +25,16 @@ NOW_STATES = ("done", "current", "next")
 BAR_TONES = ("amber",)
 
 # Drawing keys. A beat needs at least one of them.
-DRAWS = ("key", "type", "stone", "line", "window", "card", "picture", "fold", "hold")
+DRAWS = ("key", "type", "stone", "line", "queue", "window", "card", "picture", "fold", "hold")
 # Modifier keys and the drawing keys they may sit beside (any one of them is enough).
 MODIFIERS = {
     "ghost": ("type",),
-    "tag": ("line", "window", "card", "picture", "fold", "type"),
+    "tag": ("line", "queue", "window", "card", "picture", "fold", "type"),
     "tone": ("line",),
     "command": ("line",),
     "counter": ("line",),
     "buttons": ("line",),
+    "wait": ("queue",),
     "rows": ("window", "card"),
     "columns": ("window",),
     "lock": ("window",),
@@ -51,6 +52,7 @@ MODIFIERS = {
 KNOWN = frozenset(DRAWS) | frozenset(MODIFIERS)
 
 MAX_WINDOW_ROWS = 3      # what a window holds on the card's poster (the stage holds four)
+MAX_QUEUE = 2            # waiting asks the mini screen holds as chips
 MAX_SECONDS = 10         # never over this
 TARGET_SECONDS = (6, 8)  # what a scene aims for: `validate(tip, strict=True)` holds it to this
 CAPTIONS = 3
@@ -65,6 +67,7 @@ STONE_MS = {"done": 700, "needs": 1600, "working": 600}   # the hop, one knock b
 STONE_DEFAULT_MS = 300
 LINE_MS = 900            # a line fades in over 200 and stays for reading
 LINE_CLEAR_MS = 200
+QUEUE_MS = 300           # a waiting ask's chip fades in over 200 and stays a moment
 SLIDE_MS = 300           # a window or a picture card slides on (0.16, 1, 0.3, 1)
 ROW_MS = 200             # a window row, a column or a drawn box arrives in this long
 WINDOW_DWELL_MS = 300
@@ -116,6 +119,8 @@ def beat_ms(b: dict) -> int:
         parts.append(STONE_MS.get(b["stone"], STONE_DEFAULT_MS) if _is_str(b["stone"]) else STONE_DEFAULT_MS)
     if "line" in b:
         parts.append(LINE_MS if b["line"] != "" else LINE_CLEAR_MS)
+    if "queue" in b:
+        parts.append(QUEUE_MS)
     if "window" in b:
         if shows_window(b):
             slide = 0 if b.get("reload") else SLIDE_MS
@@ -214,6 +219,12 @@ def _check_beat(i: int, b, out: list[str]) -> None:
         bt = b["buttons"]
         need(isinstance(bt, list) and 0 < len(bt) <= 2 and all(isinstance(x, str) and x for x in bt),
              "buttons is one or two labels, such as [\"Undo\", \"Details\"]")
+    if "queue" in b:
+        q = b["queue"]
+        need(isinstance(q, list) and len(q) <= MAX_QUEUE and all(isinstance(x, str) and x for x in q),
+             f"queue is the asks that wait, one to {MAX_QUEUE} of them, as typed ([] puts the chips away)")
+    if "wait" in b:
+        need(isinstance(b["wait"], str) and b["wait"] != "", "wait is the chip's label, a string")
     if "window" in b:
         need(_is_str(b["window"]) or b["window"] is False, "window is a title (false or \"\" slides it out)")
     if "from" in b:
@@ -281,6 +292,7 @@ def _check_beat(i: int, b, out: list[str]) -> None:
     needs_tag = (
         (isinstance(b.get("line"), str) and b["line"] != "")
         or shows_window(b) or "card" in b or "picture" in b or bool(_items(b.get("strips")))
+        or bool(b.get("wait"))
     )
     tag = b.get("tag")
     if needs_tag and tag is None:
@@ -346,14 +358,20 @@ def strings(tip: dict) -> list[tuple[str, str]]:
             out.append((tag, b["command"]))
         for x in _items(b.get("buttons")):
             out.append(("template", x))
+        for x in _items(b.get("queue")):
+            out.append(("typed", x))                       # an ask that waits is words the person typed
+        if b.get("wait"):
+            out.append((tag, b["wait"]))
         if shows_window(b):
             out.append((tag, b["window"]))
         if b.get("lock"):
             out.append((tag, b["lock"]))
+        # The steps of a Now card are the agent's own plan, whatever the beat's tag says of its title and why.
+        row_tag = "model" if b.get("card") == "now" else tag
         for r in _items(b.get("rows")):
-            out.append((tag, r if isinstance(r, str) else str(r[0])))
+            out.append((row_tag, r if isinstance(r, str) else str(r[0])))
             if not isinstance(r, str) and len(r) > 1 and isinstance(r[1], str) and r[1] not in NOW_STATES:
-                out.append((tag, r[1]))                    # a figure or a word in a row, read as the row's tag
+                out.append((row_tag, r[1]))                # a figure or a word in a row, read as the row's tag
         if b.get("title"):
             out.append((tag, b["title"]))
         if b.get("why"):

@@ -1,8 +1,9 @@
 """Tips written for the tests of the scene renderer (tests/test_tip_scene_qml.py, tests/test_tip_scene.py).
 
-The twenty seed tips get their beats in a later stage, once the tips table lands; the renderer is built
-and tested against these. Between them they use every beat kind, every key and every modifier of the
-vocabulary (docs/TIP-SCENES.md), and none is a copy of a seed tip's words that a test depends on.
+The renderer is built and tested against these, not against the twenty seed tips (whose beats are in
+share/tips/tips.toml and are held by tests/test_tip_truth.py and tests/test_tips.py), so a seed tip's wording
+can change without a renderer test failing. Between them they use every beat kind, every key and every
+modifier of the vocabulary (docs/TIP-SCENES.md).
 """
 
 TICKETS = [["Printer jams on floor 3", "High"], ["VPN drops every hour", "Open"], ["Order a new laptop", "Done"]]
@@ -203,6 +204,24 @@ UNDO = {
     ],
 }
 
+# Asks that wait as grey chips while the AI rests, and then run.
+WAITS = {
+    "id": "fixture-waits", "line": "Out of Claude? Your apps still work.", "words": "pause Claude", "marks": [],
+    "captions": ["You pause", "An ask waits", "It runs"],
+    "beats": [
+        {"type": "pause Claude"},
+        {"key": "enter", "phase": 1},
+        {"stone": "resting", "line": "Claude is paused. Your apps and files still work.", "tag": "template"},
+        {"type": "tidy my downloads"},
+        {"key": "enter"},
+        {"queue": ["tidy my downloads"], "wait": "paused", "line": "Kept until you resume Claude.",
+         "tag": "template"},
+        {"type": "resume claude", "phase": 2},
+        {"key": "enter"},
+        {"queue": [], "stone": "working", "line": "Claude is back. Running your ask.", "tag": "template"},
+    ],
+}
+
 # Things taken away again: the counter stopped, a line cleared, a window slid out.
 CLEARS = {
     "id": "fixture-clears", "line": "Things leave when they are done.", "words": "", "marks": [],
@@ -223,4 +242,5 @@ SHORT = {
     "beats": [{"key": "enter"}, {"hold": 100}, {"line": "Done.", "tag": "caption"}],
 }
 
-ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, FOLDS, UNDO, CLEARS, SHORT]
+ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, FOLDS, UNDO, WAITS,
+       CLEARS, SHORT]

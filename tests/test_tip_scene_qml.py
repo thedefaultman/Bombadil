@@ -730,6 +730,64 @@ def test_a_picture_card_streams_its_boxes_in_and_lights_one(make):
     s.snap("app-end")
 
 
+@pytest.mark.parametrize("density, chip_h, floor", [("card", 18, 12), ("app", 26, 12)])
+def test_an_ask_that_waits_is_a_grey_chip_between_the_line_and_the_pill(make, density, chip_h, floor):
+    kept = beat_of(fx.WAITS, "wait", "paused")
+    waiting = {**fx.WAITS, "id": "fixture-waiting", "beats": fx.WAITS["beats"][:kept + 1]}   # it ends on the chip
+    s = make(waiting, density)
+    if density == "app":
+        s.seek(beat_start(waiting, kept) - 1)
+        assert s.frame["queue"] is None and s.item("queueChip") is None       # nothing waits before it is asked
+        s.seek(beat_start(waiting, kept) + 400)
+    else:
+        s.seek(0)                                                              # the poster is the last frame
+    assert s.frame["queue"]["asks"] == ["tidy my downloads"] and s.frame["queue"]["wait"] == "paused"
+    chip, pill, line = s.item("queueChip"), s.item("pill"), s.item("line")
+    assert chip is not None and chip.height() == chip_h
+    top = chip.mapToItem(s.scene, QtCore.QPointF(0, 0)).y()
+    assert top + chip.height() <= pill.y()                                       # above the pill
+    assert line is None or line.mapToItem(s.scene, QtCore.QPointF(0, 0)).y() + line.height() <= top   # the line above it
+    texts = {n: (t, size) for t, size, n in s.texts() if n in ("queueWait", "queueAsk")}
+    assert texts["queueWait"][0] == "paused" and texts["queueAsk"][0] == "tidy my downloads"
+    assert min(size for _, size in texts.values()) >= floor
+    ask = next(i for i in s.items("queueAsk") if i.isVisible())
+    assert not ask.property("truncated")                                       # the ask is whole
+    s.snap(f"queue-{density}")
+    whole = make(fx.WAITS, "app")
+    whole.seek(whole.duration)
+    assert whole.frame["queue"] is None and whole.item("queueChip") is None   # the asks run, the chips go
+
+
+def test_two_waiting_asks_share_the_line_and_a_chip_without_a_wait_says_next(make):
+    tip = {"id": "fixture-two-waits", "captions": ["a", "b", "c"], "beats": [
+        {"stone": "resting"}, {"queue": ["tidy my downloads", "rename the photos from the trip to Lisbon"],
+                               "tag": "typed"}, {"hold": 300}]}
+    for density in ("card", "app"):
+        s = make(tip, density)
+        s.seek(s.duration)
+        chips = sorted((i for i in s.items("queueChip") if i.isVisible()),
+                       key=lambda i: i.mapToItem(s.scene, QtCore.QPointF(0, 0)).x())
+        assert len(chips) == 2 and s.frame["queue"]["wait"] == "next"
+        assert [i.property("text") for i in s.items("queueWait") if i.isVisible()] == ["next", "next"]
+        xs = [c.mapToItem(s.scene, QtCore.QPointF(0, 0)).x() for c in chips]
+        assert all(0 <= x and x + c.width() <= s.scene.width() for x, c in zip(xs, chips, strict=True))
+        assert xs[0] + chips[0].width() <= xs[1]                               # side by side, not over each other
+
+
+def test_a_long_ask_in_the_pill_shows_its_end_not_its_start(make):
+    words = "tidy my downloads, then rename the photos from the trip to Lisbon by the day"
+    tip = {"id": "fixture-long-ask", "captions": ["a", "b", "c"], "beats": [{"type": words}, {"hold": 100}]}
+    for density in ("card", "app"):
+        s = make(tip, density)
+        s.seek(s.duration)
+        text = s.item("pillText")
+        row = text.parentItem()                                               # the row the words and the caret sit in
+        box = row.parentItem()                                                # the clip that is the pill's field
+        assert box.property("clip") and row.width() > box.width()             # longer than the field ...
+        assert row.x() < 0 and abs(row.x() + row.width() - box.width()) <= 2.5    # ... so its end is in view
+        assert text.property("text") == words
+
+
 def test_a_hold_is_a_pause_and_adds_to_a_beat(make):
     hold = {"beats": [{"hold": 700}, {"key": "enter", "hold": 40}, {"line": "x", "tag": "caption", "hold": 100}]}
     assert tip_scene.beat_times(hold["beats"]) == [(0, 700), (700, 400), (1100, 1000)]
