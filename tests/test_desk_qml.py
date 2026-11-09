@@ -1471,7 +1471,7 @@ def test_watching_never_reaches_the_model(desk):
     desk.click(desk.inside(desk.card_row("f7a8"), "rowsButton"))
     desk.click(desk.inside(desk.card_row("a1b2"), "rowsRemove"))
     assert {m["type"] for m in desk.sent} == {"jobs"} and len(desk.sent) == 2
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
 
 
 def test_a_row_action_for_another_widget_or_word_is_not_watchings(desk):
@@ -1781,7 +1781,7 @@ def test_open_sends_the_session_to_agentd_and_nothing_else(desk):
     assert desk.sent == [{"type": "dev", "action": "open", "key": "k2"},
                          {"type": "dev", "action": "open", "key": "k1"}]
     assert [r["key"] for r in desk.needs["rows"]] == ["k1", "k2"]      # agentd's next message says what changed
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
     assert plain(desk.win.property("actions")) == [["needs", "k2", "Open"], ["needs", "k1", "Open"]]
 
 
@@ -2002,11 +2002,12 @@ def test_a_tap_on_the_disk_row_asks_agentd_to_open_it_and_nothing_else(desk):
     assert desk.sent == hello + [{"type": "vitals", "op": "open", "row": "disk"}]
     assert plain(desk.win.property("opened")) == [["machine", "disk", "disk"]]
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
+    assert desk.prop("_phase") == "idle"
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeta"))
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeter"))
     assert [m for m in desk.sent[1:]] == [{"type": "vitals", "op": "open", "row": "disk"}] * 3
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []
 
 
 def test_only_machines_opens_are_a_message(desk):
@@ -3608,7 +3609,7 @@ def test_a_button_does_what_it_says_and_then_the_card_is_seen(desk):
     assert desk.sent[-2:] == [{"type": "jobs", "op": "why", "id": "ab12"}, seen]
     assert desk.away is not None                              # agentd takes the card away, and says so
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_button_that_does_not_match_its_row_opens_nothing_and_still_means_seen(desk):
@@ -3651,7 +3652,7 @@ def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
     assert desk.away is not None
     desk.send(type="away", since=0, count=0, why="", rows=[])
     assert desk.away is None
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_tap_on_another_cards_title_or_caption_leaves_away_alone(desk):

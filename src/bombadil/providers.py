@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths, rest
+from . import paths, persona, rest
 
 
 def kit_paths() -> tuple[Path, Path]:
@@ -30,8 +30,8 @@ def kit_paths() -> tuple[Path, Path]:
     return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
 
 
-def system_prompt() -> str:
-    """What both CLIs get on every turn, fresh or resumed."""
+def base_prompt() -> str:
+    """The prompt every turn starts from, before the user's voice."""
     kit, skill = kit_paths()
     return (
         "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
@@ -62,6 +62,12 @@ def system_prompt() -> str:
         "When an answer has parts, order or change, show it as a picture (system_map for this machine, "
         "show_card otherwise), then say one line."
     )
+
+
+def system_prompt() -> str:
+    """What both CLIs get on every turn, fresh or resumed: the base prompt, then the user's voice and
+    where to change it."""
+    return base_prompt() + ("\n\n" + n if (n := persona.note()) else "")
 
 
 DIAGNOSTIC = "[ede_diagnostic]"   # what the CLI prints when a turn was cut short
@@ -572,7 +578,7 @@ class Codex(Provider):
         # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
-                     "-c", f"developer_instructions={json.dumps(system_prompt())}",
+                     "-c", f"developer_instructions={json.dumps(system_prompt(), ensure_ascii=False)}",
                      # Codex offers update_plan (the plan on the desk) only when its config says so.
                      "-c", "tools.update_plan.enabled=true",
                      "--skip-git-repo-check"]

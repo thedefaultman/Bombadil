@@ -8,6 +8,7 @@ The project's documents, next to its code.
 - `SESSION-SERVICES.md`: how the session stays alive (the three user services, who starts them, restore
   points, the installer's kernel rule, models, updating a running system).
 - `VM-TESTING.md`: the whole-system smoke test in a VM, with a diagram, what it covers and its traps.
+- `VOICE.md`: the name card, the three voices, the welcome line and empty places: how it is built and how to extend it.
 - `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
 - `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget, and Your desk (Keep, When needed and Off for each widget, the Widgets card, a kept Machine at rest).
 - `TIPS.md`: Tips, what a new person can ask: the table of tips and its gates, what counts a tip as tried, `tips.json`, the card agentd tells the shell, the wire protocol, how to add a tip. Has marked places for the Tips app and the Tips card.

@@ -14,9 +14,12 @@ import Bombadil as Kit
 Rectangle {
     id: bar
     required property var pill       // a PillState
+    // A welcome shows on one screen only, the one that had the focus when it arrived.
+    property bool here: true
 
     readonly property var notice: pill.noticeShown ? pill.notice : null
-    readonly property bool shown: pill.mode !== "idle" || pill.flash !== "" || notice !== null
+    readonly property bool shown: (pill.mode !== "idle" && (pill.mode !== "welcome" || here)) || pill.flash !== ""
+                                  || notice !== null
     readonly property color edge: pill.mode === "working" && pill.risk === "irreversible" ? Kit.Theme.bad
                                  : pill.mode === "working" && pill.risk === "system" ? Kit.Theme.warn
                                  : pill.source === "error" && pill.mode !== "working" ? Kit.Theme.bad
@@ -69,6 +72,7 @@ Rectangle {
             if (done && (!bar.pill.sticky || bar.pill.notices.length > 0) && !bar.pill.pictureStays && bar.pill.hovers === 0
                     && bar.now - bar.pill.lineAt > bar.pill.fadeAfter)
                 bar.pill.fade()
+            if (bar.pill.welcomeDone(bar.now)) bar.pill.dismissWelcome()
         }
     }
 
@@ -91,7 +95,10 @@ Rectangle {
 
     HoverHandler {
         id: hover
-        onHoveredChanged: bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
+        onHoveredChanged: {
+            bar.pill.hovers = Math.max(0, bar.pill.hovers + (hovered ? 1 : -1))
+            if (hovered) bar.pill.touched()
+        }
     }
     Component.onDestruction: if (hover.hovered) bar.pill.hovers = Math.max(0, bar.pill.hovers - 1)
     TapHandler {

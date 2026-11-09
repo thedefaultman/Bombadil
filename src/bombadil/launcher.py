@@ -90,6 +90,7 @@ UTILITY_COMMANDS = {
     "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
+    "voice": ["voice"],   # agentd opens the name and voice card itself
 }
 # The Mail window (a kit app that ships with Bombadil), and what people call it.
 MAIL_APP = "mail"

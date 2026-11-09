@@ -728,6 +728,7 @@ def test_shell_qml_takes_the_keyboard_for_the_card_without_toggling_it_away():
     assert "root.takeKeyboard()" in asked
     take = code.split("function takeKeyboard()", 1)[1].split("\n", 1)[0]
     assert "root.summonedOn = root.focusedScreenName()" in take and "===" not in take and "?" not in take
+    assert "root.cardKeys = false" in take            # the keys are the pill's, not a persona card's
     assert "const name = root.focusedScreenName()" in code.split("function summon(text)", 1)[1].split("}", 1)[0]
 
 
