@@ -68,12 +68,14 @@ if mode == "retrying":
     out({"type": "result", "result": "answered", "session_id": "s1"})
     sys.exit(0)
 
-def refuse(text, error, info):
+def refuse(text, error, info, api_error=None):
+    # 2.1.319 names which 429 it was in `api_error`, on the assistant message and on the result; 2.1.286 did not.
+    code = {"api_error": api_error} if api_error else {}
     out({"type": "rate_limit_event", "rate_limit_info": info})
-    out({"type": "assistant", "error": error, "is_api_error_message": True,
+    out({"type": "assistant", "error": error, "is_api_error_message": True, "api_error_status": 429, **code,
          "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}})
     out({"type": "result", "subtype": "success", "is_error": True, "num_turns": 1, "result": text,
-         "api_error_status": 429, "terminal_reason": "api_error", "session_id": "s-refused"})
+         "api_error_status": 429, "terminal_reason": "api_error", "session_id": "s-refused", **code})
 
 if mode == "spend":
     refuse("You're out of extra usage · your organization's monthly spend limit was reached", "billing_error",
@@ -81,15 +83,25 @@ if mode == "spend":
 elif mode == "throttle":
     refuse("Server is temporarily limiting requests (not your usage limit) · Try again in a moment", "rate_limit",
            {"status": "allowed", "rateLimitType": "five_hour"})
-else:
+elif mode == "credits":
+    # An entitlement check: also a 429, its window reads "rejected", and the CLI names it in api_error.
+    refuse("Usage credits required for 1M context · run /extra-usage to turn them on", "rate_limit",
+           {"status": "rejected", "resetsAt": time.time() + @WAIT@, "rateLimitType": "seven_day_overage_included",
+            "isUsingOverage": False}, "long_context_credits_required")
+elif mode == "refuse286":
     refuse("You've hit your session limit", "rate_limit",
            {"status": "rejected", "resetsAt": time.time() + @WAIT@, "rateLimitType": "five_hour",
             "isUsingOverage": False})
+else:
+    refuse("You've hit your 5-hour limit", "rate_limit",
+           {"status": "rejected", "resetsAt": time.time() + @WAIT@, "rateLimitType": "five_hour",
+            "isUsingOverage": False}, "usage_limit_reached")
 '''
 
 
 class Cli:
-    """The scripted CLI and what it was asked: `mode` is ok, refuse, partial, spend, throttle or retrying."""
+    """The scripted CLI and what it was asked: `mode` is ok, refuse (2.1.319's words and codes), refuse286, partial,
+    spend, throttle, credits or retrying."""
 
     def __init__(self, home, wait=3600.0, mode="refuse"):
         self.mode_file, self.log = home / "mode", home / "prompts.log"
@@ -183,6 +195,28 @@ async def test_a_refused_ask_rests_the_machine_and_waits_as_a_chip(home):
     assert "rest" in kinds and kinds[-1] == "turn_end"
     log = [json.loads(line) for line in agentd.paths.turns_log().read_text().splitlines()]
     assert log[-1]["requeued"] is True and log[-1]["summary"] == _line(until) and log[-1]["prompt"] == "make me a habit tracker"
+    await _stop(server, w)
+
+
+@pytest.mark.asyncio
+async def test_the_older_cli_without_api_error_codes_rests_the_machine_the_same(home):
+    cli, _, d, server, r, w, msgs = await _rest_with(home, mode="refuse286")
+    until = rest.limit("claude").until
+    assert msgs[-1]["line"] == _line(until) and msgs[-1]["rest"]["kind"] == "five_hour"
+    assert not [m for m in msgs if m.get("kind") in ("error", "result")]
+    await _stop(server, w)
+
+
+@pytest.mark.asyncio
+async def test_an_entitlement_check_that_is_a_429_with_a_rejected_window_is_an_error_not_a_rest(home):
+    cli = Cli(home, mode="credits")
+    d = agentd.AgentD(Scripted(cli.script), agentd._NoSnapshots())
+    server, r, w = await _start(d)
+    await _ask(w, "hello")
+    msgs = await _until(r, _ended)
+    assert [m["text"] for m in msgs if m.get("kind") == "error"] == [
+        "Usage credits required for 1M context · run /extra-usage to turn them on"]
+    assert not msgs[-1].get("requeued") and d.access == "ready" and rest.limit("claude") is None
     await _stop(server, w)
 
 
