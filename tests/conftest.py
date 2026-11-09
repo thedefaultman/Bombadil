@@ -15,6 +15,12 @@ def no_vitals(monkeypatch):
     monkeypatch.setenv("BOMBADIL_VITALS", "0")
 
 
+@pytest.fixture(autouse=True)
+def no_tips(monkeypatch):
+    """agentd sends every client the Tips card on connect; a test that wants Tips passes `tips=`."""
+    monkeypatch.setenv("BOMBADIL_TIPS", "0")
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """Point every Bombadil path at a temp dir so tests never touch the real system."""
