@@ -22,6 +22,9 @@ QtObject {
     signal rowAction(string widget, string key, string action)
     signal rowRemove(string widget, string key)
     signal rowOpen(string widget, string key, string opens)
+    // The words "widgets" (or the agent) asked for the Widgets card. Every time, even with the card up:
+    // the shell takes the keyboard for it each time, and the card is open only while the pill holds it.
+    signal widgetsRequested()
     onRowAction: (widget, key, action) => {
         if (widget === "watching" && action === "Why?") outgoing({ type: "jobs", op: "why", id: key })
         else if (widget === "needs" && action === "Open") outgoing({ type: "dev", action: "open", key: key })
@@ -52,6 +55,10 @@ QtObject {
     property bool folded: false
     property var hidden: []
     property var stripped: []           // folded by hand: a strip whatever the room, and no slot in its rail
+    property var kept: []               // on the desk at rest, after every boot: only a widget with a calm face
+    // The rows of the Widgets card, in the order to draw them: [{id, title, question, can}], where `can`
+    // lists the states the widget may take (agentd decides which; the card only draws them).
+    property var widgetList: []
     property var rails: ({ now: "left", watching: "left", alive: "left", needs: "right", away: "right", machine: "right" })
     property var order: ({ left: ["now", "watching", "alive"], right: ["needs", "away", "machine"] })
     property string screen: ""          // "" = the shell's first screen
@@ -121,6 +128,9 @@ QtObject {
 
     function isHidden(id) { return id !== "needs" && hidden.indexOf(id) >= 0 }
     function isStripped(id) { return stripped.indexOf(id) >= 0 }
+    // What a widget is set to, read one way by the card and by setWidget: put away wins over kept, and
+    // anything neither is the default, shown when it has something to say.
+    function stateOf(id) { return isHidden(id) ? "off" : kept.indexOf(id) >= 0 ? "keep" : "needed" }
     function _rows(m) { return m && m.rows ? m.rows.length : 0 }
 
     readonly property bool nowPresent: nowVisible && !isHidden("now")
@@ -416,6 +426,12 @@ QtObject {
             else _applyDesk(ev)
             return
         }
+        // The card is the bar's, not a rail's: nothing in a rail is rebuilt, so this does not wait for a drag.
+        // There is no message to close it: closing is the shell's own.
+        if (ev.type === "widgets") {
+            if (ev.op === "open") { openWidgets(); widgetsRequested() }
+            return
+        }
         if (ev.type === "jobs") { _applyJobs(ev); return }
         if (ev.type === "dev") { _applyDev(ev); return }
         if (ev.type === "machine") { _applyMachine(ev); return }
@@ -491,6 +507,7 @@ QtObject {
     // The socket dropped: what agentd is doing is unknown until its status says so.
     function lost() {
         connected = false
+        closeWidgets()      // its presses reach nobody now
         if (_phase === "running") _clear()
         // Nothing on Watching or Needs you can be answered now, and agentd sends both tables again.
         if (jobs.length > 0 || Object.keys(_gone).length > 0) { jobs = []; _gone = {} }
@@ -501,7 +518,7 @@ QtObject {
 
     onConnectedChanged: {
         if (connected) outgoing({ type: "desk", op: "get" })
-        else dragCancel()
+        else { dragCancel(); closeWidgets() }
     }
 
     // -- Now's model --
@@ -569,6 +586,22 @@ QtObject {
 
     function _known(id) { return widgetIds.indexOf(id) >= 0 }
 
+    // The states a widget can take, in the order the Widgets card draws them.
+    readonly property var widgetStates: ["keep", "needed", "off"]
+
+    // One row for each known widget agentd lists, once, in its order. A row with no name to draw, or
+    // with no state it can take, is not one.
+    function _cleanWidgets(list) {
+        const out = []
+        for (const w of list) {
+            if (!w || typeof w !== "object" || !_known(w.id) || out.some(o => o.id === w.id)) continue
+            const can = (Array.isArray(w.can) ? w.can : []).filter((s, i, a) => widgetStates.indexOf(s) >= 0 && a.indexOf(s) === i)
+            if (_text(w.title) === "" || can.length === 0) continue
+            out.push({ id: w.id, title: w.title, question: _text(w.question), can: can })
+        }
+        return out
+    }
+
     // agentd's desk message: whatever it leaves out stays as it was, whatever it gets wrong is dropped.
     function _applyDesk(ev) {
         // This is the answer a drop was waiting for.
@@ -577,6 +610,8 @@ QtObject {
         if (Array.isArray(ev.hidden)) hidden = ev.hidden.filter(id => _known(id) && id !== "needs")
         if (Array.isArray(ev.stripped)) stripped = ev.stripped.filter((id, i, a) => _known(id) && a.indexOf(id) === i)
         if (typeof ev.screen === "string") screen = ev.screen
+        if (Array.isArray(ev.kept)) kept = ev.kept.filter((id, i, a) => _known(id) && a.indexOf(id) === i)
+        if (Array.isArray(ev.widgets)) widgetList = _cleanWidgets(ev.widgets)
         const r = Object.assign({}, rails)
         if (ev.rails && typeof ev.rails === "object") {
             for (const id of widgetIds) if (ev.rails[id] === "left" || ev.rails[id] === "right") r[id] = ev.rails[id]
@@ -853,6 +888,32 @@ QtObject {
     // One card to its strip, by hand; move takes it back into a rail.
     function foldWidget(widget) { outgoing({ type: "desk", op: "fold", widget: widget }) }
 
+    // -- the Widgets card (the card is WidgetsCard.qml; the words "widgets" open it) --
+
+    // Open only while the pill holds the keyboard (shell.qml puts it away when the pill lets go) and while
+    // agentd is there to answer a press.
+    property bool widgetsOpen: false
+
+    function openWidgets() { widgetsOpen = true }
+    function closeWidgets() { widgetsOpen = false }
+
+    // A press on a part of the card. Sent only if agentd would take it: connected, the widget on the
+    // card, the state one it can take, and not the one it already is. The desk never changes first:
+    // `kept` and `hidden` follow agentd's answer. Returns whether it asked.
+    function setWidget(id, state) {
+        const row = widgetList.find(w => w.id === id)
+        if (!connected || !row || row.can.indexOf(state) < 0 || stateOf(id) === state) return false
+        outgoing({ type: "desk", op: "set", widget: id, state: state })
+        return true
+    }
+
+    // "Reset the desk": every widget, rail and place back as the desk ships.
+    function resetDesk() {
+        if (!connected) return false
+        outgoing({ type: "desk", op: "reset" })
+        return true
+    }
+
     // A click on Now's title: the turn's commands and output, as on the line.
     function openDetails() {
         if (pill && pill.turn !== null && pill.turn !== undefined) pill.details()
@@ -969,6 +1030,7 @@ QtObject {
     function snapshot() {
         return {
             mode: mode, capsule: capsule, pillWidth: pillWidth, folded: folded, hidden: hidden, stripped: stripped,
+            kept: kept, widgetsOpen: widgetsOpen, widgets: widgetList,
             rails: rails, order: order, screen: screen, present: present, faces: faces, covered: covered,
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },

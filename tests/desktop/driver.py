@@ -1524,6 +1524,193 @@ st = desk_state()
 check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
       and st["stripped"] == [], (st["order"], st["stripped"]))
 
+# 13. your desk: Keep, When needed, Off. A widget is kept on the desk at rest, comes up only with something to say
+# (the default) or is put away; agentd says which of the three each can be and keeps the choice in desk.toml, and the
+# bar draws what agentd tells it. "widgets" opens the Widgets card above the pill; "keep", "hide" and "show" are
+# launcher words, and none of them calls a model. The vitals loop is off here (BOMBADIL_VITALS=0), so a kept Machine's
+# calm message is injected the way section 11's are; everything else is typed to the real pill and answered by the
+# real agentd.
+desk_file = Path.home() / ".local" / "state" / "bombadil" / "desk.toml"
+WIDGET_ROWS = [   # the Widgets card's rows in the order it draws them (Away and Alive have no face yet: not listed)
+    {"id": "now", "title": "Now", "question": "What is it doing, and why?", "can": ["needed", "off"]},
+    {"id": "watching", "title": "Watching", "question": "What is it keeping an eye on?", "can": ["needed", "off"]},
+    {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
+    {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?", "can": ["keep", "needed", "off"]},
+]
+# A Machine at rest with no line crossed, as vitals.py says it: memory, the disk and the processor are meters (figures
+# rounded), only the network is plain, every tone is "you", and the chip names the reading nearest its line, no dot.
+CALM_MACHINE = {
+    "type": "machine", "present": True, "calm": True, "asked": False, "why": "The machine is fine",
+    "strip": {"text": "memory 40%", "dot": ""},
+    "rows": [
+        {"key": "memory", "kind": "meter", "title": "Memory", "meterText": "6.4 of 16 GB", "meter": 0.4,
+         "tone": "you", "opens": ""},
+        {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "92 of 230 GB", "meter": 0.4,
+         "tone": "you", "opens": "disk"},
+        {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "40\u00b0", "meter": 0.1,
+         "tone": "you", "opens": ""},
+        {"key": "net", "kind": "plain", "title": "Network", "sub": "\u2193 10 kB/s   \u2191 3 kB/s",
+         "tone": "you", "opens": ""}]}
+# A strip of the screen down where the 360 px card stands over the pill, 10 px inside its left edge: the card's glass
+# is in it while the card is up (the pixels are counted live, as glass_pixels does for the picture).
+CARD_STRIP = (470, 360, 370)
+
+
+def desk_toml():
+    """desk.toml as agentd keeps it: its text, and what that parses to (nothing, if it is not there)."""
+    import tomllib
+    try:
+        text = desk_file.read_text()
+        return text, tomllib.loads(text)
+    except (OSError, ValueError):
+        return "", {}
+
+
+def desk_until(pred, timeout=10):
+    """The desk's state once pred holds of it (agentd tells the bar a moment after it decides), else as it last
+    was."""
+    end = time.monotonic() + timeout
+    st = desk_state()
+    while not pred(st) and time.monotonic() < end:
+        time.sleep(0.2)
+        st = desk_state()
+    return st
+
+
+def desk_word(word):
+    """Say a word to the pill as a person does and wait for agentd's own answer: the local event that is done, whose
+    text is the sentence on the line above the pill."""
+    summon()
+    typ(word)
+    n = mark()
+    key("Return")
+    return wait(ev("local", phase="done"), 10, n)
+
+
+# (a) the word "widgets": agentd answers, the bar opens the card and lists what agentd says it can show.
+bare = glass_pixels(*CARD_STRIP)
+before = api_requests()
+summon()
+typ("widgets")
+n = mark()
+key("Return")
+asked = wait(lambda m: m.get("type") == "widgets" and m.get("op") == "open", 10, n)
+st = desk_until(lambda s: s.get("widgetsOpen") is True)
+time.sleep(0.8)   # the card fades in; the pill took the keyboard back for it a moment after Enter gave it up
+shot("47-widgets-card")
+up = glass_pixels(*CARD_STRIP)
+check("the word widgets makes agentd ask for the Widgets card, and the bar opens it, with no model call",
+      asked is not None and st.get("widgetsOpen") is True and api_requests() == before and st.get("kept") == [],
+      (asked, st.get("widgetsOpen"), st.get("kept"), api_requests() - before))
+rows = [{k: r.get(k) for k in ("id", "title", "question", "can")} for r in st.get("widgets") or []]
+check("it lists Now, Watching, Needs you and Machine, each with what it can be (Needs you: only when needed)",
+      rows == WIDGET_ROWS, rows)
+check("Quickshell draws the card above the pill", up - bare > 150, f"{bare} -> {up}")
+
+# (b) Esc. The card is open only while the pill holds the keyboard: the shell takes it back when agentd asks for the
+# card (the keyboard path the typing above went through), so this Esc reaches the pill's own handler, which puts the
+# card away and lets the keyboard go. No summon() first: it would toggle the pill off, and that closes the card by
+# itself, which is another rule (checked offscreen) and not Esc.
+key("Escape")
+st = desk_until(lambda s: s.get("widgetsOpen") is False, 5)
+time.sleep(0.8)
+down = glass_pixels(*CARD_STRIP)
+check("Esc puts the Widgets card away", st.get("widgetsOpen") is False and up - down > 150,
+      f"open {st.get('widgetsOpen')}, {up} -> {down}")
+if st.get("widgetsOpen"):   # the key did not get there: hand the keyboard back as Super does, so the rest starts clean
+    summon()
+    desk_until(lambda s: not s.get("widgetsOpen"), 5)
+
+# (c) keep machine: the sentence, desk.toml, the bar's list. Keeping draws nothing by itself: the card is the machine
+# message's, which the vitals loop sends while Machine is kept and which is injected next.
+before = api_requests()
+kept = desk_word("keep machine")
+text, data = desk_toml()
+check("keep machine says Machine stays on the desk., with no model call",
+      kept and kept.get("ok") and kept.get("text") == "Machine stays on the desk." and api_requests() == before,
+      kept and (kept.get("ok"), kept.get("text")))
+check('desk.toml gains kept = ["machine"], and Machine is not put away',
+      'kept = ["machine"]' in text and data.get("kept") == ["machine"]
+      and "machine" not in data.get("hidden", []), text)
+st = desk_until(lambda s: "machine" in (s.get("kept") or []))
+check("the bar's desk lists Machine as kept, and not as put away",
+      st.get("kept") == ["machine"] and "machine" not in (st.get("hidden") or []), (st.get("kept"), st.get("hidden")))
+check("a kept widget alone puts no card on the desk: the card comes with the machine message",
+      not (st.get("present") or {}).get("machine"), st.get("present"))
+
+# (d) the calm Machine: present and in full on the right rail, with the calm rows and no wash of amber.
+inject(CALM_MACHINE)
+st = desk_until(lambda s: (s.get("faces") or {}).get("machine") == "full")
+time.sleep(1.0)
+shot("48-desk-kept-machine")
+mc = st.get("machine") or {}
+slot = (st.get("slots") or {}).get("machine") or {}
+check("a kept Machine is present and in full on the right rail, the desk open",
+      (st.get("present") or {}).get("machine") and (st.get("faces") or {}).get("machine") == "full"
+      and slot.get("side") == "right" and st.get("mode") == "open",
+      (st.get("present"), st.get("faces"), slot, st.get("mode")))
+rows = mc.get("rows") or []
+check("its card is calm: The machine is fine, memory, the disk and the processor as meters, the network plain",
+      mc.get("why") == "The machine is fine"
+      and [(r.get("key"), r.get("kind")) for r in rows] == [("memory", "meter"), ("disk", "meter"), ("cpu", "meter"),
+                                                            ("net", "plain")]
+      and not rows[0].get("parts"), (mc.get("why"), rows))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+figures = region_pixels("48-desk-kept-machine", box, "#e6e8eb")
+crossed = {name: region_pixels("48-desk-kept-machine", box, colour)
+           for name, colour in (("amber", "#e0a93b"), ("red", "#d05555"))}
+check("the calm card draws its figures and no amber and no red: no line is crossed",
+      figures > 60 and crossed["amber"] < 20 and crossed["red"] < 20, (figures, crossed))
+check("the card is the face, so no chip stands beside the pill", not (st.get("strips") or {}).get("right"),
+      st.get("strips"))
+
+# (e) hide machine: the first stops keeping it and says it still comes up when something needs a look, the second puts
+# it away as it always did; show machine brings it back. The bar goes on drawing the injected message until Machine is
+# put away: taking a calm card down once it is no longer kept is agentd's end (the vitals loop), which is not here.
+before = api_requests()
+first = desk_word("hide machine")
+text, data = desk_toml()
+st = desk_until(lambda s: s.get("kept") == [])
+check("hide machine says Machine is no longer kept. It still comes up when something needs a look.",
+      first and first.get("ok")
+      and first.get("text") == "Machine is no longer kept. It still comes up when something needs a look."
+      and api_requests() == before, first and (first.get("ok"), first.get("text")))
+check("desk.toml keeps nothing, and neither it nor the bar's desk lists Machine as put away",
+      not data.get("kept") and "machine" not in data.get("hidden", []) and st.get("kept") == []
+      and "machine" not in (st.get("hidden") or []), (text, st.get("kept"), st.get("hidden")))
+second = desk_word("hide machine")
+text, data = desk_toml()
+st = desk_until(lambda s: "machine" in (s.get("hidden") or []))
+check("hide machine again says Put Machine away.",
+      second and second.get("ok") and second.get("text") == "Put Machine away.",
+      second and (second.get("ok"), second.get("text")))
+check("desk.toml and the bar's desk list Machine as put away, and its card is gone",
+      "machine" in data.get("hidden", []) and "machine" in (st.get("hidden") or []) and not data.get("kept")
+      and not (st.get("present") or {}).get("machine") and (st.get("faces") or {}).get("machine") == "hidden",
+      (text, st.get("hidden"), st.get("faces")))
+back = desk_word("show machine")
+text, data = desk_toml()
+st = desk_until(lambda s: "machine" not in (s.get("hidden") or []))
+check("show machine says Here is the machine. It is back on the desk.",
+      back and back.get("ok") and back.get("text") == "Here is the machine. It is back on the desk.",
+      back and (back.get("ok"), back.get("text")))
+check("and Machine is on the desk again, in desk.toml and in the bar, and still not kept",
+      "machine" not in data.get("hidden", []) and not data.get("kept") and "machine" not in (st.get("hidden") or [])
+      and st.get("kept") == [] and (st.get("present") or {}).get("machine"),
+      (text, st.get("hidden"), st.get("kept"), st.get("present")))
+
+# the desk as the sections after this one expect it: nothing kept, nothing put away but Alive, no Machine card
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+st = desk_until(lambda s: (s.get("faces") or {}).get("machine") == "hidden")
+text, data = desk_toml()
+check("and the desk is as it was: nothing kept, Machine not put away, no card",
+      not data.get("kept") and "machine" not in data.get("hidden", []) and not st.get("kept")
+      and "machine" not in (st.get("hidden") or []) and not (st.get("present") or {}).get("machine"),
+      (text, st.get("kept"), st.get("hidden")))
+summon()
+key("Escape")   # the last sentence leaves the line; put it away so the next section starts on an idle pill
+time.sleep(0.5)
+
 # 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
 # cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
 # service on its fake engine says new mail, agentd turns it into a notice, the bar shows it.

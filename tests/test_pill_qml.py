@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from qml_theme import THEME
 
+from bombadil import launcher
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 QtCore = pytest.importorskip("PySide6.QtCore", exc_type=ImportError)
@@ -179,9 +181,8 @@ def bar(app, tmp_path):
                                      "words": ["passwords"]},
                                     {"name": "browser", "title": "Browser", "kind": "panel",
                                      "words": ["browser", "chrome"]},
-                                    {"name": "machine", "title": "Machine", "kind": "widget",
-                                     "words": ["machine"]},
-                                    {"name": "now", "title": "Now", "kind": "widget", "words": ["now", "route"]},
+                                    # the widgets as agentd really sends them, so `keep` is the real one
+                                    *[e for e in launcher.entries([]) if e["kind"] == "widget"],
                                     {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]},
                                     {"name": "undo", "title": "Undo", "kind": "command", "words": ["undo"]}])
     yield b
@@ -471,6 +472,20 @@ def test_a_widgets_name_is_a_launcher_word_only_after_a_verb_that_puts_a_thing_o
     assert bar.call("completion", "start mach") == ""
     assert bar.call("exact", "desk") == "Desk" and bar.call("exact", "desk.") == "Desk"
     assert bar.call("exact", "desk?") == "" and bar.call("exact", "show machine?") == ""
+
+
+def test_keep_is_a_launcher_word_of_the_widgets_on_the_card_and_of_nothing_else(bar):
+    # "keep machine" and "keep machine on the desk" hint, complete and count as launcher words like "show machine".
+    for word in ("keep machine", "keep machine on the desk", "keep machine on my desk", "keep machine.",
+                 "keep Machine on the desk."):
+        assert bar.call("exact", word) == "Machine", word
+    assert bar.call("exact", "keep watching") == "Watching" and bar.call("exact", "keep route") == "Now"
+    assert bar.call("completion", "keep mach") == "ine" and bar.call("completion", "keep mach on") == ""
+    # Not the ones with no row on the card, not an app or a command by that word, not a question, not bare.
+    assert bar.call("exact", "keep away") == "" and bar.call("exact", "keep alive") == ""
+    assert bar.call("exact", "keep calendar") == "" and bar.call("exact", "keep going") == ""
+    assert bar.call("exact", "keep machine?") == "" and bar.call("exact", "keep") == ""
+    assert bar.call("completion", "keep cal") == "" and bar.call("completion", "keep wat") == "ching"
 
 
 def test_the_bar_loads_without_qml_warnings(bar):

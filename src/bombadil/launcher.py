@@ -3,8 +3,9 @@
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
 or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
-only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
-agent. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
+only with a verb ("show machine", "hide now", "keep machine on the desk"): a bare "now" or "away" is an
+ordinary word for the agent. "widgets" opens the card where each widget is kept, shown when needed or
+put away. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
 every inbox at once, and the service behind it is asked, never waited for.
 Everything else goes to the agent. The list is deliberately exact (after lowercasing and
 trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
@@ -48,6 +49,8 @@ CORE_COMMANDS = {
     "history": ["history", "rewind"],
     "hide": ["hide", "hide it", "hide that", "hide everything", "put it away", "put that away"],
     "desk": ["desk"],
+    "widgets": ["widgets", "my widgets", "the widgets", "show widgets", "show my widgets", "show the widgets",
+                "open widgets", "open my widgets", "open the widgets"],
     "lock": ["lock", "lock screen", "lock the screen"],
     "restart": ["restart", "reboot", "restart the computer"],
     "shutdown": ["shut down", "shutdown", "power off", "poweroff"],
@@ -131,8 +134,11 @@ OPEN_VERBS = ("open", "show", "launch", "start", "run", "bring up", "go to", "sw
 CLOSE_VERBS = ("close", "quit", "exit", "kill")
 HIDE_VERBS = ("hide", "put away")
 # A widget takes only the verbs that mean a thing on the screen: "start now" and "run now" are
-# sentences for the agent, not the desk.
-WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"))
+# sentences for the agent, not the desk. "keep" is the one more: it stays on the desk at rest ("keep machine",
+# "keep machine on the desk"), and is read only of a widget that has a face to keep.
+WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"),
+                (("keep",), "keep"))
+KEEP_TAILS = (" on the desk", " on my desk")
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
@@ -266,7 +272,7 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
                 return Action("rest", target, verb, REST_TITLES[target])
     cmd = _lookup(t, CORE_COMMANDS) if plain else None
     if cmd:
-        if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
+        if cmd in ("restart", "shutdown", "desk", "widgets") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
     model = _lookup(t, MODEL_WORDS) if plain else None
@@ -320,7 +326,13 @@ def _widget_action(t: str, app_list: list) -> Action | None:
     now, so an app you named Now still opens with its own name."""
     for verbs, verb in WIDGET_VERBS:
         word = _strip_verb(t, verbs)
-        widget = _lookup(word, WIDGET_WORDS) if word is not None else None
+        if word is not None and verb == "keep":
+            # "keep machine on the desk": the tail says where, which the verb already means. Only the widgets
+            # on the Widgets card: "keep away" and "keep alive" are sentences for the agent.
+            word = next((word[:-len(tail)] for tail in KEEP_TAILS if word.endswith(tail)), word)
+            widget = _lookup(word, {w: WIDGET_WORDS[w] for w in WIDGET_WORDS if WIDGETS[w].listed})
+        else:
+            widget = _lookup(word, WIDGET_WORDS) if word is not None else None
         if widget is not None:
             return Action("widget", widget, verb, WIDGET_TITLES[widget])
     if t.startswith("put ") and t.endswith(" away"):
@@ -339,7 +351,9 @@ def entries(app_list: list | None = None) -> list[dict]:
     out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": list(MAIL_WORDS["mail"])})
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
-    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
+    # `keep`: the ones "keep ..." is a launcher word of (the widgets on the Widgets card; "keep watching" is answered
+    # here, and says when Watching shows), so the pill can hint and complete it as it does "show machine".
+    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
             for w, words in WIDGET_WORDS.items()]
     for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
@@ -386,6 +400,8 @@ class Launcher:
         if action.kind == "picture":
             return f"Drawing {action.title}"
         if action.kind == "widget":
+            if action.verb == "keep":
+                return f"Keeping {action.title} on the desk"
             return f"Putting {action.title} " + ("on the desk" if action.verb == "open" else "away")
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
@@ -395,7 +411,8 @@ class Launcher:
                 "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
                 "mute": "Muting the sound", "unmute": "Unmuting the sound",
                 "brain": "Opening the Brain", "whyhere": "Looking it up",
-                "desk": "Changing the desk", "send": "Sending is yours"}.get(action.kind, "On it")
+                "desk": "Changing the desk", "widgets": "Opening the widgets",
+                "send": "Sending is yours"}.get(action.kind, "On it")
 
     @staticmethod
     def failed(action: Action) -> str:
@@ -405,6 +422,8 @@ class Launcher:
         if action.kind == "picture":
             return f"Could not draw {action.title}"
         if action.kind == "widget":
+            if action.verb == "keep":
+                return f"Could not keep {action.title or action.target} on the desk"
             return (f"Could not put {action.title or action.target} "
                     + ("on the desk" if action.verb == "open" else "away"))
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
@@ -414,7 +433,8 @@ class Launcher:
                 "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
                 "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
-                "desk": "Could not change the desk"}.get(action.kind, "That did not work")
+                "desk": "Could not change the desk", "widgets": "Could not open the widgets"}.get(
+                    action.kind, "That did not work")
 
     def run(self, action: Action) -> tuple[bool, str]:
         fn = getattr(self, f"_{action.kind}", None)
@@ -517,8 +537,11 @@ class Launcher:
     def _desk(self, _a: Action) -> tuple[bool, str]:
         return self.desk_state.apply("toggle")
 
+    def _widgets(self, _a: Action) -> tuple[bool, str]:
+        return self.desk_state.apply("widgets")
+
     def _widget(self, a: Action) -> tuple[bool, str]:
-        return self.desk_state.apply("show" if a.verb == "open" else "hide", a.target)
+        return self.desk_state.apply({"open": "show", "keep": "keep"}.get(a.verb, "hide"), a.target)
 
     def _hide(self, _a: Action) -> tuple[bool, str]:
         if not self.hypr.available:

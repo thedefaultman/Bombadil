@@ -921,6 +921,17 @@ def _os_tool(tool: str, a: dict) -> Step | None:
             return Step(f"Moving {widget}{to}")
         if op in ("fold", "unfold"):
             return Step(f"{op.capitalize()}ing {widget}" if a.get("widget") else f"{op.capitalize()}ing the desk")
+        if op == "keep" or (op == "set" and a.get("state") == "keep"):
+            return Step(f"Keeping {widget} on the desk")
+        if op == "set":
+            if a.get("state") == "off":
+                return Step(f"Putting {widget} away")
+            if a.get("state") == "needed":
+                return Step(f"Showing {widget} only when it has something to say")
+        if op == "reset":
+            return Step("Putting the desk back as it came")
+        if op == "widgets":
+            return Step("Opening the widgets")
         return Step("Looking at the desk")
     if tool == "job":
         op = str(a.get("op") or "")

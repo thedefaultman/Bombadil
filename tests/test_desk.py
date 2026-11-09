@@ -13,10 +13,18 @@ def fresh(home) -> desk.Desk:
 
 def test_a_new_desk_is_the_one_the_shell_expects(home):
     assert desk.Desk().snapshot() == {
-        "type": "desk", "folded": False, "hidden": ["alive"], "stripped": [], "screen": "",
+        "type": "desk", "folded": False, "hidden": ["alive"], "stripped": [], "kept": [], "screen": "",
         "rails": {"now": "left", "watching": "left", "needs": "right", "machine": "right", "away": "right",
                   "alive": "left"},
-        "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}}
+        "order": {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]},
+        # The rows of the Widgets card: the shipped desk keeps nothing, and says what each can be.
+        "widgets": [
+            {"id": "now", "title": "Now", "question": "What is it doing, and why?", "can": ["needed", "off"]},
+            {"id": "watching", "title": "Watching", "question": "What is it keeping an eye on?",
+             "can": ["needed", "off"]},
+            {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
+            {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?",
+             "can": ["keep", "needed", "off"]}]}
 
 
 @pytest.mark.parametrize("ops, ok, text", [
@@ -444,6 +452,14 @@ def test_the_state_file_is_the_one_paths_names(home):
     ({"op": "fold", "widget": "machine"}, "Folding Machine"),
     ({"op": "unfold", "widget": "needs"}, "Unfolding Needs you"),
     ({"op": "fold", "widget": ""}, "Folding the desk"),
+    ({"op": "keep", "widget": "machine"}, "Keeping Machine on the desk"),
+    ({"op": "set", "widget": "machine", "state": "keep"}, "Keeping Machine on the desk"),
+    ({"op": "set", "widget": "machine", "state": "off"}, "Putting Machine away"),
+    ({"op": "set", "widget": "watching", "state": "needed"}, "Showing Watching only when it has something to say"),
+    ({"op": "set", "widget": "machine", "state": "loud"}, "Looking at the desk"),      # refused: it only looks
+    ({"op": "set", "widget": "machine"}, "Looking at the desk"),
+    ({"op": "reset"}, "Putting the desk back as it came"),
+    ({"op": "widgets"}, "Opening the widgets"),
     ({"op": "state"}, "Looking at the desk"),
     ({}, "Looking at the desk"),
 ])

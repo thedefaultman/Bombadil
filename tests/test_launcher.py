@@ -122,7 +122,7 @@ def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
     widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
     assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
     assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
-                                "words": ["needs", "needs you"]}
+                                "words": ["needs", "needs you"], "keep": True}
     assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]
     assert {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]} in e
 

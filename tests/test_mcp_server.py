@@ -170,8 +170,10 @@ def test_the_desk_tool_is_listed_with_what_it_can_do_and_no_more():
     tool = next(t for t in rpc(make(), "tools/list")["result"]["tools"] if t["name"] == "desk")
     props = tool["inputSchema"]["properties"]
     assert tool["inputSchema"]["required"] == ["op"]
-    assert props["op"]["enum"] == ["show", "hide", "move", "fold", "unfold", "state"]   # no make, no remove
+    assert props["op"]["enum"] == ["show", "hide", "keep", "set", "move", "fold", "unfold", "reset", "widgets",
+                                   "state"]   # no make, no remove
     assert props["widget"]["enum"] == list(desk.WIDGETS) and props["rail"]["enum"] == ["left", "right"]
+    assert props["state"]["enum"] == ["keep", "needed", "off"]
     assert props["rank"]["type"] == "integer"
     # It says plainly that it is refused unless the person asked for the desk.
     assert "ONLY" in tool["description"] and "asked for the desk" in tool["description"]
@@ -206,6 +208,22 @@ def test_only_what_was_given_is_sent(home, monkeypatch):
     assert [{k: v for k, v in m.items() if k != "id"} for m in got + more] == [
         {"type": "desk-tool", "turn": 3, "op": "move", "widget": "now", "rail": "right", "rank": 0},
         {"type": "desk-tool", "turn": 3, "op": "state"}]
+
+
+def test_a_widgets_state_is_forwarded_and_so_are_the_ops_that_keep_and_reset(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TURN", "4")
+    got = []
+    for args in ({"op": "set", "widget": "machine", "state": "keep"}, {"op": "keep", "widget": "machine"},
+                 {"op": "reset"}, {"op": "widgets"}):      # agentd answers one connection at a time
+        srv, one = _agentd(lambda m: [{"type": "desk-result", "id": m["id"], "ok": True, "text": "done"}])
+        assert _said(call(make(), "desk", **args)) == "done"
+        srv.close()
+        got += one
+    assert [{k: v for k, v in m.items() if k != "id"} for m in got] == [
+        {"type": "desk-tool", "turn": 4, "op": "set", "widget": "machine", "state": "keep"},
+        {"type": "desk-tool", "turn": 4, "op": "keep", "widget": "machine"},
+        {"type": "desk-tool", "turn": 4, "op": "reset"},
+        {"type": "desk-tool", "turn": 4, "op": "widgets"}]
 
 
 def test_a_refusal_reaches_the_agent_as_an_error_in_agentds_own_words(home, monkeypatch):
