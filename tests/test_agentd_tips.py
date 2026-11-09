@@ -467,18 +467,18 @@ async def test_the_default_tips_hear_of_the_desk_putting_them_away_and_keeping_t
     monkeypatch.setenv("BOMBADIL_TIPS", "1")
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     assert d.tips is not None and d.tips.hidden() is False and d.tips.kept() is False
-    d.desk.hidden.add("tips")                   # once the desk has a Tips widget, putting it away is this
-    assert d.tips.hidden() is True
+    assert d.desk.apply("hide", "tips") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.tips.hidden() is True              # the desk's Tips widget put away is what Tips reads
     d.desk.kept = {"tips"}                      # and keeping it (the desk's second piece) is this
     assert d.tips.kept() is True
     soon = []
     monkeypatch.setattr(d, "_tips_soon", lambda: soon.append(1))
     d._desk_dirty = True
-    await d._desk_broadcast()                   # a change of the desk is a change of what Tips shows
+    await d._desk_broadcast()                   # Tips put away is a change of what Tips shows
     d.desk.apply("hide", "machine")
     d._desk_dirty = True
     await d._desk_broadcast()
-    assert soon == [1]
+    assert soon == [1, 1]                       # and so is any other change of the desk: Tips looks again
 
 
 # -- a day of use --

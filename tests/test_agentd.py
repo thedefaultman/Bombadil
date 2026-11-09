@@ -1050,7 +1050,7 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "show", "widget": "Machine"}, True, "Here is the machine. It is back on the desk."),
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
-                                                    "Watching, Alive, Needs you, Away and Machine.")),
+                                                    "Watching, Alive, Needs you, Away, Machine and Tips.")),
         ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, move, fold, unfold "
                                                     "and say its state.")),
         ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, move, fold, "
