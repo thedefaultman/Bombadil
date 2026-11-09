@@ -608,7 +608,7 @@ def test_the_hook_program_does_not_spool_a_line_agentd_already_has(home):
 
 
 def test_bombadils_own_words_are_never_shadowed_by_a_project_of_the_same_name(projects):
-    for name in ("mail", "opus", "terminal", "brain"):
+    for name in ("mail", "opus", "terminal", "brain", "tips", "help"):
         (projects / name).mkdir()
     d, _, _ = _dev()
     for text in ("mail", "open mail", "inbox"):
@@ -617,8 +617,11 @@ def test_bombadils_own_words_are_never_shadowed_by_a_project_of_the_same_name(pr
     assert (a.kind, a.target) == ("model", "opus")
     assert launcher.match("terminal", [], d).kind == "panel"
     assert launcher.match("open the brain", [], d).kind == "brain"
+    for text in ("tips", "help", "open tips", "show tips"):
+        assert launcher.match(text, [], d).kind == "tips", text
     # The project is still there, by its tool.
     a = launcher.match("claude mail", [], d)
     assert (a.kind, a.tool, a.target) == ("session", "claude", "mail")
+    assert launcher.match("claude tips", [], d).kind == "session"
     # And a project that is no word of ours is named plainly, as before.
     assert launcher.match("myapp", [], d).kind == "project"
