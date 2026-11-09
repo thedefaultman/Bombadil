@@ -264,6 +264,33 @@ def test_a_broken_app_py_is_retried_on_every_reload_until_fixed(home):
     assert out["then_qml"] == [True, False, ["app.py:1: ValueError: bad edit"], "hello v2 from py1", False]
 
 
+def test_an_app_py_edit_made_with_a_refused_component_is_not_lost_once_the_qml_is_fixed(home):
+    """A refused load (an internal component in the app's QML) still reads app.py, as a QML syntax error does, so
+    the edit is used on the load that follows and the old backend does not stay under newer code."""
+    pytest.importorskip("PySide6")
+    make_app("held", {"main.qml": ITEM_QML, "app.py": BACKEND, "app.toml": 'title = "Held"\n'})
+    out = drive("held", """
+        src = (d / "main.qml").read_text()
+        out["start"] = [host.load(), label()]
+        write("app.py", (d / "app.py").read_text().replace("from py1", "from py2"))
+        write("main.qml", src.replace("Item {\\n", "Item {\\n    Stone { }\\n", 1))
+        out["refused"] = [host.load({"app.py", "main.qml"}), host.collector.errors, label()]
+        write("main.qml", src.replace("hello v1", "hello v3"))
+        out["fixed"] = [host.load({"main.qml"}), host.collector.errors, label()]
+        # the same with a QML syntax error in place of the refused component
+        write("app.py", (d / "app.py").read_text().replace("from py2", "from py3"))
+        write("main.qml", src + "}")
+        out["syntax"] = [host.load({"app.py", "main.qml"})]
+        write("main.qml", src.replace("hello v1", "hello v4"))
+        out["syntax_fixed"] = [host.load({"main.qml"}), label()]
+    """)
+    assert out["start"] == [True, "hello v1 from py1"]
+    ok, errors, text = out["refused"]
+    assert not ok and len(errors) == 1 and errors[0].startswith("main.qml:5: Stone ") and text == "hello v1 from py1"
+    assert out["fixed"] == [True, [], "hello v3 from py2"]
+    assert out["syntax"] == [False] and out["syntax_fixed"] == [True, "hello v4 from py3"]
+
+
 def test_the_first_size_is_read_after_bindings_run(home):
     pytest.importorskip("PySide6")
     make_app("sized", {"main.qml": "import QtQuick\nimport Bombadil\n"

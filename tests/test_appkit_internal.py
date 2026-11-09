@@ -99,9 +99,94 @@ def test_what_is_not_a_use_is_left_alone(home, text):
     assert check.refused_components(app_with(home, {"main.qml": text})) == []
 
 
-def test_an_app_with_a_component_of_its_own_by_that_name_is_left_alone(home):
-    ctx = app_with(home, {"main.qml": PLAIN, "Stone.qml": "import QtQuick\nRectangle { color: \"grey\" }\n"})
-    assert check.refused_components(ctx) == []
+OWN = 'import QtQuick\nRectangle { property string mine: "yes"; objectName: "own"; width: 20; height: 20 }\n'
+USE = 'import QtQuick\n{imports}\nItem {{ Stone {{ objectName: "s" }} }}\n'
+
+
+def stone_app(tmp_path, imports: str, where="Stone.qml", name="own", main="main.qml"):
+    """An app whose `main` uses a bare `Stone {` after these import lines, and which has its own Stone at `where`."""
+    return app_with(tmp_path, {main: USE.format(imports=imports), where: OWN}, name)
+
+
+# what QML builds for a bare `Stone {`, case by case (import lines, where the app's own Stone.qml is):
+CASES = {
+    "kit only, own beside main": ("import Bombadil", "Stone.qml", "kit"),
+    "import . below the kit": ('import Bombadil\nimport "."', "Stone.qml", "own"),
+    "import . above the kit": ('import "."\nimport Bombadil', "Stone.qml", "kit"),
+    "folder below the kit": ('import Bombadil\nimport "lib"', "lib/Stone.qml", "own"),
+    "folder above the kit": ('import "lib"\nimport Bombadil', "lib/Stone.qml", "kit"),
+    "folder below the kit, aliased": ('import Bombadil\nimport "lib" as Lib', "lib/Stone.qml", "kit"),
+    "the kit aliased": ("import Bombadil as Kit", "Stone.qml", "own"),
+    "folder not imported": ("import Bombadil", "lib/Stone.qml", "kit"),
+}
+ENGINE = """
+import json, os, sys
+from pathlib import Path
+from PySide6.QtCore import QObject, QUrl
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlComponent, QQmlEngine
+app = QGuiApplication([])
+out = {}
+for d in sys.argv[2:]:
+    engine = QQmlEngine()
+    engine.addImportPath(sys.argv[1])
+    comp = QQmlComponent(engine, QUrl.fromLocalFile(str(Path(d) / "main.qml")))
+    obj = comp.create()
+    s = obj.findChild(QObject, "s") if obj is not None else None
+    out[Path(d).name] = ([e.toString() for e in comp.errors()][:1] if s is None
+                         else "kit" if s.property("face") is not None else "own")
+print("RESULT " + json.dumps(out))
+"""
+
+
+def test_the_check_follows_the_engine_and_refuses_exactly_where_the_kits_component_wins(home):
+    """Not what we think QML does: what it does. The kit is imported by module, QML lets the later import win,
+    and a folder's own files come first and weakest, so an app's own Stone.qml next to a main.qml that only says
+    `import Bombadil` is silently the kit's stone. The check says so there, and only there."""
+    pytest.importorskip("PySide6")
+    dirs, expected = [], {}
+    for i, (label, (imports, where, winner)) in enumerate(CASES.items()):
+        ctx = stone_app(home, imports, where, name=f"case{i}")
+        dirs.append(ctx.dir)
+        expected[ctx.dir.name] = (label, winner, bool(check.refused_components(ctx)))
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"}
+    r = subprocess.run([sys.executable, "-c", ENGINE, str(KIT.parent), *map(str, dirs)], capture_output=True,
+                       text=True, env=env, timeout=90, check=False)
+    lines = [line for line in r.stdout.splitlines() if line.startswith("RESULT ")]
+    assert lines, r.stdout + r.stderr
+    built = json.loads(lines[-1].removeprefix("RESULT "))
+    for name, (label, winner, refused) in expected.items():
+        assert built[name] == winner, (label, built[name])           # the engine builds what this table says
+        assert refused == (winner == "kit"), (label, refused)           # refused exactly where the kit's is built
+
+
+def test_an_own_component_hidden_by_the_kits_gets_an_error_that_says_how_to_use_it(home):
+    refused = check.refused_components(stone_app(home, "import Bombadil"))
+    assert len(refused) == 1 and refused[0].startswith("main.qml:3: Stone is the kit's here, not your Stone.qml")
+    assert 'import "."' in refused[0] and "another name" in refused[0] and "Icon" not in refused[0]
+    plain = check.refused_components(stone_app(home, "import Bombadil", "lib/Stone.qml", "elsewhere"))
+    assert len(plain) == 1 and "Icon" in plain[0]                  # one the file cannot see: the plain refusal
+
+
+def test_an_own_component_beside_the_file_that_uses_it_in_a_folder_is_found_there(home):
+    for imports, refused in (("import Bombadil", 1), ('import Bombadil\nimport "."', 0), ('import "."\nimport Bombadil', 1)):
+        ctx = app_with(home, {"main.qml": "import QtQuick\nItem { }\n", "lib/Stone.qml": OWN,
+                              "lib/Mark.qml": USE.format(imports=imports)}, f"sub{refused}{len(imports)}")
+        found = check.refused_components(ctx)
+        line = 3 + imports.count("\n")
+        assert len(found) == refused and all(f.startswith(f"lib/Mark.qml:{line}:") for f in found), (imports, found)
+    ctx = app_with(home, {"main.qml": USE.format(imports="import Bombadil"), "lib/Stone.qml": OWN}, "root-only")
+    assert len(check.refused_components(ctx)) == 1                  # a file does not see a Stone.qml of a folder it does not import
+    ctx = app_with(home, {"main.qml": 'import QtQuick\nimport Bombadil\nItem { }\n',
+                          "lib/Mark.qml": USE.format(imports="import Bombadil"), "Stone.qml": OWN}, "above")
+    assert len(check.refused_components(ctx)) == 1                  # nor one in the folder above it
+
+
+def test_a_use_the_kit_does_not_own_is_left_alone(home):
+    ctx = app_with(home, {"main.qml": "import QtQuick\nItem { }\n",
+                          ".hidden/x.qml": USE.format(imports="import Bombadil"),                    # a dot folder is not read
+                          "lib/Other.qml": 'import QtQuick\nimport Bombadil\nItem { Mine.Stone { } Foo.Stone { } }\n'}, "left")
+    assert check.refused_components(ctx) == []                       # `Foo.Stone` is another module's, not a bare `Stone`
     ctx = app_with(home, {"main.qml": "import QtQuick\nimport Bombadil as Kit\nItem { Kit.Stone { } }\n",
                           "Stone.qml": "import QtQuick\nItem { }\n"}, "aliased")
     assert len(check.refused_components(ctx)) == 1       # the kit's, spelled as the kit's, is still refused
@@ -136,3 +221,18 @@ def test_check_fails_an_app_that_draws_the_stone_and_passes_it_once_it_does_not(
     r = run_cli("check", "demo")
     result = json.loads(r.stdout)
     assert r.returncode == 0 and result["ok"] and result["loaded"], result
+
+
+def test_check_passes_an_app_with_a_stone_of_its_own_only_where_the_engine_builds_it(home):
+    pytest.importorskip("PySide6")
+    d = apps.app_dir("go")
+    d.mkdir(parents=True)
+    (d / "Stone.qml").write_text(OWN.replace("objectName", 'Component.onCompleted: console.log("own stone"); objectName'))
+    main = 'import QtQuick\nimport Bombadil\n{imports}\nAppWindow {{ title: "Go"; Stone {{ }} }}\n'
+    (d / "main.qml").write_text(main.format(imports=""))
+    result = json.loads(run_cli("check", "go").stdout)
+    assert not result["ok"] and any("import \".\"" in e for e in result["errors"]), result      # the kit's would be built
+    (d / "main.qml").write_text(main.format(imports='import "."'))
+    r = run_cli("check", "go")
+    result = json.loads(r.stdout)
+    assert r.returncode == 0 and result["ok"] and "own stone" in result["console"], result      # and now it is the app's own
