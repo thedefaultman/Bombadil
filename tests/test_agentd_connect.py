@@ -29,6 +29,7 @@ from test_agentd import (
     _events_until,
     _in_a_turn,
     _read_until,
+    _ready,
     _say,
     _send_card,
     _silent,
@@ -101,6 +102,12 @@ async def notice(r, line=None, timeout=5):
     """The next notice message on this connection (with this line in it, when given)."""
     got = await _events_until(r, lambda m: m.get("type") == "notice" and (line is None or line in m["line"]), timeout)
     return got[-1]
+
+
+async def greeted(r, timeout=5):
+    """What a client is told on connecting, up to the coding sessions' snapshot that ends the part of the greeting this
+    piece adds to (status, entries, setup, the notices still up, an open card, a press that was in the middle)."""
+    return await _events_until(r, lambda m: m.get("type") == "dev", timeout)
 
 
 async def card(r, pred=lambda c: True, timeout=5):
@@ -585,9 +592,9 @@ async def test_a_bar_that_connects_while_a_card_is_open_is_given_it_as_it_is_now
     await _say(w, {"type": "proposal", "op": "discard", "id": pid})
     await proposal(r, lambda p: p["state"] == "discarded")
     later_r, later_w = await _client(d.socket_path)
-    for _ in range(3):
-        await later_r.readline()                                          # status, entries, setup
-    assert await _silent(later_r, 0.3)                                    # what was put away is not brought back
+    heard = await greeted(later_r)
+    assert [m for m in heard if m.get("type") in ("card", "proposal")] == []   # what was put away is not brought back
+    assert await _silent(later_r, 0.3)
     for x in (late_w, later_w):
         x.close()
     await _stop_all(r, w, server)
@@ -603,7 +610,9 @@ async def test_a_press_that_agentd_stopped_in_the_middle_of_is_said_to_the_perso
     table.shown(p["id"], "The 14th works.")
     table.begin_send(p["id"])
     d, _ = make()
-    server, r, w = await _start(d)
+    server = asyncio.create_task(d.serve())
+    await _ready(d)
+    r, w = await _client(d.socket_path)   # not `_start`: what it skips is the greeting, which has this notice in it
     n = await notice(r, "went when I restarted")
     assert n["line"] == ("I can't tell whether your reply in #launch went when I restarted. Look there before you "
                          "press again.") and n["tone"] == "ask"
@@ -627,8 +636,8 @@ async def test_a_card_put_away_or_a_new_turn_is_not_given_to_a_bar_that_joins_la
     await _say(w, {"type": "card_action", "card": "list:unread", "action": "dismiss"})
     await until(lambda: d._open_card is None)
     other_r, other_w = await _client(d.socket_path)
-    for _ in range(3):
-        await other_r.readline()
+    heard = await greeted(other_r)
+    assert [m for m in heard if m.get("type") == "card"] == []
     assert await _silent(other_r, 0.3)
     other_w.close()
     await _ask(w, "slack")
