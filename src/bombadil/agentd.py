@@ -38,6 +38,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
                                                         the os-mcp `desk` tool; answered with desk-result
                    {"type": "jobs", "op": "get"}        the jobs table (also sent after `desk get`)
+                   {"type": "away", "op": "get"|"seen"}  the Away card again; or: the person has seen it
                    {"type": "jobs", "op": "stop"|"dismiss"|"why", "id": job}
                                                         stop a job (systemctl, never the model), drop a
                                                         finished one's row, show its output in the drawer
@@ -161,6 +162,12 @@ is close to its line. It broadcasts the message when it differs from the last on
 again; {"type": "vitals", "op": "open", "row": "disk"} draws the disks picture (a click on that row), with
 no model. "show machine" and "how's the machine" raise the card on request (desk.on_ask).
 
+The Away card is one message, {"type": "away", "since", "count", "why", "rows"} (away.py has the whole shape;
+rows [] means no card). It is what the turn log and the coding sessions say happened since the person was
+last seen: "show away" builds it (desk.on_ask), the moment they come back from a break will (away.Away.back),
+and it is gone once they click it ({"type": "away", "op": "seen"}) or type their next ask.
+{"type": "away", "op": "get"} asks for it again. Nothing in it reaches the model.
+
 Resting. A provider that refuses an ask because the account is out (a plan window used up, a spending
 cap hit: providers.limit(), never a busy moment) puts the machine in the state "resting": the turn goes
 back to the front of the queue with a note of what it had already changed, nothing more is sent until
@@ -197,6 +204,7 @@ from pathlib import Path
 
 from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, outbox, paths, procs, providers, rest,
                signin, snapshots, sysmap, watch)
+from .away import Away
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
 from .jobs import JobError, Jobs, ending, started_text
@@ -271,7 +279,7 @@ class AgentD:
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
                  jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
-                 vitals: Vitals | None = None, sessions: dev.Dev | None = None):
+                 vitals: Vitals | None = None, sessions: dev.Dev | None = None, away: Away | None = None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
@@ -380,7 +388,11 @@ class AgentD:
         self._vitals_task: asyncio.Task | None = None
         self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
         self._vitals_last: dict | None = None       # what the shell was last told
-        self.desk.on_ask = self._vitals_asked
+        self.desk.on_ask = self._desk_asked
+        # What happened while the person was gone. Their asks to the pill are how agentd knows they were there.
+        self.away = away if away is not None else Away()
+        self._typed_last: float | None = None       # when the person last typed to the pill
+        self._typed_before: float | None = None     # ...and the time before that: when they were last seen there
 
     # -- state that outlives a restart --
 
@@ -490,7 +502,7 @@ class AgentD:
             writer.close()
 
     async def _greet(self, writer: asyncio.StreamWriter):
-        """What a client hears on connecting: status, entries, setup, the coding sessions."""
+        """What a client hears on connecting: status, entries, setup, the coding sessions, the Away card."""
         try:
             await self._send(writer, self._status())
             await self._send(writer, await self._entries_msg())
@@ -499,6 +511,8 @@ class AgentD:
                 await self._send(writer, notice)
             await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
             self._vitals_kick()
+            if self.away.up:
+                await self._send(writer, self.away.message())
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 - a client missing its greeting still has its connection
@@ -511,6 +525,7 @@ class AgentD:
             if not text:
                 await self._send(writer, {"type": "event", "kind": "error", "text": "empty prompt"})
                 return
+            await self._typed(msg, writer)
             action = await self._match(text)
             if action is None and launcher.is_send_word(text):
                 draft = await self._draft_waiting()
@@ -583,6 +598,8 @@ class AgentD:
             await self._jobs_op(msg, writer)
         elif t == "vitals":
             await self._vitals_op(msg, writer)
+        elif t == "away":
+            await self._away_op(msg, writer)
         elif t == "job-tool":
             await self._send(writer, await self._job_tool(msg))
         elif t == "mail-tool":
@@ -848,6 +865,8 @@ class AgentD:
             await self._send(writer, await asyncio.to_thread(self.jobs.snapshot))
             if self.vitals is not None and self.vitals.message()["present"]:
                 await self._send(writer, self.vitals.message())
+            if self.away.up:
+                await self._send(writer, self.away.message())
             return
         if op not in ("fold", "unfold", "hide", "show", "move"):
             return
@@ -900,6 +919,50 @@ class AgentD:
         self._vitals_wake.set()
         if self._vitals_task is None or self._vitals_task.done():
             self._vitals_task = asyncio.create_task(self._vitals_loop())
+
+    def _desk_asked(self, widget: str):
+        """Desk.on_ask, from a worker thread: "show machine" and "show away" raise their card on request."""
+        if widget == "away":
+            self._away_asked()
+        else:
+            self._vitals_asked(widget)
+
+    def _away_sessions(self) -> list[dict]:
+        """The coding sessions' views, as the `dev` message sends them: the dots' own, so a question that
+        waited or a session that finished while the person was gone is a row of the Away card."""
+        return self.dev.snapshot()["sessions"]
+
+    def _away_asked(self):
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(lambda: self._background(self._away_show()))
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
+    async def _away_show(self):
+        msg = await asyncio.to_thread(self.away.ask, self._away_sessions(), self._typed_before)
+        await self.broadcast(msg)
+
+    async def _typed(self, msg: dict, writer: asyncio.StreamWriter):
+        """An ask came in: when it is the person's, they are here, so what Away held is seen, and the time is
+        kept (the ask before this one is when they were last known to be at the pill). An ask from a coding
+        session comes with a name; one from a process in an agent's turn is told by who connected."""
+        who = msg.get("asked_by")
+        if isinstance(who, str) and _WHO.fullmatch(who):
+            return
+        if not await self._persons(writer):
+            return
+        self._typed_before, self._typed_last = self._typed_last, time.time()
+        if self.away.up and self.away.seen():
+            await self.broadcast(self.away.message())
+
+    async def _away_op(self, msg: dict, writer: asyncio.StreamWriter):
+        """The shell asks for the card again, or says the person has seen it (a click on it)."""
+        op = str(msg.get("op", ""))
+        if op == "get":
+            await self._send(writer, self.away.message())
+        elif op == "seen" and self.away.seen():
+            await self.broadcast(self.away.message())
 
     def _vitals_asked(self, widget: str):
         """Desk.on_ask, from a worker thread: "show machine" raises the card even when nothing is wrong."""
@@ -1003,7 +1066,7 @@ class AgentD:
             note += f" (its output is in {log})" if log is not None else ""
         self.notes = [*self.notes, note][-10:]
         self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
-                        "target": rec["title"], "result": text, "ok": ok})
+                        "target": rec["title"], "result": text, "ok": ok, "job": rec["id"]})
 
     async def _jobs_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The shell asks for the table, or acts on a row: × stops a running job, × on a finished one
@@ -1032,7 +1095,7 @@ class AgentD:
             text = f"Stopped {rec['title']}."
             self.notes = [*self.notes, f"background job {rec['id']}: {text}"][-10:]
             self._log_line({"t": time.time(), "kind": "local", "prompt": "background job", "action": "job",
-                            "target": rec["title"], "result": text, "ok": True})
+                            "target": rec["title"], "result": text, "ok": True, "stopped": True})
 
     async def _jobs_why(self, job_id):
         argv = await asyncio.to_thread(self.jobs.why, job_id)

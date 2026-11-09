@@ -155,6 +155,7 @@ second lock of its own that only those actions share, and a session being launch
   `dev.py`, and a hook or notify reporter that calls `bombadil-signal <tool>`; map its events onto the states
   in `Dev.signal`.
 - **Another surface for the same facts.** Consume the `dev` message; do not poll zellij. The desk
-  already does.
+  already does, and so does the Away card (a question that waited, a session that finished: its rows open
+  the session by key).
 - **Not built yet.** A usage-limit meter, `claude agents --json` reconciliation, per-pane
   notifications for plain shells, and a full card for "what's running?" (a plain list for now).
