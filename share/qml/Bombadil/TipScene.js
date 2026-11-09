@@ -16,6 +16,7 @@ var STONE_MS = { done: 700, needs: 1600, working: 600 }
 var STONE_DEFAULT_MS = 300
 var LINE_MS = 900
 var LINE_CLEAR_MS = 200
+var QUEUE_MS = 300
 var FADE_MS = 200
 var SLIDE_MS = 300
 var ROW_MS = 200
@@ -31,8 +32,8 @@ var LEAN_MS = 240
 
 var KEY_LABELS = { super: "⊞", enter: "↵", esc: "Esc", tab: "Tab", bang: "!" }
 var FACES = ["rest", "listening", "working", "needs", "done", "stopped", "resting"]
-var DRAWS = ["key", "type", "stone", "line", "window", "card", "picture", "fold", "hold"]
-var MODIFIERS = ["ghost", "tag", "tone", "command", "counter", "buttons", "rows", "columns", "lock", "doc", "reload",
+var DRAWS = ["key", "type", "stone", "line", "queue", "window", "card", "picture", "fold", "hold"]
+var MODIFIERS = ["ghost", "tag", "tone", "command", "counter", "buttons", "wait", "rows", "columns", "lock", "doc", "reload",
                  "from", "title", "why", "boxes", "bars", "lit", "strips", "phase"]
 
 function list(v) { return v && typeof v !== "string" && v.length !== undefined ? Array.prototype.slice.call(v) : [] }
@@ -45,6 +46,7 @@ function beatMs(b) {
     if (typeof b.type === "string") parts.push(TYPE_MS_PER_CHAR * b.type.length + TYPE_SETTLE_MS)
     if (b.stone !== undefined) parts.push(STONE_MS[b.stone] !== undefined ? STONE_MS[b.stone] : STONE_DEFAULT_MS)
     if (b.line !== undefined) parts.push(b.line !== "" ? LINE_MS : LINE_CLEAR_MS)
+    if (b.queue !== undefined) parts.push(QUEUE_MS)
     if (b.window !== undefined) {
         if (showsWindow(b)) {
             parts.push((b.reload ? 0 : SLIDE_MS) + ROW_MS * list(b.rows).length + ROW_MS * list(b.columns).length
@@ -186,7 +188,8 @@ function frameAt(c, t, still) {
     t = Math.max(0, Math.min(t, c.duration))
     var s = {
         text: "", ghost: "", face: "rest", faceSince: 0, listenSince: -1, key: null, line: null, counterAt: null,
-        win: null, cards: {}, cardOrder: [], pic: null, folded: false, foldSince: -1, strips: [], stripsTag: ""
+        win: null, cards: {}, cardOrder: [], pic: null, folded: false, foldSince: -1, strips: [], stripsTag: "",
+        queue: [], queueWait: "", queueSince: 0
     }
     var i, e, local, b
     for (i = 0; i < c.beats.length; i++) {
@@ -222,6 +225,11 @@ function frameAt(c, t, still) {
                 text: String(b.line), tag: b.tag || "", tone: b.tone || "", command: b.command || "",
                 buttons: list(b.buttons).map(String), since: e.start
             }
+        }
+        if (b.queue !== undefined) {
+            s.queue = list(b.queue).map(String)
+            s.queueWait = b.wait !== undefined ? String(b.wait) : "next"      // what the real chip says without a time
+            s.queueSince = e.start
         }
         if (b.counter !== undefined) {
             if (b.counter === false) s.counterAt = null
@@ -302,6 +310,10 @@ function frameAt(c, t, still) {
         f.line = { text: s.line.text, tag: s.line.tag, tone: s.line.tone, command: s.line.command,
                    buttons: s.line.buttons, alpha: la, mono: s.line.tag === "output", secs: secs }
     } else f.line = null
+
+    if (s.queue.length > 0) {
+        f.queue = { asks: s.queue, wait: s.queueWait, alpha: clamp01((t - s.queueSince) / FADE_MS) }
+    } else f.queue = null
 
     if (s.win) {
         var w2 = s.win

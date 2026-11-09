@@ -97,6 +97,9 @@ def test_every_key_value_the_vocabulary_takes_is_checked():
         {"window": "W", "tag": "model", "rows": ["a", "b", "c", "d"]},                       # the poster holds three
         {"picture": "P", "tag": "template", "bars": [["a", 130]]},
         {"picture": "P", "tag": "template", "bars": [["a", 30, "red"]]},
+        {"queue": "tidy my downloads"}, {"queue": [""]}, {"queue": [3]}, {"queue": ["a", "b", "c"]},
+        {"queue": ["a"], "tag": "typed", "wait": ""}, {"queue": ["a"], "tag": "typed", "wait": 3},
+        {"queue": ["a"], "tag": "typed", "wait": ["paused"]}, {"line": "x", "tag": "template", "wait": "paused"},
         {"fold": "yes"}, {"fold": True, "strips": [3], "tag": "template"}, {"hold": 0}, {"hold": "long"},
         {"hold": 100, "phase": 3}, {"hold": 100, "phase": True}, {"hold": 100, "phase": 1.0},
     ]
@@ -115,6 +118,8 @@ def test_values_the_vocabulary_takes_are_not_reported():
         {"picture": "P", "tag": "template", "boxes": ["a", "b"], "lit": 1},
         {"window": "W", "tag": "model", "rows": ["a", "b", "c"]},
         {"fold": False}, {"hold": 1}, {"line": "", "stone": "rest"},
+        {"queue": []}, {"queue": ["tidy my downloads"], "tag": "template", "wait": "paused"},
+        {"queue": ["a", "b"], "tag": "template"},
     ]
     for beat in good:
         assert ts.validate(tip(beat)) == [], beat
@@ -154,6 +159,15 @@ def test_a_row_of_the_window_beyond_the_third_is_reported_and_a_card_may_have_mo
     out = problems({"window": "W", "tag": "model", "rows": list("abcd")})
     assert out == ["beat 1: a window shows at most 3 rows, so the card's poster holds them all (this has 4)"]
     assert problems({"card": "now", "tag": "template", "rows": [["a", "done"]] * 5}) == []
+
+
+def test_a_queue_holds_at_most_two_asks_and_a_wait_needs_a_queue_and_a_tag():
+    assert problems({"queue": ["a", "b", "c"]}) == [
+        "beat 1: queue is the asks that wait, one to 2 of them, as typed ([] puts the chips away)"]
+    assert problems({"queue": ["tidy my downloads"], "wait": "paused"}) == [
+        "beat 1: has strings and no tag (one of template, typed, model, output, caption)"]
+    assert problems({"line": "x", "tag": "template", "wait": "paused"}) != []            # wait goes with queue
+    assert problems({"queue": []}) == []                                              # taking the chips away shows nothing
 
 
 def test_lit_lights_a_box_and_goes_with_boxes():
@@ -197,6 +211,7 @@ def test_how_long_each_beat_takes():
     assert ts.beat_ms({"card": "now"}) == 800
     assert ts.beat_ms({"picture": "P", "boxes": list("abcd")}) == 300 + 4 * 320 + 600
     assert ts.beat_ms({"fold": True}) == 1000
+    assert ts.beat_ms({"queue": ["a"]}) == 300 and ts.beat_ms({"queue": []}) == 300 == ts.QUEUE_MS
     assert ts.beat_ms({"hold": 250}) == 250
     assert ts.beat_ms({"key": "enter", "hold": 40}) == 400                      # a hold adds to the beat
     assert ts.beat_ms({"key": "enter", "stone": "working"}) == 600             # keys in a beat run together
@@ -275,6 +290,10 @@ def test_strings_has_every_place_a_scene_shows_words():
     assert ("template", "1 counting") in of(fx.TIMER)                                   # a strip
     assert ("template", "Timer, 25 min") in of(fx.TIMER) and ("template", "25:00") in of(fx.TIMER)
     assert ("output", "6.17.2-arch1-1") in of(fx.BANG) and ("template", "Details") in of(fx.BANG)
+    waits = of(fx.WAITS)
+    assert ("typed", "tidy my downloads") in waits                              # a waiting ask is what was typed
+    assert ("template", "paused") in waits                                      # and what its chip says
+    assert {t for t in of(fx.ROUTE) if t[1] == "Install rustup"} == {("model", "Install rustup")}     # the plan is the model's
 
 
 # -- captions --
