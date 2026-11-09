@@ -365,15 +365,21 @@ def test_the_stone_leans_at_once_under_reduced_motion(app, tmp_path):
 
 # -- the guard: every animation in the QML honours the switch --
 
-# Literal durations and endless loops the rule does not apply to, because the motion itself is not what they
-# are: (file name, the text that matches) -> why.
+# Waits that are not movement, so the rule does not apply to them: (file name, the text that matches) ->
+# (how many times it stands in that file, why). The count keeps an entry from allowing a second wait.
 ALLOWED = {
-    ("ScrollBar.qml", "duration: 600"): "a wait before the bar hides; the fade after it uses Theme.normal",
-    ("ScrollIndicator.qml", "duration: 600"): "a wait before the indicator hides; the fade after it uses Theme.normal",
+    ("ScrollBar.qml", "duration: 600"): (1, "a wait before the bar hides; the fade after it uses Theme.normal"),
+    ("ScrollIndicator.qml", "duration: 600"): (1, "a wait before the indicator hides; the fade uses Theme.normal"),
 }
 
 MOTION = re.compile(r"(?:^|[\s:;{}])(Behavior|Transition|[A-Z]\w*(?:Animation|Animator))(?:\s+on\s+[\w.]+)?\s*$")
-LITERAL = re.compile(r"\bduration\s*:\s*(\d+)\b|\bloops\s*:\s*Animation\.Infinite\b")
+# An animation that carries a value over time by itself: it needs a duration that honours the switch, or a gate.
+LEAF = re.compile(r"^(?:Number|Color|Property|Rotation|Vector3d|Anchor|Path|Pause|Smoothed|Spring)Animation$"
+                  r"|^\w+Animator$")
+DURATION = re.compile(r"\bduration\s*:\s*([^\n;]*)")
+INFINITE = re.compile(r"\bloops\s*:\s*Animation\.Infinite\b")
+GATE = re.compile(r"\b(?:running|enabled|when)\s*:\s*([^\n;]*)")
+HONOURS = re.compile(r"Theme\.|reducedMotion")      # a duration from the Theme, or one that reads the switch
 
 
 def blank(text):
@@ -416,27 +422,51 @@ def brace_blocks(clean):
     return found
 
 
-def forgetful(text, name="x.qml"):
-    """What in this QML animates by a literal duration, or loops for ever, without the switch: the
-    (match, line) of each. An animation passes when its outermost animation, Behavior or Transition
-    mentions `reducedMotion` (it is gated or reads the switch) or goes through `Theme.duration(`; a
-    duration from `Theme.fast`, `normal` or `slow` is not literal and honours the switch by itself."""
+def own(clean, opened, closed):
+    """A block's own lines: its text without the blocks inside it."""
+    depth, out = 0, []
+    for c in clean[opened:closed + 1]:
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif depth == 1:
+            out.append(c)
+    return "".join(out)
+
+
+def forgetful(text, name="x.qml", used=None):
+    """What in this QML animates without honouring the switch: the (what, line) of each. A leaf animation
+    (`NumberAnimation`, `ColorAnimation`, an Animator, ...) passes when its `duration` is 0, comes from the
+    Theme (`Theme.fast`, `Theme.duration(...)`) or reads `reducedMotion`; any other duration, literal or from a
+    property or a library (`T.washMs`), no duration at all, or a spring, fails. An endless loop fails. Either
+    passes if the animation or one around it is gated: its own `running`, `enabled` or `when` reads
+    `reducedMotion`. A wait in ALLOWED passes; `used` counts them. A `reducedMotion` somewhere else in the
+    same block gates nothing."""
     clean = blank(text)
-    motion = [b for b in brace_blocks(clean) if MOTION.search(b[2])]
+    blocks = sorted(((o, c, MOTION.search(h).group(1)) for o, c, h in brace_blocks(clean) if MOTION.search(h)))
     out = []
-    for m in LITERAL.finditer(clean):
-        if m.group(1) is not None and int(m.group(1)) == 0:
+    for o, c, kind in blocks:
+        mine = own(clean, o, c)
+        found = []
+        if LEAF.search(kind):
+            if (d := DURATION.search(mine)) is None:
+                found.append(f"{kind} without a duration")
+            elif not (re.fullmatch(r"0+(?:\.0*)?", d.group(1).strip()) or HONOURS.search(d.group(1))):
+                found.append(f"duration: {d.group(1).strip()}")
+        if INFINITE.search(mine):
+            found.append("loops: Animation.Infinite")
+        if not found:
             continue
-        around = [b for b in motion if b[0] < m.start() < b[1]]
-        if not around:
-            continue                                         # a `duration` that is not an animation's
-        outer = min(around, key=lambda b: b[0])
-        body = clean[outer[0]:outer[1]]
-        if "reducedMotion" in body or "Theme.duration(" in body:
+        around = [(oo, cc) for oo, cc, _ in blocks if oo <= o and c <= cc]
+        if any("reducedMotion" in g for oo, cc in around for g in GATE.findall(own(clean, oo, cc))):
             continue
-        if (name, m.group(0)) in ALLOWED:
-            continue
-        out.append((m.group(0), clean.count("\n", 0, m.start()) + 1))
+        for what in found:
+            if (name, what) in ALLOWED:
+                if used is not None:
+                    used[(name, what)] = used.get((name, what), 0) + 1
+                continue
+            out.append((what, clean.count("\n", 0, o) + 1))
     return out
 
 
@@ -446,11 +476,15 @@ def qml_files():
 
 
 def test_no_animation_ignores_reduced_motion():
-    bad = {str(p.relative_to(ROOT)): found for p in qml_files() if (found := forgetful(p.read_text(), p.name))}
+    used = {}
+    bad = {str(p.relative_to(ROOT)): found
+           for p in qml_files() if (found := forgetful(p.read_text(), p.name, used))}
     assert not bad, (
-        f"{bad}: an animation with a literal duration, or a loop, that does not honour reduced motion. Use "
-        "Theme.fast, normal or slow, or Theme.duration(ms), or gate it on Theme.reducedMotion; docs/MOTION.md "
-        "says how. A wait that is not a movement goes in ALLOWED, with its reason.")
+        f"{bad}: an animation that does not honour reduced motion. Take its duration from Theme.fast, normal "
+        "or slow, or wrap it in Theme.duration(ms), or gate it on Theme.reducedMotion; docs/MOTION.md says "
+        "how. A wait that is not a movement goes in ALLOWED, with its reason.")
+    # An entry that matches nothing is stale, and one that matches more than it counts allows a new wait.
+    assert used == {key: times for key, (times, _) in ALLOWED.items()}
 
 
 def test_the_guard_catches_what_it_is_for():
@@ -459,10 +493,30 @@ def test_the_guard_catches_what_it_is_for():
             Behavior on x { NumberAnimation { duration: 140 } }
             NumberAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite }
             transitions: Transition { ColorAnimation { duration: 90 } }
+            Behavior on a { NumberAnimation { duration: T.washMs } }
+            Behavior on b { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
+            Behavior on c { NumberAnimation { duration: ms } }
+            Behavior on d { NumberAnimation { } }
+            Behavior on e { SpringAnimation { spring: 2 } }
+            Behavior on f { SmoothedAnimation { velocity: 200 } }
+            Behavior on g { OpacityAnimator { duration: 100 } }
             Timer { interval: 500 }
         }"""
-    assert [m for m, _ in forgetful(bad)] == ["duration: 140", "duration: 900", "loops: Animation.Infinite",
-                                              "duration: 90"]
+    assert [m for m, _ in forgetful(bad)] == [
+        "duration: 140", "duration: 900", "loops: Animation.Infinite", "duration: 90", "duration: T.washMs",
+        "duration: rail.desk.foldMs", "duration: ms", "NumberAnimation without a duration",
+        "SpringAnimation without a duration", "SmoothedAnimation without a duration", "duration: 100"]
+    # A `reducedMotion` somewhere in the same block gates nothing: only a gate on the animation, or on one
+    # around it, or a duration that reads the switch.
+    mixed = """
+        SequentialAnimation {
+            running: true
+            NumberAnimation { duration: wall.reducedMotion ? 0 : 200 }
+            NumberAnimation { duration: 300 }
+            NumberAnimation { duration: Theme.duration(100) }
+            property bool seen: Theme.reducedMotion
+        }"""
+    assert [m for m, _ in forgetful(mixed)] == ["duration: 300"]
     good = """
         Item {
             property int duration: 5
@@ -471,14 +525,20 @@ def test_the_guard_catches_what_it_is_for():
             Behavior on w { NumberAnimation { duration: wall.reducedMotion ? 0 : 200 } }
             NumberAnimation on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite
                                           running: spinning && !Theme.reducedMotion }
+            SequentialAnimation { running: Theme.reducedMotion; loops: Animation.Infinite
+                                  NumberAnimation { to: 0.3; duration: 500 }
+                                  NumberAnimation { to: 1; duration: 500 } }
+            Behavior on v { enabled: !Theme.reducedMotion; SpringAnimation { spring: 2 } }
             Behavior on z { NumberAnimation { duration: 0 } }
             // Behavior on q { NumberAnimation { duration: 77 } }
             Text { text: "NumberAnimation { duration: 88 }" }
         }"""
     assert forgetful(good) == []
-    # An allowed wait is only allowed in the file the list names.
+    # An allowed wait is only allowed in the file the list names, and is counted there.
     wait = "Transition { SequentialAnimation { PauseAnimation { duration: 600 } } }"
-    assert forgetful(wait, "ScrollBar.qml") == [] and forgetful(wait, "Other.qml") != []
+    used = {}
+    assert forgetful(wait, "ScrollBar.qml", used) == [] and forgetful(wait, "Other.qml") != []
+    assert used == {("ScrollBar.qml", "duration: 600"): 1}
 
 
 def test_the_guard_covers_the_places_that_move():
@@ -486,5 +546,5 @@ def test_the_guard_covers_the_places_that_move():
     assert {"DeskRail.qml", "DeskCard.qml", "DeskState.qml", "DeskStrips.qml", "Stone.qml", "Wallpaper.qml",
             "Diagram.qml", "BusyIndicator.qml", "ProgressBar.qml", "ScrollBar.qml", "main.qml"} <= names
     assert len(qml_files()) > 90
-    for (name, _), why in ALLOWED.items():
-        assert name in names and why
+    for (name, _), (times, why) in ALLOWED.items():
+        assert name in names and times >= 1 and why
