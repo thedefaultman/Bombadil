@@ -9,6 +9,7 @@ The project's documents, next to its code.
 - `VM-TESTING.md`: the whole-system smoke test in a VM, with a diagram, what it covers and its traps.
 - `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
 - `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
+- `TIPS.md`: Tips, what a new person can ask: the table of tips and its gates, what counts a tip as tried, `tips.json`, the card agentd tells the shell, the wire protocol, how to add a tip. Has marked places for the Tips app and the Tips card.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
 - `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
 - `MAIL.md`: the contract the Mail view is built to: processes and diagrams, the wire protocol, the press, the agent's tools and what the image adds.
