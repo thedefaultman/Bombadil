@@ -15,6 +15,7 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
 | `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
 | `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Away, Machine; a row is a dot, a meter, a stacked meter or plain text). |
+| `shell/TipsCard.qml` | The Tips face: a still picture, one line and a button, for a new person's first week. How it is drawn, when it is there and what its button does is in [`TIPS.md`](TIPS.md#the-tips-card-on-the-desk). |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
 | `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away or folded by hand, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
@@ -63,16 +64,19 @@ drops the rest.
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
 | `{"type":"machine","present":...,"asked":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. See [the Machine card](#the-machine-card). |
 | `{"type":"away","since":...,"count":...,"why":...,"rows":[...]}` | agentd to shell | The Away card, replaced whole. `rows: []` takes it away. See [the Away card](#the-away-card). |
+| `{"type":"tips","present":...,"card":{...}}` | agentd to shell | The Tips card, replaced whole, sent only when it changed. `present: false` takes it away. See [`TIPS.md`](TIPS.md#the-tips-card-on-the-desk). |
 | `{"type":"desk","folded":...,"hidden":...,"stripped":...,"rails":...,"order":...}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand. Whatever it leaves out stays as it was. |
 | `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
 | `{"type":"away","op":"get"\|"seen"}` | shell to agentd | `get` asks for the Away card again; `seen` says the person has looked at it (a tap on it), so it can go. Neither reaches the model. |
+| `{"type":"tips","op":"turn"\|"open",...}`, `{"type":"summon","text":...,"tip":true,"id":...}` | shell to agentd | The Tips card's arrows and wheel, its title, picture and "All tips ›", and its button. A press on the button puts the words in the pill (agentd broadcasts the summon); nothing runs. |
 
 ## Faces, slots and right of way
 
 A widget is *present* when it has something to say (Now while a plan or a system step runs, Watching
-while anything counts, Needs you when two or more sessions wait). A present widget has one of three faces:
+while anything counts, Needs you when two or more sessions wait, Tips in a new person's first week and only
+once the shell is calm: [`TIPS.md`](TIPS.md#when-it-is-there)). A present widget has one of three faces:
 
 - **full**: a card in its rail. Slots stack from the pill outward, nearest first, in the rail's order. A
   card whose full height does not fit the room left, and everything above it, becomes a strip.
@@ -366,7 +370,9 @@ the real shell, so the first limit below is about Hyprland alone:
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
 3. Say how tall its full face is in `heightOf`, and give it a strip in `_stripOf`.
 4. Draw it: reuse `RowsCard` (rows with a dot or a meter, a button, a small x) or write a card on
-   `DeskCard`, and add its component to the loader in `DeskRail.qml`.
+   `DeskCard` (`TipsCard` is the example of a card with a picture and its own controls), and add its
+   component to the loader in `DeskRail.qml`. A widget that has a press on its strip says so in
+   `DeskState.stripClicked`.
 5. Test it offscreen in `tests/test_desk_qml.py` (the harness builds the real `PillState`, `DeskState`,
    both rails and both strips in one window) and, for what only a real compositor shows, in
    `tests/desktop/driver.py`.
@@ -376,6 +382,8 @@ the real shell, so the first limit below is about Hyprland alone:
 - `pytest tests/test_desk.py tests/test_desk_qml.py tests/test_desk_cards_qml.py`: the desk's state file
   and its words, and the whole desk drawn offscreen (set `BOMBADIL_SCREENS=<dir>` to save pictures).
   They need PySide6 and, in a bare container, the system libraries Qt loads (libEGL, libxkbcommon).
+- `pytest tests/test_tips_card_qml.py`: the Tips card in the real rail and its presence rules (see
+  [`TIPS.md`](TIPS.md#testing-the-card)).
 - `pytest tests/test_away.py tests/test_agentd_away.py`: the Away card's rows and wording from rows of a log
   and a clock they are handed, and agentd's side of it (who is told, what puts it away).
 - `pytest tests/test_desk_drag_qml.py`: dragging, in the three windows (the left rail, the right one and

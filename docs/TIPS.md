@@ -282,8 +282,120 @@ reads the list and watches tips.json, the stage and the list, reduced motion, wh
 
 ## The Tips card on the desk
 
-*Not built yet (the card's piece).* The card is a desk widget fed by the `tips` message above. This section will
-say how it is drawn, arrives, folds and turns, and how its button hands the words to the pill.
+The card is a desk widget: the top of the right rail, a still card of 300 x 290 px that shows one tip at a time
+in a new person's first week. It is fed by the `tips` message above and by nothing else; it never plays, loops or
+turns by itself (the Tips app is where a tip moves). Nothing on it runs a tip.
 
-<!-- PIECE E: the Tips card. Its section goes here: the desk entry, the TipsCard face, the pill hand-off, how it
-folds, arrives and turns, and the strip. DESK.md's "Adding a widget" is its recipe. -->
+| File | What it is |
+|---|---|
+| `src/bombadil/desk.py` | The `tips` widget: title "Tips", the word `tips`, the right rail, last in the order (so the top, as the rail stacks from the pill outward). Not `ALWAYS`, not `OPT_IN`. "hide tips" answers "Put Tips away. Say tips to see them again." (`HIDE_NOTES`). "show tips" is not a desk word: the launcher leaves it to the Tips app (`HIDE_ONLY_WIDGETS` in `launcher.py`). |
+| `shell/DeskState.qml` | `tipsModel` (agentd's card, cleaned), when the card is present (below), its height (290) and its strip (`tips`, muted, no dot), and what the card asks: `tipsTurn`, `tipsOpen`, `tipsTry`, and `stripClicked` for the strip. |
+| `shell/TipsCard.qml` | The face, on `DeskCard`: the title, the why line (`whyFigures`: tabular figures, so "1 of 6" and "2 of 6" are as wide), the picture, the line, and the button or the marks beside "All tips ›". |
+| `shell/DeskRail.qml`, `shell/DeskStrips.qml` | The face in the rail's loader, and the strip's press. |
+| `shell/PillState.qml`, `shell/shell.qml` | The pill's side of the button (below). |
+
+### When it is there
+
+The card is present only when all of these hold; `DeskState.tipsPresent` is their conjunction.
+
+| Rule | Where |
+|---|---|
+| agentd says `present: true` with a card (`tipsModel` is not null) | agentd: setup ready, first week not over, an untried Start-here tip left, not put away |
+| the person has not put it away (`hidden` has no `tips`) | the x, "hide tips" |
+| setup is over: the pill's setup state is `ready`, or `resting` (the AI out of plan or paused). The desk does not react to the rest: it neither brings the card nor takes it away | `tipsWanted` |
+| the shell is calm **the first time it appears**: the pill is idle (no turn, no ready, welcome or hello line, no closing line, no answer), nothing is stoppable, the desk's plan is idle, and no card of the first minutes is up (`DeskState.cardsUp`) | `tipsCalm` |
+
+Calm is a latch (`_tipsUp`): once the card is up it stays through turns, lines and the rest, and goes only when
+`tipsWanted` fails (agentd drops it, the person puts it away, setup is not ready, the socket drops). A card
+agentd takes away and brings back mid-turn waits for calm again. So a person who typed during sign-in sees it
+first when that turn's closing line has faded (12 s after the turn ends), and nobody has it appear under a
+running turn.
+
+`DeskState.cardsUp` is the hook for the cards of the first minutes (the persona card, the recovery key): nothing on
+main sets it yet, so the piece that builds each of them binds `deskState.cardsUp` to "one of them is on screen".
+
+The desk's own rules apply as for any widget: a window over the slot folds the card to its `tips` strip (150 ms
+out, 400 ms back), a screen narrower than 1016 px keeps it as a strip, a full-screen window hides it, and the
+socket going takes it away (`lost()`; agentd sends the card again to a bar that connects). A press on the strip
+opens the Tips app on its first tip (`{"type": "tips", "op": "open", "id": ""}`). The pill narrows for the card
+as for any full card, so the line above it never covers it.
+
+### The card
+
+```
+50 px   Tips                              ‹ › ×        title 14 px DemiBold; the arrows and the x on hover
+        Start here · 1 of 6                            why, 12 px muted, tabular figures
+ 8 px   +------------------------------+
+        |  the poster, 272 x 153       |               Kit.TipScene, still, density "card"
+        +------------------------------+
+        Say what you need. It gets made.               the line, 13 px, one line
+        ( Make me a ticketing app )        All tips ›  the button, and the app's door
+```
+
+- **The picture** is `Kit.TipScene` at card density, drawn from `tip` (the whole row agentd sent), still: the
+  scene's payoff frame, never its beats playing. It is loaded only while its face is on show (`Loader { active:
+  face.visible }`), so a card that is away, and the face behind during a turn, cost nothing.
+- **The button** is the sentence you would type: the words elide when they do not fit beside "All tips ›" (the
+  press still sends the whole words). A tip with no button (its words only make sense mid-turn) draws its
+  **marks** in the button's place: keys (`Esc`, `Tab`, `Enter`, `Super`) as small rounded squares, other words as
+  pills with a transparent fill. Marks are not buttons: no raised fill, no pointer, no press.
+- **Hover.** The arrows and the x (24 px, muted, top right) fade in over `Theme.fast` while the pointer is on the
+  card and out when it leaves. The wheel turns tips: one for a notch (120), a touchpad's small steps add up to
+  one, a turn the other way (or leaving the card) starts over. The arrows take the press, not only the release, so
+  the title line under them does not also open the app.
+- **A turn** crossfades the picture, the line and the button over `Theme.normal`: two faces, one fading out and
+  one in, so the card is 290 px tall for every tip and the cards above it never jump. The same tip saying
+  something new (its place in the list) changes in place, with no crossfade.
+- **Nothing runs at rest**: no timer, no loop, no page dots. `tests/test_tips_card_qml.py` asks the tree for
+  running animations and timers, and `tests/test_motion.py` holds the duration rule.
+- **Nothing on the card is the accent orange**: the face is neutral and the poster carries its own ink.
+
+| The person | The card asks | Then |
+|---|---|---|
+| presses the arrows, or turns the wheel | `{"type": "tips", "op": "turn", "dir": 1 or -1}` | agentd sends the card for the next tip; the shell crossfades to it. The shell never turns the card itself. |
+| presses the title, "All tips ›" | `{"type": "tips", "op": "open", "id": "<tip>", "play": false}` | the Tips app opens on that tip |
+| presses the picture | the same with `"play": true` | the app opens on that tip, playing |
+| presses the x | `{"type": "desk", "op": "hide", "widget": "tips"}` (the same door as "hide tips") | agentd keeps it in `desk.toml`, sends the desk and then `present: false` |
+| presses the button | `{"type": "summon", "text": "<words>", "tip": true, "id": "<tip>"}` | agentd remembers the words for that tip and tells every bar; see below |
+
+### The button, and the pill
+
+A press never runs anything. The shell sends the summon through agentd (one door for the card and for the Tips
+app), agentd broadcasts it, and the pill that has the focus takes the keyboard with the words in it:
+
+- the cursor is at the end, so the person can edit or add to them; **Enter** sends them as the person's own ask
+  and **Esc** drops them (the pill's ordinary behaviour);
+- the words are not sent, and nothing about the press reaches the model;
+- a tip's words that end in an ellipsis (`In {app}, add…`) are put in with the ellipsis taken off and a space
+  left, so the person finishes the sentence;
+- **words the person had typed and not sent are kept**: `tip: true` fills an empty pill only, where "Ask about this"
+  (the Brain's summon, with no `tip`) still replaces what is there. `PillState.summonText(current, text, tip)`
+  decides, and `shell.qml` applies it when the summoned pill takes its draft.
+
+A tip is tried when the words are sent unedited (agentd's rule above), not by the press.
+
+### Reduced motion
+
+Under `BOMBADIL_REDUCE_MOTION=1` the arrival, the hover fade and the crossfade are instant (their durations come
+from `Kit.Theme.fast` and `normal`, which are 0 there), and the poster is already still.
+
+### Testing the card
+
+```
+QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/test_desk_qml.py tests/test_desk_cards_qml.py tests/test_pill_qml.py tests/test_desk.py -q -p no:cacheprovider
+```
+
+- `tests/test_tips_card_qml.py` draws the card inside the real rail with the real `DeskState`, from messages a real
+  `Tips` builds over the shipped table: the layout at 1280 x 720 and 1920 x 1080, every card tip of the table (no
+  overflow, a long app name elided), marks, the poster, hover, wheel, the crossfade, reduced motion, what each
+  press sends, and the presence rules above (setup, resting, turns, lines, the person's x, agentd going, windows,
+  full screen, a narrow screen, the strip). Set `BOMBADIL_SCREENS=<dir>` to save a picture of each.
+- `tests/test_desk.py` holds the widget's words, rail and sentence; `tests/test_pill_qml.py` the hand-off
+  (the cursor, kept words, the ellipsis, Enter and Esc).
+- `tests/desktop/driver.py`, section 31: agentd with Tips on in headless sway, the card on the rail, the arrows
+  by a virtual pointer, the button (the summon, no turn), Enter (the turn and the tried tip), the card turning
+  12 s after, the x. Every other section runs with `BOMBADIL_TIPS=0`.
+
+What no test shows is the card under Hyprland: how the rail draws it under floating and special-workspace windows,
+and the fold as a window is dragged past it (the same as every card, DESK.md). The poster's look at card density
+is only checked as pictures.

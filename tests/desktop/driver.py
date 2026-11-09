@@ -31,6 +31,7 @@ env = dict(
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
+    BOMBADIL_TIPS="0",      # no card of Tips over the sections that are not about it (section 31 starts agentd with it on)
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
@@ -1989,6 +1990,113 @@ check("end reviewer ends it and keeps its copy",
           lambda: "bombadil-spike-reviewer" not in zlisted(), 10) and copy.is_dir(), e)
 time.sleep(1)
 shot("39-ended")
+
+# 31. Tips: the card on the desk's right rail, for a new person's first week. Every section above runs with Tips
+# off (BOMBADIL_TIPS=0, as the pytest suite does) so no card sits over what they check; agentd is started once
+# more with it on and the real chain is walked: agentd's card, the face on the rail, the arrows and the x, the
+# button (the words go to the pill and nothing runs), the person's own Enter (the words are their ask, so the tip
+# is tried), and the card turning to the next tip 12 s after that turn ends.
+run("swaymsg", '[app_id=".*"] kill')       # a window over the right rail would fold the card to its strip
+time.sleep(1.5)
+old_agentd = [p for p in procs if p.args[0].endswith("agentd")][-1]
+old_agentd.terminate()
+old_agentd.wait(5)
+procs.remove(old_agentd)
+env.pop("BOMBADIL_TIPS", None)
+start("agentd-tips", [str(REPO / "bin" / "agentd")])
+until(lambda: sock_path.exists(), 10)
+time.sleep(1)
+n = mark()
+threading.Thread(target=listen, args=("a",), daemon=True).start()
+card_msg = wait(lambda m: m.get("type") == "tips" and m.get("present") is True, 40, n)
+card = (card_msg or {}).get("card") or {}
+check("agentd sends the card: the first Start-here tip, its words, and the whole row for the picture",
+      card.get("id") == "make-an-app" and card.get("words") == "Make me a ticketing app"
+      and card.get("why", "").startswith("Start here \u00b7 1 of ") and card.get("tip", {}).get("captions"), card)
+st = {}
+for _ in range(120):                       # calm: the line the restart left has to fade first
+    st = desk_state()
+    if st.get("faces", {}).get("tips") == "full":
+        break
+    time.sleep(0.5)
+tslot = (st.get("slots") or {}).get("tips") or {}
+shot("44-tips-card")
+check("the card is up in full on the right rail, 300 by 290, showing agentd's tip",
+      st.get("faces", {}).get("tips") == "full" and tslot.get("side") == "right"
+      and (tslot.get("w"), tslot.get("h")) == (300, 290) and (st.get("tips") or {}).get("id") == "make-an-app",
+      (st.get("faces"), tslot, (st.get("tips") or {}).get("id")))
+tbox = (tslot.get("x", 0), tslot.get("y", 0), tslot.get("w", 0), tslot.get("h", 0))
+ink_px = region_pixels("44-tips-card", tbox, "#e6e8eb")
+accent_px = region_pixels("44-tips-card", (tbox[0], tbox[1], 300, 50), "#d97757")
+check("it draws its title, its line and the button's words, and its header is neutral (no accent)",
+      ink_px > 200 and accent_px < 10, (ink_px, accent_px))
+
+# The arrows and the x show only while the pointer is on the card.
+corner = (tbox[0] + 300 - 8 - 72, tbox[1] + 8, 72, 24)
+pointer("move 20 20")
+time.sleep(0.6)
+shot("44a-tips-pointer-away")
+away_px = region_pixels("44a-tips-pointer-away", corner, "#8b939c")
+pointer(f"move {tbox[0] + 150} {tbox[1] + 120}")
+time.sleep(0.8)
+shot("44b-tips-pointer-on")
+on_px = region_pixels("44b-tips-pointer-on", corner, "#8b939c")
+check("the arrows and the x fade in with the pointer on the card and are gone without it",
+      on_px >= 15 and on_px > 3 * away_px, (away_px, on_px))
+
+# The button: a press puts the words in the pill (through agentd), and nothing runs.
+n = mark()
+pointer(f"move {tbox[0] + 54} {tbox[1] + 262}")
+time.sleep(0.3)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+pressed = wait(lambda m: m.get("type") == "summon" and m.get("tip") is True, 10, n)
+check("the button sends the tip's exact words to agentd, which gives them to the pill as a tip's",
+      pressed and pressed.get("text") == "Make me a ticketing app", pressed)
+check("and nothing runs on a press: no turn starts",
+      wait(ev("turn_start"), 3, n) is None and pill_state().get("mode") == "idle", pill_state().get("mode"))
+time.sleep(0.5)
+shot("45-tips-words-in-the-pill")
+
+# The person's own Enter runs them as their ask, which tries the tip; 12 s after the turn ends the card turns.
+n = mark()
+key("Return")
+started = wait(ev("turn_start", prompt="Make me a ticketing app"), 10, n)
+check("Enter sends the words as the person's ask", started, started)
+ended = wait(ev("turn_end"), 60, n)
+turned = wait(lambda m: m.get("type") == "tips" and (m.get("card") or {}).get("id") == "picture", 40, n)
+check("12 s after the turn ends agentd turns the card to the next tip",
+      ended and turned and turned["_t"] - ended["_t"] > 8, turned and ended and turned["_t"] - ended["_t"])
+time.sleep(1)
+st = desk_state()
+shot("46-tips-card-turned")
+check("the shell shows it, and the card stayed up through the turn",
+      st["faces"]["tips"] == "full" and (st.get("tips") or {}).get("id") == "picture", (st.get("faces"), st.get("tips")))
+tips_file = json.loads((Path.home() / ".local" / "state" / "bombadil" / "tips.json").read_text())
+check("tips.json keeps that the first was tried (and nothing about the second)",
+      "make-an-app" in tips_file.get("tried", []) and "picture" not in tips_file.get("tried", []), tips_file)
+
+# The x puts Tips away, the same as the words "hide tips".
+tslot = desk_state()["slots"]["tips"]
+pointer(f"move {tslot['x'] + 150} {tslot['y'] + 120}")
+time.sleep(0.8)
+pointer(f"move {tslot['x'] + 300 - 8 - 12} {tslot['y'] + 8 + 12}")
+time.sleep(0.3)
+n = mark()
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+gone = wait(lambda m: m.get("type") == "tips" and m.get("present") is False, 10, n)
+time.sleep(1.2)
+st = desk_state()
+shot("47-tips-put-away")
+check("the x puts Tips away: the card goes and agentd stops saying it",
+      gone and st["faces"]["tips"] == "hidden" and "tips" in st["hidden"], (st.get("faces"), st.get("hidden")))
+check("the Tips card raised no QML error",
+      not [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text()).splitlines()
+           if re.search(r"TipsCard|Tips[A-Z]\w*\.qml", ln) and re.search(r"\.qml\[|\.qml:\d+|Unable to assign|TypeError", ln)],
+      "")
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

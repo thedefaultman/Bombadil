@@ -201,6 +201,7 @@ Each of these forks; I picked a default and say why, with the alternative for th
 - **Answer cards are typed JSON drawn by the shell; agent QML later in its own process:** the same rule now covers widgets.
 - **Rewind folds into Time; the Map's colours:** unchanged; Away opens Time, the desk uses the Map's colours, and a corner of the Map lives on the desk only after "show alive".
 - **The agent never starts work on its own:** kept, and extended to the desk: the `desk` tool works only in a turn that asked for the desk.
+- **Seven widgets:** an eighth, Tips, sits at the top of the right rail in a new person's first week, a still card with one tip, a picture and a button that puts its words in the pill. It is designed in [`tips-and-desk-defaults-brief.md`](tips-and-desk-defaults-brief.md) and built as [`../TIPS.md`](../TIPS.md#the-tips-card-on-the-desk) says; it follows the desk's rules above (folds under a window, strip when narrow, hidden under full screen, put away with "hide tips").
 - **Home exclusions from the restore points:** unchanged; the desk's state lives in ~/.local/state/bombadil, which is already excluded.
 - **Several monitors:** still open; the desk is on the pill's screen.
 

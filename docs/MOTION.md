@@ -82,6 +82,7 @@ the same `make_engine`, so a check sees what the window sees.
 | A desk card folding or unfolding | opacity and scale, 150 ms out, 400 ms back | instant; the 400 ms wait before it returns stays, it is a delay |
 | A strip a card folded into | fades in over the fold's 150 ms | there at once |
 | The pill's width | eases over 150 ms as cards and windows come and go | instant |
+| The Tips card turning a tip, and its arrows and x | the picture, line and button crossfade over 200 ms; the arrows and x fade in over 120 ms with the pointer | instant; nothing on the card moves otherwise (no timer, no loop) |
 | A new row on a card | its colour washes the card's left edge for 600 ms | no wash; the row is there |
 | The ring around a live dot | breathes from small and strong to large and gone, 2 s | holds still, at 1.2 times and 60 % |
 | The line above the pill, the picture above it, the AI card, the chips | fade 200 ms, grow 120 ms, border colours 120 to 300 ms | instant |
