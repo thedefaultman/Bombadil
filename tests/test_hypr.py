@@ -215,6 +215,20 @@ def test_a_drawer_that_shows_is_put_away_before_the_terminal_opens(drawer):
     assert [c[0] for c in calls] == [["foot"]]
 
 
+def test_the_terminal_does_not_carry_hyprlands_workspace_token(monkeypatch):
+    # The Super+Return bind starts `bombadil terminal` with HL_INITIAL_WORKSPACE_TOKEN set to the drawer that
+    # showed when the keys went down; a window started with it opens there for a few seconds, whatever was
+    # put away since (seen in the VM: the drawer gone, the terminal on special:browser).
+    monkeypatch.setenv("HL_INITIAL_WORKSPACE_TOKEN", "64ba0aa6-b071-4270-a750-600d99f97d22")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    calls, spawn = _spawned()
+    Terminals(showing="special:browser").open_terminal(spawn)
+    env = calls[0][1]["env"]
+    assert "HL_INITIAL_WORKSPACE_TOKEN" not in env
+    assert env["WAYLAND_DISPLAY"] == "wayland-1"
+    assert hypr.os.environ["HL_INITIAL_WORKSPACE_TOKEN"]    # the process's own environment is left alone
+
+
 def test_the_terminal_drawer_is_left_showing_for_the_terminal_that_opens_in_it():
     calls, spawn = _spawned()
     h = Terminals(showing="special:terminal")
