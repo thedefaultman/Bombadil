@@ -1,11 +1,13 @@
 """The scene vocabulary and its validator (src/bombadil/tip_scene.py), without Qt.
 
 The tips table's own tests call `validate` on every row; these check the validator itself, that the
-timing and vocabulary the renderer's JS keeps are the ones this module keeps.
+timing and vocabulary the renderer's JS keeps are the ones this module keeps, and that docs/TIP-SCENES.md
+lists the whole vocabulary and its example is a valid scene.
 """
 
 import copy
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ from bombadil import tip_scene as ts
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = (ROOT / "share" / "qml" / "Bombadil" / "TipScene.js").read_text()
+DOC = ROOT / "docs" / "TIP-SCENES.md"
 
 
 def tip(*beats, captions=("You ask", "It works", "You see it"), **more):
@@ -249,3 +252,22 @@ def test_the_renderer_keeps_the_same_vocabulary_as_the_validator():
     assert js_list("MODIFIERS") == list(ts.MODIFIERS)
     labels = re.search(r"^var KEY_LABELS = \{([^}]*)\}", JS, re.MULTILINE).group(1)
     assert dict(re.findall(r'(\w+):\s*"([^"]+)"', labels)) == ts.KEYS
+
+
+# -- the documentation lists the whole vocabulary --
+
+def test_the_documentation_names_every_beat_key_value_and_tag():
+    doc = DOC.read_text()
+    for word in (*ts.DRAWS, *ts.MODIFIERS, *ts.KEYS, *ts.FACES, *ts.TONES, *ts.TAGS, *ts.CARDS, *ts.FROM,
+                 *ts.NOW_STATES):
+        assert f"`{word}`" in doc, word
+    for seconds in (ts.MAX_SECONDS, *ts.TARGET_SECONDS):
+        assert str(seconds) in doc
+
+
+def test_the_documentations_example_is_a_valid_scene():
+    block = re.search(r"```toml\n(.*?)```", DOC.read_text(), re.DOTALL).group(1)
+    beats = tomllib.loads(block)["beats"]
+    tip = {"captions": ["You ask", "It builds", "You have it"], "beats": beats}
+    assert ts.validate(tip) == []
+    assert set(ts.DRAWS) & {k for b in beats for k in b} >= {"key", "type", "stone", "line", "window"}
