@@ -37,6 +37,7 @@ flowchart LR
     CLI["claude -p or codex exec, in full-access mode, providers.py"]
     MCP["bombadil-os-mcp: the OS as tools"]
     APPS["generated apps: ~/Apps/name/main.qml, run natively by bombadil-app"]
+    DEV["coding sessions: claude, codex or a shell in zellij, each in its own systemd scope, started by dev.py"]
     HYPR -->|"start hook"| UNITS
     SHELL <-->|"agentd.sock"| AGENTD
     AGENTD --> SNAP
@@ -44,17 +45,22 @@ flowchart LR
     CLI <-->|"MCP over stdio"| MCP
     MCP --> HYPR
     MCP --> APPS
+    AGENTD -->|"starts, by the person's words"| DEV
+    DEV -.->|"hooks run bombadil-signal"| AGENTD
+    AGENTD -.->|"dev message: the dots"| SHELL
 ```
 
 | Piece | What it does |
 |---|---|
-| `bin/agentd` | The session daemon. Runs as a systemd user service (`bombadil-agentd`, like the bar's `bombadil-shell`) that Hyprland's start hook starts; systemd starts it again a second after it dies (`Restart=always`). Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, takes a restore point where snapper is set up, runs one provider turn, streams events to every connected client, logs the turn. |
+| `bin/agentd` | The session daemon. Runs as a systemd user service (`bombadil-agentd`, like the bar's `bombadil-shell`) that Hyprland's start hook starts; systemd starts it again a second after it dies (`Restart=always`). Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, takes a restore point where snapper is set up, runs one provider turn, streams events to every connected client, logs the turn. It also keeps the coding sessions' registry (`src/bombadil/dev.py`) and sends the `dev` message that the dots above the pill's left end are drawn from, and it sends the `away` message of the Away card (`src/bombadil/away.py`). |
 | `bin/bombadil-os-mcp` | MCP server both CLIs load. Tools: `show_panel`, `hide_panel`, the app tools (`app_guide`, `create_app`, `check_app`, `open_app`, `show_app`, `hide_app`, `close_app`, `app_status`, `list_apps`, `app_template`), `show_card`, `system_map` (pictures), the mail tools (`mail_search`, `mail_read`, `mail_mark`, `mail_draft`, `mail_show`; none of them sends), `screenshot`, `snapshot`, `list_snapshots`, `rollback`, `notify`, `desk` (arranges the widgets beside the pill, only when the person asked for the desk), `job` (background jobs, watchers and timers for the Watching card). |
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) in its own slide-in drawer with hot reload; `bombadil-app check` loads one offscreen and returns errors and a screenshot. |
-| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `stop`, `undo`, `provider claude\|codex`, `signin`, `open URL`, `pill` (gives the pill the keyboard; Hyprland runs it on a Super tap), `watch` (every step of the last turn), `history` (recent turns), `view` (the details drawer's viewer), `brain …` and `mail …`. Every command is in [the reference](docs/reference.md#commands). |
+| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `stop`, `undo`, `provider claude\|codex`, `signin`, `open URL`, `pill` (gives the pill the keyboard; Hyprland runs it on a Super tap), `watch` (every step of the last turn), `history` (recent turns), `view` (the details drawer's viewer), `dev list|next|why|run` (the coding sessions: what each is doing, the next one waiting for you, the last screen of one that stopped, a session's tool run inside its pane), `brain …` and `mail …`. Every command is in [the reference](docs/reference.md#commands). |
 | `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
 | `bin/bombadil-shell` | Starts the bar: Quickshell on `shell/shell.qml`, with `share/qml` on its import path so the shell can `import Bombadil`. Every launcher (the `bombadil-shell` unit that Hyprland's start hook starts, `scripts/dev-session.sh`) runs this, never `quickshell` directly. |
-| `shell/shell.qml` | The Quickshell bar: the pill, the line above it, the desk. Its colours, sizes and type are `Theme`'s (`shell/DeskTheme.js` mirrors them for the desk; `tests/test_theme.py` keeps the two equal). |
+| `bin/bombadil-signal` | What the coding tools' hooks run (the managed settings are in `iso/airootfs/etc/claude-code/managed-settings.d/50-bombadil.json`, `iso/airootfs/etc/codex/requirements.toml` and `iso/airootfs/etc/codex/config.toml`). It passes a trimmed message (`dev-signal`) to agentd so the dots above the pill's left end know whose turn it is, never prints and never fails, and skips the machine's own agent. |
+| `src/bombadil/dev.py` | The coding sessions: named `claude`, `codex` or `shell` sessions, each in an invisible `zellij` session (`share/zellij/config.kdl`) in its own systemd user scope (where systemd can make one), so closing the window leaves it running and typing the name (`claude acme`, `reviewer`) brings it back. The bar shows one chip per project with a dot per session (`shell/DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`) ([coding sessions](docs/architecture/coding-sessions.md)). |
+| `shell/shell.qml` | The Quickshell bar: the pill, the line above it, the session chips above the pill's left end (the empty pill says which coding session waits for you, and Tab walks to it), the desk (its Away card says what happened while the person was gone, and appears when asked for with "show away"). Its colours, sizes and type are `Theme`'s (`shell/DeskTheme.js` mirrors them for the desk; `tests/test_theme.py` keeps the two equal). |
 | `share/qml/Bombadil` | The app kit (`import Bombadil`): `Theme`, the tokens the shell and every app share, the OS look for every Qt Quick control, components (AppWindow, Panel, lists, tables, forms, editor, charts) and native bindings (System, Processes, Store, Vault, Command, ...). |
 | `share/skills/bombadil-apps` | The skill both CLIs load to build apps with the kit in one shot, with two example apps. |
 | `bin/bombadil-mail` | The mail service, a user unit (`bombadil-mail.service`). Owns `$XDG_RUNTIME_DIR/bombadil/mail.sock` and `mail.db` in the state folder, keeps Thunderbird running unseen on the `mail-engine` special workspace as the engine for every account, and answers the Mail window, agentd and `bombadil mail`. Keeps no mail text, and nothing in it sends except a press on Send ([mail](docs/architecture/mail.md)). `BOMBADIL_MAIL_ENGINE=fake` runs it on sample mailboxes. |
@@ -90,6 +96,8 @@ scripts/dev-session.sh                     # bar, agentd and Mail on sample mail
 BOMBADIL_PROVIDER=claude scripts/dev-session.sh   # the fake provider is the default
 ```
 
+Coding sessions (`claude acme` in the pill, for a folder `~/Projects/acme`) also need `zellij` and `foot` on that desktop; `BOMBADIL_PROJECTS` points at another projects folder.
+
 Build and boot the ISO (an Arch host with `archiso` and `npm`, or `scripts/build-in-container.sh` on any
 Linux with Docker or Podman; `qemu` to boot it):
 
@@ -118,6 +126,8 @@ screenshots, the smoke checks, scratch copies to try a branch on); see its READM
 ## Status
 
 The first milestone (the session daemon, the OS tools, native apps, the ISO) is built and tested
-without a display where it can be, and the pill, the desk, the sign-in, the brain, Mail and the app kit have
-been added on top of it. Which pieces are shipped, in progress and only designed is in
+without a display where it can be, and the pill, the desk (with its Away card), the sign-in, the brain, Mail, the app kit and
+coding sessions (named sessions of Claude Code, Codex or a shell that outlive their window, with a dot each above the pill's left end; a second Claude or Codex session on a git repository gets its own `git worktree`)
+have been added on top of it. The rest of the fence (no `sudo`, ports and limits), undo per session, handing words across (`tell`, `give`, `review`) and shipping are only designed.
+Which pieces are shipped, in progress and only designed is in
 [the roadmap](docs/roadmap.md); what is still broken is in [known issues](docs/known-issues.md).
