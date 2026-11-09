@@ -1216,7 +1216,11 @@ def _agentd(monkeypatch, tmp_path, provider, **kw):
         rest = asyncio.all_tasks(loop)
         for t in rest:
             t.cancel()
-        loop.run_until_complete(asyncio.gather(*rest, return_exceptions=True))
+
+        async def drain():      # gather() outside a running loop asks for the thread's current loop when `rest` is empty
+            await asyncio.gather(*rest, return_exceptions=True)
+
+        loop.run_until_complete(drain())
         loop.close()
 
     thread = threading.Thread(target=serve, daemon=True)
