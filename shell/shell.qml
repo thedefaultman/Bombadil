@@ -240,6 +240,8 @@ ShellRoot {
             readonly property bool onDesk: modelData.name === root.deskScreen
             readonly property bool capsule: onDesk && deskState.capsule
             readonly property real pillMax: onDesk ? deskState.pillWidth : Kit.Theme.pillMaxWidth
+            // A picture beside a window is wider than the pill (see DeskState.pictureTarget).
+            readonly property real pictureMax: onDesk ? deskState.pictureWidth : Kit.Theme.pillMaxWidth
             anchors { left: true; right: true; bottom: true }
             implicitHeight: column.implicitHeight + 24
             color: "transparent"
@@ -363,9 +365,10 @@ ShellRoot {
                     id: cardHost
                     visible: status === Loader.Ready && item !== null && item.opacity > 0
                     Layout.fillWidth: true
-                    // As wide as the pill, so it stays between the desk's rails; a message or a task needs less.
+                    // As wide as the pill, so it stays between the desk's rails; beside a window, up to
+                    // about 560 where the rails leave the room (the pill is 360 then). A message or a task needs less.
                     Layout.maximumWidth: {
-                        const wide = Math.max(360, win.pillMax)
+                        const wide = Math.max(360, win.pictureMax)
                         const want = cardHost.item ? cardHost.item.preferredWidth : 0
                         return want > 0 ? Math.min(want, wide) : wide
                     }

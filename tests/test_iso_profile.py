@@ -605,3 +605,79 @@ def test_the_desktop_test_starts_connections_on_the_fake_engine_before_agentd_wi
     # The bus, then the service, then agentd and the shell, which all take the same environment.
     order = [driver.index(s) for s in ('start("dbus"', 'start("connect"', 'start("agentd"', 'start("quickshell"')]
     assert order == sorted(order)
+
+
+# -- the smoke's picture checks, in a guest with no KVM --
+
+GAVE_UP = "Could not read the network: ip did not answer."
+DRAWN = "Your network is up.\\n(shown above the bar)"
+BOOT_DRAWN = "What takes longest when you boot\\n2.5 s: tmpfiles\\n2.1 s: nsresourced\\n1 s: NetworkManager\\n(shown above the bar)"
+
+
+def _run_picture(tmp_path, answers, kind="network", target=""):
+    """The smoke's own picture() function, in bash, with os-mcp stood in for by `answers` (one per try,
+    the last one repeated). Returns (exit code, the scales each try asked for, what wait_for was given)."""
+    import subprocess
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    start = smoke.index("picture() {")
+    body = smoke[start:smoke.index("\n}\n", start) + 3]
+    (tmp_path / "answers").write_text("\n".join(answers) + "\n")
+    script = f'''
+d={tmp_path}
+say() {{ echo "SAY $*"; }}
+wait_for() {{ echo "$*" >>"$d/waits"; return 0; }}
+calm() {{ return 0; }}
+as_user() {{
+  cat >/dev/null
+  local n; n=$(( $(cat "$d/count" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$d/count"
+  echo "$2" >>"$d/scales"
+  local line; line=$(sed -n "${{n}}p" "$d/answers"); [[ -n "$line" ]] || line=$(tail -1 "$d/answers")
+  echo "$line"
+}}
+{body}
+picture {kind} {target}
+echo "RC=$?"
+'''
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    rc = int(re.search(r"RC=(\d+)", r.stdout).group(1))
+    read = lambda name: (tmp_path / name).read_text().split() if (tmp_path / name).exists() else []
+    return rc, read("scales"), read("waits"), r.stderr
+
+
+def test_a_capture_that_gave_up_in_a_busy_guest_is_asked_again_with_more_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [GAVE_UP, GAVE_UP, DRAWN])
+    assert rc == 0
+    assert scales == ["BOMBADIL_BUDGET_SCALE=1", "BOMBADIL_BUDGET_SCALE=4", "BOMBADIL_BUDGET_SCALE=12"]
+    assert waits == ["90", "calm", "90", "calm"]                 # the guest is let settle before each new try
+    assert "(try 3, 12x the time)" in log and "ip did not answer" in log
+
+
+def test_a_capture_that_works_the_first_time_asks_once_with_the_usual_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [DRAWN])
+    assert (rc, scales, waits) == (0, ["BOMBADIL_BUDGET_SCALE=1"], [])
+    assert "(try 1, 1x the time)" in log
+
+
+def test_a_capture_that_never_answers_fails_after_three_tries(tmp_path):
+    rc, scales, _, _ = _run_picture(tmp_path, [GAVE_UP])
+    assert rc == 1 and len(scales) == 3
+
+
+def test_a_picture_in_the_wrong_shape_fails_at_once_and_is_not_asked_again(tmp_path):
+    rc, scales, waits, _ = _run_picture(tmp_path, ["something else entirely"])
+    assert (rc, len(scales), waits) == (1, 1, [])
+    # The boot must still be more than its last line, whatever the wait.
+    rc, scales, _, _ = _run_picture(tmp_path / "b", ["The boot took 10 s.\\n10.1 s: graphical.target\\n(shown above the bar)"], "boot") \
+        if (tmp_path / "b").mkdir() is None else (None, None, None, None)
+    assert rc == 1 and len(scales) == 1
+    (tmp_path / "c").mkdir()
+    assert _run_picture(tmp_path / "c", [GAVE_UP, BOOT_DRAWN], "boot")[0] == 0
+
+
+def test_the_smoke_waits_for_a_calm_guest_before_its_pictures_and_defines_calm_once():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert smoke.count("calm() {") == 1
+    waited = smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"')
+    assert smoke.index("calm() {") < waited < smoke.index("for kind in network boot disks sound screens")
+    assert smoke.index("calm() {") < smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"')
+    assert "BOMBADIL_BUDGET_SCALE" in smoke

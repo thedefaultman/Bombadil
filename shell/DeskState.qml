@@ -18,18 +18,21 @@ QtObject {
     signal windowOpened()
     // A button or a small x on a rows card was pressed, or a row that opens something was tapped.
     // DeskState answers the ones that are its own (Why? and the x on Watching, Open on Needs you, the
-    // disk on Machine); the signals stay open for anyone else.
+    // disk on Machine, and on Away its Open and Why? and a tap on a row, which says it was seen); the
+    // signals stay open for anyone else.
     signal rowAction(string widget, string key, string action)
     signal rowRemove(string widget, string key)
     signal rowOpen(string widget, string key, string opens)
     onRowAction: (widget, key, action) => {
         if (widget === "watching" && action === "Why?") outgoing({ type: "jobs", op: "why", id: key })
         else if (widget === "needs" && action === "Open") outgoing({ type: "dev", action: "open", key: key })
+        else if (widget === "away") _awayAct(key, action)
     }
     onRowRemove: (widget, key) => { if (widget === "watching") _removeJob(key) }
     // Never a prompt: agentd shows what is behind the row and answers nothing else.
     onRowOpen: (widget, key, opens) => {
         if (widget === "machine" && opens !== "") outgoing({ type: "vitals", op: "open", row: opens })
+        else if (widget === "away" && opens === "seen") awaySeen()      // a tap on an Away row is having looked
     }
 
     // Left rail first, in the default order, then right.
@@ -64,8 +67,8 @@ QtObject {
     property string nowStripText: "working"
     // Rows cards: {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, parts, pulse,
     // button, remove, opens}]} and an optional strip: {text, dot, ring, mark, textColor, outlined}.
-    // Watching, Needs you and Machine are filled from agentd's `jobs`, `dev` and `machine` messages
-    // (below), the others by later pieces.
+    // Watching, Needs you, Away and Machine are filled from agentd's `jobs`, `dev`, `away` and `machine`
+    // messages (below), Alive by a later piece.
     property var watchModel: ({ title: "Watching", why: "", rows: [] })
     property var needsModel: ({ title: "Needs you", why: "", rows: [] })
     property var awayModel: null
@@ -155,13 +158,20 @@ QtObject {
     // must not let the pill widen for the 400 ms the cards take to come back.
     readonly property bool anyFull: widgetIds.some(id => present[id] && mode !== "immersive" && !folded
                                                         && !narrow && _stack.fit[id] === true)
+    readonly property real stageRoom: Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
+                                                                              + T.stripGap + T.railMargin)))
     readonly property real pillTarget: mode === "immersive" ? 100
         : mode === "shared" ? 360
-        : Math.max(360, Math.min(900, screenWidth - 2 * (Math.max(leftStripsWidth, rightStripsWidth, anyFull ? T.cardWidth : 0)
-                                                        + T.stripGap + T.railMargin)))
+        : stageRoom
+    // A picture above the pill is the conversation's, not the pill's: beside a window the pill narrows to
+    // 360, but a picture asked for may take about 560 (less on a screen whose rails and strips leave
+    // less room), so its labels and rows read. Without a window it is as wide as the pill.
+    readonly property real pictureTarget: mode === "shared" ? Math.min(560, stageRoom) : pillTarget
     property int pillAnimMs: 150
     property real pillWidth: pillTarget
     Behavior on pillWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
+    property real pictureWidth: pictureTarget
+    Behavior on pictureWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
 
     // -- the rails --
 
@@ -419,6 +429,7 @@ QtObject {
         if (ev.type === "jobs") { _applyJobs(ev); return }
         if (ev.type === "dev") { _applyDev(ev); return }
         if (ev.type === "machine") { _applyMachine(ev); return }
+        if (ev.type === "away") { _applyAway(ev); return }
         if (ev.type === "status") {
             if (ev.busy && ev.turn !== undefined && ev.turn !== null && _phase === "idle") {
                 // The bar (re)connected in the middle of a turn; agentd sends its plan next.
@@ -497,6 +508,8 @@ QtObject {
         if (sessions.length > 0 || attention.length > 0) { sessions = []; attention = []; _refreshNeeds() }
         // Nor Machine's readings, which are agentd's; it sends the card again with the desk.
         if (machineModel !== null) machineModel = null
+        // Nor what Away held: it is agentd's, and a bar that connects is told it again.
+        if (awayModel !== null) awayModel = null
     }
 
     onConnectedChanged: {
@@ -830,6 +843,54 @@ QtObject {
         if (JSON.stringify(next) !== JSON.stringify(machineModel)) machineModel = next
     }
 
+    // -- Away: what happened while the person was gone --
+
+    // What a row may say: dots and plain lines, a button that is one of these. A row is agentd's words, so
+    // only its shape is held here: known kinds, known tones, no row without a key, nothing past the sixth.
+    // Every row "opens" its own having been seen: a tap on a row puts the card away (so does one on its header).
+    readonly property var awayButtons: ["Open", "Why?"]
+    readonly property int awayMaxRows: 6
+
+    function _cleanAwayRows(list) {
+        const out = []
+        for (const r of (Array.isArray(list) ? list : [])) {
+            if (out.length >= awayMaxRows) break
+            if (!r || typeof r !== "object" || _text(r.key) === "" || (r.kind !== "dot" && r.kind !== "plain")) continue
+            if (out.some(o => o.key === r.key)) continue
+            out.push({ key: r.key, kind: r.kind, title: _text(r.title), sub: _text(r.sub), meter: null, meterText: "",
+                       tone: _machineTone(r.tone), pulse: false,
+                       button: awayButtons.indexOf(r.button) >= 0 ? r.button : "", remove: false, opens: "seen" })
+        }
+        return out
+    }
+
+    // agentd's away message is the whole card, or says there is none (no rows). Whatever it gets wrong is dropped.
+    function _applyAway(ev) {
+        const rows = _cleanAwayRows(ev.rows)
+        let next = null
+        if (rows.length > 0) {
+            const n = typeof ev.count === "number" && isFinite(ev.count) ? Math.max(0, Math.floor(ev.count)) : rows.length
+            next = { title: "While you were away", why: _text(ev.why), rows: rows,
+                     strip: { text: n === 0 ? "back · nothing new" : "back · " + n + (n === 1 ? " thing" : " things"),
+                              dot: "", ring: false, outlined: false } }
+        }
+        if (JSON.stringify(next) !== JSON.stringify(awayModel)) awayModel = next
+    }
+
+    // The person looked at the card, so it can go; agentd takes it away and says so. A button does what it says
+    // first ("dev:reviewer" opens that session, "job:3" shows what that job said).
+    function awaySeen() {
+        if (awayModel !== null) outgoing({ type: "away", op: "seen" })
+    }
+
+    function _awayAct(key, action) {
+        const at = String(key).indexOf(":")
+        const id = at >= 0 ? String(key).slice(at + 1) : ""
+        if (action === "Open" && String(key).startsWith("dev:") && id !== "") outgoing({ type: "dev", action: "open", key: id })
+        else if (action === "Why?" && String(key).startsWith("job:") && id !== "") outgoing({ type: "jobs", op: "why", id: id })
+        awaySeen()
+    }
+
     // -- what the desk asks agentd to do (the state comes back as a `desk` message) --
 
     // "desk": every card folds to its strip, and back.
@@ -973,7 +1034,7 @@ QtObject {
             slots: slots, windows: windows,
             strips: { left: leftStrips.map(s => s.text), right: rightStrips.map(s => s.text) },
             now: { visible: nowVisible, phase: _phase, model: nowModel },
-            watching: watchModel, needs: needsModel, machine: machineModel, needsYou: needsYou,
+            watching: watchModel, needs: needsModel, machine: machineModel, away: awayModel, needsYou: needsYou,
             face: pill ? pill.face : "", drag: drag, dropTarget: dropTarget, settling: settling
         }
     }

@@ -879,6 +879,69 @@ def test_every_capture_finishes_inside_its_budget_when_a_command_hangs():
     assert time.monotonic() - t0 < 1.0
 
 
+def _budgets_seen(monkeypatch, scale, kind, **kw):
+    """The time each command of one capture is given, with BOMBADIL_BUDGET_SCALE set (or not)."""
+    seen = []
+
+    def rec(argv, budget=0.5):
+        seen.append(budget)      # answers nothing, so every capture says it could not read
+
+    if scale is None:
+        monkeypatch.delenv("BOMBADIL_BUDGET_SCALE", raising=False)
+    else:
+        monkeypatch.setenv("BOMBADIL_BUDGET_SCALE", scale)
+    with pytest.raises(sysmap.Unavailable):
+        sysmap.capture(kind, run_=rec, **kw)
+    return set(seen)
+
+
+def test_a_machine_that_is_slow_all_the_time_can_give_every_capture_longer(monkeypatch):
+    # An emulated guest with no KVM: `ip` and `systemd-analyze` take 6 to 10 s while it is busy.
+    assert _budgets_seen(monkeypatch, None, "disks") == {sysmap.BUDGET}
+    assert _budgets_seen(monkeypatch, "4", "disks") == {sysmap.BUDGET * 4}
+    assert _budgets_seen(monkeypatch, "4", "sound") == {sysmap.BUDGET * 4}
+    assert _budgets_seen(monkeypatch, "4", "screens") == {sysmap.BUDGET * 4}
+    assert _budgets_seen(monkeypatch, "4", "network") == {sysmap.BUDGET * 4}
+    assert _budgets_seen(monkeypatch, "4", "boot") == {sysmap.BOOT_BUDGET * 4}      # the slow-by-nature one scales too
+    assert _budgets_seen(monkeypatch, "4", "service", target="sshd") == {sysmap.BUDGET * 4}
+
+
+def test_the_scale_is_read_each_time_kept_between_1_and_20_and_never_breaks_a_capture(monkeypatch):
+    assert _budgets_seen(monkeypatch, "0.2", "disks") == {sysmap.BUDGET}            # never shorter than usual
+    assert _budgets_seen(monkeypatch, "100", "disks") == {sysmap.BUDGET * 20}
+    for junk in ("", "fast", "nan", "-3", "1e999x"):
+        assert _budgets_seen(monkeypatch, junk, "disks") == {sysmap.BUDGET}, junk
+    assert _budgets_seen(monkeypatch, "1.5", "disks") == {sysmap.BUDGET * 1.5}
+
+
+def test_a_budget_that_was_asked_for_is_exact_whatever_the_scale(monkeypatch):
+    # A receipt's snapshot asks for its own budget, and a turn must not wait longer because of the scale.
+    assert _budgets_seen(monkeypatch, "4", "disks", budget=0.3) == {0.3}
+    assert _budgets_seen(monkeypatch, "4", "boot", budget=0.3) == {0.3}
+
+
+def test_the_provider_check_gets_the_scaled_time_too_and_a_receipt_keeps_the_usual_one(monkeypatch):
+    # The scale raised the time the capture waits for the provider check but not the check's own timeout
+    # (1.2 s), so on a slow machine a slow-failing first lookup was never tried again.
+    seen = []
+
+    def refuse(address, timeout=None):
+        seen.append(timeout)
+        raise OSError("slow")
+
+    monkeypatch.setattr(sysmap.socket, "create_connection", refuse)
+    for scale, want in (("1", 1.2), ("12", 18.8)):
+        seen.clear()
+        monkeypatch.setenv("BOMBADIL_BUDGET_SCALE", scale)
+        sysmap.capture("network", run_=fake(net_outputs()), read=lambda p: "", wireless=lambda d: True)
+        assert seen and seen[0] == pytest.approx(want, abs=0.1), scale
+    seen.clear()
+    monkeypatch.delenv("BOMBADIL_BUDGET_SCALE")
+    sysmap.capture("network", run_=fake(net_outputs()), read=lambda p: "", wireless=lambda d: True,
+                   budget=0.5, probe_budget=0.5)                 # what a receipt's snapshot asks for
+    assert seen and seen[0] == pytest.approx(1.2, abs=0.1)
+
+
 def test_a_slow_probe_leaves_the_provider_unanswered_not_the_picture_missing():
     def slow_probe(host):
         time.sleep(2)
