@@ -9,10 +9,12 @@ THEME_QML = ROOT / "share" / "qml" / "Bombadil" / "Theme.qml"
 
 def qml_theme():
     """{name: value} for every `readonly property <type> name: <literal>`: colours as "#AARRGGBB"
-    or "#RRGGBB" strings exactly as written, numbers as int or float, strings unquoted."""
+    or "#RRGGBB" strings exactly as written, numbers as int or float, strings unquoted. The motion
+    tokens (`reducedMotion ? 0 : 120`) are read as their designed value, 120."""
     out = {}
-    for name, raw in re.findall(r'readonly property (?:color|int|real|string) (\w+): ("[^"]*"|[\d.]+)',
-                                THEME_QML.read_text()):
+    for name, raw in re.findall(
+            r'readonly property (?:color|int|real|string) (\w+): (?:reducedMotion \? 0 : )?("[^"]*"|[\d.]+)',
+            THEME_QML.read_text()):
         if raw.startswith('"'):
             out[name] = raw.strip('"')
         else:

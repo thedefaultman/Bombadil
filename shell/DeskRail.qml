@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import Bombadil as Kit
 import "DeskTheme.js" as T
 
 // One rail's content: the card of every widget that lives on this side, each at its slot. A card
@@ -82,8 +83,8 @@ Item {
             scale: full ? 1 : 0.6
             visible: opacity > 0
             transformOrigin: rail.side === "left" ? Item.BottomLeft : Item.BottomRight
-            Behavior on opacity { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
-            Behavior on scale { NumberAnimation { duration: rail.desk.foldMs; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: Kit.Theme.duration(rail.desk.foldMs); easing.type: Easing.OutCubic } }
+            Behavior on scale { NumberAnimation { duration: Kit.Theme.duration(rail.desk.foldMs); easing.type: Easing.OutCubic } }
 
             Loader {
                 anchors.bottom: parent.bottom
