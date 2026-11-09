@@ -227,6 +227,16 @@ async def test_the_panel_slid_out_or_closed_is_noticed_and_show_brings_it_back(f
 
 
 @pytest.mark.asyncio
+async def test_a_tap_while_the_finished_sign_in_puts_its_page_away_does_not_open_the_page_again(fake):
+    panel = FakePanel()
+    s = signin.SignIn(fake("never"), panel=panel)
+    s.url, s.phase, s.view = "https://login.example/page", "finishing", "closed"
+    s._over.set()          # the run is over; its page is being put away
+    await s.show()
+    assert panel.opened == [] and s.view == "closed"
+
+
+@pytest.mark.asyncio
 async def test_a_cli_that_is_missing_fails_at_once(home):
     class Missing(providers.Fake):
         def signin_command(self):
