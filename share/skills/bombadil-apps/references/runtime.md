@@ -131,7 +131,7 @@ your own with the same name takes its place.
   running, and errors and console lines still reach the status file when that can be
   written.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
-  calls do nothing, and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
+  calls do nothing (`Agent.ask` and `Agent.draft` included), and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
   throwaway test location (`~/.qttest`) instead of the user's `~/.config` and
   `~/.local/share`. `Command`s do run so the screenshot has real data. `App.checking` is
   true if an app wants to skip something during a check, and the check's environment has
