@@ -175,7 +175,10 @@ QtObject {
 
     // -- the rails --
 
-    readonly property int rowZone: 64   // the bar's exclusive zone: the rails stop above it
+    // The bar's exclusive zone, which the rails stop above. The shell sets it from the bar on the desk's
+    // screen: the chips rows above the pill (apps, coding sessions) add to it, and a rail laid out against
+    // the bare 64 would run on under them.
+    property int rowZone: 64
     readonly property real railBottomY: screenHeight - rowZone - T.railBottom
     readonly property real railHeight: railBottomY - T.railTop
 

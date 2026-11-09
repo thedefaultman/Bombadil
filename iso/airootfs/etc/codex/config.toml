@@ -1,0 +1,10 @@
+# Codex on Bombadil, the system layer: ~/.codex/config.toml sits above it, so a person's own
+# settings win, and a change here reaches installed machines with the package (a skel copy
+# never updates, and Codex writes project trust into the user's file).
+# `notify` tells the dots beside the pill when a turn is done, and the terminal notification
+# goes out as OSC 9 (zellij passes it on to foot).
+notify = ["bombadil-signal", "codex-notify"]
+check_for_update_on_startup = false
+
+[tui]
+notification_method = "osc9"

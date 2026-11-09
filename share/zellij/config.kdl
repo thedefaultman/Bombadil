@@ -1,0 +1,20 @@
+// zellij as Bombadil runs it for coding sessions: an invisible host that keeps a session alive
+// when its window closes, never a thing you see or learn. One pane, no bars, no frames, no keys
+// of its own (every key goes to Claude Code, Codex or the shell), and no tips on start.
+// Used with `zellij --config` for these sessions only; your own zellij config is untouched.
+keybinds clear-defaults=true {
+}
+default_mode "locked"
+pane_frames false
+show_startup_tips false
+show_release_notes false
+on_force_close "detach"
+// Resume goes through the tool's own session id, so zellij never resurrects anything itself.
+session_serialization false
+support_kitty_keyboard_protocol true
+// The tools' notifications (OSC 9, 99, 777 and the bell) reach foot as OSC 99.
+host_notification_protocol "osc99"
+scroll_buffer_size 50000
+mouse_hover_effects false
+advanced_mouse_actions false
+mouse_scroll_resize false

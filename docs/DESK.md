@@ -267,9 +267,10 @@ nothing.
   signal that is still on its own branch; until it lands the card comes when it is asked for, and
   `Away.back(since)` is the call that signal will make. Until then "since" is the person's ask before this
   one, which is a proxy for when they were last there: a turn they started and watched can show as news.
-- *No session rows yet.* agentd keeps no list of the coding sessions on this branch (the shell already
-  draws one from a `dev` message), so `AgentD._away_sessions()` gives none and the card is made of turns and
-  jobs. The rows for sessions are in `away.items` and tested; filling that one method is all they need.
+- *Session rows are the dots' own.* `AgentD._away_sessions()` hands over the coding sessions' views from
+  `dev.Dev.snapshot()` (the same ones the `dev` message sends), so a question that waited, or a session that
+  finished or stopped and has not been looked at, is a row that opens that session. A session that is only
+  working is not news. (`docs/dev-sessions.md` has the sessions' side.)
 - *No Undo, no Go back, no Time.* The brief's buttons for undoing just one thing and for going back to before
   it, and a tap that opens the Brain's Time view, wait for what they act on; a tap puts the card away.
 - *A turn that failed is only as readable as its first line.* The log keeps what the turn said at its end,

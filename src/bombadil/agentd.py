@@ -54,6 +54,9 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "notice_action", "id": n, "action": "open"}  a chip on a notice
                    {"type": "notice_dismiss", "id": n}  put a notice away
                    {"type": "status"}
+                   {"type": "dev", "action": "next"|"open"|"end"|"why", "key": "..."}
+                                                        coding sessions: Tab's walk, a dot's click
+                   {"type": "dev-signal", ...}          a coding tool's hook (bombadil-signal)
 Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"text"|"tool"|
                     "tool_result"|"file_change"|"result"|"error"|"turn_end"|"queued"|"unqueued"|
                     "local"|"card"|"plan", "turn": n, ...}
@@ -69,6 +72,8 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                                                         up to three things on this computer it nearly names (none:
                                                         the line says so); only offered, a press opens one
                    {"type": "summon", "text"?: "..."}
+                   {"type": "dev", "sessions": [...], "front", "attention", "line"}
+                                                        the coding sessions, for the dots (dev.py)
                    {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "rails": {...},
                     "order": {...}, "screen": ""}       the desk's state: to whoever asks, and on every change
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
@@ -197,8 +202,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from . import (browser, cards, config, finder, launcher, narrate, outbox, paths, procs, providers, rest, signin, snapshots,
-               sysmap, watch)
+from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, outbox, paths, procs, providers, rest,
+               signin, snapshots, sysmap, watch)
 from .away import Away
 from .brain import client as brain_client
 from .desk import Desk, asked_for_desk
@@ -274,14 +279,20 @@ class AgentD:
                  socket_path: Path | None = None, launch: launcher.Launcher | None = None,
                  stopper: procs.Stopper | None = None, explain: str = "normal", desk: Desk | None = None,
                  jobs: Jobs | None = None, chosen: bool = True, auto_signin: bool = False, panel=None,
-                 vitals: Vitals | None = None, away: Away | None = None):
+                 vitals: Vitals | None = None, sessions: dev.Dev | None = None, away: Away | None = None):
         self.provider = provider
         self.explain = explain                      # brief | normal | teach: at brief no receipts
         self.snaps = snaps or snapshots.Snapshots()
         self.socket_path = socket_path or paths.socket_path()
         # One desk: the launcher's words, the shell and the agent's tool all change this one.
         self.desk = desk or getattr(launch, "desk_state", None) or Desk().load()
-        self.launcher = launch or launcher.Launcher(snaps=self.snaps, desk=self.desk)
+        # Coding sessions (dev.py): their dots, and the words that bring them back.
+        self.dev = sessions if sessions is not None else dev.Dev()
+        self.dev.on_change = self._dev_changed
+        self._dev_dirty = False
+        self._dev_last: dict | None = None
+        self._signals: asyncio.Queue = asyncio.Queue()
+        self.launcher = launch or launcher.Launcher(snaps=self.snaps, desk=self.desk, sessions=self.dev)
         self.stopper = stopper or procs.Stopper()
         self.clients: dict[asyncio.StreamWriter, asyncio.Queue] = {}
         self.session_id: str | None = None
@@ -439,17 +450,15 @@ class AgentD:
         await asyncio.to_thread(procs.scope_supported)
         self._loop = asyncio.get_running_loop()
         server = await asyncio.start_unix_server(self._client, path=str(self.socket_path), limit=LINE_LIMIT)
-        worker = asyncio.create_task(self._worker())
+        tasks = [asyncio.create_task(t) for t in (self._worker(), self._watch_apps(), self._mail_watch.run(),
+                                                  self._dev_signals(), self._dev_watch(), self._follow_focus())]
         self._background(self.check_access(start=self.auto_signin))
-        watcher = asyncio.create_task(self._watch_apps())
-        mail = asyncio.create_task(self._mail_watch.run())
         self._jobs_kick()   # what a restarted agentd finds still running is counted again
         async with server:
             try:
                 await server.serve_forever()
             finally:
-                for task in (worker, watcher, mail, self._jobs_task, self._notices_task, self._rest_task,
-                             self._vitals_task):
+                for task in (*tasks, self._jobs_task, self._notices_task, self._rest_task, self._vitals_task):
                     if task is not None:
                         task.cancel()
 
@@ -458,15 +467,11 @@ class AgentD:
         self.clients[writer] = queue
         sender = asyncio.create_task(self._sender(writer, queue))
         self._peers[writer] = self._look_at(writer)
+        # The greeting is written beside the reading. A client that sends its line and leaves (a key
+        # bind, a script) makes a greeting write to its closed socket fail, and a failed write
+        # makes the next read raise even with its line already in the buffer: read first.
+        greeting = asyncio.create_task(self._greet(writer))
         try:
-            await self._send(writer, self._status())
-            await self._send(writer, await self._entries_msg())
-            await self._send(writer, self._setup_msg())
-            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
-                await self._send(writer, notice)
-            self._vitals_kick()
-            if self.away.up:
-                await self._send(writer, self.away.message())
             while line := await reader.readline():
                 try:
                     msg = json.loads(line)
@@ -474,6 +479,7 @@ class AgentD:
                     continue
                 if not isinstance(msg, dict):
                     continue
+                await greeting   # the greeting goes out before any answer
                 try:
                     await self.handle(msg, writer)
                 except Exception as e:  # noqa: BLE001 - one bad message never costs the connection
@@ -483,6 +489,7 @@ class AgentD:
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError, ValueError, OSError):
             pass
         finally:
+            greeting.cancel()
             self._peers.pop(writer, None)
             # The client hung up or half-closed: what is already queued for it still goes out.
             if self.clients.pop(writer, None) is not None:
@@ -493,6 +500,23 @@ class AgentD:
                     pass
             sender.cancel()
             writer.close()
+
+    async def _greet(self, writer: asyncio.StreamWriter):
+        """What a client hears on connecting: status, entries, setup, the coding sessions, the Away card."""
+        try:
+            await self._send(writer, self._status())
+            await self._send(writer, await self._entries_msg())
+            await self._send(writer, self._setup_msg())
+            for notice in self.notices.live():   # what nobody has ended yet, like the setup line
+                await self._send(writer, notice)
+            await self._send(writer, await asyncio.to_thread(self.dev.snapshot))
+            self._vitals_kick()
+            if self.away.up:
+                await self._send(writer, self.away.message())
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 - a client missing its greeting still has its connection
+            print(f"agentd: greeting: {type(e).__name__}: {e}", file=sys.stderr)
 
     async def handle(self, msg: dict, writer: asyncio.StreamWriter):
         t = msg.get("type")
@@ -560,6 +584,10 @@ class AgentD:
         elif t == "summon":
             text = _pill_words(msg.get("text"))
             await self.broadcast({"type": "summon", **({"text": text} if text else {})})
+        elif t == "dev-signal":
+            self._signals.put_nowait(msg)
+        elif t == "dev":
+            self._background(self.dev_action(str(msg.get("action", "")), str(msg.get("key", ""))))
         elif t == "card":
             await self._card_message(msg, writer)
         elif t == "desk":
@@ -632,7 +660,7 @@ class AgentD:
 
     async def _entries_msg(self) -> dict:
         try:
-            entries = await asyncio.to_thread(launcher.entries)
+            entries = await asyncio.to_thread(launcher.entries, None, self.dev)
         except Exception as e:  # noqa: BLE001 - a broken app folder must not cost the bar its words
             print(f"agentd: launcher entries: {type(e).__name__}: {e}", file=sys.stderr)
             entries = launcher.entries([])
@@ -641,17 +669,18 @@ class AgentD:
     async def _match(self, text: str) -> launcher.Action | None:
         try:
             # "why" is a launcher word only while a turn runs: then it asks about the step in front of you.
-            return await asyncio.to_thread(launcher.match, text, None, self.current is not None)
+            return await asyncio.to_thread(launcher.match, text, None, self.dev, self.current is not None)
         except Exception as e:  # noqa: BLE001 - when in doubt the agent gets the text
             print(f"agentd: launcher match: {type(e).__name__}: {e}", file=sys.stderr)
             return None
 
     async def _watch_apps(self):
-        """Tell the bar when an app appears or goes, so it can complete the new name."""
+        """Tell the bar when an app, a project or a session name appears or goes, so it can
+        complete the new name."""
         while True:
             await asyncio.sleep(3)
             try:
-                key = await asyncio.to_thread(_apps_key)
+                key = await asyncio.to_thread(lambda: (_apps_key(), _names_key(self.dev)))
                 if key != self._entries_key:
                     first = self._entries_key is None
                     self._entries_key = key
@@ -707,6 +736,98 @@ class AgentD:
                 print(f"agentd: {type(e).__name__}: {e}", file=sys.stderr)
         task.add_done_callback(done)
         return task
+
+    # -- coding sessions --
+
+    def _dev_changed(self):
+        """dev.Dev changed something the bar shows; called from whichever thread did it."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(self._dev_soon)
+
+    def _dev_soon(self):
+        if not self._dev_dirty:
+            self._dev_dirty = True
+            self._background(self._dev_broadcast())
+
+    async def _dev_broadcast(self):
+        await asyncio.sleep(0.03)   # a burst of hook events goes out as one message
+        self._dev_dirty = False
+        snap = await asyncio.to_thread(self.dev.snapshot)
+        if snap != self._dev_last:
+            self._dev_last = snap
+            await self.broadcast(snap)
+
+    async def _dev_signals(self):
+        """The tools' hooks, one at a time and in order: a prompt then its stop must not swap."""
+        for m in await asyncio.to_thread(dev.take_spool):
+            self._signals.put_nowait(m)
+        while True:
+            m = await self._signals.get()
+            try:
+                s = await asyncio.to_thread(self.dev.signal, m)
+            except Exception as e:  # noqa: BLE001 - one odd event never stops the dots
+                print(f"agentd: dev signal {m.get('event')!r}: {type(e).__name__}: {e}", file=sys.stderr)
+                continue
+            if s is not None and m.get("event") == "exit":
+                how = "stopped unexpectedly" if s.state == "failed" else "ended"
+                try:
+                    self._log_line({"t": time.time(), "kind": "dev", "action": how, "target": s.key,
+                                    "result": f"{s.title} {how}."})
+                except OSError as e:   # a full or read-only disk loses the log line, not the dots
+                    print(f"agentd: dev log: {e}", file=sys.stderr)
+
+    async def _dev_watch(self):
+        """Notice sessions that went away without a word (a crash, a kill from outside)."""
+        while True:
+            await asyncio.sleep(3)
+            try:
+                await asyncio.to_thread(self.dev.check)
+            except Exception as e:  # noqa: BLE001
+                print(f"agentd: checking sessions: {type(e).__name__}: {e}", file=sys.stderr)
+
+    async def _follow_focus(self):
+        """Which window is in front, from Hyprland's event socket: the session in front never
+        announces itself, and looking at a finished one is what makes it seen."""
+        while True:
+            path = hypr.events_path()
+            if path is None or not path.exists():
+                await asyncio.sleep(5)
+                continue
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(path))
+                try:
+                    # The events say only what changes: ask once what is in front now.
+                    await asyncio.to_thread(self.dev.look_at_front)
+                    while line := await reader.readline():
+                        ev, _, data = line.decode(errors="replace").rstrip("\n").partition(">>")
+                        cls = data.split(",", 1)[0]
+                        # The pill taking the keyboard is no window: the session stays in front.
+                        if ev == "activewindow" and cls:
+                            await asyncio.to_thread(self.dev.focused, cls)
+                finally:
+                    writer.close()
+            except (OSError, ValueError) as e:
+                print(f"agentd: Hyprland events: {e}", file=sys.stderr)
+            await asyncio.sleep(2)
+
+    async def dev_action(self, action: str, key: str):
+        """A dot clicked, Tab from the empty pill, a session's "Why?"."""
+        s = self.dev.sessions.get(key)
+        if action == "next":
+            ok, text = await asyncio.to_thread(self.dev.next)
+        elif s is None:
+            ok, text = False, "That session is gone."
+        elif action == "open":
+            ok, text = await asyncio.to_thread(self.dev.bring, s)
+        elif action == "end":
+            ok, text = await asyncio.to_thread(self.dev.end, s)
+        elif action == "why" and s.why:
+            await asyncio.to_thread(self.launcher.details, [launcher._bombadil(), "dev", "why", s.key])
+            ok, text = True, f"Opened the last screen of {s.title}."
+        else:
+            return
+        await self.event("local", turn=None, action="session", target=key, phase="done", ok=ok, text=text)
 
     # -- the desk --
 
@@ -807,8 +928,9 @@ class AgentD:
             self._vitals_asked(widget)
 
     def _away_sessions(self) -> list[dict]:
-        """The coding sessions' views, as the `dev` message sends them; none until agentd keeps any."""
-        return []
+        """The coding sessions' views, as the `dev` message sends them: the dots' own, so a question that
+        waited or a session that finished while the person was gone is a row of the Away card."""
+        return self.dev.snapshot()["sessions"]
 
     def _away_asked(self):
         try:
@@ -2193,6 +2315,9 @@ class AgentD:
             source = self.provider
         env = {**os.environ, **source.env()}
         env["BROWSER"] = _bombadil_browser()   # a link the agent opens slides the browser panel in
+        # The machine's own agent: the coding tools' managed hooks fire in its turns too, and
+        # bombadil-signal skips them by this mark.
+        env["BOMBADIL_OS"] = "1"
         if snap:
             # "undo that" runs in a turn of its own; the OS tools must roll back past this turn's
             # snapshot, not to it.
@@ -2769,6 +2894,10 @@ def _apps_key():
         return ()
     return tuple(sorted((p.name, (p / "app.toml").stat().st_mtime if (p / "app.toml").exists() else 0)
                         for p in root.iterdir() if (p / "main.qml").exists()))
+
+
+def _names_key(d: dev.Dev):
+    return tuple(sorted(e["name"] for e in d.names()))
 
 
 def main(argv: list[str] | None = None) -> int:
