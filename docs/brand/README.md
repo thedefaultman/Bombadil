@@ -54,7 +54,7 @@ Reduced motion (`BOMBADIL_REDUCE_MOTION=1`) turns the roll into a pulse (opacity
 holds the glow still at 0.45 and replaces the hop with a fade.
 
 The knock is a cue, not a loop: it plays for 9.6 s (six beats) when the need appears, rests, and comes
-back as a single beat every 60 s while the need stands; a new need knocks again for the full ten seconds.
+back as a single beat every five minutes while the need stands; a new need knocks again for the full ten seconds.
 It used to knock until the person answered, and an animation that never ends keeps the whole bar drawing
 sixty frames a second for as long as someone is away (a stone left knocking on an idle machine was one of
 three causes of its idle cost, see [IDLE-COST](../IDLE-COST.md)). `Stone.qml` has the three numbers

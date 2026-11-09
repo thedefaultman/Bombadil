@@ -8,7 +8,7 @@ import Bombadil as Kit
 //   listening  green, leans toward what you type
 //   working    orange, turns a third of a turn a second around the b, which never moves
 //   needs      amber, knocks twice and waits, with a glow that breathes behind it (for ten seconds, then
-//              it holds still and glows; one beat again each minute)
+//              it holds still and glows; one beat again every five minutes)
 //   done       green, one hop with a squash on landing, then still
 //   resting    the AI is out of plan or paused: the outline whole in grey over a faint fill, the b cut in; still
 //   stopped    the Stop button's own grey square
@@ -221,9 +221,11 @@ Item {
     // forever keeps the bar drawing every frame, and on a machine that draws in software that is a core
     // or more of an idle computer (and a laptop's battery). The cue plays for `cueMs` when the stone starts
     // to need you, then the stone holds still, amber and glowing as under reduced motion, and one beat
-    // plays again every `remindMs`.
+    // plays again every `remindMs`. A beat costs a frame at a time: in a virtual machine that draws in
+    // software (1920x1080) one cost about fifteen core-seconds of the compositor and the bar, so one a minute
+    // was a third of a core for as long as the need stood; every five minutes it is about a fifteenth.
     property int cueMs: 9600
-    property int remindMs: 60000
+    property int remindMs: 300000
     property bool cueing: false
     property int _cueFor: cueMs
     readonly property bool _needsCue: face === "needs" && !reducedMotion

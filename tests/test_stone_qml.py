@@ -252,7 +252,7 @@ def test_the_knock_is_a_cue_that_ends_and_comes_back_as_one_beat(mark):
     assert max(k for t, k, _ in seen if t < 0.85) > 4                   # it knocked on arrival
     resting = [(k, c) for t, k, c in seen if 1.1 < t < 2.0]
     assert resting and all(k == 0 and c is False for k, c in resting)    # then it held still
-    assert max(k for t, k, _ in seen if t > 2.5) > 4                     # and a minute (here 1.5 s) later, a beat
+    assert max(k for t, k, _ in seen if t > 2.5) > 4                     # and a reminder (here 1.5 s) later, a beat
     assert near(mark.at(12, 8), THEME["warn"])                           # amber the whole time
 
 
