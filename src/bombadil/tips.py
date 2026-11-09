@@ -593,6 +593,17 @@ class Tips:
                 print(f"tips: on_open: {type(e).__name__}: {e}", file=sys.stderr)
         return tip_id
 
+    def opened(self, tip_id) -> bool:
+        """The Tips app read the request that opened it. `open_on` goes back to "" (the app keeps its place), so
+        that the next press on the same tip is a request again, and an app that starts later does not jump to a
+        tip pressed long ago. Only the request that was read is cleared: a newer one stays. True when it was."""
+        with self._lock:
+            if not isinstance(tip_id, str) or not tip_id or self.state.open_on != tip_id:
+                return False
+            self.state.open_on = ""
+            self._save()
+            return True
+
     # -- what has happened --
 
     def ready(self) -> bool:
