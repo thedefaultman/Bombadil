@@ -41,7 +41,7 @@ def app_with(tmp_path, files: dict[str, str], name="demo") -> AppContext:
     return ctx_for(d)
 
 
-REGISTERED = ("Stone",)      # TipScene joins when it lands (the next commit)
+REGISTERED = ("Stone", "TipScene")
 
 
 def test_the_kit_registers_the_internal_components_and_the_skill_does_not_list_them():
