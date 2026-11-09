@@ -24,9 +24,13 @@ flowchart LR
 ```
 
 - The ISO carries `bombadil-smoke.service`, which runs only when the kernel command line has
-  `bombadil.smoke`. Three boot entries set it: `bombadil.smoke` (live checks, then power off),
-  `bombadil.smoke=install` (live checks, install to the virtual disk, power off) and, on the
-  installed disk, `bombadil.smoke=undo` (session checks, then an undo round trip over a reboot).
+  `bombadil.smoke`. A plain build leaves its boot entries out (`test-vm.sh` refuses such an ISO);
+  `BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh` adds them: `02` `bombadil.smoke` (live
+  checks, then power off), `03` `bombadil.smoke=install` (live checks, install to the virtual disk,
+  power off), `04` `bombadil.smoke=install-encrypted` (the same with a password, so GRUB asks for it
+  at every start) and `05` `bombadil.smoke=refresh` (refresh a disk an older Bombadil installed).
+  On the installed disk, `bombadil.smoke=undo` runs session checks and then an undo round trip over a
+  reboot; `bombadil.smoke=refreshed` runs on a refreshed disk.
 - Each check prints `BOMBADIL-SMOKE: PASS name` or `FAIL name: <last 300 bytes of its output>` and
   the run ends with `DONE pass=N fail=M`. `scripts/test-vm.sh` exits 0 only when every log it
   collected ends with `fail=0` and holds no `FAIL`.
@@ -36,10 +40,12 @@ flowchart LR
   numbers of one boot apart from the next, which restarts the count (the undo round trip reboots).
 
 ```
-scripts/build-in-container.sh              # the ISO, in out/
+BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh   # the ISO with the test entries, in out/
 scripts/test-vm.sh                         # live checks
 MODE=install scripts/test-vm.sh            # live checks, install to a scratch disk, boot it, undo
+MODE=install-encrypted scripts/test-vm.sh  # the same with a password: typed once at GRUB, never asked again
 MODE=installed scripts/test-vm.sh          # boot the disk the last install run left (the undo's second boot)
+OLD_ISO=old.iso MODE=refresh scripts/test-vm.sh   # install with an older ISO, refresh with this one, put the old system back
 TIMEOUT=5400 MODE=install scripts/test-vm.sh
 ```
 
@@ -52,8 +58,10 @@ that each is revived after being killed, the pill taking the keyboard from a Sup
 Alt+Space, a launcher word running without a model, the browser panel sliding in and out, apps
 created and opened each in its own place, the sign-in round trip against a stand-in provider
 (`fake_signin.py`: the page opens, the pill follows it, cancelling frees the port, no internet waits
-and recovers), restore points being created and pruned, the installer, and the installed system
-booting and undoing a change across a reboot.
+and recovers), restore points being created and pruned, the installer (a plain disk, an encrypted one where GRUB
+asks for the password once, and a refresh of a disk an older Bombadil installed, which keeps the home
+folder and can put the old system back), and the installed system booting and undoing a change
+across a reboot.
 
 The sign-in block deletes the person's provider choice and starts and cancels real logins (a Codex
 login revokes the stored one), so it runs only on a system with no provider chosen: the live ISO,

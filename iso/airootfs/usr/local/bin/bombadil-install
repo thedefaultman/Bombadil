@@ -36,8 +36,8 @@ STICK_CACHE="${BOMBADIL_STICK_CACHE:-/var/cache/pacman/pkg}"
 NM_CONNECTIONS="${BOMBADIL_NM_CONNECTIONS:-/etc/NetworkManager/system-connections}"
 # btrfs wants this much free to keep the old system beside the new one while a refresh copies it.
 REFRESH_FREE_GIB=10
-# GRUB reads a typed password up to this many characters.
-MAX_PASSWORD=255
+# GRUB reads a typed password into a 256-byte buffer, and keeps two bytes back.
+MAX_PASSWORD=254
 # What a restore point of the home folder does not contain: the conversation and the history (what
 # the agent did is not undone with what it changed), caches, the provider CLIs' own state, the browser
 # profile and the projects (git has those).
@@ -84,13 +84,26 @@ load_plan() {
   disk="$P_DISK"; mode="$P_MODE"
 }
 
+# Why GRUB could not be typed this password, or nothing at all: it reads US-keyboard letters, numbers and
+# symbols, and no more than MAX_PASSWORD of them. (An accented letter or a tab could be stored on the disk
+# and then never be typed at the boot screen, which would lock the person out of their own computer.)
+password_problem() {
+  local LC_ALL=C
+  if [[ "$1" == *[^\ -~]* ]]; then
+    echo "has characters the boot screen cannot type; use letters, numbers and ordinary symbols"
+  elif (( ${#1} > MAX_PASSWORD )); then
+    echo "is longer than $MAX_PASSWORD characters, which is all GRUB can take when it asks for it"
+  fi
+}
+
 read_password() {
   password=""
   if [[ -n "$pw_fd" ]]; then
     [[ "$pw_fd" =~ ^[0-9]+$ ]] || die "--password-fd needs a file descriptor number"
     IFS= read -r -u "$pw_fd" password || [[ -n "$password" ]] || die "nothing to read on file descriptor $pw_fd"
     [[ -n "$password" ]] || die "the password is empty"
-    (( ${#password} <= MAX_PASSWORD )) || die "the password is longer than $MAX_PASSWORD characters, which is all GRUB can take when it asks for it"
+    local problem; problem=$(password_problem "$password")
+    [[ -z "$problem" ]] || die "the password $problem"
   fi
   case "$P_ENCRYPT" in
     yes) encrypt=yes ;;
@@ -342,6 +355,9 @@ refresh_aside() {
   # A run that starts over from an earlier stop cannot claim the boot files are as they were.
   if (( resume )); then phase=boot; else phase=aside; fi
   btrfs subvolume create "$top/@" >/dev/null
+  # Marked before anything is copied in: a stop that nothing can catch (power lost, the machine killed) then
+  # leaves a system the next refresh knows is half made, and the old one aside is the one it goes back to.
+  mkdir -p "$top/@/var/lib/bombadil"; : >"$top/@/$INCOMPLETE"
   btrfs subvolume create "$top/@snapshots" >/dev/null
   for sv in @log @pkg; do
     btrfs subvolume show "$top/$sv" >/dev/null 2>&1 && continue
@@ -727,6 +743,9 @@ boot() {
   step "Making it start"
   chroot_run mkinitcpio -P
   grub_defaults "$target/etc/default/grub"
+  # Everything that can be checked without GRUB is checked before the old boot files go: a bad stick then
+  # stops a refresh while the old system can still be put back.
+  verify_system
   if [[ "$mode" == refresh ]]; then
     # The last thing a refresh changes outside the two systems: the old boot files go only now that the new
     # system has its kernel, its initramfs and its GRUB settings. (The EFI partition is emptied, not formatted
@@ -756,12 +775,26 @@ check_modules() {
   die "a copied kernel module is damaged (${bad#"$t"}). The USB stick may be damaged: write it again, or try another stick"
 }
 
-verify() {
-  step "Checking the result"
-  local t="$target" cfg="$target/efi/grub/grub.cfg" listing
+# What the new system itself must hold, read without changing anything; boot() runs it before the old boot
+# files of a refresh are replaced.
+verify_system() {
+  local t="$target" listing
   check_modules "$t"
   [[ -s "$t/boot/vmlinuz-linux" && -s "$t/boot/initramfs-linux.img" && -s "$t/boot/initramfs-linux-fallback.img" ]] \
     || die "the kernel or an initramfs is missing from /boot"
+  if [[ "$encrypt" == yes ]]; then
+    # Captured first: grep -q would end the listing early, and pipefail would call that a failure.
+    listing=$(chroot_run lsinitcpio /boot/initramfs-linux.img) || die "the initramfs cannot be read"
+    grep -q 'etc/cryptsetup-keys.d/root.key' <<<"$listing" || die "the initramfs has no key for the disk"
+    grep -q 'etc/crypttab' <<<"$listing" || die "the initramfs does not know which disk to open"
+    grep -q 'systemd-cryptsetup' <<<"$listing" || die "the initramfs has no tool to open the disk"
+  fi
+}
+
+# What GRUB and the EFI partition must hold, after they are written.
+verify() {
+  step "Checking the result"
+  local t="$target" cfg="$target/efi/grub/grub.cfg"
   [[ -s "$t/efi/EFI/BOOT/BOOTX64.EFI" && -s "$cfg" ]] || die "GRUB is not on the EFI partition"
   grep -q 'rootflags=subvol=@' "$cfg" || die "grub.cfg does not start the system from the @ subvolume"
   grep -q '/@/boot/vmlinuz-linux' "$cfg" || die "grub.cfg does not start the kernel in /@/boot"
@@ -773,11 +806,6 @@ verify() {
     grep -q cryptomount "$cfg" || die "grub.cfg does not open the encrypted disk"
     grep -qE "cryptomount -u (${luks_uuid}|${luks_uuid//-/})\$" "$cfg" || die "grub.cfg opens a different disk than the one just locked"
     [[ -s "$t/efi/grub/x86_64-efi/luks2.mod" || -s "$t/efi/grub/x86_64-efi/luks.mod" ]] || die "GRUB has no module to open the disk"
-    # Captured first: grep -q would end the listing early, and pipefail would call that a failure.
-    listing=$(chroot_run lsinitcpio /boot/initramfs-linux.img) || die "the initramfs cannot be read"
-    grep -q 'etc/cryptsetup-keys.d/root.key' <<<"$listing" || die "the initramfs has no key for the disk"
-    grep -q 'etc/crypttab' <<<"$listing" || die "the initramfs does not know which disk to open"
-    grep -q 'systemd-cryptsetup' <<<"$listing" || die "the initramfs has no tool to open the disk"
   fi
 }
 
@@ -828,7 +856,8 @@ cleanup() {
   # For a test host that adds to the new system before it is shut down (scripts/wsl-vm.sh): the caller unmounts.
   [[ -n "${BOMBADIL_INSTALL_LEAVE_MOUNTED:-}" && $rc == 0 ]] && leave=1
   if [[ -d "$target" ]] && mountpoint -q "$target"; then
-    cp "$LOG" "$target/var/log/bombadil-install.log" 2>/dev/null
+    # Private: the log of a run is the owner's, not every user's of the new system.
+    (umask 077; cp "$LOG" "$target/var/log/bombadil-install.log") 2>/dev/null
     sync
     if (( leave )); then say "The new system is left mounted at $target, as asked."; else umount -R "$target"; fi
   fi
@@ -877,13 +906,14 @@ ask_number() {  # ask_number PROMPT MAX [DEFAULT]: a whole number from 1 to MAX,
 }
 
 ask_secret() {  # ask_secret PROMPT: one line, not shown, into $secret
-  read -rs -p "$1" secret || die "no answer was given; nothing was changed"
+  # IFS= keeps a space at either end: what is stored is what will be typed at the boot screen.
+  IFS= read -rs -p "$1" secret || die "no answer was given; nothing was changed"
   printf '\n' >&2
 }
 
 # The new disk's password, twice, into $guided_password ("" when the person chose none).
 ask_new_password() {
-  local again
+  local again problem
   say ""
   say "Choose a password for this computer. It opens the disk when the computer starts, and it unlocks the screen."
   say "Use letters, numbers and ordinary symbols: the boot screen reads a US keyboard."
@@ -894,8 +924,8 @@ ask_new_password() {
       if [[ "$(ask "Without a password the disk is not encrypted and anyone holding this computer can read it. Install without one? (yes/no) " no)" == yes ]]; then return; fi
       continue
     fi
-    if [[ "$guided_password" == *[^\ -~]* ]]; then say "Please use only letters, numbers and ordinary symbols."; continue; fi
-    if (( ${#guided_password} > MAX_PASSWORD )); then say "That is too long; $MAX_PASSWORD characters is the most the boot screen takes."; continue; fi
+    problem=$(password_problem "$guided_password")
+    if [[ -n "$problem" ]]; then say "That password $problem."; continue; fi
     ask_secret "Again: "; again=$secret
     if [[ "$again" == "$guided_password" ]]; then return; fi
     say "Those two were different. Let us try again."
@@ -988,6 +1018,19 @@ PY
   fi
 }
 
+# The recovery key goes to the screen only: file descriptor 3 is the terminal (the main block keeps it, because
+# everything else here goes through tee into a log, and that log is copied onto the new disk).
+show_recovery_key() {
+  { true >&3; } 2>/dev/null || return 1
+  {
+    say ""
+    say "Your recovery key. If you ever forget the password, this opens the disk. Write it down or take a photo of it now:"
+    say ""
+    say "    $recovery"
+    say ""
+  } >&3
+}
+
 run() {
   if (( guided_run )); then guided; else parse_args "$@"; fi
   load_plan
@@ -1021,11 +1064,7 @@ run() {
   snapshot "Bombadil $version, as installed" >/dev/null
   replay_stick_packages
   if (( guided_run )) && [[ -n "${recovery:-}" ]]; then
-    say ""
-    say "Your recovery key. If you ever forget the password, this opens the disk. Write it down or take a photo of it now:"
-    say ""
-    say "    $recovery"
-    say ""
+    show_recovery_key || say "The recovery key could not be shown here; the new system keeps it in /var/lib/bombadil/recovery-key until its first start shows it."
   fi
   say "Installed. Take out the USB stick, then Restart."
 }
@@ -1033,7 +1072,9 @@ run() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   mkdir -p "$(dirname "$LOG")"
   # With nothing to go on and a person at the keyboard, ask. (Decided here: inside the pipe below nothing is a terminal.)
-  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then guided_run=1; fi
+  if (($# == 0)) && [[ -t 0 && -t 1 ]]; then guided_run=1; exec 3>&1; fi
+  # The log may come to hold what a person typed in answer to a question: only its owner reads it.
+  [[ -e "$LOG" ]] || install -m 600 /dev/null "$LOG"
   run "$@" 2>&1 | tee -a "$LOG"
   rc=${PIPESTATUS[0]}
   if (( rc == 0 && guided_run )); then

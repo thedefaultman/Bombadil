@@ -428,6 +428,13 @@ def main() -> int:
         # Never fails: as a hook, a non-zero answer would stop the prompt it is taken for.
         label = snapshots.label_from_hook(sys.stdin.read()) if "--hook" in args else "turn: " + (" ".join(args) or "by hand")
         try:
+            # A turn starts a new history, as one from the pill does (agentd does this before its restore point):
+            # without it the pill's "undo" would skip this turn and take back an older one.
+            from bombadil import launcher
+            launcher.Launcher().clear_undo()
+        except Exception as e:  # noqa: BLE001
+            print(f"undo marker: {e}", file=sys.stderr)
+        try:
             snap = snapshots.Snapshots().create(label)
         except Exception as e:  # noqa: BLE001
             print(f"no restore point: {e}", file=sys.stderr)

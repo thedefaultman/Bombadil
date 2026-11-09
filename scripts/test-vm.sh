@@ -178,6 +178,15 @@ case "$mode" in
     # 3. The refreshed system starts, and puts the old system back: it then starts from the same GRUB.
     MENU_DOWN="" STOP=1 PCRE=1 boot refreshed "(?s)BOMBADIL-SMOKE: REBOOT.*BOMBADIL-SMOKE: PASS hyprland-running" \
       -drive file="$disk",if=virtio,format=qcow2
+    # What boot() waited for is not what it found: a start that never came ends in a timeout it only reports.
+    # Read only what the second start printed (after the REBOOT line), and say which system that was.
+    second=$(sed -n '/BOMBADIL-SMOKE: REBOOT/,$p' "$out/refreshed.serial.log" | tail -n +2)
+    grep -aq "BOMBADIL-SMOKE: PASS hyprland-running" <<<"$second" || { echo "the old system did not start again after the undo"; exit 1; }
+    # The refreshed system's own checks (layout-*, refresh-*) are not in the old image: seeing them again means
+    # the undo did not take and the new system started a second time.
+    if grep -aqE "BOMBADIL-SMOKE: (PASS|FAIL) (layout-|refresh-)" <<<"$second"; then
+      echo "the refreshed system started a second time: the undo did not put the old one back"; exit 1
+    fi
     logs=("$out/old-install.serial.log" "$out/refresh.serial.log" "$out/refreshed.serial.log")
     ;;
   installed)

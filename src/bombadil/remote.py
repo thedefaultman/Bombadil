@@ -28,6 +28,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SESSION = "bombadil-remote"
+NO_TMUX = "tmux is not installed, and remote control needs it."
+# Claude Code ignores a key that arrives within 250 ms of drawing a question, and asks again (a few times at most).
+ANSWER_AFTER = 0.4        # seconds to wait after the question is first seen, before answering it
+ANSWER_TRIES = 5          # answers sent to one question before it is left to the person
+ANSWER_WAIT_POLLS = 2     # polls to let the screen redraw after an answer, before sending it again
 
 URL = re.compile(r"https://claude\.(?:ai|com)/code(?:/|\?)\S+")
 TRUST = re.compile(r"Trust\b.*\[y/N\]", re.I)
@@ -88,6 +93,30 @@ def prepare_folder(folder: Path) -> None:
         settings.write_text(json.dumps(FOLDER_SETTINGS, indent=2) + "\n")
 
 
+def folder_is_fresh(folder: Path) -> bool:
+    """True when `folder` is one Bombadil can answer Claude's trust question for: not there yet, empty, or
+    holding nothing but the settings Bombadil wrote itself. (A folder that already holds a project can bring its
+    own hooks, servers and commands, and trusting it turns those on.)"""
+    if not folder.exists():
+        return True
+    if folder.is_symlink() or not folder.is_dir():
+        return False
+    for path in folder.rglob("*"):
+        rel = path.relative_to(folder).as_posix()
+        if path.is_symlink():
+            return False
+        if rel == ".claude" and path.is_dir():
+            continue
+        if rel == ".claude/settings.json" and path.is_file():
+            try:
+                if json.loads(path.read_text()) == FOLDER_SETTINGS:
+                    continue
+            except (OSError, ValueError):
+                pass
+        return False
+    return True
+
+
 def session_name() -> str:
     return f"Bombadil on {socket.gethostname() or 'this computer'}"
 
@@ -119,67 +148,94 @@ def describe(st: State) -> str:
     return f"{line} Link: {st.url}" if st.url else line
 
 
+def trust_words(where: Path | str | None = None) -> str:
+    what = str(where) if where else "the folder it runs in"
+    return (f"Claude asks whether to trust {what}. Run `bombadil remote show`, answer y once, "
+            "then press Ctrl-b and d to leave it running.")
+
+
+STARTING = ("Remote control is starting. Run `bombadil remote show` to watch it, or `bombadil remote url` "
+            "for the link once it is up. In claude.ai/code pick “{name}”.")
+
+
 def start(folder: str | Path | None = None, *, run=subprocess.run, sleep=time.sleep, tries: int = 25) -> tuple[bool, str]:
     """Start remote control, or say it is already on. Waits (up to `tries` seconds) for it to be up or to say why not."""
     if shutil.which("claude") is None:
         return False, "Claude Code is not installed on this computer."
     if shutil.which("tmux") is None:
-        return False, "tmux is not installed, and remote control needs it."
-    auto_trust = folder is None
+        return False, NO_TMUX
     where = default_folder() if folder is None else Path(folder).expanduser()
-    if auto_trust:
+    # Judged before anything is made in the folder: only a folder Bombadil made (or one that is still empty)
+    # gets its trust question answered for the person.
+    auto_trust = folder is None and folder_is_fresh(where)
+    if folder is None:
         prepare_folder(where)
     elif not where.is_dir():
         return False, f"{where} is not a folder."
     st = read_state(run)
-    if st.alive:
+    if st.alive and st.url:
         return True, describe(st)
-    if st.running:   # it stopped; what it said is in `st`, and a fresh start replaces it
-        _tmux("kill-session", "-t", SESSION, run=run)
-    command = f"claude remote-control --name {shlex.quote(session_name())}"
-    started = run([*_own_scope(), "tmux", "new-session", "-d", "-s", SESSION, "-c", str(where), "-x", "110", "-y", "30",
-                   command, ";", "set-option", "-t", SESSION, "remain-on-exit", "on"], capture_output=True, text=True)
-    if started.returncode != 0:
-        return False, f"Could not start it: {(started.stderr or started.stdout).strip() or 'tmux failed'}"
-    answered = 0   # polls since the question was answered, 0 until it is
+    if not st.alive:   # nothing is running, or it stopped (what it said is in `st`); a fresh start replaces it
+        if st.running:
+            _tmux("kill-session", "-t", SESSION, run=run)
+        command = f"claude remote-control --name {shlex.quote(session_name())}"
+        started = run([*_own_scope(), "tmux", "new-session", "-d", "-s", SESSION, "-c", str(where), "-x", "110", "-y", "30",
+                       command, ";", "set-option", "-t", SESSION, "remain-on-exit", "on"], capture_output=True, text=True)
+        if started.returncode != 0:
+            return False, f"Could not start it: {(started.stderr or started.stdout).strip() or 'tmux failed'}"
+    # Also for a session that is up but has not connected (it may be waiting at the question): watch it the same way.
+    answers = waited = 0
     for _ in range(tries):
         sleep(1)
         st = read_state(run)
         if st.url:
             return True, describe(st)
         if st.needs_trust:
-            if answered and answered < 4:   # the screen has not redrawn yet
-                answered += 1
+            if not auto_trust or answers >= ANSWER_TRIES:
+                return False, trust_words(where)
+            if answers and waited < ANSWER_WAIT_POLLS:   # the screen has not redrawn yet
+                waited += 1
                 continue
-            if not auto_trust or answered:
-                return False, (f"Claude asks whether to trust {where}. Run `bombadil remote show`, answer y once, "
-                               "then press Ctrl-b and d to leave it running.")
-            _tmux("send-keys", "-t", SESSION, "y", "Enter", run=run)   # the folder is the one Bombadil just made
-            answered = 1
+            sleep(ANSWER_AFTER)   # a key sent as the question is drawn is thrown away
+            _tmux("send-keys", "-t", SESSION, "y", "Enter", run=run)   # the folder is the one Bombadil made
+            answers, waited = answers + 1, 0
             continue
         if st.problem or (st.running and not st.alive):
             return False, st.problem or f"It stopped. What it said:\n{st.tail}"
-    return True, ("Remote control is starting. Run `bombadil remote show` to watch it, or `bombadil remote url` "
-                  f"for the link once it is up. In claude.ai/code pick “{session_name()}”.")
+    return True, STARTING.format(name=session_name())
 
 
 def status(run=subprocess.run) -> tuple[bool, str]:
     if shutil.which("tmux") is None:
-        return False, "tmux is not installed, and remote control needs it."
+        return False, NO_TMUX
     st = read_state(run)
-    if st.alive:
+    if st.alive and st.url:
         return True, describe(st)
+    if st.alive:   # up, but not connected: not "on" until there is a link to open
+        if st.needs_trust:
+            return False, trust_words()
+        if st.problem:
+            return False, st.problem
+        return True, STARTING.format(name=session_name())
     if st.running:
         return False, st.problem or f"Remote control stopped. What it said:\n{st.tail}"
     return False, "Remote control is off. Start it with `bombadil remote`, or say “remote” in the pill."
 
 
 def url(run=subprocess.run) -> tuple[bool, str]:
+    if shutil.which("tmux") is None:
+        return False, NO_TMUX
     st = read_state(run)
-    return (True, st.url) if st.alive and st.url else (False, "No link yet. Run `bombadil remote`.")
+    if st.alive and st.url:
+        return True, st.url
+    if st.alive and st.needs_trust:
+        return False, trust_words()
+    return False, "No link yet. Run `bombadil remote`."
 
 
 def stop(run=subprocess.run) -> tuple[bool, str]:
+    if shutil.which("tmux") is None:
+        return True, "Remote control was already off."   # without tmux there is no session to stop
     if not read_state(run).running:
         return True, "Remote control was already off."
     _tmux("kill-session", "-t", SESSION, run=run)
@@ -188,6 +244,9 @@ def stop(run=subprocess.run) -> tuple[bool, str]:
 
 def show(run=subprocess.run) -> int:
     """Attach this terminal to the session. Ctrl-b then d lets go and leaves it running."""
+    if shutil.which("tmux") is None:
+        print(NO_TMUX)
+        return 1
     if not read_state(run).running:
         print("Remote control is off. Start it with `bombadil remote`.")
         return 1

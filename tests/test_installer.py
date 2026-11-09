@@ -527,6 +527,37 @@ def test_a_recovery_key_waits_for_its_first_showing_and_only_the_owner_can_read_
     assert "abcdefgh" not in (target / "var/lib/bombadil/install.json").read_text()
 
 
+def test_the_recovery_key_is_shown_on_the_screen_and_never_goes_through_the_log(tmp_path):
+    # Everything the installer says goes through tee into a log that is copied onto the new disk.
+    log = tmp_path / "install.log"
+    screen = tmp_path / "screen"
+    key = "abcdefgh-abcdefgh-abcdefgh-abcdefgh-abcdefgh-abcdefgh-abcdefgh-abcdefgh"
+    sh(f'recovery="{key}"; exec 3>"{screen}"; {{ say before; show_recovery_key; say after; }} 2>&1 | tee -a "{log}" >/dev/null')
+    assert key in screen.read_text() and "write it down" in screen.read_text().lower()
+    assert key not in log.read_text() and "before" in log.read_text()
+
+
+def test_when_there_is_no_screen_to_show_the_key_on_the_run_says_where_it_is_kept(tmp_path):
+    r = sh('recovery=abc; show_recovery_key', check=False)
+    assert r.returncode != 0 and "abc" not in r.stdout + r.stderr
+    assert "recovery-key" in INSTALL.read_text().split("show_recovery_key ||", 1)[1].splitlines()[0]
+
+
+def test_the_log_copied_onto_the_new_disk_is_private_to_its_owner(tmp_path):
+    target = tmp_path / "t"
+    (target / "var/log").mkdir(parents=True)
+    log = tmp_path / "log"
+    log.write_text("what happened\n")
+    log.chmod(0o644)
+    shims = tmp_path / "shims"
+    shim(shims, "mountpoint", f'[[ "$2" == "{target}" ]]')
+    shim(shims, "umount", "true")
+    shim(shims, "sync", "true")
+    sh(f'LOG="{log}"; work="{tmp_path}/w"; target="{target}"; phase=erased; mode=fresh; set +e; cleanup', path_first=shims, check=False)
+    copy = target / "var/log/bombadil-install.log"
+    assert copy.read_text() == "what happened\n" and stat.S_IMODE(copy.stat().st_mode) == 0o600
+
+
 def test_a_refresh_keeps_the_zone_it_found_and_a_utc_only_system_has_not_been_told_one(tmp_path):
     rec, _ = record(tmp_path, mode="refresh", zone="America/Vancouver", source="unset", old="@.before-refresh-1")
     assert rec["timezone_source"] == "chosen" and rec["kept_aside"] == ["@.before-refresh-1", "@snapshots.@.before-refresh-1"]
@@ -730,6 +761,16 @@ def test_refresh_of_a_disk_that_is_already_layout_1_keeps_its_logs_and_package_c
     assert (top / old / "marker").read_text() == "the user's system"
     assert (top / "@").is_dir() and not (top / "@/marker").exists()
     assert (top / f"@snapshots.{old}/3").is_dir()
+
+
+def test_the_new_system_is_marked_unfinished_before_anything_is_copied_into_it(tmp_path):
+    # A stop nothing can catch (power lost, the machine killed) during the copy then leaves a marked system:
+    # the next refresh starts over from the old one, and undo does not take the half-made one for a whole one.
+    r, work, top, state = refresh_aside(tmp_path, layout1=True)
+    assert r.returncode == 0, r.stderr
+    assert (top / "@/var/lib/bombadil/install-incomplete").exists()
+    # ...and the old system, which has none, is still the one to go back to.
+    assert not (top / result(r)[0] / "var/lib/bombadil/install-incomplete").exists()
 
 
 def test_refresh_of_an_older_disk_makes_the_logs_and_package_subvolumes_and_notes_it(tmp_path):
@@ -953,7 +994,29 @@ def test_a_key_file_and_a_recovery_key_are_needed_only_when_the_disk_is_encrypte
 
 def test_a_password_longer_than_grub_can_take_is_refused():
     r = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%0300d\\n" 7)', check=False)
-    assert r.returncode != 0 and "longer than 255" in r.stderr
+    assert r.returncode != 0 and "longer than 254" in r.stderr
+
+
+def test_the_longest_password_grub_can_take_is_let_through_and_one_more_is_not():
+    # GRUB keeps two bytes of its 256-byte buffer back.
+    ok = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%0254d\\n" 7); echo "${#password}"')
+    assert ok.stdout.strip() == "254"
+    r = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%0255d\\n" 7)', check=False)
+    assert r.returncode != 0 and "longer than 254" in r.stderr
+
+
+@pytest.mark.parametrize("password", ["pässwörd", "tab\there", "日本語", "emoji\U0001F600"])
+def test_a_password_the_boot_screen_cannot_type_is_refused_before_the_disk_is_locked_with_it(password):
+    # A password given on a descriptor never met the guided prompt's check, and an accented letter could be
+    # stored on the disk and then never typed at GRUB: the person would be locked out of their own computer.
+    r = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%s\\n" "$PW")', check=False,
+           env={"PW": password})
+    assert r.returncode != 0 and "cannot type" in r.stderr and password not in r.stderr
+
+
+def test_spaces_and_symbols_a_us_keyboard_can_type_are_kept_exactly():
+    r = sh('parse_args /dev/vda --password-fd 7; load_plan; read_password 7< <(printf "%s\\n" " a b!#~ "); echo "[$password]"')
+    assert r.stdout.strip() == "[ a b!#~ ]"
 
 
 def test_the_preset_does_not_name_a_config_so_the_drop_in_with_the_hooks_is_read(tmp_path):
@@ -1076,7 +1139,7 @@ def test_the_check_wants_no_disk_to_be_opened_when_nothing_is_encrypted(tmp_path
 def test_a_damaged_kernel_module_is_found_and_named_so_a_bad_stick_is_not_installed_from_twice(tmp_path):
     t, shims = _finished_install(tmp_path, None)
     (t / "usr/lib/modules/7.0/kernel/also-good.ko.zst").write_text("damaged")
-    r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
+    r = sh(f"target={t}; encrypt=no; verify_system", path_first=shims, check=False)
     assert r.returncode != 0
     assert "also-good.ko.zst" in r.stderr and "write it again" in r.stderr and "good.ko.zst) " not in r.stderr
 
@@ -1084,8 +1147,29 @@ def test_a_damaged_kernel_module_is_found_and_named_so_a_bad_stick_is_not_instal
 def test_a_system_with_no_kernel_modules_is_not_a_finished_install(tmp_path):
     t, shims = _finished_install(tmp_path, None)
     shutil.rmtree(t / "usr")
-    r = sh(f"target={t}; encrypt=no; verify", path_first=shims, check=False)
+    r = sh(f"target={t}; encrypt=no; verify_system", path_first=shims, check=False)
     assert r.returncode != 0 and "no kernel modules" in r.stderr
+
+
+def test_the_system_is_checked_before_the_old_boot_files_of_a_refresh_are_deleted(tmp_path):
+    # A bad stick must stop a refresh while the old system can still be put back, not after the EFI partition is emptied.
+    t, shims = _finished_install(tmp_path, None)
+    (t / "usr/lib/modules/7.0/kernel/good.ko.zst").write_text("damaged")
+    for tool in ("grub-install", "arch-chroot"):
+        shim(shims, tool, f'echo {tool} >>"{tmp_path}/calls"')
+    (t / "efi/old-boot-file").write_text("old")
+    (t / "etc/default").mkdir(parents=True)
+    r = sh(f'target={t}; encrypt=no; mode=refresh; phase=aside; grub_defaults() {{ :; }}; chroot_run() {{ :; }}; boot', path_first=shims, check=False)
+    assert r.returncode != 0 and "damaged" in r.stderr
+    assert (t / "efi/old-boot-file").exists() and not (tmp_path / "calls").exists()
+
+
+def test_the_initramfs_of_an_encrypted_disk_is_read_before_the_old_boot_files_go(tmp_path):
+    t, shims = _finished_install(tmp_path, "3fd2b9ec-88c2-4c23-b979-2aa13b001965")
+    r = sh(f'target={t}; encrypt=yes; chroot_run() {{ printf "%s\\n" "etc/crypttab"; }}; verify_system', path_first=shims, check=False)
+    assert r.returncode != 0 and "no key for the disk" in r.stderr
+    r = sh(f'target={t}; encrypt=yes; chroot_run() {{ printf "%s\\n" "{LISTING}"; }}; verify_system', path_first=shims, check=False)
+    assert r.returncode == 0, r.stderr
 
 
 # -- the install a person runs by hand ------------------------------------------------------------------
@@ -1172,6 +1256,13 @@ def test_a_password_typed_twice_must_match_and_be_plain_text_the_boot_screen_can
     r = guided_session(tmp_path, answers)
     plan, _, pw = _decided(r)
     assert pw == "right-one" and "different" in r.stdout and "ordinary symbols" in r.stdout
+
+
+def test_a_password_typed_with_a_space_at_either_end_is_stored_with_it(tmp_path):
+    # What is stored must be what will be typed at the boot screen, spaces included.
+    answers = "1\n  two spaces \n  two spaces \nUTC\nhost1\n/dev/nvme0n1\n"
+    _, _, pw = _decided(guided_session(tmp_path, answers))
+    assert pw == "  two spaces "
 
 
 def test_a_bad_disk_number_and_a_bad_zone_and_a_bad_name_are_asked_again(tmp_path):

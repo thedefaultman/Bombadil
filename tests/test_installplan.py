@@ -204,6 +204,16 @@ def test_the_disks_a_person_can_pick_from_and_the_reason_for_each_one_that_is_mi
     assert [d for d in other if d["path"] == "/dev/sdb"][0]["why_not"] == "a Bombadil install image"
 
 
+def test_a_model_name_with_control_characters_cannot_redraw_the_installers_list_of_disks():
+    # A disk's model is whatever the device says: escape sequences from it would reach the terminal as they are.
+    nasty = "Evil\x1b[2J\x1b[1;1HSAFE  DISK \x07\u202e\u200bend\ttab"
+    lsblk = {"blockdevices": [_node("/dev/sda", "disk", size=500 * 1000**3, model=nasty, tran="sata")]}
+    (disk,) = installplan.list_disks(lsblk, stick="")
+    assert disk["model"] == "Evil [2J [1;1HSAFE DISK end tab"
+    text = "\n".join(installplan.disk_lines([disk]))
+    assert all(c.isprintable() or c in "\t\n" for c in text)
+
+
 def test_the_lines_for_the_shell_number_only_what_can_be_picked():
     disks = [{"path": "/dev/a", "size": 500 * 1000**3, "model": "A", "usb": False, "offered": True, "why_not": "",
               "note": "empty", "bombadil": False, "encrypted": False, "windows": False},

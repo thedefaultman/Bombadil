@@ -13,7 +13,9 @@ dest="$profile/airootfs/usr/share/bombadil"
 mkdir -p "$dest"
 cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/install" "$root/iso/packages.x86_64" "$dest/"
 # What this image is: the date and the commit. The installer records it, and names the first restore point after it.
-echo "$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d) ($(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown))" > "$dest/VERSION"
+# (BOMBADIL_COMMIT comes from scripts/build-in-container.sh, which can read the checkout where the container cannot.)
+commit="${BOMBADIL_COMMIT:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+echo "$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d) ($commit)" > "$dest/VERSION"
 # The test entries of the boot menu (a serial console with the smoke test, and one that installs to
 # /dev/vda without asking) are only in builds made for the VM tests, never in a release.
 if [[ -z "${BOMBADIL_TEST_ENTRIES:-}" ]]; then

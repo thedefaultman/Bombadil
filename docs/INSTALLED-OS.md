@@ -79,7 +79,11 @@ The disk has three key slots: the **password** (argon2id at 256 MiB, which is wh
 firmware that fragments low memory), a **key file** inside the initramfs (cheap to derive, so the
 password is not typed a second time), and a **recovery key** (shown once on the first start, kept
 in `/var/lib/bombadil/recovery-key`, mode 600, only until it has been shown). The password reaches
-`bombadil-install` only on a file descriptor, never in a file, an argument or the log.
+`bombadil-install` only on a file descriptor, never in a file, an argument or the log. The
+recovery key is printed to the terminal only, never into the install log (the log is copied onto the
+new disk, in `/var/log/bombadil-install.log`, readable by its owner alone). The password is limited
+to what a US keyboard types at the boot screen: letters, numbers, symbols and spaces, at most 254
+characters. An accented letter would be stored on the disk and then could not be typed at GRUB.
 
 ### What GRUB shows
 
@@ -126,8 +130,11 @@ flowchart LR
   `@snapshots` aside as `@.before-refresh-<stamp>`; copies the new system in; empties the ESP last
   (not reformatted, so its UUID stays). `bombadil-rollback --device DEV refresh` puts the old
   system back. A refresh that stops before the boot files are replaced puts the old system back by
-  itself; one that stops after leaves `var/lib/bombadil/install-incomplete`, and running it again
-  resumes from the system that is still aside.
+  itself; one that stops after leaves `var/lib/bombadil/install-incomplete` (the new `@` is marked
+  before the first file is copied into it, so a stop nothing can catch, such as lost power, is
+  marked too), and running it again resumes from the system that is still aside. Everything about the
+  new system that can be checked without GRUB (modules, kernel, initramfs) is checked before the
+  old boot files are replaced.
 - **Undo** (`bombadil-rollback N`) swaps restore point `N` in under the name `@` (one atomic
   exchange where the kernel offers it) and keeps the previous root as `@.undone-<stamp>`, so an
   undo can itself be undone.

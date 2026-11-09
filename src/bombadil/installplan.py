@@ -234,10 +234,16 @@ def list_disks(lsblk: dict, stick: str = "") -> list[dict]:
             note = "empty"
         else:
             note = f"{len(parts)} partition{'s' if len(parts) != 1 else ''}, not Bombadil"
-        out.append({"path": path, "size": size, "model": " ".join((dev.get("model") or "").split()),
+        out.append({"path": path, "size": size, "model": _plain(dev.get("model")),
                     "usb": (dev.get("tran") or "") == "usb", "offered": not why, "why_not": why, "note": note,
                     "bombadil": bombadil, "encrypted": encrypted, "windows": windows})
     return out
+
+
+def _plain(text: str | None) -> str:
+    """A name a device gave, safe to print on the installer's terminal: a USB stick can say anything it likes
+    about itself, including a screen-clearing or colour sequence that would redraw the list of disks."""
+    return " ".join("".join(c if c.isprintable() else " " for c in (text or "")).split())
 
 
 def disk_lines(disks: list[dict]) -> list[str]:

@@ -14,6 +14,8 @@ image="${BOMBADIL_BUILD_IMAGE:-archlinux:base}"
 mkdir -p "$root/out"
 
 args=(--rm --privileged -v "$root:/src" -w /src -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || date +%s)}")
+# The commit is read here: inside the container the checkout belongs to another user, and git refuses to read it.
+args+=(-e BOMBADIL_COMMIT="${BOMBADIL_COMMIT:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}")
 [[ "${BOMBADIL_HOST_NET:-}" ]] && args+=(--network host)
 [[ "${BOMBADIL_TEST_ENTRIES:-}" ]] && args+=(-e BOMBADIL_TEST_ENTRIES="$BOMBADIL_TEST_ENTRIES")
 for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy; do

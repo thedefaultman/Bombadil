@@ -149,8 +149,9 @@ stop() {  # the ACPI power button (the guest shuts down and closes its disk), th
 }
 
 # Keep the disk: a host-side restore point, then the installed Bombadil moves to this checkout in
-# place (vm-tools/update-in-place: packages, GRUB and home files are not part of it). Until the
-# installer has a refresh mode of its own this is the whole refresh.
+# place (vm-tools/update-in-place: packages, GRUB and home files are not part of it). This is the
+# quick way for a development VM; the installer's own refresh (bombadil-install --refresh, tested by
+# MODE=refresh scripts/test-vm.sh) replaces the whole system and keeps the home folder.
 refresh() {
   [[ -f "$out/.installed" && -f "$disk" ]] || { echo "Nothing to refresh: there is no installed disk yet. Run without arguments first." >&2; exit 1; }
   local tools="$tree/scripts/vm-tools" rev snap
