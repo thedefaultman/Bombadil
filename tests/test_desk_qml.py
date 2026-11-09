@@ -881,6 +881,32 @@ def test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_do
     assert desk.pill.property("card") is not None and desk.warnings == []
 
 
+def test_a_picture_beside_a_window_is_wider_than_the_pill(desk):
+    # The pill narrows to 360 beside a window; a picture asked for may take about 560 (shell.qml gives the
+    # card host `Math.max(360, pictureWidth)`), so its labels and rows read.
+    assert desk.prop("mode") == "open" and desk.prop("pictureWidth") == desk.prop("pillWidth")   # nothing in front: the pill's
+    desk.cover((700, 200, 500, 400))
+    assert desk.prop("pillWidth") == 360 and desk.prop("pictureWidth") == 560
+    desk.cover((0, 0, 1920, 1080, True))
+    assert desk.prop("capsule") and desk.prop("pictureWidth") == desk.prop("pillWidth") == 100   # the shell clamps to 360, and hides it
+    desk.cover()
+    assert desk.prop("pictureWidth") == desk.prop("pillWidth")
+
+
+def test_a_picture_beside_a_window_takes_what_the_rails_leave_on_a_smaller_screen(laptop):
+    # A 1280 screen with a card in full on each rail: 1280 - 2 * (300 + 12 + 16) = 624, so 560 fits;
+    # on a 1024 one the rails leave 368 and the picture gets that, never under the pill's 360.
+    laptop.turn(1, steps=TWO)
+    laptop.set("watchModel", rows(2))
+    laptop.cover((400, 100, 400, 300))
+    assert laptop.faces["now"] == laptop.faces["watching"] == "full"
+    assert laptop.prop("stageRoom") == 624 and laptop.prop("pictureWidth") == 560
+    laptop.resize(1024, 720)
+    laptop.cover((300, 100, 400, 300), (310, 110, 100, 100))      # another window on the stage
+    assert laptop.prop("stageRoom") == 368 and laptop.prop("pictureWidth") == 368     # what the rails leave
+    assert laptop.prop("pillWidth") == 360 and laptop.warnings == []
+
+
 def test_the_pill_takes_the_stage_less_the_strips(laptop):
     laptop.turn(1, steps=TWO)
     laptop.set("watchModel", rows(2))
