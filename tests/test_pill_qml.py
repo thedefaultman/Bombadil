@@ -990,6 +990,21 @@ def test_a_setup_line_and_its_chips_go_when_agentd_does_and_come_back_with_it(ba
     assert bar.text() == "Sign in to Claude to start." and [label for label, _ in bar.chips()] == ["Sign in"]
 
 
+def test_the_seconds_counter_counts_only_while_a_turn_works(bar):
+    # Its text is bound to the count, and a Text that changes asks the window to be drawn again, hidden or
+    # not: a count that went on behind a setup line made the bar redraw once a second on an idle machine.
+    line = bar.item("statusLine")
+    bar.send(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
+             actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])
+    line.setProperty("now", line.property("now") + 5000.0)    # (bindings follow at once; the timer would reset it)
+    assert line.property("seconds") == 0
+    bar.call("submit", "!ls")                               # (a launcher word runs even before sign-in)
+    bar.send(kind="turn_start", turn=1, prompt="!ls")
+    assert bar.pill.property("mode") == "working"
+    line.setProperty("now", bar.pill.property("startedAt") + 5000.0)
+    assert line.property("seconds") == 5
+
+
 def test_a_turn_keeps_its_line_and_the_setup_comes_back_after(bar):
     signed_out = dict(type="setup", state="signed_out", line="Sign in to Claude to start.", tone="step",
                       actions=[{"id": "signin", "label": "Sign in", "style": "primary"}])

@@ -25,7 +25,10 @@ Rectangle {
     readonly property bool errored: notice ? notice.tone === "error" : pill.source === "error"
     readonly property color markEdge: notice ? (errored ? Kit.Theme.bad : "transparent") : edge
     property double now: Date.now()
-    readonly property int seconds: Math.max(0, Math.floor((now - pill.startedAt) / 1000))
+    // The seconds counter only counts while a turn works. Its text is bound to this, and a Text that changes
+    // asks the window to be drawn again even when it is hidden, so a number that kept counting behind a
+    // setup line made the bar redraw once a second for as long as the machine sat idle.
+    readonly property int seconds: pill.mode === "working" ? Math.max(0, Math.floor((now - pill.startedAt) / 1000)) : 0
     readonly property bool hovered: hover.hovered
     readonly property bool narrow: width < 520
 
