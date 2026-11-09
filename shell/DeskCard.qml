@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Bombadil as Kit
 import "DeskTheme.js" as T
 
 // The chrome every card on the desk shares: the panel, a title with one line of why under it, an
@@ -17,6 +18,8 @@ Item {
     property string namePrefix: "deskCard"
     default property alias content: body.data
     signal titleClicked()
+    // A card whose whole header is a button says so: a tap on the line under the title counts as one on it.
+    property bool captionTaps: false
 
     readonly property color edgeColor: edge === "machine" ? T.machine
                                      : edge === "ok" ? T.ok
@@ -50,9 +53,13 @@ Item {
         border.width: 1.5
         border.color: tone
         visible: live
+        // Reduced motion: no breathing; the ring holds still, between its small and its large.
+        scale: 1.2
+        opacity: 0.6
         ParallelAnimation {
-            running: ring.live
+            running: ring.live && !Kit.Theme.reducedMotion
             loops: Animation.Infinite
+            onStopped: { ring.scale = 1.2; ring.opacity = 0.6 }
             NumberAnimation { target: ring; property: "scale"; from: 0.7; to: 1.7; duration: 2000; easing.type: Easing.OutQuad }
             NumberAnimation { target: ring; property: "opacity"; from: 0.95; to: 0; duration: 2000; easing.type: Easing.OutQuad }
         }
@@ -84,7 +91,7 @@ Item {
         target: washBar
         property: "opacity"
         from: 1; to: 0
-        duration: T.washMs
+        duration: Kit.Theme.duration(T.washMs)
         easing.type: Easing.OutQuad
     }
 
@@ -129,6 +136,12 @@ Item {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         maximumLineCount: 1
+        HoverHandler { enabled: card.captionTaps; cursorShape: Qt.PointingHandCursor }
+        TapHandler {
+            enabled: card.captionTaps
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: card.titleClicked()
+        }
     }
 
     ColumnLayout {

@@ -1,0 +1,277 @@
+# Bombadil's tips: one [[tip]] row per tip, in the teaching register of docs/design/voice-brief.md.
+# docs/TIPS.md says what every field means, how a tip is gated and how it is counted as tried.
+#
+#   id          unique, kebab-case, never reused once shipped
+#   section     start | work | code | machine
+#   order       a whole number, fixed inside its section
+#   line        one line, at most 272 px at 13 px Inter; {app}, {project} and {ai} are filled from the machine
+#   words       exactly what the button puts in the pill ("" when the tip has no button)
+#   marks       words or keys drawn as marks in place of a button
+#   needs       what the machine must be able to do before the tip shows anywhere
+#   card        false for a tip only the Tips app shows (its button does not fit the card's row)
+#   tried_when  what agentd sees that makes the tip tried, with no model
+#   captions    three phase captions, at most three words each; "You ask", "It works", "You have it" unless the
+#               brief words a tip's own (only the first tip does). They are proposals for the voice thread.
+#   beats       the scene (a later piece; a row ships with beats = [] until then)
+#
+# A tip whose gate is not met, or whose placeholder cannot be filled, is shown nowhere.
+
+[[tip]]
+id = "make-an-app"
+section = "start"
+order = 1
+line = "Say what you need. It gets made."
+words = "Make me a ticketing app"
+marks = []
+needs = ["model"]
+card = true
+tried_when = ["words", "tool:create_app"]
+captions = ["You ask", "It builds", "You have it"]
+beats = []
+
+[[tip]]
+id = "picture"
+section = "start"
+order = 2
+line = "Ask for a picture, not a paragraph."
+words = "How am I connected?"
+marks = []
+needs = []
+card = true
+tried_when = ["local:picture", "tool:show_card", "tool:system_map"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "esc"
+section = "start"
+order = 3
+line = "Esc stops anything it is doing."
+words = ""
+marks = ["Esc"]
+needs = ["model"]
+card = true
+tried_when = ["local:stop"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "timer"
+section = "start"
+order = 4
+line = "Set a timer. It counts on the desk."
+words = "Set a 25 minute timer"
+marks = []
+needs = ["model"]
+card = true
+tried_when = ["words", "job:start:timer"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "machine"
+section = "start"
+order = 5
+line = "Ask how the machine is doing."
+words = "How's the machine?"
+marks = []
+needs = []
+card = true
+tried_when = ["local:widget:machine"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "bang"
+section = "start"
+order = 6
+line = "Run a command without the AI."
+words = "!uname -r"
+marks = []
+needs = []
+card = true
+tried_when = ["bang"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "change-app"
+section = "work"
+order = 1
+line = "Change an app by saying what to add."
+words = "In {app}, add…"
+marks = []
+needs = ["model", "app"]
+card = true
+tried_when = ["words"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "open-app"
+section = "work"
+order = 2
+line = "Type an app's name to open it."
+words = "{app}"
+marks = []
+needs = ["app"]
+card = true
+tried_when = ["local:app"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "passwords"
+section = "work"
+order = 3
+line = "A password manager that locks itself."
+words = "Make me a password manager"
+marks = []
+needs = ["model"]
+card = true
+tried_when = ["words"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "whyhere"
+section = "work"
+order = 4
+line = "Open a file, then ask where it came from."
+words = ""
+marks = ["where did this come from?"]
+needs = []
+card = true
+tried_when = ["local:whyhere"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "draw"
+section = "work"
+order = 5
+line = "Ask it to draw how something works."
+words = "How does a VPN work? Draw it"
+marks = []
+needs = ["model"]
+card = false
+tried_when = ["words", "tool:show_card"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "toolchain"
+section = "code"
+order = 1
+line = "Install a toolchain, watch each step."
+words = "Install rust and set it up"
+marks = []
+needs = ["model"]
+card = true
+tried_when = ["words"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "tests"
+section = "code"
+order = 2
+line = "Run tests in the background, keep going."
+words = "Run the tests in ~/Projects/{project} in the background"
+marks = []
+needs = ["model", "project"]
+card = false
+tried_when = ["words", "job:start:job"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "code-picture"
+section = "code"
+order = 3
+line = "Ask it to draw how your code fits."
+words = "Draw how the modules in ~/Projects/{project} depend on each other"
+marks = []
+needs = ["model", "project"]
+card = false
+tried_when = ["words"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "disk"
+section = "machine"
+order = 1
+line = "Ask where your disk space went."
+words = "Where did my disk go?"
+marks = []
+needs = []
+card = true
+tried_when = ["local:picture:disks"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "pause"
+section = "machine"
+order = 2
+line = "Out of {ai}? Your apps still work."
+words = "pause {ai}"
+marks = []
+needs = []
+card = true
+tried_when = ["local:rest"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "desk"
+section = "machine"
+order = 3
+line = "Say desk to fold the cards, desk to unfold."
+words = "desk"
+marks = []
+needs = ["desk-seen"]
+card = true
+tried_when = ["local:desk"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "keep"
+section = "machine"
+order = 4
+line = "Keep a widget on your desk."
+words = "widgets"
+marks = []
+needs = ["keep"]
+card = true
+tried_when = ["words"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "why"
+section = "machine"
+order = 5
+line = "Type why while it works."
+words = ""
+marks = ["why"]
+needs = ["model"]
+card = true
+tried_when = ["local:why"]
+captions = ["You ask", "It works", "You have it"]
+beats = []
+
+[[tip]]
+id = "undo"
+section = "machine"
+order = 6
+line = "Say undo to go back a step."
+words = ""
+marks = ["undo"]
+needs = ["installed"]
+card = true
+tried_when = ["local:undo"]
+captions = ["You ask", "It works", "You have it"]
+beats = []

@@ -5,15 +5,14 @@ notification daemon dies, the person is left with a desktop and no way to ask fo
 session is built to put itself back together without anyone's help, and the rest of the system
 (the agent, the installer, the update path) is built around that.
 
-## The three user services
+## The two user services
 
 | Unit | What it runs | Why it is a unit |
 |---|---|---|
 | `bombadil-agentd.service` | the agent daemon (`agentd`) | systemd starts it again if it dies, in a clean environment |
 | `bombadil-shell.service` | the bar and pill, through the `bombadil-shell` wrapper | the wrapper puts the app kit's QML module on Quickshell's import path, which a bare `quickshell -p` cannot do |
-| `mako.service` (a drop-in) | notifications | the package's unit is kept; the drop-in adds the restart policy |
 
-All three restart on exit: `Restart=always`, `RestartSec=1`. `StartLimitIntervalSec=0` sits in
+Both restart on exit: `Restart=always`, `RestartSec=1`. `StartLimitIntervalSec=0` sits in
 the `[Unit]` section, which is the only place systemd reads it: under `[Service]` it is ignored and
 the default of five starts in ten seconds would end a crash loop with no pill at all. A daemon that
 keeps failing is still better than none.
@@ -28,13 +27,14 @@ environment to the user manager and then restarts the units:
 
 ```lua
 hl.on("hyprland.start", function()
-    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
+    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell")
 end)
 ```
 
 `WAYLAND_DISPLAY` and the compositor's signature exist only inside the session, not in the user
-manager, so the import comes first. Nothing else starts the daemon, the bar or `mako`, so no second
-copy can race the first.
+manager, so the import comes first. Nothing else starts the daemon or the bar, so no second
+copy can race the first. Notifications are the bar's own: its `NotificationServer` owns
+`org.freedesktop.Notifications`, and no notification daemon is installed.
 
 | Key | Does |
 |---|---|

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from pathlib import Path
 
 REPO = Path("/repo")
@@ -32,6 +33,13 @@ env = dict(
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
+    # Connections run on their fake engine, in the container's own folders: the service, agentd and the shell all read
+    # these, and a container's user is outside the service's default range of people (1000 to 59999).
+    BOMBADIL_CONNECT_ENGINE="fake",
+    BOMBADIL_CONNECT_UIDS="0-65535",
+    BOMBADIL_CONNECT_SOCKET=str(xdg / "connect" / "connect.sock"),
+    BOMBADIL_CONNECT_STATE=str(xdg / "connect" / "state"),
+    DBUS_SESSION_BUS_ADDRESS=f"unix:path={xdg}/bus",   # the shell's NotificationServer owns the name on this bus
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -119,6 +127,17 @@ for _ in range(100):
     time.sleep(0.1)
 env["WAYLAND_DISPLAY"] = socks[0].name
 env["SWAYSOCK"] = next(iter(xdg.glob("sway-ipc.*")), Path("")).as_posix()
+# The session bus first, so that the shell's NotificationServer is the only owner of org.freedesktop.Notifications
+# (nothing else in the image claims it), then the connection service on its fake engine, so that agentd's first look
+# at it finds it. A notification is posted to the bus the way a web page's is (gdbus or busctl; libnotify is not in the image).
+start("dbus", ["dbus-daemon", "--session", "--nofork", f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"])
+(xdg / "connect" / "state").mkdir(mode=0o700, parents=True, exist_ok=True)
+start("connect", [str(REPO / "bin" / "bombadil-connect")])
+for path in (xdg / "bus", xdg / "connect" / "connect.sock"):
+    for _ in range(100):
+        if path.exists():
+            break
+        time.sleep(0.1)
 start("agentd", [str(REPO / "bin" / "agentd")])
 sock_path = xdg / "bombadil" / "agentd.sock"
 for _ in range(100):
@@ -130,10 +149,10 @@ qs_proc = start("quickshell", [str(REPO / "bin" / "bombadil-shell")])
 events, lock = [], threading.Lock()
 
 
-def listen():
+def listen(mode="w"):
     s = socket.socket(socket.AF_UNIX)
     s.connect(str(sock_path))
-    with open(OUT / "events.jsonl", "w") as log:
+    with open(OUT / "events.jsonl", mode) as log:
         for raw in s.makefile("r"):
             try:
                 m = json.loads(raw)
@@ -210,6 +229,15 @@ def api_requests():
         return 0
 
 
+def until(pred, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def api_log():
     try:
         return [json.loads(ln) for ln in (OUT / "api-requests.jsonl").read_text().splitlines()]
@@ -256,6 +284,97 @@ body = mean_pixel("00-resting", 640, 260)
 check("the stone lies faintly in the middle, lighter than its ground", body[2] - lit[2] >= 5 and body[2] <= 46, f"{body} vs {lit}")
 check("nothing in the wallpaper is orange", all(r - b <= 3 for r, g, b in corners + [lit, body]), [lit, body])
 
+# 0. Bombadil says hello. No persona.toml yet, so the first bar to connect gets the card (name and voice),
+# with the keyboard already on it; Enter saves, the greeting follows, and the next turn's system prompt
+# carries the persona. Then the launcher word `voice` reopens it.
+HOME = Path(os.environ["HOME"])
+persona_toml = HOME / ".config" / "bombadil" / "persona.toml"
+said_json = HOME / ".local" / "state" / "bombadil" / "said.json"
+turns_jsonl = HOME / ".local" / "state" / "bombadil" / "turns.jsonl"
+greeted = xdg / "bombadil" / "greeted"
+
+
+def persona_now():
+    try:
+        return tomllib.loads(persona_toml.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def boot_rows():
+    try:
+        rows = [json.loads(line) for line in turns_jsonl.read_text(encoding="utf-8").splitlines()]
+    except (OSError, ValueError):
+        return []
+    return [r for r in rows if r.get("action") == "boot"]
+
+
+def card_up():
+    # The card's words are light text; nothing else above the pill is on a fresh desk (the wallpaper is dark
+    # to its brightest point, and the pill's own rows are left out). File size would say nothing: the
+    # wallpaper alone makes a picture of tens of KB.
+    from PySide6.QtGui import QImage
+    probe = OUT / "probe.png"
+    run("grim", str(probe))
+    img = QImage(str(probe))
+    if img.isNull():
+        return False
+    light = 0
+    for y in range(0, min(730, img.height()), 2):
+        for x in range(0, img.width(), 2):
+            c = img.pixelColor(x, y)
+            light += c.red() + c.green() + c.blue() > 3 * 170
+    return light > 60
+
+
+check("the card is asked on the first sign-in", until(lambda: persona_now() is not None, 20), persona_now())
+# The card is asked when sign-in turns ready, and the bar may still be starting: it gets the card the moment
+# it says hello, so wait until it is on screen before typing into it.
+check("the card is on screen", until(card_up, 30))
+time.sleep(1.0)
+shot("00a-card")
+p0 = persona_now() or {}
+check("defaults are written and this login counts as greeted", p0.get("voice") == "merry" and greeted.exists(), p0)
+typ("Daniel")
+shot("00b-card-typed")
+key("Return")
+check(
+    "Enter on the card saves the name, with no summon first",
+    until(lambda: (persona_now() or {}).get("name") == "Daniel", 10),
+    persona_now(),
+)
+time.sleep(1.2)
+shot("00c-welcome-line")
+check(
+    "the first hello was shown, and logged as a boot row that said something",
+    until(lambda: any(r.get("greeted") for r in boot_rows()), 15),
+    boot_rows(),
+)
+ledger = json.loads(said_json.read_text()) if said_json.exists() else {}
+check("the ledger has the day it began", bool(ledger.get("setup_day")), ledger)
+
+# the word `voice` reopens the card with what is saved; Down picks the next voice, Enter keeps it
+summon()
+typ("voice")
+n = mark()
+key("Return")
+vd = wait(ev("local", action="voice", phase="done"), 10, n)
+time.sleep(1.0)
+shot("00d-voice-word")
+check("the word voice answers locally", vd and vd.get("ok"), vd)
+key("Down")
+time.sleep(0.3)
+shot("00e-voice-plain")
+key("Return")
+check(
+    "Down then Enter picks the Plain voice and keeps the name",
+    until(lambda: (persona_now() or {}).get("voice") == "plain", 10),
+    persona_now(),
+)
+check("the name is unchanged", (persona_now() or {}).get("name") == "Daniel", persona_now())
+time.sleep(0.8)
+shot("00f-after-voice")
+
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
 typ("install ffmpeg")
@@ -287,6 +406,12 @@ end = wait(ev("turn_end"), 40, n)
 time.sleep(0.6)
 shot("04-ffmpeg-done")
 check("ffmpeg turn ends changed, with a summary", end and end.get("changed"), end)
+reqs = [json.loads(x) for x in (OUT / "api-requests.jsonl").read_text().splitlines()]
+check(
+    "the turn's system prompt carried the name and voice",
+    any(r.get("persona") and "install ffmpeg" in r.get("first", "") for r in reqs),
+    [(r.get("persona"), r.get("first", "")[:30]) for r in reqs[:4]],
+)
 
 # 2. make me a password manager: the line counts lines as the QML streams.
 summon()
@@ -453,15 +578,6 @@ def focused_app():
     return None
 
 
-def until(pred, timeout=10):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if pred():
-            return True
-        time.sleep(0.1)
-    return False
-
-
 # 7. every way out of the drawer: Esc in it, Details again, Esc in the pill. (Clicks on the line
 # and its Details button are covered offscreen in tests/test_pill_qml.py: headless sway has no pointer.)
 check("details drawer has the keyboard", until(lambda: focused_app() == "bombadil-details", 5), focused_app())
@@ -578,6 +694,11 @@ time.sleep(1.2)
 shot("23-picture-beside-window")
 shared = glass_pixels(500, 480, 200)
 check("a picture asked for beside a window still shows", shared > 20, shared)
+# The pill is 360 beside a window (460 to 820 on this 1280 screen); the picture takes about 560 (360 to 920).
+inside_l, outside_l = glass_pixels(368, 480, 200), glass_pixels(340, 480, 200)
+inside_r, outside_r = glass_pixels(912, 480, 200), glass_pixels(940, 480, 200)
+check("beside a window the picture is wider than the pill, about 560 px", inside_l > 60 and inside_r > 60 and outside_l < 10 and outside_r < 10,
+      f"left {inside_l}/{outside_l}, right {inside_r}/{outside_r}")
 desk_ipc("cover", full)
 time.sleep(1.0)
 st = desk_state()
@@ -732,9 +853,10 @@ check("and the stone is still: nothing waits, nothing is amber",
 
 # 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
 # claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
-# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
-# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
-# the same conversation: the first time the owner says so, the second time the clock does.
+# rate_limit_event and "You've hit your 5-hour limit" (api_error "usage_limit_reached"). The machine rests: the ask
+# waits as a chip, launcher words and "!" commands still run, nothing more is sent to the API, and once the plan is
+# back the same ask runs again in the same conversation: the first time the owner says so, the second time the clock
+# does.
 STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
 LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
 claude_ai = Path.home() / ".e2e-claude-ai"
@@ -1528,6 +1650,103 @@ st = desk_state()
 check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
       and st["stripped"] == [], (st["order"], st["stripped"]))
 
+# 13. Away: the card that says what happened while the person was gone. The turn log is agentd's own file, so the
+# section writes the rows a stretch away would have left (a turn that failed, a job that failed, a turn that went
+# well), asks for the card by name, puts it away with a tap of the virtual pointer, and asks again.
+turn_log = Path.home() / ".local" / "state" / "bombadil" / "turns.jsonl"
+left = time.time()
+with turn_log.open("a") as f:
+    for row in ({"t": left - 6, "prompt": "build the site", "ok": False, "result": "the build broke\nmore", "n": 901},
+                {"t": left - 5, "kind": "local", "prompt": "background job", "action": "job",
+                 "target": "Build the image", "result": "Build the image failed: no network", "ok": False,
+                 "job": "0a0b0c"},
+                {"t": left - 4, "prompt": "tidy the notes", "ok": True, "result": "", "n": 902}):
+        f.write(json.dumps(row) + "\n")
+summon()
+typ("show away")
+before = api_requests()
+n = mark()
+key("Return")
+asked = wait(ev("local", phase="done"), 10, n)
+check("asking for what happened while away answers in a line, with no model", asked and asked.get("ok")
+      and asked.get("text") == "Here is what happened while you were away." and api_requests() == before,
+      asked and asked.get("text"))
+key("Escape")
+time.sleep(1.5)
+st = desk_state()
+shot("47-desk-away")
+aw = st.get("away") or {}
+slot = (st.get("slots") or {}).get("away") or {}
+check("the Away card is up in full, on the right rail", st["present"]["away"] and st["faces"]["away"] == "full"
+      and slot.get("side") == "right", (st.get("faces"), slot))
+check("it says what failed first, then what went well, and why it is there",
+      [r["key"] for r in aw.get("rows", [])][:3] == ["job:0a0b0c", "turn:901", "turn:902"]
+      and aw["rows"][0]["button"] == "Why?" and aw["rows"][1]["sub"] == "the build broke"
+      and aw["why"].startswith("since ") and aw["why"].endswith("puts this away"), aw)
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+dots = {name: region_pixels("47-desk-away", box, colour) for name, colour in
+        (("red", "#d05555"), ("green", "#5fb36b"))}
+check("a failure is drawn red and what went well green", dots["red"] > 40 and dots["green"] > 20, dots)
+pointer(f"move {slot['x'] + 60} {slot['y'] + 22}")           # the title
+time.sleep(0.3)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+time.sleep(1.0)
+st = desk_state()
+check("a tap on the card puts it away, and nothing reached the model",
+      st["faces"]["away"] == "hidden" and not st["present"]["away"] and st.get("away") is None
+      and api_requests() == before, (st.get("faces"), st.get("away")))
+summon()
+typ("show away")
+n = mark()
+key("Return")
+wait(ev("local", phase="done"), 10, n)
+key("Escape")
+time.sleep(1.5)
+st = desk_state()
+shot("48-desk-away-nothing")
+check("what was seen is not news again: asked once more it says nothing happened",
+      [r["key"] for r in (st.get("away") or {}).get("rows", [])] == ["none"], st.get("away"))
+summon()
+typ("how's the machine?")
+n = mark()
+key("Return")
+wait(ev("local", phase="done"), 10, n)
+key("Escape")
+time.sleep(1.0)
+st = desk_state()
+check("the person's next ask puts it away too", st["faces"]["away"] == "hidden" and st.get("away") is None,
+      (st.get("faces"), st.get("away")))
+# The shell's half, with a card agentd did not build: five rows, three colours and a count of the rest.
+inject({"type": "away", "since": time.time() - 3600, "count": 7, "why": "since 09:05 · a click puts this away",
+        "rows": [
+            {"key": "turn:7", "kind": "dot", "title": "build the site", "sub": "the build broke", "tone": "red", "button": ""},
+            {"key": "dev:rev", "kind": "dot", "title": "reviewer on Bombadil", "sub": "apply the migration?",
+             "tone": "sessions", "button": "Open"},
+            {"key": "job:0a0b0c", "kind": "dot", "title": "Build the image", "sub": "no network", "tone": "red",
+             "button": "Why?"},
+            {"key": "turn:5", "kind": "dot", "title": "tidy the notes", "sub": "at 09:05", "tone": "ok", "button": ""},
+            {"key": "more", "kind": "plain", "title": "and 3 more", "sub": "", "tone": "you", "button": ""}]})
+time.sleep(1.5)
+st = desk_state()
+shot("49-desk-away-rows")
+aw = st.get("away") or {}
+slot = (st.get("slots") or {}).get("away") or {}
+check("a card of five rows is drawn in full, and its chip would say seven things",
+      st["faces"]["away"] == "full" and len(aw.get("rows", [])) == 5 and slot.get("h") == 50 + 5 * 44 + 18
+      and aw["strip"]["text"] == "back · 7 things", (st.get("faces"), slot, aw.get("strip")))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+dots = {name: region_pixels("49-desk-away-rows", box, colour) for name, colour in
+        (("red", "#d05555"), ("blue", "#5b9bd5"), ("green", "#5fb36b"))}
+check("it draws a dot in each colour, and a button on the two rows that have one",
+      dots["red"] > 100 and dots["blue"] > 40 and dots["green"] > 20, dots)
+inject({"type": "away", "since": 0, "count": 0, "why": "", "rows": []})
+time.sleep(0.8)
+st = desk_state()
+check("and agentd saying there is none takes it away", st["faces"]["away"] == "hidden" and st.get("away") is None,
+      st.get("faces"))
+
 # 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
 # cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
 # service on its fake engine says new mail, agentd turns it into a notice, the bar shows it.
@@ -1619,6 +1838,255 @@ plain_bar.wait(10)
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
               if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
 check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
+
+# 31. Messages and connections (docs/CONNECT.md): the real chain end to end. The connection service runs on its fake
+# engine (Acme and Linear, started above); the bar's own NotificationServer owns the session bus's notification
+# name; a virtual pointer and wtype are the person's hands. Nothing is injected into the bar's own state: a
+# notification is posted on the bus, a message is said to the service, and the person's Reply, typing and Send are
+# real clicks and keys.
+def click(x, y):
+    pointer(f"move {x} {y}")
+    time.sleep(0.3)
+    pointer("press")
+    time.sleep(0.1)
+    pointer("release")
+    time.sleep(0.6)
+
+
+def say_to_connect(op, **args):
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(str(xdg / "connect" / "connect.sock"))
+    s.sendall((json.dumps({"id": 1, "op": op, **args}) + "\n").encode())
+    answer = json.loads(s.makefile("r").readline())
+    s.close()
+    return answer
+
+
+def notify(app, summary, body):
+    """A page's notification, as a browser posts it on the session bus."""
+    return run("busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+               "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", app, "0", "", summary, body, "0", "0", "30000")
+
+
+# A task card is built and checked here the way agentd does it.
+sys.path.insert(0, str(REPO / "src"))
+from bombadil import cards, paths
+from bombadil.connect import cardmake
+
+key("Escape")
+connect_bar = start("quickshell-connect", [str(REPO / "bin" / "bombadil-shell")])
+until_state(lambda st: "mode" in st, 30)
+time.sleep(2)
+r = run("busctl", "--user", "status", "org.freedesktop.Notifications")
+check("the bar owns the notification name on the session bus (nothing else does)", "Comm=quickshell" in r.stdout,
+      (r.stdout[:200] + r.stderr[:200]).replace("\n", " "))
+
+# a web page's notification becomes the line above the pill, with Reply and Open
+n = mark()
+notify("Teams", "Priya Shah", "Legal just signed off")
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "notify", 10, n)
+check("a notification posted on the session bus reaches agentd and comes back as a notice with Reply and Open",
+      got and got["line"] == "Priya Shah: Legal just signed off" and [a["id"] for a in got["actions"]] == ["reply", "open"], got)
+st = until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("50-notification-notice")
+check("and the bar shows it", st.get("noticeShown") and [x["line"] for x in st["notices"]] == ["Priya Shah: Legal just signed off"],
+      st.get("notices"))
+
+# Reply (a real click on the chip) opens a card whose box takes the keys; Copy and open puts the words on the
+# clipboard and is no send
+pointer("move 956 704")
+time.sleep(0.3)
+click(956, 704)
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("source") == "notification", 10, n)
+st = until_state(lambda st: st.get("card") and st["card"]["type"] == "message")
+check("Reply on that line opens a card of the notification, with a box and Copy and open (no draft, no ring)",
+      c and c["card"]["reply"]["kind"] == "copy" and st.get("card") and st["card"]["draft"]["proposal"] == "", (c, st.get("card")))
+typ("Thanks, will do.")
+time.sleep(1)
+shot("51-notification-reply")
+n = mark()
+click(444, 669)
+inv = wait(lambda m: m.get("type") == "notification_invoke", 10, n)
+pasted = run("wl-paste", "--no-newline")
+check("Copy and open puts what was typed on the clipboard (the keys went to the card's box) and brings the page forward",
+      inv is not None and pasted.stdout == "Thanks, will do.", (inv, pasted.stdout, pasted.stderr))
+key("Escape")
+time.sleep(1)
+
+# a message in the service: the notice, the card, a draft that lights only when it is what was drawn, the person's
+# click, one receipt, and a second click that does nothing
+n = mark()
+check("the service takes a message", say_to_connect("fake_inject", message={
+    "from": {"id": "U0PRIYA", "name": "Priya Shah"}, "text": "Legal just signed off. Can we lock the 14th for the launch?",
+    "ts": time.time()}).get("ok") is True)
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect", 15, n)
+check("it reaches the bar as a notice with Reply and Open", got and got["line"].startswith("Priya Shah: Legal just signed off")
+      and [a["id"] for a in got["actions"]] == ["reply", "open"], got)
+until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("52-message-notice")
+click(956, 704)
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "message" and m["card"].get("source") == "connect", 10, n)
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["proposal"])
+check("Reply opens the message card with an empty draft of the person's own that is not lit",
+      c and c["card"]["reply"]["by"] == "person" and st["card"]["draft"]["state"] == "open" and st["card"]["draft"]["ready"] is False,
+      st.get("card"))
+time.sleep(1)
+shot("53-message-card")
+typ("Yes, lock the 14th.")
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["ready"], 10)
+time.sleep(0.8)
+shot("54-message-ready")
+check("what was typed lights the button only once agentd has the draft and the card has drawn it",
+      st.get("card") and st["card"]["draft"]["ready"] is True, st.get("card"))
+n = mark()
+click(411, 668)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect"
+           and "Replied to Priya in a direct message" in m.get("line", ""), 10, n)
+check("a click on Send is one press, and the receipt is a notice saying where it went",
+      res and res["tone"] == "done" and res["line"].startswith("Replied to Priya in a direct message"), res)
+time.sleep(1.2)
+shot("55-message-sent")
+n = mark()
+click(411, 668)
+time.sleep(1.5)
+check("a second click on the same place sends nothing more",
+      not [m for m in events[n:] if m.get("type") == "notice" and "Replied" in m.get("line", "")],
+      [m for m in events[n:] if m.get("type") in ("press_result", "notice")])
+key("Escape")
+time.sleep(1)
+
+# the next card does not inherit what the last one said
+n = mark()
+say_to_connect("fake_inject", message={"from": {"id": "U0MARCUS", "name": "Marcus Webb"},
+                                       "text": "Can you look at the pricing copy before noon?", "ts": time.time()})
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and m["line"].startswith("Marcus Webb"), 15, n)
+until_state(lambda st: st.get("noticeShown"))
+click(956, 704)
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["proposal"] not in ("", "p1"))
+time.sleep(1)
+shot("56-next-card")
+
+
+def reply_box(name):
+    """Where the card's reply box is in a screenshot: its dark inside is a run of pixels down the box's right side,
+    whatever stands above the card (a receipt line, a chip row) has moved it to."""
+    from PySide6.QtGui import QImage
+    img, run, on_card = QImage(str(OUT / f"{name}.png")), [], False
+    for y in range(380, 740):
+        c = img.pixelColor(892, y)
+        if abs(c.red() - 25) < 4 and abs(c.green() - 29) < 4 and abs(c.blue() - 34) < 4:
+            on_card = True          # (the page behind the card is darker than the box is, so start from the card)
+        elif on_card and abs(c.red() - 13) < 4 and abs(c.green() - 13) < 4 and abs(c.blue() - 17) < 4:
+            run.append(y)
+        elif len(run) >= 40:
+            break
+        else:
+            run = []
+    return (390, run[0] + 4, 500, run[-1] - run[0] - 8) if len(run) >= 40 else None     # (x, y, w, h)
+
+
+where_box = reply_box("56-next-card")
+box = region_pixels("56-next-card", where_box, "#e6e6e6", tol=60) if where_box else -1
+check("a new reply to someone else opens with an empty box (no words of the one before)",
+      st.get("card") and st["card"]["draft"]["ready"] is False and 0 <= box < 40, (st.get("card"), box, where_box))
+words_box = reply_box("54-message-ready")     # the same look at the box that had words in it finds them
+check("and looking at a box that holds words does find them (the look has teeth)",
+      words_box is not None and region_pixels("54-message-ready", words_box, "#e6e6e6", tol=60) > 100, words_box)
+key("Escape")
+time.sleep(1)
+
+# the launcher's words: unread, and what is connected, with no model
+summon()
+typ("unread")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "list", 10, n)
+time.sleep(1.2)
+shot("57-unread")
+check("the word 'unread' opens the list of what waits, without the model",
+      c and c["card"]["id"] == "list:unread" and len(c["card"]["rows"]) >= 2, c and c["card"].get("rows"))
+key("Escape")
+time.sleep(0.8)
+summon()
+typ("connections")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "list" and m["card"].get("id") != "list:unread", 10, n)
+time.sleep(1.2)
+shot("58-connected-here")
+rows = c["card"]["rows"] if c else []
+check("the word 'connections' opens Connected here: Slack and Linear, no token or key anywhere on it",
+      c and any("Acme" in r["title"] or "Slack" in r["title"] for r in rows) and any("Linear" in r["title"] for r in rows)
+      and "xox" not in json.dumps(c) and "xapp" not in json.dumps(c), rows)
+key("Escape")
+time.sleep(0.8)
+
+# the agent's side, through the real CLI and the real os-mcp server (the API is scripted): it reads what is unread and
+# drafts a reply; the draft is on a card for the person, lit only by what the card drew, and nothing has gone until
+# the person's own click
+def find_colour(name, colour, box, tol=10):
+    """The middle of the pixels of this colour in the box of a screenshot (None when there are none)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, xs, ys = QColor(colour), QImage(str(OUT / f"{name}.png")), [], []
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            c = img.pixelColor(x, y)
+            if abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3:
+                xs.append(x)
+                ys.append(y)
+    return (sum(xs) // len(xs), sum(ys) // len(ys)) if xs else None
+
+
+n = mark()
+summon()
+typ("answer priya, say yes")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "message"
+         and m["card"].get("reply", {}).get("by") == "agent", 90, n)
+check("the agent read the messages and its draft arrived as a card of its own, with the words it wrote",
+      c and c["card"]["reply"]["content"] == "Yes, the 14th works for us." and c["card"]["reply"]["kind"] == "slack_reply", c)
+end = wait(ev("turn_end"), 60, n)
+check("the turn ended on its own words and nothing in it sent", end is not None and not end.get("stopped"), end and end.get("summary"))
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["ready"], 15)
+time.sleep(1)
+shot("60-agent-draft")
+check("what the agent wrote is lit for the person's press once the card has drawn it, and sent nothing yet",
+      st.get("card") and st["card"]["draft"]["ready"] is True and st["card"]["draft"]["state"] == "open", st.get("card"))
+turn_log = paths.turns_log()
+turns = [json.loads(ln) for ln in turn_log.read_text().splitlines()] if turn_log.exists() else []
+check("the turn log keeps no message text", "Can we lock the 14th" not in json.dumps(turns) and "Priya Shah" not in json.dumps(turns),
+      json.dumps(turns)[-300:])
+where = find_colour("60-agent-draft", "#d97757", (360, 440, 450, 735))
+n = mark()
+if where:
+    click(*where)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Posted in #launch" in m.get("line", ""), 10, n)
+check("the person's click on Send is the one thing that sends it", where and res and res["tone"] == "done", (where, res))
+key("Escape")
+time.sleep(1)
+
+# a task card, built the way agentd builds one, drawn by the real shell
+card = cardmake.task_card(service="linear", task={
+    "ref": "linear:LIN-42", "service": "linear", "connection": "mcp:linear", "title": "Review the launch checklist",
+    "why": "assigned to you", "status": "In progress", "due": "2026-10-03", "url": "https://linear.acme.test/issue/LIN-42",
+    "fields": [{"key": "team", "label": "Team", "value": "Launch"}]},
+    task_fields={"comment": [{"key": "text", "label": "Comment", "edit": "text", "required": True}]})
+card, errors = cards.accept(card, now=time.time())
+check("agentd's own check takes the card it built", card is not None, errors)
+inject({"type": "card", "card": card})
+st = until_state(lambda st: st.get("card") and st["card"]["type"] == "task")
+time.sleep(1.2)
+shot("59-task-card")
+check("a task card is drawn by the shell, with its comment box and no lit button",
+      st.get("card") and st["card"]["type"] == "task" and not st["card"]["draft"]["ready"], st.get("card"))
+key("Escape")
+
+qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-connect.log").read_text()).splitlines()
+              if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
+check("the shell logged no QML errors while connections were on screen", not qml_errors, "; ".join(qml_errors[:3]))
+connect_bar.terminate()
+connect_bar.wait(10)
 
 # 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image. The file new systems ship
 # holds only comments, so the standard picture shows and a first path is noticed with no restart; the
@@ -1721,6 +2189,175 @@ check("the wallpaper's choices raised no QML error but the one for the picture t
       not [ln for ln in own_log.splitlines()
            if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)
            and "Cannot open" not in ln and "wallpaper:" not in ln], own_log[-400:])
+
+# 10. Coding sessions: the real Claude Code in zellij, a window that is only a viewer, the dots.
+home = Path.home()
+proj = home / "Projects" / "spike"
+proj.mkdir(parents=True, exist_ok=True)
+run("git", "init", "-q", "-b", "main", str(proj))
+run("git", "-C", str(proj), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "one")
+cfg_path = home / ".claude.json"
+try:
+    cfg = json.loads(cfg_path.read_text())
+except (OSError, ValueError):
+    cfg = {}
+cfg.update(hasCompletedOnboarding=True, theme="dark", numStartups=5,
+           customApiKeyResponses={"approved": ["sk-ant-fake"], "rejected": []})
+cfg.setdefault("projects", {}).update({str(p): {"hasTrustDialogAccepted": True, "hasCompletedProjectOnboarding": True}
+                                       for p in (proj, home / "Projects" / ".work" / "spike" / "reviewer")})
+cfg_path.write_text(json.dumps(cfg))
+
+
+def zscreen(name):
+    return run("zellij", "-s", name, "action", "dump-screen", "-p", "terminal_0").stdout
+
+
+def zlisted():
+    return run("zellij", "list-sessions", "--short", "--no-formatting").stdout.split()
+
+
+def devmsg(pred, timeout=20, since=0):
+    return wait(lambda m: m.get("type") == "dev" and pred(m), timeout, since)
+
+
+def states(m):
+    return {s["key"]: s["state"] for s in m.get("sessions", [])}
+
+
+def viewer_open(app_id):
+    return f'"app_id": "{app_id}"' in run("swaymsg", "-t", "get_tree").stdout
+
+
+# a. "claude spike" starts the unchanged TUI in the project, in a window of its own.
+summon()
+typ("claude spike")
+time.sleep(0.3)
+shot("30-claude-spike-typed")
+n = mark()
+t0 = time.monotonic() + 0.2
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+results["timings"]["session_start_s"] = round(o["_t"] - t0, 3) if o else None
+check("claude spike started from the pill", o and o.get("ok") and o.get("text") == "Started claude on Spike.", o)
+check("its window opened", until(lambda: viewer_open("bombadil-session-spike-claude"), 15))
+panes = run("zellij", "-s", "bombadil-spike-claude", "action", "list-panes", "--all", "--json").stdout
+check("only the tool shows, no zellij bars", "tab-bar" not in panes and "status-bar" not in panes, panes[-300:])
+check("Claude Code runs in the project", until(lambda: "claude on Spike" in zscreen("bombadil-spike-claude"), 30),
+      zscreen("bombadil-spike-claude")[-400:])
+time.sleep(1)
+shot("31-claude-tui")
+
+# b. Typed into the window, it works; its hooks move the dot; it finishes and is your turn.
+n = mark()
+typ("tell me a joke")
+key("Return")
+w = devmsg(lambda m: states(m).get("spike/claude") == "working", 20, n)
+check("its dot moves while it works", w is not None)
+d = devmsg(lambda m: states(m).get("spike/claude") == "done", 30, n)
+check("its dot is lit when it finishes", d is not None and "finished" in (d or {}).get("line", ""), d and d.get("line"))
+time.sleep(1)
+shot("32-joke-done-dot-lit")
+try:
+    geo = json.loads(run("quickshell", "ipc", "-p", str(REPO / "shell" / "shell.qml"), "call", "dev", "chips").stdout)
+except ValueError:
+    geo = {}
+check("the bar shows the project's chip above the pill's left end",
+      geo.get("visible") and geo["width"] > 40 and geo["height"] == 28 and geo["y"] + geo["height"] <= geo["pillY"]
+      and geo["pillX"] <= geo["x"] < geo["pillX"] + geo["pillWidth"] / 2, geo)
+
+# c. Shift+Enter reaches Claude Code through foot and zellij: a newline, not a send.
+before = api_requests()
+typ("line one")
+run("wtype", "-s", "200", "-M", "shift", "-k", "Return", "-m", "shift")
+time.sleep(0.3)
+typ("line two")
+time.sleep(1)
+scr = zscreen("bombadil-spike-claude")
+check("Shift+Enter makes a new line in Claude Code", "line one" in scr and "line two" in scr and api_requests() == before,
+      scr[-300:])
+shot("33-shift-enter")
+
+# d. Closing the window only closes the viewer.
+run("swaymsg", '[app_id="bombadil-session-spike-claude"] kill')
+check("the window closed", until(lambda: not viewer_open("bombadil-session-spike-claude"), 10))
+time.sleep(2)
+check("the session runs on", "bombadil-spike-claude" in zlisted(), zlisted())
+shot("34-window-closed-dot-stays")
+
+# e. Its name brings it back mid-sentence.
+summon()
+typ("claude spike")
+n = mark()
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+check("typing its name brings it back", o and o.get("text") == "Back to claude on Spike.", o)
+check("in a new window", until(lambda: viewer_open("bombadil-session-spike-claude"), 15))
+time.sleep(1.5)
+scr = zscreen("bombadil-spike-claude")
+check("mid-sentence: the unsent lines and the joke are still there",
+      "line two" in scr and "penguins" in scr, scr[-300:])
+shot("35-back-mid-sentence")
+
+# f. A second session on the repository gets its own copy, and asks a question.
+summon()
+typ("claude spike reviewer")
+n = mark()
+key("Return")
+o = wait(ev("local", phase="done"), 20, n)
+copy = home / "Projects" / ".work" / "spike" / "reviewer"
+check("a second session gets its own copy", o and "in its own copy" in (o.get("text") or "") and copy.is_dir(), o)
+until(lambda: "reviewer on Spike" in zscreen("bombadil-spike-reviewer"), 30)
+n = mark()
+typ("ask me")
+key("Return")
+a = devmsg(lambda m: states(m).get("spike/reviewer") == "asked", 30, n)
+check("a question lights its dot and becomes the pill's line",
+      a and a.get("line") == "reviewer on Spike: Run the migration on the local database?", a and a.get("line"))
+st = desk_state()
+check("and the stone knocks for it, the same message the desk's Needs you reads",
+      st.get("needsYou") and st.get("face") == "needs", {k: st.get(k) for k in ("needsYou", "face")})
+run("swaymsg", '[app_id="bombadil-session-spike-reviewer"] kill')
+time.sleep(1.5)
+shot("36-your-turn-line")
+summon()
+key("Tab")
+time.sleep(1)
+nx = wait(ev("local", action="session", phase="done"), 10, n)
+check("Tab from the empty pill goes to the session waiting for you",
+      nx and nx.get("text") == "Back to reviewer on Spike." and until(
+          lambda: viewer_open("bombadil-session-spike-reviewer"), 10), nx)
+time.sleep(1)
+shot("37-tab-to-reviewer")
+key("Return")   # answer its question in its own window
+time.sleep(3)
+check("answered, the stone stops knocking", until(lambda: not desk_state().get("needsYou"), 20), desk_state().get("face"))
+
+# g. agentd restarting touches no session.
+agentd = next(p for p in procs if p.args[0].endswith("agentd"))
+agentd.terminate()
+agentd.wait(5)
+procs.remove(agentd)
+time.sleep(1)
+start("agentd-2", [str(REPO / "bin" / "agentd")])
+until(lambda: sock_path.exists(), 10)
+time.sleep(4)
+threading.Thread(target=listen, args=("a",), daemon=True).start()
+check("sessions outlive an agentd restart", {"bombadil-spike-claude", "bombadil-spike-reviewer"} <= set(zlisted()),
+      zlisted())
+time.sleep(2)
+shot("38-after-agentd-restart")
+
+# h. "end reviewer" ends it and keeps its copy.
+summon()
+typ("end reviewer")
+n = mark()
+key("Return")
+e = wait(ev("local", phase="done"), 20, n)
+check("end reviewer ends it and keeps its copy",
+      e and e.get("text") == "Ended reviewer on Spike. Its copy is kept." and until(
+          lambda: "bombadil-spike-reviewer" not in zlisted(), 10) and copy.is_dir(), e)
+time.sleep(1)
+shot("39-ended")
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:

@@ -3,14 +3,14 @@ import QtQuick
 import QtQuick.Layouts
 import "DeskTheme.js" as T
 
-// A card of rows: Watching (what is counting), Needs you (what is waiting for you) and Machine
-// (what the machine is using). A row is a meter (a label, what it says, a percent and a track filled
+// A card of rows: Watching (what is counting), Needs you (what is waiting for you), Away (what happened
+// while you were gone) and Machine (what the machine is using). A row is a meter (a label, what it says, a percent and a track filled
 // in the colour of who is using it, and a small x when it may be removed), a stack (a meter whose
 // track is cut into the pieces of who uses it, in order, so it has no single fill), a dot row (a
 // title, one line under it, a button or a small x) or a plain one without the dot.
 // A button never starts work by itself: it reports the press and the shell decides. A row that says
 // what it opens reports a tap anywhere on it the same way; a button or the x on it still wins.
-// model is DeskState's watchModel, needsModel or machineModel:
+// model is DeskState's watchModel, needsModel, awayModel or machineModel:
 // {title, why, rows: [{key, kind, title, sub, meter, meterText, tone, parts: [{tone, fraction}],
 // pulse, button, remove, opens}]}.
 DeskCard {

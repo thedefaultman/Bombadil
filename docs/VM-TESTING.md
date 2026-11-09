@@ -47,16 +47,17 @@ Screenshots of the checks that take one (`SHOT name`) land in `out/test/`.
 
 ## What it covers
 
-The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the three user services and
+The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the two user services and
 that each is revived after being killed, the pill taking the keyboard from a Super tap and from
 Alt+Space (first that Hyprland lists the bar's two global shortcuts, `pill-shortcuts-registered`,
 because it drops a shortcut nobody registered without a word), a launcher word running without a model,
 Super+Return opening a terminal on the desktop with a drawer showing (the drawer is put away first),
 the browser panel sliding in and out, apps created and opened each in its own place, the sign-in round
 trip against a stand-in provider (`fake_signin.py`: the page opens, the pill follows it, cancelling frees
-the port and puts the login page away without quitting the browser, no internet waits and recovers),
-restore points being created and pruned, the installer, and the installed system booting and undoing a
-change across a reboot.
+the port and puts the login page away without quitting the browser, no internet waits and recovers), the
+name and voice card that the first sign-in asks and the `voice` word that brings it back, restore points
+being created and pruned, the installer, and the installed system booting and undoing a change across a
+reboot.
 
 At the end of the live checks the session is left alone and `idle-cpu` samples Hyprland, the bar, the
 daemon and the brain in three slices of 10 s (`IDLE_CPU_SECONDS`): together they must use under 30% of a

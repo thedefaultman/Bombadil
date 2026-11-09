@@ -5,7 +5,9 @@ or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "w
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
 only with a verb ("show machine", "hide now"): a bare "now" or "away" is an ordinary word for the
 agent. Mail is one more app with its own words ("mail", "email", "inbox"): the Mail window opens on
-every inbox at once, and the service behind it is asked, never waited for.
+every inbox at once, and the service behind it is asked, never waited for. Messages and connections have
+words too ("slack", "unread", "connections", "connect linear"): they open a card or start a setup, which
+agentd does, since the connection service is asked there and never waited for.
 Everything else goes to the agent. The list is deliberately exact (after lowercasing and
 trimming, with an optional "open"/"close" in front): a parser that guesses would give the machine
 two brains that sometimes disagree.
@@ -25,9 +27,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, browser, hypr, paths, snapshots, sysmap
+from . import apps, browser, dev, hypr, paths, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
+from .connect.cardmake import SERVICE_TITLES
+from .connect.protocol import SERVICES
 from .desk import WIDGETS, Desk
 from .mail import client as mail_client
 
@@ -87,6 +91,7 @@ UTILITY_COMMANDS = {
     "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
+    "voice": ["voice"],   # agentd opens the name and voice card itself
 }
 # The Mail window (a kit app that ships with Bombadil), and what people call it.
 MAIL_APP = "mail"
@@ -99,6 +104,16 @@ SEND_BEFORE = ("yes", "yeah", "ok", "okay", "please", "go ahead and")
 SEND_AFTER = ("now", "please")
 SEND_LINE = "Sending is yours. It's under the pointer."
 MAIL_SHADOWED = "an app of yours called mail stands in front of Mail; rename it to open Mail"
+# Messages and connections (docs/CONNECT.md). The words that open the unread messages and "Connected here", and the
+# ones that start connecting a service. They are matched before the person's own apps, as Mail's are, so that each
+# always means the same thing; none is the name of a built-in app, so apps.RESERVED has nothing to add for them.
+CONNECT_VIEWS = {"unread": ["slack", "messages", "unread", "what did i miss", "what did i miss on slack"],
+                 "connected": ["connections", "connected", "whats connected", "what is connected"]}
+CONNECT_TITLES = {"unread": "your unread messages", "connected": "Connected here"}
+CONNECT_VERB = "connect"
+CONNECT_ENTRIES = {"messages": "Messages", "connections": "Connections"}   # what Tab offers, by name
+# An app of yours named like one of these words cannot be opened from the pill any more, so Tab does not offer it.
+CONNECT_CLAIMED = frozenset(w for words in CONNECT_VIEWS.values() for w in words)
 # Pictures of the machine, drawn from the machine (sysmap) with no model: whole questions people
 # ask about it, each exactly (after lowercasing, without punctuation and the article). Anything
 # longer or different goes to the agent, which has system_map for the same pictures.
@@ -145,10 +160,20 @@ BRAIN_APP = "brain"
 
 @dataclass
 class Action:
-    kind: str          # "panel", "app", "widget", or a command name ("undo", "stop", ...)
-    target: str = ""   # panel, app or widget name
-    verb: str = "open"  # open, close, hide
-    title: str = ""    # what the line calls it: "the browser", "Passwords"
+    kind: str          # "panel", "app", "widget", "session", "project", or a command name ("undo", "stop", ...)
+    target: str = ""   # panel, app or widget name; a session's key; a project's folder name
+    verb: str = "open"  # open, close, hide; "start" for `claude <project> [role]`
+    title: str = ""    # what the line calls it: "the browser", "Passwords", "reviewer on Bombadil"
+    tool: str = ""     # coding sessions: claude, codex or shell
+    role: str = ""
+
+
+# Coding sessions: `claude|codex|shell <project> [role]`, a project's or a session's name,
+# "end <name>" and "what's running?". Checked before app names: project, then session, then app, and
+# after Bombadil's own words (a model, the brain, Mail, a panel), which no project or session shadows.
+DEV_RE = re.compile(r"(claude|codex|shell) ([^\s]+)(?: ([^\s]+))?")
+SESSIONS_WORDS = {"whats running", "what is running", "sessions", "coding sessions", "list sessions"}
+END_VERBS = ("end",)
 
 
 def normalize(text: str, keep_case: bool = False) -> str:
@@ -214,6 +239,76 @@ def known_apps() -> list:
     return out
 
 
+def _dev_match(t: str, d) -> Action | None:
+    """Coding sessions by name. `t` is normalized ASCII text."""
+    m = DEV_RE.fullmatch(t)
+    if m:
+        folder = d.project(m.group(2))
+        if folder is None:
+            return None   # "claude what is this" is for the agent
+        role = m.group(3) or m.group(1)
+        return Action("session", folder.name, "start", f"{role} on {dev.project_title(folder.name)}",
+                      tool=m.group(1), role=role)
+    if t.replace("'", "") in SESSIONS_WORDS:
+        return Action("sessions")
+    ending = _strip_verb(t, END_VERBS)
+    word = ending if ending is not None else (_strip_verb(t, OPEN_VERBS) or t)
+    if ending is not None:
+        found = _dev_end(ending, d)
+        if found is not None:
+            return found
+    else:
+        folder = d.project(word)
+        if folder is not None:
+            return Action("project", folder.name, "open", dev.project_title(folder.name))
+    # "reviewer", "reviewer bombadil", "reviewer on bombadil"; "end reviewer"
+    parts = word.split()
+    if len(parts) == 3 and parts[1] == "on":
+        parts = [parts[0], parts[2]]
+    if not parts or len(parts) > 2:
+        return None
+    found = d.named(parts[0])
+    if len(parts) == 2:
+        folder = d.project(parts[1])
+        found = [s for s in found if folder is not None and dev.key(s.project) == dev.key(folder.name)]
+    if len(found) > 1:
+        where = " and ".join(dev.project_title(s.project) for s in found)
+        return Action("choose", parts[0], "end" if ending is not None else "open", f"{parts[0]} is on {where}",
+                      role=found[0].project.lower())
+    if found:
+        s = found[0]
+        if ending is not None:
+            return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+        return Action("session", s.key, "open", s.title, tool=s.tool, role=s.role)
+    return None
+
+
+def _dev_end(word: str, d) -> Action | None:
+    """"end claude myapp" and "end myapp": the sessions a role cannot name. A project
+    with one session ends it; with several, say which."""
+    m = DEV_RE.fullmatch(word)
+    folder = d.project(m.group(2)) if m else d.project(word)
+    if folder is None:
+        return None
+    title = dev.project_title(folder.name)
+    if m:
+        role = m.group(3) or m.group(1)
+        k = f"{dev.slug(folder.name)}/{role}"
+        s = d.sessions.get(k)
+        if s is None or s.state == "ended":
+            return Action("end", "", "end", f"{role} on {title}", role=role)
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    found = [s for s in d.on_project(folder) if not s.yours]
+    if len(found) == 1:
+        s = found[0]
+        return Action("end", s.key, "end", s.title, tool=s.tool, role=s.role)
+    if not found:
+        return Action("end", "", "end", title)
+    roles = [s.role for s in found]
+    listed = ", ".join(roles[:-1]) + " and " + roles[-1]
+    return Action("choose", roles[0], "end", f"{title} runs {listed}", role=folder.name.lower())
+
+
 def _picture(t: str, typed: str = "") -> Action | None:
     """"how am i connected" -> the network picture; "what does bluetooth need" -> that service's.
     `t` is the lowercased text, `typed` the same with the capitals it came with."""
@@ -228,9 +323,23 @@ def _picture(t: str, typed: str = "") -> Action | None:
     return None
 
 
-def match(text: str, app_list: list | None = None, busy: bool = False) -> Action | None:
-    """The local action for exactly this text, or None to send it to the agent. `busy`: a turn
-    is running, so a bare "why" asks about its current step."""
+def _fixed_word(t: str) -> bool:
+    """Is this text one of Bombadil's own words: a model, the brain's, Mail, a panel? A project or a
+    session named like one never stands in for it ("open mail" opens Mail whatever ~/Projects holds);
+    its own form, "claude mail", still names the project."""
+    if _lookup(t, MODEL_WORDS) is not None or _lookup(t, BRAIN_COMMANDS) is not None:
+        return True
+    for verbs in (OPEN_VERBS, CLOSE_VERBS, HIDE_VERBS, ()):
+        word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
+        if word is not None and (_lookup(word, MAIL_WORDS) is not None or _lookup(word, PANEL_WORDS) is not None):
+            return True
+    return False
+
+
+def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = False) -> Action | None:
+    """The local action for exactly this text, or None to send it to the agent. `dev_names`
+    (agentd's dev.Dev) adds the coding sessions' words. `busy`: a turn is running, so a bare "why"
+    asks about its current step."""
     raw = str(text).strip()
     if not raw or raw.startswith("!"):
         return None   # "!cmd" is a shell command, whatever follows the "!"
@@ -269,12 +378,19 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
+    if dev_names is not None and plain and not _fixed_word(t):
+        found = _dev_match(t, dev_names)
+        if found is not None:
+            return found
     model = _lookup(t, MODEL_WORDS) if plain else None
     if model:
         return Action("model", model, title=MODEL_TITLES[model])
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
+    connect = _connect_action(apostrophe) if apostrophe.isascii() else None
+    if connect is not None:
+        return connect
     for verbs, verb in ((OPEN_VERBS, "open"), (CLOSE_VERBS, "close"), (HIDE_VERBS, "hide"), ((), "open")):
         word = _strip_verb(t, verbs) if verbs else (t[4:] if t.startswith("the ") else t)
         if word is None:
@@ -296,6 +412,22 @@ def match(text: str, app_list: list | None = None, busy: bool = False) -> Action
             if util and (verbs or word == t):
                 return Action(util)
     return _widget_action(t, app_list) if plain and not raw.endswith("?") else None
+
+
+def _connect_action(t: str) -> Action | None:
+    """"slack", "show messages", "what's connected" -> the card that opens; "connect linear" -> the setup of that
+    service. Exactly these words: "connect to wifi" or "connect slack to the launch channel" are for the agent.
+    `t` is the lowercased text, apostrophes as they came."""
+    t = t.replace("'", "")
+    service = t[len(CONNECT_VERB) + 1:] if t.startswith(CONNECT_VERB + " ") else None
+    if service in SERVICES:
+        return Action("connect", service, "open", SERVICE_TITLES.get(service, service.capitalize()))
+    for verbs in (OPEN_VERBS, ()):
+        word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
+        view = _lookup(word, CONNECT_VIEWS) if word else None
+        if view is not None:
+            return Action("messages", view, "open", CONNECT_TITLES[view])
+    return None
 
 
 def is_send_word(text: str) -> bool:
@@ -331,12 +463,15 @@ def _widget_action(t: str, app_list: list) -> Action | None:
     return None
 
 
-def entries(app_list: list | None = None) -> list[dict]:
-    """What the pill can complete with Tab: apps first, then panels, widgets, then commands."""
+def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
+    """What the pill can complete with Tab: apps first, then projects and sessions, then panels,
+    widgets, then commands."""
     app_list = known_apps() if app_list is None else app_list
     out = [{"name": a.name, "title": str(a.title), "kind": "app", "words": [str(a.title).lower(), a.name]}
-           for a in app_list if a.name != MAIL_APP]
+           for a in app_list if a.name != MAIL_APP and a.name not in CONNECT_CLAIMED]
     out.append({"name": MAIL_APP, "title": "Mail", "kind": "app", "words": list(MAIL_WORDS["mail"])})
+    if dev_names is not None:
+        out += dev_names.names()
     out += [{"name": p, "title": PANEL_TITLES[p].removeprefix("the ").capitalize() if p != "files" else "Files",
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words}
@@ -345,6 +480,8 @@ def entries(app_list: list | None = None) -> list[dict]:
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
+    out += [{"name": name, "title": title, "kind": "command", "words": [name]}
+            for name, title in CONNECT_ENTRIES.items()]
     return out
 
 
@@ -366,10 +503,12 @@ class Launcher:
     """Does what `match` found, without the model. Blocking; agentd calls it in a thread."""
 
     def __init__(self, hyprland: hypr.Hyprland | None = None, snaps: snapshots.Snapshots | None = None,
-                 runner=subprocess.run, spawn=subprocess.Popen, desk: Desk | None = None):
+                 runner=subprocess.run, spawn=subprocess.Popen, desk: Desk | None = None,
+                 sessions: "dev.Dev | None" = None):
         self.hypr = hyprland or hypr.Hyprland()
         self.snaps = snaps or snapshots.Snapshots()
         self.desk_state = desk if desk is not None else Desk().load()
+        self.dev = sessions
         self._run = runner
         self._spawn = spawn
         self._drawer: list[str] | None = None   # what the details drawer shows, as its argv
@@ -378,6 +517,12 @@ class Launcher:
 
     @staticmethod
     def doing(action: Action) -> str:
+        if action.kind == "session":
+            return f"Starting {action.title}" if action.verb == "start" else f"Opening {action.title}"
+        if action.kind == "project":
+            return f"Opening {action.title}"
+        if action.kind == "end":
+            return f"Ending {action.title}"
         if action.kind in ("panel", "app", "mail"):
             verb = {"open": "Opening", "close": "Closing", "hide": "Putting"}[action.verb]
             return f"{verb} {action.title}" + (" away" if action.verb == "hide" else "")
@@ -387,6 +532,10 @@ class Launcher:
             return f"Drawing {action.title}"
         if action.kind == "widget":
             return f"Putting {action.title} " + ("on the desk" if action.verb == "open" else "away")
+        if action.kind == "messages":
+            return f"Opening {action.title}" if action.target == "connected" else "Looking at your messages"
+        if action.kind == "connect":
+            return f"Setting up {action.title}"
         return {"undo": "Undoing the last change", "history": "Opening the history", "hide": "Putting things away",
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
@@ -399,6 +548,10 @@ class Launcher:
 
     @staticmethod
     def failed(action: Action) -> str:
+        if action.kind in ("session", "project"):
+            return f"Could not open {action.title}"
+        if action.kind == "end":
+            return f"Could not end {action.title}"
         if action.kind in ("panel", "app", "mail"):
             verb = {"open": "open", "close": "close", "hide": "put away"}.get(action.verb, action.verb)
             return f"Could not {verb} {action.title or action.target}"
@@ -407,6 +560,10 @@ class Launcher:
         if action.kind == "widget":
             return (f"Could not put {action.title or action.target} "
                     + ("on the desk" if action.verb == "open" else "away"))
+        if action.kind == "messages":
+            return "Could not open what is connected" if action.target == "connected" else "Could not read your messages"
+        if action.kind == "connect":
+            return f"Could not set up {action.title}"
         return {"undo": "Could not undo", "history": "Could not open the history", "hide": "Could not put things away",
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
@@ -475,7 +632,10 @@ class Launcher:
 
     def _send(self, a: Action) -> tuple[bool, str]:
         # agentd says this only when a draft waits (is_send_word); the press itself is not here. The window
-        # comes in on the draft, so that what the line points at is there to be pointed at.
+        # comes in on the draft, so that what the line points at is there to be pointed at. A draft that is not
+        # mail (a reply, a ticket) is on a card in the bar, which is already in front of the person.
+        if a.verb == "proposal":
+            return True, SEND_LINE
         try:
             self.open_mail(**({"view": "drafts", "id": a.target} if a.target else {"view": "drafts"}))
         except Exception as e:  # noqa: BLE001 - the line is still true of the window the person has
@@ -532,6 +692,45 @@ class Launcher:
                 self.hypr.dispatch(f'hl.dsp.workspace.toggle_special("{name.removeprefix("special:")}")')
                 hidden.append(name)
         return True, "Put everything away." if hidden else "Nothing to put away."
+
+    # -- coding sessions --
+
+    def _sessions_or_raise(self) -> "dev.Dev":
+        if self.dev is None:
+            raise RuntimeError("coding sessions are not running here")
+        return self.dev
+
+    def _session(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        if a.verb == "start":
+            return d.open(a.tool, a.target, a.role)
+        s = d.sessions.get(a.target)
+        if s is None:
+            return False, f"{a.title} is gone."
+        return d.bring(s)
+
+    def _project(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        folder = d.project(a.target)
+        if folder is None:
+            return False, f"{a.title} is not in your Projects folder any more."
+        return d.open_project(folder)
+
+    def _end(self, a: Action) -> tuple[bool, str]:
+        d = self._sessions_or_raise()
+        s = d.sessions.get(a.target) if a.target else None
+        if s is None or s.state == "ended":
+            return False, (f"{a.title[:1].upper()}{a.title[1:]} is not running." if a.role
+                           else f"Nothing runs on {a.title}.")
+        return d.end(s)
+
+    def _choose(self, a: Action) -> tuple[bool, str]:
+        verb = "end " if a.verb == "end" else ""
+        return False, f"{a.title[:1].upper()}{a.title[1:]}: say which, as in “{verb}{a.target} {a.role}”."
+
+    def _sessions(self, _a: Action) -> tuple[bool, str]:
+        self.details([_bombadil(), "dev", "list"])
+        return True, "Opened the list of coding sessions."
 
     # -- the brain --
 

@@ -164,9 +164,8 @@ def _unit(path: Path) -> dict[str, dict[str, str]]:
     return sections
 
 
-def test_the_daemon_the_bar_and_the_notifications_come_back_when_they_die():
-    units = [USER_UNITS / "bombadil-agentd.service", USER_UNITS / "bombadil-shell.service",
-             USER_UNITS / "mako.service.d/restart.conf"]
+def test_the_daemon_and_the_bar_come_back_when_they_die():
+    units = [USER_UNITS / "bombadil-agentd.service", USER_UNITS / "bombadil-shell.service"]
     for path in units:
         u = _unit(path)
         assert u["Service"]["Restart"] == "always", path.name
@@ -184,7 +183,7 @@ def test_the_session_starts_them_after_handing_over_its_environment():
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
     start = lua[lua.index('hl.on("hyprland.start"'):].split("\nend)")[0]
     # WAYLAND_DISPLAY and the Hyprland signature exist only in the session, not in the user manager.
-    assert start.index("import-environment") < start.index("restart bombadil-agentd bombadil-shell mako")
+    assert start.index("import-environment") < start.index("restart bombadil-agentd bombadil-shell")
     assert "exec_cmd(\"agentd\")" not in start and "quickshell" not in start.replace("bombadil-shell", "")
     # The key for a hung bar restarts the service instead of racing a second quickshell against it.
     assert 'hl.bind("SUPER + CTRL + Escape", hl.dsp.exec_cmd("systemctl --user restart bombadil-shell"))' in lua
@@ -213,6 +212,41 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
     assert 'cp "$kernel" /mnt/boot/vmlinuz-linux' in install
     # It is found, and checked, before the disk is erased.
     assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')
+
+
+def test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught(tmp_path):
+    import subprocess
+    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    start = script.index("for f in .claude .claude.json")
+    end = script.index("arch-chroot /mnt chown", start)
+    live, disk = tmp_path / "live", tmp_path / "disk"
+    state = live / ".local/state/bombadil"
+    state.mkdir(parents=True)
+    (state / "tips.json").write_text('{"first_ready": "2026-11-09", "days": ["2026-11-09"]}')
+    (state / "desk.toml").write_text('hidden = ["machine"]\n')
+    (state / "turns.jsonl").write_text("a turn\n")            # the log of turns stays with the live session
+    (live / ".config/bombadil").mkdir(parents=True)
+    (live / ".config/bombadil/config.toml").write_text('provider = "claude"\n')
+    # The loop copies /home/user (the live home) to /mnt/home/user (the disk's): run it on two folders.
+    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
+    subprocess.run(["bash", "-e", "-c", loop], check=True)
+    kept = {str(p.relative_to(disk)): p.read_text() for p in disk.rglob("*") if p.is_file()}
+    assert kept == {
+        ".local/state/bombadil/tips.json": '{"first_ready": "2026-11-09", "days": ["2026-11-09"]}',
+        ".local/state/bombadil/desk.toml": 'hidden = ["machine"]\n',
+        ".config/bombadil/config.toml": 'provider = "claude"\n'}
+
+
+def test_a_live_system_with_nothing_to_carry_over_installs_all_the_same(tmp_path):
+    import subprocess
+    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
+    start = script.index("for f in .claude .claude.json")
+    end = script.index("arch-chroot /mnt chown", start)
+    live, disk = tmp_path / "live", tmp_path / "disk"
+    live.mkdir()
+    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
+    subprocess.run(["bash", "-e", "-c", loop], check=True)
+    assert not disk.exists()
 
 
 def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
@@ -418,3 +452,327 @@ def test_the_smoke_test_covers_mail_and_parses():
         assert f"check {name} " in text, name
     # The fake engine is what the smoke runs on: no account exists on the ISO, and nothing may reach one.
     assert "BOMBADIL_MAIL_ENGINE=fake" in text
+
+
+# -- Connections (docs/CONNECT.md): the service with its own user, the browser service, notifications without mako --
+
+NOTIFICATION_DAEMONS = {"mako", "makoctl", "dunst", "swaync", "fnott", "xfce4-notifyd", "notification-daemon",
+                        "mate-notification-daemon", "notify-osd"}
+SYSTEM_UNITS = ISO / "airootfs/etc/systemd/system"
+USER_UNITS = ISO / "airootfs/etc/systemd/user"
+
+
+def _unit_keys(path: Path) -> dict[str, dict[str, list[str]]]:
+    """A unit file as {section: {key: [values]}}; a key given twice keeps both values, as systemd does."""
+    sections: dict[str, dict[str, list[str]]] = {}
+    current: dict[str, list[str]] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")):
+            continue
+        if line.startswith("["):
+            current = sections.setdefault(line.strip("[]"), {})
+        else:
+            key, _, value = line.partition("=")
+            current.setdefault(key, []).append(value)
+    return sections
+
+
+def _enabled_by(link: Path, unit: str) -> bool:
+    return link.is_symlink() and os.readlink(link) == f"../{unit}" and (link.parent / os.readlink(link)).resolve().is_file()
+
+
+def test_the_image_has_what_connections_run_on_and_no_notification_daemon():
+    packages = _packages()
+    # wl-clipboard is for "Copy and open" on a card from a notification, libnotify for notify-send.
+    assert {"python-mcp", "python-httpx", "wl-clipboard", "libnotify"} <= packages
+    assert packages & NOTIFICATION_DAEMONS == set()
+
+
+def test_nothing_on_the_image_starts_or_configures_a_notification_daemon():
+    # The shell's NotificationServer owns org.freedesktop.Notifications; a second owner would take web pages'
+    # notifications from the line above the pill (mako, which this replaced, would have won the race at login).
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    started = re.findall(r'^\s*hl\.exec_cmd\("([^"]+)"', lua, re.MULTILINE)
+    # The session restarts the daemon and the bar as user services (docs/SESSION-SERVICES.md): the bar is the only
+    # thing that owns the notification name, and it starts there.
+    assert any(c.startswith("systemctl --user") and "restart" in c.split() and "bombadil-shell" in c.split()
+               for c in started)
+    assert [c for c in started if c.split()[0] in NOTIFICATION_DAEMONS] == []
+    assert not (ISO / "airootfs/etc/skel/.config/mako").exists()
+    shipped = [p for tree in ("etc/skel/.config", "etc/systemd", "etc/xdg", "etc/greetd") for p in
+               (ISO / "airootfs" / tree).rglob("*") if p.is_file() and not p.is_symlink()]
+    assert shipped
+    DAEMON_WORD = r"\b(" + "|".join(NOTIFICATION_DAEMONS) + r")\b"
+    named = [p.relative_to(ISO).as_posix() for p in shipped
+             if re.search(DAEMON_WORD,
+                          "\n".join(line for line in p.read_text().splitlines()
+                                    if not line.lstrip().startswith(("#", "--"))))]
+    assert named == []
+    # Nor a D-Bus service file that makes the bus start one when something asks for the name.
+    assert [p for p in ISO.rglob("*") if "org.freedesktop.Notifications" in p.name] == []
+
+
+def test_the_connection_service_is_a_system_unit_of_its_own_user_with_a_closed_state_directory(monkeypatch):
+    import shlex
+
+    from bombadil import paths
+    unit = _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")
+    service = unit["Service"]
+
+    def one(key):
+        assert len(service[key]) == 1, key
+        return service[key][0]
+
+    assert one("User") == "bombadil-connect"
+    assert one("ExecStart") == "/usr/local/bin/bombadil-connect"
+    assert one("StateDirectory") == "bombadil-connect" and one("StateDirectoryMode") == "0700"
+    # connect.sock is 0666 (the service checks each peer's uid itself), so the person has to be able to walk to it.
+    assert one("RuntimeDirectory") == "bombadil-connect" and one("RuntimeDirectoryMode") == "0755"
+    assert [one(k) for k in ("NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp")] == [
+        "yes", "strict", "yes", "yes"]
+    assert set(one("RestrictAddressFamilies").split()) == {"AF_UNIX", "AF_INET", "AF_INET6"}
+    assert one("MemoryMax") == "300M" and one("Restart") == "on-failure"
+    assert unit["Unit"]["StartLimitIntervalSec"] == ["0"]
+    # The service reads /proc/<pid> and the cgroup of whoever presses, and listens for OAuth redirects on loopback:
+    # each of these would make it refuse every press or deafen it.
+    assert set(service) & {"ProtectProc", "ProcSubset", "PrivateUsers", "PrivatePIDs", "PrivateNetwork",
+                           "DynamicUser"} == set()
+    # Where the unit says its socket and state are is where agentd and the shell look by default.
+    for var in ("BOMBADIL_CONNECT_SOCKET", "BOMBADIL_CONNECT_STATE", "BOMBADIL_CONNECT_ENGINE"):
+        monkeypatch.delenv(var, raising=False)
+    env = dict(pair.split("=", 1) for value in service["Environment"] for pair in shlex.split(value))
+    assert Path(env["BOMBADIL_CONNECT_SOCKET"]) == paths.connect_socket()
+    assert Path(env["BOMBADIL_CONNECT_STATE"]) == paths.connect_state()
+    assert paths.connect_socket().parent == Path("/run") / one("RuntimeDirectory")
+    assert paths.connect_state() == Path("/var/lib") / one("StateDirectory")
+    assert "BOMBADIL_CONNECT_ENGINE" not in env, "the image runs the real engine"
+    assert unit["Install"]["WantedBy"] == ["multi-user.target"]
+    assert _enabled_by(SYSTEM_UNITS / "multi-user.target.wants/bombadil-connect.service", "bombadil-connect.service")
+
+
+def test_the_connection_service_user_is_a_system_account_that_cannot_log_in_and_has_no_home(tmp_path):
+    import shlex
+    import shutil
+    import subprocess
+    conf = ISO / "airootfs/usr/lib/sysusers.d/bombadil-connect.conf"
+    lines = conf.read_text().splitlines()
+    assert lines[0].startswith("#"), "a comment says what the account is for"
+    entries = [shlex.split(line) for line in lines if line.strip() and not line.startswith("#")]
+    assert len(entries) == 1
+    kind, name, uid, comment, home, shell = entries[0]
+    # `u` makes a system account with a group of its own and no login; `-` for the id takes one below 1000, so it is
+    # never in the range of people the service lets in (1000 to 59999); `-` for home and shell is "/" and nologin.
+    assert (kind, name, uid, home, shell) == ("u", "bombadil-connect", "-", "-", "-") and comment
+    assert name == _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")["Service"]["User"][0]
+    if not shutil.which("systemd-sysusers"):
+        return
+    root = tmp_path / "root"
+    (root / "usr/lib/sysusers.d").mkdir(parents=True)
+    (root / "etc").mkdir()
+    shutil.copy(conf, root / "usr/lib/sysusers.d")
+    subprocess.run(["systemd-sysusers", f"--root={root}"], check=True, capture_output=True)
+    fields = (root / "etc/passwd").read_text().strip().split(":")
+    assert fields[0] == name and int(fields[2]) < 1000 and fields[5] == "/" and fields[6].endswith("nologin")
+    assert (root / "etc/shadow").read_text().split(":")[1].startswith("!")
+
+
+def test_the_browser_service_is_a_user_unit_that_starts_at_login_after_the_session_and_is_never_given_up_on():
+    unit = _unit_keys(USER_UNITS / "bombadil-browserd.service")
+    assert unit["Service"]["ExecStart"] == ["/usr/local/bin/bombadil-browserd"]
+    assert unit["Service"]["Restart"] == ["on-failure"]
+    assert unit["Unit"]["After"] == ["graphical-session.target"] and unit["Unit"]["StartLimitIntervalSec"] == ["0"]
+    assert unit["Install"]["WantedBy"] == ["default.target"]
+    assert _enabled_by(USER_UNITS / "default.target.wants/bombadil-browserd.service", "bombadil-browserd.service")
+    # The browser it starts for a page is the person's, so it outlives a restart of the service.
+    assert unit["Service"]["KillMode"] == ["process"]
+    # It starts before there is a screen, but opening a page needs one (Chromium's display, the panel's compositor):
+    # the session hands it both and starts it again, as it does for mail.
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    start = lua[lua.index('hl.on("hyprland.start"'):]
+    start = start[:start.index("\nend)")]
+    line = next(part for part in start.split("hl.exec_cmd(") if "bombadil-browserd" in part)
+    assert "import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE" in line
+    assert line.index("import-environment") < line.index("restart bombadil-browserd.service")
+
+
+def test_the_build_links_the_connection_services_commands_into_usr_local_bin():
+    build = (ROOT / "scripts/build-iso.sh").read_text()
+    names = re.search(r"^for b in ([^;]+); do$", build, re.MULTILINE).group(1).split()
+    assert {"bombadil-connect", "bombadil-browserd"} <= set(names)
+    # What each unit starts is the link the build makes, to a command the tree ships and can run.
+    for unit in (SYSTEM_UNITS / "bombadil-connect.service", USER_UNITS / "bombadil-browserd.service"):
+        assert _unit_keys(unit)["Service"]["ExecStart"] == [f"/usr/local/bin/{unit.stem}"], unit
+        assert os.access(ROOT / "bin" / unit.stem, os.X_OK), unit.stem
+
+
+def _connect_skill() -> str:
+    return (ROOT / "share/skills/bombadil-connect/SKILL.md").read_text()
+
+
+def test_the_connect_skill_reaches_both_clis_and_names_the_tools_the_contract_gives():
+    from bombadil.connect import driver
+    skill = _connect_skill()
+    assert skill.startswith("---\nname: bombadil-connect\ndescription: ")
+    assert len(skill.splitlines()) < 70
+    contract = (ROOT / "docs/CONNECT.md").read_text()
+    start = contract.index("**The agent's tools**")
+    tools = re.findall(r"^\| `(\w+)\(", contract[start:contract.index("A turn that has called", start)], re.MULTILINE)
+    assert set(tools) == {"messages_unread", "message_thread", "tasks_waiting", "connections", "propose"}
+    for tool in tools:
+        assert f"`{tool} " in skill, tool
+    for kind in driver.KINDS:
+        assert f"`{kind}`" in skill, kind
+    # The words that start a setup are the contract's, no more and no fewer.
+    words = set(re.findall(r"`connect (\w+)`", contract[contract.index("**Launcher words**"):]))
+    assert words == set(re.findall(r"`connect (\w+)`", skill)) and len(words) == 6
+    skel = ISO / "airootfs/etc/skel"
+    for where in (".claude/skills", ".agents/skills"):
+        link = skel / where / "bombadil-connect"
+        assert link.is_symlink() and os.readlink(link) == "/usr/share/bombadil/share/skills/bombadil-connect"
+
+
+def test_the_connect_skill_never_tells_the_agent_to_send_or_to_hold_a_key():
+    from bombadil import launcher
+    skill = _connect_skill()
+    assert launcher.SEND_LINE in " ".join(skill.split()), "the answer to 'send it' is mail's sentence, word for word"
+    # The service's ops that are the person's or a press's: named only as things not to look for, never as a call.
+    assert [op for op in ("perform", "store_secret", "add_connection", "remove_connection")
+            if re.search(rf"`{op}\b", skill)] == []
+    # What the person types is said as theirs, never as something to run.
+    for paragraph in skill.split("\n\n"):
+        if re.search(r"`connect \w+`", paragraph):
+            assert "themselves" in paragraph and "never run" in paragraph, paragraph
+    # No token, nor the shape of one: a skill that shows one teaches the agent to look for it.
+    assert not re.search(r"xox[a-z]-|xapp-|Bearer ", skill)
+    for rule in ("other people's words", "no token", "never ask for one", "cannot send"):
+        assert rule in " ".join(skill.lower().split()), rule
+
+
+def test_the_connect_skill_is_in_the_users_home_on_the_built_image():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert ("check connect-skill-installed as_user test -f /home/user/.claude/skills/bombadil-connect/SKILL.md "
+            "-a -f /home/user/.agents/skills/bombadil-connect/SKILL.md") in smoke
+
+
+def test_the_smoke_test_covers_connections_and_notifications():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    for name in ("connect-tools-installed", "connect-python-installed", "mako-is-not-installed",
+                 "connect-skill-installed", "connect-user-exists", "connect-unit-enabled", "connect-unit-active",
+                 "connect-unit-hardened", "connect-unit-answers", "connect-state-is-closed", "browserd-unit-enabled",
+                 "browserd-unit-active", "browserd-unit-answers", "mako-is-not-running",
+                 "notifications-owner-is-the-shell", "notification-becomes-a-notice", "connect-fake-starts",
+                 "connect-status", "connect-connections-listed", "connect-messages-listed", "connect-unit-restored"):
+        assert f"check {name} " in smoke, name
+    # The fake engine is what the live image's service runs on for the checks that need a connection, in a scratch
+    # database, and the unit is put back as it was: no account exists on the ISO, and no sample may stay in the real one.
+    assert "BOMBADIL_CONNECT_ENGINE=fake" in smoke and "smoke-fake" in smoke and "restore_connect" in smoke
+    # What the smoke asks of the loaded unit is what the file says.
+    unit = _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")["Service"]
+    asked = re.search(r"for want in ([^;]+); do", smoke).group(1).split()
+    assert {"User", "NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp", "RuntimeDirectoryMode",
+            "MemoryMax"} == {w.split("=")[0] for w in asked}
+    for want in asked:
+        key, value = want.split("=")
+        assert unit[key] == [{"MemoryMax": "300M"}.get(key, value)], want
+    assert f"MemoryMax={300 << 20}" in asked
+
+
+def test_a_dev_session_runs_connections_on_the_fake_engine_in_its_scratch_folder_the_socket_too():
+    # The same reasoning as for mail: at the system unit's socket, agentd would reach a real service, and the fake
+    # could not start beside it. The service has to be up before agentd looks, and agentd has to have the variables.
+    script = (ROOT / "scripts/dev-session.sh").read_text()
+    for var in ("BOMBADIL_CONNECT_ENGINE=fake", "BOMBADIL_CONNECT_SOCKET", "BOMBADIL_CONNECT_STATE",
+                "BOMBADIL_CONNECT_UIDS"):
+        assert var in script, var
+    assert re.search(r'BOMBADIL_CONNECT_SOCKET="\$connect/[\w.]+"', script)
+    assert script.index('BOMBADIL_CONNECT_SOCKET="$connect') < script.index('"$root/bin/bombadil-connect" &')
+    assert script.index('"$root/bin/bombadil-connect" &') < script.index('"$root/bin/agentd" &')
+    import subprocess
+    subprocess.run(["bash", "-n", str(ROOT / "scripts/dev-session.sh")], check=True)
+
+
+def test_the_desktop_test_starts_connections_on_the_fake_engine_before_agentd_with_the_shell_on_a_session_bus():
+    driver = (ROOT / "tests/desktop/driver.py").read_text()
+    for want in ('BOMBADIL_CONNECT_ENGINE="fake"', 'BOMBADIL_CONNECT_UIDS="0-65535"', "BOMBADIL_CONNECT_SOCKET=",
+                 "BOMBADIL_CONNECT_STATE=", "DBUS_SESSION_BUS_ADDRESS="):
+        assert want in driver, want
+    # The bus, then the service, then agentd and the shell, which all take the same environment.
+    order = [driver.index(s) for s in ('start("dbus"', 'start("connect"', 'start("agentd"', 'start("quickshell"')]
+    assert order == sorted(order)
+
+
+# -- the smoke's picture checks, in a guest with no KVM --
+
+GAVE_UP = "Could not read the network: ip did not answer."
+DRAWN = "Your network is up.\\n(shown above the bar)"
+BOOT_DRAWN = "What takes longest when you boot\\n2.5 s: tmpfiles\\n2.1 s: nsresourced\\n1 s: NetworkManager\\n(shown above the bar)"
+
+
+def _run_picture(tmp_path, answers, kind="network", target=""):
+    """The smoke's own picture() function, in bash, with os-mcp stood in for by `answers` (one per try,
+    the last one repeated). Returns (exit code, the scales each try asked for, what wait_for was given)."""
+    import subprocess
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    start = smoke.index("picture() {")
+    body = smoke[start:smoke.index("\n}\n", start) + 3]
+    (tmp_path / "answers").write_text("\n".join(answers) + "\n")
+    script = f'''
+d={tmp_path}
+say() {{ echo "SAY $*"; }}
+wait_for() {{ echo "$*" >>"$d/waits"; return 0; }}
+calm() {{ return 0; }}
+as_user() {{
+  cat >/dev/null
+  local n; n=$(( $(cat "$d/count" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$d/count"
+  echo "$2" >>"$d/scales"
+  local line; line=$(sed -n "${{n}}p" "$d/answers"); [[ -n "$line" ]] || line=$(tail -1 "$d/answers")
+  echo "$line"
+}}
+{body}
+picture {kind} {target}
+echo "RC=$?"
+'''
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    rc = int(re.search(r"RC=(\d+)", r.stdout).group(1))
+    read = lambda name: (tmp_path / name).read_text().split() if (tmp_path / name).exists() else []
+    return rc, read("scales"), read("waits"), r.stderr
+
+
+def test_a_capture_that_gave_up_in_a_busy_guest_is_asked_again_with_more_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [GAVE_UP, GAVE_UP, DRAWN])
+    assert rc == 0
+    assert scales == ["BOMBADIL_BUDGET_SCALE=1", "BOMBADIL_BUDGET_SCALE=4", "BOMBADIL_BUDGET_SCALE=12"]
+    assert waits == ["90", "calm", "90", "calm"]                 # the guest is let settle before each new try
+    assert "(try 3, 12x the time)" in log and "ip did not answer" in log
+
+
+def test_a_capture_that_works_the_first_time_asks_once_with_the_usual_time(tmp_path):
+    rc, scales, waits, log = _run_picture(tmp_path, [DRAWN])
+    assert (rc, scales, waits) == (0, ["BOMBADIL_BUDGET_SCALE=1"], [])
+    assert "(try 1, 1x the time)" in log
+
+
+def test_a_capture_that_never_answers_fails_after_three_tries(tmp_path):
+    rc, scales, _, _ = _run_picture(tmp_path, [GAVE_UP])
+    assert rc == 1 and len(scales) == 3
+
+
+def test_a_picture_in_the_wrong_shape_fails_at_once_and_is_not_asked_again(tmp_path):
+    rc, scales, waits, _ = _run_picture(tmp_path, ["something else entirely"])
+    assert (rc, len(scales), waits) == (1, 1, [])
+    # The boot must still be more than its last line, whatever the wait.
+    rc, scales, _, _ = _run_picture(tmp_path / "b", ["The boot took 10 s.\\n10.1 s: graphical.target\\n(shown above the bar)"], "boot") \
+        if (tmp_path / "b").mkdir() is None else (None, None, None, None)
+    assert rc == 1 and len(scales) == 1
+    (tmp_path / "c").mkdir()
+    assert _run_picture(tmp_path / "c", [GAVE_UP, BOOT_DRAWN], "boot")[0] == 0
+
+
+def test_the_smoke_waits_for_a_calm_guest_before_its_pictures_and_defines_calm_once():
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert smoke.count("calm() {") == 1
+    waited = smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the pictures were taken"')
+    assert smoke.index("calm() {") < waited < smoke.index("for kind in network boot disks sound screens")
+    assert smoke.index("calm() {") < smoke.index('wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"')
+    assert "BOMBADIL_BUDGET_SCALE" in smoke

@@ -132,7 +132,14 @@ receipt for stopping a service still shows the state and nothing else.
   of the bottom of the screen, where a window's own content is. The pill's width follows the stage
   (`DeskState`): 900 px with no window, **360 px while any window shares the stage** (the layout the
   Brain and a Super+Enter terminal give), and a 100 px capsule, the dot and the clock, only under a
-  window in Hyprland's full-screen state. A picture cut to 360 px over a terminal reads badly, so:
+  window in Hyprland's full-screen state. A picture cut to 360 px over a terminal reads badly (long
+  labels elided, a chain wrapped to three rows), so:
+  - **a picture asked for beside a window is wider than the pill**: about 560 px, centred above the
+    360 px line and pill, or what the desk's rails and strips leave of the stage when that is less (it
+    is never under 360: a 1280 px screen with a card in full on each rail gives 560, a 1024 px one
+    gives 368). `DeskState.pictureTarget` computes it from the same room the pill uses when no window
+    is in front (`stageRoom`), `shell.qml` gives the card host `Math.max(360, win.pictureMax)`. With no
+    window the picture is as wide as the pill, as before;
   - a window that *opens* (one more on the stage than before, whoever opened it) puts the picture
     away: `DeskState.windowOpened` calls `PillState.windowOpened`. Not a picture drawn in the last
     2.5 s (the window is probably what the same ask opened) and not one you clicked a box in in the
@@ -155,13 +162,35 @@ receipt for stopping a service still shows the state and nothing else.
   narrow card. The first box of a row sits at the left edge, so its note started off the picture and
   lost its first letters ("ames are looked up", seen at the 360 px a window narrows the card to).
   The note is moved inside the picture's edges (`Diagram.qml`, `boxNote`), and is still centred
-  everywhere it fits. At 360 px a chain also wraps to three rows with long connectors; that is
-  the card's width, not a fault of the note.
+  everywhere it fits. (At the old 360 px a chain also wrapped to three rows with long connectors;
+  the 560 px a picture gets beside a window is the answer to that, not a change to the note.)
 - **A before and after sits together.** The two columns are at most 230 px wide with 76 px between
   them for the arrow, centred, instead of one at each edge of a wide card.
 - **The agent's own words on the line start at a word.** While the agent works, the line shows the
   newest end of what it is saying. `shell/StatusLine.qml` cuts it at a word with a `…` before it;
   `Text.ElideLeft` alone cut the first word in half.
+
+## Slow machines
+
+The captures have half a second each (`BUDGET`; four seconds for the boot, 1.6 for the provider
+check), which is plenty on real hardware and short in an emulated guest with no KVM: while the guest
+is still starting things, `ip` or `systemd-analyze` take 6 to 10 s and the capture gives up ("ip did
+not answer", "systemd-analyze took longer than expected").
+
+- `BOMBADIL_BUDGET_SCALE` (1 to 20, read at each capture) multiplies every capture's time. A
+  machine that is slow all the time sets it, and the picture waits longer instead of coming back with
+  nothing. Left alone it is 1; a budget that is asked for (a receipt's snapshot, a test) is never
+  scaled, so a turn does not wait longer because of it. `sysmap._slow` reads it. It reaches the
+  provider check too (its own connection time is `probe_budget` less 0.4 s, never under the usual
+  1.2 s), and it is on the allow-list of the environment Codex gives its MCP servers
+  (`providers.MCP_ENV`), because `system_map` captures inside the os-mcp process. Set it in the
+  environment agentd starts in (a drop-in for the agentd user unit with
+  `Environment=BOMBADIL_BUDGET_SCALE=4`, say); Claude's tool processes inherit it.
+- The VM smoke (`iso/airootfs/usr/local/bin/bombadil-smoke`) waits for the guest to be calm (load
+  under 1.5, up to four minutes) before its picture checks, and a capture that says "Could not read ..."
+  is asked again, up to three tries, with 1, 4 then 12 times the time (and a wait for calm between).
+  A picture in the wrong shape fails the first time. The log says which try worked ("try 2, 4x the time")
+  so a slow capture on real hardware is still a finding, not hidden.
 
 ## Testing
 

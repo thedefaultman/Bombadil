@@ -21,6 +21,25 @@ def qml_dirs() -> list[Path]:
     return [d for d in (local, paths.share_dir() / "share" / "qml") if d.exists()]
 
 
+def reduced_motion() -> bool:
+    """BOMBADIL_REDUCE_MOTION=1, the switch the shell reads too (docs/MOTION.md)."""
+    return os.environ.get("BOMBADIL_REDUCE_MOTION") == "1"
+
+
+def set_reduced_motion(engine) -> bool:
+    """Put the switch on this engine's `Theme` (a QML singleton, one instance per engine), so a kit
+    component or an app reads `Theme.reducedMotion` and `Theme.fast` honour it. The instance is made
+    here, on first ask, and it lives as long as the engine: a reload does not make a new one.
+    Returns whether the Theme was found (it is not when the kit is not on the import path)."""
+    from PySide6.QtCore import QObject
+
+    theme = engine.singletonInstance("Bombadil", "Theme")
+    if not isinstance(theme, QObject):   # an invalid QJSValue: the module was not found
+        return False
+    theme.setProperty("reducedMotion", reduced_motion())
+    return True
+
+
 def configure(check: bool) -> None:
     """Environment that must be set before QGuiApplication exists."""
     if check:
@@ -68,6 +87,7 @@ def make_engine(ctx: AppContext):
     engine = QQmlApplicationEngine()
     for d in reversed(qml_dirs()):
         engine.addImportPath(str(d))
+    set_reduced_motion(engine)
     # Other .qml files next to main.qml are usable by name (EntryRow.qml -> EntryRow {}).
     engine.rootContext().setContextProperty("appDir", str(ctx.dir))
     return engine
