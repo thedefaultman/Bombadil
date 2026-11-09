@@ -4,7 +4,7 @@
 > **Pieces:** on `main`: the six files in `docs/brand/`, the stone in the pill with its nine faces, the icon files the image installs, the README banner and the wallpaper. On `main` but not installed: the GRUB screen's files. Designed, with no file or code: `LOGO=bombadil` in `os-release`, the greeter and the lock as the pill, and a separate 16 px colour drawing.
 > **Code:** `docs/brand/bombadil-mark.svg`, `docs/brand/bombadil-tile.svg`, `docs/brand/bombadil-lockup.svg`, `docs/brand/bombadil-lockup-light.svg`, `docs/brand/bombadil-avatar.png`, `docs/brand/bombadil-social-preview.png`. The mark is used by `shell/Stone.qml`, `shell/PillState.qml`, `shell/shell.qml`, `README.md`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py` and `share/grub/bombadil/`.
 > **Design:** [The Bombadil mark](../design/identity-brief.md)
-> **Verified:** 2026-11-08 against `main` at `7176e55` The line numbers it cites were moved to the code at `ca7f80a` afterwards; the text was not read again.
+> **Verified:** 2026-11-08 against `main` at `7176e55` The line numbers it cites were moved to the code at `ca7f80a` afterwards; the text was not read again. The stone's lean under reduced motion, and the link to the motion page, were added and checked against `main` at `f0485c2`.
 
 Bombadil's mark is a stone with a lowercase b cut through it. It is the dot in the pill, where it says
 what the machine is doing without a word, the `bombadil` icon that the image installs in its icon theme
@@ -88,7 +88,8 @@ The stone has nine faces in the pill: `rest`, `listening`, `working`, `starting`
 plan or paused, and after a turn the limit cut off. What each face looks like and what sets it is in
 [the design system](../design-system/README.md#the-pills-states) and [the shell](../architecture/shell.md#the-stone).
 With reduced motion (`BOMBADIL_REDUCE_MOTION=1`) the roll becomes an opacity pulse, the needs-you glow
-is held still and the hop becomes a fade.
+is held still, the lean is instant and the hop becomes a fade. The switch, and what it does to the rest of
+the screen, is on [the motion page](../MOTION.md).
 
 ## The wordmark
 
@@ -305,12 +306,13 @@ and the stone `fg`; the symbolic icon must keep `fill-rule="evenodd"`, `#bebebe`
 |---|---|
 | `tests/test_stone_qml.py` (17 tests) | `shell/Stone.qml` rendered offscreen at 1x and read back pixel by pixel: the colour of every face, the b inside the stone in every pose, a third of a turn leaving the stone where it was, the b's stem never moving while it works, two knocks and the glow's reach, the lean, one hop, reduced motion, the first 400 ms, and the `resting` outline: whole, still and unlike every other face |
 | `tests/test_brand.py` (5 tests) | The installed icons (identical in `hicolor` and `pixmaps`, no mask, tile colours, the symbolic icon's fill rule), the README banner (it opens with `<p align="center">`, its image files exist and a dark source is named), the PNG sizes (1280 by 640, 500 by 500, 1920 by 1080), that the four SVGs parse, the GRUB theme's file names and ground |
+| `tests/test_motion.py` | Among the rest of reduced motion, that the stone leans at once under it, and that the shell binds the switch to `Kit.Theme.reducedMotion` and hands it on to the stone and to the wallpaper ([how it is tested](../MOTION.md#how-to-test-it)) |
 | `tests/test_wallpaper.py` (14 tests) | The wallpaper picture against the tokens, and that `scripts/make-wallpaper.py` redraws it from `bombadil-mark.svg` |
 | `tests/test_pill_qml.py`, `tests/test_desk_qml.py`, `tests/test_rest_qml.py` | Which face the pill gives: `starting`, `offline`, `rest`, `working`, `done`, `stopped` and `needs` (`tests/test_pill_qml.py`), `needs` while a session waits (`tests/test_desk_qml.py`), and `resting` while the AI is out of plan, paused or cut off by the limit (`tests/test_rest_qml.py`) |
 | `tests/desktop/driver.py` | The real bar in headless sway: the stone's pixels at rest, while a turn runs, needing you and while the AI rests, and that the shell's log holds no QML error |
 
 ```sh
-pytest -q tests/test_stone_qml.py tests/test_brand.py tests/test_wallpaper.py
+pytest -q tests/test_stone_qml.py tests/test_brand.py tests/test_wallpaper.py tests/test_motion.py
 BOMBADIL_SCREENS=/tmp/stone pytest -q tests/test_stone_qml.py   # stone-<face>.png at 8x
 ```
 

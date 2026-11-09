@@ -19,14 +19,14 @@ ruff check src tests bin scripts share iso
 python3 docs/tools/check_docs.py --mermaid # links, anchors, diagrams, leaked personal details
 ```
 
-A fresh checkout is not clean, so compare with the baseline for the files you touched: `ruff check` already reports findings that predate your change (63 with the rules of ruff 0.15.20, 541 with those of 0.16.9, counted on 2026-11-09 at `ca7f80a`), and `--mermaid` needs Mermaid's CLI (`mmdc`; leave the flag off without it). The headless desktop test, the ISO build and the VM smoke need Docker or QEMU. [`docs/contributing/development.md`](docs/contributing/development.md) says what fails and why, what each layer proves and which one covers your change.
+A fresh checkout is not clean, so compare with the baseline for the files you touched: `ruff check` already reports findings that predate your change (63 with the rules of ruff 0.15.20, 543 with those of 0.16.9, counted on 2026-11-09 at `f0485c2`), and `--mermaid` needs Mermaid's CLI (`mmdc`; leave the flag off without it). The headless desktop test, the ISO build and the VM smoke need Docker or QEMU. [`docs/contributing/development.md`](docs/contributing/development.md) says what fails and why, what each layer proves and which one covers your change.
 
 ## Rules
 
 - **Document the change in the same pull request.** Update the page of the piece you changed, and [the decision log](docs/decisions/README.md) or [the roadmap](docs/roadmap.md) if you decided or shipped something. [How, and what never to commit](docs/contributing/documenting.md).
 - **A new surface or a change in how something feels starts as a design brief**, not as code: [how to write one](docs/contributing/design-briefs.md).
 - **Nothing personal or sensitive in the repository.** No names, e-mail addresses, machine or folder names, credentials, session or chat links, or real accounts in code, tests, fixtures, screenshots or docs. Use made-up people (`alex`) and made-up accounts (`acme`, `example.com`). `docs/tools/check_docs.py` catches the common shapes; it cannot catch a name it does not know.
-- **Keep the principles.** The ones that break the product soonest when ignored: the person is a passenger and sees what the machine does; full access is made safe by undo, not by permission prompts; something true is on screen within 200 ms; nothing the person cannot see and stop runs on its own; one design language, taken from `share/qml/Bombadil/Theme.qml` (a hex colour of six to eight digits, the names `white` or `black`, or a `Text` or `TextField` without `font.family` or `font:`, in `shell/` fails `tests/test_theme.py`; sizes are kept by convention only).
+- **Keep the principles.** The ones that break the product soonest when ignored: the person is a passenger and sees what the machine does; full access is made safe by undo, not by permission prompts; something true is on screen within 200 ms; nothing the person cannot see and stop runs on its own; one design language, taken from `share/qml/Bombadil/Theme.qml` (a hex colour of six to eight digits, the names `white` or `black`, or a `Text` or `TextField` without `font.family` or `font:`, in `shell/` fails `tests/test_theme.py`; sizes are kept by convention only; an animation in `shell/`, `share/qml/Bombadil/` or `share/apps/` that ignores `Theme.reducedMotion` fails `tests/test_motion.py`).
 - **Do not weaken a test to get a green run**, and do not skip one. A test that samples an animation in real time can fail on a loaded machine; say so and rerun it alone.
 - **Describe what a person sees** at the top of a pull request: what it looked like before, what it looks like after, then in a sentence what the change does and how.
 
@@ -46,8 +46,10 @@ A fresh checkout is not clean, so compare with the baseline for the files you to
 | Signing in and the browser panel | `src/bombadil/signin.py`, `browser.py` and [browser and sign-in](docs/architecture/browser-and-signin.md) |
 | Restore points and undo | `src/bombadil/snapshots.py`, `iso/airootfs/usr/local/bin/bombadil-rollback` and [restore points](docs/architecture/restore-points.md) |
 | Mail | `src/bombadil/mail/`, `share/apps/mail/` and [mail](docs/architecture/mail.md) |
+| Bombadil's voice: the name card, the welcome line, the goodbye, the words | `src/bombadil/voice.py`, `persona.py`, `greet.py`, `greet_sources.py`, `share/voice/lines.toml`, `shell/PersonaCard.qml`, `shell/PillState.qml` (the `welcome` mode), `agentd.py` (the voice messages), `narrate.py` (`PERSONA_STEP`), `providers.py` (`system_prompt`) and [voice](docs/architecture/voice.md) |
+| Tips: the table of tips and what a person has been taught | `share/tips/tips.toml`, `src/bombadil/tips.py`, `agentd.py` (`Tips`, the `_tips_*` methods), `paths.py` (`tips_file`, `tips_table`) and [tips](docs/architecture/tips.md), with the contract [TIPS.md](docs/TIPS.md) |
 | The brain and the Brain window | `src/bombadil/brain/`, `share/apps/brain/` and [brain](docs/architecture/brain.md) |
-| The look (colours, type, motion) | `share/qml/Bombadil/Theme.qml` and [design system](docs/design-system/README.md) |
+| The look (colours, type, motion) | `share/qml/Bombadil/Theme.qml` (`reducedMotion` and `duration()` for reduced motion), `src/bombadil/appkit/engine.py` (`set_reduced_motion`), `tests/test_motion.py`, [design system](docs/design-system/README.md) and [motion](docs/MOTION.md) |
 | The image, the installer, the boot | `iso/`, `scripts/`, [ISO and install](docs/architecture/iso-and-install.md) and [installed OS](docs/architecture/installed-os.md) |
 | What restarts the daemon, the bar and notifications | `iso/airootfs/etc/systemd/user/`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua` and [session services](docs/architecture/session-services.md) |
 

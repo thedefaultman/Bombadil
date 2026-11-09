@@ -1,9 +1,9 @@
 # Principles
 
-> **Status:** Partly shipped. The rules are the design's and stand whole. The code on `main` keeps most of them. Some parts of them need work that is not on `main`, and "Where the rules stand on main" says which: the voice, coding sessions and the word "ship", and the self-improvement loop (all In progress), and the single list of everything that runs on its own, the holding card, a history for each app, the "this" chip, the card kinds other than `diagram` and the reader, a memory file the machine writes, a conversation that survives a reboot, the split between Bombadil's defaults and the person's settings, and a rollback after a failed start (all Designed).
-> **Code:** `share/qml/Bombadil/Theme.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/Stone.qml`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/launcher.py`, `src/bombadil/snapshots.py`, `src/bombadil/outbox.py`, `src/bombadil/jobs.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/sudoers.d/bombadil`, `iso/airootfs/etc/systemd/user/` (the units of the daemon, the bar and `mako`), `src/bombadil/cardtools.py`, `src/bombadil/mail/watch.py`
+> **Status:** Partly shipped. The rules are the design's and stand whole. The code on `main` keeps most of them. Some parts of them need work that is not on `main`, and "Where the rules stand on main" says which: coding sessions and the word "ship", and the self-improvement loop (all In progress), and the single list of everything that runs on its own, the holding card, a history for each app, the "this" chip, the card kinds other than `diagram` and the reader, a memory file the machine writes, a conversation that survives a reboot, the split between Bombadil's defaults and the person's settings, and a rollback after a failed start (all Designed).
+> **Code:** `share/qml/Bombadil/Theme.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/Stone.qml`, `src/bombadil/agentd.py`, `src/bombadil/voice.py`, `src/bombadil/greet.py`, `src/bombadil/persona.py`, `share/voice/lines.toml`, `src/bombadil/providers.py`, `src/bombadil/launcher.py`, `src/bombadil/snapshots.py`, `src/bombadil/outbox.py`, `src/bombadil/jobs.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/sudoers.d/bombadil`, `iso/airootfs/etc/systemd/user/` (the units of the daemon, the bar and `mako`), `src/bombadil/cardtools.py`, `src/bombadil/mail/watch.py`
 > **Design:** the [design briefs](design/README.md), listed under "Where each rule was decided"
-> **Verified:** 2026-11-08 against `main` at `9d5c729`: every number on the page (200 ms, one line and four, 12 px and 8 px, three things to learn, the newest 30 restore points, 20 jobs, 60 seconds, 5 minutes, twelve briefs, twelve questions) and the code behind each "in practice" sentence and each row of "Where the rules stand on main", read in the files named above and in `bin/bombadil`, `shell/shell.qml`, `shell/Wallpaper.qml`, `src/bombadil/brain/service.py`, `src/bombadil/notices.py`, `src/bombadil/sysmap.py`, `tests/test_agentd_rest.py`, `tests/test_theme.py`, `tests/desktop/driver.py` and `iso/airootfs/usr/local/bin/bombadil-install`; the reduced-motion behaviour of each stone movement in `shell/Stone.qml`; the conversation's life in `AgentD._load_state` and `AgentD.choose`; and that nothing under `src`, `shell`, `share`, `iso` or `bin` writes `memory.md` or the `[Screen]` block. The rule texts were compared with the rule sections of the briefs they cite.
+> **Verified:** 2026-11-08 against `main` at `9d5c729`: every number on the page (200 ms, one line and four, 12 px and 8 px, three things to learn, the newest 30 restore points, 20 jobs, 60 seconds, 5 minutes, twelve briefs, twelve questions) and the code behind each "in practice" sentence and each row of "Where the rules stand on main", read in the files named above and in `bin/bombadil`, `shell/shell.qml`, `shell/Wallpaper.qml`, `src/bombadil/brain/service.py`, `src/bombadil/notices.py`, `src/bombadil/sysmap.py`, `tests/test_agentd_rest.py`, `tests/test_theme.py`, `tests/desktop/driver.py` and `iso/airootfs/usr/local/bin/bombadil-install`; the reduced-motion behaviour of each stone movement in `shell/Stone.qml`; the conversation's life in `AgentD._load_state` and `AgentD.choose`; and that nothing under `src`, `shell`, `share`, `iso` or `bin` writes `memory.md` or the `[Screen]` block. The statements on the voice, the greeting and reduced motion were checked against the code at `f0485c2` on 2026-11-09, and the rest of the page was not read again. The rule texts were compared with the rule sections of the briefs they cite.
 
 Bombadil is a Linux distribution whose main interface is an AI agent. Its design rests on a small set
 of rules. They are why it feels the way it does, and a change that breaks one turns it into something
@@ -19,7 +19,7 @@ operating system and not a chat window.
 
 A rule is what the design holds. It does not say the code on `main` already keeps all of it: a part
 that is In progress or Designed is marked in the rule, and the next section lists them, so nobody looks
-for a greeting, a "ship" word or an Autopilot list that is not there.
+for a "ship" word or an Autopilot list that is not there.
 
 How to use this page: read it once before you design or change anything the person can see, and
 check your work against [the checklist at the end](#checking-a-change-against-the-principles). Pieces
@@ -43,9 +43,9 @@ others:
 | [Plain files stay the truth](#plain-files-stay-the-truth) | Partly shipped | The Brain's index sits beside the files and can be rebuilt. Undo swaps the system root and leaves the home folder alone. | Updates, and the split of Bombadil's defaults in `/usr` from the person's short settings files, are designed: the skeleton's `hyprland.lua` is a whole config copied into the home at install. A refresh that keeps the home is In progress. An edited document landing beside its original is designed. See [the installed OS](architecture/installed-os.md). |
 | [The answer is the thing](#the-answer-is-the-thing) | Partly shipped | The line holds at one line while the agent works and at most four afterwards, and `diagram` pictures, the machine's own pictures and receipts are drawn above it. | The other card kinds (list, checklist, timer, control, markdown reader) and the reader that slides in from the right are designed: `show_card` takes only `diagram`, so a long text reply is cut at four lines. See [cards and pictures](architecture/cards-and-pictures.md). |
 | ["This" means what you see](#this-means-what-you-see) | Partly shipped | The Brain's words "brain" and "why is this here" read what is in front: the focused window, the browser tab, a terminal. | The chip that gives every ask the screen context is designed: nothing on `main` writes the `[Screen]` block. See [the brain](architecture/brain.md) and [the interaction model](ux/README.md). |
-| [Quiet at rest](#quiet-at-rest) | Partly shipped | The screen at rest is the wallpaper and the pill, and a widget appears only with something to say. Under `BOMBADIL_REDUCE_MOTION=1` the stone and the wallpaper have a quieter version: the roll is a slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the wallpaper's fade is instant. | Nothing sets that variable. The lean, the desk's ring and fold, the strips' fade and the fades of the line, the picture and the AI card ignore it. The screen is not silent at rest for mail: a new mail from someone the person knows puts a notice above the pill for 5 minutes, decided in the [everyday work brief](design/everyday-work-brief.md#1-mail-in-bombadils-own-view). The greeting and goodbye are In progress. See [the design system](design-system/README.md#reduced-motion) and [the voice](architecture/voice.md). |
-| [One design language](#one-design-language) | Partly shipped | The shell and the kit read `Theme.qml`, and a test fails a literal colour in a shell file. The shell's words are fixed strings in the plain register. | Voices that change a greeting are In progress. See [the design system](design-system/README.md) and [the voice](architecture/voice.md). |
-| [Degrade and recover](#degrade-and-recover) | Partly shipped | The bar waits for agentd and says so, the Brain looks at its logs every 60 seconds without a file watcher, a picture that cannot draw costs the pictures and not the bar, and while the AI rests, launcher words and `!` commands still run and asks wait. | Greetings and empty-place lines as local templates are In progress with the voice. |
+| [Quiet at rest](#quiet-at-rest) | Partly shipped | The screen at rest is the wallpaper and the pill, and a widget appears only with something to say. Bombadil speaks when the person arrives or leaves: one line at login, one after the name card, one when they come back after thirty minutes or more if something happened meanwhile, and a goodbye at shutdown. It says nothing at rest. With `greet = false` in `persona.toml` the arrivals say only what failed or was put back, and the goodbye is in Plain's words. Under `BOMBADIL_REDUCE_MOTION=1` every movement has a still version: the stone's roll is a slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the lean, the wallpaper's fade, the desk's folds and the fades and slides of the kit and of every app are instant. | Nothing sets that variable, and the compositor's own window and drawer slides do not read it. The screen is not silent at rest for mail: a new mail from someone the person knows puts a notice above the pill for 5 minutes, decided in the [everyday work brief](design/everyday-work-brief.md#1-mail-in-bombadils-own-view). See [the design system](design-system/README.md#reduced-motion), [motion](MOTION.md) and [the voice](architecture/voice.md). |
+| [One design language](#one-design-language) | Partly shipped | The shell and the kit read `Theme.qml`, and a test fails a literal colour in a shell file. The shell's words are fixed strings in the plain register. The person picks one of three voices, Merry, Plain or Quiet, on the name card; a voice changes the words of a greeting and the closing sentence of the agent's reply and never a fact, a count or an error. A greeting line is at most 100 characters, has no dash, and has an exclamation mark only in Merry's lines (`tests/test_greet.py`). | Merry's exclamation marks are the one place the table allows one, where this rule says there are none in system text. See [the design system](design-system/README.md) and [the voice](architecture/voice.md). |
+| [Degrade and recover](#degrade-and-recover) | Partly shipped | The bar waits for agentd and says so, the Brain looks at its logs every 60 seconds without a file watcher, a picture that cannot draw costs the pictures and not the bar, and while the AI rests, launcher words and `!` commands still run and asks wait. | Greetings are local templates in `share/voice/lines.toml`, read from files with no model and no network: a missing or broken table, or a source that fails, leaves nothing said and costs the person nothing else. | The table has lines for empty places, but only `bombadil history` uses one (`src/bombadil/watch.py`); no kit component reads it. See [the voice](architecture/voice.md). |
 
 ## What the machine is
 
@@ -244,15 +244,16 @@ which is not built. Decided in the [UX brief](design/ux-brief.md#the-rules).
 
 **The screen at rest is wallpaper and one pill, and every movement means one thing.** No splash and
 no vitals strip, and the wallpaper is dark surfaces with at most a ghost of the stone. Widgets appear
-only when they have something to say and fold away for whatever the AI brings. Bombadil is meant to
-speak only when the person arrives or leaves and to be silent at rest; the voice is In progress and
-not on `main`. On `main` mail is an exception to that silence: a new mail from someone the person
+only when they have something to say and fold away for whatever the AI brings. Bombadil speaks
+only when the person arrives or leaves and is silent at rest: on `main` that is the greeting and the goodbye
+of its voice ([the voice](architecture/voice.md)). Mail is an exception to that silence: a new mail from someone the person
 knows puts a notice above the pill for 5 minutes, as the
 [everyday work brief](design/everyday-work-brief.md#1-mail-in-bombadils-own-view) decided. A movement always means the same thing (rolling is working, a
-knock is waiting on you, a hop is done, a lean is listening) and is meant to have a still version for
-reduced motion. On `main` only the stone and the wallpaper's fade have a quieter one: the roll is a
-slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the wallpaper's fade
-is instant. Nothing turns it on by default.
+knock is waiting on you, a hop is done, a lean is listening) and has a still version for
+reduced motion. `BOMBADIL_REDUCE_MOTION=1` sets one switch, `Theme.reducedMotion`, which the shell, the desk,
+the kit and every app read, and a test fails an animation that forgets it ([motion](MOTION.md)). The roll is a
+slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the lean and every fade and
+slide are instant. Nothing turns it on by default, and the compositor's own slides do not read it.
 
 In practice: before you add an animation, a badge or a greeting, say what single thing it means and
 when it goes away. Decided in the [identity brief](design/identity-brief.md#the-rules), the
@@ -278,9 +279,9 @@ the tokens are in the [design system](design-system/README.md).
 **The shell and every app read the same tokens, the same kit and the same plain voice.** Nothing is
 styled one-off. Things that speak are round and things that hold have 12 px corners (controls have 8).
 Words are plain full sentences in sentence case that name what changed and how to take it back; there
-are no emoji, no "Oops" and no exclamation marks in system text. A voice, once there is one, may
-change the words of a greeting, never a fact, a count or an error; voices are In progress and not on
-`main`.
+are no emoji, no "Oops" and no exclamation marks in system text. A voice may
+change the words of a greeting and the closing sentence of a reply, never a fact, a count or an error; on
+`main` the person picks one of three, Merry, Plain or Quiet, on the name card.
 
 In practice: use `Theme` and the kit's components, and write system text in the plain register.
 Decided in the [identity brief](design/identity-brief.md#the-rules), the
@@ -303,8 +304,9 @@ In practice: do not add decoration to carry character; movement and wording carr
 daemon and says so. The Brain works without its file watcher, looking at its logs every 60 seconds. A
 picture host that cannot draw costs the pictures, never the bar. While the AI rests, apps, files,
 launcher words and `!` commands keep working and asks wait instead of failing. A missing optional part
-costs a feature, not the machine. Greetings and empty-place lines are meant to be local templates that
-cost nothing at boot and work offline; the voice is In progress and not on `main`.
+costs a feature, not the machine. Greetings are local templates that
+cost nothing at boot and work offline: a table of words and facts read from files, with no model call, and a
+missing table or a source that breaks leaves nothing said.
 
 In practice: when you add a dependency, decide what the person sees when it is missing, and test
 that. Decided in the [poor man switch brief](design/poor-man-switch-brief.md#the-rules) (rule 1: nothing

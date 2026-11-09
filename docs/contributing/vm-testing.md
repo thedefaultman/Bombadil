@@ -26,7 +26,12 @@ again with more time) were added on 2026-11-09 against `main` at `9d5c729`. They
 the script and by running the five tests that exercise it, which run the script's `picture()` function in
 bash and need no VM. The coding-sessions checks and the `DIAG` lines after a failed check were added on
 2026-11-09 against `main` at `ca7f80a` by reading the script, which passes `bash -n`; no VM was booted. The
-rest of the page is as it was checked on 2026-11-08 at `7176e55`.
+change from `ca7f80a` to `f0485c2` was added and checked on 2026-11-09 and nothing else on the page was read
+again: the smoke's checks of the name and voice card (25 lines of `bombadil-smoke`, in the sign-in block), the
+installer carrying the desk's places and what Tips has taught, and the tests that read them. They were checked
+by reading the two scripts, which pass `bash -n`, and by running `tests/test_iso_profile.py` (34 tests, one of
+them the installer's carry loop run in bash on two folders); no VM was booted. The rest of the page is as it was
+checked on 2026-11-08 at `7176e55`.
 
 ## How it fits together
 
@@ -225,6 +230,18 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   revokes the stored one), so it is gated on `~/.config/bombadil/config.toml`, which is what
   `config.Config.configured` reads. When the file exists the smoke prints `SKIP signin`, and the host
   fails a run whose first log has it.
+- **The name and voice card**, inside the sign-in block and so under the same gate, before the first real
+  login. With no `~/.config/bombadil/persona.toml` yet (`no-persona-before-voice`), a stand-in sign-in that
+  turns ready makes the first-run card appear in place of the "Signed in" line (`voice-signin`,
+  `voice-card-asked`: the daemon writes `voice = "merry"` into `persona.toml` when it asks, and
+  `voice-panel-away` waits for the browser panel to go). The card is photographed twice, a few seconds apart
+  (`SHOT voice-card` and `SHOT voice-card-settled`), so a person can see that it is whole and no longer
+  growing. The smoke types a name and Enter over QMP and reads the name back from `persona.toml`
+  (`voice-name-saved`, `voice-default-merry`), asks for the pill, and types the word `voice`: the history
+  must hold `voice: Opened the voice card` (`voice-word-answered`, with `SHOT voice-saved` and `SHOT
+  voice-word` around them). It then deletes the stand-in's marker and `config.toml` and restarts the daemon
+  with no stand-in environment (`voice-agentd-restored`), so the real logins that follow start from a system
+  with no provider chosen. Eight checks and four pictures.
 - **The installer**, in install mode: `bombadil-install /dev/vda --yes` finishes.
 - **The installed disk**, in the undo mode: the brain (the watcher and the service, a file a turn
   writes is named as the machine's and one the person writes as theirs, a rename keeps the thing, the
@@ -274,6 +291,13 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   exit by itself (`scripts/test-vm.sh`, `wait $pid`). A guest that never powers off keeps the script
   waiting; stop QEMU by hand. The same wait follows `DONE`, so a guest that does not power off after
   it (one with `BOMBADIL_SMOKE_NO_POWEROFF` set, for example) leaves the script waiting too.
+- **The voice checks leave `persona.toml` behind.** The block removes the stand-in's marker and
+  `config.toml` but not `~/.config/bombadil/persona.toml`, which holds the name the smoke typed. Two
+  things follow, both read from the scripts and not seen in a VM. `no-persona-before-voice` fails on any
+  guest that already has the file, so a second run of the smoke in a VM that stays up (`vmsmoke`) with no
+  `config.toml` fails on it, and the file has to be removed first. In install mode the installer copies
+  `~/.config/bombadil` to the disk, so the installed system starts with that name and the voice card does
+  not ask again there.
 - **The installed disk is a smoke disk.** The install check puts `bombadil.smoke=undo` into the GRUB
   defaults of the disk it installs, `out/test/disk.qcow2`, so every boot of that disk runs the smoke's
   undo mode: a first pass that reboots, or a second pass that powers off. Use the disk for the test
@@ -335,8 +359,10 @@ carry the boot id and that the host's pattern matches the requests of two boots,
 sits behind the `config.toml` gate (it runs the gate's lines in bash against a home with and without
 the file) and that `SKIP signin` is in both scripts, that the smoke stops the `bombadil-agentd` unit
 before it starts its own daemon and starts the unit again, that the mail checks are present, and that
-the script parses. It also runs the smoke's own `picture()` function in bash, with a stand-in for
-`bombadil-os-mcp` that answers from a list: a capture that says `Could not read` is asked again with 1, 4
+the script parses. No test reads the voice checks themselves: the parse test is their only guard. It also
+runs the installer's carry loop in bash on two folders: `tips.json`, `desk.toml` and `config.toml` arrive on
+the disk, the log of turns stays on the live side, and a live home with nothing to carry still installs. And
+it runs the smoke's own `picture()` function in bash, with a stand-in for `bombadil-os-mcp` that answers from a list: a capture that says `Could not read` is asked again with 1, 4
 and 12 times the time and the guest is let settle before each further try, a capture that works the first
 time is asked once, one that never answers fails after three tries, and a reply in the wrong shape fails
 at once and is not asked again (the boot picture must still hold three timed lines). Another test reads

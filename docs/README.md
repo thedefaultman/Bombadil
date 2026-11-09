@@ -18,7 +18,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 |---|---|---|
 | The session daemon, the queue, providers | Shipped | [agentd](architecture/agentd.md) |
 | The OS as tools for the agent | Shipped | [os-mcp](architecture/os-mcp.md) |
-| The pill, the line, the stone, chips, wallpaper | Partly shipped | [shell](architecture/shell.md) |
+| The pill, the line, the welcome and the name card, the stone, chips, wallpaper | Partly shipped | [shell](architecture/shell.md) |
 | Cards in rails and strips (Now, Watching, Needs you, Machine, Away), dragging them, jobs | Partly shipped | [desk](architecture/desk.md) |
 | Apps the agent writes, the kit and its skill | Partly shipped | [app kit](architecture/app-kit.md) |
 | The browser panel and signing in | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
@@ -28,7 +28,8 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | What keeps the session alive | Partly shipped | [session services](architecture/session-services.md) |
 | The index that writes itself | Partly shipped | [brain](architecture/brain.md) |
 | Named coding sessions and the dots above the pill | Partly shipped | [coding sessions](architecture/coding-sessions.md) |
-| A name, voices and welcome lines | In progress | [voice](architecture/voice.md) |
+| A name, three voices, and the lines said when the person arrives or leaves | Partly shipped | [voice](architecture/voice.md) |
+| What a person can ask, one tip at a time, from a table the machine checks (the card and the app are not built) | Partly shipped | [tips](architecture/tips.md) |
 | Noticing repeated asks, self-checks | In progress | [loop](architecture/loop.md) |
 | Mail in its own window, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md) |
 | When the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
@@ -58,5 +59,5 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 - [Documenting your piece](contributing/documenting.md): where things go, the shape of a page, diagrams, what must never be committed, and the checker.
 - [Writing a design brief](contributing/design-briefs.md).
 - [Testing the whole system in a VM](contributing/vm-testing.md): the smoke test that boots the real image, what it covers and its traps.
-- [The Mail contract](MAIL.md) and [the brain contract](BRAIN.md): the exact wire formats, states and rules that comments in the code point to. The pages for [Mail](architecture/mail.md) and [the brain](architecture/brain.md) say how each piece works; these two say what it promises.
+- [The Mail contract](MAIL.md), [the brain contract](BRAIN.md), [the Tips contract](TIPS.md) and [Motion, and reduced motion](MOTION.md): the exact wire formats, states and rules that comments in the code point to. The pages for [Mail](architecture/mail.md), [the brain](architecture/brain.md) and [Tips](architecture/tips.md) say how each piece works; these say what it promises.
 - `docs/screens/` and `docs/mail/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).
