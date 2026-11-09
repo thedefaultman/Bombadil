@@ -84,7 +84,7 @@ MACHINE = {
 # A command with no AI: its output on the line, in mono.
 BANG = {
     "id": "fixture-bang", "line": "Run a command without the AI.", "words": "!uname -r", "marks": [],
-    "captions": ["You type !", "It runs", "You see it"],
+    "captions": ["You type bang", "It runs", "You see it"],
     "beats": [
         {"key": "bang"},
         {"type": "!uname -r"},
@@ -160,7 +160,7 @@ DISK = {
         {"type": "Where did my disk go?"},
         {"key": "enter"},
         {"line": "Drawing your disks", "tag": "template"},
-        {"picture": "Your disks", "tag": "template", "bars": [["/", 62], ["/home", 91, "amber"], ["USB", 12]], "lit": 1},
+        {"picture": "Your disks", "tag": "template", "bars": [["/", 62], ["/home", 91, "amber"], ["USB", 12]]},
         {"stone": "resting", "line": "Showing your disks.", "tag": "template", "hold": 300},
     ],
 }
@@ -176,10 +176,51 @@ BUSY_END = {
     ],
 }
 
+# Two cards fold to two strips beside the pill: the pill is what they leave, and no strip runs under it.
+FOLDS = {
+    "id": "fixture-folds", "line": "Say desk to fold the cards, desk to unfold.", "words": "desk", "marks": [],
+    "captions": ["Two cards", "You say desk", "Two strips"],
+    "beats": [
+        {"card": "now", "tag": "template", "title": "Install rust and set it up", "why": "step 2 of 2",
+         "rows": [["Install rustup", "done"], ["Get stable Rust", "current"]]},
+        {"card": "watching", "tag": "template", "rows": [["Timer, 25 min", "24:59"]], "phase": 1},
+        {"type": "desk"},
+        {"key": "enter", "phase": 2},
+        {"fold": True, "strips": ["step 2 of 2", "1 counting"], "tag": "template"},
+        {"line": "Folded the desk.", "tag": "template"},
+    ],
+}
+
+# The reply to undo as the code says it: 112 characters, which the real line wraps to a few lines.
+UNDO = {
+    "id": "fixture-undo", "line": "Say undo to go back a step.", "words": "undo", "marks": ["undo"],
+    "captions": ["You say undo", "It goes back", "Files return"],
+    "beats": [
+        {"type": "undo"},
+        {"key": "enter", "phase": 1},
+        {"stone": "done", "line": "Undone. System files go back to before \u201cinstall htop\u201d when you restart. "
+                                  "Your home folder and apps stay as they are.", "tag": "template", "phase": 2},
+    ],
+}
+
+# Things taken away again: the counter stopped, a line cleared, a window slid out.
+CLEARS = {
+    "id": "fixture-clears", "line": "Things leave when they are done.", "words": "", "marks": [],
+    "captions": ["It counts", "It stops", "It is gone"],
+    "beats": [
+        {"stone": "working", "line": "Working on it", "tag": "template", "counter": True},
+        {"window": "Notes", "tag": "model", "doc": True},
+        {"hold": 1100},
+        {"line": "Still working", "tag": "template", "counter": False},
+        {"line": ""},
+        {"window": False},
+    ],
+}
+
 # A very short scene, for the tests that play in real time.
 SHORT = {
     "id": "fixture-short", "line": "Short.", "words": "", "marks": [], "captions": ["One", "Two", "Three"],
     "beats": [{"key": "enter"}, {"hold": 100}, {"line": "Done.", "tag": "caption"}],
 }
 
-ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, SHORT]
+ALL = [BUILD, PICTURE, ESC, TIMER, MACHINE, BANG, CHANGE, OPEN, LOCK, ROUTE, DISK, BUSY_END, FOLDS, UNDO, CLEARS, SHORT]

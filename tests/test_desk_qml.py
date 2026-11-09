@@ -1631,7 +1631,7 @@ def test_two_sessions_waiting_show_the_card_and_one_does_not(desk):
 
 
 def face(desk):
-    """What the pill's stone shows (shell/Stone.qml), from the real PillState beside the desk."""
+    """What the pill's stone shows (share/qml/Bombadil/Stone.qml), from the real PillState beside the desk."""
     return plain(desk.pill.property("face"))
 
 

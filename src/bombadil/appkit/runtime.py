@@ -224,7 +224,8 @@ class Host:
         refused = refused_components(self.ctx)      # an internal component in an app of the user's
         for line in refused:
             self.collector.add("error", line)
-        obj = self._create() if not refused and self._load_backend(changed) else None
+        backend_ok = self._load_backend(changed)    # read app.py whatever the QML says: an edit to it is not lost
+        obj = self._create() if backend_ok and not refused else None
         focus, self._unfocused = self._unfocused, None
         if obj is None:
             if focus is not None and isValid(focus):

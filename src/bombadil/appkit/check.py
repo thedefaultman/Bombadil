@@ -56,7 +56,12 @@ INTERNAL_COMPONENTS = {
 
 _KIT_IMPORT = re.compile(
     r"^[ \t]*import[ \t]+Bombadil(?:[ \t]+\d+(?:\.\d+)?)?(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$", re.MULTILINE)
+_DIR_IMPORT = re.compile(r'^[ \t]*import[ \t]+"([^"]+)"(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$', re.MULTILINE)
 _COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+# What the error says where the app has a component by that name of its own which the kit's hides.
+_OWN = ("is the kit's here, not your {name}.qml: QML lets the later import win, and a folder's own files come first. "
+        "Write `import \".\"` below `import Bombadil` (or `import \"folder\"` for one in a folder) to use yours, "
+        "or give it another name")
 
 
 def _blank(m: re.Match) -> str:
@@ -65,9 +70,13 @@ def _blank(m: re.Match) -> str:
 
 def refused_components(ctx: AppContext) -> list[str]:
     """One `file.qml:line: Name ...` for each use of an internal kit component (INTERNAL_COMPONENTS) in an
-    app of the user's. The built-in apps under share/apps (the Tips app) may use them, and so may an app
-    with a component of its own by that name. A use is an object declaration: `Stone {` after
-    `import Bombadil`, or `Kit.Stone {` after `import Bombadil as Kit`."""
+    app of the user's. The built-in apps under share/apps (the Tips app) may use them. A use is an object
+    declaration: `Stone {` after `import Bombadil`, or `Kit.Stone {` after `import Bombadil as Kit`.
+
+    A bare `Stone {` is the kit's unless the app's own Stone.qml is imported after the kit: QML lets the
+    later import win, and a folder's own files (the implicit import) come first and weakest. So an own
+    component is let through where `import "."` (or `import "lib"`, for one in a folder) comes below
+    `import Bombadil` in that file, and a use that the kit's component would win gets an error that says so."""
     if apps.is_builtin(ctx.dir):
         return []
     out = []
@@ -79,15 +88,19 @@ def refused_components(ctx: AppContext) -> list[str]:
             text = _COMMENTS.sub(_blank, f.read_text(errors="replace"))
         except OSError:
             continue
-        imports = [m.group(1) for m in _KIT_IMPORT.finditer(text)]     # an alias, or None for `import Bombadil`
+        kit = [(m.start(), m.group(1)) for m in _KIT_IMPORT.finditer(text)]       # (where, the alias or None)
+        folders = [(m.start(), (f.parent / m.group(1)).resolve()) for m in _DIR_IMPORT.finditer(text) if not m.group(2)]
+        bare = max((where for where, alias in kit if alias is None), default=None)   # the last `import Bombadil`
         for name, why in INTERNAL_COMPONENTS.items():
-            own = (f.parent / f"{name}.qml").exists() or (ctx.dir / f"{name}.qml").exists()
-            spellings = [rf"(?<![\w.]){re.escape(a)}\.{name}" for a in imports if a]
-            if None in imports and not own:
-                spellings.append(rf"(?<![\w.]){name}")
-            for spelling in spellings:
+            spellings = [(rf"(?<![\w.]){re.escape(alias)}\.{name}", f"{name} {why}") for _, alias in kit if alias]
+            if bare is not None:
+                own = [(where, d) for where, d in folders if (d / f"{name}.qml").is_file()]
+                if not any(where > bare for where, _ in own):       # no import of an own one below the kit's wins
+                    hidden = (f.parent / f"{name}.qml").is_file() or bool(own)
+                    spellings.append((rf"(?<![\w.]){name}", f"{name} " + (_OWN.format(name=name) if hidden else why)))
+            for spelling, message in spellings:
                 for m in re.finditer(rf"{spelling}\s*\{{", text):
-                    out.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}: {name} {why}")
+                    out.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}: {message}")
     return out
 
 
