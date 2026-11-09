@@ -94,7 +94,43 @@ FocusScope {
         }
     }
 
-    Component.onCompleted: _applyPalette(frame.palette)
+    // When the window opens, typing goes into the app's first Search field, as the person expects,
+    // unless the app took the keyboard itself (a login form, a compose box asks for it). A window that
+    // opens while the pill held the keyboard is not the active one until the compositor focuses it, and
+    // until then nothing says where the app put the focus, so this waits for the window to be active, once.
+    property bool _searchChecked: false
+    QW.Window.onActiveChanged: Qt.callLater(_focusSearch)
+
+    function _focusSearch() {
+        if (_searchChecked || !_hostWindow || !_hostWindow.active)
+            return
+        _searchChecked = true
+        const held = _hostWindow.activeFocusItem
+        if (held && held !== root && held !== _hostWindow.contentItem)
+            return
+        const field = _findSearch(root)
+        if (field)
+            field.forceActiveFocus()
+    }
+
+    // The first Search field in sight, in the order the app lays them out (the title row's first).
+    function _findSearch(item) {
+        for (const c of item.children) {
+            if (!c.visible || !c.enabled)
+                continue
+            if (c.focusOnOpen === true)   // a SearchField; its type cannot be named here, Qt has one of its own
+                return c
+            const found = _findSearch(c)
+            if (found)
+                return found
+        }
+        return null
+    }
+
+    Component.onCompleted: {
+        _applyPalette(frame.palette)
+        Qt.callLater(_focusSearch)   // after the app's own completion handlers
+    }
 
     // Puts a first-milestone bar in its slot, in place of the one before it.
     function _dock(item, slot) {

@@ -232,7 +232,10 @@ so for secrets use `copyable: true` (the clipboard clears after 30 s). Mark pass
 
 ### SearchField
 A `TextField` with a search icon and a clear button. Ctrl+F focuses it, Esc clears it.
-Property `text`; signal `accepted()`. Use its `text` to filter your model. It fills the
+Property `text`; signal `accepted()`. Use its `text` to filter your model. When the app
+opens, the first one in sight has the keyboard, so typing goes straight into it; an app
+that focuses something itself (a login form, a compose box) keeps that, and
+`focusOnOpen: false` leaves one field out. It fills the
 width of its layout; in `actions` give it `Layout.preferredWidth: 200;
 Layout.fillWidth: false`. (Qt has its own `SearchField`; with the usual imports the kit's
 wins, so do not add `import QtQuick.Controls.Basic`.)
