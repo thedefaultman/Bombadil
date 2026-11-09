@@ -154,7 +154,8 @@ class Action:
 
 
 # Coding sessions: `claude|codex|shell <project> [role]`, a project's or a session's name,
-# "end <name>" and "what's running?". Checked before app names: project, then session, then app.
+# "end <name>" and "what's running?". Checked before app names: project, then session, then app, and
+# after Bombadil's own words (a model, the brain, Mail, a panel), which no project or session shadows.
 DEV_RE = re.compile(r"(claude|codex|shell) ([^\s]+)(?: ([^\s]+))?")
 SESSIONS_WORDS = {"whats running", "what is running", "sessions", "coding sessions", "list sessions"}
 END_VERBS = ("end",)
@@ -307,6 +308,19 @@ def _picture(t: str, typed: str = "") -> Action | None:
     return None
 
 
+def _fixed_word(t: str) -> bool:
+    """Is this text one of Bombadil's own words: a model, the brain's, Mail, a panel? A project or a
+    session named like one never stands in for it ("open mail" opens Mail whatever ~/Projects holds);
+    its own form, "claude mail", still names the project."""
+    if _lookup(t, MODEL_WORDS) is not None or _lookup(t, BRAIN_COMMANDS) is not None:
+        return True
+    for verbs in (OPEN_VERBS, CLOSE_VERBS, HIDE_VERBS, ()):
+        word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
+        if word is not None and (_lookup(word, MAIL_WORDS) is not None or _lookup(word, PANEL_WORDS) is not None):
+            return True
+    return False
+
+
 def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = False) -> Action | None:
     """The local action for exactly this text, or None to send it to the agent. `dev_names`
     (agentd's dev.Dev) adds the coding sessions' words. `busy`: a turn is running, so a bare "why"
@@ -349,7 +363,7 @@ def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = 
         if cmd in ("restart", "shutdown", "desk") and raw.endswith("?"):
             return None   # "restart?" asks, it does not tell
         return Action(cmd)
-    if dev_names is not None and plain:
+    if dev_names is not None and plain and not _fixed_word(t):
         found = _dev_match(t, dev_names)
         if found is not None:
             return found

@@ -754,8 +754,11 @@ class AgentD:
                 continue
             if s is not None and m.get("event") == "exit":
                 how = "stopped unexpectedly" if s.state == "failed" else "ended"
-                self._log_line({"t": time.time(), "kind": "dev", "action": how, "target": s.key,
-                                "result": f"{s.title} {how}."})
+                try:
+                    self._log_line({"t": time.time(), "kind": "dev", "action": how, "target": s.key,
+                                    "result": f"{s.title} {how}."})
+                except OSError as e:   # a full or read-only disk loses the log line, not the dots
+                    print(f"agentd: dev log: {e}", file=sys.stderr)
 
     async def _dev_watch(self):
         """Notice sessions that went away without a word (a crash, a kill from outside)."""
@@ -777,6 +780,8 @@ class AgentD:
             try:
                 reader, writer = await asyncio.open_unix_connection(str(path))
                 try:
+                    # The events say only what changes: ask once what is in front now.
+                    await asyncio.to_thread(self.dev.look_at_front)
                     while line := await reader.readline():
                         ev, _, data = line.decode(errors="replace").rstrip("\n").partition(">>")
                         cls = data.split(",", 1)[0]

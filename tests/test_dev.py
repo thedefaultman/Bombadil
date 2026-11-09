@@ -3,8 +3,10 @@
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -455,3 +457,168 @@ def test_managed_hooks_cover_the_events_the_dots_need():
 def test_paths_default_to_the_projects_folder(home):
     assert paths.projects_dir() == home / "Projects"
     assert dev.share_file("zellij/config.kdl").exists()
+
+
+# -- what a launch must not hold up --
+
+def _within(seconds, fn):
+    """Run `fn` in a thread; True when it returned in time."""
+    t = threading.Thread(target=fn, daemon=True)
+    t.start()
+    t.join(seconds)
+    return not t.is_alive()
+
+
+def test_a_slow_launch_never_stalls_what_agentd_asks_meanwhile(projects):
+    now = [1_000_000.0]
+    d, z, _ = _dev(clock=lambda: now[0])
+    gate, inside = threading.Event(), threading.Event()
+    answered = []
+
+    def runner(argv, **kw):
+        if "--create-background" in argv:
+            inside.set()
+            assert gate.wait(20)
+        return z(argv, **kw)
+
+    d._run = runner
+    launch = threading.Thread(target=lambda: answered.append(d.open("claude", "myapp")), daemon=True)
+    launch.start()
+    try:
+        assert inside.wait(10)
+        # zellij has not listed it yet and the watcher would call it gone after this long: not while it starts.
+        now[0] += dev.PENDING_SECONDS * 3
+        seen = []
+
+        def asks():
+            seen.append([e["name"] for e in d.names()])
+            seen.append(d.snapshot())
+            d.check()
+            d.focused("somewhere-else")
+            seen.append(d.named("reviewer"))
+            seen.append(d.on_project(Path(d.project("myapp"))))
+            seen.append(d.attention())
+
+        assert _within(5, asks), "a launch holds the registry's lock"
+        snap = seen[1]
+        assert [(x["project"], x["alive"]) for x in snap["sessions"]] == [("myapp", True)]
+    finally:
+        gate.set()
+        launch.join(20)
+    assert answered and answered[0][0] and d.sessions["myapp/claude"].alive
+
+
+def test_ending_a_session_waits_for_its_own_launch(projects):
+    d, z, _ = _dev()
+    gate, inside = threading.Event(), threading.Event()
+    order = []
+
+    def runner(argv, **kw):
+        if "--create-background" in argv:
+            inside.set()
+            assert gate.wait(20)
+        return z(argv, **kw)
+
+    d._run = runner
+    launch = threading.Thread(target=lambda: order.append(("started", d.open("shell", "myapp")[0])), daemon=True)
+    launch.start()
+    assert inside.wait(10)
+    s = d.sessions["myapp/shell"]
+    ender = threading.Thread(target=lambda: order.append(("ended", d.end(s)[0])), daemon=True)
+    ender.start()
+    time.sleep(0.2)
+    assert order == []          # the end is queued behind the launch, not racing it
+    gate.set()
+    launch.join(20)
+    ender.join(20)
+    assert order == [("started", True), ("ended", True)] and d.sessions["myapp/shell"].state == "ended"
+
+
+def test_a_restart_asks_which_window_is_in_front(projects):
+    d, _, _ = _dev()
+    d.open("shell", "myapp")
+    s = d.sessions["myapp/shell"]
+
+    class Asked:
+        available = False
+
+        def __init__(self, text):
+            self.text = text
+
+        def request(self, command):
+            assert command == "j/activewindow"
+            return self.text
+
+    d.front = None
+    d.hypr = Asked(json.dumps({"class": s.app_id}))
+    d.look_at_front()
+    assert d.front == s.key
+    d.hypr = Asked("{}")            # no window in front, or a compositor that says nothing: nothing changes
+    d.look_at_front()
+    d.hypr = Asked("not json")
+    d.look_at_front()
+    assert d.front == s.key
+
+
+def _slow_agentd(path, hold):
+    """A socket that takes the line and is slow to say goodbye."""
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(path))
+    srv.listen(1)
+    got = []
+
+    def serve():
+        conn, _ = srv.accept()
+        with conn:
+            data = b""
+            while chunk := conn.recv(65536):
+                data += chunk
+            got.append(data)
+            time.sleep(hold)
+        srv.close()
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    return t, got
+
+
+def test_a_line_agentd_took_but_was_slow_to_answer_is_not_spooled_too(home, monkeypatch):
+    sock = home / "slow.sock"
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(sock))
+    t, got = _slow_agentd(sock, hold=1.6)
+    dev.send_signal({"type": "dev-signal", "event": "Stop"})
+    t.join(5)
+    assert got and b'"Stop"' in got[0]
+    assert not dev.spool().exists()
+    # And with nobody there at all it is kept for when agentd starts.
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(home / "nobody.sock"))
+    dev.send_signal({"type": "dev-signal", "event": "Stop"})
+    assert [m["event"] for m in dev.take_spool()] == ["Stop"]
+
+
+def test_the_hook_program_does_not_spool_a_line_agentd_already_has(home):
+    sock = home / "slow-hook.sock"
+    t, got = _slow_agentd(sock, hold=1.6)
+    env = {"BOMBADIL_STATE": str(home / "state"), "BOMBADIL_SOCKET": str(sock), "CLAUDE_PID": str(os.getpid())}
+    payload = json.dumps({"hook_event_name": "Stop", "session_id": "s1", "cwd": "/w"})
+    assert _signal(["claude"], payload, env).returncode == 0
+    t.join(5)
+    assert got and b'"Stop"' in got[0]
+    assert not (home / "state" / "dev" / "signals.jsonl").exists()
+
+
+def test_bombadils_own_words_are_never_shadowed_by_a_project_of_the_same_name(projects):
+    for name in ("mail", "opus", "terminal", "brain"):
+        (projects / name).mkdir()
+    d, _, _ = _dev()
+    for text in ("mail", "open mail", "inbox"):
+        assert launcher.match(text, [], d).kind == "mail", text
+    a = launcher.match("switch to opus", [], d)
+    assert (a.kind, a.target) == ("model", "opus")
+    assert launcher.match("terminal", [], d).kind == "panel"
+    assert launcher.match("open the brain", [], d).kind == "brain"
+    # The project is still there, by its tool.
+    a = launcher.match("claude mail", [], d)
+    assert (a.kind, a.tool, a.target) == ("session", "claude", "mail")
+    # And a project that is no word of ours is named plainly, as before.
+    assert launcher.match("myapp", [], d).kind == "project"

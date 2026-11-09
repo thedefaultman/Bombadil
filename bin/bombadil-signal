@@ -111,8 +111,11 @@ def send(msg):
             s.connect(_socket())
             s.sendall(line)
             s.shutdown(socket.SHUT_WR)
-            while s.recv(65536):
-                pass
+            try:
+                while s.recv(65536):
+                    pass
+            except TimeoutError:
+                pass   # agentd has the line and is slow to say so: spooling it too would play it twice
         return
     except OSError:
         pass

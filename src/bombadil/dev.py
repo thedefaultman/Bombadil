@@ -169,7 +169,12 @@ class Dev:
         self._spawn = spawn
         self.clock = clock
         self.on_change = on_change
+        # `lock` guards the registry and is only ever held for a moment: agentd's hot paths (a new client's
+        # greeting, a hook's report, the dots) take it. `launching` serialises the slow work of starting,
+        # bringing back and ending a session, which waits on zellij, systemd and the compositor for seconds.
         self.lock = threading.RLock()
+        self.launching = threading.RLock()
+        self._launching: set[str] = set()     # sessions being started now: not yet in zellij's list
         self.sessions: dict[str, Session] = {}
         self.front: str | None = None     # the session whose window is in front
         self.boot = boot_id()
@@ -204,11 +209,12 @@ class Dev:
             self.sessions[s.key] = s
 
     def _save(self) -> None:
-        path = self.registry()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"sessions": [asdict(s) for s in self.sessions.values()]}, indent=1))
-        os.replace(tmp, path)
+        with self.lock:
+            path = self.registry()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"sessions": [asdict(s) for s in self.sessions.values()]}, indent=1))
+            os.replace(tmp, path)
 
     def _changed(self) -> None:
         self._save()
@@ -279,9 +285,9 @@ class Dev:
             return False, f"{tool} is not a coding tool here: use claude, codex or shell."
         if not ROLE_RE.fullmatch(role):
             return False, "A session's name is a short word: letters, digits and dashes."
-        with self.lock:
-            k = f"{slug(folder.name)}/{role}"
-            s = self.sessions.get(k)
+        with self.launching:
+            with self.lock:
+                s = self.sessions.get(f"{slug(folder.name)}/{role}")
             if s is not None and s.alive:
                 if s.tool != tool:
                     return False, (f"{s.title} is a {TOOL_TITLES[s.tool]} session. "
@@ -294,7 +300,7 @@ class Dev:
 
     def bring(self, s: Session) -> tuple[bool, str]:
         """A session by its name: its window to the front, a new viewer, or a resume."""
-        with self.lock:
+        with self.launching:
             if s.yours:
                 return False, f"{s.title} runs in a terminal of yours; Bombadil cannot bring it back."
             if not s.alive:
@@ -307,8 +313,9 @@ class Dev:
             if not shown:
                 # Asked for by name, it is in front: what it said is seen, whether or not the
                 # compositor reports the focus change.
-                self.front = s.key
-                self._looked(s)
+                with self.lock:
+                    self.front = s.key
+                    self._looked(s)
                 self._changed()
             return True, f"Back to {s.title}.{shown}"
 
@@ -322,16 +329,17 @@ class Dev:
         return self.bring(found[0])
 
     def end(self, s: Session) -> tuple[bool, str]:
-        with self.lock:
-            if s.yours:
-                return False, f"{s.title} runs in a terminal of yours: end it there."
-            if not s.alive:
-                s.state, s.since, s.unseen = "ended", self.clock(), False
+        with self.launching:   # never in the middle of the session's own launch
+            with self.lock:
+                if s.yours:
+                    return False, f"{s.title} runs in a terminal of yours: end it there."
+                if not s.alive:
+                    s.state, s.since, s.unseen = "ended", self.clock(), False
+                    self._changed()
+                    return True, f"Ended {s.title}."
+                s.state, s.alive, s.since, s.unseen = "ended", False, self.clock(), False
                 self._changed()
-                return True, f"Ended {s.title}."
-            s.state, s.alive, s.since, s.unseen = "ended", False, self.clock(), False
-            self._changed()
-        self._kill(s)
+            self._kill(s)
         kept = " Its copy is kept." if s.copy else ""
         return True, f"Ended {s.title}.{kept}"
 
@@ -365,8 +373,9 @@ class Dev:
         return ok, line
 
     def _checkout_taken(self, folder: Path) -> bool:
-        return any(s.alive and s.tool != "shell" and not s.copy and Path(s.folder) == folder
-                   for s in self.sessions.values())
+        with self.lock:
+            return any(s.alive and s.tool != "shell" and not s.copy and Path(s.folder) == folder
+                       for s in self.sessions.values())
 
     def _make_copy(self, folder: Path, role: str) -> Path | None:
         """A git worktree of `folder` on its own branch, at ~/Projects/.work/<repo>/<role>."""
@@ -390,18 +399,29 @@ class Dev:
         now = self.clock()
         if s.zellij in (self.listed() or ()):
             # Still running after all (agentd missed it): never start a second one.
-            s.alive, s.state, s.since = True, "idle", now
-            self.sessions[s.key] = s
+            with self.lock:
+                s.alive, s.state, s.since = True, "idle", now
+                self.sessions[s.key] = s
             shown = self._show(s)
             self._changed()
             return True, f"Back to {s.title}.{shown}"
-        s.alive, s.state, s.since, s.boot, s.code, s.why, s.unseen = True, "idle", now, self.boot, None, "", False
-        s.pid = s.pid_start = 0
-        s.last = "Resuming" if resume else "Starting"
-        s.run = uuid.uuid4().hex[:12]
-        s.unit = f"bombadil-dev-{slug(s.project)[:24]}-{s.role}-{s.run}"
-        self.sessions[s.key] = s
-        self._save()   # the wrapper reads its session from the registry
+        with self.lock:
+            s.alive, s.state, s.since, s.boot, s.code, s.why, s.unseen = True, "idle", now, self.boot, None, "", False
+            s.pid = s.pid_start = 0
+            s.last = "Resuming" if resume else "Starting"
+            s.run = uuid.uuid4().hex[:12]
+            s.unit = f"bombadil-dev-{slug(s.project)[:24]}-{s.role}-{s.run}"
+            self.sessions[s.key] = s
+            self._launching.add(s.key)
+            self._save()   # the wrapper reads its session from the registry
+        try:
+            return self._launch_now(s, resume)
+        finally:
+            with self.lock:
+                self._launching.discard(s.key)
+
+    def _launch_now(self, s: Session, resume: bool) -> tuple[bool, str]:
+        """The slow half of `_launch`: nothing here holds the registry's lock."""
         z = zellij()
         # A dead session of that name would be resurrected instead of started.
         self._run([z, "delete-session", s.zellij], capture_output=True, check=False, timeout=10)
@@ -413,17 +433,21 @@ class Dev:
             cmd = [*procs.SCOPE, f"--unit={s.unit}", f"--slice=bombadil-dev-{slug(s.project)[:24].replace('-', '_')}.slice",
                    "--", *cmd]
         else:
-            s.unit = ""
+            with self.lock:
+                s.unit = ""
         try:
             r = self._run(cmd, cwd=s.folder, env=session_env(s), stdin=subprocess.DEVNULL, capture_output=True,
                           text=True, check=False, timeout=20)
         except (OSError, subprocess.TimeoutExpired) as e:
             r = subprocess.CompletedProcess(cmd, 1, "", str(e))
         if r.returncode != 0 or not self._wait_listed(s.zellij):
-            s.alive, s.state, s.last = False, "failed", _first_line(r.stderr or r.stdout) or "zellij did not start"
+            with self.lock:
+                s.alive, s.state, s.last = False, "failed", _first_line(r.stderr or r.stdout) or "zellij did not start"
             self._changed()
             return False, f"Could not start {s.title}: {s.last}"
-        s.last = ""
+        with self.lock:
+            if s.last in ("Starting", "Resuming"):   # unless the session has already said something
+                s.last = ""
         self._bare(s.zellij)
         shown = self._show(s)
         self._changed()
@@ -522,6 +546,17 @@ class Dev:
                 self._looked(s)
         if self.on_change is not None:
             self.on_change()
+
+    def look_at_front(self) -> None:
+        """Which window is in front now. Hyprland's events only say when that changes, so agentd asks
+        once whenever it starts listening: a restart must not forget what you are looking at."""
+        try:
+            active = json.loads(self.hypr.request("j/activewindow") or "{}")
+        except (OSError, RuntimeError, ValueError):
+            return
+        window_class = active.get("class") if isinstance(active, dict) else None
+        if isinstance(window_class, str) and window_class:
+            self.focused(window_class)
 
     def _looked(self, s: Session) -> None:
         s.unseen = False
@@ -647,7 +682,8 @@ class Dev:
     def check(self) -> None:
         """Every few seconds: notice sessions that went away without saying so."""
         with self.lock:
-            ours = [s for s in self.sessions.values() if s.alive and not s.yours]
+            ours = [s for s in self.sessions.values()
+                    if s.alive and not s.yours and s.key not in self._launching]
             yours = [s for s in self.sessions.values() if s.yours]
         changed = False
         listed = self.listed() if ours else set()
@@ -657,7 +693,7 @@ class Dev:
         with self.lock:
             for s in ours:
                 if s.alive and s.zellij not in listed and now - s.since > PENDING_SECONDS \
-                        and self.sessions.get(s.key) is s:
+                        and self.sessions.get(s.key) is s and s.key not in self._launching:
                     s.alive, s.state, s.unseen, s.since = False, "failed", True, now
                     s.last = s.last if s.code is not None else "Stopped unexpectedly"
                     changed = True
@@ -861,8 +897,11 @@ def send_signal(msg: dict) -> None:
             sock.connect(str(paths.socket_path()))
             sock.sendall(line)
             sock.shutdown(socket.SHUT_WR)
-            while sock.recv(65536):
-                pass
+            try:
+                while sock.recv(65536):
+                    pass
+            except TimeoutError:
+                pass   # agentd has the line and is slow to say so: spooling it too would play it twice
         return
     except OSError:
         pass

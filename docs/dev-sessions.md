@@ -118,11 +118,20 @@ whenever something changes, and sends it to each client that connects. `shell/De
 `shell/SessionPeek.qml` the hover. The desk's Needs you card reads the same message, so two or more
 waiting sessions also show there, and the pill's stone knocks (amber) while any session waits and
 goes still when the last one is answered. The chips sit in a row above the pill's left end because
-the desk's strips use the row beside the pill.
+the desk's strips use the row beside the pill. The row adds to the bar's exclusive zone, and the shell hands
+that zone to the desk, so the rails stop above the row and a card is never laid out under it.
 
 **Launcher.** `launcher.py` matches the exact forms (`claude|codex|shell <project> [role]`, project
 and role names, `end <name>`, `what's running?`) before app names, so none of them waits for the
-model. Project names come from the folders under `~/Projects`.
+model. Project names come from the folders under `~/Projects`. Bombadil's own words (a model, the
+brain's, Mail, a panel) are checked first and are never shadowed by a project or a session of the same
+name: `open mail` opens Mail, and `claude mail` starts the session on the project called mail.
+
+**Threads.** agentd calls `Dev` from worker threads. Its registry lock is only ever held for a moment, so a
+new client's greeting, a hook's report and the dots never wait on a launch; the slow work of starting,
+bringing back and ending a session (zellij, systemd, the compositor, a git worktree) runs under a
+second lock of its own that only those actions share, and a session being launched is not judged
+"gone" by the watcher while zellij has not listed it yet.
 
 ## Testing
 
@@ -138,12 +147,12 @@ model. Project names come from the folders under `~/Projects`.
   keeps its copy.
 - `bombadil-smoke` (the `dev-*` checks, run by `scripts/test-vm.sh`): what needs real Hyprland and
   systemd: the scope and slice, the viewer floating and large, closing it leaving the session
-  running, lingering, and the focus events.
+  running, lingering, and the window coming back by name.
 
 ## Extending it
 
-- **Another tool.** Add its name to `TOOLS`, its command line to the launch function in `dev.py`,
-  and a hook or notify reporter that calls `bombadil-signal <tool>`; map its events onto the states
+- **Another tool.** Add its name to `TOOLS` and `TOOL_TITLES`, its command line to `command_for` in
+  `dev.py`, and a hook or notify reporter that calls `bombadil-signal <tool>`; map its events onto the states
   in `Dev.signal`.
 - **Another surface for the same facts.** Consume the `dev` message; do not poll zellij. The desk
   already does.
