@@ -378,7 +378,7 @@ SYSTEM_UNITS = ISO / "airootfs/etc/systemd/system"
 USER_UNITS = ISO / "airootfs/etc/systemd/user"
 
 
-def _unit(path: Path) -> dict[str, dict[str, list[str]]]:
+def _unit_keys(path: Path) -> dict[str, dict[str, list[str]]]:
     """A unit file as {section: {key: [values]}}; a key given twice keeps both values, as systemd does."""
     sections: dict[str, dict[str, list[str]]] = {}
     current: dict[str, list[str]] = {}
@@ -410,7 +410,10 @@ def test_nothing_on_the_image_starts_or_configures_a_notification_daemon():
     # notifications from the line above the pill (mako, which this replaced, would have won the race at login).
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
     started = re.findall(r'^\s*hl\.exec_cmd\("([^"]+)"', lua, re.MULTILINE)
-    assert "bombadil-shell" in started
+    # The session restarts the daemon and the bar as user services (docs/SESSION-SERVICES.md): the bar is the only
+    # thing that owns the notification name, and it starts there.
+    assert any(c.startswith("systemctl --user") and "restart" in c.split() and "bombadil-shell" in c.split()
+               for c in started)
     assert [c for c in started if c.split()[0] in NOTIFICATION_DAEMONS] == []
     assert not (ISO / "airootfs/etc/skel/.config/mako").exists()
     shipped = [p for tree in ("etc/skel/.config", "etc/systemd", "etc/xdg", "etc/greetd") for p in
@@ -429,7 +432,7 @@ def test_the_connection_service_is_a_system_unit_of_its_own_user_with_a_closed_s
     import shlex
 
     from bombadil import paths
-    unit = _unit(SYSTEM_UNITS / "bombadil-connect.service")
+    unit = _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")
     service = unit["Service"]
 
     def one(key):
@@ -476,7 +479,7 @@ def test_the_connection_service_user_is_a_system_account_that_cannot_log_in_and_
     # `u` makes a system account with a group of its own and no login; `-` for the id takes one below 1000, so it is
     # never in the range of people the service lets in (1000 to 59999); `-` for home and shell is "/" and nologin.
     assert (kind, name, uid, home, shell) == ("u", "bombadil-connect", "-", "-", "-") and comment
-    assert name == _unit(SYSTEM_UNITS / "bombadil-connect.service")["Service"]["User"][0]
+    assert name == _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")["Service"]["User"][0]
     if not shutil.which("systemd-sysusers"):
         return
     root = tmp_path / "root"
@@ -490,7 +493,7 @@ def test_the_connection_service_user_is_a_system_account_that_cannot_log_in_and_
 
 
 def test_the_browser_service_is_a_user_unit_that_starts_at_login_after_the_session_and_is_never_given_up_on():
-    unit = _unit(USER_UNITS / "bombadil-browserd.service")
+    unit = _unit_keys(USER_UNITS / "bombadil-browserd.service")
     assert unit["Service"]["ExecStart"] == ["/usr/local/bin/bombadil-browserd"]
     assert unit["Service"]["Restart"] == ["on-failure"]
     assert unit["Unit"]["After"] == ["graphical-session.target"] and unit["Unit"]["StartLimitIntervalSec"] == ["0"]
@@ -507,7 +510,7 @@ def test_the_build_links_the_connection_services_commands_into_usr_local_bin():
     assert {"bombadil-connect", "bombadil-browserd"} <= set(names)
     # What each unit starts is the link the build makes, to a command the tree ships and can run.
     for unit in (SYSTEM_UNITS / "bombadil-connect.service", USER_UNITS / "bombadil-browserd.service"):
-        assert _unit(unit)["Service"]["ExecStart"] == [f"/usr/local/bin/{unit.stem}"], unit
+        assert _unit_keys(unit)["Service"]["ExecStart"] == [f"/usr/local/bin/{unit.stem}"], unit
         assert os.access(ROOT / "bin" / unit.stem, os.X_OK), unit.stem
 
 
@@ -573,7 +576,7 @@ def test_the_smoke_test_covers_connections_and_notifications():
     # database, and the unit is put back as it was: no account exists on the ISO, and no sample may stay in the real one.
     assert "BOMBADIL_CONNECT_ENGINE=fake" in smoke and "smoke-fake" in smoke and "restore_connect" in smoke
     # What the smoke asks of the loaded unit is what the file says.
-    unit = _unit(SYSTEM_UNITS / "bombadil-connect.service")["Service"]
+    unit = _unit_keys(SYSTEM_UNITS / "bombadil-connect.service")["Service"]
     asked = re.search(r"for want in ([^;]+); do", smoke).group(1).split()
     assert {"User", "NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp", "RuntimeDirectoryMode",
             "MemoryMax"} == {w.split("=")[0] for w in asked}
