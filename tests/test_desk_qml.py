@@ -425,7 +425,7 @@ AWAY_WAITING = away_row("dev:reviewer", "reviewer on Bombadil", "apply the migra
 AWAY_JOB = away_row("job:ab12", "Build", "boom", "red", "Why?")
 AWAY_DONE = away_row("turn:5", "tidy the notes", "at 09:05", "ok")
 AWAY_MORE = away_row("more", "and 2 more", kind="plain", tone="you")
-AWAY_WHY = "since 09:05 · a click or your next ask puts this away"
+AWAY_WHY = "since 09:05 · a click puts this away"
 
 
 def away_msg(*table, **kw):

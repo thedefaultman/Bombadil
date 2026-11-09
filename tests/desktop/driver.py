@@ -1591,7 +1591,7 @@ st = desk_state()
 check("the person's next ask puts it away too", st["faces"]["away"] == "hidden" and st.get("away") is None,
       (st.get("faces"), st.get("away")))
 # The shell's half, with a card agentd did not build: five rows, three colours and a count of the rest.
-inject({"type": "away", "since": time.time() - 3600, "count": 7, "why": "since 09:05 · a click or your next ask puts this away",
+inject({"type": "away", "since": time.time() - 3600, "count": 7, "why": "since 09:05 · a click puts this away",
         "rows": [
             {"key": "turn:7", "kind": "dot", "title": "build the site", "sub": "the build broke", "tone": "red", "button": ""},
             {"key": "dev:rev", "kind": "dot", "title": "reviewer on Bombadil", "sub": "apply the migration?",

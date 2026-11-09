@@ -214,7 +214,7 @@ def test_nothing_happened_is_no_card_when_they_came_back_and_a_line_when_they_as
     assert card.up is True and msg["count"] == 0 and msg["since"] == LEFT
     assert msg["rows"] == [{"key": "none", "kind": "plain", "title": "Nothing happened", "sub": "", "tone": "you",
                             "button": ""}]
-    assert msg["why"] == "since 11:13 · a click or your next ask puts this away"
+    assert msg["why"] == "since 11:13 · a click puts this away"
 
 
 def test_the_card_is_rows_the_shell_can_draw_and_a_count(card):

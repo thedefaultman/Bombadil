@@ -226,7 +226,7 @@ class Away:
             self._msg = self._empty()
         else:
             self._msg = {"type": "away", "since": since, "count": len(found),
-                         "why": f"since {_clock(since, now)} · a click or your next ask puts this away",
+                         "why": f"since {_clock(since, now)} · a click puts this away",
                          "rows": rows}
         return self.message()
 
