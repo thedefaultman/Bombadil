@@ -82,8 +82,8 @@ Rectangle {
     // Visible the moment it is shown, so the field can take the keyboard before the fade-in starts.
     visible: shown || opacity > 0
     clip: true
-    Behavior on opacity { NumberAnimation { duration: 200 } }
-    Behavior on implicitHeight { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration: Kit.Theme.normal } }
+    Behavior on implicitHeight { NumberAnimation { duration: Kit.Theme.fast; easing.type: Easing.OutCubic } }
 
     ColumnLayout {
         id: content

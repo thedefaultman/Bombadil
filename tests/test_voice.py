@@ -1236,6 +1236,21 @@ async def test_every_working_session_reaches_the_goodbye_to_be_counted(clock):
 
 
 @pytest.mark.asyncio
+async def test_the_goodbye_names_a_working_session_as_the_registry_agentd_writes_it(clock):
+    """The file comes from dev.Dev as it saves it (the project's folder name and the role, no title)."""
+    from bombadil import dev
+    known("Dan")
+    at_night(clock)
+    d = dev.Dev(runner=lambda *a, **k: None, spawn=lambda *a, **k: None, load=False)
+    s = dev.Session(project="myapp", role="reviewer", tool="claude", folder="/x", state="working", alive=True)
+    d.sessions[s.key] = s
+    d._save()
+    agentd_ = make(clock)
+    (clause,) = agentd_.voice._stopping()
+    assert "reviewer on Myapp" in clause
+
+
+@pytest.mark.asyncio
 async def test_a_session_registry_nested_too_deep_leaves_a_plain_goodbye(clock):
     known("Dan")
     at_night(clock)

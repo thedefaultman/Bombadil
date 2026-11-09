@@ -440,10 +440,33 @@ def test_the_title_falls_back_to_role_and_project_or_the_key(tmp_path):
         session(state="done", role=None, project=None),
         session(state="done", title="  ", role="r", project="p")])
     assert [f.text for f in src.dev(path, NOW, 0)] == [
-        "builder on batch finished", "reviewer finished", "solo finished", "only/key finished", "r on p finished"]
+        "builder on Batch finished", "reviewer finished", "solo finished", "only/key finished", "r on P finished"]
 
 
-def test_the_dev_registry_on_main_does_not_exist(home):
+def test_the_registry_agentd_really_writes_is_read(home):
+    """The fields come from dev.Session as dev.Dev saves them: no `title` and no `key` (those are properties
+    there), the project's folder name and the role. The greeting names the session as the dots do."""
+    from dataclasses import replace
+
+    from bombadil import dev
+    d = dev.Dev(runner=lambda *a, **k: None, spawn=lambda *a, **k: None, load=False)
+    base = dev.Session(project="myapp", role="reviewer", tool="claude", folder="/x", boot="old-boot")
+    for s in (replace(base, state="done", alive=False, since=NOW - 100),
+              replace(base, project="iOS-app", role="tester", state="failed", alive=False, since=NOW - 100),
+              replace(base, role="cut", state="working", alive=True, since=NOW - 100),
+              replace(base, role="old", state="done", alive=False, since=NOW - 90 * 86400),
+              replace(base, role="mine", yours=True, conversation="abc", state="working")):
+        d.sessions[s.key] = s
+    d._save()
+    facts = src.dev(dev.Dev.registry(), NOW, NOW - 3600, boot="new-boot")
+    assert sorted((f.kind, f.text) for f in facts) == [
+        ("failed", "tester on iOS-app failed"), ("finished", "reviewer on Myapp finished"),
+        ("stopped", "cut on Myapp was stopped by the restart")]
+    same_boot = src.dev(dev.Dev.registry(), NOW, NOW - 3600, boot="old-boot")   # no restart since: only what ended
+    assert sorted(f.kind for f in same_boot) == ["failed", "finished"]
+
+
+def test_a_missing_dev_registry_says_nothing(home):
     assert src.dev(None, NOW, 0) == []
     assert src.dev(home / "nope" / "sessions.json", NOW, 0) == []
 

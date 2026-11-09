@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import greet, paths
+from .dev import project_title
 from .greet import Fact
 
 MANY = 2  # more finished requests than this are said as one count
@@ -135,14 +136,14 @@ def _title(s: dict) -> str:
         return title.strip()
     role, project = s.get("role"), s.get("project")
     if isinstance(role, str) and isinstance(project, str) and role and project:
-        return f"{role} on {project}"
+        return f"{role} on {project_title(project)}"   # the registry saves the parts; the dots say it this way
     return next((v for v in (role, project, s.get("key")) if isinstance(v, str) and v), "")
 
 
 def dev(path: Path | None, now, since_ts: float, boot: str | None = None) -> list[Fact]:
     """The coding sessions in the dev registry: stopped by a restart, finished or failed since `since_ts`.
     Never a waiting fact, because the placeholder already says who is waiting. [] when the registry does
-    not exist, as on main today.
+    not exist (no coding session was ever started).
 
     A restart cuts a session off in two ways the registry shows. It records the stop itself (asleep, "Stopped
     by a restart") but only when something else makes it save, and then only `since_ts`, the previous boot,
