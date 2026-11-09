@@ -108,6 +108,7 @@ class FakeAgentd:
         self.max_open = 0
         self.clients: list[socket.socket] = []
         self.hooks: dict[tuple, object] = {}
+        self.status = {"type": "status", "busy": False, "provider": "claude", "setup": "ready"}
         self._lock = threading.Lock()
         self.sock = None
 
@@ -162,7 +163,7 @@ class FakeAgentd:
             if self.mode == "hangup":
                 return
             # What agentd tells every client that connects, before it answers a line.
-            self.say(conn, {"type": "status", "busy": False, "provider": "claude", "setup": "ready"})
+            self.say(conn, self.status)
             self.say(conn, {"type": "entries", "entries": [{"name": f"app-{i}", "title": f"App {i}", "kind": "app",
                                                             "words": [f"app {i}"]} for i in range(30)]})
             self.say(conn, {"type": "tips", "present": True, "card": None})
