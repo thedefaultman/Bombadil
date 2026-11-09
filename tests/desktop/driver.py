@@ -1528,7 +1528,8 @@ inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""}
 inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
 time.sleep(0.8)
 st = desk_state()
-check("and the desk is as it was", st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine"]}
+check("and the desk is as it was",
+      st["order"] == {"left": ["now", "watching", "alive"], "right": ["needs", "away", "machine", "tips"]}
       and st["stripped"] == [], (st["order"], st["stripped"]))
 
 # 13. Away: the card that says what happened while the person was gone. The turn log is agentd's own file, so the
@@ -2005,7 +2006,7 @@ procs.remove(old_agentd)
 env.pop("BOMBADIL_TIPS", None)
 start("agentd-tips", [str(REPO / "bin" / "agentd")])
 until(lambda: sock_path.exists(), 10)
-time.sleep(1)
+time.sleep(4)
 n = mark()
 threading.Thread(target=listen, args=("a",), daemon=True).start()
 card_msg = wait(lambda m: m.get("type") == "tips" and m.get("present") is True, 40, n)
