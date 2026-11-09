@@ -32,6 +32,9 @@ def configure(check: bool) -> None:
     else:
         os.environ.pop("BOMBADIL_CHECK", None)
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", STYLE)
+    # Qt redraws a window whose frame the compositor answered after 100 ms, and a compositor that draws in
+    # software answers later than that for a big window: the window then redraws forever (see bin/bombadil-shell).
+    os.environ.setdefault("QT_WAYLAND_FRAME_CALLBACK_TIMEOUT", "2000")
 
 
 def make_app(ctx: AppContext):
