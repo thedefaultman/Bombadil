@@ -61,6 +61,12 @@ ShellRoot {
     }
     Binding { target: deskState; property: "screenWidth"; value: root.deskScreenObject ? root.deskScreenObject.width : 1920 }
     Binding { target: deskState; property: "screenHeight"; value: root.deskScreenObject ? root.deskScreenObject.height : 1080 }
+    // The rails stop where the bar's zone starts, and that zone grows with the rows of chips above the pill.
+    readonly property int deskZone: {
+        for (const w of bars.instances) if (w.onDesk) return w.exclusiveZone
+        return 64
+    }
+    Binding { target: deskState; property: "rowZone"; value: root.deskZone }
     HyprCover { desk: deskState; screenName: root.deskScreen }
     Variants {
         model: Quickshell.screens
