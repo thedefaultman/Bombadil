@@ -1,4 +1,5 @@
 import QtQuick
+import Bombadil as Kit
 import "DeskTheme.js" as T
 
 // What the desk shows, worked out from agentd's messages and from where the windows are.
@@ -161,7 +162,7 @@ QtObject {
                                                         + T.stripGap + T.railMargin)))
     property int pillAnimMs: 150
     property real pillWidth: pillTarget
-    Behavior on pillWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
+    Behavior on pillWidth { NumberAnimation { duration: Kit.Theme.duration(desk.pillAnimMs); easing.type: Easing.OutCubic } }
 
     // -- the rails --
 

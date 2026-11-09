@@ -48,7 +48,15 @@ T.BusyIndicator {
                 to: 360
                 duration: 900
                 loops: Animation.Infinite
-                running: control.running && control.visible
+                running: control.running && control.visible && !Theme.reducedMotion
+            }
+            // Reduced motion: the arc holds still and pulses, as the stone does.
+            SequentialAnimation {
+                running: control.running && control.visible && Theme.reducedMotion
+                loops: Animation.Infinite
+                NumberAnimation { target: arc; property: "opacity"; to: Theme.pulseLow; duration: 500 }
+                NumberAnimation { target: arc; property: "opacity"; to: 1; duration: 500 }
+                onStopped: arc.opacity = 1
             }
         }
     }
