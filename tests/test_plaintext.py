@@ -19,7 +19,8 @@ def test_words_that_draw_all_they_hold_are_left_as_they_are(text):
 
 @pytest.mark.parametrize("hidden", [
     TAGS, "\U0000200b", "\U0000200c", "\U0000200d", "\U00002060", "\U000000ad", "\U0000feff", "\U00003164", "\U00002800", "\U0000180b", "\U0000fe0f",
-    "\U0000fe00", "\U000e0100", "\U0000206a", "\U0000061c", "\U0000202e", "\U0000fff9", "\U0000115f"])
+    "\U0000fe00", "\U000e0100", "\U0000206a", "\U0000061c", "\U0000202e", "\U0000fff9", "\U0000115f",
+    "\U0001bca0", "\U0001bca3", "\U0000fff0", "\U0000fff8", "\U00013430", "\U0001343f", "\U0001d173"])
 def test_a_character_that_draws_as_nothing_is_taken_out_wherever_it_stands(hidden):
     for text in (f"a{hidden}b", f"{hidden}a", f"a{hidden}", f"a {hidden} b"):
         assert plaintext.strip(text) == text.replace(hidden, "") and plaintext.has_hidden(text)
@@ -53,3 +54,18 @@ def test_a_typed_reply_with_an_emoji_in_it_is_a_reply_a_card_can_hold_and_one_wi
     errors: list[str] = []
     assert cards._typed("on it " + FAMILY, 100, "reply.content", errors) == "on it " + FAMILY and errors == []
     assert cards._typed("on it" + TAGS, 100, "reply.content", errors) == "" and len(errors) == 1
+
+
+# The format characters (category Cf) that do draw something, so they are text: the Arabic and Syriac number and
+# abbreviation marks, the Kaithi number signs. Every other format character draws as nothing and is hidden. A Unicode
+# that adds one makes this test fail, which is the point: somebody says whether it draws.
+DRAWN_FORMAT_CHARACTERS = ((0x600, 0x605), (0x6DD, 0x6DD), (0x70F, 0x70F), (0x890, 0x891), (0x8E2, 0x8E2),
+                           (0x110BD, 0x110BD), (0x110CD, 0x110CD))
+
+
+def test_every_format_character_that_draws_as_nothing_is_on_the_list():
+    import unicodedata
+    drawn = {c for a, b in DRAWN_FORMAT_CHARACTERS for c in range(a, b + 1)}
+    loose = [hex(c) for c in range(0x110000) if unicodedata.category(chr(c)) == "Cf" and c not in drawn
+             and not plaintext.HIDDEN.match(chr(c))]
+    assert loose == []

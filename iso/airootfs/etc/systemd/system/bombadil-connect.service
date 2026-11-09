@@ -38,8 +38,9 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 # Not ProtectProc, ProcSubset, PrivateUsers or PrivatePIDs: before it performs anything the service looks in
 # /proc/<pid> of the process that pressed, and reads its cgroup, to refuse a press from inside an agent's turn.
 MemoryMax=300M
-# A service that dies leaves the pill, cards and turns as they are: agentd's pokes give up after 0.3 s
-# and say "Connections are not running yet" until it is back.
+# A service that dies leaves the pill, cards and turns as they are: agentd's pokes (what the person has seen) give up
+# after 0.3 s, a read after a few seconds and a press after 25, and say "Connections are not running yet" until it
+# is back.
 Restart=on-failure
 RestartSec=2
 

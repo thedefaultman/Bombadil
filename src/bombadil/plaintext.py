@@ -20,11 +20,12 @@ import unicodedata
 # variation selectors and vowel separator, the zero-width and direction marks, the invisible operators and deprecated
 # formatting characters, the braille blank, the Hangul filler, the variation selectors, the byte order mark, the
 # halfwidth filler, the interlinear annotation marks, the musical formatting characters, and the tag block with the
-# ideographic variation selectors.
+# ideographic variation selectors, the shorthand and hieroglyph format controls, and the unassigned code points beside
+# the annotation marks that are default-ignorable too.
 _RANGES = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
            (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x2800, 0x2800),
-           (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF9, 0xFFFB),
-           (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
+           (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFFB),
+           (0x1BCA0, 0x1BCA3), (0x13430, 0x1343F), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF))
 HIDDEN = re.compile("[" + "".join(re.escape(chr(a)) + (("-" + re.escape(chr(b))) if b != a else "")
                                   for a, b in _RANGES) + "]")
 

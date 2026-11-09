@@ -1840,7 +1840,8 @@ check("what was typed lights the button only once agentd has the draft and the c
       st.get("card") and st["card"]["draft"]["ready"] is True, st.get("card"))
 n = mark()
 click(411, 668)
-res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Posted in #launch" in m.get("line", ""), 10, n)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect"
+           and "Replied to Priya in a direct message" in m.get("line", ""), 10, n)
 check("a click on Send is one press, and the receipt is a notice saying where it went",
       res and res["tone"] == "done" and res["line"].startswith("Replied to Priya in a direct message"), res)
 time.sleep(1.2)
@@ -1864,9 +1865,33 @@ click(956, 704)
 st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["proposal"] not in ("", "p1"))
 time.sleep(1)
 shot("56-next-card")
-box = region_pixels("56-next-card", (380, 480, 900, 640), "#e6e6e6", tol=60) if "region_pixels" in globals() else 0
+
+
+def reply_box(name):
+    """Where the card's reply box is in a screenshot: its dark inside is a run of pixels down the box's right side,
+    whatever stands above the card (a receipt line, a chip row) has moved it to."""
+    from PySide6.QtGui import QImage
+    img, run, on_card = QImage(str(OUT / f"{name}.png")), [], False
+    for y in range(380, 740):
+        c = img.pixelColor(892, y)
+        if abs(c.red() - 25) < 4 and abs(c.green() - 29) < 4 and abs(c.blue() - 34) < 4:
+            on_card = True          # (the page behind the card is darker than the box is, so start from the card)
+        elif on_card and abs(c.red() - 13) < 4 and abs(c.green() - 13) < 4 and abs(c.blue() - 17) < 4:
+            run.append(y)
+        elif len(run) >= 40:
+            break
+        else:
+            run = []
+    return (390, run[0] + 4, 500, run[-1] - run[0] - 8) if len(run) >= 40 else None     # (x, y, w, h)
+
+
+where_box = reply_box("56-next-card")
+box = region_pixels("56-next-card", where_box, "#e6e6e6", tol=60) if where_box else -1
 check("a new reply to someone else opens with an empty box (no words of the one before)",
-      st.get("card") and st["card"]["draft"]["ready"] is False and box < 40, (st.get("card"), box))
+      st.get("card") and st["card"]["draft"]["ready"] is False and 0 <= box < 40, (st.get("card"), box, where_box))
+words_box = reply_box("54-message-ready")     # the same look at the box that had words in it finds them
+check("and looking at a box that holds words does find them (the look has teeth)",
+      words_box is not None and region_pixels("54-message-ready", words_box, "#e6e6e6", tol=60) > 100, words_box)
 key("Escape")
 time.sleep(1)
 
@@ -1934,7 +1959,7 @@ where = find_colour("60-agent-draft", "#d97757", (360, 440, 450, 735))
 n = mark()
 if where:
     click(*where)
-res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Replied to Priya" in m.get("line", ""), 10, n)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Posted in #launch" in m.get("line", ""), 10, n)
 check("the person's click on Send is the one thing that sends it", where and res and res["tone"] == "done", (where, res))
 key("Escape")
 time.sleep(1)
