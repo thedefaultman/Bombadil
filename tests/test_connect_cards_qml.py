@@ -715,6 +715,48 @@ def test_a_notifications_card_copies_and_opens_and_is_no_send(bar):
     assert bar.warnings == []
 
 
+def test_the_next_card_does_not_inherit_the_words_typed_in_the_one_before(bar):
+    # What one conversation's reply said must never turn up in the box of another card (a reply to someone else, a
+    # notification's card): the words are that draft's, and agentd keeps them there.
+    bar.card(message_card())
+    bar.wait(lambda: bar.sent_of("proposal"))
+    focus(bar)
+    bar.type("Yes, lock the 14th.")
+    bar.key(QtCore.Qt.Key_Escape)
+    assert bar.pill.property("card") is None
+    bar.pump(0.4)
+    bar.card(notification_card())
+    bar.pump(0.4)
+    assert bar.box().property("text") == ""
+    bar.key(QtCore.Qt.Key_Escape)
+    bar.card(message_card(id="msg:other", reply=reply_block(proposal="p9", target="slack:w1/C2/1700000000.000300")))
+    bar.pump(0.4)
+    assert bar.box().property("text") == ""
+    assert bar.warnings == []
+
+
+def test_the_next_card_does_not_inherit_the_words_of_a_reply_that_was_sent(bar):
+    agentd = open_message(bar)
+    focus(bar)
+    bar.type("Yes, lock the 14th.")
+    agentd.settle()
+    bar.wait(lambda: lit(bar))
+    bar.click(bar.item("sendButton"))
+    agentd.settle()
+    bar.wait(lambda: bar.text("receiptLine"))
+    assert reply_box(bar).property("text") == "Yes, lock the 14th."
+    bar.key(QtCore.Qt.Key_Escape)
+    bar.pump(0.4)
+    bar.card(notification_card())
+    bar.pump(0.4)
+    assert reply_box(bar).property("text") == ""
+    bar.key(QtCore.Qt.Key_Escape)
+    bar.card(message_card(id="msg:other", reply=reply_block(proposal="p9", target="slack:w1/C2/1700000000.000300")))
+    bar.pump(0.4)
+    assert reply_box(bar).property("text") == ""
+    assert bar.warnings == []
+
+
 # -- closing a card, and what keeps one open --
 
 def test_esc_in_the_box_closes_the_card_and_an_empty_draft_goes_with_it(bar):

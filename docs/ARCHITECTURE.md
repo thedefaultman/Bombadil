@@ -277,6 +277,45 @@ above the pill when no turn line has it (`shell/NoticeChips.qml`). `docs/MAIL.md
 processes (with diagrams), wire protocol, the press, the tools and what the ISO adds;
 `docs/design/mail-view.md` is the design: the line, the rules and what the person sees.
 
+## Messages and connections
+
+Slack and the work tools (Notion, Linear, Jira, Todoist, ClickUp) reach Bombadil through `bombadil-connect`, a
+system service that runs as its own user and keeps their tokens where the agent's processes cannot read them
+(a rule with a check today, since the image still gives the user passwordless `sudo`; `docs/CONNECT.md` says
+what that means). Slack is a small private app the person makes in their own workspace from a manifest
+Bombadil prepares, read over Socket Mode; each work tool is an official MCP server the person allows with a
+browser sign-in. `bombadil-browserd` (a user unit) holds one connection to the browser panel's Chromium so
+that the setup can point at a button and read a token off the page into the service without the model seeing
+it. agentd turns what the service says into notices and into three card kinds the bar draws (a message with a
+reply box, a task with its fields, a list), keeps the drafts (`proposals.py`) and runs the press: the agent has
+five tools and none sends, and a reply or a ticket goes only on the person's press on the button of its card,
+which agentd and the service both check against a fingerprint of exactly what the card drew. The bar's own
+`NotificationServer` replaces mako, so a web page's notification becomes the same line with Reply and Open.
+`docs/CONNECT.md` is the contract (processes with diagrams, the wire protocol, the drivers, the press, the
+cards); `docs/design/messages-and-connections.md` is the design.
+
+```mermaid
+flowchart LR
+  subgraph services["Slack, Notion, Linear, Jira, Todoist, ClickUp"]
+  end
+  subgraph connect["bombadil-connect (own user, token store)"]
+    drivers["drivers: Slack, MCP"]
+    perform["perform: the only way anything leaves"]
+  end
+  browserd["bombadil-browserd (read half, no hands)"]
+  agentd["agentd: notices, cards, proposals, the press"]
+  bar["the bar: cards, NotificationServer"]
+  agent["the agent: 5 tools, none sends"]
+  services <--> drivers
+  drivers --> perform
+  browserd -. "a token off a page" .-> connect
+  connect -- "messages, tasks" --> agentd
+  agentd -- "notices, cards" --> bar
+  bar -- "edit, shown, press (the person's)" --> agentd
+  agentd -- "perform + fingerprint" --> perform
+  agent -- "read, propose" --> agentd
+```
+
 ## Next
 
 - Boot the ISO in QEMU and fix what the real Hyprland session shows (bar layering,

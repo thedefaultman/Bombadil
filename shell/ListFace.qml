@@ -6,8 +6,8 @@ import Bombadil as Kit
 // and a line under it, when, and up to two buttons. A row that opens something opens it on a click or on Enter.
 //
 // The mark is in the kit's colours and is never the only sign (each has a shape): ok a tick in green, warn a triangle
-// in amber, bad a cross in red, new a dot in orange (something that just appeared), gone a dash, dim and struck
-// through, active a ring in blue. A button asks agentd for its action on that row (`card_action`); a row that
+// in amber, bad a cross in red, new a dot in orange (something that just appeared), gone a dash and a dim title (a
+// service not connected yet is not struck out: it is there to be connected), active a ring in blue. A button asks agentd for its action on that row (`card_action`); a row that
 // opens a card or a page asks to open it. Nothing here changes anything itself.
 FocusScope {
     id: face
@@ -133,7 +133,6 @@ FocusScope {
                             font.family: Kit.Theme.fontFamily
                             font.pixelSize: Kit.Theme.textSize
                             font.weight: row.rowState === "new" ? Font.DemiBold : Font.Medium
-                            font.strikeout: row.rowState === "gone"
                             textFormat: Text.PlainText
                             elide: Text.ElideRight
                         }

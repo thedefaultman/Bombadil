@@ -236,8 +236,9 @@ def task_card(*, service: str, task: dict | None = None, proposal: dict | None =
     taken = {f["key"] for f in spec}
     # What the task says about itself comes first, and never takes a key a box needs. Anything a proposal holds
     # for a field that has no box is shown as it is: it would go, so the person has to see it.
-    about = [("why", "Why", (task or {}).get("why")), ("status", "Status", (task or {}).get("status")),
-             ("due", "Due", (task or {}).get("due"))]
+    # (`why` and `status` are the card's own two lines under its title, so no row says them again.)
+    taken |= {"why", "status"}
+    about = [("due", "Due", (task or {}).get("due"))]
     about += [(f.get("key"), f.get("label"), f.get("value")) for f in (task or {}).get("fields") or []
               if isinstance(f, dict)]
     about += [(k, k.capitalize(), v) for k, v in values.items() if k not in taken and isinstance(v, str)]

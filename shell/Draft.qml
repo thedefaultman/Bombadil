@@ -132,8 +132,11 @@ Item {
         _compose()
     }
 
-    onCardChanged: sync()
-    onReplyChanged: sync()
+    // `reply`, `proposalId`, `kind` and the rest are bindings on `card`: when the card changes, a handler that runs
+    // before they have caught up would load the box with the words of the card that went (and take that card's draft
+    // for this one's), so the card's change is looked at once they have all settled.
+    onCardChanged: Qt.callLater(sync)
+    onReplyChanged: Qt.callLater(sync)
     onBoxKeysChanged: if (card) _compose()
 
     Connections {

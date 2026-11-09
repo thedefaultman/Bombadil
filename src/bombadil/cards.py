@@ -744,7 +744,7 @@ def rank_layers(nodes: list[dict], links: list[dict]) -> list[dict]:
 
 SENDING_LINE = "Sending…"
 UNKNOWN_LINE = "I can't tell whether that went. Look in {via} before you press again."
-LIST_STATE_WORDS = {"warn": "needs a look", "bad": "not working", "new": "new", "gone": "gone", "active": "in use"}
+LIST_STATE_WORDS = {"warn": "needs a look", "bad": "not working", "new": "new", "gone": "not connected", "active": "in use"}
 
 
 def _state_lines(via: str) -> dict:

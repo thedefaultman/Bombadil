@@ -176,8 +176,7 @@ def test_a_task_that_waits_on_the_person_has_its_facts_and_the_box_for_a_comment
     assert card["title"] == "Fix the login page" and card["service"] == "linear"
     assert card["why"] == "assigned to you" and card["status"] == "In Progress"
     facts = [(f["key"], f["label"], f["value"], f["edit"]) for f in card["fields"] if f["edit"] is None]
-    assert facts == [("why", "Why", "assigned to you", None), ("status", "Status", "In Progress", None),
-                     ("due", "Due", "2026-11-12", None), ("team", "Team", "Web", None)]
+    assert facts == [("due", "Due", "2026-11-12", None), ("team", "Team", "Web", None)]    # why and status are lines of the card
     assert card["fields"][-1] == {"key": "body", "label": "Comment", "value": "", "edit": "text"}
     assert card["proposal"]["proposal"] is None and card["proposal"]["kind"] == "task_comment"
     assert card["proposal"]["target"] == "linear:LIN-42" and card["proposal"]["content"] == {}
