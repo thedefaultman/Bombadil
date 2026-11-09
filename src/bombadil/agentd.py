@@ -214,6 +214,7 @@ import subprocess
 import sys
 import time
 import urllib.parse
+from dataclasses import replace
 from pathlib import Path
 
 from . import (browser, cards, config, finder, launcher, narrate, outbox, paths, procs, providers, rest, signin, snapshots,
@@ -291,6 +292,8 @@ VITALS_OPENS = {"disk": "disks"}
 TIPS_TURN_AFTER = 12.0
 # The AI is something to teach with while it is ready or resting (setup, above).
 TIPS_AI_STATES = ("ready", "resting")
+# How often agentd looks at ~/Apps to tell the bar (and Tips) that an app came or went.
+APPS_POLL = 3.0
 
 
 class AgentD:
@@ -410,6 +413,7 @@ class AgentD:
                  kept=lambda: "tips" in getattr(self.desk, "kept", ()))
             if os.environ.get("BOMBADIL_TIPS") != "0" else None)
         self._tips_last: dict | None = None         # what the shell was last told
+        self._tips_lock = asyncio.Lock()            # one look at the machine at a time
         self._tips_timer: asyncio.TimerHandle | None = None   # turns the card after a turn that tried a tip
         self._tips_tried = False                    # a turn or a word tried a tip since the card last turned
         self._tips_calls: dict[str, str] = {}       # the running turn's tool calls by id, until their results
@@ -573,7 +577,7 @@ class AgentD:
                 # Asked for something while signed out: sign in, and the ask runs after.
                 self._background(self.start_signin())
         elif t in ("stop", "cancel"):
-            await self.stop()
+            await self.stop(by_person=True)
         elif t == "unqueue":
             await self._unqueue(msg.get("turn"))
         elif t == "found_open":
@@ -686,7 +690,7 @@ class AgentD:
     async def _watch_apps(self):
         """Tell the bar when an app appears or goes, so it can complete the new name."""
         while True:
-            await asyncio.sleep(3)
+            await asyncio.sleep(APPS_POLL)
             try:
                 key = await asyncio.to_thread(_apps_key)
                 if key != self._entries_key:
@@ -901,18 +905,25 @@ class AgentD:
         the shell when the card is not what it was told. True when it was told."""
         if self.tips is None:
             return False
-        ai = self._title() if self.chosen and self.access in TIPS_AI_STATES else ""
-        seen = self.tips.state.desk_seen
-        self.tips.facts = await asyncio.to_thread(
-            lambda: read_facts(ai=ai, installed=bool(self.snaps.available), desk_seen=seen))
-        return await self._tips_send()
+        try:
+            # One look at a time, and what only agentd knows (the AI, the disk) is read after the folders are,
+            # not before: a look that was slow must not tell the shell what was true when it began.
+            async with self._tips_lock:
+                folders = await asyncio.to_thread(read_facts)
+                self.tips.facts = replace(
+                    folders, installed=bool(self.snaps.available),
+                    ai=self._title() if self.chosen and self.access in TIPS_AI_STATES else "")
+                return await self._tips_send()
+        except Exception as e:  # noqa: BLE001 - Tips never costs agentd a client, a turn or a setup
+            print(f"agentd: tips: {type(e).__name__}: {e}", file=sys.stderr)
+            return False
 
     async def _tips_send(self) -> bool:
         msg = self.tips.message()
         if msg == self._tips_last:
             return False
-        self._tips_last = msg
         await self.broadcast(msg)
+        self._tips_last = msg   # (after: a card that could not be sent was not told to anyone)
         return True
 
     def _tips_soon(self):
@@ -922,8 +933,14 @@ class AgentD:
 
     async def _tips_hello(self, writer: asyncio.StreamWriter):
         """A client that connects is told the card once, even when the others were told it already."""
-        if self.tips is not None and not await self._tips_refresh():   # (else it went to every client)
-            await self._send(writer, self._tips_last)
+        if self.tips is None:
+            return
+        try:
+            # (a refresh that sent sent it to every client; one that failed leaves nothing to tell)
+            if not await self._tips_refresh() and self._tips_last is not None:
+                await self._send(writer, self._tips_last)
+        except Exception as e:  # noqa: BLE001 - a card that cannot be sent never costs the client its connection
+            print(f"agentd: tips: {type(e).__name__}: {e}", file=sys.stderr)
 
     async def _tips_op(self, msg: dict, writer: asyncio.StreamWriter):
         """The card's arrows and wheel, a press on its title or picture, and the Tips app's one-shot list."""
@@ -1298,7 +1315,7 @@ class AgentD:
                             "target": action.target, "result": text, "ok": True})
             return
         if action.kind == "stop":
-            stopping = await self.stop()
+            stopping = await self.stop(by_person=True)
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
                              text="Stopping." if stopping else "Nothing is running.")
             return
@@ -1471,11 +1488,13 @@ class AgentD:
     def _busy(self) -> bool:
         return self.current is not None
 
-    async def stop(self) -> bool:
+    async def stop(self, by_person: bool = False) -> bool:
         """End the running turn and everything it started. False when nothing runs.
 
         Returns at once; the stopper works in the background. A turn still saving its restore
-        point is marked, and ends before its CLI starts."""
+        point is marked, and ends before its CLI starts. `by_person` is Esc or the word "stop": the one way of
+        stopping that the Esc tip counts as tried (undo, restart and a setup card's cancel stop a turn too,
+        and none of them is the person pressing Esc)."""
         if self.current is None:
             # Nothing runs but the sign-in: Esc cancels that.
             if self.signin is not None and self.signin.running:
@@ -1489,7 +1508,8 @@ class AgentD:
         if self.stopping:
             return True
         self.stopping = True
-        self._tips_saw(*local_keys("stop"))   # Esc, or the word, on a turn that runs
+        if by_person:
+            self._tips_saw(*local_keys("stop"))   # Esc, or the word, on a turn that runs
         self._stopped_line = self.narrator.stopped_line() if self.narrator else "Stopped."
         if self.proc is not None:
             self._background(self._stop_proc(self.proc, self._unit))
@@ -2253,8 +2273,8 @@ class AgentD:
         # Something true on screen before snapper, which can take a second.
         await self.event("turn_start", prompt=prompt, snapshot=None, asked_by=asked_by)
         await self.broadcast(self._status())
-        if shell:
-            self._tips_saw(*BANG)
+        if shell and not asked_by:
+            self._tips_saw(*BANG)   # the person typed it; a helper's "!" teaches nobody
         if not shell and not self.provider.installed:
             await self.event("error", text=f"{self.provider.binary} is not installed yet: press Super+Return "
                                            "and run bombadil-setup")
