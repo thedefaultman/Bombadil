@@ -9,6 +9,8 @@ shipped table through the real Tips object, with the fixture scenes in the place
 """
 
 import copy
+import importlib.util
+import itertools
 import json
 import os
 import socket
@@ -18,8 +20,36 @@ from datetime import date
 from pathlib import Path
 
 import tip_fixtures as fx
+from PySide6.QtCore import QEventLoop, QTimer
 
 from bombadil import tips as tips_mod
+
+APP_DIR = Path(__file__).resolve().parents[1] / "share" / "apps" / "tips"
+
+
+def load_app(name: str = "tips_app_under_test"):
+    """The app's app.py as a module of its own, so a test can set its clocks before a Backend reads them."""
+    spec = importlib.util.spec_from_file_location(name, APP_DIR / "app.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def spin(ms: int) -> None:
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
+
+
+def wait_until(cond, timeout_ms: int = 4000) -> bool:
+    """Qt's loop keeps running while a test waits, which the backend and the window need."""
+    end = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < end:
+        if cond():
+            return True
+        spin(10)
+    return cond()
+
 
 # The fixture scenes, for the tips of the shipped table that have no beats of their own yet.
 SCENES = {"make-an-app": fx.BUILD, "picture": fx.PICTURE, "esc": fx.ESC, "timer": fx.TIMER, "machine": fx.MACHINE,
@@ -28,10 +58,13 @@ SCENES = {"make-an-app": fx.BUILD, "picture": fx.PICTURE, "esc": fx.ESC, "timer"
 MACHINE = tips_mod.Facts(ai="Claude", installed=True, app="Tickets", project="myapp", desk_seen=True, keep=True)
 
 
+_LISTINGS = itertools.count()      # each listing starts from a state of its own: what an earlier one tried is not carried
+
+
 def listing(tmp: Path, facts=MACHINE, tried=(), new=(), scenes=True) -> list[dict]:
     """agentd's list: `tips.listing()` on the shipped table for a machine with these facts. `tried` are marked, `new`
     are tips an update brought (not known), `scenes` gives the rows without beats a fixture scene."""
-    t = tips_mod.Tips(path=tmp / "lab-tips.json", clock=lambda: date(2026, 11, 9))
+    t = tips_mod.Tips(path=tmp / f"lab-tips-{next(_LISTINGS)}.json", clock=lambda: date(2026, 11, 9))
     t.facts = facts
     t.ready()
     if new:

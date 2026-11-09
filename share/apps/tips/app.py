@@ -101,11 +101,12 @@ def draft_of(words: str) -> str:
 class Once(QObject):
     """One request to agentd on a connection of its own, closed when it is answered (or at once when nothing
     answers a line of this kind). `finished(ok, message)`: the message that `answer` accepted, or None. Not
-    ok when agentd is away or says nothing in time."""
+    ok when agentd is away or says nothing in time. Nothing happens until `start()`: a socket whose path is
+    not there fails at once, and whoever listens for `finished` has to be connected by then."""
 
     finished = Signal(bool, object)
 
-    def __init__(self, parent: QObject, message: dict, answer=None, timeout_ms: int = ANSWER_MS):
+    def __init__(self, parent: QObject, message: dict, answer=None, timeout_ms: int | None = None):
         super().__init__(parent)
         self._line = (json.dumps(message) + "\n").encode()
         self._answer = answer
@@ -119,8 +120,12 @@ class Once(QObject):
         self._timeout = QTimer(self)
         self._timeout.setSingleShot(True)
         self._timeout.timeout.connect(lambda: self._finish(False, None))
-        self._timeout.start(timeout_ms)
+        self._timeout_ms = timeout_ms or ANSWER_MS
+
+    def start(self) -> "Once":
+        self._timeout.start(self._timeout_ms)
         self._socket.connectToServer(agent_socket())
+        return self
 
     def _write(self):
         self._socket.write(self._line)
@@ -215,6 +220,7 @@ class Backend(QObject):
         self._asking: Once | None = None
         self._again = False                  # asked again while a request was out
         self._open = ""                      # a press on the desk card named this tip; no list yet to find it in
+        self._open_seen: str | None = None   # the last `open_on` the file held, "" or an id
         self._seen_tried: frozenset | None = None
         self._model = Rows(self)
 
@@ -323,6 +329,7 @@ class Backend(QObject):
         once = Once(self, {"type": "tips", "op": "list"}, answer=_is_list)
         self._asking = once
         once.finished.connect(self._answered)
+        once.start()
 
     def _answered(self, ok: bool, msg):
         self._asking = None
@@ -403,12 +410,17 @@ class Backend(QObject):
             return
         if not isinstance(data, dict):
             return
-        tried = frozenset(i for i in data.get("tried") or [] if isinstance(i, str) and ID_RE.fullmatch(i)) \
-            if isinstance(data.get("tried"), list) else frozenset()
+        # A request is a change of `open_on` (agentd clears it when it hears "opened"): the same value read
+        # again is not a new press, or the window would jump back to it every time the file is looked at.
         open_on = data.get("open_on")
-        if isinstance(open_on, str) and ID_RE.fullmatch(open_on):
-            self._open = open_on
-            self._request_taken()
+        if isinstance(open_on, str) and open_on != self._open_seen:
+            self._open_seen = open_on
+            if ID_RE.fullmatch(open_on):
+                self._open = open_on
+                self._request_taken()
+        if not isinstance(data.get("tried"), list):      # not what agentd writes: it says nothing about ticks
+            return
+        tried = frozenset(i for i in data["tried"] if isinstance(i, str) and ID_RE.fullmatch(i))
         if tried != self._seen_tried:
             changed = self._seen_tried is not None
             self._seen_tried = tried
@@ -427,4 +439,4 @@ class Backend(QObject):
         if self._row_of_tip(tip_id) is not None and not self._set_selected(tip_id):
             self.openRequested.emit(tip_id)         # already in front: play it again
         if not CHECKING:
-            Once(self, {"type": "tips", "op": "opened", "id": tip_id})
+            Once(self, {"type": "tips", "op": "opened", "id": tip_id}).start()
