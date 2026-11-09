@@ -7,8 +7,8 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
-    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    // The bar is asked to take the keyboard (Super was tapped, or Alt+Space was pressed), or an app
+    // asked for the pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
     signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
@@ -182,6 +182,17 @@ QtObject {
         }
     }
 
+    // The pill is asked for: agentd relays `bombadil pill` and the apps' words, and the bar's own
+    // global shortcuts (PillKeys.qml, from Hyprland's Super tap and Alt+Space) call it directly.
+    function summon(text) {
+        summoned(text)
+        // The pill comes up: say why the AI does not answer, unless a line is being read.
+        if (resting && setupLine) {
+            if (foundShown) return   // the line of what was found is being read: it stays
+            if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
+        }
+    }
+
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
         if (ev.type === "status") {
@@ -202,15 +213,7 @@ QtObject {
         if (ev.type === "notice_end") { _noticeEnd(ev.id); return }
         if (ev.type === "ai") { aiRows = ev.rows && typeof ev.rows === "object" ? Array.from(ev.rows) : []; return }
         if (ev.type === "found") { _takeFound(ev); return }
-        if (ev.type === "summon") {
-            summoned(typeof ev.text === "string" ? ev.text : "")
-            // The pill comes up: say why the AI does not answer, unless a line is being read.
-            if (resting && setupLine) {
-                if (foundShown) return   // the line of what was found is being read: it stays
-                if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
-            }
-            return
-        }
+        if (ev.type === "summon") { summon(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "local") {
             // agentd answered our prompt without the model: no turn is coming.
             if (optimistic) { optimistic = false; mode = "local"; line = "…"; source = "step"; sticky = false; lineAt = _now() }

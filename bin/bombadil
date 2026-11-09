@@ -6,7 +6,8 @@
                                        (the ask stays queued and runs then)
   bombadil status                      is the agent busy, which provider
   bombadil stop                        end the running turn and everything it started
-  bombadil pill                        give the pill the keyboard (Hyprland runs this on a Super tap)
+  bombadil pill                        give the pill the keyboard (a Super tap does it inside the bar; this is
+                                       for scripts, and for a session without Hyprland)
   bombadil terminal                    a terminal on the desktop, not inside the drawer that shows (Super+Return)
   bombadil watch [--file F] [--follow] every step, command and output of the last (or a) turn
   bombadil history                     recent turns and launcher actions

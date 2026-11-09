@@ -216,6 +216,25 @@ def test_summoning_the_pill_says_it_again_unless_a_line_is_being_read(bar):
     assert prop(bar, "mode") == "idle"              # and only once
 
 
+def test_a_key_summons_the_pill_as_agentds_summon_does(bar):
+    # Super and Alt+Space reach PillState.summon from the bar's own shortcuts (PillKeys), not as agentd's event.
+    bar.send(**LIMIT)
+    long_ago(bar)
+    bar.call("summon", "")
+    assert bar.text() == LIMIT_LINE and prop(bar, "mode") == "resting"
+    summons = bar.win.property("summons")
+    assert list(summons.toVariant() if hasattr(summons, "toVariant") else summons) == [""]
+    long_ago(bar)
+    bar.call("submit", "!ls")                       # a turn has the line: the resting line waits for it
+    bar.send(kind="turn_start", turn=1, prompt="!ls")
+    bar.call("summon", "")
+    assert prop(bar, "mode") == "working"
+    bar.send(kind="result", turn=1, ok=True, text="Apps  Documents")
+    bar.send(kind="turn_end", turn=1, seconds=0.1, changed=False, summary="")
+    bar.call("dismiss")
+    assert bar.text() == LIMIT_LINE and prop(bar, "mode") == "resting"
+
+
 # -- what waits, and what does not --
 
 def test_asks_wait_as_chips_that_say_when_never_next_and_never_on_it(bar):

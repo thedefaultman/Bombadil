@@ -59,11 +59,16 @@ hl.bind("SUPER + Q", hl.dsp.window.close())
 hl.bind("SUPER + Return", hl.dsp.exec_cmd("bombadil terminal"))
 -- Tap Super alone: the pill takes the keyboard (a second tap gives it back). It fires on
 -- release, and Hyprland drops it when another key, a click or a drag happened meanwhile.
-hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })
-hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("bombadil pill"), { release = true })
+-- The bar registers these as global shortcuts (shell/PillKeys.qml), so the key reaches the pill at
+-- once: `bombadil pill` is a Python start and a round trip through agentd, and on a busy machine
+-- the first letters typed after the tap went to the window underneath. The shortcut's name says
+-- which edge the bar listens to ("release" for a tap, "press" for Alt+Space), and Hyprland does
+-- nothing, silently, for a name the bar has not registered: change the two together.
+hl.bind("SUPER + SUPER_L", hl.dsp.global("bombadil:pill-release"), { release = true })
+hl.bind("SUPER + SUPER_R", hl.dsp.global("bombadil:pill-release"), { release = true })
 -- Alt+Space does the same where Super never arrives: a VM window on Windows keeps the Windows key
 -- for its Start menu.
-hl.bind("ALT + space", hl.dsp.exec_cmd("bombadil pill"))
+hl.bind("ALT + space", hl.dsp.global("bombadil:pill-press"))
 -- Stop from anywhere: ends the running turn and everything it started, sudo'd commands too.
 hl.bind("SUPER + Escape", hl.dsp.exec_cmd("bombadil stop"))
 -- If the bar itself hangs: start it again.
