@@ -42,12 +42,14 @@ HARD = [
     ("session id", re.compile(r"\b(?:cse|cmsg|chan|user)_[0-9A-Za-z]{12,}\b|\bsession_(?=[0-9A-Za-z]*\d)(?=[0-9A-Za-z]*[A-Za-z])[0-9A-Za-z]{16,}\b")),
     ("session url", re.compile(r"claude\.ai/(?:code|chat|project|artifact)/[A-Za-z0-9_-]+")),
     ("shared folder path", re.compile(r"/mnt/(?:project-files|wslg|c|user-data)\b")),
-    ("user home path", re.compile(r"[A-Za-z]:\\Users\\|(?-i:/Users/(?!user/)[A-Za-z][\w.-]*/)|/home/(?!user\b)[a-z][a-z0-9_-]*/", re.I)),
+    ("user home path", re.compile(r"[A-Za-z]:\\Users\\|(?-i:/Users/(?!user/)[A-Za-z][\w.-]*/)|/home/(?!user/)[a-z][a-z0-9_-]*/", re.I)),
     ("token", re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abp]-[0-9A-Za-z-]{10,}")),
 ]
-# GitHub no-reply addresses, the Claude commit trailer address, the example addresses in docs
-# (example.com, acme.*, and the reserved .example, .test and .invalid names) and systemd template
-# unit names such as getty@tty1.service are not leaks.
+# Not leaks: addresses at example.com, example.org and example.net (and their subdomains); at acme.
+# followed by one top-level name (acme.io, not acme.co.uk); at the reserved .example, .test and
+# .invalid names; at users.noreply.github.com; the Claude commit trailer address noreply@anthropic.com;
+# and systemd unit names such as getty@tty1.service. Any other address, GitHub's plain no-reply
+# address at github.com included, is a leak.
 EMAIL_OK = re.compile(
     r"^noreply@anthropic\.com$"
     r"|@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|acme\.[a-z]+|users\.noreply\.github\.com|example|test|invalid"
@@ -232,6 +234,9 @@ def main() -> int:
         if (root / t).exists() and root not in (root / t).resolve().parents and (root / t).resolve() != root
     ]
     problems += [f"terms file not found: {f}" for f in (a.private_terms, a.soft_terms) if f and not os.path.exists(f)]
+    mmdc = os.environ.get("MMDC", "mmdc")
+    if a.mermaid and shutil.which(mmdc) is None:
+        problems.append(f"cannot render diagrams: {mmdc!r} not found (install @mermaid-js/mermaid-cli or set MMDC)")
     if problems:
         for msg in problems:
             print(f"check_docs: {msg}", file=sys.stderr)
@@ -340,11 +345,8 @@ def main() -> int:
                         notes.append(f"{rel}:{n}: review ({m.group(0)!r}): {line.strip()[:110]}")
 
     if a.mermaid and mmd_jobs:
-        mmdc = os.environ.get("MMDC", "mmdc")
         cfg = os.environ.get("MMDC_CONFIG")
-        if shutil.which(mmdc) is None:
-            print(f"check_docs: cannot render diagrams: {mmdc!r} not found (install @mermaid-js/mermaid-cli or set MMDC)", file=sys.stderr)
-            return 2
+        rendered = 0
         with tempfile.TemporaryDirectory() as td:
             for i, (f, n, b) in enumerate(mmd_jobs):
                 src = Path(td) / f"d{i}.mmd"
@@ -361,7 +363,9 @@ def main() -> int:
                     msg = (r.stderr or r.stdout).strip().splitlines()
                     short = next((l for l in msg if "error" in l.lower() or "Parse" in l), msg[0] if msg else "failed")
                     errors.append(f"{f.relative_to(root)}:{n}: mermaid does not render: {short[:200]}")
-        notes.append(f"mermaid: {len(mmd_jobs)} diagram(s) rendered")
+                else:
+                    rendered += 1
+        notes.append(f"mermaid: {rendered} of {len(mmd_jobs)} diagram(s) rendered")
 
     for e in errors:
         print("ERROR", e)

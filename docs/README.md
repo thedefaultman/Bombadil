@@ -30,9 +30,9 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | Named coding sessions | In progress | [coding sessions](architecture/coding-sessions.md) |
 | A name, voices and welcome lines | In progress | [voice](architecture/voice.md) |
 | Noticing repeated asks, self-checks | In progress | [loop](architecture/loop.md) |
-| Mail and everyday work | Partly shipped | [mail](architecture/mail.md) |
+| Mail in its own window, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md) |
 | When the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
-| An encrypted installed system | Partly shipped | [installed OS](architecture/installed-os.md) |
+| Bombadil installed on a disk: the plain installer and its rules; the encrypted layout is in progress | Partly shipped | [installed OS](architecture/installed-os.md) |
 
 ## I want to know how it should look and feel
 

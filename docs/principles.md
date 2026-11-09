@@ -1,9 +1,9 @@
 # Principles
 
-> **Status:** Partly shipped. The rules are the design's and stand whole. The code on `main` keeps most of them. Some parts of them need work that is not on `main`, and "Where the rules stand on main" says which: the voice, coding sessions and the word "ship", and the self-improvement loop (all In progress), and the single list of everything that runs on its own, the holding card, a history for each app, the "this" chip, the split between Bombadil's defaults and the person's settings, and a rollback after a failed start (all Designed).
-> **Code:** `share/qml/Bombadil/Theme.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/Stone.qml`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/launcher.py`, `src/bombadil/snapshots.py`, `src/bombadil/outbox.py`, `src/bombadil/jobs.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/sudoers.d/bombadil`
+> **Status:** Partly shipped. The rules are the design's and stand whole. The code on `main` keeps most of them. Some parts of them need work that is not on `main`, and "Where the rules stand on main" says which: the voice, coding sessions and the word "ship", and the self-improvement loop (all In progress), and the single list of everything that runs on its own, the holding card, a history for each app, the "this" chip, the card kinds other than `diagram` and the reader, a memory file the machine writes, a conversation that survives a reboot, the split between Bombadil's defaults and the person's settings, and a rollback after a failed start (all Designed).
+> **Code:** `share/qml/Bombadil/Theme.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/Stone.qml`, `src/bombadil/agentd.py`, `src/bombadil/providers.py`, `src/bombadil/launcher.py`, `src/bombadil/snapshots.py`, `src/bombadil/outbox.py`, `src/bombadil/jobs.py`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `iso/airootfs/etc/sudoers.d/bombadil`, `iso/airootfs/etc/systemd/user/` (the units of the daemon, the bar and `mako`), `src/bombadil/cardtools.py`, `src/bombadil/mail/watch.py`
 > **Design:** the [design briefs](design/README.md), listed under "Where each rule was decided"
-> **Verified:** 2026-11-08 against `main` at `9d5c729`: every number on the page (200 ms, one line and four, 12 px, three things to learn, twelve questions) and the code behind each "in practice" sentence and each row of "Where the rules stand on main", read in the files named above and in `bin/bombadil`, `shell/shell.qml`, `shell/Wallpaper.qml`, `tests/test_agentd_rest.py` and `iso/airootfs/usr/local/bin/bombadil-install`. The rule texts were compared with the rule sections of the briefs they cite.
+> **Verified:** 2026-11-08 against `main` at `9d5c729`: every number on the page (200 ms, one line and four, 12 px and 8 px, three things to learn, the newest 30 restore points, 20 jobs, 60 seconds, 5 minutes, twelve briefs, twelve questions) and the code behind each "in practice" sentence and each row of "Where the rules stand on main", read in the files named above and in `bin/bombadil`, `shell/shell.qml`, `shell/Wallpaper.qml`, `src/bombadil/brain/service.py`, `src/bombadil/notices.py`, `src/bombadil/sysmap.py`, `tests/test_agentd_rest.py`, `tests/test_theme.py`, `tests/desktop/driver.py` and `iso/airootfs/usr/local/bin/bombadil-install`; the reduced-motion behaviour of each stone movement in `shell/Stone.qml`; the conversation's life in `AgentD._load_state` and `AgentD.choose`; and that nothing under `src`, `shell`, `share`, `iso` or `bin` writes `memory.md` or the `[Screen]` block. The rule texts were compared with the rule sections of the briefs they cite.
 
 Bombadil is a Linux distribution whose main interface is an AI agent. Its design rests on a small set
 of rules. They are why it feels the way it does, and a change that breaks one turns it into something
@@ -27,24 +27,25 @@ of the system link back here from their own pages, under "Principles it keeps".
 
 ## Where the rules stand on main
 
-Five rules need no caveat for `main`: stupidly simple, 200 ms, the answer is the thing, colour says who
-and original. For the others:
+Four rules need no caveat for `main`: stupidly simple, 200 ms, colour says who and original. For the
+others:
 
 | Rule | Status | What `main` does | What it does not do |
 |---|---|---|---|
-| [The person is a passenger](#the-person-is-a-passenger) | Partly shipped | Each step is narrated in plain words, with its reason on hover, and the machine draws pictures of itself for the exact words listed under records before models. | The passenger brief's later pieces are designed: browser tools, promises, the holding card and the update turn. See [cards and pictures](architecture/cards-and-pictures.md). |
+| [The person is a passenger](#the-person-is-a-passenger) | Partly shipped | Each step is narrated in plain words, with its reason on hover, and the machine draws pictures of itself for exact words ([the phrases](architecture/cards-and-pictures.md#picture-words)). | The passenger brief's later pieces are designed: browser tools, promises, the holding card and the update turn. See [cards and pictures](architecture/cards-and-pictures.md). |
 | [Full access with undo](#full-access-with-undo) | Partly shipped | The agent runs as the person with passwordless sudo and the CLIs in their no-prompt modes. On an installed system a restore point of the system files is taken before every turn, the newest 30 are kept, and `undo` puts the files back at the next restart. | The live image has no restore points, and the home folder and apps have none. The installer's red button that names the disk is designed; `bombadil-install` asks for the disk's name to be typed unless it is given `--yes`. See [restore points](architecture/restore-points.md). |
 | [Real native apps](#real-native-apps) | Partly shipped | An app is a folder in `~/Apps/<name>/` that opens as a native window by name and reloads in place. | A history with undo for each app is designed. `~/Apps` is in no restore point, so undoing a turn that built an app leaves the app. See [app kit](architecture/app-kit.md). |
-| [One machine one conversation](#one-machine-one-conversation) | Shipped | Claude and Codex run the same `os-mcp` tools on the same files. | A switch of provider starts a fresh conversation: `agentd` drops the conversation id. See [agentd](architecture/agentd.md). |
+| [One machine one conversation](#one-machine-one-conversation) | Partly shipped | Claude and Codex run the same `os-mcp` tools on the same files, and the conversation survives a restart of `agentd`. | A switch of provider, a reboot or a new login starts a fresh conversation: `agentd` drops the conversation id on a switch and keeps it only under the runtime directory. Nothing writes `memory.md`; the Brain only reads it. See [agentd](architecture/agentd.md#known-gaps) and [the brain](architecture/brain.md). |
 | [Recovery without the broken part](#recovery-without-the-broken-part) | Partly shipped | `Super+Escape` stops through agentd's socket, `bombadil undo` runs with no daemon, `Super+Ctrl+Escape` restarts the bar, and agentd, the bar and notifications restart when they die. | The rollback of a failed start, repair and reinstall from the stick and the rescue page are designed. See [session services](architecture/session-services.md) and [the installed OS](architecture/installed-os.md). |
-| [Records before models](#records-before-models) | Partly shipped | "why" during a turn, "why is this here", `history`, the closing line with Details and the pictures of the machine (`network`, `boot`, `disks`, `sound`, `screens`) answer with no model. | The holding card, `remember` and `forget` and the list of what runs on its own are designed. See [cards and pictures](architecture/cards-and-pictures.md) and [the brain](architecture/brain.md). |
+| [Records before models](#records-before-models) | Partly shipped | "why" during a turn, "why is this here", `history`, the closing line with Details and the pictures of the machine (the network, the boot, one service, the disks, the sound and the screens) answer with no model. | The holding card, `remember` and `forget` and the list of what runs on its own are designed. See [cards and pictures](architecture/cards-and-pictures.md) and [the brain](architecture/brain.md). |
 | [The person's press reaches people](#the-persons-press-reaches-people) | Partly shipped | The agent has no tool that sends. A mail draft leaves only on the person's press on the Mail window's Send, which `agentd` checks and refuses from inside a turn. | For everything else the rule is held by the system prompt and the design, not by a block: the agent has a shell, the network and sudo. Other kinds of press are designed. The word "ship" belongs to coding sessions, which are In progress. See [the security model](security-model.md#things-that-cross-to-other-people) and [coding sessions](architecture/coding-sessions.md). |
 | [Nothing runs unseen](#nothing-runs-unseen) | Partly shipped | A job, one-shot watcher or timer the agent starts is a transient user unit, a row on the desk's Watching card (at most 20 at once) with a stop that needs no model. The image's own background programs are units. | The single list (Autopilot) and promises, routines and watchers that survive a restart are designed. The self-improvement loop is In progress. A process the agent starts by hand is not listed. See [the desk](architecture/desk.md#the-jobs-registry) and [the loop](architecture/loop.md). |
 | [Plain files stay the truth](#plain-files-stay-the-truth) | Partly shipped | The Brain's index sits beside the files and can be rebuilt. Undo swaps the system root and leaves the home folder alone. | Updates, and the split of Bombadil's defaults in `/usr` from the person's short settings files, are designed: the skeleton's `hyprland.lua` is a whole config copied into the home at install. A refresh that keeps the home is In progress. An edited document landing beside its original is designed. See [the installed OS](architecture/installed-os.md). |
+| [The answer is the thing](#the-answer-is-the-thing) | Partly shipped | The line holds at one line while the agent works and at most four afterwards, and `diagram` pictures, the machine's own pictures and receipts are drawn above it. | The other card kinds (list, checklist, timer, control, markdown reader) and the reader that slides in from the right are designed: `show_card` takes only `diagram`, so a long text reply is cut at four lines. See [cards and pictures](architecture/cards-and-pictures.md). |
 | ["This" means what you see](#this-means-what-you-see) | Partly shipped | The Brain's words "brain" and "why is this here" read what is in front: the focused window, the browser tab, a terminal. | The chip that gives every ask the screen context is designed: nothing on `main` writes the `[Screen]` block. See [the brain](architecture/brain.md) and [the interaction model](ux/README.md). |
-| [Quiet at rest](#quiet-at-rest) | Partly shipped | The screen at rest is the wallpaper and the pill, and a widget appears only with something to say. Under `BOMBADIL_REDUCE_MOTION=1` the stone's roll, knock, glow and hop and the wallpaper's fade have a still version. | Nothing sets that variable. The lean, the desk's ring and fold, the strips' fade and the fades of the line, the picture and the AI card ignore it. The greeting and goodbye are In progress. See [the design system](design-system/README.md#reduced-motion) and [the voice](architecture/voice.md). |
+| [Quiet at rest](#quiet-at-rest) | Partly shipped | The screen at rest is the wallpaper and the pill, and a widget appears only with something to say. Under `BOMBADIL_REDUCE_MOTION=1` the stone and the wallpaper have a quieter version: the roll is a slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the wallpaper's fade is instant. | Nothing sets that variable. The lean, the desk's ring and fold, the strips' fade and the fades of the line, the picture and the AI card ignore it. The screen is not silent at rest for mail: a new mail from someone the person knows puts a notice above the pill for 5 minutes, decided in the [everyday work brief](design/everyday-work-brief.md#1-mail-in-bombadils-own-view). The greeting and goodbye are In progress. See [the design system](design-system/README.md#reduced-motion) and [the voice](architecture/voice.md). |
 | [One design language](#one-design-language) | Partly shipped | The shell and the kit read `Theme.qml`, and a test fails a literal colour in a shell file. The shell's words are fixed strings in the plain register. | Voices that change a greeting are In progress. See [the design system](design-system/README.md) and [the voice](architecture/voice.md). |
-| [Degrade and recover](#degrade-and-recover) | Shipped | The bar waits for agentd and says so, the Brain looks at its logs every 60 seconds without a file watcher, a picture that cannot draw costs the pictures and not the bar, and while the AI rests, launcher words and `!` commands still run and asks wait. | Greetings and empty-place lines as local templates are In progress with the voice. |
+| [Degrade and recover](#degrade-and-recover) | Partly shipped | The bar waits for agentd and says so, the Brain looks at its logs every 60 seconds without a file watcher, a picture that cannot draw costs the pictures and not the bar, and while the AI rests, launcher words and `!` commands still run and asks wait. | Greetings and empty-place lines as local templates are In progress with the voice. |
 
 ## What the machine is
 
@@ -99,7 +100,9 @@ feature that only works as a localhost web page does not ship. Decided in the
 chats. What the OS can do lives in one tool server and in plain files, so Claude and Codex run the
 same tools on the same files. What the machine made and recorded stays when the person switches
 provider, but the conversation does not: the other provider starts a fresh one. What the machine
-remembers is stored where the person can read it.
+remembers is meant to be kept in a plain file the person can read, `memory.md`. On `main` the
+conversation survives a restart of `agentd` and not a reboot or the next login, and nothing writes
+`memory.md`: the Brain only reads it.
 
 In practice: put an ability in `os-mcp`, not in one provider's prompt; keep state in plain files or
 a rebuildable index. Decided in the [UX brief](design/ux-brief.md#the-rules) and the
@@ -213,7 +216,7 @@ goes on.
 
 In practice: show progress from the first event, not from the first model token; route fixed
 commands around the model. The pill draws "On it" on the keypress, and the headless desktop test
-fails if agentd's first event (`turn_start`) comes more than 200 ms after Enter. Decided in the
+fails if agentd's first event of the turn (`turn_start`) comes more than 200 ms after Enter. Decided in the
 [UX brief](design/ux-brief.md#the-rules).
 
 ### The answer is the thing
@@ -222,7 +225,9 @@ fails if agentd's first event (`turn_start`) comes more than 200 ms after Enter.
 line while the agent works and at most four afterwards, because a paragraph about the work
 turns an operating system back into a chat window.
 
-In practice: when a reply would be long, it is a card, a picture or an app. Decided in the
+In practice: when a reply would be long, it is a card, a picture or an app. On `main` the only card
+kind is `diagram`, and a text reply longer than four lines is cut at four; the other kinds and the
+reader that slides in from the right are designed. Decided in the
 [UX brief](design/ux-brief.md#the-rules) and the [voice brief](design/voice-brief.md#the-rules).
 
 ### "This" means what you see
@@ -241,10 +246,13 @@ which is not built. Decided in the [UX brief](design/ux-brief.md#the-rules).
 no vitals strip, and the wallpaper is dark surfaces with at most a ghost of the stone. Widgets appear
 only when they have something to say and fold away for whatever the AI brings. Bombadil is meant to
 speak only when the person arrives or leaves and to be silent at rest; the voice is In progress and
-not on `main`. A movement always means the same thing (rolling is working, a knock is waiting on you,
-a hop is done, a lean is listening) and is meant to have a still version for reduced motion. On `main`
-only the stone's roll, knock, glow and hop and the wallpaper's fade have one, and nothing turns it on
-by default.
+not on `main`. On `main` mail is an exception to that silence: a new mail from someone the person
+knows puts a notice above the pill for 5 minutes, as the
+[everyday work brief](design/everyday-work-brief.md#1-mail-in-bombadils-own-view) decided. A movement always means the same thing (rolling is working, a
+knock is waiting on you, a hop is done, a lean is listening) and is meant to have a still version for
+reduced motion. On `main` only the stone and the wallpaper's fade have a quieter one: the roll is a
+slow pulse, the knock holds still and the glow is fixed, the hop is a fade-in, and the wallpaper's fade
+is instant. Nothing turns it on by default.
 
 In practice: before you add an animation, a badge or a greeting, say what single thing it means and
 when it goes away. Decided in the [identity brief](design/identity-brief.md#the-rules), the
@@ -308,7 +316,7 @@ host were set in the code, not in a brief: see [the brain](architecture/brain.md
 ## Checking a change against the principles
 
 Before you open a pull request for something the person can see or that acts on their machine, ask.
-Each question names the rules it tests.
+Each question names the rules it tests, except the last, which tests the paperwork.
 
 1. Is something true on screen within 200 ms of Enter, do open, stop and undo skip the model, and does
    the line say what is happening in plain words? ([Something true in 200 ms](#something-true-in-200-ms))
