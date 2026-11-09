@@ -84,10 +84,14 @@ DeskCard {
             objectName: "tipsPicture"
             y: 8
             width: 272; height: 153
-            Kit.TipScene {
-                tip: face.m.tip || ({})
-                density: "card"
-                reducedMotion: Kit.Theme.reducedMotion
+            // Drawn only while the face is on show, so a card that is away (or the face behind) costs nothing.
+            Loader {
+                active: face.visible
+                sourceComponent: Kit.TipScene {
+                    tip: face.m.tip || ({})
+                    density: "card"
+                    reducedMotion: Kit.Theme.reducedMotion
+                }
             }
             HoverHandler { cursorShape: Qt.PointingHandCursor }
             TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: face.pictureTapped() }
@@ -264,7 +268,8 @@ DeskCard {
                     color: controlHover.hovered ? T.fg : T.muted
                 }
                 HoverHandler { id: controlHover; cursorShape: Qt.PointingHandCursor }
-                TapHandler { gesturePolicy: TapHandler.ReleaseWithinBounds; onTapped: control.activated() }
+                // Takes the press (not just the release), so the title line under the arrows does not open the app.
+                TapHandler { gesturePolicy: TapHandler.WithinBounds; onTapped: control.activated() }
             }
             Control { objectName: "tipsPrev"; icon: "chevron-left"; onActivated: card.turnRequested(-1) }
             Control { objectName: "tipsNext"; icon: "chevron-right"; onActivated: card.turnRequested(1) }

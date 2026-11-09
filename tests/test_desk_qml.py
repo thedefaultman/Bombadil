@@ -43,6 +43,7 @@ Window {
     property var opened: []
     property int machineChanges: 0
     property int awayChanges: 0
+    property int tipsChanges: 0
     // What shell.qml does with a line from agentd: parse it, and hand it to the pill and the desk.
     function feed(line) {
         const ev = JSON.parse(line)
@@ -78,6 +79,7 @@ Window {
         onRowOpen: (widget, key, opens) => w.opened = w.opened.concat([[widget, key, opens]])
         onMachineModelChanged: w.machineChanges += 1
         onAwayModelChanged: w.awayChanges += 1
+        onTipsModelChanged: w.tipsChanges += 1
     }
     // What shell.qml puts in its windows: a rail each side, the pill, and the strips beside it.
     DeskRail { objectName: "railLeft"; parent: w.contentItem; desk: deskState; side: "left"
@@ -1072,7 +1074,8 @@ def test_a_desk_message_that_is_partial_or_wrong_costs_nothing(desk):
     assert desk.prop("folded") and desk.prop("screen") == "DP-2"
     assert desk.prop("rails")["now"] == "left"
     order = desk.prop("order")
-    assert sorted(order["left"] + order["right"]) == ["alive", "away", "machine", "needs", "now", "watching"]
+    assert sorted(order["left"] + order["right"]) == [
+        "alive", "away", "machine", "needs", "now", "tips", "watching"]
     desk.send(type="desk", screen="")
     assert desk.prop("screen") == ""
 
@@ -2494,7 +2497,7 @@ def a_full_desk(d):
     d.set("needsModel", rows(2))
     d.set("awayModel", rows(2))
     d.vitals()
-    assert set(d.faces.values()) == {"full"}
+    assert {f for i, f in d.faces.items() if i != "tips"} == {"full"}      # Tips is a new person's first week, not this desk
     return d.slots
 
 
@@ -2870,7 +2873,7 @@ def test_a_card_dropped_in_the_row_folds_and_a_strip_dropped_on_a_rail_is_moved(
 def test_a_strip_that_is_one_for_the_room_is_never_in_its_place(desk):
     a_full_desk(desk)
     desk.send(**desk_msg(folded=True))                                       # the word "desk": every card is a strip
-    assert set(desk.faces.values()) == {"strip"}
+    assert {f for i, f in desk.faces.items() if i != "tips"} == {"strip"}   # (Tips has nothing to say on this desk)
     assert take(desk, "now", 100, 800, "strip") == rank("left", 0, desk.prop("railBottomY"))
     desk.call("dragEnd", 100, 800)
     assert sent_ops(desk) == [{"type": "desk", "op": "move", "widget": "now", "rail": "left", "rank": 0}]
