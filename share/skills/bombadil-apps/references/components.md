@@ -71,7 +71,8 @@ Tokens: `Theme.bg`, `panel`, `raised`, `overlay`, `sunken`, `border`, `borderStr
 
 Motion: `Theme.reducedMotion` is true when the person asked the computer for less motion.
 `Theme.fast`, `normal` and `slow` are 0 then, so a `Behavior` or `Transition` that takes its
-`duration` from them goes instant with nothing more. For any other duration use
+`duration` from them goes instant with nothing more. Use them for animation durations only, never as a
+`Timer` interval or a delay: a repeating `Timer` at interval 0 does not tick. For any other duration use
 `Theme.duration(ms)`, which is `ms` or 0. Anything that loops or spins (a loading indicator you
 draw yourself) should stop, or pulse its opacity, while `Theme.reducedMotion` is true.
 

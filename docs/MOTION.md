@@ -34,6 +34,11 @@ environment, so the bar, the desk and every app see it. Anything other than `1` 
 `BOMBADIL_REDUCE_MOTION=1 bin/bombadil-shell`, and the same in front of `bombadil-app run <name>` or
 `bombadil-app check <name>`.
 
+On the installed image the session starts from greetd with no login screen, and the image's
+`/etc/environment` is where a session-wide variable goes (it already carries `BROWSER`): add the line
+`BOMBADIL_REDUCE_MOTION=1` and start the session again. The image sets nothing for it today, and this route has
+not been tried on a booted image.
+
 The shell and the runtime read it once, when they start. The property itself is live: whatever sets it, every
 surface follows at once (the tests do exactly that).
 
@@ -111,7 +116,7 @@ What the switch does not reach:
    and give it a still version. For "working" the still version is the pulse the stone uses
    (`SequentialAnimation` on opacity to `Theme.pulseLow` and back, 500 ms each way, `onStopped` putting the
    opacity back). `Style/BusyIndicator.qml` and `Style/ProgressBar.qml` are the examples.
-4. **A component that is handed the switch** (`Stone`, and the tip scenes after it) declares
+4. **A component that is handed the switch** (`Stone` is one) declares
    `property bool reducedMotion: false` and its user binds it: `reducedMotion: Kit.Theme.reducedMotion`. Its
    animations are gated on its own property, so a test can drive it without a Theme.
 5. **A `Timer` that moves something** (a typewriter, a carousel step) is an animation: gate it, and show the
@@ -122,13 +127,17 @@ What the switch does not reach:
 ## How to test it
 
 - **The guard.** `test_no_animation_ignores_reduced_motion` reads every `shell/*.qml`,
-  `share/qml/Bombadil/**/*.qml` and `share/apps/**/*.qml`. For each `duration` with a literal number above
-  zero, and each `loops: Animation.Infinite`, it finds the outermost animation, `Behavior` or `Transition`
-  around it and fails unless that block mentions `reducedMotion` or goes through `Theme.duration(`. A duration
-  that comes from `Theme.fast`, `normal` or `slow` is not literal and passes, because the tokens read 0.
-  `test_the_guard_catches_what_it_is_for` runs the same check on snippets, so the guard cannot go quiet
-  without a test failing. It does not see a `Timer` that animates, or an animation in an app the agent writes
-  later; those depend on the rule above.
+  `share/qml/Bombadil/**/*.qml` and `share/apps/**/*.qml` and looks at each `Behavior`, `Transition` and
+  animation's own lines. A leaf animation (`NumberAnimation`, `ColorAnimation`, `PropertyAnimation`, an
+  Animator, `SmoothedAnimation`, ...) passes only with a `duration` of 0, from the Theme (`Theme.fast`,
+  `Theme.duration(...)`) or that reads `reducedMotion`. A duration from anywhere else fails, whether it is a
+  literal, a property or a `DeskTheme.js` value (`T.washMs`), and so does no duration at all and a
+  `SpringAnimation`. So does `loops: Animation.Infinite`. Each passes when the animation, or one around it, is
+  gated: its own `running`, `enabled` or `when` reads `reducedMotion`. A `reducedMotion` somewhere else in
+  the same block gates nothing. A wait in `ALLOWED` passes, and the list counts its entries, so a stale one,
+  or one that now covers a second wait, fails. `test_the_guard_catches_what_it_is_for` runs the same check on
+  snippets, so the guard cannot go quiet without a test failing. It does not see a `Timer` that animates, an
+  animation written in JavaScript, or an app the agent writes later; those depend on the rule above.
 - **A surface, in both modes.** The Theme is a singleton per engine, so a test sets it on its own engine and
   restores it:
 
