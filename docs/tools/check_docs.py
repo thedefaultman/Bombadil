@@ -27,15 +27,20 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 HARD = [
-    ("email", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+\.[A-Za-z]{2,}")),
-    ("session id", re.compile(r"\b(?:cse|cmsg|chan|user)_[0-9A-Za-z]{12,}\b")),
+    ("email", re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")),
+    ("session id", re.compile(r"\b(?:cse|cmsg|chan|user)_[0-9A-Za-z]{12,}\b|\bsession_(?=[0-9A-Za-z]*\d)(?=[0-9A-Za-z]*[A-Za-z])[0-9A-Za-z]{16,}\b")),
     ("session url", re.compile(r"claude\.ai/(?:code|chat|project|artifact)/[A-Za-z0-9_-]+")),
     ("shared folder path", re.compile(r"/mnt/(?:project-files|wslg|c|user-data)\b")),
-    ("user home path", re.compile(r"[A-Za-z]:\\Users\\|/Users/[a-z]+/Library|/home/(?!user\b)[a-z][a-z0-9_-]*/", re.I)),
+    ("user home path", re.compile(r"[A-Za-z]:\\Users\\|(?-i:/Users/(?!user/)[A-Za-z][\w.-]*/)|/home/(?!user\b)[a-z][a-z0-9_-]*/", re.I)),
     ("token", re.compile(r"sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abp]-[0-9A-Za-z-]{10,}")),
 ]
-# GitHub no-reply addresses and the example addresses in docs are not leaks.
-EMAIL_OK = re.compile(r"@(?:example\.(?:com|org|net)|acme\.[a-z]+|users\.noreply\.github\.com|noreply\.anthropic\.com|[a-z.]*example)$", re.I)
+# GitHub no-reply addresses, the Claude commit trailer address and the example addresses in docs
+# (example.com, acme.*, and the reserved .example, .test and .invalid names) are not leaks.
+EMAIL_OK = re.compile(
+    r"^noreply@anthropic\.com$"
+    r"|@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|acme\.[a-z]+|users\.noreply\.github\.com|example|test|invalid)$",
+    re.I,
+)
 
 TEXT_SUFFIXES = {".md", ".html", ".htm", ".txt", ".json", ".svg", ".toml", ".qml", ".py", ".sh", ".log", ".patch"}
 
@@ -50,15 +55,28 @@ def slug(heading: str) -> str:
     return h.replace(" ", "-")
 
 
+def md_lines(text: str):
+    """Yield (line number, line, in_code): in_code is true for fence lines and the lines between them."""
+    fence = None  # (character, length) of the open fence
+    for n, line in enumerate(text.splitlines(), 1):
+        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if fence is None:
+            if m:
+                fence = (m.group(1)[0], len(m.group(1)))
+                yield n, line, True
+                continue
+            yield n, line, False
+        else:
+            yield n, line, True
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1] and re.match(r"^\s*[`~]+\s*$", line):
+                fence = None
+
+
 def md_anchors(text: str) -> set[str]:
     out: set[str] = set()
     seen: dict[str, int] = {}
-    fence = False
-    for line in text.splitlines():
-        if re.match(r"^\s*(```|~~~)", line):
-            fence = not fence
-            continue
-        if fence:
+    for _, line, code in md_lines(text):
+        if code:
             continue
         m = re.match(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$", line)
         if m:
@@ -69,6 +87,10 @@ def md_anchors(text: str) -> set[str]:
         for a in re.findall(r'<a\s+(?:name|id)="([^"]+)"', line):
             out.add(a)
     return out
+
+
+def srcset_urls(value: str) -> list[str]:
+    return [part.split()[0] for part in value.split(",") if part.split()]
 
 
 class HtmlRefs(HTMLParser):
@@ -82,43 +104,65 @@ class HtmlRefs(HTMLParser):
         for k in ("href", "src", "poster"):
             if d.get(k):
                 self.refs.append(d[k])
+        if d.get("srcset"):
+            self.refs.extend(srcset_urls(d["srcset"]))
         if d.get("id"):
             self.ids.add(d["id"])
         if d.get("name") and tag == "a":
             self.ids.add(d["name"])
 
 
+# A link may wrap over several lines of a paragraph; its text stops at a blank line.
+LINK_RX = re.compile(r"!?\[(?:[^\]\n]|\n(?!\s*\n))*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+TAG_RX = re.compile(r"<(?:a|img|source|link|video|audio|iframe|script)\s[^>]*>", re.I)
+ATTR_RX = re.compile(r"\b(href|src|poster|srcset)\s*=\s*(?:\"([^\"]*)\"|'([^']*)')", re.I)
+
+
 def md_links(text: str) -> list[tuple[int, str]]:
-    out = []
-    fence = False
-    for n, line in enumerate(text.splitlines(), 1):
-        if re.match(r"^\s*(```|~~~)", line):
-            fence = not fence
-            continue
-        if fence:
-            continue
-        scrub = re.sub(r"`[^`]*`", "", line)
-        for m in re.finditer(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)", scrub):
-            out.append((n, m.group(1)))
-        for m in re.finditer(r'<(?:a|img)\s[^>]*?(?:href|src)="([^"]+)"', scrub):
-            out.append((n, m.group(1)))
-        m = re.match(r"^\s{0,3}\[[^\]]+\]:\s*(\S+)", scrub)
+    """Targets of the links and images in Markdown prose (not in fences or code spans), with line numbers."""
+    out: list[tuple[int, str]] = []
+    prose = []
+    for _, line, code in md_lines(text):
+        prose.append("" if code else re.sub(r"`[^`]*`", "", line))
+    flat = "\n".join(prose)
+
+    def line_of(pos: int) -> int:
+        return flat.count("\n", 0, pos) + 1
+
+    for m in LINK_RX.finditer(flat):
+        out.append((line_of(m.start()), m.group(1)))
+    for t in TAG_RX.finditer(flat):
+        for a in ATTR_RX.finditer(t.group(0)):
+            value = a.group(2) if a.group(2) is not None else a.group(3)
+            for ref in srcset_urls(value) if a.group(1).lower() == "srcset" else [value]:
+                out.append((line_of(t.start()), ref))
+    for n, line in enumerate(prose, 1):
+        m = re.match(r"^\s{0,3}\[[^\]]+\]:\s*(\S+)", line)
         if m:
             out.append((n, m.group(1)))
     return out
 
 
 def mermaid_blocks(text: str) -> list[tuple[int, str]]:
-    blocks, cur, start, fence = [], [], 0, False
+    blocks, cur, start, fence = [], [], 0, None
     for n, line in enumerate(text.splitlines(), 1):
-        if not fence and re.match(r"^\s*```\s*mermaid\s*$", line):
-            fence, cur, start = True, [], n
-        elif fence and re.match(r"^\s*```\s*$", line):
-            blocks.append((start, "\n".join(cur)))
-            fence = False
-        elif fence:
-            cur.append(line)
-    if fence:
+        if fence is None:
+            m = re.match(r"^\s*(`{3,}|~{3,})\s*mermaid\s*$", line)
+            if m:
+                fence, cur, start = (m.group(1)[0], len(m.group(1))), [], n
+            else:
+                m = re.match(r"^\s*(`{3,}|~{3,})", line)
+                if m:  # some other fenced block: skip to its end
+                    fence, cur, start = (m.group(1)[0], len(m.group(1))), None, n
+        else:
+            m = re.match(r"^\s*(`+|~+)\s*$", line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= fence[1]:
+                if cur is not None:
+                    blocks.append((start, "\n".join(cur)))
+                fence = None
+            elif cur is not None:
+                cur.append(line)
+    if fence is not None and cur is not None:
         blocks.append((start, "\n".join(cur) + "\n%% UNCLOSED FENCE"))
     return blocks
 
