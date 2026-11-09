@@ -23,8 +23,17 @@ ShellRoot {
     property string summonedOn: ""
     property string draft: ""          // words an app put in the pill, taken by the summoned pill
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
-    // The stone pulses instead of rolling and knocking (BOMBADIL_REDUCE_MOTION=1).
+    // The screens that show the card and the welcome: the ones that had the focus when they
+    // arrived ("" = every screen).
+    property string cardOn: ""
+    // The keyboard goes to the card (not the pill) when a screen turns summoned: the card asked for it
+    // or was clicked. Super and a click on the pill clear it, so they always mean the pill.
+    property bool cardKeys: false
+    property string welcomeOn: ""
+    // Reduced motion (BOMBADIL_REDUCE_MOTION=1): the stone pulses instead of rolling and knocking, and
+    // everything else that moves goes instant. The kit's Theme holds the switch for every surface.
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
+    Binding { target: Kit.Theme; property: "reducedMotion"; value: root.reducedMotion }
 
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
@@ -32,13 +41,33 @@ ShellRoot {
         onOutgoing: msg => root.write(msg)
         onSummoned: text => root.summon(text)
         onHandOff: root.release()
+        onAsked: root.summonKeep()
+        onWelcomeShown: root.welcomeOn = root.focusedScreen()
+        // A full-screen window in front: a greeting is dropped rather than drawn over it.
+        fullscreen: !!(Hyprland.focusedMonitor && Hyprland.focusedMonitor.activeWorkspace && Hyprland.focusedMonitor.activeWorkspace.hasFullscreen)
+    }
+
+    // Away and back: agentd times a welcome-back from this. respectInhibitors stays on, so a
+    // video being watched counts as present.
+    IdleMonitor {
+        timeout: Number(Quickshell.env("BOMBADIL_IDLE_SECONDS")) || 300
+        onIsIdleChanged: pillState.presence(isIdle)
+    }
+
+    // The first key or pointer movement after a welcome starts its fade. Keys typed into other
+    // windows are invisible to the bar, so this watches for a pause of a second and the activity after it.
+    IdleMonitor {
+        timeout: 1
+        respectInhibitors: false
+        enabled: pillState.mode === "welcome" && pillState.touchedAt === 0
+        onIsIdleChanged: if (!isIdle) pillState.touched()
     }
 
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
     // The ground under everything: the wallpaper, on every screen.
-    Wallpaper { reducedMotion: root.reducedMotion }
+    Wallpaper { reducedMotion: Kit.Theme.reducedMotion }
 
     // The desk: cards on two rails under every window, strips beside the pill when they fold.
     DeskState {
@@ -166,16 +195,41 @@ ShellRoot {
     function summon(text) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+        root.cardKeys = false
         if (text) {
-            // Words to finish: always take the keyboard, never toggle it away.
+            // Words to finish: always take the keyboard, never toggle it away. A card holding the keys
+            // here gives them to the pill.
             root.draft = text
             root.summonedOn = name
+            if (pillState.personaAsk !== null) pillState.focusPill()
             return
         }
+        // Super while the card holds the keyboard here means the pill: the card stays, the keys move.
+        if (pillState.personaAsk !== null && root.summonedOn === name) { pillState.focusPill(); return }
         root.summonedOn = root.summonedOn === name ? "" : name
     }
 
-    function release() { root.summonedOn = "" }
+    function release() { root.cardKeys = false; root.summonedOn = "" }
+
+    function focusedScreen() {
+        const m = Hyprland.focusedMonitor
+        return m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
+    }
+
+    // A screen unplugged while the card or a welcome was on it: show them everywhere, not nowhere.
+    function hasScreen(name) {
+        for (let i = 0; i < Quickshell.screens.length; i++)
+            if (Quickshell.screens[i].name === name) return true
+        return false
+    }
+
+    // The card asks what to call you: it comes up on the focused screen and takes the keyboard
+    // there. Unlike summon() this never gives the keyboard back, and it works on every compositor.
+    function summonKeep() {
+        root.cardKeys = true
+        root.cardOn = root.focusedScreen()
+        root.summonedOn = root.cardOn
+    }
 
     // Running apps, for the chips above the prompt. Each app window lives in its own special
     // workspace "special:app-<name>" (bombadil-app's placement.py puts it there).
@@ -220,6 +274,8 @@ ShellRoot {
             required property var modelData
             screen: modelData
             readonly property bool summoned: root.summonedOn !== "" && root.summonedOn === modelData.name
+            readonly property bool cardHere: root.cardOn === "" || root.cardOn === modelData.name || !root.hasScreen(root.cardOn)
+            readonly property bool welcomeHere: root.welcomeOn === "" || root.welcomeOn === modelData.name || !root.hasScreen(root.welcomeOn)
             // The desk narrows the pill and turns it into a capsule under a full-screen window on the
             // screen it lives on; the pill on another screen is as it always was.
             readonly property bool onDesk: modelData.name === root.deskScreen
@@ -257,6 +313,8 @@ ShellRoot {
             mask: Region {
                 Region { item: cardHost }
                 Region { item: statusLine }
+                // (a hidden item keeps its last place)
+                Region { item: personaCard.visible ? personaCard : null }
                 Region { item: foundChips.visible ? foundChips : null }
                 Region { item: setupChips.visible ? setupChips : null }   // (a hidden item keeps its last place)
                 Region { item: chips }
@@ -269,7 +327,11 @@ ShellRoot {
             }
 
             onSummonedChanged: {
-                if (summoned) input.forceActiveFocus()
+                // The card, when it is up here, is where typing goes; the pill stays one click away.
+                if (summoned) {
+                    if (root.cardKeys && personaCard.shown) personaCard.takeKeys()
+                    else input.forceActiveFocus()
+                }
                 grab.active = summoned
                 takeDraft()
             }
@@ -284,9 +346,32 @@ ShellRoot {
                 function onDraftChanged() { win.takeDraft() }
             }
 
+            function takeCard() { if (personaCard.shown) personaCard.takeKeys() }
+
+            Connections {
+                target: pillState
+                // The card asked while this screen already had the keyboard: summoned did not
+                // change, so hand it over here. Later, once the card is shown.
+                function onAsked() { if (win.summoned) Qt.callLater(win.takeCard) }
+                function onFocusPill() { if (win.summoned) input.forceActiveFocus() }
+                // Folded by anything (an answer from another bar, a dropped socket): the pill's field is the
+                // focus again, and a keyboard the card was holding goes back to the windows at once.
+                function onPersonaAskChanged() {
+                    if (pillState.personaAsk !== null) return
+                    input.forceActiveFocus()
+                    if (win.summoned && root.cardKeys) root.release()
+                }
+            }
+
             // Clicking the pill is the same as tapping Super: it is where you type. (Elsewhere the
             // layer takes clicks on demand by itself.)
             function summonHere() { if (root.hyprland) root.summonedOn = modelData.name }
+            // A click on the pill: its field has the keys, card or no card.
+            function focusPill() {
+                root.cardKeys = false
+                summonHere()
+                if (summoned) input.forceActiveFocus()
+            }
 
             // While summoned the pill holds the keyboard; a click anywhere else hands it back,
             // so typing meant for another window (a password prompt) never lands in the pill.
@@ -301,7 +386,8 @@ ShellRoot {
                 // the wait again; text already typed stays in the pill.
                 id: idle
                 interval: input.text === "" ? 20000 : 60000
-                running: win.summoned
+                // Not while the card is up: it is waiting for an answer, and typing a name is slow.
+                running: win.summoned && !personaCard.shown
                 onTriggered: root.release()
             }
 
@@ -347,9 +433,29 @@ ShellRoot {
                 StatusLine {
                     id: statusLine
                     pill: pillState
+                    here: win.welcomeHere
                     Layout.fillWidth: true
                     Layout.maximumWidth: Math.max(360, win.pillMax)
                     Layout.alignment: Qt.AlignHCenter
+                }
+
+                PersonaCard {
+                    id: personaCard
+                    pill: pillState
+                    here: win.cardHere
+                    Layout.fillWidth: true
+                    Layout.maximumWidth: 620
+                    Layout.alignment: Qt.AlignHCenter
+                    // A click on the card is a click on the pill: take the keyboard (Hyprland gives none unasked).
+                    onWantKeys: {
+                        root.cardKeys = true
+                        win.summonHere()
+                        win.takeCard()
+                    }
+                    onClosed: {
+                        root.release()
+                        input.forceActiveFocus()
+                    }
                 }
 
                 // While the AI rests: what the sentence you typed nearly names on this computer (an app, a
@@ -433,7 +539,7 @@ ShellRoot {
                             color: shown ? Kit.Theme.glassRaised : Kit.Theme.glassChip
                             border.width: 1
                             border.color: shown ? Kit.Theme.accent : Kit.Theme.border
-                            Behavior on border.color { ColorAnimation { duration: 150 } }
+                            Behavior on border.color { ColorAnimation { duration: Kit.Theme.duration(150) } }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
@@ -491,7 +597,7 @@ ShellRoot {
                     border.color: pillState.busy ? Kit.Theme.accent : (win.summoned ? Kit.Theme.borderActive : (pillState.face === "offline" ? Kit.Theme.badLine : Kit.Theme.border))
                     border.width: Kit.Theme.pillBorder
                     Behavior on border.color { ColorAnimation { duration: Kit.Theme.slow } }
-                    TapHandler { onTapped: win.summonHere() }
+                    TapHandler { onTapped: win.focusPill() }
 
                     RowLayout {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
@@ -515,7 +621,7 @@ ShellRoot {
                                 anchors.centerIn: parent
                                 // The screen that holds the keyboard leans toward what you type.
                                 face: win.summoned && pillState.face === "rest" ? "listening" : pillState.face
-                                reducedMotion: root.reducedMotion
+                                reducedMotion: Kit.Theme.reducedMotion
                             }
                             Row {
                                 id: stopRow
@@ -553,15 +659,18 @@ ShellRoot {
                                 background: null
                                 focus: true
                                 // The field takes the press itself, so the pill's own handler never sees it.
-                                TapHandler { onTapped: win.summonHere() }
+                                TapHandler { onTapped: win.focusPill() }
                                 onAccepted: {
                                     if (pillState.submit(text)) {
                                         text = ""
                                         root.release()
+                                    } else {
+                                        pillState.dismissWelcome()   // Enter on nothing ends a greeting too
                                     }
                                 }
                                 onTextChanged: {
                                     if (win.summoned) idle.restart()
+                                    if (text !== "") pillState.dismissWelcome()
                                     if (text !== "") pillState.closeAi()
                                 }
                                 // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
@@ -582,7 +691,7 @@ ShellRoot {
                                     if (pillState.stoppable) pillState.stop()
                                     else if (pillState.aiOpen) { pillState.closeAi(); root.release() }
                                     else if (text !== "") text = ""
-                                    else { pillState.dismiss(); pillState.closeDetails(); root.release() }
+                                    else { pillState.dismiss(); pillState.dismissWelcome(); pillState.closeDetails(); root.release() }
                                 }
                             }
 

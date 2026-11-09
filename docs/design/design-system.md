@@ -59,6 +59,7 @@ The mark is the riding b: a smooth three-sided stone (a rounded Reuleaux triangl
 - Under reduced motion, working falls back to one pulse (opacity 1 to `pulseLow` and back, 500 ms each way), needs you holds its glow, and the rest stay still.
 - The line stays 12 s after a turn, 5 s after a local answer, 15 s after an undo.
 - Every movement has a still version for reduced motion.
+- Reduced motion is one switch, `Theme.reducedMotion` (set from `BOMBADIL_REDUCE_MOTION=1` by the shell and the app runtime), and `fast`, `normal` and `slow` read 0 under it, so a component that animates with them honours it with nothing more; `Theme.duration(ms)` is `ms` or 0 for any other duration. What every surface does, and how to honour it in a new component, is in [`../MOTION.md`](../MOTION.md).
 
 ## Depth
 

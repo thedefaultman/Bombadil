@@ -397,9 +397,9 @@ Item {
                     border.width: edgeWidth
                     border.color: edge
                     opacity: state === "gone" ? 0.6 : (root.anyLit && !lit ? 0.7 : 1)
-                    Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                    Behavior on y { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                    Behavior on width { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                    Behavior on x { NumberAnimation { duration: Theme.duration(140); easing.type: Easing.OutCubic } }
+                    Behavior on y { NumberAnimation { duration: Theme.duration(140); easing.type: Easing.OutCubic } }
+                    Behavior on width { NumberAnimation { duration: Theme.duration(140); easing.type: Easing.OutCubic } }
                     Behavior on opacity { NumberAnimation { duration: Theme.normal } }
                     Component.onCompleted: { if (root.partial) { opacity = 0; opacity = Qt.binding(() => state === "gone" ? 0.6 : 1) } }
 
