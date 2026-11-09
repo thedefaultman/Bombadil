@@ -27,8 +27,9 @@ import "TipScene.js" as Scene
 //   numbers. It never plays.
 // app (576 x 324, and the captions in a row under it): plays. The 24 px stone in its real colours
 //   (orange only where it acts), a 52 px pill, 16 px text, a 15 px line. The three phase captions sit
-//   under the stage, the current one in fg. Under reducedMotion it shows three stills side by side
-//   (each the last frame of its phase) with their captions, and play() settles at once.
+//   under the stage, the current one in fg. Under reducedMotion it shows three stills (each the last frame
+//   of its phase, at the card's size, flowing onto a second row where three do not fit) with their
+//   captions, and play() settles at once.
 Item {
     id: root
 
@@ -89,14 +90,14 @@ Item {
     readonly property var cardM: ({
         w: 272, h: 153, radius: 8, pillH: 32, pillBottom: 6, pillSide: 24, stone: 16, small: true,
         text: 12, lineText: 12, title: 12, row: 12, caption: 12, rowH: 15, pad: 5, gap: 5, lineH: 22, cardW: 84,
-        winW: 172, winH: 75, winTop: 6, winRadius: 6, slide: 10, picW: 236, boxH: 20, border: 1,
-        stripH: 18, keyH: 20, buttonW: 18, buttonH: 12, margin: 8
+        winW: 232, winH: 75, winTop: 6, winRadius: 6, slide: 10, picW: 236, boxH: 20, border: 1,
+        stripH: 18, keyH: 20, buttonW: 18, buttonH: 12, margin: 8, pillMin: 72
     })
     readonly property var appM: ({
         w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 64, stone: 24, small: false,
         text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 168,
         winW: 380, winH: 176, winTop: 14, winRadius: 12, slide: 28, picW: 440, boxH: 40, border: 1.5,
-        stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12
+        stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12, pillMin: 160
     })
 
     implicitWidth: poster ? cardM.w : appM.w
@@ -146,16 +147,18 @@ Item {
         }
     }
 
-    // Reduced motion: three stills side by side, each the last frame of its phase, with its caption.
-    // Each is drawn with the card's measures, shrunk to fit a third of the scene's width (576 by default, so
-    // a thumbnail at two thirds); a host that gives the scene 840 px or more gets them at full size, 12 px text.
-    Row {
+    // Reduced motion: three stills, each the last frame of its phase, with its caption under it. Each is
+    // drawn at the card's measures, 12 px text and never smaller, so where three do not fit across they wrap
+    // onto a second row: two and one on the app's 576 px stage, all three from 840 px. A host narrower than
+    // one card shrinks them to its width.
+    Flow {
         id: stillsRow
         objectName: "stills"
         visible: root.stills
+        width: root.width
         spacing: 12
-        readonly property real cw: Math.min(root.cardM.w, (root.width - 2 * spacing) / 3)
-        readonly property real k: Math.min(1, cw / root.cardM.w)
+        readonly property real cw: Math.min(root.cardM.w, root.width)
+        readonly property real k: cw / root.cardM.w
         Repeater {
             model: root.stills ? 3 : 0
             delegate: Column {
@@ -207,8 +210,16 @@ Item {
 
         readonly property real pillTop: m.h - m.pillBottom - m.pillH
         readonly property real slotTop: pillTop - m.gap - m.lineH          // where a one-line line sits
-        readonly property real railBottom: slotTop - m.gap                 // the rails and the picture rest on it
-        readonly property real side: m.pillSide + Math.min(stripsRow.width + 8, m.w * 0.18) * f.fold.p
+        // The rails and the picture rest on the line: a line of several lines grows upward from the pill and
+        // lifts them as it arrives, so it never covers a card or the picture.
+        readonly property real lineLift: lineBox.visible ? (lineBox.height - m.lineH) * lineBox.ln.alpha : 0
+        readonly property real railBottom: slotTop - m.gap - lineLift
+        // Folded, the strips stand beside the pill on the left and the pill is what they leave, with its
+        // right edge where it was: the pill never runs under a strip, however many there are.
+        readonly property real stripsEnd: m.margin / 2 + stripsRow.width + m.gap
+        readonly property real side: m.pillSide + Math.max(0, stripsEnd - m.pillSide) * f.fold.p
+        // what the strips may take together, so that the pill keeps a few words' width
+        readonly property real stripsRoom: m.w - m.pillSide - m.margin / 2 - m.gap - m.pillMin
 
         // The ground: the sunken surface with two faint glows, one from above at the left and one from
         // below at the right, so a poster is never a flat rectangle. Both are neutral light.
@@ -269,8 +280,10 @@ Item {
             visible: w !== null
             readonly property real slide: w ? w.slide : 0
             readonly property string from: w ? w.from : "bottom"
-            // as tall as its rows (a document and a lock screen get a fixed share), never past the room above the line
-            readonly property real wanted: !w ? 0 : (w.doc || w.lock !== "") ? st.m.winH * 0.75
+            // as tall as what is in it (its rows, its lines of grey, its lock screen), never past the room above the line
+            readonly property real head: st.m.pad + st.m.title + st.m.gap          // where the body begins, under the title
+            readonly property real wanted: !w ? 0 : w.doc ? head + docLines.height + st.m.pad
+                : w.lock !== "" ? head + lockBody.height + st.m.pad
                 : 2 * st.m.pad + st.m.title + st.m.gap + w.rows.length * (st.m.rowH + (st.m.small ? 1 : 4)) + 4
             // the room above whatever stands over the pill (the line, a picture), so a window never sits under one
             readonly property real room: Math.min(lineBox.visible ? lineBox.y : st.railBottom, pic.visible ? pic.y : st.railBottom)
@@ -342,10 +355,11 @@ Item {
                         color: Theme.panel
                         opacity: d.alpha
                         Text {
+                            objectName: "windowRowLabel"
                             x: 6; anchors.verticalCenter: parent.verticalCenter
                             width: parent.width - 12 - cells.width
                             font.family: Theme.fontFamily
-                            font.pixelSize: st.m.small ? st.m.row : st.m.row
+                            font.pixelSize: st.m.row
                             text: wrow.d.label
                             color: Theme.fg
                             elide: Text.ElideRight
@@ -390,8 +404,10 @@ Item {
             }
             // a document: lines of grey
             Column {
+                id: docLines
+                objectName: "windowDoc"
                 visible: win.w !== null && win.w.doc
-                x: st.m.pad; y: st.m.pad + st.m.title + st.m.gap
+                x: st.m.pad; y: win.head
                 spacing: st.m.small ? 4 : 7
                 Repeater {
                     model: [1, 0.55, 0.9, 0.4, 0.75]
@@ -404,9 +420,11 @@ Item {
             }
             // the lock screen: its words and the password field, waiting
             Column {
+                id: lockBody
+                objectName: "windowLock"
                 visible: win.w !== null && win.w.lock !== ""
-                anchors.centerIn: parent
-                anchors.verticalCenterOffset: st.m.title / 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: win.head
                 spacing: st.m.gap
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
@@ -559,14 +577,20 @@ Item {
                     id: strip
                     required property int index
                     readonly property string label: index < st.f.fold.strips.length ? st.f.fold.strips[index] : ""
+                    // each takes its words' width, or its share of what the strips may take, whichever is less
+                    readonly property real share: (st.stripsRoom - stripsRow.spacing * (st.f.fold.strips.length - 1))
+                                                  / Math.max(1, st.f.fold.strips.length)
                     objectName: "strip"
                     height: st.m.stripH; radius: height / 2
-                    width: stripText.implicitWidth + 16
+                    width: Math.min(stripText.implicitWidth + 16, share)
                     color: Theme.glassStrip
                     border.width: 1; border.color: Theme.border
                     Text {
                         id: stripText
+                        objectName: "stripText"
                         anchors.centerIn: parent
+                        width: Math.min(implicitWidth, strip.width - 16)
+                        elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: st.m.small ? 12 : Theme.smallSize
                         text: strip.label
@@ -592,10 +616,13 @@ Item {
             readonly property real cmdRoom: avail - textW - 8
             readonly property real cmdW: ln && ln.command !== "" && cmdRoom >= 56
                                          ? Math.min(cmdMetrics.width + 2, cmdRoom) + 8 : 0
+            // As the real line: one line while the stone works, and up to four once it has something to say
+            // (shell/StatusLine.qml). It grows upward from the pill, and what stands above it makes room.
+            readonly property bool wraps: ln !== null && st.f.stone.face !== "working"
             visible: ln !== null
             opacity: ln ? ln.alpha : 0
             width: Math.min(maxW, padL + padR + textW + cmdW + secW + btnW)
-            height: st.m.lineH                                              // a line is one line
+            height: st.m.lineH + Math.max(0, lineText.lineCount - 1) * lineText.contentHeight / Math.max(1, lineText.lineCount)
             x: (st.m.w - width) / 2
             y: st.slotTop + st.m.lineH - height + (ln ? (1 - ln.alpha) * 4 : 0)
             radius: Math.min(height / 2, Theme.radiusLine)
@@ -624,7 +651,8 @@ Item {
                     font.pixelSize: st.m.lineText
                     text: lineBox.ln ? lineBox.ln.text : ""
                     color: lineBox.ln && lineBox.ln.tone === "red" && !st.ink ? Theme.badInk : Theme.fg
-                    wrapMode: Text.NoWrap
+                    wrapMode: lineBox.wraps ? Text.Wrap : Text.NoWrap
+                    maximumLineCount: lineBox.wraps ? 4 : 1
                     elide: Text.ElideRight
                 }
                 Text {
@@ -688,7 +716,7 @@ Item {
             objectName: "pill"
             x: st.side
             y: st.pillTop
-            width: st.m.w - 2 * st.side
+            width: st.m.w - st.side - st.m.pillSide
             height: st.m.pillH
             radius: height / 2
             color: Theme.glassPill
@@ -718,7 +746,7 @@ Item {
                 id: field
                 x: stone.x + stone.width + 8
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - x - (st.m.small ? 12 : 64)
+                width: Math.max(0, parent.width - x - (st.m.small ? 12 : 64))
                 clip: true
                 Rectangle {      // the text cursor: solid, because nothing here blinks
                     visible: st.f.pill.caret && st.f.pill.text === ""
@@ -769,7 +797,9 @@ Item {
             height: st.m.keyH
             radius: 6
             color: Theme.fg
-            x: Math.max(2, (st.side - width) / 2)
+            // in the margin on the left of the pill, or on its right while the strips stand on the left
+            x: stripsRow.visible ? Math.min(st.m.w - width - 2, st.m.w - (st.m.pillSide + width) / 2)
+                                 : Math.max(2, (st.side - width) / 2)
             y: st.pillTop + (st.m.pillH - height) / 2 + (k && k.down ? 2 : 0)
             Rectangle {      // the cap's lower edge, gone while it is down
                 visible: keycap.k !== null && !keycap.k.down
@@ -844,6 +874,7 @@ Item {
                     // a poster: a dot and a bar. The app: the words, the figure, the meter.
                     Rectangle {
                         id: dot
+                        objectName: "cardDot"
                         visible: cd.c.kind === "now" || cd.ink
                         x: 0; anchors.verticalCenter: parent.verticalCenter
                         width: 6; height: 6; radius: 3
@@ -879,11 +910,13 @@ Item {
                         color: Theme.fg
                     }
                     Rectangle {
+                        objectName: "meter"
                         visible: !cd.ink && cd.c.kind === "machine"
                         anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                         width: parent.width * 0.45; height: 6; radius: 3
                         color: Theme.raised
                         Rectangle {
+                            objectName: "meterFill"
                             width: parent.width * Math.max(0, Math.min(100, Number(cr.d.value) || 0)) / 100
                             height: parent.height; radius: 3
                             color: Theme.muted

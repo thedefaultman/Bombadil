@@ -92,6 +92,7 @@ the same `make_engine`, so a check sees what the window sees.
 | `BusyIndicator` | an arc turns | the arc holds still and pulses, as the stone does |
 | `ProgressBar`, indeterminate | a segment sweeps across | the segment holds in the middle and pulses |
 | Charts, meters, rings, the diagram | bars grow, axes ease, boxes slide | instant |
+| A tip's scene (`Kit.TipScene`, in the Tips app) | plays once, one clock running the length of the scene, and holds its last frame | nothing plays: three stills, each the last frame of a phase, and the clock is never started; the desk card's poster is always a still |
 | Brain and Mail (built-in apps) | draw no animation of their own; the kit's controls move as above | the same stills |
 | The Tips app's stage (`share/apps/tips`) | the tip in front plays once on `Kit.TipScene`'s clock and holds its last frame | three stills side by side, one per phase, each with its caption; Replay and Space have nothing to play. Its button and rows move as the kit's controls do, so they are instant |
 

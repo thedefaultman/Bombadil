@@ -50,6 +50,7 @@ MODIFIERS = {
 }
 KNOWN = frozenset(DRAWS) | frozenset(MODIFIERS)
 
+MAX_WINDOW_ROWS = 3      # what a window holds on the card's poster (the stage holds four)
 MAX_SECONDS = 10         # never over this
 TARGET_SECONDS = (6, 8)  # what a scene aims for: `validate(tip, strict=True)` holds it to this
 CAPTIONS = 3
@@ -82,6 +83,22 @@ def _items(v) -> list:
     return list(v) if isinstance(v, (list, tuple)) else []
 
 
+def _is_str(v) -> bool:
+    return isinstance(v, str)
+
+
+def _units(s: str) -> int:
+    """A string's length as JavaScript counts it, in UTF-16 units: a character past U+FFFF is two, so the
+    duration here is the renderer's to the millisecond."""
+    return len(s.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _phase(b: dict) -> int | None:
+    """The phase a beat opens, 1 or 2; None for anything else (`True` is not a phase)."""
+    v = b.get("phase")
+    return v if _is_int(v) and v in (1, 2) else None
+
+
 def shows_window(b: dict) -> bool:
     """A `window` beat that brings a window (a title), as against one that hides it (false or "")."""
     return isinstance(b.get("window"), str) and b["window"] != ""
@@ -94,9 +111,9 @@ def beat_ms(b: dict) -> int:
     if "key" in b:
         parts.append(KEY_MS)
     if isinstance(b.get("type"), str):
-        parts.append(TYPE_MS_PER_CHAR * len(b["type"]) + TYPE_SETTLE_MS)
+        parts.append(TYPE_MS_PER_CHAR * _units(b["type"]) + TYPE_SETTLE_MS)
     if "stone" in b:
-        parts.append(STONE_MS.get(b["stone"], STONE_DEFAULT_MS))
+        parts.append(STONE_MS.get(b["stone"], STONE_DEFAULT_MS) if _is_str(b["stone"]) else STONE_DEFAULT_MS)
     if "line" in b:
         parts.append(LINE_MS if b["line"] != "" else LINE_CLEAR_MS)
     if "window" in b:
@@ -143,8 +160,8 @@ def phase_starts(beats: list) -> tuple[int, int]:
     total = duration(beats)
     marks = {}
     for b, (start, _n) in zip(beats, times, strict=False):
-        if isinstance(b, dict) and b.get("phase") in (1, 2) and b["phase"] not in marks:
-            marks[b["phase"]] = start
+        if isinstance(b, dict) and _phase(b) and _phase(b) not in marks:
+            marks[_phase(b)] = start
     if 1 in marks and 2 in marks:
         return marks[1], marks[2]
     return total // 3, total * 2 // 3
@@ -176,13 +193,16 @@ def _check_beat(i: int, b, out: list[str]) -> None:
             out.append(f"{where}: {msg}")
 
     if "key" in b:
-        need(b["key"] in KEYS, f"key must be one of {', '.join(KEYS)} (not {b['key']!r})")
+        need(_is_str(b["key"]) and b["key"] in KEYS, f"key must be one of {', '.join(KEYS)} (not {b['key']!r})")
     if "type" in b:
         need(isinstance(b["type"], str) and b["type"] != "", "type is the words typed, a string")
     if "ghost" in b:
         need(isinstance(b["ghost"], str) and b["ghost"] != "", "ghost is the faint completion, a string")
     if "stone" in b:
-        need(b["stone"] in FACES, f"stone must be one of {', '.join(FACES)} (not {b['stone']!r})")
+        need(_is_str(b["stone"]) and b["stone"] in FACES,
+             f"stone must be one of {', '.join(FACES)} (not {b['stone']!r})")
+    if "line" in b:
+        need(_is_str(b["line"]), "line is a string (\"\" clears it)")
     if "tone" in b:
         need(b["tone"] in TONES, f"tone must be amber or red (not {b['tone']!r})")
     if "command" in b:
@@ -195,7 +215,7 @@ def _check_beat(i: int, b, out: list[str]) -> None:
         need(isinstance(bt, list) and 0 < len(bt) <= 2 and all(isinstance(x, str) and x for x in bt),
              "buttons is one or two labels, such as [\"Undo\", \"Details\"]")
     if "window" in b:
-        need(isinstance(b["window"], str) or b["window"] is False, "window is a title (false or \"\" slides it out)")
+        need(_is_str(b["window"]) or b["window"] is False, "window is a title (false or \"\" slides it out)")
     if "from" in b:
         need(b["from"] in FROM, f"from must be one of {', '.join(FROM)}")
     for k in ("doc", "reload"):
@@ -214,6 +234,9 @@ def _check_beat(i: int, b, out: list[str]) -> None:
             isinstance(r, str) or isinstance(r, list) and r and all(isinstance(c, (str, int)) for c in r)
             for r in rows)
         need(ok, "rows is a list of strings, or of [label, value] lists")
+        if ok and "window" in b:
+            need(len(rows) <= MAX_WINDOW_ROWS, f"a window shows at most {MAX_WINDOW_ROWS} rows, so the card's "
+                 f"poster holds them all (this has {len(rows)})")
         if ok and b.get("card") == "now":
             for r in rows:
                 if isinstance(r, list) and len(r) > 1:
@@ -240,8 +263,9 @@ def _check_beat(i: int, b, out: list[str]) -> None:
             isinstance(x, list) and len(x) >= 2 and isinstance(x[0], str) and _is_int(x[1]) and 0 <= x[1] <= 100
             and (len(x) < 3 or x[2] in BAR_TONES) for x in bars), "bars is a list of [label, percent] or [label, percent, \"amber\"]")
     if "lit" in b:
-        n = len(_items(b.get("boxes"))) or len(_items(b.get("bars")))
-        need(_is_int(b["lit"]) and 0 <= b["lit"] < max(n, 1), "lit is the index of a box or bar")
+        need("boxes" in b, "lit lights one of the boxes: it goes with boxes, not bars (a bar is amber instead)")
+        n = len(_items(b.get("boxes")))
+        need(_is_int(b["lit"]) and 0 <= b["lit"] < max(n, 1), "lit is the index of a box")
     if "fold" in b:
         need(isinstance(b["fold"], bool), "fold is true (cards to strips) or false (back)")
     if "strips" in b:
@@ -250,7 +274,7 @@ def _check_beat(i: int, b, out: list[str]) -> None:
     if "hold" in b:
         need(_is_int(b["hold"]) and b["hold"] > 0, "hold is a number of milliseconds")
     if "phase" in b:
-        need(b["phase"] in (1, 2), "phase is 1 or 2: the beat that opens that phase")
+        need(_phase(b) is not None, "phase is 1 or 2: the beat that opens that phase")
 
     # The truth rule: every string a scene shows is tagged. `type` is the tip's own words and is typed.
     # A line, a window, a card, a picture and a fold with strips each carry one tag for their strings.
@@ -285,7 +309,7 @@ def validate(tip: dict, allow_empty: bool = False, strict: bool = False) -> list
         out.append("no beats")
     for i, b in enumerate(beats):
         _check_beat(i, b, out)
-    marks = [b["phase"] for b in beats if isinstance(b, dict) and b.get("phase") in (1, 2)]
+    marks = [_phase(b) for b in beats if isinstance(b, dict) and _phase(b)]
     if marks and marks != [1, 2]:
         out.append("phase marks come as one phase = 1 and then one phase = 2, or not at all")
     if all(isinstance(b, dict) for b in beats):

@@ -10,8 +10,8 @@ fed by. The two things a person sees have their own sections at the end of this 
 - [the **Tips app**](#the-tips-app) (the window where each tip plays), and
 - the **Tips card** on the desk (its piece's section).
 
-The scenes a tip plays are the scene piece's (`share/qml/Bombadil/TipScene.qml`); their words are in
-`docs/TIP-SCENES.md` once that piece lands.
+The scenes a tip plays are drawn by `share/qml/Bombadil/TipScene.qml`; how to write the beats of a tip, and the
+whole vocabulary, are in [`TIP-SCENES.md`](TIP-SCENES.md).
 
 ## The rules the code keeps
 
@@ -239,16 +239,16 @@ run that way, so no other test hears a card.
 **A PR that adds something a person can ask ships its tip row and beats in the same PR, gated by a `needs` flag
 until its code is on main.** It ships them the way it ships its docs: the row says what to ask, the gate keeps it
 off every machine that cannot do it yet, and the PR that puts the code on main flips the gate's fact in
-`read_facts`. (The beats are the scene piece's: until it lands, a row ships with `beats = []` and the card draws
-its still from the line alone. Once `docs/TIP-SCENES.md` exists, it says how to write them.) There is no
+`read_facts`. (The beats are written as `docs/TIP-SCENES.md` says; a row whose beats are not written yet ships
+with `beats = []`, and `tip_scene.validate(row, allow_empty=True)` accepts it.) There is no
 `CONTRIBUTING` file in the repository yet to carry this line; when one is added it should point here.
 
 1. Add a `[[tip]]` row to `share/tips/tips.toml` with a new id and the next `order` in its section. The row is a
    claim about this machine: put every gate it needs in `needs`, and write `tried_when` from the list above.
 2. If it needs a thing the machine may not have, add a gate to `GATES` and its fact to `Facts`, set from
    `read_facts` (a gate that is a piece of code is `find_spec(...)`, so a branch without it hides the tip).
-3. Write its scene in `beats` and its still: this part comes from the scene piece (`docs/TIP-SCENES.md`, once it
-   lands). Until then leave `beats = []`.
+3. Write its scene in `beats` (`docs/TIP-SCENES.md`: "Writing the beats for a tip"). The poster on the card is
+   the last beat's state, so there is no still to draw. Until the beats are written leave `beats = []`.
 4. Run `tests/test_tips.py`. It fails on a line that does not fit the card, a malformed or reused id, a voice
    rule broken, a button that does not fit the card's row while `card` is true, words that reach nothing, and
    evidence that nothing sees.

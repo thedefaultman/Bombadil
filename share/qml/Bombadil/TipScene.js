@@ -209,8 +209,11 @@ function frameAt(c, t, still) {
             if (n > 0 && s.listenSince < 0) s.listenSince = e.start
         }
         if (b.stone !== undefined) {
+            var wasListening = s.face === "listening"
             s.face = b.stone; s.faceSince = e.start
             if (b.stone !== "working") s.counterAt = null
+            if (b.stone === "listening" && s.listenSince < 0) s.listenSince = e.start      // it leans as it does after Super
+            if (b.stone === "rest" && wasListening) s.listenSince = -1                      // and rest stands it up again
             if (b.stone !== "rest" && b.stone !== "listening") s.listenSince = -1
         }
         if (b.line !== undefined) {
@@ -323,7 +326,6 @@ function frameAt(c, t, still) {
         var cd = s.cards[s.cardOrder[i]]
         var arrive = clamp01((t - cd.since) / CARD_ARRIVE_MS)
         var shown = s.foldSince >= 0 ? (s.folded ? 1 - fp : fp) : 1
-        if (s.foldSince >= 0 && !s.folded && cd.since > s.foldSince) shown = 1
         cards.push({ kind: cd.kind, rows: cd.rows, title: cd.title, why: cd.why, arrive: arrive, shown: shown * arrive })
     }
     f.cards = cards
