@@ -10,7 +10,8 @@
 #   needs       what the machine must be able to do before the tip shows anywhere
 #   card        false for a tip only the Tips app shows (its button does not fit the card's row)
 #   tried_when  what agentd sees that makes the tip tried, with no model
-#   captions    three phase captions, at most three words each
+#   captions    three phase captions, at most three words each; "You ask", "It works", "You have it" unless the
+#               brief words a tip's own (only the first tip does). They are proposals for the voice thread.
 #   beats       the scene (a later piece; a row ships with beats = [] until then)
 #
 # A tip whose gate is not met, or whose placeholder cannot be filled, is shown nowhere.
@@ -38,7 +39,7 @@ marks = []
 needs = []
 card = true
 tried_when = ["local:picture", "tool:show_card", "tool:system_map"]
-captions = ["You ask", "It draws", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -51,7 +52,7 @@ marks = ["Esc"]
 needs = ["model"]
 card = true
 tried_when = ["local:stop"]
-captions = ["It works", "You press Esc", "It stops"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -64,7 +65,7 @@ marks = []
 needs = ["model"]
 card = true
 tried_when = ["words", "job:start:timer"]
-captions = ["You ask", "It counts", "It steps aside"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -77,7 +78,7 @@ marks = []
 needs = []
 card = true
 tried_when = ["local:widget:machine"]
-captions = ["You ask", "It answers", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -90,7 +91,7 @@ marks = []
 needs = []
 card = true
 tried_when = ["bang"]
-captions = ["You type", "It runs", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -103,7 +104,7 @@ marks = []
 needs = ["model", "app"]
 card = true
 tried_when = ["words"]
-captions = ["You ask", "It changes", "Same place"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -116,7 +117,7 @@ marks = []
 needs = ["app"]
 card = true
 tried_when = ["local:app"]
-captions = ["You type", "It finishes", "It opens"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -129,7 +130,7 @@ marks = []
 needs = ["model"]
 card = true
 tried_when = ["words"]
-captions = ["You ask", "It builds", "It locks"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -142,7 +143,7 @@ marks = ["where did this come from?"]
 needs = []
 card = true
 tried_when = ["local:whyhere"]
-captions = ["File is open", "You ask", "It knows"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -155,7 +156,7 @@ marks = []
 needs = ["model"]
 card = false
 tried_when = ["words", "tool:show_card"]
-captions = ["You ask", "It draws", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -168,7 +169,7 @@ marks = []
 needs = ["model"]
 card = true
 tried_when = ["words"]
-captions = ["You ask", "Each step shows", "It is ready"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -181,7 +182,7 @@ marks = []
 needs = ["model", "project"]
 card = false
 tried_when = ["words", "job:start:job"]
-captions = ["You ask", "It runs aside", "It tells you"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -194,7 +195,7 @@ marks = []
 needs = ["model", "project"]
 card = false
 tried_when = ["words"]
-captions = ["You ask", "It draws", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -207,7 +208,7 @@ marks = []
 needs = []
 card = true
 tried_when = ["local:picture:disks"]
-captions = ["You ask", "It draws", "You see it"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -220,7 +221,7 @@ marks = []
 needs = []
 card = true
 tried_when = ["local:rest"]
-captions = ["It rests", "Asks wait", "It comes back"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -233,7 +234,7 @@ marks = []
 needs = ["desk-seen"]
 card = true
 tried_when = ["local:desk"]
-captions = ["Cards are up", "You say desk", "They fold"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -246,7 +247,7 @@ marks = []
 needs = ["keep"]
 card = true
 tried_when = ["words"]
-captions = ["You choose", "It restarts", "It is there"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -259,7 +260,7 @@ marks = ["why"]
 needs = ["model"]
 card = true
 tried_when = ["local:why"]
-captions = ["It works", "You ask why", "It says"]
+captions = ["You ask", "It works", "You have it"]
 beats = []
 
 [[tip]]
@@ -272,5 +273,5 @@ marks = ["undo"]
 needs = ["installed"]
 card = true
 tried_when = ["local:undo"]
-captions = ["It changed", "You say undo", "It goes back"]
+captions = ["You ask", "It works", "You have it"]
 beats = []

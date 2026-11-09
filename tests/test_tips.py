@@ -103,8 +103,19 @@ def test_a_tip_follows_the_voice_rules(row):
     assert all(1 <= len(c.split()) <= 3 for c in row.captions), row.captions
 
 
+def test_captions_are_the_default_three_unless_the_brief_words_a_tips_own():
+    """The brief words the captions of one tip, the first; every other row has the default three, as a proposal
+    for the voice thread."""
+    assert BY_ID["make-an-app"].captions == ("You ask", "It builds", "You have it")
+    assert {r.captions for r in ROWS if r.id != "make-an-app"} == {("You ask", "It works", "You have it")}
+
+
 def _qt():
-    QtGui = pytest.importorskip("PySide6.QtGui", exc_type=ImportError)
+    """Qt's gui module and an application, or (None, None) where PySide6 is not installed."""
+    try:
+        from PySide6 import QtGui
+    except ImportError:
+        return None, None
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QtGui.QGuiApplication.instance() or QtGui.QGuiApplication([])
     return QtGui, app
@@ -112,10 +123,10 @@ def _qt():
 
 @pytest.fixture(scope="module")
 def ink():
-    """Width in pixels of text in Inter at a size and weight, or None where Inter is not installed (the test
-    then holds the characters to what fits)."""
+    """Width in pixels of text in Inter at a size and weight, or None where Inter (or PySide6) is not installed:
+    the test then holds the characters to what fits, so a machine without the font still checks the rule."""
     QtGui, _ = _qt()
-    if "Inter" not in QtGui.QFontDatabase.families():
+    if QtGui is None or "Inter" not in QtGui.QFontDatabase.families():
         yield None
         return
 
@@ -129,6 +140,7 @@ def ink():
 
 CARD_ROW = 272            # the card is 300 wide with 14 px each side
 LINE_CHARS = 45           # what fits 272 px at 13 px when Inter is not here to measure (the longest line is 43)
+BUTTON_CHARS = 27         # the same for a card's button or marks beside "All tips ›" (the longest is 27)
 BUTTON_INSET = 2 * 12 + 2  # the button's padding and its 1 px borders
 ROW_GAP = 10
 ALL_TIPS = "All tips ›"
@@ -138,15 +150,24 @@ ALL_TIPS = "All tips ›"
 def test_the_line_fits_the_card_and_so_does_the_button_with_all_tips(row, ink):
     tip = tips.resolve(row, SAMPLE)
     assert tip is not None
+    shown = tip.words or " ".join(tip.marks)
     if ink is None:
         assert len(tip.line) <= LINE_CHARS
+        assert not row.card or len(shown) <= BUTTON_CHARS, f"{row.id}: {shown!r} is too long for the card's row"
         return
     assert ink(tip.line, 13) <= CARD_ROW, f"{row.id}: {tip.line!r}"
     if row.card:
         # The button (or the marks, which take its place) and "All tips ›" share the card's bottom row.
-        shown = tip.words or " ".join(tip.marks)
         used = ink(shown, 13, "medium") + BUTTON_INSET + ROW_GAP + ink(ALL_TIPS, 12)
         assert used <= CARD_ROW, f"{row.id}: {shown!r} and {ALL_TIPS!r} take {used:.1f} px of {CARD_ROW}"
+
+
+def test_the_character_bounds_that_stand_in_for_inter_hold_for_the_shipped_tips():
+    """Where Inter is not installed the width test falls back on these, so they must be true of the table."""
+    for row in ROWS:
+        tip = tips.resolve(row, SAMPLE)
+        assert len(tip.line) <= LINE_CHARS, row.id
+        assert not row.card or len(tip.words or " ".join(tip.marks)) <= BUTTON_CHARS, row.id
 
 
 def test_a_tip_that_does_not_fit_the_card_is_one_the_app_shows(ink):
@@ -226,11 +247,32 @@ def _toml(*rows):
     ({"order": True}, "order"), ({"line": "  "}, "line"), ({"needs": ["wishes"]}, "gate"),
     ({"needs": "model"}, "gate"), ({"tried_when": ["clicks"]}, "evidence"), ({"tried_when": ["local:"]}, "evidence"),
     ({"captions": ["One", "Two"]}, "captions"), ({"card": "yes"}, "card"), ({"beats": ["x"]}, "beats"),
-    ({"line": "Hello {name}."}, "placeholder"), ({"words": "pause {AI}"}, "placeholder")])
+    ({"line": "Hello {name}."}, "placeholder"), ({"words": "pause {AI}"}, "placeholder"),
+    ({"need": ["model"]}, "unknown field need"), ({"beat": []}, "unknown field beat")])
 def test_a_row_that_is_not_one_is_left_out_with_why(over, why):
     rows, problems = load_rows(_toml(_row(), _row(id="fine", order=2), _row(**{"id": "broken", "order": 3, **over})))
     assert [r.id for r in rows] == ["a-tip", "fine"]
     assert why in " ".join(problems)
+
+
+def _with_beats(beat):
+    """A table of one good row and one whose beats are written as TOML (json.dumps cannot write a date)."""
+    own = "\n".join(f"{k} = {json.dumps(v)}" for k, v in _row(id="beaten", order=2).items() if k != "beats")
+    return _toml(_row()) + f"\n[[tip]]\n{own}\nbeats = [ {beat} ]\n"
+
+
+@pytest.mark.parametrize("beat", ["{ hold = 1979-05-27 }", "{ hold = 07:32:00 }", "{ hold = nan }", "{ hold = inf }"])
+def test_a_row_whose_beats_json_cannot_carry_is_left_out_and_cannot_reach_a_client(beat):
+    """TOML holds dates, times and nan, which json.dumps refuses; a row sent to a client with one in it would fail
+    every connection."""
+    rows, problems = load_rows(_with_beats(beat))
+    assert [r.id for r in rows] == ["a-tip"] and "JSON cannot carry" in " ".join(problems)
+
+
+def test_a_row_whose_beats_are_plain_values_is_kept_and_can_be_sent():
+    rows, problems = load_rows(_with_beats('{ key = "super" }, { type = "Hello", hold = 400 }'))
+    assert problems == [] and [r.id for r in rows] == ["a-tip", "beaten"]
+    assert json.loads(json.dumps(rows[1].as_dict()))["beats"] == [{"key": "super"}, {"type": "Hello", "hold": 400}]
 
 
 def test_a_second_row_with_an_id_is_left_out_and_a_shared_place_is_reported():
@@ -306,7 +348,7 @@ def test_the_filled_row_is_what_the_card_and_the_app_are_sent():
     assert t.words == "Tickets" and t.line == "Type an app's name to open it." and BY_ID["open-app"].words == "{app}"
     assert t.as_dict() == {"id": "open-app", "section": "work", "order": 2, "line": "Type an app's name to open it.",
                            "words": "Tickets", "marks": [], "needs": ["app"], "card": True,
-                           "tried_when": ["local:app"], "captions": ["You type", "It finishes", "It opens"],
+                           "tried_when": ["local:app"], "captions": ["You ask", "It works", "You have it"],
                            "beats": []}
 
 
@@ -344,6 +386,25 @@ def test_a_name_that_could_not_go_into_a_button_safely_is_never_used(tmp_path):
     _app(tmp_path, "tickets", "!reboot", age=0)
     assert newest_app(tmp_path) == "tickets"                                # the folder's name stands in for it
     assert tips.fit("Café Ünï", tips._TITLE, 18) == "Café Ünï" and tips.fit("Two   words", tips._TITLE, 18) == "Two words"
+
+
+@pytest.mark.parametrize("title", ["Lock", "Desk", "History", "Mail", "Restart", "Shutdown", "Stop", "Undo", "Brain"])
+def test_an_app_whose_title_the_launcher_keeps_for_a_command_is_not_the_one_a_tip_says_to_type(tmp_path, title):
+    """"Type an app's name to open it" must be true: typing "Lock" locks the screen, whatever app is called that."""
+    _app(tmp_path, "tickets", "Tickets", age=500)
+    _app(tmp_path, apps.slug(title), title, age=1)                             # the newer one, in the folder it gets
+    assert launcher.match(title, [SimpleNamespace(name=apps.slug(title), title=title)]).kind != "app"
+    assert newest_app(tmp_path) == "Tickets"
+    only = tmp_path / "only"
+    _app(only, apps.slug(title), title)
+    assert newest_app(only) == ""                                              # no app a tip can name: no tip
+    assert not backed(BY_ID["open-app"], Facts(ai="Claude", app=newest_app(only)))
+
+
+def test_an_app_that_a_command_word_hides_by_title_is_still_named_by_its_folder_when_that_opens_it(tmp_path):
+    _app(tmp_path, "my-lock", "Lock", age=1)
+    assert newest_app(tmp_path) == "my-lock"
+    assert launcher.match("my-lock", [apps.App("my-lock", tmp_path, "Lock")]).kind == "app"
 
 
 def test_the_newest_project_is_the_newest_folder_that_is_a_plain_name(tmp_path):
@@ -437,6 +498,37 @@ def test_a_damaged_part_falls_back_alone_and_unknown_things_are_dropped(tmp_path
     assert machine(tmp_path).state.known == SEED            # begun, but knows nothing of "known": none are new
 
 
+def test_a_file_begun_when_the_table_could_not_be_read_does_not_hide_every_tip_after(tmp_path):
+    path = tmp_path / "tips.json"
+    broken = Tips(rows=[], path=path, clock=lambda: NOW)           # the table was unreadable on that day
+    assert broken.ready() and json.loads(path.read_text())["known"] == []
+    again = machine(tmp_path)
+    assert again.state.known == SEED and again.message()["card"]["id"] == "make-an-app"
+    path.write_text(json.dumps({"first_ready": "2026-11-09", "known": [None, 7, "Bad Id"]}))      # or by hand
+    assert machine(tmp_path).state.known == SEED
+    path.write_text(json.dumps({"first_ready": "2026-11-09", "known": ["bang"]}))     # a real list is believed
+    assert machine(tmp_path).state.known == ["bang"]
+    path.write_text(json.dumps({"known": []}))                       # before setup was ever ready: nothing yet
+    assert machine(tmp_path).state.known == []
+
+
+def test_a_save_that_fails_halfway_keeps_the_file_it_had_and_leaves_nothing_behind(tmp_path, monkeypatch, capsys):
+    t = machine(tmp_path)
+    assert t.ready()
+    before = (tmp_path / "tips.json").read_text()
+    renamed = []
+
+    def refused(src, dst):
+        renamed.append((os.path.basename(src), os.path.exists(src)))     # the new text is written aside first
+        raise OSError("disk full")
+    monkeypatch.setattr(tips.os, "replace", refused)
+    assert t.tried(["bang"]) == ["bang"] and t.state.tried == ["bang"]      # kept in memory until agentd stops
+    assert renamed == [("tips.json.tmp", True)]
+    assert (tmp_path / "tips.json").read_text() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["tips.json"]
+    assert "could not save" in capsys.readouterr().err
+
+
 def test_a_file_that_cannot_be_read_or_written_never_costs_agentd(tmp_path, capsys):
     (tmp_path / "tips.json").mkdir()                        # not a file at all
     t = machine(tmp_path)
@@ -494,7 +586,7 @@ def test_the_arrows_turn_through_start_here_and_wrap(tmp_path):
     assert t.message()["card"]["id"] == "picture"
     assert t.turn(-1) is True and t.turn(-1) is True and t.message()["card"]["id"] == "bang"
     assert t.message()["card"]["why"] == "Start here · 6 of 6"
-    assert [t.turn(d) for d in (0, 2, None, "1", True)] == [False] * 5
+    assert [t.turn(d) for d in (0, 2, None, "1", True, 1.0, -1.0, [1])] == [False] * 8     # a whole number only
     assert machine(tmp_path / "other").turn(1) is False      # nothing to turn before the card is there
 
 
@@ -678,7 +770,7 @@ def test_the_list_holds_only_what_the_machine_can_back_with_what_the_app_draws_f
     assert [r["id"] for r in rows] == ["picture", "machine", "bang", "whyhere", "disk"]
     assert rows[0] == {"id": "picture", "section": "start", "order": 2, "line": "Ask for a picture, not a paragraph.",
                        "words": "How am I connected?", "marks": [], "card": True, "tried": True, "new": False,
-                       "captions": ["You ask", "It draws", "You see it"], "beats": []}
+                       "captions": ["You ask", "It works", "You have it"], "beats": []}
     assert [r["tried"] for r in rows] == [True, False, False, False, False]
     t.facts = Facts(ai="Claude", app="Tickets", project="myapp", installed=True, desk_seen=True)
     full = t.listing()
@@ -746,6 +838,7 @@ def test_desk_seen_unlocks_the_desk_tip_and_is_kept(tmp_path):
 
 def test_parse_state_alone_is_pure():
     assert parse_state(None) == tips.State() and parse_state("") == tips.State()
-    s = parse_state(json.dumps({"first_ready": "2026-11-09", "days": ["2026-11-09"], "tried": ["bang"], "known": [],
-                                "open_on": "bang", "desk_seen": True}), SEED)
-    assert s == tips.State("2026-11-09", ["2026-11-09"], ["bang"], [], "bang", True)
+    s = parse_state(json.dumps({"first_ready": "2026-11-09", "days": ["2026-11-09"], "tried": ["bang"],
+                                "known": ["bang"], "open_on": "bang", "desk_seen": True}), SEED)
+    assert s == tips.State("2026-11-09", ["2026-11-09"], ["bang"], ["bang"], "bang", True)
+    assert parse_state(json.dumps({"first_ready": "2026-11-09", "known": []}), SEED).known == SEED

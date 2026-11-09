@@ -37,13 +37,16 @@ from pathlib import Path
 
 from . import paths
 from .apps import NAME_RE as APP_NAME
-from .apps import read_meta
+from .apps import App, read_meta
 
 # The sections, in the order the app lists them and the card turns through them.
 SECTIONS = {"start": "Start here", "work": "Work", "code": "Code", "machine": "This machine"}
 # What a tip may need. Each is one thing the machine either can back or cannot, see `Facts`.
 GATES = ("model", "installed", "app", "project", "sessions", "mail", "noticed", "keep", "desk-seen")
 PLACEHOLDERS = ("ai", "app", "project")
+# The fields of a [[tip]] row (docs/TIPS.md): a row with any other key is reported, not half-read.
+FIELDS = frozenset({"id", "section", "order", "line", "words", "marks", "needs", "card", "tried_when", "captions",
+                    "beats"})
 JOB_KINDS = ("job", "watch", "timer")
 WEEK_DAYS = 7              # days on which the person typed in the pill; Tips steps aside after this many
 START = "start"            # the section a new person is taught from, in the card's first week
@@ -92,6 +95,16 @@ def _strings(value) -> list[str] | None:
     return list(value) if isinstance(value, list) and all(isinstance(v, str) for v in value) else None
 
 
+def _sendable(value) -> bool:
+    """Can this go to a client as JSON? TOML holds dates, times and a nan that JSON does not, and a row that
+    could not be sent would fail every client that connects."""
+    try:
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return False
+    return True
+
+
 def parse_row(raw) -> tuple[Tip | None, list[str]]:
     """One [[tip]] table as a row, or None and what is wrong with it. A row that is not one is left out of the
     table, never half-used."""
@@ -103,6 +116,9 @@ def parse_row(raw) -> tuple[Tip | None, list[str]]:
     def need(ok: bool, what: str):
         if not ok:
             bad.append(f"{name}: {what}")
+    # A key nothing reads is a typo (`need` for `needs` would leave a tip ungated), so it is reported.
+    need(not set(raw) - FIELDS, f"unknown field {', '.join(sorted(set(raw) - FIELDS))} (the fields are "
+                                f"{', '.join(sorted(FIELDS))})")
     need(isinstance(raw.get("id"), str) and bool(ID_RE.fullmatch(raw["id"])) and len(raw["id"]) <= 40,
          "id is not kebab-case")
     need(raw.get("section") in SECTIONS, f"section is not one of {', '.join(SECTIONS)}")
@@ -118,6 +134,7 @@ def parse_row(raw) -> tuple[Tip | None, list[str]]:
     need(when is not None and all(_EVIDENCE.fullmatch(w) for w in when), "tried_when holds evidence nothing sees")
     need(caps is not None and len(caps) == 3, "captions are not three")
     need(isinstance(beats, list) and all(isinstance(b, dict) for b in beats), "beats is not a list of tables")
+    need(_sendable(beats), "beats holds a value JSON cannot carry (a date or time, say)")
     for text in (raw.get("line"), raw.get("words", "")):
         if isinstance(text, str):
             need(all(p in PLACEHOLDERS for p in _PLACEHOLDER.findall(text)), f"{text!r} holds a placeholder "
@@ -235,10 +252,20 @@ def fit(text: str, pattern: re.Pattern, limit: int) -> str:
     return s if s and len(s) <= limit and pattern.fullmatch(s) else ""
 
 
+def _opens_the_app(title: str, name: str, folder: Path) -> bool:
+    """Does typing this title open that app? The launcher answers a command before an app ("lock", "desk",
+    "history", "mail" are its words), so an app with such a title is not opened by its name, and a tip that
+    says it is would be untrue. Imported here so tips.py stays a leaf of the package."""
+    from . import launcher
+    action = launcher.match(title, [App(name, folder, title)])
+    return action is not None and action.kind == "app" and action.target == name and action.verb == "open"
+
+
 def newest_app(apps_dir: Path) -> str:
     """The title of the newest app in the folder: the one whose main.qml was written last. An app whose name
-    does not fit a button is left out, and the next newest is used."""
-    best, name = -1.0, ""
+    does not fit a button, or whose title is a word the launcher keeps for itself, is left out, and the next
+    newest is used."""
+    found = []
     try:
         entries = sorted(os.scandir(apps_dir), key=lambda e: e.name)
     except OSError:
@@ -250,10 +277,12 @@ def newest_app(apps_dir: Path) -> str:
             written = os.stat(os.path.join(e.path, "main.qml")).st_mtime
         except OSError:
             continue
-        title = fit(read_meta(Path(e.path)).get("title") or "", _TITLE, MAX_APP) or fit(e.name, _TITLE, MAX_APP)
-        if title and written > best:
-            best, name = written, title
-    return name
+        folder = Path(e.path)
+        for title in (fit(read_meta(folder).get("title") or "", _TITLE, MAX_APP), fit(e.name, _TITLE, MAX_APP)):
+            if title and _opens_the_app(title, e.name, folder):
+                found.append((written, title))
+                break
+    return max(found, key=lambda f: f[0], default=(0, ""))[1]
 
 
 def newest_project(projects_dir: Path) -> str:
@@ -329,8 +358,9 @@ def _ids(value) -> list[str]:
 
 def parse_state(text: str | None, all_ids=()) -> State:
     """tips.json as it is read. Whatever is missing, damaged or edited by hand falls back for that part; a
-    file that does not parse gives a new person's state. `known` missing from a file that has begun means
-    the person has had every tip there is in front of them, so none of them is new."""
+    file that does not parse gives a new person's state. `known` missing or empty in a file that has begun
+    means the person has had every tip there is in front of them, so none of them is new (an empty list is
+    what a table that could not be read leaves behind, and it would otherwise hide every tip)."""
     if not text or not text.strip():
         return State()
     try:
@@ -343,7 +373,7 @@ def parse_state(text: str | None, all_ids=()) -> State:
     s = State(first_ready=data["first_ready"] if _is_day(data.get("first_ready")) else "")
     s.days = sorted({d for d in data["days"] if _is_day(d)})[-MAX_DAYS:] if isinstance(data.get("days"), list) else []
     s.tried = _ids(data.get("tried"))
-    s.known = _ids(data["known"]) if isinstance(data.get("known"), list) else (list(all_ids) if s.first_ready else [])
+    s.known = _ids(data.get("known")) or (list(all_ids) if s.first_ready else [])
     s.open_on = data["open_on"] if isinstance(data.get("open_on"), str) and ID_RE.fullmatch(data["open_on"]) else ""
     s.desk_seen = data.get("desk_seen") is True
     return s
@@ -440,6 +470,10 @@ class Tips:
             os.replace(tmp, path)
         except OSError as e:
             print(f"tips: could not save {path}: {e}", file=sys.stderr)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
             return False
         return True
 
@@ -519,7 +553,7 @@ class Tips:
 
     def turn(self, direction) -> bool:
         """The arrows and the wheel: one tip on, or back, round the card's tips. True when the card moved."""
-        if direction not in (1, -1) or isinstance(direction, bool):
+        if type(direction) is not int or direction not in (1, -1):   # not True, not 1.0
             return False
         with self._lock:
             msg = self.message()
