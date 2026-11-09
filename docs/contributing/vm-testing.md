@@ -3,7 +3,7 @@
 > **Status:** Shipped
 > **Code:** `scripts/test-vm.sh`, `scripts/qmp.py`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/etc/systemd/system/bombadil-smoke.service`, `iso/efiboot/loader/entries/02-bombadil-serial.conf`, `iso/efiboot/loader/entries/03-bombadil-install-test.conf`, `src/bombadil/fake_signin.py`, `scripts/vm-tools/vmsmoke`, `tests/test_iso_profile.py`, `tests/test_boot_console.py`, `tests/test_brain_service.py`
 > **Design:** there is no brief for the test layers; [developing and testing](development.md) places this layer among the others
-> **Verified:** 2026-11-08 against `main` at `7176e55`
+> **Verified:** 2026-11-09 against `main` at `ca7f80a` for the coding-sessions checks and the `DIAG` lines after a failure, which were read from the script and not run, and for the smoke's picture checks; the rest as checked on 2026-11-08 at `7176e55`
 
 Unit tests cover the Python and the QML that load without a compositor, and a headless desktop test
 (`tests/desktop/run.sh`) drives the bar and the daemon in a sway session against a scripted model
@@ -24,7 +24,9 @@ from how the scripts rely on it.
 The parts of this page about the smoke's picture checks (a wait for a calm guest, and a capture asked
 again with more time) were added on 2026-11-09 against `main` at `9d5c729`. They were checked by reading
 the script and by running the five tests that exercise it, which run the script's `picture()` function in
-bash and need no VM. The rest of the page is as it was checked on 2026-11-08 at `7176e55`.
+bash and need no VM. The coding-sessions checks and the `DIAG` lines after a failed check were added on
+2026-11-09 against `main` at `ca7f80a` by reading the script, which passes `bash -n`; no VM was booted. The
+rest of the page is as it was checked on 2026-11-08 at `7176e55`.
 
 ## How it fits together
 
@@ -155,7 +157,7 @@ when the kernel has one. The host reads the log every two seconds, answers a `SH
 | `SHOT <name>` | The guest wants a picture, then sleeps `SHOT_WAIT` seconds (8 by default). | A screenshot to `out/test/<boot>-<name>.png`, once per name, so the second pass of the undo round trip takes none of the shots whose names the first pass used. The name matches `[a-z0-9-]*`. Nothing reads the picture; it is for the person who opens it. |
 | `KEYS <bootid>-<n> <qcode>...` | The guest wants these keys pressed, then sleeps `KEYS_WAIT` seconds (8 by default). | One QMP `send-key` per word, once per `<bootid>-<n>`. A `+` joins keys pressed together. |
 | `NOTE <text>` | The machine was still busy when the keys went in, or when the pictures were taken. | none |
-| `DIAG <text>` | What the machine looked like when something went wrong. | none |
+| `DIAG <text>` | What the machine looked like when something went wrong: after each of the first four `FAIL` lines, two lines `DIAG <name> windows:` and `DIAG <name> programs:`, and the cases under [When a check fails](#when-a-check-fails). | none |
 | `AGENTD-LOG: <line>`, `MAIL-LOG: <line>` | The last 60 lines of `/tmp/smoke.agentd.log`, printed at the end of the sign-in block, and the last 30 of `/tmp/smoke.mail.log`, printed at the end of the mail block. Both appear in a passing run. `AGENTD-LOG:` is printed again when `signin-page-again` fails. | none |
 | `SKIP signin: <reason>` | The sign-in checks did not run. | The run exits 1 when this is in the first log. |
 | `REBOOT pass=<n> fail=<m>` | The first pass of the undo mode ends and the guest reboots. There is no `DONE` yet. | none |
@@ -195,6 +197,19 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   `!` turn runs and Super+Esc stops it and says so in the history.
 - **The details drawer.** It takes the keyboard and every way out closes it. The message a click on
   a service in a picture sends (`open-unit`) opens the unit in the same drawer.
+- **Coding sessions**, in every mode, `undo` included. `zellij`, `foot`, `footclient` and `bombadil-signal` are
+  looked for on `PATH` (`dev-tools`, which like `tools-installed` passes when any one of them is found), the
+  managed hook files parse (`dev-hooks-parse`) and lingering is on for the user
+  (`dev-linger`: `bombadil-live.service` turns it on for the live image and `bombadil-install` for the
+  installed one). The smoke makes `~/Projects/smoke`, a folder with one commit (`dev-project`), and the word
+  `shell smoke` starts a shell session on it (`dev-start`) in a zellij session, a systemd scope and a slice of
+  its own (`dev-zellij`, `dev-scope`, `dev-slice`). Its viewer window, of class `bombadil-session-smoke-shell`,
+  floats and is at least 70% as wide as the screen (`dev-window`, `dev-window-size`, and a `SHOT session`).
+  Closing the window leaves the session running, and its name brings it back in a new window
+  (`dev-close-window` to `dev-window-again`). `end shell smoke` ends the session and its scope, and the
+  history says so (`dev-end`, `dev-ended`, `dev-scope-gone`, `dev-in-history`). The session is a shell, so no
+  provider login and no model are involved, and the hooks of Claude Code and Codex run nothing here: only their
+  files are read.
 - **Mail.** In every mode, `undo` included, Thunderbird answers `--version`, the unit is enabled and
   active, and its service answers on its socket. In every mode but `undo`, windows that carry
   Thunderbird's class stay on `special:mail-engine` without taking the keyboard, the service runs on
@@ -280,7 +295,10 @@ Every mode runs the common checks. The catalogue, with every check name, is in
    kernel and console output around them, are in `out/test/<boot>.serial.log`. Start with the first
    `FAIL`, because later ones often follow from it. Its tail is the last 300 bytes of the check's
    output; a failed `launcher_ran` check ends with the last three lines of `bombadil history`.
-2. Read the `DIAG` lines near it. The smoke prints them in three cases. When the first Super tap did
+2. Read the `DIAG` lines near it. The smoke prints them in four cases. After each of the first four failed
+   checks it lists Hyprland's windows (class, workspace and pid) and the pids of Hyprland, quickshell, foot,
+   footclient, zellij and agentd, with the count of chromium processes (`DIAG <name> windows:` and `DIAG <name>
+   programs:`). The other three: when the first Super tap did
    nothing, it names the active window and the release binds, asks for the pill by hand, types the
    word again and says whether the pill took it (the Super bind did not fire) or not. When the word
    did not reach the pill during the mail window test, it names the active window. When

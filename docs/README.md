@@ -19,7 +19,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | The session daemon, the queue, providers | Shipped | [agentd](architecture/agentd.md) |
 | The OS as tools for the agent | Shipped | [os-mcp](architecture/os-mcp.md) |
 | The pill, the line, the stone, chips, wallpaper | Partly shipped | [shell](architecture/shell.md) |
-| Cards in rails and strips, dragging them, jobs | Partly shipped | [desk](architecture/desk.md) |
+| Cards in rails and strips (Now, Watching, Needs you, Machine, Away), dragging them, jobs | Partly shipped | [desk](architecture/desk.md) |
 | Apps the agent writes, the kit and its skill | Partly shipped | [app kit](architecture/app-kit.md) |
 | The browser panel and signing in | Partly shipped | [browser and sign-in](architecture/browser-and-signin.md) |
 | Diagrams and reasons above the pill | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
@@ -27,7 +27,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | The image, the installer, boot | Shipped | [ISO and install](architecture/iso-and-install.md) |
 | What keeps the session alive | Partly shipped | [session services](architecture/session-services.md) |
 | The index that writes itself | Partly shipped | [brain](architecture/brain.md) |
-| Named coding sessions | In progress | [coding sessions](architecture/coding-sessions.md) |
+| Named coding sessions and the dots above the pill | Partly shipped | [coding sessions](architecture/coding-sessions.md) |
 | A name, voices and welcome lines | In progress | [voice](architecture/voice.md) |
 | Noticing repeated asks, self-checks | In progress | [loop](architecture/loop.md) |
 | Mail in its own window, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md) |
