@@ -8,6 +8,8 @@ hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", sca
 -- them again if it dies (Restart=always). They need the session's environment first.
 hl.on("hyprland.start", function()
     hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
+    -- One foot server for the coding sessions' windows, so a session's window rises at once.
+    hl.exec_cmd("foot --server")
     -- Mail's service is a user unit that starts at login, before this session has a screen, and
     -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
@@ -75,6 +77,16 @@ hl.window_rule({
     float = true,
     center = true,
     size = "540 660",
+})
+
+-- A coding session's window (foot on its zellij session, dev.py) rises large in the middle, clear
+-- of the pill. It is only a viewer: closing it leaves the session running.
+hl.window_rule({
+    name = "bombadil-sessions",
+    match = { class = "^(bombadil-session-.*)$" },
+    float = true,
+    center = true,
+    size = "(monitor_w*0.86) (monitor_h*0.8)",
 })
 
 -- Panel apps open straight into their panel; os-mcp (hypr.py) only launches and toggles.
