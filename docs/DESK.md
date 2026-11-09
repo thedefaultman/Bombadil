@@ -14,11 +14,12 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskRails.qml`, `shell/DeskRail.qml` | The two rails: one Quickshell `PanelWindow` per side on the Bottom layer (above the wallpaper, under every window), reserving nothing, with an input mask that covers only the cards. |
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
 | `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
-| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Machine; a row is a dot, a meter, a stacked meter or plain text). |
+| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Away, Machine; a row is a dot, a meter, a stacked meter or plain text). |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
 | `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away or folded by hand, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
 | `src/bombadil/jobs.py` | Watching's table of background jobs. |
+| `src/bombadil/away.py` | The Away card's rows: what the turn log and the coding sessions say happened since the person was last seen, in the order they would want it, and the one `away` message built from them. Pure Python; the log's path and the clock are parameters, so the tests hand it rows and a time. |
 | `src/bombadil/vitals.py` | The Machine card's readings: memory by who uses it, the disk, the processor and its heat, the network, the lines that raise the card and the sentence that says why. Pure Python on the standard library; every file it reads is a parameter, so the tests hand it text. |
 | `src/bombadil/agentd.py` | Sends the plan, the jobs table, the coding sessions and the desk's state to the shell, and takes the shell's requests back. |
 
@@ -60,10 +61,12 @@ drops the rest.
 | `{"type":"jobs","jobs":[...]}` | agentd to shell | Watching's table, replaced whole each time. |
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
 | `{"type":"machine","present":...,"asked":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. See [the Machine card](#the-machine-card). |
+| `{"type":"away","since":...,"count":...,"why":...,"rows":[...]}` | agentd to shell | The Away card, replaced whole. `rows: []` takes it away. See [the Away card](#the-away-card). |
 | `{"type":"desk","folded":...,"hidden":...,"stripped":...,"rails":...,"order":...}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand. Whatever it leaves out stays as it was. |
 | `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
+| `{"type":"away","op":"get"\|"seen"}` | shell to agentd | `get` asks for the Away card again; `seen` says the person has looked at it (a tap on it), so it can go. Neither reaches the model. |
 
 ## Faces, slots and right of way
 
@@ -203,6 +206,71 @@ the last changes nothing.
 - *The first frame after nobody was looking can be a second old.* After Machine is put away and asked for
   again, the processor reads 0% and the network shows dashes until the next sample, a second later.
 
+## The Away card
+
+The Away card answers "what happened while I was gone?". It sits on the right rail between Needs you and
+Machine, its chip says `back · 4 things`, and it lists what finished, who is waiting, what failed and what
+changed, the most urgent first. It leaves once it has been seen: a tap anywhere on it, or the person's next
+ask. `away.py` reads the turn log and the sessions and decides; the shell draws what the one `away`
+message says and knows nothing about turns or sessions.
+
+```mermaid
+flowchart LR
+    T["turns.jsonl: turns and jobs that ended"] --> W[away.py: items]
+    S[coding sessions] --> W
+    W -- "away message" --> A[agentd]
+    A --> DS[DeskState.awayModel]
+    DS --> RC[RowsCard: dot and plain rows]
+    DS --> SC["strip chip: back · 4 things"]
+    RC -- "a tap, or the next ask" --> A -- "seen" --> W
+```
+
+**The rows.** Newest first within each kind, at most four, and a plain `and N more` line for the rest. The
+chip counts everything found, not the rows shown.
+
+| Kind | It is | Tone | Second line | Button |
+| --- | --- | --- | --- | --- |
+| failed | a turn that ended in an error, or a background job that ended failed | red | the first line of what went wrong | `Why?` on a job (shows its output) |
+| waiting | a coding session that has asked something | the sessions' blue | what it asked | `Open` |
+| finished | a turn or a job that ended well, or a session that finished and was not looked at | green | when (`at 09:05`, with the weekday when it was not today); for a job, the line it ended with | `Open` on a session |
+| changed | a turn that changed files and said what it did | orange | the time | none |
+
+Left out: what the person ran themselves (`!`), what an app asked, a turn or a job they stopped, a turn waiting
+for the limit to lift (it has not ended), and anything the log does not make a turn or a job of (an undo, a
+change at the desk). A row the card cannot make sense of is dropped; nothing here raises.
+
+**When it is built.** `show away`, or "while you were away" (the word is also a question: `desk.ASKABLE`),
+builds it from the person's last typed ask, or from the last time it was seen, or from a day ago when it never
+was (never further back than a week), and answers "Here is what happened while you were away." When
+nothing did, the card is one line, `Nothing happened`. A card that is up is sent to every bar, to a bar that
+connects later, and with `desk get`.
+
+**When it goes.** A tap on any row, the title or a button (`seen`, which a button sends after doing what it
+says), or the next thing the person types at the pill. An ask from a coding session (it comes with a name) or from a process inside an agent's
+turn does not count as the person being there. agentd remembers when it was last seen in
+`~/.local/state/bombadil/away.json`, so a restart does not bring back what was seen.
+
+**What the shell does with the message.** A row kind other than `dot` or `plain` is dropped, as is one with
+no key or a key already used; a tone it does not know is "you"; the only buttons are `Open` and `Why?`; nothing
+on it pulses or has a small ×; at most six rows. `Open` on `dev:<session>` asks agentd to open that session
+(as the same button on Needs you does), `Why?` on `job:<id>` shows what the job said (as it does on Watching),
+and either is then a `seen`. A message with no rows takes the card away, and one identical to the last changes
+nothing.
+
+**Known limits.**
+
+- *Nothing tells agentd the person came back yet.* The moment of coming back from a break needs the idle
+  signal that is still on its own branch; until it lands the card comes when it is asked for, and
+  `Away.back(since)` is the call that signal will make. Until then "since" is the person's ask before this
+  one, which is a proxy for when they were last there: a turn they started and watched can show as news.
+- *No session rows yet.* agentd keeps no list of the coding sessions on this branch (the shell already
+  draws one from a `dev` message), so `AgentD._away_sessions()` gives none and the card is made of turns and
+  jobs. The rows for sessions are in `away.items` and tested; filling that one method is all they need.
+- *No Undo, no Go back, no Time.* The brief's buttons for undoing just one thing and for going back to before
+  it, and a tap that opens the Brain's Time view, wait for what they act on; a tap puts the card away.
+- *A turn that failed is only as readable as its first line.* The log keeps what the turn said at its end,
+  and the card shows the first line of it, cut at the card's width.
+
 ## Dragging cards
 
 A card is taken by its title and the line under it (the first 50 px; the rows below keep their buttons
@@ -284,7 +352,7 @@ the real shell, so the first limit below is about Hyprland alone:
 1. Add it to `WIDGETS` in `src/bombadil/desk.py` (id, title, launcher words, default rail) and to
    `widgetIds` and the default `rails` and `order` in `DeskState.qml`, so the word "hide machine" and the
    saved desk know it.
-2. Give `DeskState` a model for it (`awayModel`, `machineModel`, ... are already waiting) filled from one
+2. Give `DeskState` a model for it (`machineModel` and `awayModel` are the examples to copy) filled from one
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
 3. Say how tall its full face is in `heightOf`, and give it a strip in `_stripOf`.
 4. Draw it: reuse `RowsCard` (rows with a dot or a meter, a button, a small x) or write a card on
@@ -298,6 +366,8 @@ the real shell, so the first limit below is about Hyprland alone:
 - `pytest tests/test_desk.py tests/test_desk_qml.py tests/test_desk_cards_qml.py`: the desk's state file
   and its words, and the whole desk drawn offscreen (set `BOMBADIL_SCREENS=<dir>` to save pictures).
   They need PySide6 and, in a bare container, the system libraries Qt loads (libEGL, libxkbcommon).
+- `pytest tests/test_away.py tests/test_agentd_away.py`: the Away card's rows and wording from rows of a log
+  and a clock they are handed, and agentd's side of it (who is told, what puts it away).
 - `pytest tests/test_desk_drag_qml.py`: dragging, in the three windows (the left rail, the right one and
   the bar) at their real places, each driven by pointer events given in its own coordinates.
 - `tests/desktop/run.sh`: the real bar, agentd and the Claude CLI in a headless sway session. The
