@@ -21,6 +21,11 @@ the code they call. What QEMU, systemd and systemd-boot do with their inputs (QM
 `screendump`, the unit condition matching `bombadil.smoke=install`, the `Boot in` countdown) is taken
 from how the scripts rely on it.
 
+The parts of this page about the smoke's picture checks (a wait for a calm guest, and a capture asked
+again with more time) were added on 2026-11-09 against `main` at `9d5c729`. They were checked by reading
+the script and by running the five tests that exercise it, which run the script's `picture()` function in
+bash and need no VM. The rest of the page is as it was checked on 2026-11-08 at `7176e55`.
+
 ## How it fits together
 
 ```mermaid
@@ -149,7 +154,7 @@ when the kernel has one. The host reads the log every two seconds, answers a `SH
 | `FAIL <name>: <tail>` | A check failed. The tail is the last 300 bytes of its output, with newlines turned into spaces. | none |
 | `SHOT <name>` | The guest wants a picture, then sleeps `SHOT_WAIT` seconds (8 by default). | A screenshot to `out/test/<boot>-<name>.png`, once per name, so the second pass of the undo round trip takes none of the shots whose names the first pass used. The name matches `[a-z0-9-]*`. Nothing reads the picture; it is for the person who opens it. |
 | `KEYS <bootid>-<n> <qcode>...` | The guest wants these keys pressed, then sleeps `KEYS_WAIT` seconds (8 by default). | One QMP `send-key` per word, once per `<bootid>-<n>`. A `+` joins keys pressed together. |
-| `NOTE <text>` | The machine was still busy when the keys went in. | none |
+| `NOTE <text>` | The machine was still busy when the keys went in, or when the pictures were taken. | none |
 | `DIAG <text>` | What the machine looked like when something went wrong. | none |
 | `AGENTD-LOG: <line>`, `MAIL-LOG: <line>` | The last 60 lines of `/tmp/smoke.agentd.log`, printed at the end of the sign-in block, and the last 30 of `/tmp/smoke.mail.log`, printed at the end of the mail block. Both appear in a passing run. `AGENTD-LOG:` is printed again when `signin-page-again` fails. | none |
 | `SKIP signin: <reason>` | The sign-in checks did not run. | The run exits 1 when this is in the first log. |
@@ -183,7 +188,9 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   read back from Hyprland, the skills are installed for both CLIs, and the example apps open.
 - **Pictures.** `system_map` captures network, boot, disks, sound, screens and one service from this
   machine, and agentd answers that a client besides the caller was there to draw each (the reply says
-  `shown above the bar`). The boot picture must hold at least three timed lines.
+  `shown above the bar`). The boot picture must hold at least three timed lines. On a guest without KVM
+  the smoke waits for the guest to be calm first and asks a capture that gave up again with more time
+  (see [Traps](#traps)).
 - **The pill.** A Super tap and Alt+Space give it the keyboard, a launcher word runs without a model, a
   `!` turn runs and Super+Esc stops it and says so in the history.
 - **The details drawer.** It takes the keyboard and every way out closes it. The message a click on
@@ -218,7 +225,16 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   the handover from a Super tap to the pill take longer than the check waits. Before the Super tap and
   before the Alt+Space tap the smoke waits up to 240 seconds for the guest's one-minute load average to
   fall below 1.5, and prints `NOTE the machine was still busy when the keys went in` if it did not.
-  The other key requests have no such wait. Run nothing else while a VM run is in progress.
+  The other key requests have no such wait. A picture capture can run out of its time too: it is given
+  half a second (`BUDGET` in `src/bombadil/sysmap.py`), and the smoke's own comment gives 6 to 10 seconds
+  for `ip` or `systemd-analyze` while the guest is still starting things. So the smoke waits up to 240
+  seconds for calm once before its first picture check (`NOTE the machine was still busy when the
+  pictures were taken` if it did not come), and a reply that says `Could not read` is asked again, up to
+  three tries in all, after a wait of up to 90 seconds for calm. The tries ask for 1, 4 and 12 times the
+  usual time: the smoke sets `BOMBADIL_BUDGET_SCALE` for each one and the capture code reads it. A reply
+  in any other wrong shape fails at once, with no second try. The log line of each try carries its number
+  and scale (`try 2, 4x the time`) and how long it took, so a slow capture on real hardware is still
+  visible. Run nothing else while a VM run is in progress.
 - **The CPU depends on KVM.** With `/dev/kvm` writable the script uses `-enable-kvm -cpu host`. Without
   it, it emulates `Nehalem` (override with `QEMU_CPU`), because Mesa's software GL (llvmpipe) crashed
   on the AVX2 that QEMU emulates, in Hyprland and in Quickshell's renderer.
@@ -300,7 +316,13 @@ carry the boot id and that the host's pattern matches the requests of two boots,
 sits behind the `config.toml` gate (it runs the gate's lines in bash against a home with and without
 the file) and that `SKIP signin` is in both scripts, that the smoke stops the `bombadil-agentd` unit
 before it starts its own daemon and starts the unit again, that the mail checks are present, and that
-the script parses. `tests/test_brain_service.py` runs `bash -n` on it and matches the loop that looks
+the script parses. It also runs the smoke's own `picture()` function in bash, with a stand-in for
+`bombadil-os-mcp` that answers from a list: a capture that says `Could not read` is asked again with 1, 4
+and 12 times the time and the guest is let settle before each further try, a capture that works the first
+time is asked once, one that never answers fails after three tries, and a reply in the wrong shape fails
+at once and is not asked again (the boot picture must still hold three timed lines). Another test reads
+the script for the wait: it comes before the picture checks, and `calm` is defined once, before the wait
+for the pictures and the wait for the keys. `tests/test_brain_service.py` runs `bash -n` on it and matches the loop that looks
 for the brain's two programs one by one. `tests/test_boot_console.py` keeps the two serial entries
 loud (no `quiet`, no colour parameters), because the host reads them on the serial console. Run one
 file with `pytest tests/test_iso_profile.py`; they do not boot anything.

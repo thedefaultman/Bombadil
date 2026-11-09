@@ -6,6 +6,8 @@
 
 This page lists the names Bombadil's code uses: commands, environment variables, files, sockets, units, configuration keys, tools, events, scripts and packages. Each name gets one line and a link to the page that owns the detail, so a name met in a log, a diff or a shell can be found here and followed. Names are spelled as the code spells them, and paths are relative to the repository root unless they start with `~`, `/` or `$`.
 
+The row for `BOMBADIL_BUDGET_SCALE` and the count of `BOMBADIL_*` names were added and checked against `main` at `9d5c729`; the rest of the page was checked against `main` at `7176e55`.
+
 ## Commands
 
 Executables in `bin/` and in `iso/airootfs/usr/local/bin/`, then every subcommand of `bombadil`, `bombadil mail` and `bombadil-app`. On the ISO the ten commands in `bin/` are linked into `/usr/local/bin` by `scripts/build-iso.sh`; the four scripts in `iso/airootfs/usr/local/bin/` are files there.
@@ -63,7 +65,7 @@ Executables in `bin/` and in `iso/airootfs/usr/local/bin/`, then every subcomman
 
 ## Environment variables
 
-Every `BOMBADIL_*` name found by searching `src/`, `bin/`, `shell/`, `share/`, `iso/`, `scripts/`, `tests/`, `pyproject.toml` and `.claude/` is in the first group, 51 names. The second group is the other variables the code and the scripts read, or set for a child process. A row marked "tests only" is used only by the test suite, the test containers or the VM smoke test, and one marked "tooling" only by the build and VM scripts.
+Every `BOMBADIL_*` name found by searching `src/`, `bin/`, `shell/`, `share/`, `iso/`, `scripts/`, `tests/`, `pyproject.toml` and `.claude/` is in the first group, 52 names. The second group is the other variables the code and the scripts read, or set for a child process. A row marked "tests only" is used only by the test suite, the test containers or the VM smoke test, and one marked "tooling" only by the build and VM scripts.
 
 | Variable | Default | Effect | Detail in |
 |---|---|---|---|
@@ -71,6 +73,7 @@ Every `BOMBADIL_*` name found by searching `src/`, `bin/`, `shell/`, `share/`, `
 | `BOMBADIL_BAR_INJECT` | unset | `1` lets `quickshell ipc call desk inject` feed the bar a `notice` or `notice_end`. No session of the image sets it; `tests/desktop/driver.py` does. Tests only. | [the shell](architecture/shell.md#environment-variables) |
 | `BOMBADIL_BRAIN_DB` | `<state dir>/brain.db` | The brain's database file (`paths.brain_db`). | [brain](architecture/brain.md) |
 | `BOMBADIL_BRAIN_SOCKET` | `<runtime dir>/brain.sock` | The brain's socket (`paths.brain_socket`). `share/apps/brain/app.py` reads it too. | [brain](architecture/brain.md) |
+| `BOMBADIL_BUDGET_SCALE` | unset, which counts as `1` | How many times longer than usual a `system_map` capture may wait for its commands, read at each capture (`sysmap._slow`), for a machine that is slow all the time such as a guest without KVM. A number from 1 to 20: a value outside that range is held to it, and one that is not a number counts as `1`. A capture whose caller passes its own time is not scaled. `MCP_ENV` in `providers.py` lets it through to the MCP server Codex starts, and `bombadil-smoke` sets it to `1`, `4` and `12` on the three tries of a picture check. | [what `system_map` captures](architecture/cards-and-pictures.md#what-system_map-captures) |
 | `BOMBADIL_BUILD_IMAGE` | `archlinux:base` | The container image of `scripts/build-in-container.sh` and `tests/vm/btrfs-kernel.sh`. Tooling. | [the build](architecture/iso-and-install.md#the-build) |
 | `BOMBADIL_CHECK` | unset | Set to `1` by `bombadil-app check` and removed by `run`, so `app.py` and the programs an app's commands start can tell a check from a run. `share/apps/brain/app.py` and `share/apps/mail/app.py` read it. | [`bombadil-app check`](architecture/app-kit.md#bombadil-app-check) |
 | `BOMBADIL_CHROMIUM_DIRS` | `$XDG_CONFIG_HOME/chromium` and `<config dir>/chromium` | Colon-separated Chromium profile folders whose `History` the brain reads. Tests set it too. | [brain](architecture/brain.md) |

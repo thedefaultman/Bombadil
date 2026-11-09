@@ -3,7 +3,7 @@
 > **Status:** Partly shipped
 > **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/agentd.py`, `src/bombadil/watch.py`, `src/bombadil/providers.py`, `src/bombadil/config.py`, `bin/bombadil`, `shell/CardHost.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Diagram.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
 > **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch)
-> **Verified:** 2026-11-08 against `main` at `7176e55`
+> **Verified:** 2026-11-08 against `main` at `7176e55`. The change since that commit (a picture beside a window up to 560 px wide, the scale for the captures' time, the smoke's calm wait and retries) was added and checked against the code at `9d5c729`; the rest of the page was not read again.
 
 A card is validated data for a picture that the shell draws above the status line. One card type exists,
 `diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`), and every finished card carries a `text`
@@ -24,7 +24,7 @@ read from real commands, and a reason is the agent's own sentence from just befo
 | Receipts, a before and after of what a turn changed | Shipped | `sysmap.py` (`receipt`), `agentd.py` (`_receipt`) |
 | Why lines (`because`, `after`) and a bare "why" during a turn | Shipped | `narrate.py`, `StatusLine.qml`, `launcher.py` |
 | Details drawer and `bombadil view` | Shipped | `launcher.py`, `pager.py` |
-| A card that keeps its line, is placed once and gives way to a window that opens or a full-screen window | Shipped | `CardHost.qml`, `PillState.qml`, `DeskState.qml`, `StatusLine.qml`, `shell.qml` |
+| A card that keeps its line, is placed once, is wider than the pill beside a window and gives way to a window that opens or a full-screen window | Shipped | `CardHost.qml`, `PillState.qml`, `DeskState.qml`, `StatusLine.qml`, `shell.qml` |
 | The boot picture from `systemd-analyze plot`, btrfs subvolumes in the disks picture, a receipt for boot, the two snapshots stored beside the turn's log | Designed | [Passenger brief, piece 2](../design/passenger-brief.md#2-pictures-from-the-machine) |
 | Other card kinds: list, checklist, timer, control, markdown reader | Designed | [UX brief, piece 5](../design/ux-brief.md#5-answers-you-can-touch) |
 | Cards the agent writes in QML | Designed | UX brief, piece 5 |
@@ -72,8 +72,9 @@ flowchart LR
 5. **The shell draws it.** `PillState._takeCard` keeps one card. `CardHost.qml`, loaded through a `Loader`, holds
    the title, a source label, a close mark, the kit's `Diagram` inside a scroll area (the shell caps the host at 60
    percent of the screen height, and a taller picture scrolls), and the `say` line, which shows at most three lines
-   (`maximumLineCount: 3`). `shell.qml` makes the host as wide as the pill (`Layout.maximumWidth: Math.max(360,
-   win.pillMax)`), so a picture stays between the desk's rails. The `Diagram` draws the card and places its boxes;
+   (`maximumLineCount: 3`). `shell.qml` makes the host as wide as the pill, or up to 560 px beside a window
+   (`Layout.maximumWidth: Math.max(360, win.pictureMax)`, see Where the card sits), so a picture stays between the
+   desk's rails. The `Diagram` draws the card and places its boxes;
    Python computes only the `rank` and `col` of a `layers` card and the `row` pairing of a `compare` card.
 
 ### A turn that records a reason and ends with a receipt
@@ -230,7 +231,7 @@ finished card in place. A card leaves when:
 | `{"id", "gone": true}` for the card on screen | put away |
 | A picture word that could not be drawn (`local` event, `action` `picture`, `phase` `done`, `ok` false) | the old card is put away so the error does not read as about it |
 | A window the launcher opened (`local` event, `phase` `done`, `ok` true, `verb` `open`, `action` `brain`, `app` or `panel`) | put away, so it does not sit over the window. Hiding or closing a window does not |
-| Any window comes onto the desk's screen, however it was opened (`DeskState.setWindows` sees more windows than before and emits `windowOpened`, which `shell.qml` passes to `PillState.windowOpened`) | put away, so the picture does not sit over it at the 360 px a shared stage gives the pill. Not a draft; not a card taken less than 2.5 seconds ago (`windowGrace`: the window is probably what the same ask opened); not one a box was clicked in less than 5 seconds ago (`clickGrace`: the window is what the click opened). A window that closes or is dragged changes nothing |
+| Any window comes onto the desk's screen, however it was opened (`DeskState.setWindows` sees more windows than before and emits `windowOpened`, which `shell.qml` passes to `PillState.windowOpened`) | put away, so the picture does not sit over it. Not a draft; not a card taken less than 2.5 seconds ago (`windowGrace`: the window is probably what the same ask opened); not one a box was clicked in less than 5 seconds ago (`clickGrace`: the window is what the click opened). A window that closes or is dragged changes nothing |
 | The connection to `agentd` drops while the card is a draft | put away (`lost`) |
 | The closing line fades (`fade`) | only a receipt goes. A picture the person asked for stays until Esc or the next turn |
 | A window already on the stage goes full-screen | not put away: `CardHost.suppressed` hides it and it returns when the window leaves full screen. (A window that opens full-screen is one more window, so the row above applies and the card goes) |
@@ -250,14 +251,23 @@ rules keep a card from moving the pill or its own close mark, and keep what it d
 | The card is placed once | `CardHost.qml`: `implicitHeight` has no `Behavior`, and a `Translate` of 14 px | The card takes its height at once and fades in and rises inside that space, and it hands the space back after it has faded out. A height that grew over several frames resized the window every frame. This does not cure the dip the `layers` animation caused (that is the switch in the row above); it only keeps a card to one resize |
 | A picture the person asked for keeps its line | `PillState.pictureStays`, `StatusLine.qml` (`lineTimer`, `done` check) | The card sits above the line in a column anchored to the bottom, so a line that grew, shrank or went moved the card by the line's height and a click aimed at its close mark missed. `pictureStays` is true while a card is up that is not a receipt and not a draft; the line does not fade while it is true, and its timer stops running when the pill is not working and no flash is showing, so a picture left up costs no wake-ups. Esc puts line and picture away together. The close mark clears the card and the line fades on the timer's next tick unless it is `sticky`. A receipt is not asked for and fades with its line |
 | A card being drawn keeps the layout it will end with | `Diagram.qml`: `if (partial && links.length === 0) longest = 14` | The boxes of a streamed chain arrive before its links, and the links' labels decide how wide the gaps are, so a finished chain would lay itself out again from one row into two |
+| A picture beside a window is wider than the pill | `DeskState.qml`: `pictureTarget`, `pictureWidth`; `shell.qml`: `pictureMax` | At 360 px a picture can have labels cut short and a chain wrapped to three rows. While a window shares the stage the card host may be as wide as `Math.min(560, stageRoom)`, centred above the 360 px line and pill (see below). With no window it is as wide as the pill |
 | A before and after sits together | `Diagram.qml`: `maxCompareWidth`, `compareGap` | The two columns are at most 230 px wide with 76 px between them for the arrow, centred, instead of one at each edge of a wide card |
-| A note under a box stays on the picture | `Diagram.qml`: `boxNote` | A note is centred under its box and at least 170 px wide, which is wider than a box in a narrow card. The first box of a row sits at the picture's left edge, so a note centred under it started off the picture and lost its first letters (at the 360 px a window narrows the card to). The note's `x` is clamped between the picture's two edges and stays centred wherever it fits. A chain at 360 px also wraps to rows with long connectors (the network picture to three), which is the card's width and not a fault of the note |
+| A note under a box stays on the picture | `Diagram.qml`: `boxNote` | A note is centred under its box and at least 170 px wide, which is wider than a box in a narrow card. The first box of a row sits at the picture's left edge, so a note centred under it started off the picture and lost its first letters (seen at 360 px, the width a card had beside a window before it was allowed up to 560, and the least a card gets). The note's `x` is clamped between the picture's two edges and stays centred wherever it fits. A chain at 360 px also wraps to rows with long connectors (the network picture to three), which is the card's width and not a fault of the note |
 | A full-screen window puts the card away | the `Binding` in `shell.qml` that sets `CardHost.suppressed` from `win.capsule` | In a full-screen window the pill is a dot and a clock in a 100 px capsule (see [the desk](desk.md)), and a card above it would land over whatever the window shows. The card is still `PillState.card`, so it comes back when the window goes. Only a window in Hyprland's full-screen state counts (`HyprCover.qml` reads `fullscreen` 2 or 3): a tiled or maximized terminal does not, so try this with a window in that state |
 
-The card is as wide as the pill, and the pill's width follows the stage (`DeskState.pillTarget`, see [the desk](desk.md)):
-up to 900 px with no window, 360 px while any window or panel shares the stage (the Brain, a `foot` terminal from
-Super+Return), and a 100 px capsule under a window in the full-screen state. That is why a window that opens puts a
-picture away (see Replacing in place).
+The pill's width follows the stage (`DeskState.pillTarget`, see [the desk](desk.md)): up to 900 px with no window
+(`stageRoom`: the screen less what the rails and strips take on each side, held between 360 and 900), 360 px while any
+window or panel shares the stage (the Brain, a `foot` terminal from Super+Return), and a 100 px capsule under a window
+in the full-screen state. The card's width is `DeskState.pictureTarget`, which `shell.qml` reads as `pictureMax` for
+the screen the desk is on. With no window and under a full-screen window it is the pill's width. While a window shares
+the stage it is `Math.min(560, stageRoom)`: about 560 px, centred above the 360 px line and pill, less on a screen whose
+rails and strips leave less room, and never under 360. With a card in full on a rail, a 1280 px screen leaves 624 px of
+stage and the picture gets 560, and a 1024 px screen leaves 368 and it gets that. `DeskState.pictureWidth` follows the
+target with the same animation as the pill's width. The host's `Layout.maximumWidth` is never under 360: under a
+full-screen window the width is 100, the host is held at 360 and hidden (see the last row of the table above). A screen
+that is not the desk's uses the theme's `pillMaxWidth` for both. A window that opens still puts a picture away (see
+Replacing in place).
 
 The card's top edge is its own height above the line, so two different pictures sit at different heights; the same
 picture sits at the same place each time.
@@ -312,7 +322,8 @@ Every capture reads the machine with real commands (the network capture also ope
 `SYSTEMD_COLORS=0`, `NO_COLOR=1` and `TERM=dumb`, and no stdin, side by side in a worker pool. Each command has the
 capture's budget: 0.5 seconds (`BUDGET`), and anything that has not answered by then counts as missing, so a picture
 comes back within about that time, drawn from what could be read (a capture that reads in steps takes the budget once
-per step). Parsers are pure functions of text. If nothing at all could be read, the capture raises `sysmap.Unavailable`
+per step). The budgets in the table are the usual ones: a machine that is slow all the time multiplies them (see On a
+slow machine below). Parsers are pure functions of text. If nothing at all could be read, the capture raises `sysmap.Unavailable`
 with one plain sentence ("Could not read the disks: lsblk did not answer.").
 
 | `kind` | Reads | Budget | The picture |
@@ -339,6 +350,30 @@ is "This laptop" then "No network". "not answering" appears under the provider b
 provider host does not accept a connection, unless NetworkManager reports no or limited connectivity: then the
 internet box is the broken one and the provider box has no line. A picture word asks no model and starts no turn (see
 Picture words).
+
+#### On a slow machine
+
+The budgets suit real hardware. In an emulated guest with no KVM, `ip` or `systemd-analyze` can take 6 to 10 seconds
+while the guest is still starting things (the figure is in the comment of `bombadil-smoke`), and the capture gives up
+with a sentence such as "Could not read the network: ip did not answer." or "Could not read the boot: systemd-analyze
+took longer than expected."
+
+- **`BOMBADIL_BUDGET_SCALE` multiplies every capture's time.** `sysmap._slow` reads it at each capture: a number from 1
+  to 20, held to those limits, and 1 when it is unset, `nan` or not a number. `sysmap.capture` multiplies `BUDGET`,
+  `BOOT_BUDGET` and the provider connection's `PROBE_BUDGET` by it, so at 4 each command of a `disks` capture gets 2
+  seconds and the boot 16. The provider connection's own timeout is the time the capture waits for it (`probe_budget`)
+  less 0.4 seconds, and never under the usual 1.2 seconds, so a slow first lookup can be tried again and a slow connect
+  can finish.
+- **A budget that is asked for is exact.** When a caller passes `budget` to `capture`, the scale is 1. A receipt's
+  snapshots do (`sysmap.snapshot` and `snapshot_service` pass their own), so a turn does not wait longer because of
+  the scale, and the connection's timeout in a snapshot stays at 1.2 seconds. `find_unit`, which looks up a typed unit
+  name, keeps `BUDGET` as well. A picture word (`agentd.picture`) and the `system_map` tool pass no budget and are
+  scaled.
+- **Where to set it.** In the environment `agentd` starts in, for example `Environment=BOMBADIL_BUDGET_SCALE=4` in a
+  drop-in for `bombadil-agentd.service`. A provider's process inherits `agentd`'s environment, so Claude's
+  `bombadil-os-mcp` sees it. Codex gives its MCP servers only the names in `providers.MCP_ENV`, and the list holds
+  this one, because `system_map` captures inside the os-mcp process.
+- **The smoke waits and asks again.** See Tests.
 
 #### What reading a real machine taught
 
@@ -591,11 +626,13 @@ lists what this piece owns.
 | `BOMBADIL_PROVIDER` | environment | the provider whose host the network picture ends with; `cardtools.provider_name` reads it, then the config, then `claude`. `providers.MCP_ENV` does not list it, so an os-mcp server started by Codex never sees it and falls to the config (see [os-mcp](os-mcp.md)) |
 | `sysmap.PROVIDER_HOSTS` | Python | provider name to the brand and host the network picture ends with (`claude`, `codex`); an unknown provider falls back to the Claude host |
 | `BOMBADIL_SOCKET` | environment | the `agentd` socket `cardtools.deliver` connects to |
+| `BOMBADIL_BUDGET_SCALE` | environment | a number from 1 to 20 that multiplies the time of every capture (`sysmap._slow`, read at each capture); unset is 1. It is on `providers.MCP_ENV`, so a Codex os-mcp process gets it (see On a slow machine) |
 | `bombadil view --file PATH`, `bombadil view -- CMD...` | commands | the drawer's viewer |
 | `bombadil watch [--file PATH] [--follow]` | command | a turn's log in the drawer (the newest turn's without `--file`); `agentd.details` runs it, `--follow` for the running turn. `watch.py` owns the layout |
 | `Diagram` (`import Bombadil`) | kit component | `spec`, `showTitle`, `minBoxWidth` (132), `maxBoxWidth` (208), `maxCompareWidth` (230), `compareGap` (76); signals `opened(target)` and `picked(node)`. Also used by apps, see [the app kit](app-kit.md); documented in `share/skills/bombadil-apps/references/components.md` |
 | `PillState.card`, `dismissCard()`, `openThing(target)`, `pictureStays`, `windowOpened()` | shell state | what `CardHost.qml` and `StatusLine.qml` read and call. `windowOpened()` is called by `shell.qml` when `DeskState` emits its `windowOpened` signal |
 | `CardHost.suppressed` | shell property | true while a full-screen window has the screen; `shell.qml` sets it |
+| `DeskState.pictureTarget`, `pictureWidth`, `stageRoom` | shell state | how wide the card host may be: the pill's width, or up to 560 px (never under 360) while a window shares the stage. `shell.qml` reads `pictureWidth` as `win.pictureMax` for the desk's screen |
 | `cards.validate_diagram`, `cards.accept`, `cards.text_of`, `cards.check_opens` | Python | the data contract |
 | `sysmap.capture`, `sysmap.snapshot`, `sysmap.receipt`, `sysmap.apply_overrides` | Python | captures and receipts |
 | `sysmap.find_unit`, `sysmap.warm_unit_names` | Python | the unit a typed name means, and the background read of the unit-file names that `agentd` starts |
@@ -769,16 +806,18 @@ which an adapter reports its account's limit (`Provider.limit` and `Provider.wai
 |---|---|
 | `tests/test_cards.py` | validation limits and errors, `opens`, `layers` ranking, text twins, `accept`, `partial_diagram` and `CardStream` |
 | `tests/test_cardtools.py` | the two tools' inputs and results, delivery and every failure note, a card crossing a real socket |
-| `tests/test_sysmap.py` | each parser on captured output (the C-locale boot tree, `blame`, PipeWire levels, escaped unit names), each capture's card and errors, the unit lookup and its kept list, budgets, `receipt` |
+| `tests/test_sysmap.py` | each parser on captured output (the C-locale boot tree, `blame`, PipeWire levels, escaped unit names), each capture's card and errors, the unit lookup and its kept list, budgets, the scale (`BOMBADIL_BUDGET_SCALE`: its limits, that a budget asked for is exact, the provider connection's time), `receipt` |
+| `tests/test_mcp_server.py` (`test_codex_hands_a_slow_machines_capture_scale_to_the_tool_too`) | `BOMBADIL_BUDGET_SCALE` is in `providers.MCP_ENV` |
 | `tests/test_narrate.py` | step words, `reason_from`, reads and their origin, parts touched |
 | `tests/test_diagram_qml.py` | `Diagram.qml` offscreen: layouts (a before and after in the middle, a chain still being drawn, a note at a row's edge kept inside the picture), states, `opened` and `picked`, the drafts |
 | `tests/test_pager.py` | layout, scrolling, keys, a real terminal run |
 | `tests/test_agentd.py` | a card reaching every bar, `card_ack`, streaming and taking a draft back, picture words, receipts, clicks, `why`, `verb` on a launcher event |
 | `tests/test_launcher.py` | picture phrases, a service typed with capitals, the drawer and what each `opens.kind` runs |
 | `tests/test_pill_qml.py` | the card lifecycle in the shell, hover and fade, `because` and `after` on the line, a card placed in one resize, a picture that keeps its line, a full-screen window, a window the launcher opens and a window that opens (`windowOpened`: not a card just drawn or just clicked in, not a draft) |
-| `tests/test_desk_qml.py` (one test, `test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not`) | `DeskState` emitting `windowOpened` only when the list of windows grew, wired to `PillState` as `shell.qml` does |
+| `tests/test_desk_qml.py` (`test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not`, `test_a_picture_beside_a_window_is_wider_than_the_pill`, `test_a_picture_beside_a_window_takes_what_the_rails_leave_on_a_smaller_screen`) | `DeskState` emitting `windowOpened` only when the list of windows grew, wired to `PillState` as `shell.qml` does; `pictureWidth` is the pill's with no window, 560 beside a window and 100 under a full-screen one, and what the rails leave on a 1280 px screen (`stageRoom` 624, picture 560) and a 1024 px one (368) |
+| `tests/test_iso_profile.py` | the smoke's `picture()` function run in bash with os-mcp stood in for: three tries at 1, 4 and 12 times the time with a wait for calm before each new one, one try when the capture works, three when it never answers, one for a picture in the wrong shape (the boot included); `calm` defined once and waited for before the pictures |
 | `tests/test_watch.py` | `why:`, `after` and pictures in Details, and a command that Stop ended reading `stopped` and not `failed` (`test_a_command_that_stop_ended_reads_stopped_not_failed`) |
-| `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, an `open` message for a file (the message a click on its box sends) opens it in the drawer and one Esc puts it away, a window that opens puts the picture away while one asked for beside it still shows, a window that goes full-screen hides it and it returns when the window leaves full screen, and a picture sits between the desk's rails |
+| `tests/desktop/` (`run.sh`, `driver.py`; needs Docker, see [development](../contributing/development.md#the-desktop-test)) | the real bar in a headless desktop: a `show_card` draft streams into the bar and the finished card takes its id, the kit's `Diagram` loads without QML errors, Esc puts the picture away, a picture word draws with no model and no turn, an `open` message for a file (the message a click on its box sends) opens it in the drawer and one Esc puts it away, a window that opens puts the picture away while one asked for beside it still shows and is wider than the 360 px pill (about 560 px), a window that goes full-screen hides it and it returns when the window leaves full screen, and a picture sits between the desk's rails |
 | `scripts/vm-tools/lifttrace` (needs a running VM; its docstring says how) | whether the pill moves when a card changes size |
 | `iso/airootfs/usr/local/bin/bombadil-smoke` (a booted machine) | see below |
 
@@ -793,10 +832,15 @@ and nearly all of `test_agentd.py`) and the QML tests need PySide6 (they skip wi
 `test_desk_qml.py` and `test_watch.py` cover the rest of the piece and run the same way. Set `BOMBADIL_SCREENS=<dir>`
 to save a picture of each state that `test_diagram_qml.py` and `test_pill_qml.py` draw.
 
-The VM smoke script `bombadil-smoke` calls `system_map` for every kind through `bombadil-os-mcp` (the service picture for
-`systemd-logind`), expects "shown above the bar", requires at least three timed rows in the boot picture, and logs the
-time of each capture; a capture over 500 ms on real hardware is a finding, not a failure. It also sends `open` for a
-unit and checks that the drawer window appears with the keyboard and that Esc closes it.
+The VM smoke script `bombadil-smoke` first waits for the guest to be calm (`calm`: a load average under 1.5, for up to
+240 seconds, then goes on with a note in the log). It then calls `system_map` for every kind through `bombadil-os-mcp`
+(the service picture for `systemd-logind`), expects "shown above the bar", requires at least three timed rows in the
+boot picture, and logs the time of each capture with its try and the scale it ran at ("try 2, 4x the time"). A capture
+whose answer says "Could not read" is asked again, up to three tries in all, with `BOMBADIL_BUDGET_SCALE` at 1, 4 and
+12 and a wait of up to 90 seconds for calm before each new try. An answer in any other wrong shape fails at the first
+try. A slow guest is therefore not a broken picture, and a capture over 500 ms on real hardware is still a finding, not
+a failure. The smoke also sends `open` for a unit and checks that the drawer window appears with the keyboard and that
+Esc closes it.
 
 ## Known gaps
 

@@ -106,7 +106,7 @@ sequenceDiagram
 | The turn number | kept: the larger of the last turn in `turns.jsonl` and the number in the `turn` file (`agentd.py:281`) | kept: both files are in the state dir in the home |
 | The queue of waiting prompts and the notes for the next turn | lost: `AgentD.pending` and `AgentD.notes` are in memory (`agentd.py:285,294`) | lost |
 
-While the daemon is away the bar says `Waiting for agentd…` and retries every 1500 ms (`shell/shell.qml:121,477`). Tests: `test_a_restarted_daemon_keeps_the_conversation_and_the_turn_count`, `test_a_dead_conversation_is_not_brought_back_by_a_restart` and `test_saved_state_that_is_not_for_this_daemon_is_ignored`.
+While the daemon is away the bar says `Waiting for agentd…` and retries every 1500 ms (`shell/shell.qml:121,480`). Tests: `test_a_restarted_daemon_keeps_the_conversation_and_the_turn_count`, `test_a_dead_conversation_is_not_brought_back_by_a_restart` and `test_saved_state_that_is_not_for_this_daemon_is_ignored`.
 
 ### Restore points do not pile up
 

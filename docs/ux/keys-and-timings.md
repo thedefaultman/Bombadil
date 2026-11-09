@@ -9,7 +9,7 @@ This page lists the keys the image binds or handles (Hyprland, the pill, the det
 
 ## Keys
 
-The only bind file on `main` is `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, and it has no `hl.bind` other than the ones below. It also sets `input = { kb_layout = "us", follow_mouse = 1 }` (line 41). Keys that reach the pill's field (`Enter`, `Esc`, `Tab`) work only while the pill holds the keyboard. On Hyprland that is while it is summoned (`WlrKeyboardFocus.OnDemand`, else `None`); on other compositors the layer is `Exclusive` while summoned and `OnDemand` otherwise (`shell/shell.qml:217-219`). Under a full-screen window the field is disabled (`enabled: !win.capsule`, `shell/shell.qml:475`), so nothing can be typed there.
+The only bind file on `main` is `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, and it has no `hl.bind` other than the ones below. It also sets `input = { kb_layout = "us", follow_mouse = 1 }` (line 41). Keys that reach the pill's field (`Enter`, `Esc`, `Tab`) work only while the pill holds the keyboard. On Hyprland that is while it is summoned (`WlrKeyboardFocus.OnDemand`, else `None`); on other compositors the layer is `Exclusive` while summoned and `OnDemand` otherwise (`shell/shell.qml:219-221`). Under a full-screen window the field is disabled (`enabled: !win.capsule`, `shell/shell.qml:478`), so nothing can be typed there.
 
 ### Hyprland binds
 
@@ -29,21 +29,21 @@ The only bind file on `main` is `iso/airootfs/etc/skel/.config/hypr/hyprland.lua
 
 | Key | Where | What it does | Defined in |
 |---|---|---|---|
-| `Enter` | The pill's field | `pillState.submit(text)`. When it returns true the field is cleared and the keyboard goes back. A blank line, or one typed while the bar is not connected, sends nothing: the field and the keyboard stay, and the second case says `Not connected to the agent yet.` | `shell/shell.qml:485-490`, `shell/PillState.qml:522-557` |
-| `Esc` while a turn runs, from the moment `Enter` shows `On it`, or while a sign-in is under way | The pill's field | `pillState.stop()` sends `stop`; the line reads `Stopping` and the pill keeps the keyboard | `shell/shell.qml:503-504`, `shell/PillState.qml:94, 582-586` |
-| `Esc` with nothing to stop and the AI card open | The pill's field | `closeAi()` puts the card away and `release()` gives the keyboard back. Typing in the field puts the card away too | `shell/shell.qml:493, 505`, `shell/PillState.qml:628` |
-| `Esc` with text typed, nothing to stop and no AI card | The pill's field | Clears the text | `shell/shell.qml:506` |
-| `Esc` with an empty field, nothing to stop and no AI card | The pill's field | `dismiss()` puts the line and the picture away, `closeDetails()` sends `close_details` so the drawer closes, and `release()` gives the keyboard back | `shell/shell.qml:507`, `shell/PillState.qml:650, 669-672` |
-| `Tab` | The pill's field | Types the rest of the suggested launcher name (`pass` then `Tab` gives `passwords`). It does nothing unless at least two characters follow an optional verb and a name is longer than that | `shell/shell.qml:496-499`, `shell/PillState.qml:704-715` |
+| `Enter` | The pill's field | `pillState.submit(text)`. When it returns true the field is cleared and the keyboard goes back. A blank line, or one typed while the bar is not connected, sends nothing: the field and the keyboard stay, and the second case says `Not connected to the agent yet.` | `shell/shell.qml:488-493`, `shell/PillState.qml:522-557` |
+| `Esc` while a turn runs, from the moment `Enter` shows `On it`, or while a sign-in is under way | The pill's field | `pillState.stop()` sends `stop`; the line reads `Stopping` and the pill keeps the keyboard | `shell/shell.qml:506-507`, `shell/PillState.qml:94, 582-586` |
+| `Esc` with nothing to stop and the AI card open | The pill's field | `closeAi()` puts the card away and `release()` gives the keyboard back. Typing in the field puts the card away too | `shell/shell.qml:496, 508`, `shell/PillState.qml:628` |
+| `Esc` with text typed, nothing to stop and no AI card | The pill's field | Clears the text | `shell/shell.qml:509` |
+| `Esc` with an empty field, nothing to stop and no AI card | The pill's field | `dismiss()` puts the line and the picture away, `closeDetails()` sends `close_details` so the drawer closes, and `release()` gives the keyboard back | `shell/shell.qml:510`, `shell/PillState.qml:650, 669-672` |
+| `Tab` | The pill's field | Types the rest of the suggested launcher name (`pass` then `Tab` gives `passwords`). It does nothing unless at least two characters follow an optional verb and a name is longer than that | `shell/shell.qml:499-502`, `shell/PillState.qml:704-715` |
 
 ### Pointer actions that stand in for keys
 
 | Action | Where | What it does | Defined in |
 |---|---|---|---|
-| Click on the pill or its field | Hyprland only | The same as tapping `Super`: this screen's pill takes the keyboard. Elsewhere the layer takes clicks on demand by itself | `shell/shell.qml:252-254, 428, 484` |
-| Click anywhere else | While the pill is summoned | The focus grab clears and `release()` gives the keyboard back, so typing meant for another window never lands in the pill | `shell/shell.qml:256-262` |
-| Pointer over the stone, then a click | While a turn can be stopped | The stone becomes `Stop`; the click sends `stop`. The capsule never shows `Stop`, but a tap on its stone still stops a turn that can be stopped, because the tap handler has no capsule test | `shell/shell.qml:437-464` |
-| Click on the stone | While no turn can be stopped | `pillState.toggleAi()` asks agentd for fresh rows (`ai` with `op: get`) and opens the AI card: 360 px wide, one row per AI. Not connected, it says `Not connected to the agent yet.` instead. A second click puts the card away, and so do typing, a turn starting and a lost socket | `shell/shell.qml:463`, `shell/PillState.qml:95, 566, 620-628`, `shell/AiCard.qml:14-17` |
+| Click on the pill or its field | Hyprland only | The same as tapping `Super`: this screen's pill takes the keyboard. Elsewhere the layer takes clicks on demand by itself | `shell/shell.qml:254-256, 431, 487` |
+| Click anywhere else | While the pill is summoned | The focus grab clears and `release()` gives the keyboard back, so typing meant for another window never lands in the pill | `shell/shell.qml:258-264` |
+| Pointer over the stone, then a click | While a turn can be stopped | The stone becomes `Stop`; the click sends `stop`. The capsule never shows `Stop`, but a tap on its stone still stops a turn that can be stopped, because the tap handler has no capsule test | `shell/shell.qml:440-467` |
+| Click on the stone | While no turn can be stopped | `pillState.toggleAi()` asks agentd for fresh rows (`ai` with `op: get`) and opens the AI card: 360 px wide, one row per AI. Not connected, it says `Not connected to the agent yet.` instead. A second click puts the card away, and so do typing, a turn starting and a lost socket | `shell/shell.qml:466`, `shell/PillState.qml:95, 566, 620-628`, `shell/AiCard.qml:14-17` |
 | Switch on the AI card | A switch that can be flipped (not signed in or not installed is dimmed to `0.4`) | `pillState.setAi` sends `ai` with `pause` or `resume`. The switch follows what agentd sends back, not the tap | `shell/AiCard.qml:64-93`, `shell/PillState.qml:630-635` |
 | Click on a finished line | Line in mode `closing`, with no notice on it | Opens the turn's details in the drawer | `shell/StatusLine.qml:97-101` |
 | `×` on a `next` chip | Queue chips | Sends `unqueue` for that turn | `shell/QueueChips.qml:46-53`, `shell/PillState.qml:588-593` |
@@ -54,9 +54,9 @@ The only bind file on `main` is `iso/airootfs/etc/skel/.config/hypr/hyprland.lua
 | A setup chip | Under the setup line or the resting line | `setupAction` sends `setup_action` with the chip's id, and hands the keyboard over unless the chip is `cancel`, `resume` or `retry` | `shell/SetupChips.qml:42-46`, `shell/PillState.qml:426-433` |
 | `×` on a picture | The picture above the line | `dismissCard()`: puts the picture away | `shell/CardHost.qml:87-103`, `shell/PillState.qml:155` |
 | A box in a picture that names a thing | The picture above the line | `openThing`: a turn opens its details in the drawer, anything else sends `open` with its kind and value | `shell/CardHost.qml:122`, `shell/PillState.qml:173-183` |
-| Click on an app chip, and its `×` | The chips of running apps | The click slides that app's drawer in or out. The `×` runs `bombadil-app close NAME`, which quits the app | `shell/shell.qml:371-375, 394-401` |
-| Click on the title of `Now`; `Why?` and `×` on a `Watching` row; a `Machine` row that opens something | The desk's cards | `Now` opens the turn's details. `Why?` sends `jobs` with `op: why`, the `×` stops a running job or drops a finished one, and a `Machine` row sends `vitals` with `op: open` (the disk row draws the disks picture) | `shell/DeskCard.qml:117`, `shell/DeskState.qml:25-33, 632-641, 857-859`, `shell/RowsCard.qml:114-124, 273-301` |
-| Drag a card by its grip, or a strip, with the left button | The desk, past Qt's own drag threshold (`DragHandler` sets none) | Moves the card to a rail, to another place in its rail, or onto the pill's row, where it folds to a strip; a strip dropped on a rail gets its card back. The zones, the refusals and the dimming are in [The desk](#the-desk-1) | `shell/DeskDrag.qml:10-53`, `shell/DeskRail.qml:95-105`, `shell/DeskStrips.qml:66-73`, `shell/DeskState.qml:861-966` |
+| Click on an app chip, and its `×` | The chips of running apps | The click slides that app's drawer in or out. The `×` runs `bombadil-app close NAME`, which quits the app | `shell/shell.qml:374-378, 397-404` |
+| Click on the title of `Now`; `Why?` and `×` on a `Watching` row; a `Machine` row that opens something | The desk's cards | `Now` opens the turn's details. `Why?` sends `jobs` with `op: why`, the `×` stops a running job or drops a finished one, and a `Machine` row sends `vitals` with `op: open` (the disk row draws the disks picture) | `shell/DeskCard.qml:117`, `shell/DeskState.qml:25-33, 639-648, 864-866`, `shell/RowsCard.qml:114-124, 273-301` |
+| Drag a card by its grip, or a strip, with the left button | The desk, past Qt's own drag threshold (`DragHandler` sets none) | Moves the card to a rail, to another place in its rail, or onto the pill's row, where it folds to a strip; a strip dropped on a rail gets its card back. The zones, the refusals and the dimming are in [The desk](#the-desk-1) | `shell/DeskDrag.qml:10-53`, `shell/DeskRail.qml:95-105`, `shell/DeskStrips.qml:66-73`, `shell/DeskState.qml:868-973` |
 
 ### In the details drawer
 
@@ -69,7 +69,7 @@ The drawer is a `foot` window with the app id `bombadil-details` on the special 
 | `Up`, `Down`, `j`, `k`, `Enter` (down) | `bombadil view` with a longer text | Scrolls one row | `src/bombadil/pager.py:27-32, 53-59` |
 | `PageUp`, `PageDown`, `b`, `f`, `Space` | `bombadil view` | Scrolls a page less one row | `src/bombadil/pager.py:27-32, 53-59` |
 | `Home`, `g`, `End`, `G` | `bombadil view` | Jumps to the start or the end | `src/bombadil/pager.py:27-32, 53-59` |
-| `Esc` in the pill | The pill's field, empty, nothing to stop and no AI card | Closes the drawer (`close_details`) | `shell/shell.qml:507`, `src/bombadil/launcher.py:725-731` |
+| `Esc` in the pill | The pill's field, empty, nothing to stop and no AI card | Closes the drawer (`close_details`) | `shell/shell.qml:510`, `src/bombadil/launcher.py:725-731` |
 
 A command that Stop ended prints `stopped` in the drawer instead of `failed (exit N)`. Its exit code is `-2`, `-15` or `-9`, the signals Stop sends (SIGINT, SIGTERM, SIGKILL; `src/bombadil/watch.py:23-24, 88-93`). So does the note that Claude Code leaves for a tool call that was cut short (`src/bombadil/watch.py:22, 80-83`).
 
@@ -117,11 +117,11 @@ Mail and Brain are kit apps that ship in `share/apps/`. They have the kit's keys
 |---|---|---|
 | `15000` | The "Starting" window. Until agentd first answers, the stone's face is `starting` and the placeholder reads `Starting`. If nothing has answered when the timer ends, the face is `offline` | `shell/shell.qml:36`, `shell/PillState.qml:107-120` |
 | `1500`, repeating | How often the bar tries agentd's socket while it is not connected (once at start too). A Quickshell `Socket` that failed does not retry, so each try makes a fresh `Socket` | `shell/shell.qml:101-126` |
-| `20000` with an empty field, `60000` with text typed | How long a summoned pill is left alone before it gives the keyboard back. Typing restarts the wait. Text already typed stays in the pill | `shell/shell.qml:264-271, 491-494` |
-| `30000`, repeating | The clock text in the pill | `shell/shell.qml:535` |
-| `150` | The border colour of an app chip. It is neither `Theme.fast` nor `Theme.normal` | `shell/shell.qml:370` |
-| `300` (`Theme.slow`) | The pill's border colour change | `shell/shell.qml:427`, `share/qml/Bombadil/Theme.qml:93` |
-| `120` (`Theme.fast`) | The width of the stone's box when `Stop` appears under the pointer | `shell/shell.qml:444`, `share/qml/Bombadil/Theme.qml:91` |
+| `20000` with an empty field, `60000` with text typed | How long a summoned pill is left alone before it gives the keyboard back. Typing restarts the wait. Text already typed stays in the pill | `shell/shell.qml:266-273, 494-497` |
+| `30000`, repeating | The clock text in the pill | `shell/shell.qml:538` |
+| `150` | The border colour of an app chip. It is neither `Theme.fast` nor `Theme.normal` | `shell/shell.qml:373` |
+| `300` (`Theme.slow`) | The pill's border colour change | `shell/shell.qml:430`, `share/qml/Bombadil/Theme.qml:93` |
+| `120` (`Theme.fast`) | The width of the stone's box when `Stop` appears under the pointer | `shell/shell.qml:447`, `share/qml/Bombadil/Theme.qml:91` |
 | `200` (`Theme.normal`) | The border colour of a setup chip and of a found chip | `shell/SetupChips.qml:29`, `shell/FoundChips.qml:33`, `share/qml/Bombadil/Theme.qml:92` |
 | `120` (`Theme.fast`) | The border colour of a notice chip | `shell/NoticeChips.qml:36` |
 | `300` (`Theme.slow`) or `0` | The wallpaper picture settling in over the ground, and the dimming over a picture of the person's own. `0` with `BOMBADIL_REDUCE_MOTION=1` | `shell/Wallpaper.qml:93-97, 107-109` |
@@ -181,15 +181,15 @@ Every looping motion has a `running` condition, so nothing loops at rest. The le
 | Value | What it times | Defined in |
 |---|---|---|
 | `150` (`foldMs`) | A card fading out and shrinking to 0.6 toward its outer bottom corner, and back; a strip fading in | `shell/DeskTheme.js:51`, `shell/DeskState.qml:47`, `shell/DeskRail.qml:85-86`, `shell/DeskStrips.qml:63` |
-| `400` (`unfoldDelayMs`) | How long after the last window leaves a card's place the card unfolds. A window back over it in that time keeps it folded | `shell/DeskTheme.js:52`, `shell/DeskState.qml:48, 245-250, 257-263` |
+| `400` (`unfoldDelayMs`) | How long after the last window leaves a card's place the card unfolds. A window back over it in that time keeps it folded | `shell/DeskTheme.js:52`, `shell/DeskState.qml:48, 252-264, 264-270` |
 | `600` (`washMs`) | The colour of a row that has just arrived, washing over a card's left edge | `shell/DeskTheme.js:53`, `shell/DeskCard.qml:82-89` |
-| `150` (`pillAnimMs`) | The pill's width changing between the desk's modes, `OutCubic` | `shell/DeskState.qml:162-164` |
+| `150` (`pillAnimMs`) | The pill's width changing between the desk's modes, `OutCubic` | `shell/DeskState.qml:167-169` |
 | `230` (`foldMs` plus `80`) | A rail's window stays up this long after its last full card has gone, and after a drag ends. It is up for as long as a drag lasts, an empty rail's too: it draws the drop mark | `shell/DeskRail.qml:25-41` |
-| `500` (`settleMs`) | After a drop, the card or strip it came from stays dimmed until agentd answers with the desk or this long | `shell/DeskState.qml:870-871, 265-270, 575` |
+| `500` (`settleMs`) | After a drop, the card or strip it came from stays dimmed until agentd answers with the desk or this long | `shell/DeskState.qml:877-878, 272-277, 582` |
 | `2000`, repeating | The ring that breathes round a dot: the machine's turn, a session working, a live row | `shell/DeskCard.qml:43-59` |
-| `1000` (`tickMs`), repeating | The clock the Watching rows read. It runs only while agentd lists a job that has not failed, so a desk with nothing counting wakes nothing | `shell/DeskState.qml:102, 106, 278-286` |
-| `12000` (`doneStaysMs`) | A finished job's row leaves this long after it ended | `shell/DeskState.qml:103, 698` |
-| `5000` (`goneMs`) | A row the person removed stays gone this long and comes back if agentd still lists the job | `shell/DeskState.qml:105, 271-277` |
+| `1000` (`tickMs`), repeating | The clock the Watching rows read. It runs only while agentd lists a job that has not failed, so a desk with nothing counting wakes nothing | `shell/DeskState.qml:102, 106, 285-293` |
+| `12000` (`doneStaysMs`) | A finished job's row leaves this long after it ended | `shell/DeskState.qml:103, 705` |
+| `5000` (`goneMs`) | A row the person removed stays gone this long and comes back if agentd still lists the job | `shell/DeskState.qml:105, 278-284` |
 | `300` (`pollMs`), repeating | `HyprCover` asks Hyprland where the windows are, while any window is on the stage. Nothing reports a drag | `shell/HyprCover.qml:14, 87-93` |
 | `40` | `HyprCover` reads Hyprland's answer this long after it asked. A burst of events settles every `40` rather than waiting for the burst to end | `shell/HyprCover.qml:71-75` |
 | `250` | `HyprCover` reads again once a slow answer has surely come | `shell/HyprCover.qml:76-80` |
@@ -249,7 +249,7 @@ The fades, slides and colour changes of the kit's components in `share/qml/Bomba
 | `120.0` s (`READY_LINE_SECONDS`) | How long `Signed in to Claude` is worth saying to a bar that connects after it | `src/bombadil/agentd.py:243, 1359-1362` |
 | `600` s, from the environment `BOMBADIL_SIGNIN_TIMEOUT` | How long a sign-in may wait on its page. agentd watches a sign-in that was started in a terminal every `2` s for this long | `src/bombadil/signin.py:38`, `src/bombadil/agentd.py:1630-1642` |
 | `10` s | How long `_end_signin` waits for a cancelled sign-in's page to be put away | `src/bombadil/agentd.py:1553-1563` |
-| `1.5` s (`BUDGET` plus `1.0`) | How long a turn's receipt waits for the picture of the machine taken before the turn. `sysmap.BUDGET` is `0.5` | `src/bombadil/agentd.py:1269`, `src/bombadil/sysmap.py:34` |
+| `1.5` s (`BUDGET` plus `1.0`) | How long a turn's receipt waits for the picture of the machine taken before the turn. `sysmap.BUDGET` is `0.5` | `src/bombadil/agentd.py:1269`, `src/bombadil/sysmap.py:36` |
 | `2.0` s (`POKE_TIMEOUT`) | However the brain's client misbehaves, the note about a turn that agentd sends it is not held up longer than this, and nothing it does fails a turn | `src/bombadil/agentd.py:219, 2441-2451` |
 | `0.05` s | Polls while an undo, a restart or a shutdown waits for the running turn to end, and while `_exited` waits for a process | `src/bombadil/agentd.py:1148, 2689` |
 | `60.0` s (`REST_POLL`) | While a limit lasts, how often agentd compares the wall clock with the time the provider gave | `src/bombadil/agentd.py:240, 1729` |
@@ -278,16 +278,17 @@ The shell hides a finished row after `12000` ms (`doneStaysMs`) and the table dr
 | Value | What it limits | Defined in |
 |---|---|---|
 | `52` px high, radius `26`, border `1.5` px | The pill (`pillHeight`, `radiusPill`, `pillBorder`) | `share/qml/Bombadil/Theme.qml:66-67, 73` |
-| `900` px | The widest the pill, the line and the chips grow (`pillMaxWidth`). On the screen the desk lives on, the pill is `deskState.pillWidth` instead | `share/qml/Bombadil/Theme.qml:71`, `shell/shell.qml:203, 420` |
-| `360` px | The floor of the width limit on the line, the picture, the found chips and the queue chips (`Math.max(360, win.pillMax)`), and the pill's width while any window shares the stage (`shared`) | `shell/shell.qml:303, 315, 328, 347`, `shell/DeskState.qml:159` |
-| `100` px | The pill's width under a full-screen window (`immersive`): the capsule holds the stone and the clock only | `shell/DeskState.qml:142-146, 158` |
-| `900` px at most and `360` at least, less what strips and a full card take on each side | The pill's width on a screen with nothing on the stage (`open`) | `shell/DeskState.qml:160-161` |
-| `64` px, plus the app chips and `8` px when they show | The bar's exclusive zone: windows never cover the pill row | `shell/shell.qml:221` |
-| `12` px margins, `8` px between rows | The column that holds the picture, the line, the chips and the pill | `shell/shell.qml:292-293` |
+| `900` px | The widest the pill, the line and the chips grow (`pillMaxWidth`). On the screen the desk lives on, the pill is `deskState.pillWidth` instead | `share/qml/Bombadil/Theme.qml:71`, `shell/shell.qml:203, 423` |
+| `360` px | The floor of the width limit on the line, the picture, the found chips and the queue chips (`Math.max(360, win.pillMax)`, and `Math.max(360, win.pictureMax)` for the picture), and the pill's width while any window shares the stage (`shared`) | `shell/shell.qml:306, 318, 331, 350`, `shell/DeskState.qml:161` |
+| `560` px | The widest a picture grows beside a window (`Math.min(560, stageRoom)`, less on a screen whose rails and strips leave less room); with no window it is as wide as the pill, and the pill is 360 while a window shares the stage | `shell/DeskState.qml:166, 170`, `shell/shell.qml:205, 306` |
+| `100` px | The pill's width under a full-screen window (`immersive`): the capsule holds the stone and the clock only | `shell/DeskState.qml:142-146, 160` |
+| `900` px at most and `360` at least, less what strips and a full card take on each side | The pill's width on a screen with nothing on the stage (`open`) | `shell/DeskState.qml:158-162` |
+| `64` px, plus the app chips and `8` px when they show | The bar's exclusive zone: windows never cover the pill row | `shell/shell.qml:223` |
+| `12` px margins, `8` px between rows | The column that holds the picture, the line, the chips and the pill | `shell/shell.qml:294-295` |
 | `24` by `24` px, the stone `18` px wide | The stone and its slot | `shell/Stone.qml:5, 27-28` |
-| `28` px high | A queued chip, a notice chip, an app chip and a desk strip (`chipHeight`, `stripHeight`) | `share/qml/Bombadil/Theme.qml:70`, `shell/QueueChips.qml:21`, `shell/NoticeChips.qml:31`, `shell/shell.qml:365`, `shell/DeskTheme.js:45` |
+| `28` px high | A queued chip, a notice chip, an app chip and a desk strip (`chipHeight`, `stripHeight`) | `share/qml/Bombadil/Theme.qml:70`, `shell/QueueChips.qml:21`, `shell/NoticeChips.qml:31`, `shell/shell.qml:368`, `shell/DeskTheme.js:45` |
 | `260` px | The widest prompt text in a `next` chip; it elides past it | `shell/QueueChips.qml:39` |
-| `180` px | The widest app title in an app chip | `shell/shell.qml:382` |
+| `180` px | The widest app title in an app chip | `shell/shell.qml:385` |
 | `46` px high, at least `132` px wide, and `30` px high | A `big` setup chip, and every other setup chip | `shell/SetupChips.qml:23-24` |
 | `30` px high, `96` to `520` px wide, label at most `420` px | A found chip. A row too wide for the bar shrinks its chips and cuts their labels short | `shell/FoundChips.qml:25-28, 44` |
 | `3` chips | The most found chips the bar shows (agentd's finder sends at most `3` too: `LIMIT`) | `shell/PillState.qml:379`, `src/bombadil/finder.py:30` |
@@ -300,7 +301,7 @@ The shell hides a finished row after `12000` ms (`doneStaysMs`) and the table dr
 | `400` characters | How much of the agent's own words `StatusLine.newest` looks through to find the newest words that fit | `shell/StatusLine.qml:79-90` |
 | `200` characters | The tail of the agent's own words the narrator sends as the line | `src/bombadil/narrate.py:1757, 1765, 1772` |
 | `1` line, `2` lines | An error with no turn: shown over a running turn as its first line, else as the line, up to two lines | `shell/PillState.qml:263-264` |
-| none | The `next` chips. `AgentD.pending` has no cap in code, and the chips are one `RowLayout` as wide as the pill | `src/bombadil/agentd.py:285, 523`, `shell/QueueChips.qml:7-12`, `shell/shell.qml:340-348` |
+| none | The `next` chips. `AgentD.pending` has no cap in code, and the chips are one `RowLayout` as wide as the pill | `src/bombadil/agentd.py:285, 523`, `shell/QueueChips.qml:7-12`, `shell/shell.qml:343-351` |
 | `540` by `660` px | The static window rule for every `bombadil-app-*` window: floating and centred. `hypr.APP_CARD` is the same size, and the card that `place_app` cascades: `3` slots (`APP_SLOTS`), each `48` px down and to the right of the last (`APP_STEP`), a slot held `10.0` s for an app whose window has not appeared (`PENDING_SECS`) | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:71-78`, `src/bombadil/hypr.py:31-33, 56` |
 | `560` by `680` px | The size a kit app asks for when it declares none (`AppWindow` `width` and `height`, and `DEFAULT_SIZE`). The runtime clamps a declared size to between `240` by `160` and `3840` by `2160`, `placement.fit` shrinks it to the room, keeping `24` px of margin and `56` px for the line, and a window rule for that size is added for the app | `share/qml/Bombadil/AppWindow.qml:36-37`, `src/bombadil/appkit/runtime.py:33, 497-505, 559-560`, `src/bombadil/appkit/placement.py:22-24, 53-57, 168-172` |
 | `12` px rounding, gaps `6` and `12`, border `1`, blur size `6` and `2` passes | Windows (`rounding` matches `Theme.radius`), the gaps between them and their blur | `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:18-31` |
@@ -321,7 +322,7 @@ A picture that breaks a limit is refused, with an error that names the limit (`v
 | `40` characters | A box's `id` (and `key`, which is cut) | `src/bombadil/cards.py:31, 145-146` |
 | `120`, `80`, `9` | A unit name, a package name, and the digits of a turn number in `opens` | `src/bombadil/cards.py:32-33, 53-71` |
 | `3` lines | The `say` sentence in the picture host | `shell/CardHost.qml:136` |
-| `60` percent of the screen's height | The tallest picture host (`maxHeight`). The scroll area is `maxHeight - 120` | `shell/shell.qml:305-306`, `shell/CardHost.qml:16, 110` |
+| `60` percent of the screen's height | The tallest picture host (`maxHeight`). The scroll area is `maxHeight - 120` | `shell/shell.qml:308-309`, `shell/CardHost.qml:16, 110` |
 | `1` picture | One at a time: a newer one replaces it, `Esc` and its `×` put it away, the next turn clears it | `shell/PillState.qml:80-82, 141-155, 240` |
 
 ### The desk
@@ -332,27 +333,27 @@ A picture that breaks a limit is refused, with an error that names the limit (`v
 | `16`, `40`, `16`, `12` px | A rail's margin from the screen edge, its top, its bottom above the pill's row, and the gap between cards | `shell/DeskTheme.js:41-44` |
 | `300` px wide, `40` px top margin, `16` px side margins, layer `Bottom`, exclusive zone `0` | A rail's window: one on each side of a screen, under the app windows and over the wallpaper. Its input mask is the box around the cards in full, so a click beside a card goes through. On a screen the desk does not live on, or under a full-screen window, there is no window | `shell/DeskRails.qml:17-39`, `shell/DeskRail.qml:13-23, 43-59` |
 | `28` px high, `12` px apart, text at most `220` px | A strip, the gap between strips and from the pill, and the strip's text | `shell/DeskTheme.js:45-46`, `shell/DeskStrip.qml:17, 24` |
-| `3` per side | Strips beside the pill; more merge into one `+N` | `shell/DeskState.qml:345-362` |
-| `screenHeight - 120` px | A rail's height: from `40` below the top to `64 + 16` above the bottom | `shell/DeskState.qml:168-170` |
+| `3` per side | Strips beside the pill; more merge into one `+N` | `shell/DeskState.qml:352-369` |
+| `screenHeight - 120` px | A rail's height: from `40` below the top to `64 + 16` above the bottom | `shell/DeskState.qml:175-177` |
 | `1016` px | The narrowest screen that keeps its cards in full: `2 * (300 + 16 + 12) + 360`. A narrower one keeps them as strips | `shell/DeskState.qml:149-150` |
-| `68 + 26 * steps`, plus `20` for a command and `18` for a caption | The height of `Now` | `shell/DeskState.qml:118, 180-183`, `shell/NowCard.qml:22-23, 49` |
-| `68` plus `34` per meter or stack row and `44` per other row | The height of `Watching`, `Needs you` and `Machine` | `shell/DeskState.qml:186-189`, `shell/RowsCard.qml:109` |
-| `6` rows | The most rows `Machine` keeps; a row past the sixth is dropped | `shell/DeskState.qml:773, 801-815` |
-| `168` | The height of `Alive`. Nothing fills the `alive` or `away` models, and `DeskRail` draws a face only for `Now`, `Watching`, `Needs you` and `Machine`, so this height is never used | `shell/DeskState.qml:71, 73, 185`, `shell/DeskRail.qml:90-92` |
-| `12` rows | Steps shown on `Now`: a longer plan shows the steps around the current one, and `Step 7 of 20` still counts all | `shell/DeskState.qml:556-566` |
-| `36`, `44` characters | About what a card's title and its why line hold | `shell/DeskState.qml:559-560` |
-| `60` characters | The prompt shown as `Now`'s title (`36` less `asked by` when a session asked) | `shell/DeskState.qml:550` |
-| `70` characters | A `Needs you` row's second line | `shell/DeskState.qml:759` |
+| `68 + 26 * steps`, plus `20` for a command and `18` for a caption | The height of `Now` | `shell/DeskState.qml:118, 187-190`, `shell/NowCard.qml:22-23, 49` |
+| `68` plus `34` per meter or stack row and `44` per other row | The height of `Watching`, `Needs you` and `Machine` | `shell/DeskState.qml:193-196`, `shell/RowsCard.qml:109` |
+| `6` rows | The most rows `Machine` keeps; a row past the sixth is dropped | `shell/DeskState.qml:780, 808-822` |
+| `168` | The height of `Alive`. Nothing fills the `alive` or `away` models, and `DeskRail` draws a face only for `Now`, `Watching`, `Needs you` and `Machine`, so this height is never used | `shell/DeskState.qml:71, 73, 192`, `shell/DeskRail.qml:90-92` |
+| `12` rows | Steps shown on `Now`: a longer plan shows the steps around the current one, and `Step 7 of 20` still counts all | `shell/DeskState.qml:563-573` |
+| `36`, `44` characters | About what a card's title and its why line hold | `shell/DeskState.qml:566-567` |
+| `60` characters | The prompt shown as `Now`'s title (`36` less `asked by` when a session asked) | `shell/DeskState.qml:557` |
+| `70` characters | A `Needs you` row's second line | `shell/DeskState.qml:766` |
 | `2` rows | `Needs you` is a card only from two waiting sessions; one is the line. The stone knocks for one (`needsYou`), card or no card | `shell/DeskState.qml:129, 133` |
 | `2` steps, or a step that touches the system | `Now` shows for a plan of two steps or more, or a turn that touched the system | `shell/DeskState.qml:114` |
 | `50` px high, left button only | A card's grip: the title and the line under it. The rows start below it, so a button or an `×` never starts a drag | `shell/DeskRail.qml:95-105`, `shell/DeskDrag.qml:23` |
-| `screenHeight - 64` px and below | A drop on the pill's row. A card taken from a rail folds to its strip (`fold` with its widget); a strip dropped there does nothing | `shell/DeskState.qml:168, 886, 946` |
-| `railX(left) + 300 + 40` px and left, `railX(right) - 40` px and right | A drop beside a rail: a `move` to that rail, at the place under the pointer. Between the two is the stage, where nothing happens; so is any point over a window | `shell/DeskState.qml:172, 885, 887-888, 947` |
+| `screenHeight - 64` px and below | A drop on the pill's row. A card taken from a rail folds to its strip (`fold` with its widget); a strip dropped there does nothing | `shell/DeskState.qml:175, 893, 953` |
+| `railX(left) + 300 + 40` px and left, `railX(right) - 40` px and right | A drop beside a rail: a `move` to that rail, at the place under the pointer. Between the two is the stage, where nothing happens; so is any point over a window | `shell/DeskState.qml:179, 892, 894-895, 954` |
 | `3` px high | The drop mark across a rail | `shell/DeskRail.qml:145-153` |
 | `0.55` | The opacity of the dim over the card or strip in hand, and over the one a drop was sent for until `settleMs` | `shell/DeskRail.qml:107-117`, `shell/DeskStrips.qml:74-83` |
 | `0.6` | The ghost chip: an outlined strip at the outer end of the strips on the side a card was taken from, while the card is held over the pill's row. It sits outside the row, so it moves nothing | `shell/DeskStrips.qml:19-20, 88-101` |
-| Over a window, in the middle, a strip on the row, or a card put back where it was | A drop that sends nothing. Cards in the order they are, among the cards on show, are not a move; a strip is never in its place, so its drop always counts | `shell/DeskState.qml:885-888, 906-913` |
-| Connected, no other drag, the widget in the face it is taken from | A drag is refused otherwise. A `desk` message that arrives during a drag waits for the drop. A move also gives a hand-folded card its card back | `shell/DeskState.qml:415-416, 917-924`, `src/bombadil/desk.py:221-226, 245` |
+| Over a window, in the middle, a strip on the row, or a card put back where it was | A drop that sends nothing. Cards in the order they are, among the cards on show, are not a move; a strip is never in its place, so its drop always counts | `shell/DeskState.qml:892-895, 913-920` |
+| Connected, no other drag, the widget in the face it is taken from | A drag is refused otherwise. A `desk` message that arrives during a drag waits for the drop. A move also gives a hand-folded card its card back | `shell/DeskState.qml:422-423, 924-931`, `src/bombadil/desk.py:221-226, 245` |
 | `6` widgets, `1` always, `1` opt in | `now`, `watching`, `alive`, `needs`, `away`, `machine`. `needs` cannot be hidden, and `alive` is on the desk only after `show alive`. `Desk.stripped` holds the cards folded by hand, kept in `desk.toml`, and `fold` and `unfold` take a widget | `src/bombadil/desk.py:42-53, 125, 154-159, 194-195, 200-205, 310` |
 | `1` to `40` characters | A screen name in `desk.toml` (`[A-Za-z0-9 ._:/-]`) | `src/bombadil/desk.py:281` |
 | `20` jobs | Running jobs at once (`MAX_RUNNING`) | `src/bombadil/jobs.py:43, 319-320` |
@@ -458,7 +459,7 @@ Other words, in the order they are tried:
 
 Apps beat panels and panels beat utility words, so an app called `Sound` opens as itself. Mail is the one exception: its words come before apps. A picture phrase and a widget question lose to an app with exactly that title. A widget name loses to an app with that name. Core commands beat apps. A utility word matches bare or after an open verb, so `the sound` alone goes to the agent while `the browser` opens the panel (`src/bombadil/launcher.py:294-297`).
 
-What the pill itself offers is narrower, and only a hint: agentd decides. `launcher.entries` lists apps (Mail as its own entry, with its words), then panels, then widgets, then the first word of each core, brain and utility command, leaving out `restart`, `shutdown`, `lock`, `stop`, `volume_up`, `volume_down`, `mute`, `unmute` and `whyhere`, then `Sign in` (`src/bombadil/launcher.py:138-139, 334-348`). `Tab` completes from that list once two characters follow an optional verb, and a widget's name completes only after `open`, `show`, `close` or `hide`. The grey `↵ Passwords` appears when the text is exactly one of those words (`shell/shell.qml:521-529`, `shell/PillState.qml:704-737`). `PillState` knows seven of the launcher's verbs (`open`, `show`, `launch`, `start`, `close`, `quit`, `hide`) and not `run`, `bring up`, `go to`, `switch to`, `exit`, `kill` or `put away`, so those open the app without the hint (`shell/PillState.qml:683-685, 687-737`).
+What the pill itself offers is narrower, and only a hint: agentd decides. `launcher.entries` lists apps (Mail as its own entry, with its words), then panels, then widgets, then the first word of each core, brain and utility command, leaving out `restart`, `shutdown`, `lock`, `stop`, `volume_up`, `volume_down`, `mute`, `unmute` and `whyhere`, then `Sign in` (`src/bombadil/launcher.py:138-139, 334-348`). `Tab` completes from that list once two characters follow an optional verb, and a widget's name completes only after `open`, `show`, `close` or `hide`. The grey `↵ Passwords` appears when the text is exactly one of those words (`shell/shell.qml:524-532`, `shell/PillState.qml:704-737`). `PillState` knows seven of the launcher's verbs (`open`, `show`, `launch`, `start`, `close`, `quit`, `hide`) and not `run`, `bring up`, `go to`, `switch to`, `exit`, `kill` or `put away`, so those open the app without the hint (`shell/PillState.qml:683-685, 687-737`).
 
 ## What the rules say
 
@@ -466,12 +467,12 @@ The rules are in [principles](../principles.md). Each row gives the number a rul
 
 | Rule | What it states | The constants that implement it |
 |---|---|---|
-| [One pill, three things to learn](../principles.md#stupidly-simple) | `Super` (or `Alt+Space`) to talk, `Esc` to stop, `undo` to go back | The two `Super` taps and `Alt+Space` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:59-65`), `Keys.onEscapePressed` (`shell/shell.qml:503-508`) and the word `undo` (`src/bombadil/launcher.py:47`). The image also binds six keys the rule does not name: `Super+B`, `T`, `F`, `Q`, `Return` and `Super+Ctrl+Escape` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:54-58, 69`) |
+| [One pill, three things to learn](../principles.md#stupidly-simple) | `Super` (or `Alt+Space`) to talk, `Esc` to stop, `undo` to go back | The two `Super` taps and `Alt+Space` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:59-65`), `Keys.onEscapePressed` (`shell/shell.qml:506-511`) and the word `undo` (`src/bombadil/launcher.py:47`). The image also binds six keys the rule does not name: `Super+B`, `T`, `F`, `Q`, `Return` and `Super+Ctrl+Escape` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:54-58, 69`) |
 | [Something true in 200 ms](../principles.md#something-true-in-200-ms) | Something true on screen within `200` ms of `Enter`. Open, stop and undo never wait for the model | `PillState.submit` sets `optimistic`, `mode = "working"` and the line `On it` in the same handler as `Enter`, before agentd answers (`shell/PillState.qml:547-552`). agentd says `turn_start` before it takes the restore point (`src/bombadil/agentd.py:2072, 2097-2099`) and answers a launcher word with a `local` event at once (`src/bombadil/agentd.py:500`). The line's fade-in is `Theme.normal`, `200` ms (`shell/StatusLine.qml:40`). A headless run measured `turn_start` `0.006` s after `Enter` (`docs/screens/pill/checks.log:2`), and the check fails above `0.2` s (`tests/desktop/driver.py:260-269`) |
 | [The answer is the thing itself](../principles.md#the-answer-is-the-thing) | One or two lines while the agent works, at most four afterwards | `maximumLineCount` `1`, `2` for a flash and `4` (`shell/StatusLine.qml:127`). The system prompt asks for at most four lines of one or two plain sentences (`src/bombadil/providers.py:57-58`). A picture holds at most `12` boxes and `16` links, with the limits in [Pictures](#pictures) |
-| [Quiet at rest](../principles.md#quiet-at-rest) | A screen at rest is wallpaper and one pill. Every movement means one thing and has a still version for reduced motion | Four stone movements: roll `1000`, knock and glow `1600`, hop `700`, lean `240` (see [The stone](#the-stone)). Widgets are present only with something to say: `Now` for two steps or a system step, `Watching` for a listed job, `Needs you` from two sessions, `Machine` while agentd sends rows (`shell/DeskState.qml:112-136`). With nothing on the stage, the one repeating timer in the shell is the clock (`30000`). `HyprCover`'s `300` poll runs only while a window is on the stage, the line's `250` timer only while it shows, the desk's clock only while a job counts, the reconnect timer only while disconnected and the idle timer only while the pill is summoned (`shell/shell.qml:120-121, 264-271, 535`, `shell/HyprCover.qml:88-93`, `shell/StatusLine.qml:53-61`, `shell/DeskState.qml:278-286`) |
+| [Quiet at rest](../principles.md#quiet-at-rest) | A screen at rest is wallpaper and one pill. Every movement means one thing and has a still version for reduced motion | Four stone movements: roll `1000`, knock and glow `1600`, hop `700`, lean `240` (see [The stone](#the-stone)). Widgets are present only with something to say: `Now` for two steps or a system step, `Watching` for a listed job, `Needs you` from two sessions, `Machine` while agentd sends rows (`shell/DeskState.qml:112-136`). With nothing on the stage, the one repeating timer in the shell is the clock (`30000`). `HyprCover`'s `300` poll runs only while a window is on the stage, the line's `250` timer only while it shows, the desk's clock only while a job counts, the reconnect timer only while disconnected and the idle timer only while the pill is summoned (`shell/shell.qml:120-121, 266-273, 538`, `shell/HyprCover.qml:88-93`, `shell/StatusLine.qml:53-61`, `shell/DeskState.qml:285-293`) |
 | [Recovery never goes through the broken part](../principles.md#recovery-without-the-broken-part) | Stop, undo and rescue work without the model, the network or the shell | `Super+Escape` runs `bombadil stop`, which writes one line to agentd's socket with a `2` s limit (`bin/bombadil:133`). `Super+Ctrl+Escape` restarts the bar's unit without touching agentd (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:69`), and systemd starts agentd, the bar and `mako` again `1` s after they die (see [The session services](#the-session-services)). agentd runs local actions beside its reader so a stop sent right after is read at once (`src/bombadil/agentd.py:680-694`). A client that stops reading is dropped after `5.0` s or `10000` queued messages so one hung bar holds nobody up (`src/bombadil/agentd.py:210-211, 646-653`) |
-| [Every piece degrades](../principles.md#degrade-and-recover) | A missing part costs a feature, not the machine | The bar retries agentd every `1500` ms and shows `Waiting for agentd…` meanwhile (`shell/shell.qml:120-126, 477`). The picture host is a `Loader` so a card that cannot draw costs the cards, never the bar (`shell/shell.qml:295-309`). The `15000` window decides between `Starting` and `offline` |
+| [Every piece degrades](../principles.md#degrade-and-recover) | A missing part costs a feature, not the machine | The bar retries agentd every `1500` ms and shows `Waiting for agentd…` meanwhile (`shell/shell.qml:120-126, 480`). The picture host is a `Loader` so a card that cannot draw costs the cards, never the bar (`shell/shell.qml:297-312`). The `15000` window decides between `Starting` and `offline` |
 | [Nothing runs unseen](../principles.md#nothing-runs-unseen) | Background work is a unit the person can see and stop | Jobs are listed in `Watching`; agentd reads the table every `2.0` s while it has anything. At most `20` run at once. A `×` on a row stops or drops it through agentd, never the model (`src/bombadil/agentd.py:554-555, 887`) |
 | [One design language](../principles.md#one-design-language) | Things that speak are round, things that hold have 12 px corners | The pill is `52` high with radius `26`, chips are `28` high with half of that, windows round `12` (`share/qml/Bombadil/Theme.qml:58, 66-70`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua:30`). Motion uses three tokens: `fast` `120`, `normal` `200`, `slow` `300` (`share/qml/Bombadil/Theme.qml:91-93`) |
 | [Records answer before models](../principles.md#records-before-models) | A reason is the sentence the agent wrote just before it acted | At most `140` characters (`src/bombadil/narrate.py:1239`). The answer to `why` stays for `8000` ms (`shell/PillState.qml:311`) |
@@ -481,9 +482,9 @@ The rules are in [principles](../principles.md). Each row gives the number a rul
 Each is read from the file named.
 
 - **A still version of every movement.** Reduced motion (`BOMBADIL_REDUCE_MOTION=1`) reaches the stone's roll, knock, glow and hop and the wallpaper's fade (`shell/Stone.qml:72, 197-271`, `shell/Wallpaper.qml:96, 108`), and nothing else reads it. It does not reach the lean (`shell/Stone.qml:60`), the desk's `2000` ms ring (`shell/DeskCard.qml:53-58`), the fold (`shell/DeskRail.qml:85-86`), the strips' fade (`shell/DeskStrips.qml:63`), the wash (`shell/DeskCard.qml:82-89`), or the fades and slides of the line, the picture and the AI card (`shell/StatusLine.qml:40-41`, `shell/CardHost.qml:41-45`, `shell/AiCard.qml:25-26`). Nothing in the repository sets the variable.
-- **One number for one meaning.** A finished job is hidden by the shell after `12000` ms and dropped by the table after `15.0` s (`shell/DeskState.qml:103`, `src/bombadil/jobs.py:40`). The app chips' `150` ms border fade (`shell/shell.qml:370`) and a `Diagram` box's `140` ms move (`share/qml/Bombadil/Diagram.qml:400-402`) are literals that are neither `fast` nor `normal`.
+- **One number for one meaning.** A finished job is hidden by the shell after `12000` ms and dropped by the table after `15.0` s (`shell/DeskState.qml:103`, `src/bombadil/jobs.py:40`). The app chips' `150` ms border fade (`shell/shell.qml:373`) and a `Diagram` box's `140` ms move (`share/qml/Bombadil/Diagram.qml:400-402`) are literals that are neither `fast` nor `normal`.
 - **Tokens for the desk's durations.** `foldMs`, `unfoldDelayMs` and `washMs` live in `shell/DeskTheme.js:51-53`, not in `Theme.qml`, and `tests/test_theme.py` does not compare them.
-- **A key the card promises.** `Needs you` says `Tab walks these · one alone is just the line` (`shell/DeskState.qml:763`), but `Tab` in the pill only completes a launcher name (`shell/shell.qml:496-499`), and agentd has no handler for the `dev` messages that fill the card or for its `Open` button (`shell/DeskState.qml:27, 420`).
+- **A key the card promises.** `Needs you` says `Tab walks these · one alone is just the line` (`shell/DeskState.qml:770`), but `Tab` in the pill only completes a launcher name (`shell/shell.qml:499-502`), and agentd has no handler for the `dev` messages that fill the card or for its `Open` button (`shell/DeskState.qml:27, 427`).
 - **A hint that is narrower than the launcher.** Seven of the launcher's verbs show no `↵` hint (see [The launcher words](#the-launcher-words)).
 
 ## Which values a test pins

@@ -198,8 +198,11 @@ Only the arguments the agent gave are sent. For `desk`, `job` and the mail tools
 | `DBUS_SESSION_BUS_ADDRESS` | `notify` | The session bus. | yes |
 | `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `XDG_DATA_HOME` | everything that reads `paths.py` | Where config, state and data live. | yes |
 | `BOMBADIL_STATE`, `BOMBADIL_APPS`, `BOMBADIL_SHARE` | app tools, `app_guide` | Overrides for the state folder, `~/Apps` and the share folder. | yes |
+| `BOMBADIL_BUDGET_SCALE` | `system_map`, and `agentd` for its own picture words | How many times longer than usual a capture may wait: a number from 1 to 20, read at each capture (`sysmap._slow`). A value below 1 counts as 1, one above 20 as 20, and one that is not a number as 1. A machine that is slow all the time sets it in the environment `agentd` starts in, and the picture waits longer instead of coming back with nothing. It scales every kind of capture, the provider check in `network` among them, and not a capture that is given a budget of its own, such as a receipt's snapshot. | yes |
 | `BOMBADIL_PROVIDER` | `system_map` | Names the provider on the network picture; else `provider` from `config.toml`, else `claude`. | no |
 | `BOMBADIL_RUNTIME`, `BOMBADIL_CONFIG`, `BOMBADIL_DATA` | `paths.py` | Overrides for the runtime, config and data folders. | no |
+
+The row for `BOMBADIL_BUDGET_SCALE`, its entry in `MCP_ENV` and the scaled times in [Time limits and other constants](#time-limits-and-other-constants) were added on 2026-11-09 and checked against `main` at `9d5c729`; the rest of the page was verified at the commit on the Verified line.
 
 On a booted system the session variables reach the server through `agentd`'s own environment. `agentd` runs as a systemd user service (`bombadil-agentd.service`), and the user manager takes the session's environment (`WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` and the rest) from `systemctl --user import-environment`, which Hyprland's `hyprland.start` hook runs before it restarts `bombadil-agentd`, `bombadil-shell` and `mako` (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua`). `agentd` hands its environment to the CLI, and the CLI hands it to the server (Codex only the names in `MCP_ENV`). A panel tool that answers `Hyprland is not running` on a booted system is therefore a question about that import: see [session-services.md](session-services.md#who-starts-them).
 
@@ -226,7 +229,7 @@ On a booted system the session variables reach the server through `agentd`'s own
 | `MAIL_TIMEOUT` | 30 s: what the tool waits for `agentd`, because a draft copies its attachments first | `mail/tools.py` |
 | `TIMEOUTS` (`search`, `read`, `mark`, `draft`) | 8 s, 12 s, 5 s, 20 s: what `agentd`'s broker waits for the mail service. The entry `show` (4 s) is never read: `mail_show` goes through `Launcher.open_mail`, which waits `MAIL_SHOW_SECONDS`, 1 s | `mail/tools.py`, `launcher.py` |
 | `ACK_TIMEOUT` | 2 s, per socket operation | `cardtools.py` |
-| `BUDGET`, `BOOT_BUDGET`, `PROBE_BUDGET` | 0.5 s per capture; 4 s for `boot`; 1.6 s for the provider check in `network` | `sysmap.py` |
+| `BUDGET`, `BOOT_BUDGET`, `PROBE_BUDGET` | 0.5 s per capture; 4 s for `boot`; 1.6 s for the provider check in `network`, whose connection waits 0.4 s less than that, and never under 1.2 s. Each is multiplied by `BOMBADIL_BUDGET_SCALE` (1 to 20, 1 when it is not set) unless the caller passes a budget of its own ([Environment](#environment)) | `sysmap.py` |
 | `CHECK_TIMEOUT`, `OPEN_WAIT` | 40 s, 3 s | `appkit/tools.py` |
 | Panel window wait | 20 s | `Hyprland.panel` |
 | Hyprland socket request | 10 s | `Hyprland.request` |
@@ -338,11 +341,11 @@ Steps 1 to 3 are all there is to changing how an existing CLI is told about the 
 
 | File | What it covers |
 |---|---|
-| `tests/test_mcp_server.py` | The protocol methods, the panel and snapshot tools with fakes, `rollback` skipping the turn's own snapshot, serving over stdio, the `desk` and `job` tools against a stand-in `agentd` (turn, ids, only given arguments, refusals as errors, timeouts, hang-ups, answers in pieces), the mail tools listed with no way to send, a mail tool asking `agentd` (its turn, the mail's id as `mail`, a refusal, a silence), `_line`, and `MCP_ENV` carrying the turn. |
+| `tests/test_mcp_server.py` | The protocol methods, the panel and snapshot tools with fakes, `rollback` skipping the turn's own snapshot, serving over stdio, the `desk` and `job` tools against a stand-in `agentd` (turn, ids, only given arguments, refusals as errors, timeouts, hang-ups, answers in pieces), the mail tools listed with no way to send, a mail tool asking `agentd` (its turn, the mail's id as `mail`, a refusal, a silence), `_line`, and `MCP_ENV` carrying the turn and `BOMBADIL_BUDGET_SCALE`. |
 | `tests/test_cardtools.py` | The picture tools' schemas and size budget, every fixable error at once, the words returned with and without `agentd` or a bar, `system_map` reading and pointing, the provider name, and a card crossing a real socket to `agentd`. |
 | `tests/test_appkit_tools.py` | The app tools with the check and Hyprland faked: results with a screenshot, reload, failed checks, bad files, the check run against the app's own folder, `app_guide` topics, tool order, and that no Qt is imported. |
 | `tests/test_appkit_placement.py` | Window control behind the app tools: a stuck app is killed, a toggle that was sent is never sent again, a failed connect is tried again, requests wait as long as `hypr` does. |
-| `tests/test_sysmap.py` | What `system_map` reads: the parsers on captured output, the boot fallback to `blame`, unit names found without their capitals, and the unit file list that is never waited for. |
+| `tests/test_sysmap.py` | What `system_map` reads: the parsers on captured output, the boot fallback to `blame`, unit names found without their capitals, and the unit file list that is never waited for. Also the time each capture gets under `BOMBADIL_BUDGET_SCALE`: kept between 1 and 20, a value that is not a number read as 1, never applied to a budget that was asked for, and carried to the provider check's connection. |
 | `tests/test_mail_tools.py` | Both ends of the mail tools: schemas and the rules in the descriptions, the line each tool sends, and the broker against a fake service (marks around other people's words, control and text-reversing characters, the cut, the typed words, a draft and its warnings, the window, a service that is absent or silent). |
 | `tests/test_mail_client.py` | The blocking client of `mail.sock` that the broker reaches the service through: ids, timeouts, hang-ups, pushes. |
 | `tests/test_mail_agentd.py` | `agentd`'s side of `mail-tool` (only the running turn, only the asker answered, an answer cut at a size), the real server reaching mail from inside a turn, and `[mail text not kept]` in the log. |
