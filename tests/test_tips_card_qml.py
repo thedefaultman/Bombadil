@@ -49,15 +49,16 @@ def ready(d):
 class Card:
     """A desk with the Tips card up, and what the card does to it."""
 
-    def __init__(self, app, tmp_path, width, height, facts=SAMPLE, kept=False):
+    def __init__(self, app, tmp_path, width, height, facts=SAMPLE, kept=False, up=True):
         self.desk = Desk(app, tmp_path, width, height)
         self.tmp = tmp_path
-        ready(self.desk)
         self.tips = Tips(path=tmp_path / "tips.json", clock=lambda: date(2026, 11, 9), kept=lambda: kept)
         self.tips.facts = facts
         self.tips.ready()
-        self.show()
-        self.desk.pump(0.4)           # the arrival: the desk's own fade and scale, once
+        if up:
+            ready(self.desk)
+            self.show()
+            self.desk.pump(0.4)       # the arrival: the desk's own fade and scale, once
 
     # -- agentd's side --
 
@@ -587,6 +588,153 @@ def test_the_card_loads_and_works_with_no_qml_warnings(make):
     c.desk.send(type="tips", present=True, card={"id": "x"})   # no line: no card
     c.desk.call("lost")
     assert c.desk.warnings == []
+
+
+# -- when the card is there: agentd says so, setup is over, and the shell is calm --
+
+def setup(c, state, line="", **kw):
+    c.desk.send(type="setup", state=state, line=line, tone=kw.pop("tone", "step"), actions=[], **kw)
+
+
+def test_the_card_waits_for_setup_to_be_ready_and_goes_when_it_is_not(make):
+    c = make(up=False)
+    c.show()                                                  # agentd has something to say, setup has not started
+    assert c.desk.prop("tipsModel") is not None and c.desk.faces["tips"] == "hidden"
+    for state in ("choose", "checking", "signed_out", "offline", "signing_in"):
+        setup(c, state, "Sign in to Claude.")
+        assert c.desk.faces["tips"] == "hidden" and not c.desk.prop("present")["tips"], state
+    c.desk.send(type="status", busy=False, provider="claude", queue=[])
+    setup(c, "ready")
+    assert c.desk.faces["tips"] == "full" and c.desk.slots["tips"]["h"] == 290
+    setup(c, "signed_out", "Sign in to Claude.")              # signed out again: the card goes, it is not in the way
+    assert c.desk.faces["tips"] == "hidden"
+    setup(c, "ready")
+    assert c.desk.faces["tips"] == "full"
+
+
+def test_the_ai_resting_neither_brings_the_card_nor_takes_it_away(make):
+    c = make()
+    rest = {"provider": "claude", "why": "limit", "kind": "limit", "until": "15:00", "when": 0, "hint": "", "note": ""}
+    setup(c, "resting", "Claude is resting. Asks wait.", rest=rest)
+    c.desk.pump(0.3)
+    assert c.desk.faces["tips"] == "full"                                # it was up: it stays up through the rest
+    setup(c, "ready")
+    assert c.desk.faces["tips"] == "full"
+    # and a desk that first hears of the rest has the card too, once the line it said has faded
+    d = make(up=False)
+    d.desk.send(type="status", busy=False, provider="claude", queue=[])
+    setup(d, "resting", "Claude is resting. Asks wait.", rest=rest)
+    d.show()
+    assert d.desk.pill.property("mode") == "resting" and d.desk.faces["tips"] == "hidden"
+    d.desk.pill_call("dismiss")
+    assert d.desk.pill.property("mode") == "idle" and d.desk.faces["tips"] == "full"
+
+
+def test_the_card_never_first_appears_during_a_turn_or_under_a_line_and_stays_once_it_is_up(make):
+    c = make(up=False)
+    c.desk.send(type="status", busy=False, provider="claude", queue=[])
+    setup(c, "signing_in", "Waiting for the browser.")
+    c.desk.turn(1, prompt="make a ticketing app")             # typed during sign-in: the turn runs, the card waits
+    c.show()
+    setup(c, "ready", "Signed in to Claude. Ask me for anything.")
+    assert c.desk.faces["tips"] == "hidden"
+    c.desk.end(1)
+    assert c.desk.pill.property("mode") == "closing" and c.desk.faces["tips"] == "hidden"
+    c.desk.pill_call("dismiss")                               # the closing line fades: 12 s after the turn ends
+    assert c.desk.pill.property("mode") == "idle" and c.desk.faces["tips"] == "full"
+    c.desk.pump(0.4)
+    # up: a turn, its closing line and the ready line do not take it away
+    c.desk.turn(2, prompt="install ffmpeg", steps=[("Find it", True, "running"), ("Install it", False, "pending")])
+    assert c.desk.faces["tips"] == "full" and c.desk.shown("deskCard-now")
+    c.desk.end(2)
+    assert c.desk.faces["tips"] == "full"
+    c.desk.pill_call("dismiss")
+    assert c.desk.faces["tips"] == "full"
+
+
+def test_agentd_taking_the_card_away_or_the_person_putting_it_away_removes_it_and_it_returns_when_calm(make):
+    c = make()
+    assert c.desk.faces["tips"] == "full"
+    c.desk.send(type="tips", present=False, card=None)
+    assert c.desk.faces["tips"] == "hidden" and "tips" not in c.desk.slots and c.desk.prop("rightStrips") == []
+    c.desk.turn(1)                                            # agentd has it back in the middle of a turn: it waits
+    c.show()
+    assert c.desk.faces["tips"] == "hidden"
+    c.desk.end(1)
+    c.desk.pill_call("dismiss")
+    assert c.desk.faces["tips"] == "full"
+    c.desk.send(type="desk", hidden=["tips"])                 # "put Tips away"
+    assert c.desk.faces["tips"] == "hidden" and c.desk.prop("tipsModel") is not None
+    c.desk.pump(0.4)
+    assert not c.desk.shown("deskCard-tips") and not c.desk.shown("deskStrip-tips")
+    c.desk.send(type="desk", hidden=[])                       # "tips" again
+    assert c.desk.faces["tips"] == "full"
+
+
+def test_the_card_is_gone_when_agentd_is_and_back_when_agentd_says_it_again(make):
+    c = make()
+    c.desk.call("lost")
+    assert c.desk.prop("tipsModel") is None and c.desk.faces["tips"] == "hidden"
+    c.desk.pump(0.4)
+    assert not c.desk.shown("deskCard-tips") and c.desk.warnings == []
+    c.show()                                                  # agentd tells a client that connects
+    assert c.desk.faces["tips"] == "full"
+
+
+def test_windows_fold_the_card_to_its_strip_full_screen_hides_it_and_the_strip_opens_the_app(make):
+    c = make(1280, 720)
+    slot = c.desk.slots["tips"]
+    c.desk.cover((slot["x"] + 20, slot["y"] + 20, 100, 100))
+    assert c.desk.faces["tips"] == "strip"
+    assert [(s["id"], s["text"]) for s in c.desk.prop("rightStrips")] == [("tips", "tips")]
+    c.desk.pump(0.6)
+    strip = c.desk.item("deskStrip-tips")
+    assert strip.isVisible() and not c.desk.shown("deskCard-tips")
+    c.forget()
+    c.click(strip)
+    assert c.sent == [{"type": "tips", "op": "open", "id": "", "play": False}]       # the app on the first tip
+    c.desk.cover()
+    c.desk.pump(0.6)                                          # the strip is a card again after 400 ms
+    assert c.desk.faces["tips"] == "full"
+    c.desk.cover((0, 0, 1280, 720, True))
+    assert c.desk.faces["tips"] == "hidden" and c.desk.prop("capsule")
+    c.desk.cover()
+    c.desk.pump(0.6)
+    assert c.desk.faces["tips"] == "full"
+    assert c.desk.warnings == []
+
+
+def test_a_narrow_screen_keeps_the_card_as_a_strip_and_the_card_is_never_under_the_pills_line(make):
+    narrow = make(1000, 700)
+    assert narrow.desk.prop("narrow") and narrow.desk.faces["tips"] == "strip"
+    wide = make(1280, 720)
+    assert not wide.desk.prop("narrow") and wide.desk.faces["tips"] == "full"
+    # the pill gives the card its width: the line above it never covers the card (stageRoom counts a full rail)
+    assert wide.desk.prop("pillTarget") <= 1280 - 2 * (300 + 16 + 12)
+    wide.desk.send(type="desk", hidden=["tips"])
+    assert wide.desk.prop("pillTarget") >= 1280 - 2 * (300 + 16 + 12)
+
+
+def test_tips_is_the_top_of_the_right_rail_and_keeps_its_size_when_the_rest_of_the_desk_comes(make):
+    c = make(1920, 1080)
+    before = c.desk.slots["tips"]
+    assert before["y"] + 290 == c.desk.prop("railBottomY")                       # alone, it is the nearest the pill
+    c.desk.vitals()                                          # the machine and the away cards come under it
+    c.desk.back()
+    assert c.desk.faces["machine"] == "full" and c.desk.faces["away"] == "full" and c.desk.faces["tips"] == "full"
+    slots = c.desk.slots
+    assert slots["tips"]["y"] + 290 <= slots["machine"]["y"] < slots["machine"]["y"] + slots["machine"]["h"]
+    assert slots["machine"]["y"] + slots["machine"]["h"] <= slots["away"]["y"]       # the top of the rail: bottom up
+    assert slots["away"]["y"] + slots["away"]["h"] == c.desk.prop("railBottomY")
+    assert (slots["tips"]["x"], slots["tips"]["w"], slots["tips"]["h"]) == (before["x"], before["w"], 290)
+
+
+def test_the_snapshot_says_what_the_card_holds(make):
+    c = make()
+    snap = c.desk.call("snapshot")
+    assert snap["tips"]["id"] == "make-an-app" and snap["tips"]["words"] == "Make me a ticketing app"
+    c.desk.call("lost")
+    assert c.desk.call("snapshot")["tips"] is None
 
 
 # -- what the message may carry --
