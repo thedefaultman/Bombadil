@@ -1,7 +1,7 @@
 #!/bin/sh
 # The real CLI, pointed at the scripted API. Usually it holds an API key; while the driver keeps
 # ~/.e2e-claude-ai it is a claude.ai login instead (an OAuth token, no key), the kind of account whose
-# plan can run out: only that kind gets the CLI's rate_limit_event and "You've hit your session limit".
+# plan can run out: only that kind gets the CLI's rate_limit_event and "You've hit your 5-hour limit".
 if [ -e "$HOME/.e2e-claude-ai" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-fake
 else

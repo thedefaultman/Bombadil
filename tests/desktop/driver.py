@@ -733,9 +733,10 @@ check("and the stone is still: nothing waits, nothing is amber",
 
 # 10. out of plan: the AI's plan runs out. The scripted API answers the marked ask (a haiku) with the 429 a used-up
 # claude.ai plan gets, so the real CLI (a claude.ai login for this part, see bin/claude) prints its own
-# rate_limit_event and "You've hit your session limit". The machine rests: the ask waits as a chip, launcher words
-# and "!" commands still run, nothing more is sent to the API, and once the plan is back the same ask runs again in
-# the same conversation: the first time the owner says so, the second time the clock does.
+# rate_limit_event and "You've hit your 5-hour limit" (api_error "usage_limit_reached"). The machine rests: the ask
+# waits as a chip, launcher words and "!" commands still run, nothing more is sent to the API, and once the plan is
+# back the same ask runs again in the same conversation: the first time the owner says so, the second time the clock
+# does.
 STONE = (198, 744, 232, 780)   # the stone in the pill, 24 px wide, at the field's left end
 LINE = (195, 658, 30)          # a one-pixel strip down the line above the pill, over its chip row (see glass_pixels)
 claude_ai = Path.home() / ".e2e-claude-ai"
