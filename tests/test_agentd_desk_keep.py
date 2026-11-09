@@ -205,6 +205,31 @@ async def test_keep_machine_in_words_keeps_it_says_so_and_never_starts_a_turn(ho
 
 
 @pytest.mark.asyncio
+async def test_keep_away_changes_nothing_and_does_not_raise_or_move_the_away_card(home):
+    d = _agentd()
+    server, r, w = await _start(d)
+    await _ask(w, "show away")                                  # the card is asked for, as it always was
+    shown = [m for m in await _all_of(r, _is_done, lambda m: m.get("type") == "away") if m.get("type") == "away"]
+    assert shown and shown[-1]["rows"]                          # a card with a row to show (it says nothing happened)
+    while not await _silent(r):
+        pass
+    for word in ("keep away", "keep while you were away"):
+        await _ask(w, word)
+        msgs = await _all_of(r, _is_done)
+        assert [m["text"] for m in msgs if _is_done(m)] == ["Away shows only after you have been away."]
+        # The word is an ask like any other, so it is the person having looked: Away's own rule puts the card away.
+        # Keeping raises nothing, moves nothing and keeps nothing.
+        assert all(not m["rows"] for m in msgs if m.get("type") == "away")
+        assert not [m for m in msgs if m.get("type") in ("desk", "widgets")]
+        assert await _silent(r)
+    before = d.away.message()
+    assert before['rows'] == [] and not d.away.up               # and it is gone for good once seen
+    assert d.desk.snapshot()["kept"] == [] and not paths.desk_file().exists() and d.turns == 0
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_kept_machine_is_sampled_calm_and_a_machine_no_longer_kept_is_not(home):
     fake = FakeVitals(dict(MACHINE_UP, calm=True), delay=0.05)
     d = _agentd(vitals=fake)

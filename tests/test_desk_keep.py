@@ -256,6 +256,39 @@ def test_a_repeated_off_changes_nothing_saves_nothing_and_calls_nobody(home):
     assert calls == [] and paths.desk_file().stat().st_mtime_ns == stamp
 
 
+@pytest.mark.parametrize("op", [("keep", "away"), ("set", "away", None, None, "keep"), ("set", "away", None, None, "needed"),
+                                ("set", "machine", None, None, "keep"), ("keep", "machine"), ("reset",),
+                                ("widgets",), ("set", "away", None, None, "off")])
+def test_none_of_the_keep_ops_asks_for_a_card(home, op):
+    # "show away" and "show machine" raise their card on request (on_ask). Keeping, setting, resetting and opening the
+    # Widgets card are not a request for one: "keep away" must never bring the Away card up.
+    d = fresh()
+    asked = []
+    d.on_ask = asked.append
+    d.apply(*op)
+    assert asked == []
+
+
+def test_keep_away_changes_nothing_so_an_away_card_with_no_rows_is_never_kept_and_still_goes_when_seen(home):
+    # Away shows only after the person has been away, and it has no calm face: there is nothing to keep, so nothing is,
+    # and the Away card stays what agentd's `away` message makes it (rows to show, or gone once seen).
+    d = fresh()
+    calls = []
+    d.on_change = lambda: calls.append(1)
+    assert d.apply("keep", "away") == (True, "Away shows only after you have been away.")
+    assert d.apply("set", "away", state="keep") == (True, "Away shows only after you have been away.")
+    assert calls == [] and not paths.desk_file().exists()
+    assert d.kept == set() and "away" not in d.hidden
+    away = next(r for r in d.snapshot()["widgets"] if r["id"] == "away")
+    assert away["can"] == ["needed", "off"]                          # Keep is drawn faint on its row
+
+
+def test_a_file_that_keeps_away_by_hand_keeps_nothing(home):
+    paths.desk_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.desk_file().write_text('kept = ["away", "alive", "machine"]\n')
+    assert kept(desk.Desk().load()) == ["machine"]
+
+
 def test_the_widgets_card_lists_what_the_desk_lists_and_what_each_can_be(home):
     rows = fresh().snapshot()["widgets"]
     assert [r["id"] for r in rows] == ["now", "watching", "needs", "away", "machine"]      # Alive waits for its feed
