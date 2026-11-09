@@ -1243,7 +1243,7 @@ def test_agent_talks_to_agentd(kit, monkeypatch, tmp_path):
             a.ask("what is running?")               # queued until the connection is up
             a.start()
             assert wait_until(lambda: a.property("connected"), 5000)
-            assert a.property("provider") == "fake"
+            assert wait_until(lambda: a.property("provider") == "fake", 5000)   # (the hello follows the connection)
             assert wait_until(lambda: replies, 5000)
             assert replies[0] == f"echo: [from app {kit.ctx.name}] what is running?"
             assert a.property("reply") == replies[0]
