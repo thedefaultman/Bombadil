@@ -51,7 +51,7 @@ and shows `listening` over `rest` while the screen holds the keyboard.
 | `offline` | the outline alone, dashed, red; the b stays | agentd was there and is gone, or never came |
 
 Reduced motion (`BOMBADIL_REDUCE_MOTION=1`) turns the roll into a pulse (opacity 1, 0.3, 1 a second),
-holds the glow still at 0.45 and replaces the hop with a fade.
+holds the glow still at 0.45, makes the lean instant and replaces the hop with a fade.
 
 ## Drawing it
 

@@ -17,6 +17,8 @@ T.ProgressBar {
         id: track
 
         property real sweep: 0
+        // Reduced motion: the segment holds still in the middle and pulses, as the stone does.
+        readonly property real at: Theme.reducedMotion ? 0.5 : sweep
 
         implicitWidth: 200
         implicitHeight: 6
@@ -35,8 +37,9 @@ T.ProgressBar {
             }
         }
         Rectangle {
-            readonly property real head: Math.min(1, track.sweep * 1.4) * track.width
-            readonly property real tail: Math.max(0, track.sweep * 1.4 - 0.4) * track.width
+            id: segment
+            readonly property real head: Math.min(1, track.at * 1.4) * track.width
+            readonly property real tail: Math.max(0, track.at * 1.4 - 0.4) * track.width
             x: tail
             width: Math.max(0, head - tail)
             height: parent.height
@@ -51,7 +54,14 @@ T.ProgressBar {
             duration: 1400
             loops: Animation.Infinite
             easing.type: Easing.InOutQuad
-            running: control.indeterminate && control.visible
+            running: control.indeterminate && control.visible && !Theme.reducedMotion
+        }
+        SequentialAnimation {
+            running: control.indeterminate && control.visible && Theme.reducedMotion
+            loops: Animation.Infinite
+            NumberAnimation { target: segment; property: "opacity"; to: Theme.pulseLow; duration: 500 }
+            NumberAnimation { target: segment; property: "opacity"; to: 1; duration: 500 }
+            onStopped: segment.opacity = 1
         }
     }
 

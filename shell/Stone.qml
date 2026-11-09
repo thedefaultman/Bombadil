@@ -57,7 +57,7 @@ Item {
     property real hopSy: 1
     property real glowOpacity: 0.25
 
-    Behavior on lean { NumberAnimation { duration: 240; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.16, 1, 0.3, 1, 1, 1] } }
+    Behavior on lean { NumberAnimation { duration: stone.reducedMotion ? 0 : 240; easing.type: Easing.BezierSpline; easing.bezierCurve: [0.16, 1, 0.3, 1, 1, 1] } }
 
     // The b rides: it slides with the stone's centre but never tilts.
     readonly property real rideX: arcR * rock * toRad - armR * Math.sin(rock * toRad)

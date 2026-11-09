@@ -676,6 +676,17 @@ def test_everything_fits_on_a_full_hd_screen(desk):
     assert s["now"]["x"] == 16 and s["now"]["w"] == 300
 
 
+def test_a_row_of_chips_above_the_pill_lifts_the_rails_with_the_bars_zone(laptop):
+    # The rails stop where the bar's exclusive zone starts. The shell hands the zone over, so a row of chips
+    # above the pill (running apps, coding sessions) shortens them here as it does on the screen, and a
+    # card is never laid out under the row.
+    assert laptop.prop("rowZone") == 64 and laptop.prop("railBottomY") == 640
+    laptop.set("rowZone", 64 + 36)
+    assert laptop.prop("railBottomY") == 604 and laptop.prop("railHeight") == 564
+    laptop.set("rowZone", 64)
+    assert laptop.prop("railBottomY") == 640 and laptop.prop("railHeight") == 600
+
+
 def test_a_laptop_folds_what_does_not_fit_by_the_height_rule(laptop):
     assert laptop.prop("railHeight") == 600 and laptop.prop("railBottomY") == 640
     laptop.turn(1, steps=[(f"step {i}", None, "in_progress" if i == 0 else "pending") for i in range(8)])

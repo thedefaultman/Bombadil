@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import Bombadil as Kit
 import "DeskTheme.js" as T
 
 // The strips of one side, in the pill's row: the left ones right-aligned to the pill and growing
@@ -60,7 +61,7 @@ Item {
                 textColor: entry.textColor !== undefined ? entry.textColor : T.muted
                 outlined: !!entry.outlined
                 opacity: 0
-                Behavior on opacity { NumberAnimation { duration: strips.desk.foldMs } }
+                Behavior on opacity { NumberAnimation { duration: Kit.Theme.duration(strips.desk.foldMs) } }
                 Component.onCompleted: opacity = 1
 
                 // Taken by place, so the widget is read when the drag starts. The "+N" chip is no widget's
