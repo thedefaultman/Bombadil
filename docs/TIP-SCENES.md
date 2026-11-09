@@ -13,8 +13,8 @@ that works and the exact vocabulary a beat is written in. Why a tip moves at all
 | `share/qml/Bombadil/TipScene.qml` | `Kit.TipScene`: draws the frame at the card's measures (a poster) or the app's (plays). Pure QtQuick: `Theme`, `QtQuick.Shapes` and `Kit.Stone`, with `font.family` set on every Text. Internal: not in the apps skill, and `bombadil-app check` refuses it in an app the agent writes. |
 | `share/qml/Bombadil/TipScene.js` | A `.pragma library` that says what is on the mini screen at any time `t`: `compile(beats)` lays the beats end to end, `frameAt(compiled, t)` returns the frame. It draws nothing and runs nothing. |
 | `share/qml/Bombadil/Stone.qml` | `Kit.Stone`, the mark: the pill's stone and the scenes' stone. See [The stone in the kit](#the-stone-in-the-kit). |
-| `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. The tips table's tests call `validate(tip)` on every row. |
-| `tests/tip_fixtures.py` | Thirteen tips written for the tests, which between them use every beat, key and modifier. |
+| `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. `tests/test_tips.py` calls `validate(row, allow_empty=True)` on every row of `share/tips/tips.toml`, so a bad scene in the table fails there. |
+| `tests/tip_fixtures.py` | Fifteen tips written for the tests, which between them use every beat, key and modifier. |
 | `tests/test_tip_scene_qml.py`, `tests/test_tip_scene.py` | The renderer's frames, sizes and "nothing runs" tests, and the validator's. |
 
 ## Why storyboards, not video
@@ -30,7 +30,7 @@ line the real machine never says. The truth rule below is what pays for that.
 flowchart LR
     ROW["tip row (tips.toml)<br/>line, words, marks,<br/>captions, beats"] --> VAL["tip_scene.validate<br/>keys, values, tags,<br/>10 s, three captions"]
     ROW --> STR["tip_scene.strings<br/>every string with its tag"]
-    STR --> TRUTH["the tips table's truth test<br/>template: matched to the code<br/>typed: the tip's words"]
+    STR --> TRUTH["the truth test, added with the beats<br/>template: matched to the code<br/>typed: the tip's words"]
     ROW --> COMP["TipScene.js compile<br/>beats end to end:<br/>duration, phases"]
     CLK["t, in ms<br/>one animation while playing;<br/>seek(ms) sets it"] --> FR
     COMP --> FR["frameAt(compiled, t)<br/>pill, stone, key, line,<br/>window, cards, picture, fold"]
@@ -84,17 +84,30 @@ TipScene { tip: row; density: "app"; reducedMotion: Theme.reducedMotion
 | Pictures of the machine | generic shapes: no names, numbers or values | the names and the figures |
 | Captions | none | three, in a row under the stage, the current one in `fg` |
 
-**Reduced motion** (app density) draws three stills side by side instead of a stage, each the last frame of its
-phase with its caption under it, and `play()` settles at once. A phase that ends on Enter is drawn before
-the key lands, so its still has the words in the pill. Each still is the card's measures shrunk to a third of
-the scene's width: 576 by default, so a thumbnail at 0.68, and a host that gives the scene 840 px or more gets
-them at full size with 12 px text. On a still the line buttons are unlabelled outlines, as on the card.
+**Reduced motion** (app density) draws three stills instead of a stage, each the last frame of its phase with its
+caption under it, and `play()` settles at once. A phase that ends on Enter is drawn before the key lands, so its
+still has the words in the pill. Each still is the card's measures at full size, 12 px text and never smaller, so
+they flow: two across and one under on the app's 576 px, all three across from 840 px, and a host narrower than
+one card (272 px) shrinks them to its width. On a still the line buttons are unlabelled outlines, as on the card.
 
-**A line is one line.** It never wraps, so nothing under it is covered; one that does not fit is elided. The
-words keep their room first, then the buttons, then the counter, and the command takes what is left or is left
-out. On the card, at 12 px, a line holds about 36 characters, or about 29 beside the two buttons. The tests
-fail on any fixture line that is elided at either density, and the same loop is the check for the tips' own
-lines.
+**A line is as long as the real one.** While the stone works it is one line and what does not fit is elided;
+otherwise it is up to four lines, as `shell/StatusLine.qml` has it (`maximumLineCount`), so a reply is shown
+whole: the undo reply, "Undone. System files go back to before “install htop” when you restart. Your home
+folder and apps stay as they are.", is three lines on the card and two on the stage. The line grows upward from
+the pill, and what stands above it (the rails' cards, the picture) rises to make room as it arrives. The words
+keep their room first, then the buttons, then the counter, and the command takes what is left or is left out.
+On the card, at 12 px, a line holds about 36 characters, or about 29 beside the two buttons. The tests fail on
+any fixture line or window row that is elided at either density (a working line apart), and the same loop is
+the check for the tips' own lines.
+
+**Strips and the pill.** Folded, the strips stand on the left in the pill's row, and the pill is what they
+leave: its right edge stays where it was and its left edge is where the strips end, so it never runs under one,
+however many there are. It keeps at least 72 px on the card and 160 on the stage, and strips too long to leave
+that are elided. A keycap pressed while strips stand is drawn in the margin on the right.
+
+**A window** is as tall as what is in it, up to the room above the line: its rows, its lines of grey (`doc`) or
+its lock screen under the title. It holds three rows on the card's poster and four on the stage, which is why
+the validator allows a window three (`MAX_WINDOW_ROWS`); a `card` may have more.
 
 ## The nine beats
 
@@ -121,17 +134,17 @@ A beat needs at least one drawing key, and a modifier needs a drawing key it goe
 | Key | Takes | Meaning |
 |---|---|---|
 | `key` | `super`, `enter`, `esc`, `tab`, `bang` | Drawn as the marks ⊞, ↵, Esc, Tab and !. It comes in, is down from about 100 ms to 260 ms, where its effect lands at 120 ms, and is gone by 360 ms. `super` makes the stone lean toward the text; `enter` sends what is in the pill, which empties it; `tab` takes the faint completion. |
-| `type` | a string | The words, typed from the first character at 25 a second and then 240 ms of rest. What is typed is the tip's own words, so it is `typed` and needs no `tag`. |
+| `type` | a string | The words, typed from the first character at 25 a second (counted in UTF-16 units, as the renderer's JavaScript counts) and then 240 ms of rest. What is typed is the tip's own words, so it is `typed` and needs no `tag`. |
 | `ghost` | a string | With `type`: the faint completion that follows the typed words once they are all in. |
-| `stone` | `rest`, `listening`, `working`, `needs`, `done`, `stopped`, `resting` | The stone's face. `working` rolls a third of a turn a second, `needs` knocks twice on a 1.6 s beat with the glow breathing, `done` hops once, `listening` leans six degrees toward the text, `stopped` is the grey square, `resting` the hollow grey stone, `rest` stands still. While the scene plays the stone shows the motion; on its last frame it stands still in its face. |
-| `line` | a string | The line above the pill. Needs a `tag`. |
+| `stone` | `rest`, `listening`, `working`, `needs`, `done`, `stopped`, `resting` | The stone's face. `working` rolls a third of a turn a second, `needs` knocks twice on a 1.6 s beat with the glow breathing, `done` hops once, `listening` leans six degrees toward the text (over 240 ms, as it does after `super` or typing), `stopped` is the grey square, `resting` the hollow grey stone, `rest` stands still and stands a leaning stone up. While the scene plays the stone shows the motion; on its last frame it stands still in its face. |
+| `line` | a string | The line above the pill (`""` clears it). Needs a `tag`. |
 | `tag` | `template`, `typed`, `model`, `output`, `caption` | Where the beat's strings come from. See [The truth rule](#the-truth-rule). |
 | `tone` | `amber`, `red` | The line's marked edge: amber for a step that touches the system, red for one no restore point can undo. On the card it is drawn in ink. |
 | `command` | a string | With `line`: the command, in mono. |
 | `counter` | `true`, `false`, or a number of seconds | With `line`: the seconds counter, which counts while the stone works. A number starts it from there. `false` stops it. |
 | `buttons` | one or two labels, such as `["Undo", "Details"]` | With `line`: the line's buttons. They are tagged `template`. |
 | `window` | a title, or `false` or `""` | An app window slides in from its drawer in 300 ms. A title with `reload` and a window already open changes it in place. |
-| `rows` | strings, or `[label, value]` lists | With `window`: its rows, arriving 200 ms apart. With `card`: its rows (see `card`). |
+| `rows` | strings, or `[label, value]` lists | With `window`: its rows, at most three, arriving 200 ms apart. With `card`: its rows (see `card`). |
 | `columns` | `[heading, cell, cell, ...]` lists | With `window`: columns added to the rows, one every 200 ms. |
 | `lock` | a string | With `window`: the window shows its lock screen with these words instead of rows. |
 | `doc` | `true` or `false` | With `window`: its body is a document, a few lines, not rows. |
@@ -143,7 +156,7 @@ A beat needs at least one drawing key, and a modifier needs a drawing key it goe
 | `picture` | a title | A picture card above the line. On the card the title is not drawn. |
 | `boxes` | a list of names | With `picture`: boxes streaming in, one every 320 ms, joined by arrows. |
 | `bars` | `[label, percent]` or `[label, percent, "amber"]` lists | With `picture`: bars that grow, one every 320 ms, as a disk does. |
-| `lit` | an index | With `picture`: the box or bar that is lit. |
+| `lit` | an index | With `picture` and `boxes`: the box that is lit. A bar has its `amber` tone for emphasis instead. |
 | `fold` | `true` or `false` | The cards fold to strips beside the pill, or come back. |
 | `strips` | a list of labels | With `fold`: what the strips say ("1 counting"). Needs a `tag`. |
 | `hold` | milliseconds | A pause. With another key it adds to that beat. |
@@ -236,10 +249,13 @@ row's tag; a number is a meter and is not text.
   while the scene is not playing (no running animation or timer anywhere under the window), that `play()` runs
   one animation, emits `finished` once and holds, and that every line fits on one line.
   Set `BOMBADIL_SCREENS=<dir>` to save pictures of the frames.
-- `tests/test_tip_scene.py` tests the validator: unknown keys, bad values, strings without a tag, over 10 s, the
-  wrong number of captions; and that the renderer's JS keeps the timing and vocabulary the validator keeps.
+- `tests/test_tip_scene.py` tests the validator: unknown keys, bad values (a list or a number where a word goes
+  is reported, never a crash), strings without a tag, over 10 s, the wrong number of captions; and that the
+  renderer's JS keeps the timing and vocabulary the validator keeps.
+- `tests/test_tips.py` validates every row of the tips table with `tip_scene.validate`.
 - `tests/test_stone_qml.py` holds the stone: its faces, its pose, `animate`, `ink`, the 16 px drawing.
-- `tests/test_appkit_internal.py` holds that `bombadil-app check` refuses `Stone` and `TipScene` in an app.
+- `tests/test_appkit_internal.py` holds that `bombadil-app check` refuses `Stone` and `TipScene` in an app, that an
+  app's own component of that name is let through only where QML really builds it, and that the load refuses too.
 
 ## Writing the beats for a tip
 
@@ -249,3 +265,65 @@ row's tag; a number is a meter and is not text.
 4. Run `validate(tip, strict=True)`: it names the beat that is wrong, and says if the scene is not 6 to 8 s.
 5. Look at the poster and the stage with `BOMBADIL_SCREENS`. The poster is the last beat's state, so end on the
    payoff, and keep a line short enough for the card.
+
+## The frame
+
+`TipScene.frame` (and `Scene.frameAt(compiled, t, still)` in `TipScene.js`) is plain data, what the tests read
+and what `Stage` in `TipScene.qml` binds to. Every field is a function of `t` alone. `null` means the thing is
+not on the screen.
+
+| Field | Holds |
+|---|---|
+| `t`, `ended`, `phase` | the clock, whether the last frame has been reached (the stone then stands still), the current caption, 0 to 2 |
+| `key` | `null`, or `{label, name, alpha, down}`: the keycap, and whether it is pressed |
+| `pill` | `{text, ghost, caret, border, placeholder}`; `border` is `"working"`, `"listening"` or `"idle"` |
+| `stone` | `{face, turn, knock, lean, glow, hopY, hopSx, hopSy}`: the face and the pose `Kit.Stone` is given |
+| `line` | `null`, or `{text, tag, tone, command, buttons, alpha, mono, secs}`; `secs` is `-1` with no counter |
+| `win` | `null`, or `{title, lock, doc, from, slide, alpha, rows, cols}`; a row is `{label, cells, value, alpha}`, a column `{head, cells, alpha}` |
+| `cards`, `cardsLeft`, `cardsRight` | `{kind, rows, title, why, arrive, shown}` for each desk card; `machine` stands in the right rail, the others in the left |
+| `fold` | `{folded, p, strips}`: how far the cards have folded, and the strips' labels |
+| `pic` | `null`, or `{title, boxes, bars, lit, slide, alpha}`; a box is `{label, alpha}`, a bar `{label, pct, tone, grow}` |
+
+## Adding a beat kind
+
+A new kind of beat is a small piece of `TipScene` (the brief's examples: session dots and the knock when the coding
+sessions land, a Mail window when Mail lands). It touches these places, and the tests fail until each agrees with
+the others:
+
+1. `src/bombadil/tip_scene.py`: the drawing key in `DRAWS` and each modifier in `MODIFIERS` (with the drawing keys
+   it goes with), its length in `beat_ms`, its values in `_check_beat`, its words in `strings()` if it shows any.
+2. `share/qml/Bombadil/TipScene.js`: the same lists (`DRAWS`, `MODIFIERS`), its length in `beatMs`, what it sets in
+   `frameAt` (a thing remembers when it was set, `since`, so its motion is a function of `t - since`) and its field
+   on the frame.
+3. `share/qml/Bombadil/TipScene.qml`: draw the field in `Stage` at both densities, from `m` (the measures) and `f`
+   (the frame) alone, with `font.family` on every Text. Give it an `objectName` for the tests. If it moves, it moves
+   because `t` does: no timer, no `Behavior`, no animation of its own (`tests/test_motion.py` and the "nothing
+   runs" tests fail it).
+4. `tests/tip_fixtures.py`: a fixture that uses it, so `test_the_fixtures_between_them_use_every_beat_kind...`
+   holds; `tests/test_tip_scene_qml.py`: a frame test and a look at its poster. `test_the_renderer_keeps_the_same_...`
+   fails if the two lists or the timing drift apart.
+5. This page: the beats table, the vocabulary table and the timing table (`test_the_documentation_names_...` fails
+   until every key and value is in backticks here).
+
+A drawing that is a component of its own (a mini Mail window) goes in `share/qml/Bombadil/` beside `TipScene.qml`,
+and is internal for the same reason: see the next section.
+
+## The internal components
+
+`Kit.Stone` and `Kit.TipScene` are in the kit's `qmldir` so the shell and the built-in apps can use them, and they
+are internal: not in the apps skill (a test keeps them out), and refused in an app the agent writes.
+`refused_components` in `src/bombadil/appkit/check.py` is what refuses them. It runs in `bombadil-app check` (so in
+`create_app` and `check_app`) and on every load and reload of an app, and it reports `file:line: Name ...` with what
+to use instead. `INTERNAL_COMPONENTS` maps each name to that message: a new internal component is one more entry
+(and one more line under the "Internal" comment in the `qmldir`).
+
+- It reads every `.qml` file of the app except `data/` and hidden folders, ignores comments, and finds a use as an
+  object declaration: `Stone {` after `import Bombadil`, or `Kit.Stone {` after `import Bombadil as Kit`.
+- The built-in apps under `share/apps` (the Tips app) are let through: `apps.is_builtin`.
+- QML lets the later import win, and a folder's own files are imported first and weakest. An app with its own
+  `Stone.qml` beside a `main.qml` that says `import Bombadil` therefore gets the kit's stone, not its own. The check
+  follows the engine: a use is let through where `import "."` (or `import "lib"` for a file in a folder) comes after
+  `import Bombadil` in that file, and refused otherwise, with the message that says to add `import "."` below
+  `import Bombadil` or to rename the file. `Kit.Stone` is always the kit's, and `Stone` beside
+  `import Bombadil as Kit` is always the app's own.
+- A refused app does not load, but its `app.py` is still read, so fixing the QML does not lose an edit to it.

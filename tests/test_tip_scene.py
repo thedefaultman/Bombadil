@@ -91,10 +91,14 @@ def test_every_key_value_the_vocabulary_takes_is_checked():
         {"card": "watching", "tag": "template", "title": ""},
         {"picture": "P", "tag": "template"}, {"picture": "P", "tag": "template", "boxes": ["a"], "bars": [["a", 5]]},
         {"picture": "P", "tag": "template", "boxes": ["a"], "lit": 3},
+        {"picture": "P", "tag": "template", "bars": [["a", 5], ["b", 90]], "lit": 1},         # lit goes with boxes
+        {"picture": 3, "tag": "template", "boxes": ["a"]}, {"picture": "P", "tag": "template", "boxes": [1]},
+        {"line": 5, "tag": "template"}, {"line": True, "tag": "template"}, {"line": ["a"], "tag": "template"},
+        {"window": "W", "tag": "model", "rows": ["a", "b", "c", "d"]},                       # the poster holds three
         {"picture": "P", "tag": "template", "bars": [["a", 130]]},
         {"picture": "P", "tag": "template", "bars": [["a", 30, "red"]]},
         {"fold": "yes"}, {"fold": True, "strips": [3], "tag": "template"}, {"hold": 0}, {"hold": "long"},
-        {"hold": 100, "phase": 3},
+        {"hold": 100, "phase": 3}, {"hold": 100, "phase": True}, {"hold": 100, "phase": 1.0},
     ]
     for beat in bad:
         assert ts.validate(tip(beat)) != [], beat
@@ -107,11 +111,62 @@ def test_values_the_vocabulary_takes_are_not_reported():
         {"window": "W", "tag": "model", "rows": ["a", ["b", "c"]], "columns": [["Due", "x"]], "from": "right"},
         {"window": False}, {"window": ""}, {"card": "now", "tag": "template", "rows": [["a", "done"]]},
         {"card": "machine", "tag": "template", "rows": [["a", 100]]},
-        {"picture": "P", "tag": "template", "bars": [["a", 5], ["b", 90, "amber"]], "lit": 1},
+        {"picture": "P", "tag": "template", "bars": [["a", 5], ["b", 90, "amber"]]},
+        {"picture": "P", "tag": "template", "boxes": ["a", "b"], "lit": 1},
+        {"window": "W", "tag": "model", "rows": ["a", "b", "c"]},
         {"fold": False}, {"hold": 1}, {"line": "", "stone": "rest"},
     ]
     for beat in good:
         assert ts.validate(tip(beat)) == [], beat
+
+
+# JSON and TOML hand over what was typed: a list where a word goes is a typo to report, not a crash.
+JUNK = ([], ["super"], ["a", "b"], {}, {"a": 1}, 5, -1, 1.5, True, False, "x", "")
+
+
+@pytest.mark.parametrize("key", sorted(ts.KNOWN))
+def test_a_value_of_the_wrong_kind_is_reported_and_never_raises(key):
+    for value in JUNK:
+        beat = {key: value}
+        ts.validate(tip(beat))
+        ts.validate(tip({"line": "x", "tag": "template", key: value}))
+        ts.duration([beat])
+        ts.phase_starts([beat, {"hold": 5, "phase": 2}])
+
+
+@pytest.mark.parametrize("beat, word", [
+    ({"key": ["super"]}, "key"), ({"stone": ["working"]}, "stone"), ({"stone": {"a": 1}}, "stone"),
+    ({"line": 5, "tag": "template"}, "line"), ({"line": ["a"], "tag": "template"}, "line"),
+    ({"hold": 100, "phase": True}, "phase"), ({"hold": True}, "hold"),
+])
+def test_a_wrong_kind_of_value_names_its_key(beat, word):
+    out = problems(beat)
+    assert out and any(word in m for m in out), (beat, out)
+    assert ts.validate(tip({"line": "", "stone": "rest"})) == []
+
+
+def test_a_boolean_is_not_a_phase_and_a_line_may_be_empty():
+    assert ts.phase_starts([{"hold": 300, "phase": True}, {"hold": 300}, {"hold": 300}]) == (300, 600)
+    assert problems({"line": ""}) == []
+
+
+def test_a_row_of_the_window_beyond_the_third_is_reported_and_a_card_may_have_more():
+    out = problems({"window": "W", "tag": "model", "rows": list("abcd")})
+    assert out == ["beat 1: a window shows at most 3 rows, so the card's poster holds them all (this has 4)"]
+    assert problems({"card": "now", "tag": "template", "rows": [["a", "done"]] * 5}) == []
+
+
+def test_lit_lights_a_box_and_goes_with_boxes():
+    out = problems({"picture": "P", "tag": "template", "bars": [["a", 5], ["b", 9]], "lit": 0})
+    assert any("goes with boxes" in m for m in out)
+    assert problems({"picture": "P", "tag": "template", "boxes": ["a", "b"], "lit": 1}) == []
+
+
+def test_a_character_past_the_basic_plane_counts_as_the_renderer_counts_it():
+    # JavaScript's length is in UTF-16 units: an emoji is two, so 40 ms more than a letter takes
+    assert ts.beat_ms({"type": "\U0001F600"}) == 2 * 40 + 240
+    assert ts.beat_ms({"type": "ab"}) == 2 * 40 + 240
+    assert ts.beat_ms({"type": "a\U0001F600b"}) == 4 * 40 + 240
 
 
 # -- time --
@@ -203,6 +258,25 @@ def test_strings_lists_each_string_with_its_tag():
     assert [t for t in ts.strings(fx.MACHINE) if t[1] == "42"] == []              # a meter is a number, not words
 
 
+def test_strings_has_every_place_a_scene_shows_words():
+    """Each source is asserted by itself: a string the truth test never sees is a string nobody checks."""
+    def of(tip):
+        return ts.strings(tip)
+
+    assert ("model", "Locked after 5 minutes idle") in of(fx.LOCK) and ("model", "Passwords") in of(fx.LOCK)
+    assert ("template", "Install rust and set it up") in of(fx.ROUTE)                  # a card's title
+    assert ("template", "step 2 of 3") in of(fx.ROUTE)                                  # and its why line
+    assert ("template", "The machine is fine") in of(fx.MACHINE)
+    assert ("template", "How you're connected") in of(fx.PICTURE)                      # a picture's title
+    assert [("template", n) for n in ("Computer", "Wi-Fi", "Router", "Internet")] == [
+        t for t in of(fx.PICTURE) if t[1] in ("Computer", "Wi-Fi", "Router", "Internet")]    # its boxes, in order
+    assert ("template", "Your disks") in of(fx.DISK)
+    assert [("template", n) for n in ("/", "/home", "USB")] == [t for t in of(fx.DISK) if t[1] in ("/", "/home", "USB")]
+    assert ("template", "1 counting") in of(fx.TIMER)                                   # a strip
+    assert ("template", "Timer, 25 min") in of(fx.TIMER) and ("template", "25:00") in of(fx.TIMER)
+    assert ("output", "6.17.2-arch1-1") in of(fx.BANG) and ("template", "Details") in of(fx.BANG)
+
+
 # -- captions --
 
 def test_there_are_three_captions_of_at_most_three_words():
@@ -261,8 +335,8 @@ def test_the_documentation_names_every_beat_key_value_and_tag():
     for word in (*ts.DRAWS, *ts.MODIFIERS, *ts.KEYS, *ts.FACES, *ts.TONES, *ts.TAGS, *ts.CARDS, *ts.FROM,
                  *ts.NOW_STATES):
         assert f"`{word}`" in doc, word
-    for seconds in (ts.MAX_SECONDS, *ts.TARGET_SECONDS):
-        assert str(seconds) in doc
+    assert f"runs {ts.TARGET_SECONDS[0]} to {ts.TARGET_SECONDS[1]} s and never over {ts.MAX_SECONDS}" in doc
+    assert "MAX_WINDOW_ROWS" in doc and ts.MAX_WINDOW_ROWS == 3 and "holds three rows on the card" in doc
 
 
 def test_the_documentations_example_is_a_valid_scene():

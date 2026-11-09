@@ -83,6 +83,17 @@ def test_marks_and_the_cards_the_brief_decided():
     assert all(r.words or r.marks for r in ROWS)                       # every tip shows a button or a mark
 
 
+def test_every_row_is_a_sound_scene_so_far_as_it_has_one():
+    """tip_scene.validate (the scene piece's vocabulary and timing, docs/TIP-SCENES.md) over every row: a row
+    whose beats are not written yet is allowed, one whose beats are written has to be right, so a bad scene in
+    the table fails here and not on a person's screen."""
+    from bombadil import tip_scene
+
+    for r in ROWS:
+        tip = {"beats": [dict(b) for b in r.beats], "captions": list(r.captions)}
+        assert tip_scene.validate(tip, allow_empty=True) == [], r.id
+
+
 VOICE_NO = [(re.compile(r"!"), "an exclamation mark"), (re.compile("—"), "an em-dash"),
             (re.compile(r"\b(will|tomorrow|later)\b", re.IGNORECASE), "will, tomorrow or later"),
             (re.compile(r"[\n\r]"), "a second line")]

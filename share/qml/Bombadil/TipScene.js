@@ -209,8 +209,11 @@ function frameAt(c, t, still) {
             if (n > 0 && s.listenSince < 0) s.listenSince = e.start
         }
         if (b.stone !== undefined) {
+            var wasListening = s.face === "listening"
             s.face = b.stone; s.faceSince = e.start
             if (b.stone !== "working") s.counterAt = null
+            if (b.stone === "listening" && s.listenSince < 0) s.listenSince = e.start      // it leans as it does after Super
+            if (b.stone === "rest" && wasListening) s.listenSince = -1                      // and rest stands it up again
             if (b.stone !== "rest" && b.stone !== "listening") s.listenSince = -1
         }
         if (b.line !== undefined) {

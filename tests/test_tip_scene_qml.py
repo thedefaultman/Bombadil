@@ -340,6 +340,28 @@ def test_the_stone_leans_after_super_and_rests_after_enter(make):
     assert s.frame["stone"]["face"] == "rest" and s.frame["pill"]["text"] == ""
 
 
+def test_a_listening_stone_leans_six_degrees_as_it_plays_and_rest_stands_it_up(make):
+    """`stone = "listening"` alone is the lean the brief draws after Super: it leans in 240 ms, it does not
+    sit at 0 degrees until the last frame."""
+    tip = {"id": "lean", "captions": ["a", "b", "c"],
+           "beats": [{"stone": "listening"}, {"hold": 1000}, {"stone": "rest"}, {"hold": 400}]}
+    assert tip_scene.validate(tip) == []
+    s = make(tip, "app")
+    leans = {}
+    for t in (0, 60, 120, 300, 1000, 1299):
+        s.seek(t)
+        leans[t] = s.frame["stone"]["lean"]
+        assert s.frame["stone"]["face"] == "listening", t
+    assert leans[0] == 0 and 0 < leans[60] < leans[120] < 6 and abs(leans[300] - 6) < 0.01 and abs(leans[1299] - 6) < 0.01
+    s.seek(1500)                                                        # `rest` stands it up
+    assert s.frame["stone"]["face"] == "rest" and s.frame["stone"]["lean"] == 0
+    s.seek(s.duration)
+    assert s.frame["stone"]["face"] == "rest" and s.frame["stone"]["lean"] == 0
+    s = make(tip, "app")
+    s.seek(1299)
+    assert abs(s.item("stone").property("lean") - 6) < 0.01             # and the stone itself is posed by it
+
+
 def test_the_line_has_a_tone_a_command_a_counter_and_buttons(make):
     s = make(fx.ESC, "app")
     at = beat_start(fx.ESC, 2) + 1500
@@ -430,6 +452,44 @@ def test_a_window_can_show_a_lock_screen_a_document_and_slide_from_the_left(make
     assert far < s.item("window").property("x")                       # it comes in from the left edge
 
 
+@pytest.mark.parametrize("density", ["card", "app"])
+def test_nothing_in_a_window_is_clipped_by_its_border_and_a_lock_has_air_under_its_title(make, density):
+    seen = set()
+    for tip in fx.ALL:
+        s = make(tip, density)
+        s.seek(s.duration)
+        win = s.item("window")
+        if win is None:
+            continue
+        for name in ("windowRows", "windowDoc", "windowLock"):
+            body = s.item(name)
+            if body is None:
+                continue
+            seen.add(name)
+            assert body.y() + body.height() <= win.height() - 1, (tip["id"], density, name)
+            title = s.item("windowTitle")
+            assert body.y() >= title.y() + title.height() - 1, (tip["id"], density, name)     # under the title
+        if s.item("windowLock") is not None:
+            lock = s.item("windowLock")
+            assert lock.y() >= s.item("windowTitle").y() + s.item("windowTitle").height() + 2    # with a gap
+    assert seen == {"windowRows", "windowDoc", "windowLock"}
+
+
+def test_a_window_holds_the_rows_the_validator_lets_it_have(make):
+    """The validator's limit is what the poster really holds: three rows fit the card, four the stage."""
+    def rows(n):
+        return {"id": "rows", "captions": ["a", "b", "c"], "beats": [
+            {"window": "W", "tag": "model", "rows": [f"row {i}" for i in range(n)]}]}
+
+    s = make(rows(tip_scene.MAX_WINDOW_ROWS), "card")
+    assert s.item("windowRows").y() + s.item("windowRows").height() <= s.item("window").height() - 1
+    s = make(rows(tip_scene.MAX_WINDOW_ROWS + 1), "card")
+    assert s.item("windowRows").y() + s.item("windowRows").height() > s.item("window").height() - 1
+    s = make(rows(4), "app")
+    s.seek(s.duration)
+    assert s.item("windowRows").y() + s.item("windowRows").height() <= s.item("window").height() - 1
+
+
 def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     s = make(fx.TIMER, "app")
     start = beat_start(fx.TIMER, 2)
@@ -457,6 +517,83 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     s.seek(s.duration)
     assert [t for t, _, _ in s.texts() if t == "Install rust and set it up"]
     assert s.item("card-now") is not None
+
+
+def scene_box(s, item):
+    """An item's rectangle in the scene's own coordinates: (left, top, right, bottom)."""
+    p = item.mapToItem(s.scene, QtCore.QPointF(0, 0))
+    return p.x(), p.y(), p.x() + item.width(), p.y() + item.height()
+
+
+@pytest.mark.parametrize("density", ["card", "app"])
+@pytest.mark.parametrize("tip", [fx.TIMER, fx.FOLDS], ids=lambda t: t["id"])
+def test_a_folded_strip_stands_clear_of_the_pill_at_both_densities(make, tip, density):
+    """One strip (a timer) and two (the desk word): the pill is what the strips leave, none runs under it."""
+    s = make(tip, density)
+    s.seek(s.duration)
+    strips = sorted((i for i in s.items("strip") if i.isVisible()), key=lambda i: scene_box(s, i)[0])
+    assert len(strips) == (1 if tip is fx.TIMER else 2)
+    pill = scene_box(s, s.item("pill"))
+    stage = s.item("stage").width()
+    floor = 72 if density == "card" else 160
+    assert pill[2] <= stage and pill[2] - pill[0] >= floor                      # the pill keeps a few words' room
+    previous = 0
+    for strip in strips:
+        left, _, right, _ = scene_box(s, strip)
+        assert left >= previous and right < pill[0], (left, right, pill)           # beside the pill, never under it
+        previous = right
+    words = [i for i in s.items("stripText") if i.isVisible()]
+    wanted = next(b["strips"] for b in tip["beats"] if "strips" in b)
+    assert sorted(w.property("text") for w in words) == sorted(wanted) and not any(w.property("truncated") for w in words)
+    for strip in strips:                                                        # on the pill's row, centred on it
+        assert abs((scene_box(s, strip)[1] + scene_box(s, strip)[3]) / 2 - (pill[1] + pill[3]) / 2) < 0.6
+
+
+def test_the_pill_is_whole_before_a_fold_and_after_it_is_taken_back(make):
+    tip = copy.deepcopy(fx.FOLDS)
+    tip["beats"].append({"fold": False, "tag": "template"})
+    for density, side in (("card", 24), ("app", 64)):
+        s = make(tip, density)
+        s.seek(0 if density == "app" else 1)
+        pill = scene_box(s, s.item("pill"))
+        stage = s.item("stage").width()
+        assert (pill[0], stage - pill[2]) == (side, side)                          # centred, as it rests
+        s.seek(s.duration)
+        assert s.item("strip") is None
+        pill = scene_box(s, s.item("pill"))
+        assert (pill[0], stage - pill[2]) == (side, side)
+
+
+@pytest.mark.parametrize("density", ["card", "app"])
+def test_strips_too_long_for_the_stage_are_elided_and_the_pill_keeps_its_room(make, density):
+    tip = {"id": "strips-long", "captions": ["a", "b", "c"], "beats": [
+        {"fold": True, "tag": "template", "strips": ["step 2 of 2 and a long way to go", "1 counting down",
+                                                      "nothing else to say about it"]}]}
+    s = make(tip, density)
+    s.seek(s.duration)
+    pill = scene_box(s, s.item("pill"))
+    strips = [i for i in s.items("strip") if i.isVisible()]
+    assert len(strips) == 3 and max(scene_box(s, i)[2] for i in strips) < pill[0]
+    assert pill[2] - pill[0] >= (72 if density == "card" else 160)
+    assert any(i.property("truncated") for i in s.items("stripText"))
+
+
+def test_a_keycap_pressed_while_strips_stand_is_not_drawn_over_them(make):
+    tip = copy.deepcopy(fx.FOLDS)
+    tip["beats"].append({"key": "enter"})
+    s = make(tip, "app")                                                             # a poster has no keycap
+    s.seek(beat_start(tip, len(tip["beats"]) - 1) + 180)
+    key = scene_box(s, s.item("key"))
+    strips = [i for i in s.items("strip") if i.isVisible()]
+    assert len(strips) == 2
+    for strip in strips:
+        left, top, right, bottom = scene_box(s, strip)
+        assert key[0] >= right or key[2] <= left or key[3] <= top or key[1] >= bottom
+    pill = scene_box(s, s.item("pill"))
+    assert key[0] > pill[2] - 1 and key[2] <= s.item("stage").width()                # in the margin on the right
+    s.seek(beat_start(tip, 3) + 180)                                                 # before the fold: on the left, as ever
+    key = scene_box(s, s.item("key"))
+    assert key[2] <= scene_box(s, s.item("pill"))[0] + 1
 
 
 def test_a_fold_can_be_taken_back(make):
@@ -537,9 +674,19 @@ def test_the_card_never_sets_text_below_12_px_and_does_not_count(make):
         assert s.item("lineCounter") is None                          # no counting on a poster
         words = {text for _, text in tip_scene.strings(tip)} | set(tip_scene.KEYS.values())
         assert {text for text, _, _ in shown} <= words | {"Ask anything", "Now", "Watching", "Machine", "›"}, tip["id"]
+        still = make(tip, "app", True)                                  # and so are the reduced-motion stills
+        assert min(size for _, size, _ in still.texts()) >= 12, tip["id"]
 
 
-def test_a_line_is_one_line_whole_at_every_density_and_in_the_stills(make):
+def inter_here():
+    """Where Inter is not installed the widths here are another font's, so a fit test cannot say anything."""
+    return "Inter" in QtGui.QFontDatabase.families()
+
+
+def test_a_line_and_a_row_are_whole_at_every_density_and_in_the_stills(make, app):
+    """The same loop is the check for a tip's own lines: nothing a scene shows is elided."""
+    if not inter_here():
+        pytest.skip("Inter is not installed here, so widths cannot be measured")
     for tip in fx.ALL:
         for density, reduced in (("card", False), ("app", False), ("app", True)):
             s = make(tip, density, reduced)
@@ -547,11 +694,55 @@ def test_a_line_is_one_line_whole_at_every_density_and_in_the_stills(make):
                 s.seek(ms)
                 for item in s.items("lineText"):
                     if item.isVisible() and item.property("text"):
+                        where = (tip["id"], density, ms, item.property("text"))
+                        assert not item.property("truncated"), where
+                        assert item.property("lineCount") <= 4, where
+                        if s.frame["stone"]["face"] == "working":
+                            assert item.property("lineCount") == 1, where
+                for item in s.items("windowRowLabel"):
+                    if item.isVisible() and item.property("text"):
                         assert not item.property("truncated"), (tip["id"], density, ms, item.property("text"))
-                        assert item.property("lineCount") == 1, (tip["id"], density, ms)
-            # the line box is one line high, so nothing under it is ever covered by a second line
-            for box in s.items("line"):
-                assert box.height() in (22.0, 36.0)
+            for ms in (s.duration,):
+                s.seek(ms)
+                for box in s.items("line"):
+                    if box.isVisible():
+                        assert box.y() + box.height() <= s.item("pill").y(), (tip["id"], density)    # never over the pill
+
+
+def test_a_line_is_one_line_while_the_stone_works_and_up_to_four_otherwise_growing_up_from_the_pill(make):
+    """As the real line (shell/StatusLine.qml: one while working, four otherwise): a long reply is shown whole."""
+    undo = next(b["line"] for b in fx.UNDO["beats"] if "line" in b)
+    for density, one, gap in (("card", 22.0, 5), ("app", 36.0, 8)):
+        s = make(fx.UNDO, density)
+        s.seek(s.duration)
+        text, box, pill = s.item("lineText"), s.item("line"), s.item("pill")
+        assert text.property("text") == undo and not text.property("truncated")
+        assert 2 <= text.property("lineCount") <= 4 and box.height() > one
+        assert abs(box.y() + box.height() - (pill.y() - gap)) < 0.01       # its foot is where a one-line line's is
+    # while the stone works it is one line and what does not fit is elided, as in the real bar
+    tip = {"id": "long-working", "captions": ["a", "b", "c"],
+           "beats": [{"stone": "working", "line": undo, "tag": "template"}, {"hold": 300}]}
+    for density, one in (("card", 22.0), ("app", 36.0)):
+        s = make(tip, density)
+        text, box = s.item("lineText"), s.item("line")
+        assert text.property("lineCount") == 1 and text.property("truncated") and box.height() == one
+
+
+def test_a_tall_line_lifts_the_cards_and_the_picture_it_would_otherwise_cover(make):
+    undo = next(b["line"] for b in fx.UNDO["beats"] if "line" in b)
+    tip = {"id": "tall", "captions": ["a", "b", "c"], "beats": [
+        {"card": "machine", "tag": "template", "rows": [["memory", 40]]},
+        {"card": "now", "tag": "template", "title": "Install", "rows": [["a", "current"]]},
+        {"picture": "P", "tag": "template", "boxes": ["a", "b"]},
+        {"stone": "done", "line": undo, "tag": "template"}]}
+    for density in ("card", "app"):
+        s = make(tip, density)
+        s.seek(s.duration)
+        box = s.item("line")
+        top = box.y()
+        for name in ("card-machine", "card-now", "picture"):
+            item = s.item(name)
+            assert item.mapToItem(s.scene, QtCore.QPointF(0, 0)).y() + item.height() <= top + 0.01, (density, name)
 
 
 def test_the_words_come_before_the_command_when_a_line_is_tight(make):
@@ -566,15 +757,27 @@ def test_the_words_come_before_the_command_when_a_line_is_tight(make):
     assert s.item("lineCommand").property("text") == "pacman -S docker"       # with room, the command is shown
 
 
-def test_the_stills_grow_to_full_size_with_the_width_the_host_gives(make):
+def test_the_stills_are_at_full_size_and_wrap_where_three_do_not_fit_across(make):
+    """12 px text is the card's floor and the stills hold it: 576 px takes two across and one under."""
     s = make(fx.BUILD, "app", reduced=True)
     assert s.scene.width() == 576.0
-    small = {size for _, size, _ in s.texts()}
-    first = s.item("still-0")
-    assert abs(first.property("scale") - (576 - 24) / 3 / 272) < 1e-6            # a thumbnail by default
+
+    def corners():
+        return [s.item(f"still-{i}").mapToItem(s.scene, QtCore.QPointF(0, 0)) for i in range(3)]
+
+    assert all(s.item(f"still-{i}").property("scale") == 1 for i in range(3))
+    assert min(size for _, size, _ in s.texts()) >= 12
+    a, b, c = corners()
+    assert a.y() == b.y() and a.x() < b.x() and c.x() == a.x() and c.y() > a.y()           # two, then one
+    assert s.scene.height() >= 2 * 153 and s.scene.implicitHeight() == s.scene.height()
     s.set(width=840)
-    assert s.item("still-0").property("scale") == 1                              # and at full size, 12 px text
-    assert min(size for _, size, _ in s.texts()) >= 12 and small
+    a, b, c = corners()
+    assert a.y() == b.y() == c.y() and a.x() < b.x() < c.x()                              # all three across
+    assert all(s.item(f"still-{i}").property("scale") == 1 for i in range(3)) and s.scene.height() < 200
+    s.set(width=200)                                                      # a host narrower than one card shrinks them
+    assert s.item("still-0").property("scale") == 200 / 272
+    s.set(width=576)
+    assert min(size for _, size, _ in s.texts()) >= 12
 
 
 def test_the_cards_line_buttons_are_unlabelled_outlines(make):
@@ -678,14 +881,14 @@ def test_reduced_motion_shows_three_stills_side_by_side_with_their_captions(make
     assert s.item("stage") is None and s.item("stills") is not None
     stills = [s.item(f"still-{i}") for i in range(3)]
     assert all(st is not None for st in stills)
-    xs = [st.mapToItem(s.scene, QtCore.QPointF(0, 0)).x() for st in stills]
-    assert xs == sorted(xs) and len(set(xs)) == 3
+    places = [st.mapToItem(s.scene, QtCore.QPointF(0, 0)) for st in stills]
+    order = sorted(range(3), key=lambda i: (places[i].y(), places[i].x()))
+    assert order == [0, 1, 2] and len({(p.x(), p.y()) for p in places}) == 3        # in reading order, none on another
     caps = [s.item(f"still-caption-{i}").property("text") for i in range(3)]
     assert caps == ["You ask", "It builds", "You have it"]
     assert s.item("captions") is None                                  # the row under a stage is not drawn
     img = s.image()
-    third = int(s.scene.width() / 3)
-    pieces = [img.copy(12 + k * third, 12, third - 6, 110) for k in range(3)]
+    pieces = [img.copy(12 + int(p.x()), 12 + int(p.y()), 272, 153) for p in places]
     assert pieces[0] != pieces[1] and pieces[1] != pieces[2] and pieces[0] != pieces[2]
     s.snap("stills")
 
