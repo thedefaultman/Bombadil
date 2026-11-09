@@ -24,6 +24,8 @@ def _lx():
     ("keep route", "now"),
     ("keep needs you", "needs"),
     ("keep needs", "needs"),
+    ("keep away", "away"),
+    ("keep while you were away", "away"),
 ])
 def test_keep_and_a_widget_is_the_desk_keeping_it(home, text, target):
     a = launcher.match(text, [])
@@ -31,8 +33,8 @@ def test_keep_and_a_widget_is_the_desk_keeping_it(home, text, target):
 
 
 @pytest.mark.parametrize("text", [
-    # Alive and Away have no row on the Widgets card and wait for their feeds, so these are the agent's sentences.
-    "keep alive", "keep away", "keep while you were away", "keep alive on the desk",
+    # Alive has no row on the Widgets card yet (it waits for its feed), so these are the agent's sentences.
+    "keep alive", "keep alive on the desk",
     # A question asks, a sentence is the agent's, and a verb alone is nothing.
     "keep machine?", "keep it", "keep", "keep machine please", "keep machine on", "keep machine on the right",
     "keep an eye on the machine", "keep the machine running", "keep machine on the desk please",
@@ -79,7 +81,7 @@ def test_widgets_is_a_completion_and_keep_is_not_a_word_to_complete(home):
     assert not any(x["name"].startswith("keep") for x in e)
     # What the pill is told so that "keep ..." hints and completes as "show ..." does: the widgets on the card.
     assert {x["name"]: x["keep"] for x in e if x["kind"] == "widget"} == {
-        "now": True, "watching": True, "needs": True, "machine": True, "alive": False, "away": False}
+        "now": True, "watching": True, "needs": True, "machine": True, "alive": False, "away": True}
     assert not any("keep" in x for x in e if x["kind"] != "widget")
 
 

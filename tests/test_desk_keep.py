@@ -258,9 +258,9 @@ def test_a_repeated_off_changes_nothing_saves_nothing_and_calls_nobody(home):
 
 def test_the_widgets_card_lists_what_the_desk_lists_and_what_each_can_be(home):
     rows = fresh().snapshot()["widgets"]
-    assert [r["id"] for r in rows] == ["now", "watching", "needs", "machine"]      # Away and Alive wait for feeds
+    assert [r["id"] for r in rows] == ["now", "watching", "needs", "away", "machine"]      # Alive waits for its feed
     assert {r["id"]: r["can"] for r in rows} == {
-        "now": ["needed", "off"], "watching": ["needed", "off"], "needs": ["needed"],
+        "now": ["needed", "off"], "watching": ["needed", "off"], "needs": ["needed"], "away": ["needed", "off"],
         "machine": ["keep", "needed", "off"]}
     assert all(r["title"] and r["question"].endswith("?") for r in rows)
     # Every state a row says it can take is one the desk really takes, from wherever the widget stands.

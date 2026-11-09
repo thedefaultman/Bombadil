@@ -168,9 +168,9 @@ def clear_hand(provider: str) -> bool:
     return had
 
 
-def due(provider: str) -> float | None:
+def due(provider: str, at: float | None = None) -> float | None:
     """When the provider's limit should be looked at again (its time plus the grace), or None."""
-    e = limit(provider)
+    e = limit(provider, at)
     return e.until + RESET_GRACE if e is not None and e.until is not None else None
 
 

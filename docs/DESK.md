@@ -17,12 +17,13 @@ why it is built that way is in [`design/tips-and-desk-defaults-brief.md`](design
 | `shell/DeskRails.qml`, `shell/DeskRail.qml` | The two rails: one Quickshell `PanelWindow` per side on the Bottom layer (above the wallpaper, under every window), reserving nothing, with an input mask that covers only the cards. |
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
 | `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
-| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Machine; a row is a dot, a meter, a stacked meter or plain text). |
+| `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Away, Machine; a row is a dot, a meter, a stacked meter or plain text). |
 | `shell/WidgetsCard.qml` | The card the word "widgets" opens above the pill, in the AI card's shape: one row per widget with its three-part control (Keep, When needed, Off), and "Reset the desk". It draws what `DeskState` says and changes nothing itself. |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
 | `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away, kept on the desk or folded by hand, each widget's rail and place, and which states each widget may take. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
 | `src/bombadil/jobs.py` | Watching's table of background jobs. |
+| `src/bombadil/away.py` | The Away card's rows: what the turn log and the coding sessions say happened since the person was last seen, in the order they would want it, and the one `away` message built from them. Pure Python; the log's path and the clock are parameters, so the tests hand it rows and a time. |
 | `src/bombadil/vitals.py` | The Machine card's readings: memory by who uses it, the disk, the processor and its heat, the network, the lines that raise the card and the sentence that says why, and the calm shape of a Machine the person keeps. Pure Python on the standard library; every file it reads is a parameter, so the tests hand it text. |
 | `src/bombadil/agentd.py` | Sends the plan, the jobs table, the coding sessions and the desk's state to the shell, and takes the shell's requests back. |
 
@@ -34,6 +35,7 @@ flowchart LR
         D[coding sessions]
         K[desk.py / desk.toml]
         V[vitals.py samples /proc, /sys, statfs]
+        W[away.py reads the turn log]
     end
     subgraph shell
         S[shell.qml handle]
@@ -44,13 +46,13 @@ flowchart LR
         ST[Stone in the pill]
     end
     H[Hyprland] -- windows --> C[HyprCover] -- setWindows --> DS
-    A & J & D & K & V --> S
+    A & J & D & K & V & W --> S
     S --> P
     S --> DS
     DS --> R
     DS --> T
     DS -- needsYou --> P --> ST
-    DS -- outgoing: jobs, dev, desk, vitals --> agentd
+    DS -- outgoing: jobs, dev, desk, vitals, away --> agentd
 ```
 
 ## What agentd and the shell say to each other
@@ -64,12 +66,14 @@ drops the rest.
 | `{"type":"jobs","jobs":[...]}` | agentd to shell | Watching's table, replaced whole each time. |
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
 | `{"type":"machine","present":...,"asked":...,"calm":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. `calm: true` is a kept Machine at rest ("The machine is fine"); the shell draws it as it draws every Machine card. See [the Machine card](#the-machine-card). |
+| `{"type":"away","since":...,"count":...,"why":...,"rows":[...]}` | agentd to shell | The Away card, replaced whole. `rows: []` takes it away. See [the Away card](#the-away-card). |
 | `{"type":"desk","folded":...,"hidden":...,"stripped":...,"kept":...,"rails":...,"order":...,"widgets":[...]}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand, `kept` the ones kept on the desk at rest, and `widgets` the rows of the Widgets card (`{id, title, question, can}`, where `can` lists the states the widget may take). Whatever it leaves out stays as it was. |
 | `{"type":"widgets","op":"open"}` | agentd to shell | The person typed "widgets" (or the agent asked): open the Widgets card and take the keyboard for it. Every time, even with the card up. There is no message to close it. |
 | `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
 | `{"type":"desk","op":"set","widget":...,"state":"keep"\|"needed"\|"off"}`, `{"type":"desk","op":"reset"}` | shell to agentd | A press on the Widgets card. Answered with the new `desk` state like any change, and with one sentence on the line above the pill (a `local` event, `phase: "done"`), because a press has no gesture to show what it did: "Machine stays on the desk.", or a refusal ("Needs you cannot be hidden."). |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
+| `{"type":"away","op":"get"\|"seen"}` | shell to agentd | `get` asks for the Away card again; `seen` says the person has looked at it (a tap on it), so it can go. Neither reaches the model. |
 
 ## Faces, slots and right of way
 
@@ -89,7 +93,14 @@ because Hyprland sends no event while a floating window is dragged. The slot a c
 reserved while it is folded, so the cards above it do not slide down.
 
 The pill follows the desk: 900 px at most, less what the strips and a card on each side take, never
-under 360 px; 360 px with a window in front; a capsule under a full-screen window.
+under 360 px; 360 px with a window in front; a capsule under a full-screen window. A picture above
+the pill (docs/pictures.md) follows the same room but is not narrowed with the pill: beside a window it
+may take about 560 px (less when the rails leave less; `DeskState.pictureTarget`).
+
+Under reduced motion the fold, the strips' fade, the pill's width and the wash are instant and the ring holds
+still; the timings above (`foldMs`, the 400 ms wait, `pillAnimMs`) stay as they are, and each animation
+takes its duration through `Kit.Theme.duration(...)`. [`MOTION.md`](MOTION.md) has the rule, the table and how
+a new card honours it.
 
 ## The needs-you mark
 
@@ -133,7 +144,7 @@ is kept in `desk.toml` and so survives every boot. A widget is in one of three s
 nothing is happening, can be kept (`Widget.calm` in `desk.py`). Today that is Machine; Tips will be the second.
 Now and Watching have nothing to show at rest, so they offer *When needed* and *Off*. Needs you offers only
 *When needed*: it is the one place two sessions' requests can be answered together, so it cannot be put away.
-Alive and Away have no face yet and are not listed (`Widget.listed`). `desk.can(widget)` says the states a
+Away offers the same two, now that it has a face. Alive has none yet and is not listed (`Widget.listed`). `desk.can(widget)` says the states a
 widget may take, and agentd sends them as `can` on each row, so the shell draws what agentd allows and decides
 nothing. A widget is never both kept and put away: one press moves it from one to the other, and of the two a
 hand-edited `desk.toml` can say at once, *off* wins. A file from before keeping, with no `kept` line, keeps
@@ -144,12 +155,12 @@ nothing.
 | Typed | Answer | Desk |
 |---|---|---|
 | `keep machine`, `keep the machine`, `keep machine on the desk`, `keep machine on my desk` | "Machine stays on the desk." (again: "Machine is already kept on the desk."; a hand-folded card is unfolded: "Unfolded Machine.") | Machine kept, and brought back if it was put away |
-| `keep watching`, `keep now`, `keep needs you` | "Watching shows only while something counts." (and the like: each widget says when it does show; one that is put away says "Watching is put away. Say show watching to bring it back.") | nothing changes, nothing is saved |
+| `keep watching`, `keep now`, `keep needs you`, `keep away` | "Watching shows only while something counts." (and the like: each widget says when it does show; one that is put away says "Watching is put away. Say show watching to bring it back.") | nothing changes, nothing is saved |
 | `hide machine` while it is kept | "Machine is no longer kept. It still comes up when something needs a look." | back to *When needed* |
 | `hide machine` again | "Put Machine away." | *Off*; its warnings stop too |
 | `show machine` | "Here is the machine." (+ " It is back on the desk." if it was put away) | raises the card for 30 s, as before |
 | `widgets` (also `my widgets`, `show widgets`, `open the widgets`) | "Here are the widgets." | opens the Widgets card |
-| `keep alive`, `keep away` (no row on the card), any longer sentence, any question (`widgets?`) | the agent | the agent's `desk` tool, when the words asked for the desk. Alive ships put away, so it answers "Alive is put away. Say show alive to bring it back." until it is shown |
+| `keep alive` (no row on the card yet), any longer sentence, any question (`widgets?`) | the agent | the agent's `desk` tool, when the words asked for the desk. Alive ships put away, so it answers "Alive is put away. Say show alive to bring it back." until it is shown |
 
 The pill knows the words too: `launcher.entries()` marks each widget on the card with `keep`, so `keep mach` is
 completed with Tab and `keep machine` (or `... on the desk`) shows the same `↵ Machine` hint as `show machine`; an
@@ -242,7 +253,7 @@ Machine is sampled from the first bar after boot. See [A kept Machine at rest](#
   card opening, Esc and the line.
 - *A double press sends two messages.* agentd answers the second as "already", and what is raised follows its
   answer.
-- *The card has no reduced-motion handling,* the same as the AI card: it fades and its height eases.
+- *Its motion is the design's tokens,* as the AI card's: it fades (`Theme.normal`) and its height eases (`Theme.fast`), so under reduced motion ([MOTION.md](MOTION.md)) it appears and goes at once.
 - *Only Machine can be kept today.* Tips will make it two: its widget is declared with `calm=True` and a
   `quiet` and `then` sentence, and its row appears on the card by itself.
 - *There is no word for "reset the desk".* It is the card's footer, and the agent's `reset` op.
@@ -386,6 +397,73 @@ the last changes nothing.
   again, the processor reads 0% and the network shows dashes until the next sample, a second later. A kept card
   at rest does not have this: it waits for its second sample.
 
+## The Away card
+
+The Away card answers "what happened while I was gone?". It sits on the right rail between Needs you and
+Machine, its chip says `back · 4 things`, and it lists what finished, who is waiting, what failed and what
+changed, the most urgent first. It leaves once it has been seen: a tap on a row or its header, or the person's next
+ask. `away.py` reads the turn log and the sessions and decides; the shell draws what the one `away`
+message says and knows nothing about turns or sessions.
+
+```mermaid
+flowchart LR
+    T["turns.jsonl: turns and jobs that ended"] --> W[away.py: items]
+    S[coding sessions] --> W
+    W -- "away message" --> A[agentd]
+    A --> DS[DeskState.awayModel]
+    DS --> RC[RowsCard: dot and plain rows]
+    DS --> SC["strip chip: back · 4 things"]
+    RC -- "a tap, or the next ask" --> A -- "seen" --> W
+```
+
+**The rows.** Newest first within each kind, at most four, and a plain `and N more` line for the rest. The
+chip counts everything found, not the rows shown.
+
+| Kind | It is | Tone | Second line | Button |
+| --- | --- | --- | --- | --- |
+| failed | a turn that ended in an error or without finishing, a background job that ended failed, or a coding session that failed and was not looked at | red | the first line of what went wrong (a session: the line it last said) | `Why?` on a job that ended in the last day (its output is not kept longer), `Open` on a session |
+| waiting | a coding session that has asked something | the sessions' blue | what it asked | `Open` |
+| finished | a turn or a job that ended well, or a session that finished and was not looked at | green | when (`at 09:05`, with the weekday when it was not today); for a job or a session, the line it ended with | `Open` on a session |
+| changed | a turn that changed files and said what it did | orange | the time | none |
+
+Left out: what the person ran themselves (`!`), what an app asked, a turn or a job they stopped, a turn waiting
+for the limit to lift (it has not ended), and anything the log does not make a turn or a job of (an undo, a
+change at the desk). A row the card cannot make sense of is dropped; nothing here raises.
+
+**When it is built.** `show away`, or "while you were away" (the word is also a question: `desk.ASKABLE`),
+builds it from the person's last typed ask, or from the last time it was seen, or from a day ago when it never
+was (never further back than a week), and answers "Here is what happened while you were away." When
+nothing did, the card is one line, `Nothing happened`. A card that is up is sent to every bar, to a bar that
+connects later, and with `desk get`.
+
+**When it goes.** A tap on a row, on the title or the line under it, or on a button (`seen`, which a button
+sends after doing what it says), or the next thing the person types at the pill. An ask from a coding
+session (it comes with a name) or from a process inside an agent's turn does not count as the person being
+there. agentd remembers when it was last seen in
+`~/.local/state/bombadil/away.json`, so a restart does not bring back what was seen.
+
+**What the shell does with the message.** A row kind other than `dot` or `plain` is dropped, as is one with
+no key or a key already used; a tone it does not know is "you"; the only buttons are `Open` and `Why?`; nothing
+on it pulses or has a small ×; at most six rows. `Open` on `dev:<session>` asks agentd to open that session
+(as the same button on Needs you does), `Why?` on `job:<id>` shows what the job said (as it does on Watching),
+and either is then a `seen`. A message with no rows takes the card away, and one identical to the last changes
+nothing.
+
+**Known limits.**
+
+- *Nothing tells agentd the person came back yet.* The moment of coming back from a break needs the idle
+  signal that is still on its own branch; until it lands the card comes when it is asked for, and
+  `Away.back(since)` is the call that signal will make. Until then "since" is the person's ask before this
+  one, which is a proxy for when they were last there: a turn they started and watched can show as news.
+- *Session rows are the dots' own.* `AgentD._away_sessions()` hands over the coding sessions' views from
+  `dev.Dev.snapshot()` (the same ones the `dev` message sends), so a question that waited, or a session that
+  finished or stopped and has not been looked at, is a row that opens that session. A session that is only
+  working is not news. (`docs/dev-sessions.md` has the sessions' side.)
+- *No Undo, no Go back, no Time.* The brief's buttons for undoing just one thing and for going back to before
+  it, and a tap that opens the Brain's Time view, wait for what they act on; a tap puts the card away.
+- *A turn that failed is only as readable as its first line.* The log keeps what the turn said at its end,
+  and the card shows the first line of it, cut at the card's width.
+
 ## Dragging cards
 
 A card is taken by its title and the line under it (the first 50 px; the rows below keep their buttons
@@ -473,7 +551,7 @@ the real shell, so the first limit below is about Hyprland alone:
    feed that reads `desk.kept` and says its calm face at rest, as agentd does for Machine (`vitals.keep(...)` in
    `_vitals_kick`); declaring `calm=True` alone puts "Keep" on its row and nothing on the desk. `listed=False`
    keeps a widget with no face yet off the Widgets card. The card, the words and `can` follow from those fields.
-2. Give `DeskState` a model for it (`awayModel`, `machineModel`, ... are already waiting) filled from one
+2. Give `DeskState` a model for it (`machineModel` and `awayModel` are the examples to copy) filled from one
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
 3. Say how tall its full face is in `heightOf`, and give it a strip in `_stripOf`.
 4. Draw it: reuse `RowsCard` (rows with a dot or a meter, a button, a small x) or write a card on
@@ -497,6 +575,8 @@ the real shell, so the first limit below is about Hyprland alone:
   closing) with the `DeskState` rules in `tests/test_desk_qml.py` (what a press sends and refuses, a dropped
   socket, a desk message that leaves `kept` out, a kept Machine in its slot, calm to raised and back).
   `BOMBADIL_SCREENS=<dir>` saves the card's pictures: Machine kept, needed, off, and long text.
+- `pytest tests/test_away.py tests/test_agentd_away.py`: the Away card's rows and wording from rows of a log
+  and a clock they are handed, and agentd's side of it (who is told, what puts it away).
 - `pytest tests/test_desk_drag_qml.py`: dragging, in the three windows (the left rail, the right one and
   the bar) at their real places, each driven by pointer events given in its own coordinates.
 - `tests/desktop/run.sh`: the real bar, agentd and the Claude CLI in a headless sway session. The

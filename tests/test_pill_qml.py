@@ -481,8 +481,8 @@ def test_keep_is_a_launcher_word_of_the_widgets_on_the_card_and_of_nothing_else(
         assert bar.call("exact", word) == "Machine", word
     assert bar.call("exact", "keep watching") == "Watching" and bar.call("exact", "keep route") == "Now"
     assert bar.call("completion", "keep mach") == "ine" and bar.call("completion", "keep mach on") == ""
-    # Not the ones with no row on the card, not an app or a command by that word, not a question, not bare.
-    assert bar.call("exact", "keep away") == "" and bar.call("exact", "keep alive") == ""
+    # Not the one with no row on the card (Alive), not an app or a command by that word, not a question, not bare.
+    assert bar.call("exact", "keep alive") == "" and bar.call("exact", "keep away") == "Away"
     assert bar.call("exact", "keep calendar") == "" and bar.call("exact", "keep going") == ""
     assert bar.call("exact", "keep machine?") == "" and bar.call("exact", "keep") == ""
     assert bar.call("completion", "keep cal") == "" and bar.call("completion", "keep wat") == "ching"

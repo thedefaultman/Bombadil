@@ -23,6 +23,7 @@ def test_a_new_desk_is_the_one_the_shell_expects(home):
             {"id": "watching", "title": "Watching", "question": "What is it keeping an eye on?",
              "can": ["needed", "off"]},
             {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
+            {"id": "away", "title": "Away", "question": "What happened while I was gone?", "can": ["needed", "off"]},
             {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?",
              "can": ["keep", "needed", "off"]}]}
 
@@ -313,6 +314,18 @@ def test_showing_the_machine_is_also_asking_for_it(home):
     d.apply("show", "sofa")          # refused
     assert asked == ["machine", "machine", "machine"]
     assert changed == [["alive", "machine"], ["alive"], ["alive", "machine"]]
+
+
+def test_showing_away_is_asking_for_it_too_by_either_of_its_words(home):
+    d = fresh(home)
+    asked = []
+    d.on_ask = asked.append
+    away = "Here is what happened while you were away."
+    assert d.apply("show", "away") == (True, away)
+    assert d.apply("show", "while you were away") == (True, away)
+    assert d.apply("hide", "away") == (True, "Put Away away.")       # hiding is not asking
+    assert d.apply("show", "away") == (True, away + " It is back on the desk.")
+    assert asked == ["away", "away", "away"]
 
 
 def test_a_broken_ask_listener_never_costs_the_answer(home, capsys):

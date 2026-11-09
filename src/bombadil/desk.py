@@ -42,7 +42,7 @@ class Widget:
     rail: str                  # where it sits until moved
     question: str = ""         # the one question it answers (widgets brief, rule 1): the Widgets card shows it
     calm: bool = False         # has a face for a desk at rest, so it can be kept
-    listed: bool = True        # has a row on the Widgets card (Away and Alive wait for their feeds)
+    listed: bool = True        # has a row on the Widgets card (Alive waits for its feed)
     quiet: str = ""            # what "keep" says of a widget that has nothing to show at rest
     then: str = ""             # what it does once it is no longer kept ("It still comes up when ...")
 
@@ -59,7 +59,7 @@ WIDGETS: dict[str, Widget] = {w.id: w for w in (
     Widget("needs", "Needs you", ("needs you", "needs"), "right", "What is waiting for me?",
            quiet="Needs you shows only while two or more sessions wait."),
     Widget("away", "Away", ("away", "while you were away"), "right", "What happened while I was gone?",
-           listed=False, quiet="Away shows only after you have been away."),
+           quiet="Away shows only after you have been away."),
     Widget("machine", "Machine", ("machine",), "right", "Is the machine in trouble?", calm=True,
            then="It still comes up when something needs a look."),
 )}
@@ -69,8 +69,9 @@ ALWAYS = ("needs",)
 # Opt in: it is on the desk only after "show alive".
 OPT_IN = ("alive",)
 # Widgets that are present only with something to say, and that "show" is also a question to: the word
-# brings the card up for a while even when nothing is wrong ("how's the machine"). The sentence is the answer.
-ASKABLE = {"machine": "Here is the machine."}
+# brings the card up even when nothing is wrong ("how's the machine": for a while; "show away": until it is
+# seen, with "nothing happened" when that is so). The sentence is the answer.
+ASKABLE = {"machine": "Here is the machine.", "away": "Here is what happened while you were away."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
 _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
