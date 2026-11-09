@@ -307,6 +307,18 @@ def test_showing_the_machine_is_also_asking_for_it(home):
     assert changed == [["alive", "machine"], ["alive"], ["alive", "machine"]]
 
 
+def test_showing_away_is_asking_for_it_too_by_either_of_its_words(home):
+    d = fresh(home)
+    asked = []
+    d.on_ask = asked.append
+    away = "Here is what happened while you were away."
+    assert d.apply("show", "away") == (True, away)
+    assert d.apply("show", "while you were away") == (True, away)
+    assert d.apply("hide", "away") == (True, "Put Away away.")       # hiding is not asking
+    assert d.apply("show", "away") == (True, away + " It is back on the desk.")
+    assert asked == ["away", "away", "away"]
+
+
 def test_a_broken_ask_listener_never_costs_the_answer(home, capsys):
     d = fresh(home)
 

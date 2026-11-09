@@ -4,6 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
+- `dev-sessions.md`: coding sessions that outlive their window and come back by name, and the dots beside the pill: principles, UX, how it is built, how it is tested.
 - `SESSION-SERVICES.md`: how the session stays alive (the three user services, who starts them, restore
   points, the installer's kernel rule, models, updating a running system).
 - `VM-TESTING.md`: the whole-system smoke test in a VM, with a diagram, what it covers and its traps.

@@ -90,7 +90,7 @@ Item {
                 anchors.bottom: parent.bottom
                 sourceComponent: cell.modelData === "now" ? nowFace
                                : cell.modelData === "watching" || cell.modelData === "needs"
-                                 || cell.modelData === "machine" ? rowsFace : null
+                                 || cell.modelData === "machine" || cell.modelData === "away" ? rowsFace : null
             }
 
             // The title and the line under it are the handle; the rows start below them, so a button
@@ -128,8 +128,10 @@ Item {
                 id: rowsFace
                 RowsCard {
                     readonly property var current: cell.modelData === "watching" ? rail.desk.watchModel
-                        : cell.modelData === "machine" ? rail.desk.machineModel : rail.desk.needsModel
-                    // Machine has no model while it is calm: its card folds away with what it last said.
+                        : cell.modelData === "machine" ? rail.desk.machineModel
+                        : cell.modelData === "away" ? rail.desk.awayModel : rail.desk.needsModel
+                    // Machine and Away have no model while there is nothing to say: the card folds away with
+                    // what it last said.
                     property var last: null
                     onCurrentChanged: if (current) last = current
                     Component.onCompleted: if (current) last = current
@@ -137,6 +139,10 @@ Item {
                     onRowAction: (key, action) => rail.desk.rowAction(cell.modelData, key, action)
                     onRowRemove: key => rail.desk.rowRemove(cell.modelData, key)
                     onRowOpen: (key, opens) => rail.desk.rowOpen(cell.modelData, key, opens)
+                    // A click on Away's title or the line under it is the person having seen it (it has no Time
+                    // to open yet).
+                    captionTaps: cell.modelData === "away"
+                    onTitleClicked: if (cell.modelData === "away") rail.desk.awaySeen()
                 }
             }
         }
