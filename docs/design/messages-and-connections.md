@@ -108,7 +108,7 @@ There is no tool that sends, posts, replies, creates or comments, and no tool th
 ## What is a rule, not yet a wall
 
 As for mail, what keeps "never" true is code that checks where a press comes from (agentd refuses one from a
-process inside an agent's turn, or from one it cannot name) and what is being pressed (the fingerprint of the
+process inside an agent's turn or a coding session's scope, or from one it cannot name) and what is being pressed (the fingerprint of the
 kind, the target and the content, worked out again by the connection service). A process of yours that is
 outside every turn could still ask the service to perform something, which is why the service checks the
 fingerprint, performs a proposal at most once, and never retries. The keys are in a store only the service's

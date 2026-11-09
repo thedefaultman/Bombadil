@@ -125,9 +125,9 @@ is cut and made plain by the service (`clean_message`, `clean_task`) whatever th
 | `subscribe` | | `{}`, then pushes `{"push": "message", "message"}`, `{"push": "task", "item"}`, `{"push": "connection", "connection"}` |
 
 **`perform`** is the only way anything leaves, and the service does it only when every one of these holds: the
-peer's uid is allowed; the peer is not inside an agent's turn (`procs.cgroup_of(pid)` is None, as in
-`outbox.py`; a peer whose `/proc/<pid>/cgroup` cannot be read is refused as `agent`, since `cgroup_of` would
-call it "not in a turn"); `fingerprint` equals `driver.fingerprint(kind, target, content)`
+peer's uid is allowed; the peer is not inside an agent's scope, a turn's or a coding session's
+(`procs.cgroup_of(pid)` is None, as in `outbox.py`; a peer whose `/proc/<pid>/cgroup` cannot be read is refused as
+`agent`, since `cgroup_of` would call it "not in a turn"); `fingerprint` equals `driver.fingerprint(kind, target, content)`
 worked out again here; none of the words in `content` holds a character that draws as nothing (`plaintext.has_hidden`,
 code `refused`: what the person read in the box has to be all of what goes; a draft never holds one, since
 `clean_content` takes them out first, so this is the last look for a press that did not come from agentd); the
@@ -248,7 +248,7 @@ Linear") with the item's URL when the answer has one.
 
 One user service holding one connection to the panel's Chromium over its DevTools websocket (`ws.py`; the HTTP
 side stays in `browser.py`). Socket `browserd.sock`, JSON lines as above, peers of the person's uid only, and not a
-peer inside an agent's turn (its cgroup is a turn's scope, asked again for every request and failing closed; the answer
+peer inside an agent's turn or coding session (its cgroup is such a scope, asked again for every request and failing closed; the answer
 is `refused` and the connection is closed). The one caller, agentd's setup recipe, is no turn's process. Without that a
 turn could open pages of its own choosing and, through `take`, write a token of its own choosing into any connection.
 
