@@ -70,7 +70,7 @@ exclamation mark, no em-dash, no "will", "tomorrow" or "later".
 | `card` | `true` by default. `false` when the tip's button does not fit the card's row (the button, its inset and "All tips ›" must fit 272 px): only the app shows it. |
 | `tried_when` | Evidence agentd matches against its own live events (below). |
 | `captions` | Three phase captions of at most three words, under the stage in the app and beneath the three stills under reduced motion. "You ask", "It works", "You have it" unless the brief words a tip's own (it does for the first tip only: "You ask", "It builds", "You have it"). Like the lines, they are proposals for the voice thread. |
-| `beats` | The scene. The scene piece fills it; a row ships with `beats = []` and the card then draws its still poster from the line alone. |
+| `beats` | The scene, written as [`TIP-SCENES.md`](TIP-SCENES.md) says; the card draws its last frame as the poster. A row whose beats are not written yet ships with `beats = []`, and the card then draws the bare ground in the poster's place. |
 
 `load_rows` checks every row and **leaves out** a bad one instead of half-using it (a wrong gate, captions that are
 not three, evidence nothing sees, a second row with a used id, a field that is not in the table above, so a typo
