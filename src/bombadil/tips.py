@@ -57,7 +57,7 @@ ID_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _EVIDENCE = re.compile(r"words|bang|local:[a-z][a-z0-9_-]*(?::[A-Za-z0-9_.:@+-]+)?|tool:[A-Za-z0-9_-]+"
                        r"|job:start(?::(?:" + "|".join(JOB_KINDS) + "))?")
-_PLACEHOLDER = re.compile(r"\{([a-z]+)\}")
+_PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
 # What goes into a button's words from the machine: it starts with a letter or a digit (never "!" or "~",
 # which would turn a name into a shell command or a path) and holds nothing a shell or a pill reads as more.
 _TITLE = re.compile(r"[^\W_][\w .'’-]*")
@@ -457,20 +457,21 @@ class Tips:
 
     def _sequence(self, tips: list[Tip]) -> list[Tip]:
         """The tips the card turns through: Start here in the first week, and every tip whose button fits the
-        card once the person keeps Tips on the desk."""
-        cards = [t for t in tips if t.card]
+        card once the person keeps Tips on the desk. A tip that came with an update waits in the app until the
+        person has had it in front of them: nothing new is put on the desk unasked."""
+        known = set(self.state.known)
+        cards = [t for t in tips if t.card and t.id in known]
         return cards if self.kept() else [t for t in cards if t.section == START]
 
-    def _present(self, facts: Facts, tips: list[Tip], seq: list[Tip]) -> bool:
+    def _present(self, facts: Facts, seq: list[Tip]) -> bool:
         """Has Tips something to say to a new person? Setup is ready, the person has not put it away, and
         either they keep it, or the first week is not over and a Start-here tip is left untried."""
         if not facts.model or self.hidden() or not seq:
             return False
         if self.kept():
             return True
-        start = [t for t in tips if t.card and t.section == START]
         return (bool(self.state.first_ready) and len(self.state.days) < WEEK_DAYS
-                and any(t.id not in self.state.tried for t in start))
+                and any(t.id not in self.state.tried for t in seq))
 
     def _first_untried(self, seq: list[Tip]) -> Tip:
         return next((t for t in seq if t.id not in self.state.tried), seq[0])
@@ -483,7 +484,7 @@ class Tips:
             facts = self._facts()
             tips = listed(self.rows, facts)
             seq = self._sequence(tips)
-            if not self._present(facts, tips, seq):
+            if not self._present(facts, seq):
                 return {"type": "tips", "present": False, "card": None}
             tip = next((t for t in seq if t.id == self._shown), None) or self._first_untried(seq)
             self._shown = tip.id

@@ -939,6 +939,7 @@ class AgentD:
         elif op == "list":
             await self._tips_refresh()
             await self._send(writer, {"type": "tips", "list": self.tips.listing()})
+            await self._tips_send()   # a tip that has now been in front of the person may be on the card
 
     def _tips_typed(self, text: str):
         """The person typed in the pill: a day of use, and a tip tried when these are the words its button put
