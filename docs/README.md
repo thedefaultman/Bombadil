@@ -25,13 +25,14 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 | Diagrams and reasons above the pill | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
 | Undo | Partly shipped | [restore points](architecture/restore-points.md) |
 | The image, the installer, boot | Shipped | [ISO and install](architecture/iso-and-install.md) |
+| What keeps the session alive | Partly shipped | [session services](architecture/session-services.md) |
 | The index that writes itself | Partly shipped | [brain](architecture/brain.md) |
 | Named coding sessions | In progress | [coding sessions](architecture/coding-sessions.md) |
 | A name, voices and welcome lines | In progress | [voice](architecture/voice.md) |
 | Noticing repeated asks, self-checks | In progress | [loop](architecture/loop.md) |
-| Mail and everyday work | In progress | [mail](architecture/mail.md) |
-| When the AI's plan runs out | In progress | [poor man switch](architecture/poor-man-switch.md) |
-| An encrypted installed system | Designed | [installed OS](architecture/installed-os.md) |
+| Mail and everyday work | Partly shipped | [mail](architecture/mail.md) |
+| When the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
+| An encrypted installed system | Partly shipped | [installed OS](architecture/installed-os.md) |
 
 ## I want to know how it should look and feel
 
@@ -56,5 +57,6 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 - [The security model](security-model.md): what the agent can do, who can reach what, and what undo covers and does not.
 - [Documenting your piece](contributing/documenting.md): where things go, the shape of a page, diagrams, what must never be committed, and the checker.
 - [Writing a design brief](contributing/design-briefs.md).
-- [Measuring the desk](contributing/measuring-the-desk.md): measuring the stone and the pill from outside a VM.
+- [Testing the whole system in a VM](contributing/vm-testing.md): the smoke test that boots the real image, what it covers and its traps.
+- [The Mail contract](MAIL.md) and [the brain contract](BRAIN.md): the exact wire formats, states and rules that comments in the code point to. The pages for [Mail](architecture/mail.md) and [the brain](architecture/brain.md) say how each piece works; these two say what it promises.
 - `docs/screens/`: the screenshots the pages show. `docs/tools/check_docs.py`: the docs checker (`python3 docs/tools/check_docs.py --mermaid`).

@@ -366,7 +366,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 
 <section id="first">
   <h2>Build these first</h2>
-  <p class="intro">Two pieces that can each be built on their own. Both edit shell.qml, so they follow the merges of the app kit and of the session dots (which are Sessions' strip). <a href="../widgets-brief.md#where-the-pieces-stand-2026-10-01">Where each piece stands</a> on 2026-10-01 is in the brief.</p>
+  <p class="intro">Two pieces that can each be built on their own. Both edit shell.qml, so they follow the merges of the app kit and of the session dots (which are Sessions' strip). <a href="../widgets-brief.md#where-the-pieces-stand-2026-11-08">Where each piece stands</a> on 2026-10-01 is in the brief.</p>
   <div class="pieces">
     <article class="piece">
       <div class="piece-head"><span class="piece-num">1</span><h3>The desk, and Now</h3><span class="effort">M to L</span></div>
@@ -447,7 +447,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line);
 <section id="facts" class="facts">
   <h2>Checked today, and to verify before building</h2>
   <p class="intro">The facts the design rests on, checked against the code on 27 Sep 2026, and the ones a builder should test in the VM first.</p>
-  <p class="intro">Reading note: this section is dated 27 Sep 2026, before the desk was built. On 2026-10-01 three of its statements about the code no longer hold: Codex's todo list reaches the <code>plan</code> event whole, the pill's row is laid out as strips, pill, strips, and the kit is on <code>main</code>. The vendor facts were not re-checked. <a href="../widgets-brief.md#where-the-pieces-stand-2026-10-01">Where the pieces stand</a>.</p>
+  <p class="intro">Reading note: this section is dated 27 Sep 2026, before the desk was built. On 2026-10-01 three of its statements about the code no longer hold: Codex's todo list reaches the <code>plan</code> event whole, the pill's row is laid out as strips, pill, strips, and the kit is on <code>main</code>. The vendor facts were not re-checked. <a href="../widgets-brief.md#where-the-pieces-stand-2026-11-08">Where the pieces stand</a>.</p>
   <ul>
     <li>The bar today is one Quickshell PanelWindow per screen on the Overlay layer with an input mask and <code>exclusiveZone: 64</code> (shell.qml); a PanelWindow reserves its whole width by default when anchored to three edges, so the rails set <code>exclusionMode: Normal</code> and <code>exclusiveZone: 0</code> explicitly.</li>
     <li>PillState.qml is fed by agentd's JSON events, drops kinds it does not know, and guards status against another turn's id; agentd stamps every event with the current turn. DeskState follows the same pattern: <code>plan</code> carries the turn and is matched, <code>desk</code> events are not turn-bound.</li>

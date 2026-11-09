@@ -33,13 +33,14 @@ flowchart LR
 | cards and pictures | Validated diagrams the agent and the machine draw above the pill, and the reasons behind each step | Partly shipped | [cards and pictures](architecture/cards-and-pictures.md) |
 | restore points | A btrfs snapshot before each turn, and "undo" | Partly shipped | [restore points](architecture/restore-points.md) |
 | ISO and install | The archiso image, the installer, the boot and the console | Shipped | [ISO and install](architecture/iso-and-install.md) |
+| session services | The user units that put the daemon, the bar and notifications back when they die, and the keys that stop or restart them | Partly shipped | [session services](architecture/session-services.md) |
 | brain | An index that writes itself from what the machine saw, and the Focus window | Partly shipped | [brain](architecture/brain.md) |
 | coding sessions | Named sessions of the vendors' coding tools that outlive their window | In progress | [coding sessions](architecture/coding-sessions.md) |
 | voice | A name, three voices, the welcome line and the words of empty places | In progress | [voice](architecture/voice.md) |
 | self-improvement loop | Noticing repeated asks and checking itself | In progress | [loop](architecture/loop.md) |
-| mail | Mail in Bombadil's own view, with Thunderbird as the unseen engine | In progress | [mail](architecture/mail.md) |
-| poor man switch | What the machine does when the AI's plan runs out | In progress | [poor man switch](architecture/poor-man-switch.md) |
-| installed OS | An encrypted disk, packages and updates | Designed | [installed OS](architecture/installed-os.md) |
+| mail | Mail in Bombadil's own view, with Thunderbird as the unseen engine | Partly shipped | [mail](architecture/mail.md) |
+| poor man switch | What the machine does when the AI's plan runs out | Partly shipped | [poor man switch](architecture/poor-man-switch.md) |
+| installed OS | An encrypted disk, packages and updates | Partly shipped | [installed OS](architecture/installed-os.md) |
 
 [The roadmap](roadmap.md) says where each piece stands and what is left. [The glossary](glossary.md) explains the project's own words.
 
