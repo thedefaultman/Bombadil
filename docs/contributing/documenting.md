@@ -30,7 +30,7 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 | `docs/decisions/` | the decision log, one file per area: what was decided, when, why, and where it is built |
 | `docs/roadmap.md` | what is shipped, in progress and designed |
 | `docs/ux/README.md` | the interaction model: the surfaces, the stone's states, one conversation, and a gallery of screens |
-| `docs/ux/flows.md` | the flows from first boot to a picture card, each with where it breaks and what the person sees |
+| `docs/ux/flows.md` | the flows from first boot to coding sessions and the Away card, each with where it breaks and what the person sees |
 | `docs/ux/keys-and-timings.md` | every key, duration, size, limit and launcher word, with where the code defines it |
 | `docs/reference.md` | every command, environment variable, file, socket, unit, configuration key, tool and event, one line each, with the page that owns the detail |
 | `docs/security-model.md` | what the agent can do, who can reach what, and what undo covers and does not |

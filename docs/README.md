@@ -37,7 +37,7 @@ Everything about how Bombadil is designed, how it is built and how to build on i
 ## I want to know how it should look and feel
 
 - [The interaction model](ux/README.md): the surfaces, the stone's states, one conversation, and a gallery of screens.
-- [Flows](ux/flows.md): first boot, sign-in, a turn, undo, building an app, and what the person sees when something fails.
+- [Flows](ux/flows.md): first boot, sign-in, a turn, undo, building an app, coding sessions, the Away card, and what the person sees when something fails.
 - [Keys, timings and limits](ux/keys-and-timings.md): every key, duration and limit, with where it is defined.
 - [The design system](design-system/README.md): colour, type, shape, motion, icons and the tokens that carry them.
 - [Brand assets](brand/README.md): the mark and its files.
