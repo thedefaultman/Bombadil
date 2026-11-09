@@ -882,6 +882,9 @@ def shell_step(command: str, description: str | None = None) -> Step:
 _MAP_WORDS = {"network": "Drawing how you're connected", "boot": "Drawing what starts when you boot",
               "service": "Drawing what {target} needs", "disks": "Drawing your disks",
               "sound": "Drawing what's playing where", "screens": "Drawing your screens"}
+# What a draft on a card is called while it is being written (the kind says which).
+_PROPOSE_WORDS = {"slack_reply": "Drafting a reply", "task_create": "Drafting a new task",
+                  "task_comment": "Drafting a comment"}
 
 
 def _os_tool(tool: str, a: dict) -> Step | None:
@@ -967,6 +970,17 @@ def _os_tool(tool: str, a: dict) -> Step | None:
         return Step("Writing a draft")
     if tool == "mail_show":
         return Step("Opening Mail")
+    # Messages and connections: lines only, as for mail. A proposal is a draft on a card, the person's to send.
+    if tool == "messages_unread":
+        return Step("Reading your messages")
+    if tool == "message_thread":
+        return Step("Reading the thread")
+    if tool == "tasks_waiting":
+        return Step("Looking at what waits on you")
+    if tool == "connections":
+        return Step("Checking what is connected")
+    if tool == "propose":
+        return Step(_PROPOSE_WORDS.get(str(a.get("kind") or ""), "Drafting a reply"))
     return None
 
 
@@ -1373,8 +1387,9 @@ def reason_from(text: str) -> str:
 class Read:
     """Something the turn read, and whether it came from outside the machine's own files."""
     label: str            # "wireguard.com/quickstart", "notes.txt", "coding session api on Latchkey"
-    kind: str             # web, file, search, screen, session, app, mail
-    outside: bool         # a web page, a downloaded file, the page on screen, a mail, a request from a session or app
+    kind: str             # web, file, search, screen, session, app, mail, messages, tasks
+    outside: bool         # a web page, a downloaded file, the page on screen, a mail, a message, a task, a request
+                          # from a session or app
     origin: str = ""      # for a downloaded file, the host it came from
 
     def as_dict(self) -> dict:
@@ -1398,6 +1413,10 @@ class Read:
 
 
 MAX_READS = 50
+# What the tools that read other people's messages and tasks say they read: (label, kind, outside).
+CONNECT_READS = {"mcp__bombadil-os__messages_unread": ("your messages", "messages", True),
+                 "mcp__bombadil-os__message_thread": ("a conversation", "messages", True),
+                 "mcp__bombadil-os__tasks_waiting": ("what waits on you", "tasks", True)}
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
 _READ_PROGS = {"cat", "less", "more", "head", "tail", "bat", "batcat", "zcat", "xxd", "hexdump"}
 
@@ -1487,6 +1506,9 @@ def tool_reads(name: str, a: dict | None) -> list[Read]:
     if name in ("mcp__bombadil-os__mail_read", "mcp__bombadil-os__mail_search"):
         # Other people's words: a step that follows says "after reading a mail".
         return [Read("a mail" if name.endswith("_read") else "your mail", "mail", True)]
+    if name in CONNECT_READS:
+        # So are messages and tasks: "after reading your messages".
+        return [Read(*CONNECT_READS[name])]
     return []
 
 

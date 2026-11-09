@@ -38,6 +38,9 @@ permission prompt.
 | `bin/bombadil-mail-host` | The native messaging host Thunderbird's Bombadil add-on (`share/mail/extension`) connects to; it relays the add-on's frames to `mail.sock`. |
 | `share/apps/mail` | The Mail window, a kit app of the built-in kind: every account in one list, Needs a reply, Drafts, and a reply box whose Send is yours. Opens from the launcher words "mail", "email" and "inbox" and from the Reply and Open chips of a new-mail line. |
 | `share/skills/bombadil-mail` | The skill both CLIs load for mail: the `mail_*` tools, the rules (other people's words, no send, drafts wait for a press) and the routines. |
+| `bin/bombadil-connect` | The connection service, a system unit (`bombadil-connect.service`) that runs as its own user, `bombadil-connect`. Owns `/run/bombadil-connect/connect.sock` and the token store in `/var/lib/bombadil-connect` (mode 0700), runs the Slack and MCP drivers, keeps a ring of recent messages in memory, and performs a Slack reply, a ticket or a comment only for a press the person made (`docs/CONNECT.md`). `BOMBADIL_CONNECT_ENGINE=fake` runs it on sample messages and tasks. |
+| `bin/bombadil-browserd` | The browser service, a user unit (`bombadil-browserd.service`): one connection to the browser panel's Chromium that opens, reads, points at a button and takes a token off a page into the connection service. It has no hands. |
+| `share/skills/bombadil-connect` | The skill both CLIs load for messages and connections: the five tools, the rules (other people's words, no send, no token) and how a service is connected. |
 | `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to a btrfs disk with snapper. |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools

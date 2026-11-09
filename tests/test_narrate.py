@@ -1052,3 +1052,39 @@ def test_the_mail_tools_have_words_and_reading_mail_is_an_outside_read():
     quiet.on_event({"kind": "tool", "name": "mcp__bombadil-os__mail_mark", "input": {"id": "a1/x"}, "id": "m"})
     assert "after" not in quiet.on_event({"kind": "tool", "name": "Write",
                                           "input": {"file_path": "/etc/hosts", "content": "x"}})
+
+
+def test_the_connection_tools_have_words_and_reading_messages_or_tasks_is_an_outside_read():
+    def step(tool, **a):
+        return narrate.tool_step(f"mcp__bombadil-os__{tool}", a)
+
+    assert step("messages_unread").text == "Reading your messages"
+    assert step("message_thread").text == "Reading the thread"
+    assert step("tasks_waiting").text == "Looking at what waits on you"
+    assert step("connections").text == "Checking what is connected"
+    assert step("propose", kind="slack_reply").text == "Drafting a reply"
+    assert step("propose", kind="task_create").text == "Drafting a new task"
+    assert step("propose", kind="task_comment").text == "Drafting a comment"
+    assert step("propose").text == "Drafting a reply" and step("propose", kind="nonsense").text == "Drafting a reply"
+    # Lines only: nothing here claims a change, so no closing sentence, no Undo and no mark of a system step.
+    for tool in ("messages_unread", "message_thread", "tasks_waiting", "connections", "propose"):
+        s = step(tool)
+        assert s.done is None and s.risk is None and not s.changes
+    for odd in ({"kind": ["x"]}, {"kind": None}, {"kind": {"a": 1}}, {"kind": 5}):
+        assert step("propose", **odd).text == "Drafting a reply"
+    n = narrate.Narrator()
+    n.on_event({"kind": "tool", "name": "mcp__bombadil-os__messages_unread", "input": {}, "id": "m"})
+    marked = n.on_event({"kind": "tool", "name": "Write", "input": {"file_path": "/etc/hosts", "content": "x"}})
+    assert marked["after"] == {"label": "your messages", "kind": "messages", "text": "after reading your messages"}
+    for tool, label in (("message_thread", "a conversation"), ("tasks_waiting", "what waits on you")):
+        later = narrate.Narrator()
+        later.on_event({"kind": "tool", "name": f"mcp__bombadil-os__{tool}", "input": {}, "id": "m"})
+        assert later.on_event({"kind": "tool", "name": "Write", "input": {"file_path": "/etc/hosts",
+                                                                         "content": "x"}})["after"]["label"] == label
+    for quiet_tool in ("connections", "propose"):
+        quiet = narrate.Narrator()
+        quiet.on_event({"kind": "tool", "name": f"mcp__bombadil-os__{quiet_tool}", "input": {}, "id": "m"})
+        assert "after" not in quiet.on_event({"kind": "tool", "name": "Write",
+                                              "input": {"file_path": "/etc/hosts", "content": "x"}})
+    # The same names from another server are not these tools.
+    assert narrate.tool_reads("mcp__other__messages_unread", {}) == []

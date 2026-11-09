@@ -1,0 +1,503 @@
+"""The Slack setup recipe: walks the person through making their own private Slack app in the browser panel, with
+Bombadil's pointer on each press, and takes the two tokens off Slack's pages into the connection service
+(docs/CONNECT.md, "The setup recipe").
+
+`run_setup` is blocking and runs in one of agentd's worker threads. It speaks to two services only through their
+client modules, which a test can replace: the browser service (`browserd`: open, point, wait, read, take) and the
+connection service (`connect`: it only asks for `connections`). The steps, each waiting for its page before the next:
+
+1. open `manifest.creation_url()` and point at Create (or Next, if Slack asks for a workspace first);
+2. on the new app's page the person names an App-Level Token, adds `connections:write` and presses Generate; the
+   pointer is on Generate Token and Scopes, and the `xapp-` value is taken off the page into `app_token`;
+3. point at Install to Workspace, then at Allow;
+4. on the OAuth & Permissions page take the `xoxp-` User OAuth Token into `user_token`;
+5. ask the connection service what became of the connection.
+
+A run that starts on a connection which already holds a token (an earlier one stopped at an administrator's approval
+wall, or gave up waiting for a page; one the person called off is taken back by agentd, with what it stored) does not
+make a second app: it opens Slack's list of the person's apps, points at
+the one called Bombadil and goes on from the app they open, with only what is still missing. Whichever app a run
+begins with is the only one it takes tokens from, so the two tokens always come from one app.
+
+Steps 2 to 4 are one loop that watches for both tokens, because a person does not always go in the order they were
+asked: pressing Install first is natural, and Slack lets them. Whichever token shows up is taken, and what is said and
+pointed at next is whatever is still missing.
+
+The rules it keeps:
+
+- The person presses everything. This never clicks, types or navigates: it opens the first page (the panel opening)
+  and points. Where it cannot find a button by its words it says what it is looking for ("Look for Install to
+  Workspace on the page.") and keeps waiting, rather than failing. A pointer that the page lost (a reload, a page
+  drawn again) is drawn again at once, and one the person scrolled away from is left alone.
+- A token never passes through here. It is taken by the browser service, which reads it off the page and hands it
+  to the connection service; all this module sees is "stored" or not. It never calls `store_secret` itself, and what
+  it says never holds a token.
+- Slack's words are not Bombadil's. Pages are read only to look for a few words (an administrator's approval wall),
+  and the one thing from the outside that is repeated, the workspace's name, is quoted.
+- It stops, never raises. A wall ("an administrator must approve apps") is said once in plain words and ends it with
+  `ok` false; so does a page that never comes (each wait is generous: the person is reading and pressing), a closed
+  tab, a service that is not running, and the person calling it off, which is answered within a second (a call to
+  the browser service runs on its own thread while this one watches `cancelled()`; one that is storing a token is
+  given a moment to finish, not left half done for long). Whatever ends it, the pointer goes.
+
+It returns `{"ok": bool, "say": "one sentence"}`. The last sentence is returned, not passed to `say`: the caller says
+it. A wall leaves the connection as it was (in `setup`, with the first token stored): the next "connect slack" picks
+it up, in the same app. Unverified against Slack's real pages: it finds things by their visible words and by token shape (see
+tests/browserd_fakes/slack_pages.py for the pages it is tested against).
+"""
+
+import contextlib
+import re
+import threading
+import time
+
+from ..browserd import client as browserd_client
+from ..browserd import overlay
+from . import client as connect_client
+from . import manifest, protocol
+
+# The app's own pages: https://api.slack.com/apps/A0123456789/..., and its OAuth & Permissions page.
+APP_PAGE = r"/apps/A[A-Z0-9]+"
+TOKENS_PAGE = r"/apps/A[A-Z0-9]+/oauth"
+TOKENS_WORDS = "User OAuth Token"
+_APP_ID = re.compile(r"/apps/(A[A-Z0-9]+)")
+
+APP_TOKEN = ("app_token", manifest.APP_TOKEN_PREFIX)
+USER_TOKEN = ("user_token", manifest.USER_TOKEN_PREFIX)
+
+# How long each page is waited for: the person is reading, logging in, choosing a workspace and pressing.
+CREATE_WAIT_S = 600.0
+APP_TOKEN_WAIT_S = 900.0     # for the first token, and for the second when the person went to it first
+INSTALL_WAIT_S = 900.0       # for the install to finish, after the first token
+USER_TOKEN_WAIT_S = 120.0    # for the token to show once the page that has it is there
+CONNECTION_WAIT_S = 20.0
+
+SLICE_S = 0.6            # one `wait` of the browser service looks at the page this long
+PAUSE_S = 0.5            # between two looks for a token
+LOOK_PAUSE_S = 0.1       # between two looks for a page: `wait` is the pace, this is for a page that answers at once
+POINT_TTL_S = 30.0       # how long the pointer stays when nothing changes ...
+REPOINT_S = 25.0         # ... and when it is drawn again
+HINT_AFTER_S = 8.0       # a button not found by its words for this long is said out loud, once
+WALL_EVERY_S = 2.0
+CALL_S = 15.0
+OPEN_S = 60.0            # opening the page may start the browser
+STORE_GRACE_S = 0.3      # a token being taken when the person cancels is given this long to be done
+SETTLE_S = 0.2           # and a pointer being drawn this long to land, so it can be taken away again
+
+SAY_OPEN = "I've opened Slack's page to make the app. Press Create."
+SAY_RESUME = "Your Slack apps are open. Open the one called Bombadil and I'll go on from there."
+SAY_INSTALL_AGAIN = "The app has its first token. Press Install to Workspace."
+SAY_APP = ("The app is made. It needs a token to listen with: press Generate Token and Scopes under App-Level "
+           "Tokens, name it anything, add the scope connections:write and press Generate.")
+SAY_INSTALL = "I have the first token and stored it. Now press Install to Workspace."
+SAY_ALLOW = "Slack asks you to confirm. Press Allow."
+SAY_TOKEN = "I have the second token and stored it."
+SAY_FIRST = "I have the first token and stored it."
+SAY_FIRST_MISSING = ("I have the second token and stored it. I still need the first: open Basic Information and "
+                     "press Generate Token and Scopes under App-Level Tokens.")
+SAY_WALL = ("Your Slack workspace needs an administrator to approve this app before it can be installed. Ask them "
+            "to approve it, then connect Slack again.")
+SAY_STOPPED = "Setup stopped."
+
+# What an approval wall says: something about approval or a request to install, and an administrator.
+_WALL_ASKS = ("approval", "approve", "request to install", "request approval")
+_WALL_WHO = ("administrator", "workspace admin", "admins")
+# Buttons that mean the page is not a wall: the person can still press on.
+_NOT_A_WALL = ("Install to Workspace", "Allow", "Generate Token and Scopes")
+
+
+class _Stop(Exception):
+    """The recipe ends here: `ok` and the sentence for the person."""
+
+    def __init__(self, ok: bool, sentence: str):
+        super().__init__(sentence)
+        self.ok = ok
+        self.sentence = sentence
+
+
+class _NotReady(Exception):
+    """The page did not answer just now (it is changing): look again."""
+
+
+class _NotThere(Exception):
+    """The page has nothing that matches what was asked for."""
+
+
+def _sentence(value, fallback: str) -> str:
+    """A sentence of the services' own (their exceptions' text) or the fallback; never a stack trace's words."""
+    if isinstance(value, (connect_client.ConnectError, connect_client.ConnectUnavailable)):
+        return str(value)
+    return value if isinstance(value, str) and value else fallback
+
+
+def token_pattern(prefix: str) -> str:
+    """A token as Slack writes it: the prefix, dash-separated parts and a tail of twenty to a hundred lowercase
+    letters and digits (a longer run is not a token, and a page cannot hide a real one behind it). The tail ends where a lowercase letter or digit does not follow, so a word that a page sets right
+    against it ("...a1b2Copy", a button beside the token) is not taken along.
+
+    The pattern is run by the browser service over whatever text a page holds, on the one thread that answers every
+    other caller, so it must never take longer than the text is long: a token starts only where no letter, digit or
+    dash comes before it (a page that spells the prefix over and over has one start for each run of them, not one for
+    each spelling), and every part is whole between its dashes, so nothing can be taken apart two ways."""
+    return r"(?<![A-Za-z0-9-])" + re.escape(prefix) + r"(?:[A-Za-z0-9]+-)*[a-z0-9]{20,100}(?![a-z0-9])"
+
+
+def _has_wall_words(text: str) -> bool:
+    text = text.lower()
+    return "request to install" in text or (any(w in text for w in _WALL_ASKS) and any(w in text for w in _WALL_WHO))
+
+
+class _Setup:
+    def __init__(self, connection_id, say, cancelled, browserd, connect):
+        self.cid = connection_id
+        self.say = say
+        self.cancelled = cancelled
+        self.b = browserd
+        self.c = connect
+        self.stored: list[str] = []                    # names of the secrets the connection holds
+        self.app: str | None = None                    # the app this run is for, from the first page it is on
+        self._url = ""                                 # the address the last matched wait saw
+        self._up: tuple[str, float] | None = None      # the words the pointer is on, and since when
+        self._pointed = False                          # a pointer was asked for at some point
+        self._announced: set[str] = set()
+        self._started = time.monotonic()
+        self._pointed_here = False
+        self._hinted = False
+        self._deadline = 0.0
+        self._abandoned: list[threading.Thread] = []   # calls left running when the person cancelled
+
+    # -- the walk --
+
+    def go(self) -> dict:
+        if not (isinstance(self.cid, str) and protocol.valid_connection_id(self.cid) and self.cid.startswith("slack:")):
+            raise _Stop(False, "That is not a Slack connection.")
+        # The connection is there, and the connection service is running, before anything opens.
+        self.stored = self._held(self._connection())
+        if len(self.stored) < 2:
+            self._resume() if self.stored else self._begin()
+            self._tokens()
+        return self._finish()
+
+    def _begin(self) -> None:
+        self._call("open", OPEN_S, url=manifest.creation_url())
+        self._say(SAY_OPEN)
+        self._phase()
+        self._until(lambda: self._arrived(APP_PAGE), CREATE_WAIT_S, "the app being made", "Create",
+                    (("Create", "Yours: Create", None), ("Next", "Yours: Next", None)))
+        self._pin()
+        self._say(SAY_APP)
+
+    def _resume(self) -> None:
+        """The connection already holds a token: the app was made. Slack's list of the person's apps is opened and the
+        app they open from it is the one that is gone on with."""
+        self._call("open", OPEN_S, url=manifest.apps_url())
+        self._say(SAY_RESUME)
+        self._phase()
+        self._until(lambda: self._arrived(APP_PAGE), CREATE_WAIT_S, "your app being opened", manifest.APP_NAME,
+                    ((manifest.APP_NAME, "Yours: Open", None),))
+        self._pin()
+        self._say(SAY_APP if APP_TOKEN[0] not in self.stored else SAY_INSTALL_AGAIN)
+
+    @staticmethod
+    def _held(row: dict) -> list[str]:
+        """The tokens the connection holds already, from the steps it says are still to do: all of them when it says
+        there are none, and none when it does not say (or says the app is still to be made)."""
+        steps = row.get("steps")
+        if not isinstance(steps, list):
+            return []
+        todo = {s.get("id") for s in steps if isinstance(s, dict)}
+        if "create" in todo:
+            return []
+        return [name for name, _prefix in (APP_TOKEN, USER_TOKEN) if name not in todo]
+
+    def _pin(self) -> None:
+        """The app this run is for is the one whose page it arrived on."""
+        found = _APP_ID.search(self._url)
+        self.app = found.group(1) if found else None
+
+    def _phase(self) -> None:
+        """A new page's worth of work: the pointer of the last one goes, and what was said about it is forgotten."""
+        self._unpoint()
+        self._started = time.monotonic()
+        self._pointed_here = False
+        self._hinted = False
+
+    def _until(self, check, total: float, what: str, look_for: str, pointers) -> None:
+        """Look until `check()` is true: point at what the person is to press, say what is being looked for when it
+        cannot be found by its words, and give up after `total` seconds."""
+        deadline = time.monotonic() + total
+        while True:
+            self._check_cancelled()
+            if check():
+                return
+            self._point(pointers)
+            self._hint(look_for)
+            if time.monotonic() >= deadline:
+                raise _Stop(False, self._gave_up(what))
+            self._nap(LOOK_PAUSE_S)
+
+    def _tokens(self) -> None:
+        """Both tokens, in whichever order they come. Each loop takes what is on the page, then points at what the
+        person is to press for what is still missing, and watches for a wall."""
+        self._phase()
+        self._deadline = time.monotonic() + APP_TOKEN_WAIT_S
+        last_wall = None
+        arrived = False        # the page that shows the user token is there
+        while True:
+            self._check_cancelled()
+            for name, prefix in (APP_TOKEN, USER_TOKEN):
+                if name not in self.stored and self._take(prefix, name):
+                    self._stored(name)
+            if len(self.stored) == 2:
+                return
+            now = time.monotonic()
+            app_missing, user_missing = APP_TOKEN[0] not in self.stored, USER_TOKEN[0] not in self.stored
+            if app_missing:
+                pointers = [("Generate Token and Scopes", "Yours: Generate Token", None)]
+                what, look_for = "the first token", "Generate Token and Scopes"
+            else:
+                pointers = [("Install to Workspace", "Yours: Install", None)]
+                what, look_for = "the install finish", "Install to Workspace"
+            if user_missing:
+                pointers.append(("Allow", "Yours: Allow", SAY_ALLOW))
+                here = not app_missing and self._arrived(TOKENS_PAGE, TOKENS_WORDS, 0)
+                if here and not arrived:
+                    # The page with the token is here: nothing is left to press, and it is not long in showing it.
+                    self._deadline = min(self._deadline, now + USER_TOKEN_WAIT_S)
+                    self._phase()
+                arrived = here
+                if arrived:
+                    pointers = []
+                    what, look_for = "the second token", TOKENS_WORDS
+            self._point(pointers)
+            self._hint(look_for)
+            if user_missing and (last_wall is None or now - last_wall >= WALL_EVERY_S):
+                last_wall = now
+                if self._wall_up():
+                    raise _Stop(False, SAY_WALL)
+            if now >= self._deadline:
+                raise _Stop(False, self._gave_up(what))
+            self._nap(PAUSE_S)
+
+    def _stored(self, name: str) -> None:
+        """A token is in: say which one and what is left, by which one it is rather than in what order it came."""
+        self.stored.append(name)
+        both = len(self.stored) == 2
+        if name == APP_TOKEN[0]:
+            self._say(SAY_FIRST if both else SAY_INSTALL)
+            self._deadline = time.monotonic() + INSTALL_WAIT_S
+        else:
+            self._say(SAY_TOKEN if both else SAY_FIRST_MISSING)
+            self._deadline = time.monotonic() + APP_TOKEN_WAIT_S
+        self._phase()
+
+    def _hint(self, look_for: str) -> None:
+        if not self._pointed_here and not self._hinted and time.monotonic() - self._started >= HINT_AFTER_S:
+            self._hinted = True
+            self._say(f"Look for {look_for} on the page.")
+
+    # -- looking --
+
+    def _arrived(self, url: str, words: str | None = None, seconds: float = SLICE_S) -> bool:
+        args = {"url": url, "seconds": seconds}
+        if words:
+            args["text"] = words
+        seen = self._look("wait", **args)
+        if seen and seen.get("matched"):
+            self._url = str(seen.get("url") or "")
+            return True
+        return False
+
+    def _take(self, prefix: str, name: str) -> bool:
+        """Take the token off the page into the connection. Not abandoned the moment the person cancels: a token
+        being stored is given a moment to be done."""
+        # Only from a page of the app this run is for: a token on another app's page, one the person has gone to by hand,
+        # is not taken (the two must come from one app). The browser service looks at the address as it reads the page.
+        where = {"url": rf"/apps/{re.escape(self.app)}(?:[/?#]|$)"} if self.app else {}
+        got = self._call("take", CALL_S, grace=STORE_GRACE_S, pattern=token_pattern(prefix),
+                         into={"connection": self.cid, "name": name}, **where)
+        if got.get("stored") is True:
+            return True
+        if got.get("found"):
+            raise _Stop(False, f"{self._where()}{_sentence(got.get('why'), 'It could not be stored.')} Setup stopped.")
+        return False
+
+    def _wall_up(self) -> bool:
+        """Does the page say an administrator must approve apps, with nothing left on it to press on with?"""
+        page = self._look("read")
+        if not page or not _has_wall_words(str(page.get("text") or "")):
+            return False
+        for button in _NOT_A_WALL:
+            seen = self._look("find", text=button)
+            if seen is None or seen.get("found"):
+                return False
+        return True
+
+    def _point(self, pointers) -> bool:
+        """Point at the first of `pointers` the page has, and keep it there (drawn again before it times out, and at
+        once when the page lost it). A pointer that is up stays while its words are still on the page: the person's
+        own scrolling is left alone."""
+        now = time.monotonic()
+        if self._up is not None:
+            words, since = self._up
+            if now - since < REPOINT_S:
+                seen = self._look("find", text=words)
+                if seen is None or (seen.get("found") and self._drawn()):
+                    return True
+            self._up = None
+        for words, label, announce in pointers:
+            self._pointed = True
+            got = self._look("point", text=words, label=label, ttl=POINT_TTL_S)
+            if got and got.get("pointed"):
+                self._up, self._pointed_here = (words, now), True
+                if announce and announce not in self._announced:
+                    self._announced.add(announce)
+                    self._say(announce)
+                return True
+        return False
+
+    def _drawn(self) -> bool:
+        """Is the pointer still on the page? A page that was reloaded or drawn again has lost it."""
+        try:
+            self._call("read", CALL_S, selector=f"#{overlay.POINTER_ID}")
+        except _NotThere:
+            return False
+        except _NotReady:
+            return True    # the page is changing: this is not the time to say it is gone
+        return True
+
+    def _unpoint(self, always: bool = False) -> None:
+        if self._up is not None or (always and self._pointed):
+            self._up = None
+            with contextlib.suppress(Exception):   # taking the pointer away is a courtesy
+                self.b.notify("unpoint")
+
+    # -- the end --
+
+    def _connection(self) -> dict:
+        try:
+            listed = self.c.request("connections")
+        except Exception as e:  # noqa: BLE001 - said as the sentence it is, below
+            raise _Stop(False, _sentence(e, "Connections could not be asked just now.")) from None
+        rows = listed.get("connections") if isinstance(listed, dict) else None
+        found = next((r for r in rows or [] if isinstance(r, dict) and r.get("id") == self.cid), None)
+        if found is None:
+            raise _Stop(False, "That connection is not there any more.")
+        return found
+
+    def _finish(self) -> dict:
+        deadline = time.monotonic() + CONNECTION_WAIT_S
+        while True:
+            conn = self._connection()
+            state = conn.get("state")
+            if state == "ok":
+                name = protocol.one_line(conn.get("name"), 60)
+                return {"ok": True, "say": f"Slack is connected to “{name}”." if name else "Slack is connected."}
+            if state == "blocked":
+                raise _Stop(False, SAY_WALL)
+            if state == "error":
+                note = protocol.one_line(conn.get("note"), 160)
+                raise _Stop(False, f"Slack would not take the connection: “{note}”" if note
+                            else "Slack would not take the connection.")
+            if time.monotonic() >= deadline:
+                raise _Stop(False, "Both tokens are stored, but Slack has not answered yet. Look in Connected here "
+                                   "in a moment.")
+            self._nap(PAUSE_S)
+
+    def _gave_up(self, what: str) -> str:
+        return f"{self._where()}I did not see {what}, so I stopped. Say connect Slack to try again."
+
+    def _where(self) -> str:
+        if len(self.stored) == 2:
+            return "Both tokens are stored. "
+        if self.stored:
+            return "The first token is stored. " if self.stored[0] == APP_TOKEN[0] else "The second token is stored. "
+        return ""
+
+    # -- calls --
+
+    def _look(self, op: str, **args):
+        """A call to the browser service for something to look at: None when the page was not ready to say, or had
+        nothing like it."""
+        try:
+            return self._call(op, CALL_S, **args)
+        except (_NotReady, _NotThere):
+            return None
+
+    def _call(self, op: str, timeout: float = CALL_S, grace: float = 0.0, **args):
+        """One call to the browser service, on a thread of its own while this one watches for the person calling
+        setup off (a call with a `grace` is given that long to finish after it). The service's no is a sentence that
+        ends the recipe, except a page that is not ready yet or has nothing like what was asked for."""
+        self._check_cancelled()
+        box: dict = {}
+
+        def work():
+            try:
+                box["result"] = self.b.request(op, timeout, **args)
+            except BaseException as e:  # noqa: BLE001 - handed to the thread that asked
+                box["error"] = e
+
+        worker = threading.Thread(target=work, daemon=True)
+        worker.start()
+        stop_at = None
+        while worker.is_alive():
+            worker.join(0.05)
+            if self.cancelled():
+                now = time.monotonic()
+                stop_at = now + grace if stop_at is None else stop_at
+                if now >= stop_at:
+                    self._abandoned.append(worker)
+                    raise _Stop(False, SAY_STOPPED)
+        error = box.get("error")
+        if error is None:
+            if isinstance(box.get("result"), dict):
+                return box["result"]
+            raise _Stop(False, "The browser service did not answer as expected. Setup stopped.")
+        if isinstance(error, browserd_client.BrowserdError):
+            if error.code == "page":
+                raise _NotReady
+            if error.code == "not_found":
+                raise _NotThere
+            raise _Stop(False, f"{error} Setup stopped.")
+        if isinstance(error, browserd_client.BrowserdUnavailable):
+            raise _Stop(False, f"{error} Setup stopped.")
+        raise _Stop(False, "The browser service did not answer as expected. Setup stopped.")
+
+    def _check_cancelled(self) -> None:
+        if self.cancelled():
+            raise _Stop(False, SAY_STOPPED)
+
+    def _nap(self, seconds: float) -> None:
+        end = time.monotonic() + seconds
+        while True:
+            self._check_cancelled()
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(0.05, left))
+
+    def _say(self, sentence: str) -> None:
+        with contextlib.suppress(Exception):   # telling the person is never worth stopping for
+            self.say(sentence)
+
+    def close(self) -> None:
+        """However it ended, no pointer is left on the page: a call that was abandoned is given a moment to land
+        first, so a pointer it was drawing is taken away too."""
+        end = time.monotonic() + SETTLE_S
+        for worker in self._abandoned:
+            worker.join(max(0.0, end - time.monotonic()))
+        self._unpoint(always=True)
+
+
+def run_setup(connection_id: str, say, cancelled=lambda: False, *, browserd=None, connect=None) -> dict:
+    """Walk the person through making the Slack app and give both tokens to `connection_id` (docs/CONNECT.md).
+    `say(sentence)` is told what is happening; `cancelled()` is asked all the time and ends it at once. Blocking."""
+    run = _Setup(connection_id, say, cancelled, browserd or browserd_client, connect or connect_client)
+    try:
+        return run.go()
+    except _Stop as stop:
+        return {"ok": stop.ok, "say": stop.sentence}
+    except Exception:  # noqa: BLE001 - a recipe that was not written for this page ends in a sentence, never a trace
+        return {"ok": False, "say": f"{run._where()}Setup could not go on just now."}
+    finally:
+        run.close()
