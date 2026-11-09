@@ -14,7 +14,7 @@ install mode, installs it to a scratch disk and boots that too, judging each boo
 This page covers the host side (`scripts/test-vm.sh`), the protocol between the host and the guest,
 what the run covers, the traps and what to do when a check fails. The catalogue of checks is in
 [ISO and install](../architecture/iso-and-install.md#the-smoke-test), and the recipe for adding one is
-in [Developing and testing](development.md#the-iso-smoke).
+in [Developing and testing](development.md#add-a-smoke-check).
 
 No boot was observed for this page on 2026-11-08. Every statement comes from reading the scripts and
 the code they call. What QEMU, systemd and systemd-boot do with their inputs (QMP's `send-key` and
@@ -198,8 +198,9 @@ Every mode runs the common checks. The catalogue, with every check name, is in
 - **The details drawer.** It takes the keyboard and every way out closes it. The message a click on
   a service in a picture sends (`open-unit`) opens the unit in the same drawer.
 - **Coding sessions**, in every mode, `undo` included. `zellij`, `foot`, `footclient` and `bombadil-signal` are
-  looked for on `PATH` (`dev-tools`, which like `tools-installed` passes when any one of them is found), the
-  managed hook files parse (`dev-hooks-parse`) and lingering is on for the user
+  looked for on `PATH` (`dev-tools`, which like `tools-installed` passes when any one of them is found), Claude
+  Code's managed hook file and Codex's `requirements.toml` parse (`dev-hooks-parse`; `/etc/codex/config.toml` is not
+  read) and lingering is on for the user
   (`dev-linger`: `bombadil-live.service` turns it on for the live image and `bombadil-install` for the
   installed one). The smoke makes `~/Projects/smoke`, a folder with one commit (`dev-project`), and the word
   `shell smoke` starts a shell session on it (`dev-start`) in a zellij session, a systemd scope and a slice of
@@ -208,8 +209,8 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   Closing the window leaves the session running, and its name brings it back in a new window
   (`dev-close-window` to `dev-window-again`). `end shell smoke` ends the session and its scope, and the
   history says so (`dev-end`, `dev-ended`, `dev-scope-gone`, `dev-in-history`). The session is a shell, so no
-  provider login and no model are involved, and the hooks of Claude Code and Codex run nothing here: only their
-  files are read.
+  provider login and no model are involved, and the hooks of Claude Code and Codex run nothing here: only the two
+  files named above are parsed.
 - **Mail.** In every mode, `undo` included, Thunderbird answers `--version`, the unit is enabled and
   active, and its service answers on its socket. In every mode but `undo`, windows that carry
   Thunderbird's class stay on `special:mail-engine` without taking the keyboard, the service runs on
