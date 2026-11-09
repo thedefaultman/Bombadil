@@ -69,6 +69,12 @@ Tokens: `Theme.bg`, `panel`, `raised`, `overlay`, `sunken`, `border`, `borderStr
 `font`, `monoFont`, `captionSize`, `headingSize`, `titleSize`, `displaySize`, `fast`,
 `normal` (animation ms).
 
+Motion: `Theme.reducedMotion` is true when the person asked the computer for less motion.
+`Theme.fast`, `normal` and `slow` are 0 then, so a `Behavior` or `Transition` that takes its
+`duration` from them goes instant with nothing more. For any other duration use
+`Theme.duration(ms)`, which is `ms` or 0. Anything that loops or spins (a loading indicator you
+draw yourself) should stop, or pulse its opacity, while `Theme.reducedMotion` is true.
+
 Functions: `Theme.icon(name)` → url for `icon.source`; `Theme.tone(name)` → color;
 `Theme.alpha(color, a)` → same color with alpha. `color` may be a color or a color string,
 such as a `Theme.series` entry or a color loaded from JSON or a Store
