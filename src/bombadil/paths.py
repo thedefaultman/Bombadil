@@ -27,6 +27,32 @@ def state_dir() -> Path:
     return _env_path("BOMBADIL_STATE", Path(base) / "bombadil")
 
 
+def persona_file() -> Path:
+    return config_dir() / "persona.toml"
+
+
+def ledger_file() -> Path:
+    return state_dir() / "said.json"
+
+
+def greeted_marker() -> Path:
+    return runtime_dir() / "greeted"
+
+
+def updates_file() -> Path:
+    return _env_path("BOMBADIL_UPDATES", Path("/var/lib/bombadil/updates.json"))
+
+
+def voice_lines() -> Path:
+    # Resolved like mcp_server._share(): /usr/share/bombadil/share when installed, the checkout otherwise.
+    default = Path(__file__).resolve().parents[2] / "share" / "voice" / "lines.toml"
+    return _env_path("BOMBADIL_VOICE_LINES", default)
+
+
+def localtime_link() -> Path:
+    return _env_path("BOMBADIL_LOCALTIME", Path("/etc/localtime"))
+
+
 def config_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(home() / ".config")
     return _env_path("BOMBADIL_CONFIG", Path(base) / "bombadil")

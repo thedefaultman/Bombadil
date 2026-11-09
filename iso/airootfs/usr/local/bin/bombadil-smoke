@@ -534,6 +534,31 @@ if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then
   check signin-agentd-starts restart_agentd
   check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
   shot signin-choose
+
+  # The voice. The first sign-in that turns ready with no persona.toml puts the name and voice card up in
+  # place of the "Signed in" line, with the keyboard already on it: a typed name and Enter save it, and the
+  # word `voice` brings the card back. (Before a sign-in the pill holds every word, so this comes first.)
+  persona_file=/home/user/.config/bombadil/persona.toml
+  persona_has() { grep -q "$1" "$persona_file"; }
+  check no-persona-before-voice bash -c "! test -e $persona_file"
+  check voice-signin restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2
+  check voice-card-asked wait_for 240 persona_has '^voice = "merry"'
+  check voice-panel-away wait_for 90 panel_away
+  shot voice-card
+  shot voice-card-settled   # the same card a few seconds on: whole, and not still growing
+  keys shift+d a n i e l ret
+  check voice-name-saved wait_for 60 persona_has '^name = "Daniel"'
+  check voice-default-merry persona_has '^voice = "merry"'
+  shot voice-saved
+  # `bombadil pill` is what the Super bind runs. A tap and a word sent right after it race each other under
+  # software emulation (the launcher checks above lose the same race), so ask for the pill and let it settle.
+  as_user bombadil pill; sleep 3
+  keys v o i c e ret
+  check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
+  shot voice-word
+  keys esc
+  rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
+  check voice-agentd-restored restart_agentd
   check signin-codex-page try_provider codex '^https://(auth\.openai\.com|chatgpt\.com)/'
   shot signin-codex
   check signin-codex-called-off called_off codex

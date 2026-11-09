@@ -164,6 +164,8 @@ class H(BaseHTTPRequestHandler):
             and isinstance(users[-1].get("content"), list)
             and any(b.get("type") == "tool_result" for b in users[-1]["content"])
         )
+        system = body.get("system")
+        system = system if isinstance(system, str) else "\n".join(b.get("text", "") for b in system or [])
         refused = bool(LIMIT["reset"]) and "haiku" in first
         LOG.write(
             json.dumps(
@@ -172,6 +174,7 @@ class H(BaseHTTPRequestHandler):
                     "model": body.get("model"),
                     "first": first[-200:],
                     "after_tool": after_tool,
+                    "persona": "The user goes by" in system,
                     "prompts": len(prompts),   # more than one: the conversation carries what was said before
                     "refused": refused,
                     "shape": [

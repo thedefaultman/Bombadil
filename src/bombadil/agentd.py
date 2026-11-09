@@ -230,6 +230,9 @@ waiting ask is then the check, with no test calls. "pause claude" or the AI card
 provider by hand the same way, until resumed. Launcher words, "!" commands, apps and the browser never
 look at the state. It is kept per provider in rest.json (state directory), which other processes read.
 
+The bar also says hello ("bar", "presence", "welcomed", "persona") for the welcome line and the name and
+voice card; voice.py holds those messages and what agentd answers.
+
 Every turn: say turn_start, snapshot the system (undo point), run one provider CLI turn with
 the os-mcp server attached in its own scope, stream its events, log the turn. Launcher words
 (apps, panels, undo, stop) are handled here at once and never wait for the model.
@@ -257,7 +260,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, notifications, outbox, paths, procs, providers, rest,
-               signin, snapshots, sysmap, watch)
+               signin, snapshots, sysmap, voice, watch)
 from .away import Away
 from .brain import client as brain_client
 from .connect import cardmake as connect_cards
@@ -395,6 +398,7 @@ class AgentD:
         self._unit: str | None = None               # the running turn's systemd scope
         self._hold = 0                              # undo/restart/shutdown running: start no turn
         self._exclusive = asyncio.Lock()
+        self.voice = voice.Voice(self)
         self._tasks: set[asyncio.Task] = set()      # local actions and stops running beside the reader
         self._files: TurnFiles | None = None        # what the running turn wrote and read
         self._poking: asyncio.Task | None = None    # the last note to the brain, still going
@@ -608,6 +612,7 @@ class AgentD:
             greeting.cancel()
             self._peers.pop(writer, None)
             # The client hung up or half-closed: what is already queued for it still goes out.
+            self.voice.on_disconnect(writer)
             if self.clients.pop(writer, None) is not None:
                 try:
                     queue.put_nowait(None)
@@ -729,6 +734,8 @@ class AgentD:
             self._background(self.dev_action(str(msg.get("action", "")), str(msg.get("key", ""))))
         elif t == "card":
             await self._card_message(msg, writer)
+        elif isinstance(t, str) and t in voice.TYPES:
+            await self.voice.handle(t, msg, writer)
         elif t == "desk":
             await self._desk_op(msg, writer)
         elif t == "desk-tool":
@@ -1755,6 +1762,9 @@ class AgentD:
             await self.event("local", turn=None, action="stop", phase="done", ok=True,
                              text="Stopping." if stopping or setting_up else "Nothing is running.")
             return
+        if action.kind == "voice":
+            await self.voice.word(typed)
+            return
         if action.kind in ("undo", "restart", "shutdown"):
             # Undo takes back the turn that is running too, so end it first, and start no
             # queued turn until the undo is done: it would take that turn's snapshot instead.
@@ -1774,11 +1784,22 @@ class AgentD:
 
     async def _local(self, action: launcher.Action, typed: str):
         doing = self.launcher.doing(action)
+        # A shutdown says goodbye in the start text: the done text may come after the power is gone.
+        bye = await self.voice.goodbye() if action.kind == "shutdown" else ""
         if action.kind in ("mail", "send") and action.verb != "proposal":
             self._mail_opened = time.monotonic()   # the service's echo of the show must not open the window again
         await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
-                         phase="start", text=doing)
+                         phase="start",
+                         text=bye or doing)
+        if action.kind in ("restart", "shutdown"):
+            await self.voice.flush()   # bounded: a dead client never holds the power button
+        if action.kind == "restart":
+            self.voice.note_restart()   # the boot after a restart you asked for gets no hello
         ok, text = await asyncio.to_thread(self.launcher.run, action)
+        if action.kind == "restart" and not ok:
+            self.voice.forget_restart()
+        if ok and bye:
+            text = bye
         await self.event("local", turn=None, action=action.kind, target=action.target, verb=action.verb,
                          phase="done", ok=ok, text=text)
         if ok:
@@ -1927,6 +1948,19 @@ class AgentD:
     def _busy(self) -> bool:
         return self.current is not None
 
+    # -- the voice: name and voice card, welcome line, goodbye (voice.py does the work) --
+
+    def _setup_ready(self) -> bool:
+        """Sign-in is done: the provider is picked and signed in (the setup state is "ready")."""
+        return self.access == "ready"
+
+    async def ask_persona(self, line: str | None = None, current: bool = False) -> bool:
+        """Show the name and voice card; it asks only while persona.toml is missing. `_set_access` does the
+        same through `voice.due()` and `voice.on_ready()` when sign-in turns ready, with the line "Signed in
+        to Claude. What should I call you?". The word `voice` asks with current=True. False when nothing was
+        asked."""
+        return await self.voice.ask(line, current)
+
     async def stop(self, by_person: bool = False) -> bool:
         """End the running turn and everything it started. False when nothing runs.
 
@@ -2047,6 +2081,12 @@ class AgentD:
     async def _set_access(self, state: str, line: str = "", tone: str = "step"):
         self.access = state
         self._access_at = time.monotonic()
+        ask = None
+        if state == "ready" and self.voice.due():
+            # The first sign-in asks what to call the user: the name card says "Signed in" itself, so the
+            # pill's own "Ask me for anything" stays quiet.
+            ask = f"Signed in to {self._title()}. What should I call you?" if line.startswith("Signed in") else ""
+            line = ""
         self._access_line = (line, tone)
         await self.broadcast(self._setup_msg())
         await self.broadcast(self._status())
@@ -2054,6 +2094,7 @@ class AgentD:
             if self.tips is not None:
                 self.tips.ready()   # the day the first week begins, the first time
             self._wake.set()
+            await self.voice.on_ready(ask or None)   # the card if it is due, else a boot line a bar waits for
         self._tips_soon()       # what Tips can teach follows the setup
 
     async def check_access(self, start: bool = False, announce: bool = False):
@@ -3065,6 +3106,7 @@ class AgentD:
                         "provider": "shell" if prompt.startswith("!") else self.provider.name,
                         "model": None if prompt.startswith("!") else self.provider.model,
                         "session": self.session_id, "stopped": stopped, "summary": summary,
+                        "changed": bool(summary), "made": list(getattr(self.narrator, "made", ())),
                         # What the turn read, yours or outside.
                         "read": read or [],
                         "details": str(self.turn_logs.get(self.current, "")),
