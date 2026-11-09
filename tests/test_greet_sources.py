@@ -125,6 +125,14 @@ def test_a_stopped_turn_says_nothing():
     assert src.turns(rows, 0, now=NOW) == []
 
 
+def test_a_turn_the_limit_cut_off_says_nothing_it_is_still_queued():
+    # The row says why it stopped, not that it finished; the ask runs later and logs its own row.
+    cut = row(100, ok=None, requeued=True, summary="Claude hit its limit partway. It carries on at 3:00 pm.")
+    assert src.turns([cut, row(101, ok=False, requeued=True), row(102, summary="Did it.")], 0, now=NOW) == \
+        src.turns([row(102, summary="Did it.")], 0, now=NOW)
+    assert [f.text for f in src.turns([cut], 0, now=NOW)] == []
+
+
 def test_only_turns_count_not_the_other_rows_of_the_log():
     rows = [row(100, kind="local", summary="Opened it."), row(101, kind="boot", summary="x"),
             row(102, kind="signin", ok=False), row(103, kind="dev", summary="y"), row(104, summary="Real.")]

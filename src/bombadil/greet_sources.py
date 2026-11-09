@@ -67,12 +67,13 @@ def _lower(text: str) -> str:
 
 def turns(rows, since_ts: float, *, now) -> list[Fact]:
     """What finished or failed in the turns since `since_ts`: one fact per finished turn that has a summary,
-    one count when there are many, and one for failures. Turns that were stopped say nothing."""
+    one count when there are many, and one for failures. Turns that were stopped say nothing, and neither
+    does one the usage limit cut off: it is still queued and logs its own row when it runs."""
     end = _ts(now)
     done, failed = [], []
     for r in rows:
         t = _num(r.get("t")) if isinstance(r, dict) and "kind" not in r else None
-        if t is None or not since_ts < t <= end or r.get("stopped"):
+        if t is None or not since_ts < t <= end or r.get("stopped") or r.get("requeued"):
             continue
         summary = r.get("summary")
         if r.get("ok") is False:

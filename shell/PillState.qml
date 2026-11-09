@@ -351,11 +351,14 @@ QtObject {
         }
     }
 
-    // agentd's greeting. It yields to everything else: a line already on screen, a running turn,
-    // the card, a full-screen window. Dropped, never queued, and agentd hears only about one shown.
+    // agentd's greeting. It yields to everything else: a line already on screen (a warning notice stays
+    // on the line in every mode but "working", so the greeting would never be drawn: news waits behind
+    // the greeting instead), a running turn, the card, a full-screen window. Dropped, never queued, and
+    // agentd hears only about one shown.
     function _welcome(ev) {
         const text = String(ev.text || "").trim()
-        if (!text || mode !== "idle" || busy || optimistic || flash !== "" || personaAsk !== null || fullscreen)
+        if (!text || mode !== "idle" || busy || optimistic || flash !== "" || personaAsk !== null || fullscreen
+                || (notice !== null && notice.tone === "error"))
             return
         mode = "welcome"; line = text; source = "step"; risk = ""; command = ""; sticky = false
         welcomeId = ev.id === undefined || ev.id === null ? 0 : ev.id

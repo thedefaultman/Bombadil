@@ -288,13 +288,21 @@ def boot_rows():
 
 
 def card_up():
-    # An empty screen is a few KB of PNG; the card over it is tens of KB.
+    # The card's words are light text; nothing else above the pill is on a fresh desk (the wallpaper is dark
+    # to its brightest point, and the pill's own rows are left out). File size would say nothing: the
+    # wallpaper alone makes a picture of tens of KB.
+    from PySide6.QtGui import QImage
     probe = OUT / "probe.png"
     run("grim", str(probe))
-    try:
-        return probe.stat().st_size > 20000
-    except OSError:
+    img = QImage(str(probe))
+    if img.isNull():
         return False
+    light = 0
+    for y in range(0, min(730, img.height()), 2):
+        for x in range(0, img.width(), 2):
+            c = img.pixelColor(x, y)
+            light += c.red() + c.green() + c.blue() > 3 * 170
+    return light > 60
 
 
 check("the card is asked on the first sign-in", until(lambda: persona_now() is not None, 20), persona_now())

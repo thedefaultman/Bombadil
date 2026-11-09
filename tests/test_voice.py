@@ -44,9 +44,15 @@ class Clock:
 @pytest.fixture
 def clock(home, monkeypatch):
     """08:40 on 30 Sep 2026, a zone that is set, a live system off, and no updates file."""
+    # A zone file of our own (an image without tzdata has none), reached through a link that names a
+    # real zone, and no TZ of the host's: a TZ in the environment makes tz_set() false.
+    berlin = home / "usr" / "share" / "zoneinfo" / "Europe" / "Berlin"
+    berlin.parent.mkdir(parents=True)
+    berlin.write_bytes(b"TZif2")
     zone = home / "localtime"
-    zone.symlink_to("/usr/share/zoneinfo/Europe/Berlin")
+    zone.symlink_to(berlin)
     monkeypatch.setenv("BOMBADIL_LOCALTIME", str(zone))
+    monkeypatch.delenv("TZ", raising=False)
     monkeypatch.setenv("BOMBADIL_LIVE", "1")
     monkeypatch.setenv("BOMBADIL_UPDATES", str(home / "updates.json"))
     monkeypatch.setenv("BOMBADIL_GREET_DELAY", "0")

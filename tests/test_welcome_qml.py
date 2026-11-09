@@ -258,7 +258,8 @@ def test_hover_holds_a_welcome_and_counts_as_the_first_touch(bar):
     assert bar.mode == "idle"
 
 
-@pytest.mark.parametrize("why", ["busy", "working", "optimistic", "closing", "local", "flash", "card", "fullscreen"])
+@pytest.mark.parametrize("why", ["busy", "working", "optimistic", "closing", "local", "flash", "card", "fullscreen",
+                                 "warning"])
 def test_a_welcome_is_dropped_not_queued_when_anything_holds_the_line(bar, why):
     if why == "busy":
         bar.send(type="status", busy=True, provider="claude", queue=[])
@@ -283,6 +284,12 @@ def test_a_welcome_is_dropped_not_queued_when_anything_holds_the_line(bar, why):
                  voices=[{"id": "merry", "name": "Merry", "card": "Welcome{n}."}])
     elif why == "fullscreen":
         bar.set("fullscreen", True)
+    elif why == "warning":
+        # A warning stays on the line in every mode but "working": a greeting under it would never be
+        # drawn, and agentd would count it as seen.
+        bar.send(type="notice", id=1, source="mail", line="Mail could not sync.", tone="error", actions=[],
+                 ttl=0, at=1001.0)
+        assert bar.prop("noticeShown") is True
     mode, line = bar.mode, bar.prop("line")
     bar.welcome()
     assert bar.mode == mode and bar.prop("line") == line and bar.welcomed() == []
@@ -295,6 +302,24 @@ def test_a_welcome_is_dropped_not_queued_when_anything_holds_the_line(bar, why):
     bar.pump(0.3)
     assert bar.mode in ("idle", "working") and bar.welcomed() == []
     assert bar.mode != "welcome"
+
+
+def test_news_waits_behind_the_welcome_and_comes_back_when_it_ends(bar):
+    # A notice that is news shows only on an idle line: the greeting is drawn, was shown, and the news
+    # takes the line again when the greeting is gone.
+    bar.send(type="notice", id=1, source="mail", line="Priya: launch date", tone="ask", actions=[], ttl=0, at=1001.0)
+    assert bar.prop("noticeShown") is True and bar.text() == "Priya: launch date"
+    bar.welcome()
+    assert bar.mode == "welcome" and bar.text() == GREETING and bar.prop("noticeShown") is False
+    assert [m["id"] for m in bar.welcomed()] == [1]
+    bar.call("dismissWelcome")
+    assert bar.mode == "idle" and bar.prop("noticeShown") is True and bar.text() == "Priya: launch date"
+
+
+def test_a_warning_keeps_the_line_and_the_greeting_that_was_dropped_is_not_counted_as_seen(bar):
+    bar.send(type="notice", id=1, source="mail", line="Mail could not sync.", tone="error", actions=[], ttl=0, at=1001.0)
+    bar.welcome()
+    assert bar.mode == "idle" and bar.welcomed() == [] and bar.text() == "Mail could not sync."
 
 
 def test_dismiss_is_for_finished_lines_and_leaves_a_welcome_to_dismissWelcome(bar):

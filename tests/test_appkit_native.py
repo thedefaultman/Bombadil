@@ -1204,6 +1204,9 @@ def _agentd(monkeypatch, tmp_path, provider):
     sock = tmp_path / "agentd.sock"
     monkeypatch.setenv("BOMBADIL_SOCKET", str(sock))
     monkeypatch.setenv("BOMBADIL_STATE", str(tmp_path / "state"))
+    # The voice asks its card when the fake provider turns ready: persona.toml and the greeted marker.
+    monkeypatch.setenv("BOMBADIL_CONFIG", str(tmp_path / "config"))
+    monkeypatch.setenv("BOMBADIL_RUNTIME", str(tmp_path / "run"))
     daemon = agentd.AgentD(provider, agentd._NoSnapshots(), socket_path=sock)
     loop = asyncio.new_event_loop()
     task = loop.create_task(daemon.serve())

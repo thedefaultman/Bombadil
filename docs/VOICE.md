@@ -163,8 +163,11 @@ sentence and keep the name clause conditional ("use it only when greeting or ask
 - `tests/test_persona_card_qml.py`, `tests/test_welcome_qml.py`: the QML card and the welcome mode, offscreen.
 - `tests/desktop/run.sh`: the card, the first hello, the `voice` word and the persona in the next turn's
   system prompt, in a headless sway with the real bar and the real Claude CLI against a scripted API.
-- `iso/airootfs/usr/local/bin/bombadil-smoke`: the card's keyboard hand-off, the idle monitor under
-  Hyprland and the poweroff goodbye, inside the booted ISO (`scripts/test-vm.sh`).
+- `iso/airootfs/usr/local/bin/bombadil-smoke`: inside the booted ISO (`scripts/test-vm.sh`), the card
+  that the first sign-in asks (the defaults written, a typed name and Enter saved, with the keyboard
+  already on the card) and the `voice` word that brings it back. The idle monitor's return greeting
+  and the poweroff goodbye are not driven there: `test_welcome_qml.py` covers the monitor's wiring and
+  `test_voice.py` the greeting and the goodbye.
 
 ## Not built yet
 
