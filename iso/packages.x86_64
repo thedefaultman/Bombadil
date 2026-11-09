@@ -29,6 +29,7 @@ slurp
 wl-clipboard
 libnotify
 foot
+zellij
 nautilus
 chromium
 # pdftotext and pdftoppm: PDF text for the brain's search, first pages for Focus

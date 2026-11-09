@@ -12,7 +12,7 @@ import pytest
 from test_agentd import (_another, _ask, _events_until, _finish, _heard, _in_a_turn, _jobs_daemon, _say, _silent,
                          _start, _start_job, _stop)
 
-from bombadil import agentd, away, paths, providers
+from bombadil import agentd, away, dev, paths, providers
 
 
 def _away(m):
@@ -233,5 +233,22 @@ async def test_a_job_that_ended_names_itself_in_the_log_and_a_stop_is_marked_as_
 
 
 @pytest.mark.asyncio
-async def test_away_sessions_is_empty_until_agentd_keeps_coding_sessions(home):
-    assert _daemon()._away_sessions() == []
+async def test_away_sessions_are_the_coding_sessions_the_dots_show(home):
+    assert _daemon()._away_sessions() == []          # none running: nothing to say
+    sessions = dev.Dev(load=False)
+    now = time.time()
+    sessions.sessions["myapp/reviewer"] = dev.Session(
+        project="myapp", role="reviewer", tool="claude", folder="/w", state="asked", alive=True, unseen=True,
+        since=now - 60, last="Run the migration?")
+    sessions.sessions["myapp/api"] = dev.Session(
+        project="myapp", role="api", tool="claude", folder="/w", state="idle", alive=True, since=now - 30)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots(), sessions=sessions)
+    assert sorted(s["key"] for s in d._away_sessions()) == ["myapp/api", "myapp/reviewer"]
+    server, r, w = await _start(d)
+    await _say(w, {"type": "desk", "op": "show", "widget": "away"})
+    card = await _card(r)
+    # The question that waits is a row that opens its session ("dev:<key>"); a session that is only working is not news.
+    assert [(row["key"], row["title"], row["sub"], row["button"]) for row in card["rows"]] == \
+        [("dev:myapp/reviewer", "reviewer on Myapp", "Run the migration?", "Open")]
+    w.close()
+    server.cancel()

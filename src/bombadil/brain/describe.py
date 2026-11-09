@@ -408,8 +408,11 @@ class Describer:
         self.model = cmd[cmd.index("--model") + 1] if "--model" in cmd else provider.name
         cwd = paths.runtime_dir()
         # Run away from any project, so no project's instructions or hooks come along.
+        # The machine's own agent, not a coding session: the coding tools' managed hooks fire for any run of
+        # them, and bombadil-signal skips the ones marked like this.
         r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=TIMEOUT_S, check=False,
-                           cwd=str(cwd) if cwd.is_dir() else tempfile.gettempdir())
+                           cwd=str(cwd) if cwd.is_dir() else tempfile.gettempdir(),
+                           env={**os.environ, "BOMBADIL_OS": "1"})
         if r.returncode != 0:
             raise RuntimeError(f"{provider.name} exited {r.returncode}: {(r.stderr or '').strip()[-200:]}")
         return r.stdout

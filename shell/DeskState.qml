@@ -1,4 +1,5 @@
 import QtQuick
+import Bombadil as Kit
 import "DeskTheme.js" as T
 
 // What the desk shows, worked out from agentd's messages and from where the windows are.
@@ -169,13 +170,16 @@ QtObject {
     readonly property real pictureTarget: mode === "shared" ? Math.min(560, stageRoom) : pillTarget
     property int pillAnimMs: 150
     property real pillWidth: pillTarget
-    Behavior on pillWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
+    Behavior on pillWidth { NumberAnimation { duration: Kit.Theme.duration(desk.pillAnimMs); easing.type: Easing.OutCubic } }
     property real pictureWidth: pictureTarget
-    Behavior on pictureWidth { NumberAnimation { duration: desk.pillAnimMs; easing.type: Easing.OutCubic } }
+    Behavior on pictureWidth { NumberAnimation { duration: Kit.Theme.duration(desk.pillAnimMs); easing.type: Easing.OutCubic } }
 
     // -- the rails --
 
-    readonly property int rowZone: 64   // the bar's exclusive zone: the rails stop above it
+    // The bar's exclusive zone, which the rails stop above. The shell sets it from the bar on the desk's
+    // screen: the chips rows above the pill (apps, coding sessions) add to it, and a rail laid out against
+    // the bare 64 would run on under them.
+    property int rowZone: 64
     readonly property real railBottomY: screenHeight - rowZone - T.railBottom
     readonly property real railHeight: railBottomY - T.railTop
 
