@@ -1040,7 +1040,7 @@ async def test_the_client_metadata_document_is_bombadils_own(monkeypatch):
                                          "response_types": ["code"]}
 
 
-SERVER = '[server]\nservice="x"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
+SERVER = '[server]\nservice="xx"\nname="X"\nurl="https://x.test/mcp"\nreads="r"\nverified=false\n'
 ONE_FIELD = 'fields=[{key="a",label="A",edit="line"}]\n'
 CREATE = f'[create]\ntool="t"\n{ONE_FIELD}'
 
@@ -1048,7 +1048,7 @@ BROKEN = {
     "no server table": ("[list]\ntool = 'x'\n", "[server] is missing."),
     "verified not written": (SERVER.replace("verified=false\n", "") + CREATE, "verified must be written down"),
     "http away from this machine": (SERVER.replace("https", "http") + CREATE, "url must be an https"),
-    "service is not the file's": (SERVER.replace('service="x"', 'service="y"') + CREATE, "service must be"),
+    "service is not the file's": (SERVER.replace('service="xx"', 'service="yy"') + CREATE, "service must be"),
     "nothing to do": (SERVER, "needs at least one of"),
     "edit unknown": (SERVER + '[create]\ntool="t"\nfields=[{key="a",label="A",edit="rich"}]\n', "edit must be one of"),
     "duplicate keys": (SERVER + '[create]\ntool="t"\nfields=[{key="a",label="A",edit="line"},'
@@ -1071,20 +1071,21 @@ async def test_a_recipe_that_is_wrong_is_refused_with_a_sentence_naming_the_file
     text, said = BROKEN[name]
     folder = tmp_path / "connect" / "recipes"
     folder.mkdir(parents=True)
-    (folder / "x.toml").write_text(text)
+    (folder / "xx.toml").write_text(text)
     with pytest.raises(recipes.RecipeError) as raised:
-        recipes.load("x")
-    assert str(raised.value).startswith("x.toml: ") and said in str(raised.value)
+        recipes.load("xx")
+    assert str(raised.value).startswith("xx.toml: ") and said in str(raised.value)
 
 
 async def test_a_recipe_file_that_is_not_toml_or_a_service_that_is_not_a_name_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("BOMBADIL_SHARE", str(tmp_path))
     folder = tmp_path / "connect" / "recipes"
     folder.mkdir(parents=True)
-    (folder / "x.toml").write_text("this is = = not toml")
-    with pytest.raises(recipes.RecipeError, match="x.toml cannot be read"):
-        recipes.load("x")
-    for bad in ("", "../x", "X", "a b", None, 5):
+    (folder / "xx.toml").write_text("this is = = not toml")
+    with pytest.raises(recipes.RecipeError, match="xx.toml cannot be read"):
+        recipes.load("xx")
+    # a name must be the shape of the prefix of a ref (two to twelve lowercase letters), or its tasks would be dropped
+    for bad in ("", "../x", "X", "x", "a b", "a-b", "abcdefghijklm", None, 5):
         with pytest.raises(recipes.RecipeError):
             recipes.load(bad)
 
