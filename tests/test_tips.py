@@ -430,7 +430,9 @@ def test_read_facts_puts_the_machine_together(tmp_path):
     bare = read_facts(apps_dir=tmp_path / "x", projects_dir=tmp_path / "y", has_module=lambda n: False)
     assert bare == Facts() and not bare.model
     # Where the coding-sessions code is not on this machine, there is no module to find.
-    assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path).sessions is False
+    assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path, has_module=lambda n: False).sessions is False
+    # and where it is (it is, since the coding sessions merged), the fact is true with no argument at all.
+    assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path).sessions is True
 
 
 def test_the_apps_a_machine_has_are_read_the_way_the_launcher_reads_them(home):
