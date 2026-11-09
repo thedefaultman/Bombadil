@@ -3223,7 +3223,7 @@ def test_a_button_does_what_it_says_and_then_the_card_is_seen(desk):
     assert desk.sent[-2:] == [{"type": "jobs", "op": "why", "id": "ab12"}, seen]
     assert desk.away is not None                              # agentd takes the card away, and says so
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_button_that_does_not_match_its_row_opens_nothing_and_still_means_seen(desk):
@@ -3266,7 +3266,7 @@ def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
     assert desk.away is not None
     desk.send(type="away", since=0, count=0, why="", rows=[])
     assert desk.away is None
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_tap_on_another_cards_title_or_caption_leaves_away_alone(desk):
