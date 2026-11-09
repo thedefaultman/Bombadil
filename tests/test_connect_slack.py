@@ -353,7 +353,7 @@ async def test_a_direct_message_is_a_message_for_the_person(rig):
         "connection": "slack:w1", "conversation": {"id": "D0PRIYA", "name": "Priya Shah", "kind": "dm"},
         "thread": None, "from": {"id": PRIYA, "name": "Priya Shah"},
         "text": "Legal just signed off. Can we lock the 14th?", "ts": float(rig.fake.messages["D0PRIYA"][0]["ts"]),
-        "mentions_me": False, "reason": "direct message", "unread": True, "web_url": None}
+        "mentions_me": False, "mine": False, "reason": "direct message", "unread": True, "web_url": None}
     assert clean_message(m, "slack:w1") == m          # the service's own cleaning has nothing to change
 
 
@@ -871,6 +871,7 @@ async def test_a_thread_is_its_messages_oldest_first_and_only_the_one_asked_for_
                                         "Yes from me"]
     assert [m["from"]["name"] for m in got] == ["Alex Chen", "Priya Shah", "Marcus Webb"]
     assert [m["reason"] for m in got] == ["you wrote this", "in #launch", "in #launch"]
+    assert [m["mine"] for m in got] == [True, False, False]
     assert [m["thread"] for m in got] == [None, f"slack:T0ACME/C0LAUNCH/{root}", f"slack:T0ACME/C0LAUNCH/{root}"]
     assert all(set(m) == set(MESSAGE_KEYS) for m in got)
     assert [m["web_url"] for m in got] == [None, f"https://acme.slack.test/archives/C0LAUNCH/p{reply.replace('.', '')}",

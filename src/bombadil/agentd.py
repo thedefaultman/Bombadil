@@ -1249,7 +1249,10 @@ class AgentD:
             if self._open_card is not None and self._open_card.get("id") == card:
                 self._open_card = None
         elif action == "copy_open":
-            if not self.notifier.copy_open(card):
+            text = msg.get("text")
+            if isinstance(text, str) and text.strip() and not await asyncio.to_thread(notifications.copy_text, text):
+                await self._connect_say("I could not copy that. Your words are still in the box.", False)
+            elif not self.notifier.copy_open(card):
                 await self._connect_say("The app that sent that is not holding it any more.", False)
         else:
             await self.connect_says.card_action(card, row if isinstance(row, str) and row else None, action)

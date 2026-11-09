@@ -21,7 +21,7 @@ check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watc
 check mail-tools-installed bash -c 'for b in thunderbird bombadil-mail bombadil-mail-host; do command -v $b || exit 1; done'
 # Connections: the service and the browser service, the Python they run on, and no mako (the shell owns the notifications).
 check connect-tools-installed bash -c 'for b in bombadil-connect bombadil-browserd notify-send wl-copy; do command -v $b || exit 1; done'
-check connect-python-installed python3 -c 'import httpx; from mcp import ClientSession'
+check connect-python-installed python3 -c 'import httpx, httpx2; from mcp import ClientSession, MCPError'
 check mako-is-not-installed bash -c '! command -v mako'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd

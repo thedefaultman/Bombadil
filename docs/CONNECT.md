@@ -117,16 +117,22 @@ is cut and made plain by the service (`clean_message`, `clean_task`) whatever th
 
 **`perform`** is the only way anything leaves, and the service does it only when every one of these holds: the
 peer's uid is allowed; the peer is not inside an agent's turn (`procs.cgroup_of(pid)` is None, as in
-`outbox.py`; one that cannot be told is refused); `fingerprint` equals `driver.fingerprint(kind, target, content)`
+`outbox.py`; a peer whose `/proc/<pid>/cgroup` cannot be read is refused as `agent`, since `cgroup_of` would
+call it "not in a turn"); `fingerprint` equals `driver.fingerprint(kind, target, content)`
 worked out again here; the connection the target names exists, is `ok` and its driver can do `kind`; the
 `proposal` id has not been performed (a second press of the same id is answered `already` with no act, and
 the ids are kept in `connect.db`, so a restart does not forget); and no other `perform` of that id is running
-(`busy`). It calls the driver once. What the driver returns or raises is final: no retry, here or above. An
-`UnknownOutcome` is recorded as performed (so a retry is the person's, with a new proposal) and answered
+(`busy`, which is checked before `already`: a press in flight already has its row, and answering "may have gone"
+for one that is still running would be wrong). It calls the driver once. What the driver returns or raises is final: no retry, here or above. A plain `DriverError`
+is not recorded as performed (nothing went). An `UnknownOutcome`, or a `DriverError` whose code is
+`unknown_outcome`, is recorded as performed (so a retry is the person's, with a new proposal) and answered
 `unknown_outcome`. This is a rule with a check, not yet a wall: a process of the person's that is outside every
 turn could still call it, as with mail's press (see "What is a rule, not yet a wall" in the design page).
 
 ## Drivers
+
+What a driver returns is normalised by the service, not trusted: a message older than the ring's 14 days is dropped,
+and a task's `service` is always its connection's.
 
 `connect/driver.py` is the interface (`Driver`, `Secrets`, `DriverError`, `UnknownOutcome`, `fingerprint`). The
 service builds a driver from the connection's record, gives it a `Secrets` for that connection alone, calls
@@ -149,7 +155,8 @@ manifest Bombadil prepares, and it keeps normal limits and can receive new messa
   fake that speaks both halves.
 - **What is a message for the person**: any message in a direct or group direct message; one in a channel that
   mentions them (`<@their id>`); one in a thread they have posted in. Their own messages and the service's
-  housekeeping subtypes are not. `reason` says which. Text is made plain (mentions, channel links and links
+  housekeeping subtypes are not for the person, but a message carries `mine` (its sender is the person), so a thread
+  shows "You" and the new-place warning can see the person's own posts. `reason` says which. Text is made plain (mentions, channel links and links
   become words; `&amp;`, `&lt;`, `&gt;` are undone). Names are looked up once and kept a day.
 - **Start**: after connecting, the driver backfills direct and group direct messages since the conversation's
   `seen_ts` (at most 50 per conversation, `conversations.history`), so "what did I miss" is true after a restart.
@@ -169,20 +176,35 @@ page and the pointer on each press. The steps, each waiting for its page before 
 app's page point at "Generate Token and Scopes" under App-Level Tokens, and take the `xapp-` value off the
 page into `store_secret`; point at "Install to Workspace" (then "Allow"); take the `xoxp-` User OAuth Token the
 same way. The person presses everything; Bombadil points and reads the two tokens off the page and gives them to
-the service, never through the model. If the workspace needs an administrator to approve apps, Slack says so on
-its page: the recipe says that once and the connection is `blocked`; Slack messages then come from Slack's own
-notifications (below). Unverified against Slack's real pages; the recipe locates things by their visible words
-and by token shape and is tested against a page that imitates them.
+the service, never through the model. The generate, install and read steps are one loop that takes whichever token appears and points at what
+is still missing, so pressing Install before generating the app token does not hang it; a pointer the page lost
+(reload, redraw) is drawn again on the next look. A token is recognised by its shape (`xapp-` or `xoxp-`, then
+dash-separated parts and a tail of at least 20 lowercase letters and digits) and only when it stands apart from the
+words beside it. If the workspace needs an administrator to approve apps, Slack says so on its page: the recipe says
+that once and ends, leaving the connection in `setup` with whatever token was already stored (the recipe has no way
+to set `blocked`), and the next "connect slack" picks up from there; Slack messages then come from Slack's own
+notifications (below). Cancelling (the typed words "stop" or "cancel") is answered within a second and takes the
+pointer away. The recipe presses nothing and runs only fixed scripts. Unverified against Slack's real pages; it
+locates things by their visible words and by token shape and is tested against a page that imitates them, in a real
+headless Chromium and against a fake DevTools port.
 
 ### Work tools, through MCP
 
 Notion, Linear, Atlassian's Jira, Todoist and ClickUp have official MCP servers a person can allow alone with
-a browser sign-in. `mcpconn.py` is one driver for all of them: the official Python SDK's client (`mcp` package,
-`ClientSession` over Streamable HTTP) with its OAuth client provider, a token store backed by `Secrets`, and a
-client metadata document Bombadil publishes (`share/connect/client-metadata.json`: its `client_id` is its own
-public address, the redirect is `http://127.0.0.1:<port>/callback`), so each consent page says "Bombadil".
-`add_connection` starts the flow and returns `open`: the service listens on a loopback port for the redirect,
-exchanges the code, stores the tokens and pushes `connection` with state `ok`.
+a browser sign-in. `mcpconn.py` is one driver for all of them: the official Python SDK's client (`mcp` 2.3.0, over
+`httpx2`; `ClientSession` over Streamable HTTP) with its OAuth client provider and a token store backed by `Secrets`.
+Each request gets its own provider (they share only the token store), because the SDK's provider holds a lock from
+sending a call until the server answers, so one hung call would block every later one. Status codes are read from the
+HTTP client's event hooks (the 2.x transport no longer says which status failed), so a 429, 403 or 5xx is classified
+as itself.
+
+Registration is dynamic today, under the client name "Bombadil", so each consent page says "Bombadil". The SDK also
+supports a client metadata document (`share/connect/client-metadata.json`: its `client_id` is its own public
+address, the redirect is `http://127.0.0.1:<port>/callback`), for servers that advertise it (Linear, Notion, Jira and
+Todoist do; ClickUp does not), but no address for that document is published yet (`BOMBADIL_CLIENT_METADATA_URL` is
+unset and no recipe names one), so it is not used. `add_connection` starts the flow and returns `open`: the service
+listens on a loopback port for the redirect, which must carry `iss` where the server advertises it (the SDK refuses
+a redirect without it), exchanges the code, stores the tokens and pushes `connection` with state `ok`.
 
 A recipe per service (`share/connect/recipes/<service>.toml`) says where its server is, the scopes to ask for (read
 only where there is a choice), a sentence for `reads`, how to list what waits on the person (a tool name, its
@@ -190,7 +212,12 @@ arguments and how its answer maps to a Task), and how to create an item and add 
 card's fields map to their arguments). Recipes are data so a fork can add a service; each carries
 `verified = false` until someone has run it against the live server. Nothing here has been run against a real
 Linear, Notion, Jira, Todoist or ClickUp: the driver is tested against a fake server written with the same SDK
-and a fake OAuth provider.
+and a fake OAuth provider. The only contact with the real servers was unauthenticated, on 2026-11-08: all five
+still answer a 401 with `WWW-Authenticate` for their discovery documents, and the SDK's own parsers accept their
+documents and issuers. Every tool name, argument name and answer shape in the recipes is a guess, because the tool
+lists cannot be seen without signing in; a real server may also refuse the older `initialize` handshake the driver
+keeps (the docstring says what to change). Only a JSON-RPC "method not found" or "invalid params" counts as the
+server turning a call away; any other JSON-RPC error after the request was written is `UnknownOutcome`.
 
 `perform("task_create"|"task_comment", target, content)`: `target` is `<service>` (create) or a task ref
 (comment); `content` is the card's fields as an object. One tool call, then a receipt line ("Created LIN-42 in
@@ -204,14 +231,14 @@ side stays in `browser.py`). Socket `browserd.sock`, JSON lines as above, peers 
 | op | args | result |
 |---|---|---|
 | `status` | | `{"up": bool, "tabs": int}` |
-| `open` | `url` | `{"tab": {"id", "url"}}`: `browser.open_url`, so the panel slides in |
-| `tabs` | | `{"tabs": [{"id", "url", "title"}]}` |
+| `open` | `url` | `{"tab": {"id", "url"}}`: `browser.open_url`, so the panel slides in. A request with no `tab` afterwards means this page; if it was closed the answer is "That page is gone.", never the first page of the person's |
+| `tabs` | | `{"tabs": [{"id", "url", "title"}]}`; addresses are cut at 2000 characters (`protocol.MAX_URL`) here and in `open` |
 | `read` | `tab?`, `selector?` | `{"url", "title", "text", "untrusted": true}`: the page's visible text (at most 200 000 characters) or the selector's. Other people's words |
 | `find` | `tab?`, `text` | `{"found": bool, "rect": {x, y, w, h}}` of the visible button, link or input whose text or label matches |
 | `point` | `tab?`, `text` or `selector`, `label`, `ttl?` | `{"pointed": bool}`: an orange ring on the element and a pointer with a label chip beside it, drawn by an element the service injects (`pointer-events: none`, always on top), gone after `ttl` seconds (20), on `unpoint` or on a navigation |
 | `unpoint` | `tab?` | `{}` |
 | `wait` | `tab?`, `url?` (regex), `text?`, `timeout?` (30) | `{"matched": bool, "url"}`, polling every 300 ms |
-| `take` | `tab?`, `pattern`, `into: {"connection", "name"}` | `{"stored": bool, "why"?}`: the first match of the regex in the page's text or input values goes straight to the connection service's `store_secret`; the value is never returned or logged |
+| `take` | `tab?`, `pattern`, `into: {"connection", "name"}` | `{"stored": bool, "found": bool, "why"?}`: the first match of the regex in the page's visible text or the values of its visible input fields (a hidden, not-yet-generated field is not read) goes straight to the connection service's `store_secret`; the value is never returned or logged |
 
 It has no hands: it never clicks, types or navigates a page by itself (`open` is the one navigation, and it is the
 panel opening). Writing in a page, with the orange frame, is a later piece.
@@ -258,12 +285,15 @@ with `connect-result`; there is no tool that sends):
 | `messages_unread(limit?)` | the unread messages to the person, as text inside the other-people's-words mark, and shows the list card |
 | `message_thread(ref)` | one thread's messages, same mark; opens its message card |
 | `tasks_waiting(service?)` | the items that wait on the person, same mark |
-| `connections()` | what is connected and in what state (the service's own words, no tokens) |
-| `propose(kind, target, content, where?)` | a proposal made `created_by: "agent"`, its card shown, the line "Reply to Priya is ready. Sending is yours." |
+| `connections()` | what is connected and in what state (the service's own words, no tokens), and the boxes a new task or a comment takes in each service (use those keys with `propose`). It names no workspace, is not inside the other-people's-words mark and does not taint the turn |
+| `propose(kind, target, content)` | a proposal made `created_by: "agent"`, its card shown, the line "Reply to Priya is ready. Sending is yours." `content` is a string (a reply) or an object of the task's boxes. The place and the name in the line come from the service, never from the model, so there is no `where` argument |
 
 A turn that has called `messages_unread`, `message_thread`, `tasks_waiting` or a mail read tool is tainted until
 it ends (the mark stays with the conversation it resumes into, as for mail). `typed` is the person's own words for
-the turn, as for mail drafts. A `propose` with `target` not a ref the service knows is refused.
+the turn, as for mail drafts. A `propose` with `target` not a ref the service knows is refused, and so is one with a box the tool does not have or a
+required box left empty; characters the card would refuse are stripped. After a refusal or an unknown outcome the
+next try uses the id `p1-2`. When the turn read other people's words from a page too, `propose` is held to the
+person's own typed words. Connect read results are replaced in the turn log by a placeholder, as mail's are.
 
 **Notices and cards from pushes** (`connect/watch.py`): a `message` push the person should see becomes a notice
 (source `connect`, tone `step`, at most one line "Priya Shah in #launch: Legal just signed off. Can we lock the 14th…",
@@ -275,7 +305,9 @@ previous notice instead of stacking.
 **Launcher words** (exact, no model): `slack`, `messages`, `unread`, `what did i miss`, `what did i miss on slack` open the
 list card of unread messages; `connections`, `connected`, `whats connected`, `what is connected` open "Connected
 here"; `connect slack`, `connect linear`, `connect notion`, `connect jira`, `connect todoist`, `connect clickup`
-start the setup (the first step opens in the panel).
+start the setup (the first step opens in the panel). These words win over an app of the person's with the same name
+(as mail's do), and `apps.create` refuses an app named `slack`, `messages`, `unread`, `connections` or `connected`
+(`apps.CLAIMED`), since it could never be opened from the pill; Tab offers `messages` and `connections` only.
 
 ## Cards
 
@@ -294,11 +326,18 @@ agentd, so nothing malformed reaches the bar. Text is plain.
 ```
 
 A card whose source is `notification` has `"reply": {"proposal": null, "kind": "copy", "where": "Teams", "content": ""}`:
-its button says "Copy and open", copies the words and opens the page, and is not a send (no ring, no "Yours").
+its button says "Copy and open", copies the words and opens the page, and is not a send (no ring, no "Yours"). The
+button is live only when there is text. The shell sends `card_action` `copy_open` with `text`; agentd copies it with
+`wl-copy` (nothing else does) and then invokes the notification, so the page that sent it comes forward. If the copy
+fails, the notification is not invoked and Bombadil says "I could not copy that. Your words are still in the box."
 
 **task** (`{"type": "task", ...}`): `title`, `service`, `fields: [{"key", "label", "value", "edit": "line"|"text"|"date"|
 null}]`, `proposal` as above with `kind` `task_create` or `task_comment` and `content` the fields as an object, `open`,
-`say`. The one button is "Create" or "Comment".
+`say`. The one button is "Create" or "Comment". A press carries one value per box (`""` for an untouched box).
+
+A card also carries `lines`, the two sentences (`sending`, `unknown`) the card shows while a press is in flight and
+after an unknown outcome, so the bar never writes them itself. After an unknown outcome the button returns only once
+the person ticks "I looked in <where>"; the press then carries `again: true`.
 
 **list** (`{"type": "list", ...}`): `rows: [{"id", "title", "sub", "when", "state": "ok"|"warn"|"bad"|"new"|"gone"|"active",
 "actions": [{"id", "label", "style": "primary"|"quiet"}], "opens": {"kind": "card"|"url", "value"} | null}]`, at most 12
@@ -310,13 +349,17 @@ send button has the orange ring and "Yours: Send" while the proposal is `ready` 
 fingerprint) and the box still holds exactly the proposal's `content`; it waits (as Mail's does) until the box has
 drawn exactly what would be sent. A press carries the `fingerprint` the shell was last told for the content it
 draws. After an `edit` the shell keeps what the person is typing and takes only the proposal's state, `ready` and
-fingerprint from agentd's update.
+fingerprint from agentd's update. The ring waits 300 ms after the button becomes ready, so a click already on its
+way to something else does not press. A box is read-only unless the proposal is `open`. A card takes the keyboard only
+after the person's Reply or a click in its box; a card with a box is drawn on the one screen the person was on when
+it arrived, and a newer card replaces one being typed in (the typed words are flushed to agentd first and kept there
+as a draft). A card with a box is 560 wide, a list 480.
 
 **Connected here** is the list card "Connected here": each mail account (from the mail service), the Slack app and
 each tool, one row each with what it reads (`reads`), its state, and "Disconnect" (mail's `remove_account` or
-`remove_connection`); a service not yet connected is a quiet row with "Connect". It opens by its words. The
-design calls for a holding card that lists it; no such card exists in the code yet, so this list card is what it
-opens as until one does.
+`remove_connection`); a service not yet connected is a quiet row with "Connect". It opens by its words only
+(`connections`, `connected`, ...), as a list card; the design calls for a holding card that lists it, and no such
+card exists in the code yet.
 
 ## Notifications (replacing mako)
 
@@ -329,12 +372,17 @@ the person sees: a notice with the sender and preview ("Priya Shah: Legal just s
 30 s for critical) with Reply (a message card built from the notification, source `notification`) and Open
 (`notification_invoke`, so the page that sent it comes forward); at most one notice per app per two seconds (a
 burst becomes "+N" on the last); no notice at all for a notification whose summary and body are empty. The
-notification text is other people's words. `mako` leaves `iso/packages.x86_64` and `hyprland.lua`.
+notification text is other people's words; text that is not a string counts as empty, and a notification with the
+same shell id is an update, not a new notice. The bar holds at most 64 notifications (the oldest is dismissed when a
+65th arrives), cuts text at 2000 characters and actions at 8; one that arrives while agentd is away waits and is
+sent once. An invoke with no matching or default action dismisses it. `mako` leaves `iso/packages.x86_64` and `hyprland.lua`.
 
 ## The image
 
-`python-mcp` and `python-httpx` are added to `iso/packages.x86_64` (with what they pull in: the SDK's server-side
-dependencies, 23 packages, all in Arch's `extra`); `wl-clipboard` and `libnotify` were already there; `mako` is gone.
+`python-mcp` (2.3.0) and `python-httpx` are added to `iso/packages.x86_64`. `python-mcp` now pulls
+`python-mcp-types` and `python-httpx2` as well as the SDK's other dependencies, all in Arch's `extra`;
+`python-httpx` stays because `slack.py` imports it. The VM smoke imports `httpx`, `httpx2` and `MCPError` (which
+exists only in 2.x, so it is also a version guard). `wl-clipboard` and `libnotify` were already there; `mako` is gone.
 A snapshot rollback of the whole root also rolls back `/var/lib/bombadil-connect`: the tokens return to what they
 were then, and the ids of performed presses with them (a press the rollback undid can be pressed again, which is
 what undo means). `bombadil-connect.service`

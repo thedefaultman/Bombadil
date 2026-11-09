@@ -750,6 +750,7 @@ class SlackDriver(Driver):
             "text": plain,
             "ts": float(ts),
             "mentions_me": mention,
+            "mine": bool(sender) and sender == self.user_id,
             "reason": reason,
             "unread": True,
             "web_url": None,

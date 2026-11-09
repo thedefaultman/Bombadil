@@ -181,6 +181,7 @@ def clean_message(raw, connection: str) -> dict | None:
         "text": text,
         "ts": _number(raw.get("ts")),
         "mentions_me": bool(raw.get("mentions_me")),
+        "mine": bool(raw.get("mine")),
         "reason": one_line(raw.get("reason"), MAX_REASON),
         "unread": bool(raw.get("unread")),
         "web_url": web_url(raw.get("web_url")),

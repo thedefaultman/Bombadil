@@ -14,7 +14,7 @@ cannot read them. You have five tools in the `bombadil-os` MCP server: four read
 | `message_thread {ref}` | the last messages of one conversation, and opens its message card |
 | `tasks_waiting {service?}` | what waits on the person in a work tool, such as tickets assigned to them |
 | `connections {}` | what is connected and in what state, and the boxes a ticket has in each tool (`task_fields`) |
-| `propose {kind, target, content, where?}` | a draft on a card, which opens on it. `slack_reply`: target a message ref, content the text. `task_create`: target the service (`linear`), content the boxes. `task_comment`: target a task ref, content the boxes |
+| `propose {kind, target, content}` | a draft on a card, which opens on it. `slack_reply`: target a message ref, content the text. `task_create`: target the service (`linear`), content the boxes. `task_comment`: target a task ref, content the boxes |
 
 What the first three give back sits between two marks that say it is other people's words. The first two put
 their card on the screen themselves, so you never draw a message or a task card yourself.

@@ -37,7 +37,7 @@ from test_agentd import (
 )
 from test_mail_agentd import _call, _result, _says
 
-from bombadil import agentd, cards, paths, procs, providers
+from bombadil import agentd, cards, notifications, paths, procs, providers
 from bombadil.connect import cardmake
 from bombadil.connect import tools as connect_tools
 
@@ -852,6 +852,39 @@ async def test_reply_on_a_notification_is_a_card_with_a_copy_and_the_buttons_of_
     await _say(w, {"type": "card_action", "card": c["id"], "action": "copy_open"})   # the bar no longer holds it
     done = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("action") == "connections")
     assert done[-1]["ok"] is False and done[-1]["text"] == "The app that sent that is not holding it any more."
+    await _stop_all(r, w, server)
+
+
+@pytest.mark.asyncio
+async def test_copy_and_open_puts_the_persons_words_on_the_clipboard_before_the_page_comes_forward(
+        home, person, monkeypatch):
+    copied = []
+    monkeypatch.setattr(notifications, "copy_text", lambda text: copied.append(text) or True)
+    d, _ = make()
+    server, r, w = await _start(d)
+    await _say(w, NOTIFICATION)
+    n = await notice(r, "Priya Shah")
+    await _say(w, {"type": "notice_action", "id": n["id"], "action": "reply"})
+    c = await card(r, lambda c: c["type"] == "message")
+    await _say(w, {"type": "card_action", "card": c["id"], "action": "copy_open", "text": "Yes, bringing them."})
+    got = await _events_until(r, lambda m: m.get("type") == "notification_invoke")
+    assert copied == ["Yes, bringing them."] and got[-1]["id"] == 4
+    await _stop_all(r, w, server)
+
+
+@pytest.mark.asyncio
+async def test_when_the_words_could_not_be_copied_the_page_does_not_come_forward(home, person, monkeypatch):
+    monkeypatch.setattr(notifications, "copy_text", lambda text: False)
+    d, _ = make()
+    server, r, w = await _start(d)
+    await _say(w, NOTIFICATION)
+    n = await notice(r, "Priya Shah")
+    await _say(w, {"type": "notice_action", "id": n["id"], "action": "reply"})
+    c = await card(r, lambda c: c["type"] == "message")
+    await _say(w, {"type": "card_action", "card": c["id"], "action": "copy_open", "text": "Yes."})
+    done = await _events_until(r, lambda m: m.get("kind") == "local" and m.get("action") == "connections")
+    assert done[-1]["ok"] is False and done[-1]["text"] == "I could not copy that. Your words are still in the box."
+    assert await _silent(r, 0.4)                       # nothing was invoked: the page stays where it is
     await _stop_all(r, w, server)
 
 

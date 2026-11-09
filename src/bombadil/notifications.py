@@ -28,6 +28,8 @@ What it does not do: keep any notification's text beyond the notice and the card
 """
 
 import re
+import shutil
+import subprocess
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -35,6 +37,25 @@ from dataclasses import dataclass
 
 from .connect import cardmake
 from .notices import Notices
+
+COPY_CHARS = 4000        # the longest reply "Copy and open" puts on the clipboard
+COPY_SECONDS = 3.0       # wl-copy takes the text and goes to the background; it should not take longer
+
+
+def copy_text(text: str) -> bool:
+    """Put the person's own words on the clipboard (wl-copy, from wl-clipboard) so they can paste them into the page
+    that sent the notification. False when there is nothing to copy or it did not work: the caller then does not
+    bring the page forward, because the person would paste nothing. Blocking, so agentd calls it in a thread."""
+    exe = shutil.which("wl-copy")
+    if exe is None or not isinstance(text, str) or not text.strip():
+        return False
+    try:
+        done = subprocess.run([exe], input=text[:COPY_CHARS].encode(), stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=COPY_SECONDS, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
 
 RATE_SECONDS = 2.0       # at most one notice per app in this long
 TTL = 10.0

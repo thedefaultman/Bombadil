@@ -173,6 +173,7 @@ MESSAGE_KEYS = {
     "text": "str, other people's words, at most 4000 characters",
     "ts": "float, seconds since the epoch",
     "mentions_me": "bool",
+    "mine": "bool, the person wrote it (a thread shows their own words; the new-place check counts them)",
     "reason": "str, why it is for the person: 'direct message', 'mentioned you', 'a thread you are in', 'in #launch'",
     "unread": "bool, newer than the last the person saw in that conversation (kept by the service, not by Slack)",
     "web_url": "str|None, opens it in the service's own page",
