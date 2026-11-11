@@ -6,6 +6,7 @@ DeskTheme.js, a library of plain values, and the parity test below is what keeps
 
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,23 @@ def test_the_shell_gets_the_kit_on_its_import_path():
     for path in QML:
         imports = re.findall(r"^import (.*Bombadil.*)$", code(path), re.MULTILINE)
         assert all(i == "Bombadil as Kit" for i in imports), (path.name, imports)
+
+
+def test_the_shell_waits_longer_than_qt_does_for_a_slow_compositor_to_answer_a_frame(tmp_path):
+    # Qt draws a window again when the compositor answered its frame after 100 ms. A compositor that draws
+    # in software needs longer for a full-screen frame, so the wallpaper redrew itself forever (and kept
+    # Hyprland drawing too). The launcher raises the wait; a person who set their own value keeps it.
+    stub = tmp_path / "quickshell"
+    stub.write_text('#!/bin/sh\nprintf %s "$QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"\n')
+    stub.chmod(0o755)
+    for given, expected in ((None, "2000"), ("5000", "5000"), ("0", "0")):
+        env = {k: v for k, v in os.environ.items() if k != "QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"}
+        env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+        if given is not None:
+            env["QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"] = given
+        out = subprocess.run([str(SHELL.parent / "bin" / "bombadil-shell")], env=env, capture_output=True,
+                             text=True, check=True)
+        assert out.stdout == expected, (given, out.stdout)
 
 
 def test_nothing_launches_quickshell_without_the_kit_path():

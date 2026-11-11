@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, browser, dev, hypr, paths, snapshots, sysmap
+from . import apps, browser, dev, hypr, paths, remote, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
 from .connect.cardmake import SERVICE_TITLES
@@ -102,6 +102,8 @@ UTILITY_COMMANDS = {
     "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
+    "remote": ["remote", "remote control", "start remote control", "remote session", "start a remote session"],
+    "install": ["install", "install bombadil", "install on this computer", "install to disk", "install this"],
     "voice": ["voice"],   # agentd opens the name and voice card itself
 }
 # The Mail window (a kit app that ships with Bombadil), and what people call it.
@@ -189,6 +191,11 @@ class Action:
 DEV_RE = re.compile(r"(claude|codex|shell) ([^\s]+)(?: ([^\s]+))?")
 SESSIONS_WORDS = {"whats running", "what is running", "sessions", "coding sessions", "list sessions"}
 END_VERBS = ("end",)
+
+
+def _live() -> bool:
+    """True on the USB stick, false on an installed computer."""
+    return Path("/run/archiso").exists()
 
 
 def normalize(text: str, keep_case: bool = False) -> str:
@@ -568,6 +575,7 @@ class Launcher:
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
+                "remote": "Starting remote control", "install": "Opening the installer",
                 "provider": f"Switching to {action.title or action.target}",
                 "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
                 "mute": "Muting the sound", "unmute": "Unmuting the sound",
@@ -599,6 +607,7 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                "remote": "Could not start remote control", "install": "Could not open the installer",
                 "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
                 "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
@@ -1032,6 +1041,17 @@ class Launcher:
             return False, "Wi-Fi settings need NetworkManager, which is not installed."
         self.details(["nmtui", "connect"])
         return True, "Opened Wi-Fi."
+
+    def _install(self, _a: Action) -> tuple[bool, str]:
+        """On the USB stick: the installer, in the terminal drawer, asking its own questions."""
+        if not _live():
+            return False, "Bombadil is already installed on this computer."
+        self.details(["sudo", "bombadil-install"])
+        return True, "Opened the installer."
+
+    def _remote(self, _a: Action) -> tuple[bool, str]:
+        """Remote control: a Claude Code session on this computer that claude.ai/code steers (bombadil remote)."""
+        return remote.start()
 
     # -- one-line readouts (cards with controls come later) --
 

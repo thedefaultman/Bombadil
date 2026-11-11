@@ -435,6 +435,23 @@ def test_a_reload_that_fails_late_leaves_the_old_ui_its_focus(home):
     assert out["failed"] == [False, False, "previous", True, True]
 
 
+def test_a_window_the_runtime_opens_has_the_keyboard_in_the_apps_search_field(home):
+    """The runtime shows its window and then asks the root for the keyboard: the Search field must still
+    end up with it, on the first load and on every reload."""
+    pytest.importorskip("PySide6")
+    make_app("finder", {"main.qml": 'import QtQuick\nimport Bombadil\nAppWindow {\n'
+                                    '    actions: [SearchField { objectName: "search" }]\n'
+                                    '    Text { objectName: "label"; text: "v1" }\n}\n'})
+    out = drive("finder", """
+        search = lambda: host.root.findChild(QQuickItem, "search")
+        out["start"] = host.start()
+        out["opened"] = wait_for(lambda: search().hasActiveFocus())
+        write("main.qml", (d / "main.qml").read_text().replace("v1", "v2"))
+        out["reloaded"] = [wait_for(lambda: label() == "v2"), wait_for(lambda: search().hasActiveFocus())]
+    """)
+    assert out == {"start": True, "opened": True, "reloaded": [True, True]}
+
+
 def test_reloading_app_py_does_not_abort_on_a_backend_thread(home):
     pytest.importorskip("PySide6")
     py = """\

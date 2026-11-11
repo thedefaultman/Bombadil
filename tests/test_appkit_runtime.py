@@ -215,6 +215,20 @@ def test_a_window_root_is_recreated_on_reload(home):
     assert out["second"] == ["Legacy v2", 300, True, True]
 
 
+def test_an_app_waits_longer_than_qt_does_for_a_slow_compositor_to_answer_a_frame(monkeypatch):
+    # The same reason as bin/bombadil-shell: Qt redraws a window whose frame was answered after 100 ms, and
+    # a window drawn by a compositor in software is answered later than that, over and over.
+    from bombadil.appkit import engine
+    for name in ("BOMBADIL_CHECK", "QT_QPA_PLATFORM"):    # (configure sets these; put them back afterwards)
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+    monkeypatch.delenv("QT_WAYLAND_FRAME_CALLBACK_TIMEOUT", raising=False)
+    engine.configure(check=True)
+    assert os.environ["QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"] == "2000"
+    monkeypatch.setenv("QT_WAYLAND_FRAME_CALLBACK_TIMEOUT", "5000")
+    engine.configure(check=True)
+    assert os.environ["QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"] == "5000"
+
+
 def test_check_renders_through_the_runtime(home, tmp_path):
     pytest.importorskip("PySide6")
     make_app("demo", {"main.qml": ITEM_QML, "app.py": BACKEND})

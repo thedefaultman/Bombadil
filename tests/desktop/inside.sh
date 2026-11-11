@@ -10,3 +10,5 @@ cp /repo/iso/airootfs/etc/claude-code/managed-settings.d/50-bombadil.json /etc/c
 chown u /out
 cd /home/u
 sudo -u u -H env HOME=/home/u python3 -u /e2e/driver.py 2>&1 | tee /out/driver.log
+# What the desktop costs left alone (idle.py), once the driver is done with it
+sudo -u u -H env HOME=/home/u python3 -u /e2e/idle.py 2>&1 | tee /out/idle.log

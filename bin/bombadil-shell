@@ -4,4 +4,9 @@
 # resolves a singleton only from inside the shell's own directory or from the import path.)
 root="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 export QML2_IMPORT_PATH="$root/share/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
+# Qt gives a compositor 100 ms to answer a frame and, when it is late, draws the window again when the
+# answer comes. A compositor that draws in software (a virtual machine, a computer with no GPU driver) needs
+# longer than that for a full-screen frame, so the wallpaper redrew itself forever and kept Hyprland drawing
+# too: more than three cores with nothing on screen. A second or two is slow enough for any frame that will ever come.
+export QT_WAYLAND_FRAME_CALLBACK_TIMEOUT="${QT_WAYLAND_FRAME_CALLBACK_TIMEOUT:-2000}"
 exec quickshell -p "$root/shell/shell.qml" "$@"

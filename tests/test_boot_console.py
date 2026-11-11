@@ -98,11 +98,12 @@ def test_the_grub_drop_in_adds_to_the_line_and_sorts_after_every_other_drop_in()
 
 
 def test_the_installer_copies_the_live_etc_so_the_drop_in_arrives_with_it():
-    # bombadil-install copies the running system (`cp -ax /. /mnt/`), /etc/default/grub.d included,
-    # and removes only the files it names.
+    # bombadil-install copies the image (or, with none mounted, the running system), /etc/default/grub.d
+    # included, and removes only the files it names.
     script = (ISO / "airootfs" / "usr" / "local" / "bin" / "bombadil-install").read_text()
-    after_copy = script.split("cp -ax /. /mnt/")[1].split("mkdir -p /mnt/boot")[0]
-    assert "cp -ax /. /mnt/" in script and "grub.d" not in after_copy
+    copy = script.split("copy_system() {")[1].split("\n}\n")[0]
+    after_copy = copy.split('cp -a "$image/." "$target/"')[1]
+    assert 'cp -a "$image/." "$target/"' in copy and "cp -ax /. " in copy and "grub.d" not in after_copy
 
 
 def test_greetd_keeps_hyprlands_start_up_text_off_the_console():
