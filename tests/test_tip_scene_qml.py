@@ -6,6 +6,7 @@ Set BOMBADIL_SCREENS=<dir> to save a picture of the frames (tip-<name>-card.png,
 
 import copy
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -44,9 +45,23 @@ Window {
 """
 
 
+# What QML says at run time. A binding that throws (a TypeError on a value that is null for a moment) is a message
+# on stderr, not an exception and not an engine warning, so it is collected here and every test that draws a scene
+# fails on one (the `make` fixture here and `drawn` in test_tips.py both check it).
+QML_MESSAGES = []
+
+
+def _collect(mode, ctx, msg):
+    if ".qml" in (ctx.file or "") or "TypeError" in msg or "ReferenceError" in msg:
+        QML_MESSAGES.append(msg)
+    else:
+        print(msg, file=sys.stderr)
+
+
 class Scene:
     def __init__(self, app, tmp_path, tip, density="card", reduced=False):
         self.app = app
+        QtCore.qInstallMessageHandler(_collect)       # again for each scene: another test file may have taken it
         qml = tmp_path / "scene.qml"
         # density None: the scene's own defaults (a card, with motion on)
         props = "" if density is None else f'density: "{density}"; reducedMotion: {"true" if reduced else "false"}'
@@ -156,6 +171,7 @@ def app():
 @pytest.fixture
 def make(app, tmp_path):
     made = []
+    del QML_MESSAGES[:]
 
     def build(tip, density="card", reduced=False):
         where = tmp_path / f"s{len(made)}"
@@ -168,6 +184,7 @@ def make(app, tmp_path):
     yield build
     for s in made:
         s.close()
+    assert QML_MESSAGES == [], QML_MESSAGES
 
 
 def near(a, b, tol=14):
@@ -231,6 +248,19 @@ def test_seek_clamps_and_stops_the_clock(make):
     assert s.prop("t") == s.duration and not s.prop("playing")
     s.seek(1234)
     assert s.prop("t") == 1234
+
+
+@pytest.mark.parametrize("density", ["card", "app"])
+@pytest.mark.parametrize("tip", fx.ALL, ids=lambda t: t["id"])
+def test_seeking_back_to_the_start_raises_no_qml_error(make, tip, density):
+    """What Replay does (seek(0), then play) after a scene has reached its end: the line and the queue are gone from
+    the frame for a moment before what draws them is hidden, and a binding that read their alpha threw a TypeError."""
+    s = make(tip, density)
+    for ms in (s.duration, 0, s.duration / 2, 0, s.duration):
+        s.seek(ms)
+    s.call("replay")
+    s.seek(0)
+    assert QML_MESSAGES == [], QML_MESSAGES
 
 
 def test_the_frame_at_a_chosen_t_is_the_same_every_time(make):

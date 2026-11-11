@@ -157,6 +157,7 @@ def drawn(tmp_path):
 
     app = q.QtGui.QGuiApplication.instance() or q.QtGui.QGuiApplication([])
     made = []
+    del q.QML_MESSAGES[:]
 
     def draw(row, density="card", reduced=False, at=None):
         where = tmp_path / f"s{len(made)}"
@@ -171,6 +172,7 @@ def drawn(tmp_path):
     yield draw
     for s in made:
         s.close()
+    assert q.QML_MESSAGES == [], q.QML_MESSAGES        # a binding that threw at run time
 
 
 def _inside(s, name):
@@ -240,6 +242,19 @@ def test_every_tip_renders_at_the_apps_density_at_its_end_and_nothing_on_the_sta
     if SHEET:
         s.seek(s.duration)
         s.snap("stage")
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
+def test_replaying_a_tip_raises_no_qml_error_at_either_density(row, drawn):
+    """Replay seeks a scene that has reached its end back to the start: no binding may read what the frame no longer
+    holds (QML errors are collected by the harness and the fixture fails on any)."""
+    for density in ("card", "app"):
+        s = drawn(row, density)
+        for ms in (0, s.duration, s.duration / 2, 0):
+            s.seek(ms)
+        s.call("replay")
+        s.seek(0)
+    assert drawn.qt.QML_MESSAGES == [], drawn.qt.QML_MESSAGES
 
 
 def test_a_poster_shows_no_name_number_or_value_of_the_machine_and_no_label_on_a_button(drawn):

@@ -210,11 +210,13 @@ Item {
 
         readonly property real pillTop: m.h - m.pillBottom - m.pillH
         // Waiting asks stand as chips just above the pill, under the line (shell/QueueChips.qml), and lift it.
-        readonly property real queueLift: queueRow.visible ? (m.chipH + m.gap) * queueRow.q.alpha : 0
+        // (Guarded on the data, not on `visible`: a seek back to the start clears the frame's line and queue before
+        // `visible` follows, and a binding that reads `.alpha` of null is a TypeError at run time.)
+        readonly property real queueLift: queueRow.q ? (m.chipH + m.gap) * queueRow.q.alpha : 0
         readonly property real slotTop: pillTop - m.gap - m.lineH - queueLift   // where a one-line line sits
         // The rails and the picture rest on the line: a line of several lines grows upward from the pill and
         // lifts them as it arrives, so it never covers a card or the picture.
-        readonly property real lineLift: lineBox.visible ? (lineBox.height - m.lineH) * lineBox.ln.alpha : 0
+        readonly property real lineLift: lineBox.ln ? (lineBox.height - m.lineH) * lineBox.ln.alpha : 0
         readonly property real railBottom: slotTop - m.gap - lineLift
         // Folded, the strips stand beside the pill on the left and the pill is what they leave, with its
         // right edge where it was: the pill never runs under a strip, however many there are.
