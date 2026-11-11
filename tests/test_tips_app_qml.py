@@ -7,7 +7,8 @@ exist once per process. The child runs the runtime's own `Host` on the real app 
 fake agentd in a thread (tests/tips_app_lab.py) that lists the shipped tips and records every line it is sent, in a
 temp home. It drives the window with mouse and key events (QTest), reads what is drawn from the item tree and prints
 what it found as JSON for the test to judge. With BOMBADIL_SCREENS=<dir> the scenarios also save pictures there
-(tips-app-<name>.png; the tips with no beats of their own yet play the fixture scenes of tests/tip_fixtures.py).
+(tips-app-<name>.png; every shipped tip plays its own scene, the fixture scenes of tests/tip_fixtures.py are only
+for a row that arrives without beats).
 
 What is held to what: the list has its sections and only the tips agentd lists; a tip plays once when it is chosen
 and holds its payoff, and nothing advances or loops by itself; Replay and Space play it again; Up and Down choose;
@@ -398,22 +399,43 @@ def test_up_and_down_choose_the_tip_and_each_plays_from_its_start(home):
 
 
 def test_a_tip_with_no_scene_of_its_own_yet_has_an_empty_stage_and_nothing_to_replay(home):
+    """Every shipped tip has a scene, but a tip may arrive without one (a row being added, an older table): the
+    window shows it as it shows any other, with an empty stage, and nothing to replay. The row here is made up."""
     out = drive(home, """
-        boot(tips=[t for t in lab.listing(home, scenes=False) if t["id"] in ("make-an-app", "desk")])
-        listed(2)
+        bare = {"id": "no-scene-yet", "section": "work", "order": 99, "line": "A tip that came without its scene.",
+                "words": "Show me the next thing", "marks": [], "card": True, "tried": False, "new": False,
+                "captions": ["one", "two", "three"], "beats": []}
+        boot(tips=lab.listing(home) + [bare])
+        listed(21)
+        out["first"] = [backend.selected, wait_until(playing, 2000), clock()[1] > 0, shown("replayButton")]
+        wait_until(held, 15000)
+        backend.select("no-scene-yet")                     # from a tip that played to one with no scene
+        spin(300)
         out["front"] = backend.selected
+        out["scene_tip"] = ev(find("scene"), "tip.id")
         out["duration"] = clock()[1]
         out["playing"] = playing()
         out["replay"] = shown("replayButton")
         out["button"] = shown("wordsButton")
+        out["line"] = find("tipLine").property("text")
+        shot("no-scene")
         key(Qt.Key.Key_Space)
+        spin(200)
         out["space"] = playing()
-        key(Qt.Key.Key_Down)
-        out["next"] = [backend.selected, playing(), find("tipLine").property("text")]
+        key(Qt.Key.Key_Down)                               # on to the next tip, which has a scene and plays
+        out["next"] = [backend.selected, wait_until(playing, 2000), clock()[1] > 0, shown("replayButton")]
+        wait_until(held, 15000)
+        key(Qt.Key.Key_Up)                                 # and back: the stage is empty again
+        spin(300)
+        out["back"] = [backend.selected, clock()[1], playing(), shown("replayButton")]
     """)
-    assert out["front"] == "make-an-app" and out["duration"] == 0
+    assert out["first"] == ["make-an-app", True, True, True]
+    assert out["front"] == "no-scene-yet" and out["scene_tip"] == "no-scene-yet" and out["duration"] == 0
     assert out["playing"] is False and out["replay"] is False and out["button"] is True
-    assert out["space"] is False and out["next"][0] == "desk" and out["next"][1] is False and out["next"][2]
+    assert out["line"] == "A tip that came without its scene."
+    assert out["space"] is False
+    assert out["next"][0] != "no-scene-yet" and out["next"][1:] == [True, True, True]
+    assert out["back"] == ["no-scene-yet", 0, False, False]
 
 
 # ---- the button and Enter: the words in the pill, nothing run ------------------------------------------------
@@ -543,15 +565,17 @@ def test_the_window_opens_on_the_tip_the_card_named_plays_it_and_says_it_read_th
         # a press on the same tip again, once agentd has cleared the request: it plays again
         wait_until(held, 15000)
         lab.write_state(home / "state" / "tips.json", open_on="")
-        spin(6500)
+        out["cleared"] = wait_until(lambda: backend._open_seen == "", 5000)      # the app has read the empty request
         lab.write_state(home / "state" / "tips.json", open_on="disk")
         out["again"] = wait_until(playing, 9000)
-        out["opened_twice"] = len(fake.of("tips", "opened"))
+        # the line that says it was read goes out on a connection of its own, after the window plays the tip
+        out["opened_twice"] = wait_until(lambda: len(fake.of("tips", "opened")) == 2, 5000)
         out["still_front"] = backend.selected
     """, timeout=170)
     assert out["front"] == ["disk", "disk", True]
     assert out["opened"] == [{"type": "tips", "op": "opened", "id": "disk"}]
-    assert out["again"] is True and out["opened_twice"] == 2 and out["still_front"] == "disk"
+    assert out["cleared"] is True and out["again"] is True and out["opened_twice"] is True
+    assert out["still_front"] == "disk"
 
 
 # ---- reduced motion ---------------------------------------------------------------------------------------------------
