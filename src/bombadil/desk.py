@@ -85,9 +85,12 @@ _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!wr
 # A verb for moving things about, then a widget's name right after it, and then the end of the
 # words or a word that goes on about where it should be: "hide machine", "put watching on the
 # right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
+# "tips" is a plain word as well, so after on, to, in or at it must name where on the desk ("put tips on the left"),
+# and "keep tips in mind", "put tips in the README" and "bring tips to the meeting" are not the desk.
 _DESK_ASK = re.compile(
     r"\b(?:show|hide|put|keep|pin|move|bring|fold|unfold)\s+(?:(?:up|back|the|my)\s+)*"
-    r"(?:now|watching|needs you|machine|alive|tips|while you were away)\b(?!')"
+    r"(?:now|watching|needs you|machine|alive|while you were away"
+    r"|tips(?!\s+(?:on|to|in|into|at)\s+(?!(?:the\s+|my\s+)?(?:left|right|other|opposite|rails?|card)\b)))\b(?!')"
     r"(?=\s*$|\s*,"
     r"|\s+(?:on|to|in|into|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 

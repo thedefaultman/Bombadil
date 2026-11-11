@@ -399,7 +399,7 @@ can keep it, and its row on the Widgets card has all three parts. The way it was
 | `hide tips`, `put tips away`, while it is kept | "Tips is no longer kept. Say tips to open the app." | back to When needed: the card stays in the first week and goes after it |
 | `hide tips` again; the x on the card; Off on the Widgets card | "Put Tips away. Say tips to see them again." | Off |
 | `show tips`, `open tips`, `tips`, `help` | the Tips app's own words (the app's piece): it opens the app and does not bring the card back | nothing changes |
-| `put tips on the left`, any longer sentence or question | the agent's `desk` tool, when the words asked for the desk | |
+| `put tips on the left`, any longer sentence or question | the agent's `desk` tool, when the words asked for the desk. "tips" is a plain word, so after on, to, in or at the gate wants a place on the desk (the left, the right, the other rail, the card): "keep tips in mind" and "put tips in the README" are not the desk (`desk.py`'s `_DESK_ASK`) | |
 
 The card is brought back by "keep tips" or by the Widgets card (Keep, or When needed in the first week), and never
 by "show tips": that word means the app, so a person is not told the card is back when it is not. This is the

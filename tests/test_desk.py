@@ -665,6 +665,13 @@ def test_a_desk_file_from_before_tips_gets_the_card_last_in_the_right_rail(home)
     ("put tips on the left", True), ("hide tips", True), ("move tips to the left rail", True),
     ("bring the tips card back", True), ("show tips, please", True),
     ("give me tips for git", False), ("any tips for sleeping", False), ("tips", False),
+    # "tips" is a plain word too: after on, to, in or at it must name a place on the desk to be the desk's
+    ("put tips on the right", True), ("move tips to the other rail", True), ("put tips on my left", True),
+    ("keep tips in mind when you write this", False), ("put tips in the README", False),
+    ("show tips on writing better commit messages", False), ("bring tips to the meeting", False),
+    ("put tips in the jar", False), ("show tips at the end of the page", False),
+    # the other widgets are not words for anything else, so their gate is as it was
+    ("put machine in the corner", True),
 ])
 def test_the_agents_desk_tool_works_when_the_words_ask_for_tips_on_the_desk(words, asked):
     assert desk.asked_for_desk(words) is asked
