@@ -18,8 +18,8 @@ In the machine the mark is the pill's dot. It says what the machine is doing wit
 | `docs/brand/bombadil-avatar.png`, `-social-preview.png` | The repository's avatar and social preview, for upload in its settings. |
 | `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil{,-symbolic}.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg` | The installed icon. None uses an SVG `<mask>`, which Qt's renderer ignores; the b is drawn in the tile's colour, or cut out with even-odd fill in the symbolic one. |
 | `share/grub/bombadil/` | The theme for the password screen of an installed disk (its own README). |
-| `shell/Stone.qml` | The mark in the pill, drawn and animated. The geometry in it is the drawing in the files above. |
-| `tests/test_stone_qml.py`, `tests/test_brand.py` | Every face read back pixel by pixel; the files' colours and sizes. |
+| `share/qml/Bombadil/Stone.qml` | `Kit.Stone`: the mark, drawn and animated; the pill uses it at 24 px, the tip scenes at 16 and 24 (see [Stone in the kit](#stone-in-the-kit)). The geometry in it is the drawing in the files above. |
+| `tests/test_stone_qml.py`, `tests/test_brand.py` | Every face read back pixel by pixel, at 24 and 16 px, animated, still and in ink; the files' colours and sizes. |
 
 ## Colours
 
@@ -36,7 +36,7 @@ Only the shared tokens (`share/qml/Bombadil/Theme.qml`), so the pill, the desk a
 
 ## The faces
 
-`PillState.face` is the one word for what the machine is doing; `shell.qml` passes it to the stone,
+`PillState.face` is the one word for what the machine is doing; `shell.qml` passes it to `Kit.Stone`,
 and shows `listening` over `rest` while the screen holds the keyboard.
 
 | Face | The stone | Set when |
@@ -61,6 +61,20 @@ stone on its bottom arc (radius 15.3 about the top corner's centre) and slide th
 stays level. The b's centre line is `M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86`. Clearance
 between the b and the stone's edge is 0.95 px in every pose; `test_the_b_stays_inside_the_stone_in_every_pose`
 holds it there.
+
+## Stone in the kit
+
+The stone moved from `shell/` into the app kit (`share/qml/Bombadil/Stone.qml`, `Kit.Stone`) because a
+second place draws it: the tip scenes ([`../TIP-SCENES.md`](../TIP-SCENES.md)). It is an internal
+component: it is not in the apps skill's component list, and `bombadil-app check` refuses it in an app the
+agent writes. The pill uses it exactly as before; three properties are new, and each defaults to what the
+pill needs.
+
+| Property | Default | What it does |
+|---|---|---|
+| `animate` | `true` | `false` gates every animation and the settle timer: the stone is painted at once in its face's colour, and the pose (`turn`, `knock`, `lean`, `hopY`, `hopSx`, `hopSy`, `glowOpacity`) is plain values a host may write, so a scene can draw it a frame at a time. Nothing runs. |
+| `ink` | `""` | `""` or `false` keeps the state colours. `"fg"` (or `true`) draws the stone and its glow, square, outline and dashes in the primary ink, `"muted"` in the secondary one: no green, orange, amber or red. Every face still reads by shape and motion. For use outside the pill, where colour says who and a poster belongs to nobody. |
+| `small` | `false` | The 16 px drawing: the stone full-bleed (W 16, corners 2.4, sides 13.6, centroid on (8, 8.866)) and the b cut as the brand's own 1.5 px outline, the one in `bombadil-symbolic.svg`. The stone and the b are that icon's path, and `tests/test_stone_qml.py` compares them. The outlines of `resting` and `offline` are the stone inset by 0.75 (W 14.5), the 24 px ones being W 16.5. |
 
 ## What a real machine taught us
 
