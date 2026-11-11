@@ -318,7 +318,7 @@ def _picture(t: str, typed: str = "") -> Action | None:
 
 
 def _fixed_word(t: str) -> bool:
-    """Is this text one of Bombadil's own words: a model, the brain's, Mail, a panel? A project or a
+    """Is this text one of Bombadil's own words: a model, the brain's, Tips, Mail, a panel? A project or a
     session named like one never stands in for it ("open mail" opens Mail whatever ~/Projects holds);
     its own form, "claude mail", still names the project."""
     if any(_lookup(t, table) is not None for table in (MODEL_WORDS, BRAIN_COMMANDS, TIPS_COMMANDS)):

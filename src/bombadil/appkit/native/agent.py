@@ -245,18 +245,18 @@ class Agent(QObject):
 
     @Slot(str)
     @Slot(str, str)
-    def draft(self, text: str, tip: str = ""):
+    def draft(self, text: str, tip_id: str = ""):
         """Put these words in the pill, with the cursor at the end, and send nothing: the person's Enter
-        sends them, Esc drops them. Never replaces words the person typed and has not sent. `tip` is the
-        id of the Tips tip the words belong to, so agentd can tell when they were sent as they were. A
-        one-shot on a connection of its own, which closes when the line is written; nothing is queued, so
-        with agentd away nothing happens. Never in `check`."""
+        sends them, Esc drops them. Never replaces words the person typed and has not sent. `tip_id` is the
+        id of the Tips tip the words belong to (the wire's `id`; its `tip` is the boolean), so agentd can
+        tell when they were sent as they were. A one-shot on a connection of its own, which closes when the
+        line is written; nothing is queued, so with agentd away nothing happens. Never in `check`."""
         words = str(text) if text else ""
         if not words.strip() or self._ctx.check:
             return
         msg = {"type": "summon", "text": words, "tip": True}
-        if tip:
-            msg["id"] = str(tip)
+        if tip_id:
+            msg["id"] = str(tip_id)
         _OneShot(self, str(paths.socket_path()), (json.dumps(msg) + "\n").encode())
 
     def _wake(self):
