@@ -6,6 +6,7 @@ Set BOMBADIL_SCREENS=<dir> to save a picture of the frames (tip-<name>-card.png,
 
 import copy
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -44,9 +45,23 @@ Window {
 """
 
 
+# What QML says at run time. A binding that throws (a TypeError on a value that is null for a moment) is a message
+# on stderr, not an exception and not an engine warning, so it is collected here and every test that draws a scene
+# fails on one (the `make` fixture here and `drawn` in test_tips.py both check it).
+QML_MESSAGES = []
+
+
+def _collect(mode, ctx, msg):
+    if ".qml" in (ctx.file or "") or "TypeError" in msg or "ReferenceError" in msg:
+        QML_MESSAGES.append(msg)
+    else:
+        print(msg, file=sys.stderr)
+
+
 class Scene:
     def __init__(self, app, tmp_path, tip, density="card", reduced=False):
         self.app = app
+        QtCore.qInstallMessageHandler(_collect)       # again for each scene: another test file may have taken it
         qml = tmp_path / "scene.qml"
         # density None: the scene's own defaults (a card, with motion on)
         props = "" if density is None else f'density: "{density}"; reducedMotion: {"true" if reduced else "false"}'
@@ -156,6 +171,7 @@ def app():
 @pytest.fixture
 def make(app, tmp_path):
     made = []
+    del QML_MESSAGES[:]
 
     def build(tip, density="card", reduced=False):
         where = tmp_path / f"s{len(made)}"
@@ -168,6 +184,7 @@ def make(app, tmp_path):
     yield build
     for s in made:
         s.close()
+    assert QML_MESSAGES == [], QML_MESSAGES
 
 
 def near(a, b, tol=14):
@@ -231,6 +248,19 @@ def test_seek_clamps_and_stops_the_clock(make):
     assert s.prop("t") == s.duration and not s.prop("playing")
     s.seek(1234)
     assert s.prop("t") == 1234
+
+
+@pytest.mark.parametrize("density", ["card", "app"])
+@pytest.mark.parametrize("tip", fx.ALL, ids=lambda t: t["id"])
+def test_seeking_back_to_the_start_raises_no_qml_error(make, tip, density):
+    """What Replay does (seek(0), then play) after a scene has reached its end: the line and the queue are gone from
+    the frame for a moment before what draws them is hidden, and a binding that read their alpha threw a TypeError."""
+    s = make(tip, density)
+    for ms in (s.duration, 0, s.duration / 2, 0, s.duration):
+        s.seek(ms)
+    s.call("replay")
+    s.seek(0)
+    assert QML_MESSAGES == [], QML_MESSAGES
 
 
 def test_the_frame_at_a_chosen_t_is_the_same_every_time(make):
@@ -593,6 +623,29 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     assert len(s.items("card-now")) == 1 and len(s.items("card-watching")) == 0
 
 
+def test_the_stage_card_says_a_task_and_its_step_whole_and_the_poster_card_says_only_now(make):
+    """The stage's card is 208 wide and wraps its heading and its why to two lines. The poster's has no room for a
+    task and no names (it is a picture of the machine): it says "Now", not the task cut short. A tip's scene is never
+    drawn with a clipped task."""
+    long_task = "Install rust and set it up on this machine"
+    tip = dict(fx.ROUTE, beats=[dict(b, title=long_task) if b.get("card") == "now" else b for b in fx.ROUTE["beats"]])
+    s = make(tip, "app")
+    s.seek(s.duration)
+    card = s.item("card-now")
+    assert card is not None and card.width() == 208
+    said = [i for i in s.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
+            and i.property("text") == long_task]
+    assert len(said) == 1 and said[0].property("lineCount") == 2 and not said[0].property("truncated")
+    assert not [i for i in s.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
+                and i.property("truncated")]
+    p = make(tip, "card")
+    p.seek(p.duration)
+    words = [i for i in p.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()]
+    assert long_task not in [i.property("text") for i in words]
+    heading = [i for i in words if i.property("text") == "Now"]
+    assert len(heading) == 1 and heading[0].property("lineCount") == 1 and not heading[0].property("truncated")
+
+
 def scene_box(s, item):
     """An item's rectangle in the scene's own coordinates: (left, top, right, bottom)."""
     p = item.mapToItem(s.scene, QtCore.QPointF(0, 0))
@@ -641,7 +694,7 @@ def test_no_strip_of_any_fixture_overlaps_the_pill_at_any_frame_it_stands(make):
 def test_the_pill_is_whole_before_a_fold_and_after_it_is_taken_back(make):
     tip = copy.deepcopy(fx.FOLDS)
     tip["beats"].append({"fold": False, "tag": "template"})
-    for density, side in (("card", 24), ("app", 64)):
+    for density, side in (("card", 24), ("app", 48)):
         s = make(tip, density)
         s.seek(0 if density == "app" else 1)
         pill = scene_box(s, s.item("pill"))
@@ -786,6 +839,23 @@ def test_a_long_ask_in_the_pill_shows_its_end_not_its_start(make):
         assert box.property("clip") and row.width() > box.width()             # longer than the field ...
         assert row.x() < 0 and abs(row.x() + row.width() - box.width()) <= 2.5    # ... so its end is in view
         assert text.property("text") == words
+
+
+def test_an_ask_a_little_wider_than_the_stages_field_is_set_smaller_and_whole_and_never_below_12_px(make):
+    """The real pill is wider than the mini one: an ask that fits it can be wider than this field. It is set smaller
+    (down to 12 px) so its words stay whole; only what still does not fit is scrolled to its end."""
+    asks = {"short": "Make me a ticketing app", "wide": "Run the tests in ~/Projects/shop in the background",
+            "wider": "Draw how the modules in ~/Projects/shop depend on each other"}
+    sizes = {}
+    for name, words in asks.items():
+        tip = {"id": f"fixture-{name}-ask", "captions": ["a", "b", "c"], "beats": [{"type": words}, {"hold": 100}]}
+        s = make(tip, "app")
+        s.seek(s.duration)
+        text = s.item("pillText")
+        row, box = text.parentItem(), text.parentItem().parentItem()
+        sizes[name] = text.property("font").pixelSize()
+        assert text.property("text") == words and row.x() == 0 and row.width() <= box.width(), name   # whole, not scrolled
+    assert sizes["short"] == 16 and 12 <= sizes["wider"] <= sizes["wide"] < 16, sizes
 
 
 def test_a_hold_is_a_pause_and_adds_to_a_beat(make):

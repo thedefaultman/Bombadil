@@ -132,7 +132,9 @@ async def test_a_client_that_connects_is_told_the_card_once_and_the_others_nothi
         "marks": [], "why": "Start here · 1 of 6", "index": 1, "count": 6,
         "tip": d.tips.listed()[0].as_dict()}}
     assert first["card"]["tip"]["captions"] == ["You ask", "It builds", "You have it"]
-    assert first["card"]["tip"]["beats"] == []
+    beats = first["card"]["tip"]["beats"]
+    assert beats and beats == [dict(b) for b in d.tips.listed()[0].beats]     # the scene goes over the socket whole
+    assert json.loads(json.dumps(beats)) == beats
     r2, w2 = await _connect(d)
     assert (await _events_until(r2, _card))[-1] == first
     assert await _tips_heard(r) == []          # nothing changed for the first one, so it is not told again

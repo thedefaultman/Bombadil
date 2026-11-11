@@ -12,7 +12,7 @@
 #   tried_when  what agentd sees that makes the tip tried, with no model
 #   captions    three phase captions, at most three words each; "You ask", "It works", "You have it" unless the
 #               brief words a tip's own (only the first tip does). They are proposals for the voice thread.
-#   beats       the scene (a later piece; a row ships with beats = [] until then)
+#   beats       the scene, a list of beats: docs/TIP-SCENES.md has the vocabulary and the truth rule
 #
 # A tip whose gate is not met, or whose placeholder cannot be filled, is shown nowhere.
 
@@ -27,7 +27,16 @@ needs = ["model"]
 card = true
 tried_when = ["words", "tool:create_app"]
 captions = ["You ask", "It builds", "You have it"]
-beats = []
+beats = [
+  { key = "super" },
+  { type = "Make me a ticketing app" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Building Tickets, 140 lines", tag = "template" },
+  { window = "Tickets", tag = "model", rows = ["Printer jams on floor 3", "VPN drops every hour", "Order a new laptop"], phase = 2 },
+  { line = "Made Tickets. It is open now.", tag = "model", buttons = ["Undo", "Details"], stone = "done" },
+  { hold = 1000 },
+]
 
 [[tip]]
 id = "picture"
@@ -40,7 +49,15 @@ needs = []
 card = true
 tried_when = ["local:picture", "tool:show_card", "tool:system_map"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "super" },
+  { type = "How am I connected?" },
+  { key = "enter", phase = 1 },
+  { stone = "rest", line = "Drawing how you're connected", tag = "template" },
+  { picture = "How you're connected", tag = "template", boxes = ["This laptop", "Cable", "Router", "Internet"], phase = 2 },
+  { line = "Showing how you're connected.", tag = "template" },
+  { hold = 800 },
+]
 
 [[tip]]
 id = "esc"
@@ -53,7 +70,16 @@ needs = ["model"]
 card = true
 tried_when = ["local:stop"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "install docker and set it up" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "Installing docker", tag = "template", tone = "amber", command = "sudo pacman -S --noconfirm docker", counter = true },
+  { hold = 700 },
+  { key = "esc", phase = 2 },
+  { line = "Stopping", tag = "template" },
+  { stone = "stopped", line = "Stopped while installing docker.", tag = "template" },
+  { hold = 1200 },
+]
 
 [[tip]]
 id = "timer"
@@ -66,7 +92,17 @@ needs = ["model"]
 card = true
 tried_when = ["words", "job:start:timer"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "Set a 25 minute timer" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Watching Timer, 25 min", tag = "template" },
+  { card = "watching", tag = "template", rows = [["Timer, 25 min", "25:00 left"]] },
+  { stone = "done", line = "Timer set for 25 minutes.", tag = "model" },
+  { card = "watching", tag = "template", rows = [["Timer, 25 min", "24:59 left"]], hold = 200 },
+  { window = "Notes", tag = "model", doc = true, from = "left", phase = 2 },
+  { fold = true, strips = ["1 counting"], tag = "template" },
+]
 
 [[tip]]
 id = "machine"
@@ -79,7 +115,14 @@ needs = []
 card = true
 tried_when = ["local:widget:machine"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "super" },
+  { type = "How's the machine?" },
+  { key = "enter", phase = 1 },
+  { stone = "rest", line = "Here is the machine.", tag = "template" },
+  { card = "machine", tag = "template", why = "The machine is fine", rows = [["Memory", 42], ["Disk", 61], ["Processor", 12]], phase = 2 },
+  { hold = 3100 },
+]
 
 [[tip]]
 id = "bang"
@@ -92,7 +135,15 @@ needs = []
 card = true
 tried_when = ["bang"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "bang" },
+  { type = "!uname -r" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Running uname", tag = "template" },
+  { stone = "done", line = "6.17.2-arch1-1", tag = "output", phase = 2 },
+  { hold = 2200 },
+]
 
 [[tip]]
 id = "change-app"
@@ -105,7 +156,15 @@ needs = ["model", "app"]
 card = true
 tried_when = ["words"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { window = "Tickets", tag = "model", rows = ["Printer jams on floor 3", "VPN drops every hour", "Order a new laptop"] },
+  { type = "In Tickets, add a due date column" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "Changing Tickets, 180 lines", tag = "template", counter = true },
+  { window = "Tickets", tag = "model", reload = true, columns = [["Due", "Oct 3", "Oct 6", "Oct 9"]], phase = 2 },
+  { stone = "done", line = "Tickets has a Due column.", tag = "model", buttons = ["Undo", "Details"] },
+  { hold = 1200 },
+]
 
 [[tip]]
 id = "open-app"
@@ -118,7 +177,15 @@ needs = ["app"]
 card = true
 tried_when = ["local:app"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "super", stone = "listening" },
+  { type = "tic", ghost = "kets", hold = 700 },
+  { key = "tab", phase = 1 },
+  { key = "enter" },
+  { stone = "rest", line = "Opened Tickets.", tag = "template", phase = 2 },
+  { window = "Tickets", tag = "model", rows = ["Printer jams on floor 3", "VPN drops every hour"] },
+  { hold = 2300 },
+]
 
 [[tip]]
 id = "passwords"
@@ -131,7 +198,15 @@ needs = ["model"]
 card = true
 tried_when = ["words"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "Make me a password manager" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Building Passwords, 210 lines", tag = "template" },
+  { window = "Passwords", tag = "model", lock = "Locked after 5 minutes idle", phase = 2 },
+  { stone = "done", line = "Made Passwords. It locks itself.", tag = "model", buttons = ["Undo", "Details"] },
+  { hold = 1400 },
+]
 
 [[tip]]
 id = "whyhere"
@@ -144,7 +219,18 @@ needs = []
 card = true
 tried_when = ["local:whyhere"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { window = "lease-2026.pdf", tag = "model", doc = true },
+  { key = "super" },
+  { type = "where did this come from?" },
+  { key = "enter", phase = 1 },
+  { line = "Downloaded from rent-portal on Tue 14:02 while you read “Lease renewal 2026”.", tag = "template" },
+  { type = "brain" },
+  { key = "enter", phase = 2 },
+  { line = "Opened the Brain on lease-2026.pdf.", tag = "template" },
+  { window = "Brain", tag = "model", rows = [["Lease renewal 2026", "page"], ["lease-2026.pdf", "file"]] },
+  { hold = 700 },
+]
 
 [[tip]]
 id = "draw"
@@ -157,7 +243,15 @@ needs = ["model"]
 card = false
 tried_when = ["words", "tool:show_card"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "How does a VPN work? Draw it" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Drawing “How a VPN works”", tag = "template" },
+  { picture = "How a VPN works", tag = "model", boxes = ["Laptop", "Tunnel", "VPN server", "Website"], phase = 2 },
+  { stone = "done", line = "Your laptop sends traffic through an encrypted tunnel to the VPN server, which passes it on.", tag = "model" },
+  { hold = 700 },
+]
 
 [[tip]]
 id = "toolchain"
@@ -170,7 +264,14 @@ needs = ["model"]
 card = true
 tried_when = ["words"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "Install rust and set it up" },
+  { key = "enter", phase = 1 },
+  { stone = "working", card = "now", tag = "template", title = "Install rust and set it up", why = "Step 1 of 3 · Esc stops", rows = [["Installing rustup", "current"], ["Install stable Rust", "next"], ["Check cargo", "next"]], line = "Installing rustup", tone = "amber", command = "sudo pacman -S --noconfirm rustup", counter = 39 },
+  { card = "now", tag = "template", why = "Step 2 of 3 · 1 package so far · Esc stops", phase = 2, rows = [["Install rustup", "done"], ["Installing stable Rust", "current"], ["Check cargo", "next"]], line = "Installing stable Rust" },
+  { stone = "done", card = "now", tag = "model", why = "done in 41 s · Undo is above the pill", rows = [["Install rustup", "done"], ["Install stable Rust", "done"], ["Check cargo", "done"]], line = "Installed rust. cargo is ready.", buttons = ["Undo", "Details"] },
+  { hold = 1800 },
+]
 
 [[tip]]
 id = "tests"
@@ -183,7 +284,16 @@ needs = ["model", "project"]
 card = false
 tried_when = ["words", "job:start:job"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "Run the tests in ~/Projects/shop in the background" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Watching Shop tests", tag = "template" },
+  { card = "watching", tag = "template", rows = [["Shop tests", "40 s so far"]] },
+  { stone = "done", line = "Started the tests. They run in the background.", tag = "model", phase = 2 },
+  { hold = 700 },
+  { card = "watching", tag = "template", why = "finished", rows = [["Shop tests", "done in 3 min"]], line = "Shop tests is done in 3 min." },
+]
 
 [[tip]]
 id = "code-picture"
@@ -196,7 +306,14 @@ needs = ["model", "project"]
 card = false
 tried_when = ["words"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "Draw how the modules in ~/Projects/shop depend on each other" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "On it", tag = "template", counter = true },
+  { line = "Drawing “How the shop modules fit”", tag = "template" },
+  { picture = "How the shop modules fit", tag = "model", boxes = ["cli", "server", "store"], lit = 1, phase = 2 },
+  { stone = "done", line = "The cli calls the server, and only the server touches the store.", tag = "model" },
+]
 
 [[tip]]
 id = "disk"
@@ -209,7 +326,15 @@ needs = []
 card = true
 tried_when = ["local:picture:disks"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "super" },
+  { type = "Where did my disk go?" },
+  { key = "enter", phase = 1 },
+  { stone = "rest", line = "Drawing your disks", tag = "template" },
+  { picture = "Your disks", tag = "template", bars = [["/", 62], ["/home", 91, "amber"], ["/data", 12]], phase = 2 },
+  { line = "Showing your disks.", tag = "template" },
+  { hold = 1000 },
+]
 
 [[tip]]
 id = "pause"
@@ -222,7 +347,18 @@ needs = []
 card = true
 tried_when = ["local:rest"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "pause Claude" },
+  { key = "enter", phase = 1 },
+  { stone = "resting", line = "Claude is paused. Your apps and files still work.", tag = "template" },
+  { type = "tidy my downloads" },
+  { key = "enter" },
+  { queue = ["tidy my downloads"], wait = "paused", line = "Kept until you resume Claude. Nothing on this computer matches.", tag = "template" },
+  { type = "resume claude", phase = 2 },
+  { key = "enter" },
+  { queue = [], stone = "rest", line = "Claude is back. Running your waiting ask.", tag = "template" },
+  { hold = 600 },
+]
 
 [[tip]]
 id = "desk"
@@ -235,7 +371,19 @@ needs = ["desk-seen"]
 card = true
 tried_when = ["local:desk"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { stone = "working", card = "now", tag = "template", title = "Install rust and set it up", why = "Step 2 of 2 · Esc stops", rows = [["Install rustup", "done"], ["Installing stable Rust", "current"]] },
+  { key = "super" },
+  { type = "desk" },
+  { key = "enter", phase = 1 },
+  { fold = true, strips = ["step 2 of 2"], tag = "template" },
+  { line = "Folded the desk.", tag = "template" },
+  { key = "super" },
+  { type = "desk", phase = 2 },
+  { key = "enter" },
+  { fold = false, line = "Unfolded the desk.", tag = "template" },
+  { hold = 1000 },
+]
 
 [[tip]]
 id = "keep"
@@ -248,7 +396,16 @@ needs = ["keep"]
 card = true
 tried_when = ["local:widgets"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { key = "super" },
+  { type = "widgets" },
+  { key = "enter", phase = 1 },
+  { stone = "rest", window = "Widgets", tag = "template", rows = [["Machine", "When needed"], ["Now", "When needed"], ["Watching", "When needed"]] },
+  { window = "Widgets", tag = "template", reload = true, phase = 2, rows = [["Machine", "Keep"], ["Now", "When needed"], ["Watching", "When needed"]] },
+  { window = false },
+  { card = "machine", tag = "template", why = "The machine is fine", rows = [["Memory", 42], ["Disk", 61], ["Processor", 12]] },
+  { hold = 1800 },
+]
 
 [[tip]]
 id = "why"
@@ -261,7 +418,17 @@ needs = ["model"]
 card = true
 tried_when = ["local:why"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "install docker and set it up" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "Installing docker", tag = "template", tone = "amber", command = "sudo pacman -S --noconfirm docker", counter = true },
+  { hold = 600 },
+  { key = "super" },
+  { type = "why", hold = 500 },
+  { key = "enter", phase = 2 },
+  { line = "Docker comes first in this setup.", tag = "model" },
+  { hold = 1500 },
+]
 
 [[tip]]
 id = "undo"
@@ -274,4 +441,15 @@ needs = ["installed"]
 card = true
 tried_when = ["local:undo"]
 captions = ["You ask", "It works", "You have it"]
-beats = []
+beats = [
+  { type = "install htop" },
+  { key = "enter" },
+  { stone = "working", line = "Installing htop", tag = "template", tone = "amber", command = "sudo pacman -S --noconfirm htop", counter = true },
+  { stone = "done", line = "Installed htop.", tag = "template", buttons = ["Undo", "Details"] },
+  { hold = 900 },
+  { type = "undo", phase = 1 },
+  { key = "enter" },
+  { stone = "rest", line = "Undoing the last change", tag = "template" },
+  { line = "Undone. System files go back to before “install htop” when you restart. Your home folder and apps stay as they are.", tag = "template", phase = 2 },
+  { hold = 900 },
+]
