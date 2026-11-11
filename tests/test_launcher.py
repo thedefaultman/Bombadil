@@ -1172,7 +1172,8 @@ def test_sentences_that_only_contain_the_tips_words_go_to_the_agent(home, text):
 
 
 def test_the_tips_words_win_over_an_app_of_yours_but_not_over_a_core_command(home):
-    apps.create("Tips", "import QtQuick\nItem {}\n")
+    (home / "Apps" / "tips").mkdir(parents=True)             # an app of that name (it cannot be made: apps.RESERVED)
+    (home / "Apps" / "tips" / "main.qml").write_text("import QtQuick\nItem {}\n")
     apps.create("Help", "import QtQuick\nItem {}\n")
     for text in ("tips", "help", "open tips"):
         assert launcher.match(text).kind == "tips", text

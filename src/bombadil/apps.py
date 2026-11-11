@@ -50,8 +50,10 @@ def builtin_dir() -> Path:
 
 
 # Built-in apps nothing may replace: the Mail window carries the person's press on Send, so an app
-# of the same name (made by the agent, or dropped into ~/Apps) must never run in its place.
-RESERVED = frozenset({"mail"})
+# of the same name (made by the agent, or dropped into ~/Apps) must never run in its place. Tips is the one
+# place Bombadil teaches from, and the agent never writes tips: the word "tips" and the desk card open this
+# window, not an app that happens to be called Tips.
+RESERVED = frozenset({"mail", "tips"})
 
 
 def own_dir(name: str) -> Path:
