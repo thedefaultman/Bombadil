@@ -1154,6 +1154,99 @@ def test_send_still_answers_when_the_window_will_not_open(home, monkeypatch, cap
     assert "no screen" in capsys.readouterr().err
 
 
+# -- the Tips app's words (docs/TIPS.md) --
+
+TIPS_WORDS = ["tips", "Tips", "the tips", "open tips", "show tips", "open the tips", "Show the tips", "what can you do",
+              "What can you do?", "what can I ask", "What can I ask?", "what can i ask", "help", "Help.", "HELP", "help!"]
+
+
+@pytest.mark.parametrize("text", TIPS_WORDS)
+def test_the_tips_words_open_the_tips_app_locally(home, text):
+    a = launcher.match(text, _apps(home))
+    assert a is not None and (a.kind, a.verb, a.title) == ("tips", "open", "Tips")
+
+
+@pytest.mark.parametrize("text", [
+    "help me write a poem", "what can you do about my disk", "tips for gardening", "any tips?", "give me some tips",
+    "show tips for vim", "what can you do for me", "can you help", "help me", "helpful", "what can I ask about",
+    "open tips and tricks", "what can you", "tip", "!help", "!tips", "помощь", "tips ✨",
+])
+def test_sentences_that_only_contain_the_tips_words_go_to_the_agent(home, text):
+    assert launcher.match(text, _apps(home)) is None
+
+
+def test_the_tips_words_win_over_an_app_of_yours_but_not_over_a_core_command(home):
+    (home / "Apps" / "tips").mkdir(parents=True)             # an app of that name (it cannot be made: apps.RESERVED)
+    (home / "Apps" / "tips" / "main.qml").write_text("import QtQuick\nItem {}\n")
+    apps.create("Help", "import QtQuick\nItem {}\n")
+    for text in ("tips", "help", "open tips"):
+        assert launcher.match(text).kind == "tips", text
+    assert launcher.match("undo").kind == "undo" and launcher.match("stop").kind == "stop"
+    assert launcher.match("brain").kind == "brain"           # the neighbours' words are not moved
+    apps.create("Passwords", "import QtQuick\nItem {}\n")
+    assert launcher.match("passwords").kind == "app"
+
+
+def test_the_tips_words_win_over_the_desks_widget_words(home, monkeypatch):
+    """The desk gets a Tips widget in a later piece; "show tips" must still open the app, never the widget."""
+    monkeypatch.setitem(launcher.WIDGET_WORDS, "tips", ["tips", "tip"])
+    monkeypatch.setitem(launcher.WIDGET_TITLES, "tips", "Tips")
+    for text in ("tips", "show tips", "open tips", "show the tips", "open the tips"):
+        assert launcher.match(text, []).kind == "tips", text
+    widget = launcher.match("hide tips", [])                  # the widget's own words keep their verbs
+    assert (widget.kind, widget.verb, widget.target) == ("widget", "hide", "tips")
+    assert launcher.match("put tips away", []).kind == "widget"
+
+
+def test_tips_is_offered_for_tab_by_its_one_word(home):
+    e = {x["name"]: x for x in launcher.entries(_apps(home))}
+    assert e["tips"] == {"name": "tips", "title": "Tips", "kind": "command", "words": ["tips"]}
+    assert "help" not in e                                                    # the other words are not completions
+
+
+def test_the_line_says_what_the_tips_word_does():
+    a = launcher.Action("tips", title="Tips")
+    assert launcher.Launcher.doing(a) == "Opening Tips" and launcher.Launcher.failed(a) == "Could not open Tips"
+
+
+def test_tips_opens_the_tips_app_and_says_so(home, brain_lx):
+    lx, state = brain_lx
+    assert lx.run(launcher.match("what can you do")) == (True, "Opened Tips.")
+    assert state["opened"] == ["tips"]
+
+
+def test_an_open_tips_window_comes_forward_instead_of_starting_twice(home, brain_lx):
+    lx, state = brain_lx
+    state["running"] = True
+    assert lx.run(launcher.Action("tips")) == (True, "Opened Tips.")
+    assert state["opened"] == []
+    assert state["hypr_obj"].calls == [("dispatch", 'hl.dsp.focus({ window = "class:^(bombadil-app-tips)$" })')]
+
+
+def test_tips_slides_in_from_its_drawer_when_the_kit_has_drawers(home, brain_lx, monkeypatch):
+    lx, state = brain_lx
+    shown = []
+
+    class Placement:
+        @staticmethod
+        def show(name):
+            shown.append(name)
+    monkeypatch.setattr(launcher, "_placement", lambda: Placement)
+    assert lx.run(launcher.Action("tips"))[0] is True
+    assert shown == ["tips"] and state["opened"] == []
+    lx.open_tips()                                              # agentd opens it for a press on the card, quietly
+    assert shown == ["tips", "tips"]
+
+
+def test_tips_says_plainly_when_the_window_cannot_open(home, brain_lx, monkeypatch):
+    lx, _ = brain_lx
+
+    def broken(name):
+        raise OSError("no runner")
+    monkeypatch.setattr(launcher.apps, "run", broken)
+    assert lx.run(launcher.Action("tips", title="Tips")) == (False, "Could not open Tips: no runner")
+
+
 # -- messages and connections --
 
 @pytest.mark.parametrize("text, target, title", [

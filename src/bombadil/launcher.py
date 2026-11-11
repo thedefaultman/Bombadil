@@ -1,7 +1,7 @@
 """The pill is also the launcher: a small exact list of words that never wait for the model.
 
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
-or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
+or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "tips", "why is this here?")
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
 only with a verb ("show machine", "hide now", "keep machine on the desk"): a bare "now" or "away" is an
 ordinary word for the agent. "widgets" opens the card where each widget is kept, shown when needed or
@@ -72,6 +72,14 @@ BRAIN_COMMANDS = {
     "brain": ["brain", "the brain", "open the brain", "show the brain", "open brain", "show brain"],
     "whyhere": ["why is this here", "where did this come from", "where is this from", "who made this",
                 "what made this"],
+}
+# The Tips app (a kit app that ships with Bombadil, docs/TIPS.md): what to ask, shown in action. Checked after
+# the core commands and before app names and the desk's widget words, so "show tips" opens the app whatever an
+# app of yours is called and whatever widget Tips becomes on the desk. Only these whole sentences: "help me write
+# a poem" and "what can you do about my disk" are for the agent.
+TIPS_COMMANDS = {
+    "tips": ["tips", "the tips", "open tips", "show tips", "open the tips", "show the tips", "what can you do",
+             "what can I ask", "help"],
 }
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
@@ -164,6 +172,7 @@ VOLUME_STEP = "5%"
 
 DETAILS_CLASS = "bombadil-details"
 BRAIN_APP = "brain"
+TIPS_APP = "tips"
 
 
 @dataclass
@@ -337,10 +346,10 @@ def _picture(t: str, typed: str = "") -> Action | None:
 
 
 def _fixed_word(t: str) -> bool:
-    """Is this text one of Bombadil's own words: a model, the brain's, Mail, a panel? A project or a
+    """Is this text one of Bombadil's own words: a model, the brain's, Tips, Mail, a panel? A project or a
     session named like one never stands in for it ("open mail" opens Mail whatever ~/Projects holds);
     its own form, "claude mail", still names the project."""
-    if _lookup(t, MODEL_WORDS) is not None or _lookup(t, BRAIN_COMMANDS) is not None:
+    if any(_lookup(t, table) is not None for table in (MODEL_WORDS, BRAIN_COMMANDS, TIPS_COMMANDS)):
         return True
     for verbs in (OPEN_VERBS, CLOSE_VERBS, HIDE_VERBS, ()):
         word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
@@ -401,6 +410,9 @@ def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = 
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
+    tips = _lookup(t, TIPS_COMMANDS) if plain else None
+    if tips:
+        return Action(tips, title="Tips")
     connect = _connect_action(apostrophe) if apostrophe.isascii() else None
     if connect is not None:
         return connect
@@ -497,7 +509,7 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
     # here, and says when Watching shows), so the pill can hint and complete it as it does "show machine".
     out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
             for w, words in WIDGET_WORDS.items()]
-    for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
+    for table in (CORE_COMMANDS, BRAIN_COMMANDS, TIPS_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
@@ -567,7 +579,7 @@ class Launcher:
                 "provider": f"Switching to {action.title or action.target}",
                 "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
                 "mute": "Muting the sound", "unmute": "Unmuting the sound",
-                "brain": "Opening the Brain", "whyhere": "Looking it up",
+                "brain": "Opening the Brain", "whyhere": "Looking it up", "tips": "Opening Tips",
                 "desk": "Changing the desk", "widgets": "Opening the widgets",
                 "send": "Sending is yours"}.get(action.kind, "On it")
 
@@ -599,6 +611,7 @@ class Launcher:
                 "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
                 "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
+                "tips": "Could not open Tips",
                 "desk": "Could not change the desk", "widgets": "Could not open the widgets"}.get(
                     action.kind, "That did not work")
 
@@ -790,6 +803,24 @@ class Launcher:
             self._focus_class(f"bombadil-app-{BRAIN_APP}")
         else:
             apps.run(BRAIN_APP)
+
+    # -- the tips --
+
+    def _tips(self, _a: Action) -> tuple[bool, str]:
+        self.open_tips()
+        return True, "Opened Tips."
+
+    def open_tips(self) -> None:
+        """The Tips window, the way the Brain's is opened: the kit's drawer when there is one, else its own
+        window, brought forward when it is already open. Which tip it shows is the app's to read (the tip
+        agentd keeps in tips.json); the words only open it."""
+        placement = _placement()
+        if placement is not None:
+            placement.show(TIPS_APP)
+        elif _app_running(TIPS_APP):
+            self._focus_class(f"bombadil-app-{TIPS_APP}")
+        else:
+            apps.run(TIPS_APP)
 
     def _whyhere(self, a: Action) -> tuple[bool, str]:
         ref = this.resolve(self.hypr)

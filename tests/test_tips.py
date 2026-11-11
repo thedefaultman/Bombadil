@@ -1131,6 +1131,26 @@ def test_open_keeps_the_tip_for_the_app_and_calls_its_hook_and_opens_nothing(tmp
     assert asked == [("picture", True), ("", False), ("", False), ("", False), ("", False)]
 
 
+def test_the_app_reading_a_request_clears_it_so_the_same_press_is_a_request_again(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    assert t.opened("picture") is True and t.state.open_on == ""
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == ""
+    assert t.opened("picture") is False                      # nothing left to read
+    t.open("picture")
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == "picture"   # the file changed again
+
+
+def test_only_the_request_that_was_read_is_cleared(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    t.open("bang")                                           # a newer press while the app was reading the old one
+    assert t.opened("picture") is False and t.state.open_on == "bang"
+    for bad in ("", None, 7, ["bang"], "nope"):
+        assert t.opened(bad) is False and t.state.open_on == "bang"
+    assert t.opened("bang") is True and t.state.open_on == ""
+
+
 def test_a_hook_that_breaks_never_costs_the_request(tmp_path, capsys):
     def broken(*_):
         raise RuntimeError("no app")

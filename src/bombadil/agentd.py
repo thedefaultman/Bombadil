@@ -23,6 +23,7 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                    {"type": "tips", "op": "turn", "dir": 1|-1}  the Tips card's arrows and wheel
                    {"type": "tips", "op": "open", "id": "<tip>"|"", "play": bool}
                                                         open the Tips app on that tip (Tips, below)
+                   {"type": "tips", "op": "opened", "id": "<tip>"}  the Tips app has read that request
                    {"type": "tips", "op": "list"}       the Tips app's one-shot: answered with the list
                    {"type": "open", "kind": "path"|"unit"|"package"|"url"|"turn", "value": "..."}
                                                         open what a box in a picture names; answered
@@ -230,8 +231,9 @@ card is not what it was told. The card is the first tip not tried, in the person
 an arrow and 12 seconds (TIPS_TURN_AFTER) after a turn that tried a tip ends. A tip is tried, with no model, when
 a button's words are sent unedited, or when what agentd saw matches the tip's `tried_when`: the launcher action
 that ran, a tool the turn used, a job started, a "!" command (tips.py lists the forms). Showing a tip never counts.
-`open` only stores the tip for the app and calls Tips.on_open, which the Tips app's piece wires; no window opens
-here. BOMBADIL_TIPS=0 turns Tips off.
+`open` stores the tip in tips.json (open_on) and shows the Tips app (launcher.open_tips, quietly: Tips never
+speaks); the app reads open_on from the file, plays that tip, and says `opened` so the next press on the same tip
+is a request again. BOMBADIL_TIPS=0 turns Tips off.
 
 Resting. A provider that refuses an ask because the account is out (a plan window used up, a spending
 cap hit: providers.limit(), never a busy moment) puts the machine in the state "resting": the turn goes
@@ -501,7 +503,7 @@ class AgentD:
         # widget) whether it is kept. BOMBADIL_TIPS=0 turns Tips off (the tests do: no client is sent a card).
         self.tips = tips if tips is not None else (
             Tips(hidden=lambda: "tips" in self.desk.hidden,
-                 kept=lambda: "tips" in getattr(self.desk, "kept", ()))
+                 kept=lambda: "tips" in getattr(self.desk, "kept", ()), on_open=self._tips_open)
             if os.environ.get("BOMBADIL_TIPS") != "0" else None)
         self._tips_last: dict | None = None         # what the shell was last told
         self._tips_lock = asyncio.Lock()            # one look at the machine at a time
@@ -1261,6 +1263,8 @@ class AgentD:
         """The card's arrows and wheel, a press on its title or picture, and the Tips app's one-shot list."""
         op = str(msg.get("op", ""))
         if self.tips is None:
+            if op == "list":        # Tips is off: a window that asks is told there is nothing, not left waiting
+                await self._send(writer, {"type": "tips", "list": []})
             return
         if op == "turn":
             if self.tips.turn(msg.get("dir")):
@@ -1268,10 +1272,18 @@ class AgentD:
         elif op == "open":
             await self._tips_refresh()
             self.tips.open(msg.get("id"), msg.get("play") is True)
+        elif op == "opened":
+            self.tips.opened(msg.get("id"))
         elif op == "list":
             await self._tips_refresh()
             await self._send(writer, {"type": "tips", "list": self.tips.listing()})
             await self._tips_send()   # a tip that has now been in front of the person may be on the card
+
+    def _tips_open(self, tip_id: str, play: bool) -> None:
+        """A press on the Tips card (or its title, picture or "All tips") asked for the app: slide it in. The tip
+        is already in tips.json for the app to read; the window is the launcher's to open, in a thread (it asks
+        Hyprland), and says nothing: Tips never speaks."""
+        self._background(asyncio.to_thread(self.launcher.open_tips))
 
     def _tips_typed(self, text: str):
         """The person typed in the pill: a day of use, and a tip tried when these are the words its button put

@@ -96,6 +96,21 @@ def test_the_mail_window_cannot_be_replaced_by_an_app_of_the_same_name(home, tmp
     assert apps.app_dir("mail") == built / "mail"
 
 
+def test_the_tips_window_cannot_be_replaced_by_an_app_called_tips(home, tmp_path, monkeypatch):
+    """The word "tips" and the desk card open Bombadil's own window, and the agent never writes tips: an app of
+    that name (made, or dropped into ~/Apps) is never the one that runs, as for Mail. Its neighbours are free."""
+    assert (apps.builtin_dir() / "tips" / "main.qml").exists()        # the real one, not a stand-in
+    with pytest.raises(ValueError, match="Bombadil's own apps"):
+        apps.create("Tips", "import QtQuick\nRectangle {}\n")
+    assert not (home / "Apps" / "tips").exists()
+    (home / "Apps" / "tips").mkdir(parents=True)
+    (home / "Apps" / "tips" / "main.qml").write_text("import QtQuick\nRectangle {}\n")
+    assert apps.app_dir("tips") == apps.builtin_dir() / "tips"
+    assert apps.load("tips").path == apps.builtin_dir() / "tips"
+    for title in ("Tip Calculator", "Help", "Tips and Tricks"):
+        assert apps.create(title, "import QtQuick\nRectangle {}\n").path == home / "Apps" / apps.slug(title)
+
+
 @pytest.mark.parametrize("title", ["Slack", "Messages", "Unread", "Connections", "Connected"])
 def test_an_app_cannot_take_a_word_the_pill_answers_itself(home, title):
     with pytest.raises(ValueError, match="answers itself"):
