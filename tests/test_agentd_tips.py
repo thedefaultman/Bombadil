@@ -470,8 +470,8 @@ async def test_the_default_tips_hear_of_the_desk_putting_them_away_and_keeping_t
     assert d.tips is not None and d.tips.hidden() is False and d.tips.kept() is False
     assert d.desk.apply("hide", "tips") == (True, "Put Tips away. Say tips to see them again.")
     assert d.tips.hidden() is True              # the desk's Tips widget put away is what Tips reads
-    d.desk.kept = {"tips"}                      # and keeping it (the desk's second piece) is this
-    assert d.tips.kept() is True
+    assert d.desk.apply("keep", "tips") == (True, "Tips stays on the desk.")      # and keeping it is the desk's too
+    assert d.tips.kept() is True and d.tips.hidden() is False                  # (keeping brings it back from away)
     soon = []
     monkeypatch.setattr(d, "_tips_soon", lambda: soon.append(1))
     d._desk_dirty = True
@@ -483,18 +483,100 @@ async def test_the_default_tips_hear_of_the_desk_putting_them_away_and_keeping_t
 
 
 @pytest.mark.asyncio
-async def test_the_x_on_the_card_says_the_way_back_as_the_word_does_and_other_widgets_say_nothing(home):
+async def test_the_x_on_the_card_is_the_widgets_cards_off_and_says_the_way_back_on_the_line(home):
     d = machine()
     server, r, w, _ = await _serve(d)
-    await _say(w, {"type": "desk", "op": "hide", "widget": "tips"})
+    await _say(w, {"type": "desk", "op": "set", "widget": "tips", "state": "off"})
     done = (await _events_until(r, _done))[-1]
     assert done["text"] == "Put Tips away. Say tips to see them again." and done["ok"] is True
     assert done["action"] == "desk" and done["target"] == "tips"
-    await _say(w, {"type": "desk", "op": "hide", "widget": "tips"})            # already put away: nothing to say
-    await _say(w, {"type": "desk", "op": "hide", "widget": "machine"})         # a gesture is its own answer
-    assert [m for m in await _heard(r, 0.5) if _done(m)] == []
+    assert d.desk.hidden == {"alive", "tips"} and d.desk.kept == set()
+    # the same sentence whoever puts it away, so the Widgets card's Off says it too
+    assert d.desk.apply("show", "tips") == (True, "Put Tips on the desk.")
+    await _say(w, {"type": "desk", "op": "set", "widget": "tips", "state": "off"})
+    assert (await _events_until(r, _done))[-1]["text"] == "Put Tips away. Say tips to see them again."
     w.close()
     server.cancel()
+
+
+def _week_over(day=date(2026, 11, 9)):
+    """tips.json of a person whose first week is over: seven days of use, the Start-here tips tried."""
+    rows = read_table()
+    state = {"first_ready": "2026-11-01", "days": [f"2026-11-{n:02d}" for n in range(1, 8)],
+             "tried": [t.id for t in rows if t.section == "start"], "known": [t.id for t in rows], "open_on": ""}
+    paths.tips_file().parent.mkdir(parents=True, exist_ok=True)
+    paths.tips_file().write_text(json.dumps(state))
+
+
+async def _desk_said(w, r, **msg):
+    """A desk op as the shell sends it: the sentence on the line, and the card messages agentd then sends (the
+    desk's change is announced a moment later, so they are read for a while, in whatever order they come)."""
+    await _say(w, {"type": "desk", **msg})
+    heard = await _heard(r, 0.8)
+    said = [m["text"] for m in heard if _done(m)]
+    assert said, heard
+    return said[-1], [m for m in heard if _card(m)]
+
+
+@pytest.mark.asyncio
+async def test_a_kept_tips_says_present_after_the_first_week_and_keeping_follows_the_desk(home, monkeypatch):
+    """agentd's `tips` message and the desk agree: Tips kept is present whatever the first week says; no longer kept
+    it is present only in the first week; put away it is never present."""
+    monkeypatch.setenv("BOMBADIL_TIPS", "1")
+    _week_over()
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    await _ready(d)
+    r, w = await _connect(d)
+    assert (await _events_until(r, _card))[-1] == {"type": "tips", "present": False, "card": None}
+    said, cards = await _desk_said(w, r, op="set", widget="tips", state="keep")
+    assert said == "Tips stays on the desk." and len(cards) == 1
+    # a kept Tips shows the first tip not tried, and every Start-here tip is tried: the first of Work's
+    kept = cards[0]
+    assert kept["present"] is True and kept["card"]["id"] not in d.tips.state.tried
+    assert kept["card"]["why"].startswith("Work · 1 of ")
+    # it turns through every tip whose button fits the card, Start here among them (the first week, only through
+    # Start here), and round
+    await _say(w, {"type": "tips", "op": "turn", "dir": -1})
+    last = (await _events_until(r, _card))[-1]
+    assert last["present"] is True and last["card"]["why"].startswith("Start here · 6 of 6")
+    # no longer kept, in the words' own sentence: the week is over, so the card goes
+    said, cards = await _desk_said(w, r, op="set", widget="tips", state="needed")
+    assert said == "Tips is no longer kept. Say tips to open the app."
+    assert cards == [{"type": "tips", "present": False, "card": None}]
+    # keep, then the x: Off at once, and the card goes with it
+    assert (await _desk_said(w, r, op="keep", widget="tips"))[1][-1]["present"] is True
+    said, cards = await _desk_said(w, r, op="set", widget="tips", state="off")
+    assert said == "Put Tips away. Say tips to see them again."
+    assert cards == [{"type": "tips", "present": False, "card": None}]
+    # and "keep" brings it back from away, for good
+    said, cards = await _desk_said(w, r, op="keep", widget="tips")
+    assert said == "Tips stays on the desk." and cards[-1]["present"] is True
+    assert d.desk.hidden == {"alive"} and d.desk.kept == {"tips"}
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_tips_no_longer_kept_in_the_first_week_stays_and_a_kept_tips_survives_a_restart(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TIPS", "1")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    await _ready(d)
+    r, w = await _connect(d)
+    first = (await _events_until(r, _card))[-1]
+    assert first["present"] is True                              # the first week, nothing kept
+    await _desk_said(w, r, op="keep", widget="tips")
+    assert d.desk.kept == {"tips"} and "tips" in paths.desk_file().read_text()
+    said, cards = await _desk_said(w, r, op="set", widget="tips", state="needed")
+    assert said == "Tips is no longer kept. Say tips to open the app."
+    assert d.tips.message()["present"] is True                   # still the first week: unkept is not away
+    assert all(m["present"] is True for m in cards)
+    await _desk_said(w, r, op="keep", widget="tips")
+    w.close()
+    server.cancel()
+    again = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    assert again.desk.kept == {"tips"} and again.tips.kept() is True      # desk.toml is what a restart reads
 
 
 # -- a day of use --

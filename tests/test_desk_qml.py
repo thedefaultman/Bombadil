@@ -1223,6 +1223,16 @@ def test_needs_you_is_never_asked_to_hide(desk):
     assert desk.sent == []
 
 
+def test_a_cards_own_x_puts_the_widget_away_at_once_which_the_word_hide_does_not_when_it_is_kept(desk):
+    """A card's x is the leap, as the Widgets card's Off: Off at once, kept or not. The desk's `hide` is the word's
+    step (agentd: a kept widget is first no longer kept), so the x does not use it."""
+    assert desk.call("putAway", "tips") is True
+    assert desk.sent == [{"type": "desk", "op": "set", "widget": "tips", "state": "off"}]
+    assert desk.prop("hidden") == []                      # nothing is applied here: agentd's desk message does it
+    assert desk.call("putAway", "needs") is False         # the one place two sessions' asks are answered together
+    assert len(desk.sent) == 1
+
+
 def test_a_turn_sends_agentd_nothing(desk):
     desk.set("connected", True)
     sent = len(desk.sent)

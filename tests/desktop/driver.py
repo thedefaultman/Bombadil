@@ -1758,6 +1758,7 @@ WIDGET_ROWS = [   # the Widgets card's rows in the order it draws them (Alive ha
     {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
     {"id": "away", "title": "Away", "question": "What happened while I was gone?", "can": ["needed", "off"]},
     {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?", "can": ["keep", "needed", "off"]},
+    {"id": "tips", "title": "Tips", "question": "What can I ask it to do?", "can": ["keep", "needed", "off"]},
 ]
 # A Machine at rest with no line crossed, as vitals.py says it: memory, the disk and the processor are meters (figures
 # rounded), only the network is plain, every tone is "you", and the chip names the reading nearest its line, no dot.
@@ -1825,7 +1826,8 @@ check("the word widgets makes agentd ask for the Widgets card, and the bar opens
       asked is not None and st.get("widgetsOpen") is True and api_requests() == before and st.get("kept") == [],
       (asked, st.get("widgetsOpen"), st.get("kept"), api_requests() - before))
 rows = [{k: r.get(k) for k in ("id", "title", "question", "can")} for r in st.get("widgets") or []]
-check("it lists Now, Watching, Needs you, Away and Machine, each with what it can be (Needs you: only when needed)",
+check("it lists Now, Watching, Needs you, Away, Machine and Tips, each with what it can be (Needs you: only when "
+      "needed)",
       rows == WIDGET_ROWS, rows)
 check("Quickshell draws the card above the pill", up - bare > 150, f"{bare} -> {up}")
 
@@ -2650,6 +2652,27 @@ check("the x puts Tips away: the card goes and agentd stops saying it",
       gone and st["faces"]["tips"] == "hidden" and "tips" in st["hidden"], (st.get("faces"), st.get("hidden")))
 check("and the line says the way back, as the words \"hide tips\" do",
       said and said.get("text") == "Put Tips away. Say tips to see them again.", said)
+
+# "keep tips" is a launcher word: it brings the card back for good (a kept Tips is present whatever the first week
+# says), the sentence says so, desk.toml keeps it, and the card comes up once the line has faded.
+summon()
+typ("keep tips")
+n = mark()
+before = api_requests()
+key("Return")
+said = wait(ev("local", phase="done"), 10, n)
+back = wait(lambda m: m.get("type") == "tips" and m.get("present") is True, 10, n)
+check('the words "keep tips" answer that Tips stays on the desk, and no model is called',
+      said and said.get("ok") and said.get("text") == "Tips stays on the desk." and api_requests() == before,
+      said and (said.get("ok"), said.get("text")))
+text, data = desk_toml()
+check("desk.toml keeps Tips, and Tips is no longer put away", "tips" in data.get("kept", [])
+      and "tips" not in data.get("hidden", []), (data.get("kept"), data.get("hidden")))
+st = desk_until(lambda s: (s.get("faces") or {}).get("tips") == "full", 30)
+shot("48-tips-kept")
+check("agentd says the card again and the card is back in full on the right rail, still 300 by 290",
+      back and (st.get("faces") or {}).get("tips") == "full" and "tips" in (st.get("kept") or [])
+      and ((st.get("slots") or {}).get("tips") or {}).get("h") == 290, (back, st.get("faces"), st.get("kept")))
 check("the Tips card raised no QML error",
       not [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text()).splitlines()
            if re.search(r"TipsCard|Tips[A-Z]\w*\.qml", ln) and re.search(r"\.qml\[|\.qml:\d+|Unable to assign|TypeError", ln)],

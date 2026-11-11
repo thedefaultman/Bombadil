@@ -137,7 +137,7 @@ Item {
                     onTurnRequested: dir => rail.desk.tipsTurn(dir)
                     onOpenRequested: (id, play) => rail.desk.tipsOpen(id, play)
                     onTryRequested: id => rail.desk.tipsTry(id)
-                    onHideRequested: rail.desk.hide("tips")
+                    onHideRequested: rail.desk.putAway("tips")
                 }
             }
             Component {

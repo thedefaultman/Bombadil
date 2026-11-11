@@ -23,7 +23,8 @@ DeskCard {
     namePrefix: "tips"
     property var model: ({})
     // The arrows and the wheel (1 on, -1 back); the title, the picture and "All tips ›" (the app on that
-    // tip, playing from the picture); the button (the tip's words, to the pill); the x.
+    // tip, playing from the picture); the button (the tip's words, to the pill); the x (Off at once, kept or not:
+    // DeskState.putAway).
     signal turnRequested(int dir)
     signal openRequested(string id, bool play)
     signal tryRequested(string id)

@@ -17,6 +17,7 @@ from qml_running import running_things
 from qml_theme import THEME
 from test_desk_qml import Desk, plain
 
+from bombadil import desk as desk_py
 from bombadil import tips as tips_mod
 from bombadil.tips import Facts, Tips
 
@@ -52,7 +53,9 @@ class Card:
     def __init__(self, app, tmp_path, width, height, facts=SAMPLE, kept=False, up=True):
         self.desk = Desk(app, tmp_path, width, height)
         self.tmp = tmp_path
-        self.tips = Tips(path=tmp_path / "tips.json", clock=lambda: date(2026, 11, 9), kept=lambda: kept)
+        self.kept = kept          # what the desk says of Tips (desk.py): a test moves it with keep()
+        self.desk_py = desk_py.Desk(tmp_path / "desk.toml")
+        self.tips = Tips(path=tmp_path / "tips.json", clock=lambda: date(2026, 11, 9), kept=lambda: self.kept)
         self.tips.facts = facts
         self.tips.ready()
         if up:
@@ -69,6 +72,24 @@ class Card:
         """What agentd does when the card asks to turn: the next card, as the message it sends."""
         self.tips.turn(direction)
         self.show()
+
+    def end_the_first_week(self):
+        """The person has used the pill on seven days and tried the six Start-here tips: Tips has nothing more to
+        say to a new person, so agentd says no card, unless they keep it."""
+        self.tips.state.days = [f"2026-11-{day:02d}" for day in range(1, 8)]
+        self.tips.state.tried = [t.id for t in self.tips.listed() if t.section == "start"]
+
+    def keep(self, *ops):
+        """The person's words or presses at the desk, as agentd's Desk applies them (desk.py), and what follows:
+        the desk's message, and the card as Tips now says it (a kept Tips reads `desk.kept`)."""
+        for op in ops:
+            ok, said = self.desk_py.apply(*op)
+            assert ok, said
+        snap = self.desk_py.snapshot()
+        self.kept = "tips" in snap["kept"]
+        self.desk.send(**snap)
+        self.show()
+        return snap
 
     # -- looking --
 
@@ -295,8 +316,9 @@ def test_the_controls_send_the_turn_and_the_hide_and_nothing_else(make):
     assert c.sent == [{"type": "tips", "op": "turn", "dir": -1}, {"type": "tips", "op": "turn", "dir": 1}]
     c.forget()
     c.click(c.desk.item("tipsHide"))
-    # the same door as the word "hide tips": agentd's Desk.apply answers "Put Tips away. Say tips to see them again."
-    assert c.sent == [{"type": "desk", "op": "hide", "widget": "tips"}]
+    # Off, at once, as the Widgets card's Off is: agentd's Desk.apply answers "Put Tips away. Say tips to see them
+    # again." on the line, and a kept Tips is not first only "no longer kept" (which "hide tips" says)
+    assert c.sent == [{"type": "desk", "op": "set", "widget": "tips", "state": "off"}]
     assert c.desk.pill.property("mode") == "idle"
     # the card changes only when agentd says so: nothing was turned or taken away by the shell itself
     assert c.desk.faces["tips"] == "full" and c.named("tipsLine").property("text") == "Say what you need. It gets made."
@@ -770,3 +792,123 @@ def test_the_source_keeps_the_rules_the_guard_cannot_see():
     assert "Repeater" in source and source.count("Repeater") == 1                     # the marks, nothing like dots
     assert "pageIndicator" not in source.lower() and "PageIndicator" not in source
     assert "interval" not in source
+
+
+# -- a Tips the person keeps (desk.py: Tips is a calm widget; docs/TIPS.md "A kept Tips card") --
+# Agentd decides what Tips has to say, from the first week and the desk's `kept`; the shell draws what it says
+# with the rules it always has: setup over, calm at its first appearance, and nothing over the persona card.
+
+def test_a_kept_card_after_the_first_week_is_the_same_still_card_and_leaves_when_it_is_no_longer_kept(make):
+    c = make()
+    c.end_the_first_week()
+    c.show()                                                  # agentd: nothing more to say to a new person
+    assert c.desk.faces["tips"] == "hidden" and c.desk.prop("tipsModel") is None
+    snap = c.keep(("keep", "tips"))                           # the words "keep tips", or Keep on the Widgets card
+    assert snap["kept"] == ["tips"] and c.desk.prop("kept") == ["tips"]
+    assert c.desk.faces["tips"] == "full" and c.desk.slots["tips"]["h"] == 290           # the same card, as ever
+    assert c.text("tipsLine") == "Say what you need. It gets made."          # the first tip, as it was at the start
+    assert c.text("tipsWhy") == "Start here · 1 of 6"
+    c.desk.pump(0.5)
+    assert running_things(c.desk.win) == []                    # and as still: nothing runs at rest
+    c.keep(("set", "tips", None, None, "needed"))             # "hide tips" says no longer kept, and so does Keep -> When needed
+    assert c.desk.prop("kept") == [] and c.desk.faces["tips"] == "hidden"
+    assert c.desk.warnings == []
+
+
+def test_a_kept_card_turns_through_the_other_tips_and_draws_each_without_overflow(make):
+    c = make(kept=True)
+    c.end_the_first_week()
+    c.show()
+    seen = []
+    for _ in range(40):
+        seen.append((c.text("tipsWhy"), c.text("tipsLine")))
+        c.turn(1)
+        c.desk.pump(0.3)
+        if c.text("tipsLine") == seen[0][1]:
+            break
+    sections = {why.split(" · ")[0] for why, _ in seen}
+    assert {"Start here", "Work", "This machine"} <= sections    # Start here, then the others whose button fits
+    assert len({line for _, line in seen}) == len(seen) >= 12    # each once, round the card
+    assert c.desk.warnings == []
+
+
+def test_a_kept_card_never_first_appears_during_a_turn_or_under_a_line_and_stays_once_it_is_up(make):
+    c = make(up=False, kept=True)
+    c.end_the_first_week()
+    c.desk.send(type="status", busy=False, provider="claude", queue=[])
+    setup(c, "signing_in", "Waiting for the browser.")
+    c.desk.turn(1, prompt="make a ticketing app")             # typed during sign-in: the turn runs, the card waits
+    c.show()
+    setup(c, "ready", "Signed in to Claude. Ask me for anything.")
+    assert c.desk.prop("tipsModel") is not None and c.desk.faces["tips"] == "hidden"
+    c.desk.end(1)
+    assert c.desk.pill.property("mode") == "closing" and c.desk.faces["tips"] == "hidden"
+    c.desk.pill_call("dismiss")                               # the closing line fades
+    assert c.desk.pill.property("mode") == "idle" and c.desk.faces["tips"] == "full"
+    c.desk.pump(0.4)
+    c.desk.turn(2, prompt="install ffmpeg", steps=[("Find it", True, "running"), ("Install it", False, "pending")])
+    assert c.desk.faces["tips"] == "full"                     # up: a turn does not take it away
+    c.desk.end(2)
+    c.desk.pill_call("dismiss")
+    assert c.desk.faces["tips"] == "full"
+
+
+def test_a_kept_card_waits_for_the_answer_to_keep_tips_to_fade(make):
+    c = make()
+    c.end_the_first_week()
+    c.show()
+    # the words are a launcher answer: the line "Tips stays on the desk." is on the pill until it fades
+    c.desk.send(kind="local", turn=None, action="desk", target="tips", phase="done", ok=True,
+                text="Tips stays on the desk.")
+    assert c.desk.pill.property("mode") == "local"
+    c.keep(("keep", "tips"))
+    assert c.desk.faces["tips"] == "hidden"
+    c.desk.pill_call("dismiss")
+    assert c.desk.pill.property("mode") == "idle" and c.desk.faces["tips"] == "full"
+
+
+def test_a_persona_card_holds_back_the_card_kept_or_not_and_the_card_comes_when_it_is_answered(make):
+    for kept in (False, True):
+        c = make(up=False, kept=kept)
+        if kept:
+            c.end_the_first_week()
+        c.desk.send(type="status", busy=False, provider="claude", queue=[])
+        c.desk.send(type="persona_ask", line="What should I call you?", name="", voice="", current=False, voices=[])
+        setup(c, "ready")
+        c.show()
+        assert c.desk.prop("tipsModel") is not None and c.desk.faces["tips"] == "hidden", kept
+        c.desk.pill_call("personaAnswer", "Ada", "")
+        assert c.desk.faces["tips"] == "full", kept
+
+
+def test_the_x_on_a_kept_card_puts_it_away_at_once_and_keep_brings_it_back(make):
+    c = make(kept=True)
+    c.keep(("keep", "tips"))
+    c.end_the_first_week()
+    c.hover()
+    c.forget()
+    c.click(c.desk.item("tipsHide"))
+    assert c.sent == [{"type": "desk", "op": "set", "widget": "tips", "state": "off"}]
+    # what agentd's desk does with it: one press, the leap (the word "hide tips" would only stop keeping it)
+    ok, said = c.desk_py.apply("set", "tips", state="off")
+    assert (ok, said) == (True, "Put Tips away. Say tips to see them again.")
+    snap = c.keep()
+    assert snap["hidden"] == ["alive", "tips"] and snap["kept"] == [] and c.desk.faces["tips"] == "hidden"
+    snap = c.keep(("keep", "tips"))                           # "keep tips" brings it back, for good
+    assert snap["hidden"] == ["alive"] and snap["kept"] == ["tips"] and c.desk.faces["tips"] == "full"
+
+
+def test_a_kept_card_folds_to_its_strip_under_a_window_and_the_strip_opens_the_app(make):
+    c = make()
+    c.end_the_first_week()
+    c.keep(("keep", "tips"))
+    slot = c.desk.slots["tips"]
+    c.desk.cover((slot["x"] + 20, slot["y"] + 20, 100, 100))
+    assert c.desk.faces["tips"] == "strip"
+    c.desk.pump(0.6)
+    c.forget()
+    c.click(c.desk.item("deskStrip-tips"))
+    assert c.sent == [{"type": "tips", "op": "open", "id": "", "play": False}]
+    c.desk.cover()
+    c.desk.pump(0.6)
+    assert c.desk.faces["tips"] == "full" and c.desk.warnings == []

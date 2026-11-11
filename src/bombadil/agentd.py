@@ -226,8 +226,9 @@ Tips (tips.py, docs/TIPS.md) are rows in share/tips/tips.toml that say what a ne
 which this machine can back (the AI chosen and not signed out, the disk, the apps and projects, the desk), keeps
 ~/.local/state/bombadil/tips.json (it is the only writer: the first-ready date, the days the person typed in the
 pill, the tips tried, the tips known, the tip the app opens on) and sends the shell one `tips` message when the
-card is not what it was told. The card is the first tip not tried, in the person's first week of use; it turns on
-an arrow and 12 seconds (TIPS_TURN_AFTER) after a turn that tried a tip ends. A tip is tried, with no model, when
+card is not what it was told. The card is the first tip not tried, in the person's first week of use or while the
+person keeps Tips on the desk (`desk.kept`: then it also turns through the other tips whose button fits the card);
+it turns on an arrow and 12 seconds (TIPS_TURN_AFTER) after a turn that tried a tip ends. A tip is tried, with no model, when
 a button's words are sent unedited, or when what agentd saw matches the tip's `tried_when`: the launcher action
 that ran, a tool the turn used, a job started, a "!" command (tips.py lists the forms). Showing a tip never counts.
 `open` only stores the tip for the app and calls Tips.on_open, which the Tips app's piece wires; no window opens
@@ -357,7 +358,7 @@ CONNECT_PRESSED = {"slack_reply": "the person pressed Send on your reply",
 CONNECT_NOTES = {"unread": "showed the unread messages", "connected": "showed what is connected"}
 # What a click on a Machine row opens (vitals.py names the rows that open anything).
 VITALS_OPENS = {"disk": "disks"}
-# The desk's ops that the line above the pill answers for: the Widgets card's presses.
+# The desk's ops that the line above the pill answers for: the Widgets card's presses (and the Tips card's x).
 DESK_SAID = ("set", "keep", "reset")
 # After a turn that tried a tip (or a word that did) the Tips card turns to the next tip this long after it
 # ends.
@@ -497,11 +498,12 @@ class AgentD:
         self.desk.on_ask = self._desk_asked
         self.desk.on_widgets = self._widgets_asked
         # Tips (docs/TIPS.md): what a new person can ask, and what this one has been taught. agentd is the
-        # only writer of tips.json. The desk says whether Tips is put away, and (once the desk can keep a
-        # widget) whether it is kept. BOMBADIL_TIPS=0 turns Tips off (the tests do: no client is sent a card).
+        # only writer of tips.json. The desk says whether Tips is put away and whether it is kept (a calm widget:
+        # desk.py), and a change of either makes Tips look again (_desk_broadcast). BOMBADIL_TIPS=0 turns Tips off
+        # (the tests do: no client is sent a card).
         self.tips = tips if tips is not None else (
             Tips(hidden=lambda: "tips" in self.desk.hidden,
-                 kept=lambda: "tips" in getattr(self.desk, "kept", ()))
+                 kept=lambda: "tips" in self.desk.kept)
             if os.environ.get("BOMBADIL_TIPS") != "0" else None)
         self._tips_last: dict | None = None         # what the shell was last told
         self._tips_lock = asyncio.Lock()            # one look at the machine at a time
@@ -1054,6 +1056,8 @@ class AgentD:
         if op in DESK_SAID:
             # A press on the Widgets card has no gesture to show what it did (a card dragged to its place is
             # its own answer), so the line says it, with a refusal (Needs you cannot be put away) as an error.
+            # So does the x on the Tips card, which sends a `set` to "off": the card leaves with no strip to bring
+            # it back, so the line says the way ("Put Tips away. Say tips to see them again.").
             await self.event("local", turn=None, action="desk", target=str(msg.get("widget") or ""),
                              phase="done", ok=ok, text=text)
         if ok and changed:
@@ -1061,10 +1065,6 @@ class AgentD:
             self.notes = [*self.notes, f"at the desk: {text}"][-10:]
             self._log_line({"t": time.time(), "kind": "local", "prompt": "at the desk", "action": "desk",
                             "target": str(msg.get("widget") or ""), "result": text, "ok": True})
-            if op == "hide" and msg.get("widget") == "tips":
-                # Tips leaves with no strip to bring it back, so its x says the way, as "hide tips" does.
-                await self.event("local", turn=None, action="desk", target="tips", verb="hide", phase="done",
-                                 ok=True, text=text)
 
     async def _desk_tool(self, msg: dict) -> dict:
         """The os-mcp `desk` tool. It works in the turn that is running, and only when that

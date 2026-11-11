@@ -153,17 +153,19 @@ QtObject {
     readonly property bool machinePresent: _rows(machineModel) > 0 && !isHidden("machine")
     readonly property bool alivePresent: _rows(aliveModel) > 0 && !isHidden("alive")
 
-    // Tips is for a new person's first week, and it never takes a calm screen by surprise. It is there when
-    // agentd says it has something to say, the person has not put it away, and setup is over (ready, or the AI
-    // resting: the desk does not react to the rest). It first appears only when the shell is calm: no turn
-    // runs, and the pill's line (the ready, welcome or hello line, or the closing line of the turn that ran
-    // while the person typed through sign-in) has faded. Once it is up it stays through turns and lines, and
-    // goes the moment agentd, the person or setup says so. docs/TIPS.md has the table.
-    property bool cardsUp: false       // a card of the first minutes is up (the persona card, the recovery key)
+    // Tips is for a new person's first week, or for a person who keeps it, and either way it never takes a calm
+    // screen by surprise. It is there when agentd says it has something to say (agentd decides which of the two it
+    // is, from the first week and the desk's `kept`: the shell does not look at either), the person has not put it
+    // away, and setup is over (ready, or the AI resting: the desk does not react to the rest). It first appears
+    // only when the shell is calm: no turn runs, no persona card is up, and the pill's line (the ready, welcome or
+    // hello line, the answer to "keep tips", or the closing line of the turn that ran while the person typed
+    // through sign-in) has faded. Once it is up it stays through turns and lines, and goes the moment agentd, the
+    // person or setup says so. docs/TIPS.md has the table.
+    property bool cardsUp: false       // another card of the first minutes is up (the recovery key)
     readonly property bool tipsWanted: tipsModel !== null && !isHidden("tips") && pill !== null
                                        && (pill.setupState === "ready" || pill.setupState === "resting")
     readonly property bool tipsCalm: pill !== null && pill.mode === "idle" && !pill.stoppable
-                                     && _phase === "idle" && !cardsUp
+                                     && _phase === "idle" && !cardsUp && pill.personaAsk === null
     property bool _tipsUp: false
     readonly property bool tipsPresent: tipsWanted && _tipsUp
     function _tipsSettle() {
@@ -1025,6 +1027,15 @@ QtObject {
     }
 
     function show(widget) { outgoing({ type: "desk", op: "show", widget: widget }) }
+
+    // A card's own x: put the widget away at once, kept or not. The word "hide" on a kept widget only stops keeping
+    // it (a step, so one word cannot silence a warning by accident); a press on an x is the leap, the same as the
+    // Widgets card's Off. agentd answers with the new desk and the sentence on the line.
+    function putAway(widget) {
+        if (widget === "needs") return false
+        outgoing({ type: "desk", op: "set", widget: widget, state: "off" })
+        return true
+    }
 
     // rank 0 is nearest the pill; rail is left out to keep the widget where it is.
     function move(widget, rail, rank) {

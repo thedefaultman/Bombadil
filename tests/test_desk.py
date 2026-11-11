@@ -503,7 +503,7 @@ def test_odd_desk_arguments_never_break_the_line(args):
     assert narrate.tool_step("mcp__bombadil-os__desk", args).text
 
 
-# -- Tips (docs/TIPS.md): the card at the top of the right rail, put away by its x or by "hide tips" --
+# -- Tips (docs/TIPS.md): the card at the top of the right rail, put away by its x or by "hide tips", and kept --
 
 def test_tips_is_the_top_of_the_right_rail_and_is_neither_always_nor_opt_in(home):
     w = desk.WIDGETS["tips"]
@@ -526,14 +526,102 @@ def test_putting_tips_away_says_how_to_see_them_again(home):
     assert d.apply("show", "Tips") == (True, "Tips is already on the desk.")
 
 
-def test_tips_is_put_away_by_the_x_and_by_the_word_through_the_same_door(home):
-    """The card's x sends {"type": "desk", "op": "hide", "widget": "tips"} and the launcher's "hide tips" calls the
-    same Desk.apply: one sentence, one state, one file."""
+def test_tips_is_put_away_by_the_x_the_widgets_card_and_the_word_with_one_sentence_and_one_file(home):
+    """The card's x sends {"type": "desk", "op": "set", "widget": "tips", "state": "off"}, the Widgets card's Off
+    sends the same, and the launcher's "hide tips" calls Desk.apply("hide"): one sentence, one state, one file."""
     from bombadil import launcher
     assert launcher.match("hide tips") == launcher.Action("widget", "tips", "hide", "Tips")
     assert launcher.match("put tips away") == launcher.Action("widget", "tips", "hide", "Tips")
+    for apply in (("hide", "tips"), ("set", "tips", None, None, "off")):
+        d = fresh(home)
+        assert d.apply(*apply) == (True, "Put Tips away. Say tips to see them again.")
+        assert d.snapshot()["hidden"] == ["alive", "tips"]
+
+
+def test_tips_is_a_calm_widget_that_can_be_kept_and_the_widgets_card_lists_it_last(home):
+    w = desk.WIDGETS["tips"]
+    assert w.calm and w.listed and w.question == "What can I ask it to do?"
+    assert w.then == "Say tips to open the app." and w.quiet == ""
+    assert desk.can("tips") == ("keep", "needed", "off")
+    rows = fresh(home).snapshot()["widgets"]
+    assert rows[-1] == {"id": "tips", "title": "Tips", "question": "What can I ask it to do?",
+                        "can": ["keep", "needed", "off"]}
+    # every sentence a widget says is a line above the pill: one line, and none of the words the voice keeps out
+    for text in (w.question, w.then):
+        assert "\n" not in text and "!" not in text and "\u2014" not in text
+        assert not {"will", "tomorrow", "later"} & set(text.lower().replace(".", "").replace("?", "").split())
+
+
+def test_keeping_tips_says_what_it_did_and_the_two_steps_of_hide_say_the_way_back(home):
     d = fresh(home)
-    assert d.apply("hide", "tips")[1] == "Put Tips away. Say tips to see them again."
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.apply("keep", "tips") == (True, "Tips is already kept on the desk.")
+    assert d.snapshot()["kept"] == ["tips"] and d.state_of("tips") == "keep"
+    # "hide tips" is a step, the first time: no longer kept, with the way to the app; the card is the person's again
+    assert d.apply("hide", "tips") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.snapshot()["kept"] == [] and "tips" not in d.snapshot()["hidden"]
+    # and the second puts it away, with the way back as before
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.apply("hide", "tips") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.apply("hide", "tips") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.state_of("tips") == "off"
+    # keep brings it back from away, for good
+    assert d.apply("keep", "tips") == (True, "Tips stays on the desk.")
+    assert d.snapshot()["hidden"] == ["alive"] and d.snapshot()["kept"] == ["tips"]
+
+
+def test_the_widgets_cards_three_parts_for_tips_say_the_same_things(home):
+    d = fresh(home)
+    assert d.apply("set", "tips", None, None, "keep") == (True, "Tips stays on the desk.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Tips is already on the desk.")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Tips is already put away.")
+    assert d.apply("set", "tips", None, None, "needed") == (True, "Put Tips on the desk.")
+    # Off from kept is one press, and says the way back too
+    d.apply("set", "tips", None, None, "keep")
+    assert d.apply("set", "tips", None, None, "off") == (True, "Put Tips away. Say tips to see them again.")
+    assert d.snapshot()["kept"] == [] and d.snapshot()["hidden"] == ["alive", "tips"]
+
+
+def test_a_kept_tips_survives_a_restart_and_the_install_and_the_desk_reset_forgets_it(home):
+    d = fresh(home)
+    d.apply("keep", "tips")
+    d.apply("keep", "machine")
+    again = desk.Desk().load()
+    assert again.snapshot() == d.snapshot() and again.snapshot()["kept"] == ["machine", "tips"]
+    # the file the installer copies is plain TOML that names it
+    assert tomllib.loads(paths.desk_file().read_text())["kept"] == ["machine", "tips"]
+    assert d.apply("reset") == (True, "The desk is back as it came.")
+    assert d.snapshot()["kept"] == [] and d.snapshot()["hidden"] == ["alive"]
+    # a hand-edited file may keep Tips too, and where it also puts it away, away wins
+    paths.desk_file().write_text('kept = ["tips"]\n')
+    assert desk.Desk().load().snapshot()["kept"] == ["tips"]
+    paths.desk_file().write_text('kept = ["tips"]\nhidden = ["tips"]\n')
+    assert desk.Desk().load().snapshot()["kept"] == []
+
+
+def test_keep_tips_is_a_launcher_word_and_show_tips_and_open_tips_are_the_apps(home):
+    """The words: "keep tips" (and "... on the desk") keep it; "hide tips" is the two steps; "show tips" and "open
+    tips" open the Tips app (its own words, TIPS_COMMANDS of the app's piece), never the desk's, so the card comes
+    back by "keep tips" or the Widgets card and not by a word that means the app."""
+    from bombadil import launcher
+    keep = launcher.Action("widget", "tips", "keep", "Tips")
+    for words in ("keep tips", "Keep Tips", "keep the tips", "keep tips on the desk", "keep tips on my desk"):
+        assert launcher.match(words, []) == keep, words
+    # a longer sentence or a question is the agent's, as it is for every widget
+    for words in ("keep tips?", "keep tips coming", "keep tips for git", "keep tips on the left", "keep my tips"):
+        assert launcher.match(words, []) is None, words
+    for words in ("show tips", "open tips", "bring up tips"):
+        action = launcher.match(words, [])
+        assert action is None or action.kind != "widget", words
+    lx = launcher.Launcher(desk=fresh(home))
+    assert lx.run(launcher.match("keep tips", [])) == (True, "Tips stays on the desk.")
+    assert lx.run(launcher.match("keep tips on the desk", [])) == (True, "Tips is already kept on the desk.")
+    assert launcher.Launcher.doing(keep) == "Keeping Tips on the desk"
+    assert lx.run(launcher.match("hide tips", [])) == (True, "Tips is no longer kept. Say tips to open the app.")
+    assert lx.run(launcher.match("hide tips", [])) == (True, "Put Tips away. Say tips to see them again.")
+    assert {e["name"]: e["keep"] for e in launcher.entries([]) if e["kind"] == "widget"}["tips"] is True
 
 
 def test_show_tips_is_not_a_desk_word(home):

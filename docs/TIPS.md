@@ -288,8 +288,8 @@ turns by itself (the Tips app is where a tip moves). Nothing on it runs a tip.
 
 | File | What it is |
 |---|---|
-| `src/bombadil/desk.py` | The `tips` widget: title "Tips", the word `tips`, the right rail, last in the order (so the top, as the rail stacks from the pill outward). Not `ALWAYS`, not `OPT_IN`. "hide tips" answers "Put Tips away. Say tips to see them again." (`HIDE_NOTES`). "show tips" is not a desk word: the launcher leaves it to the Tips app (`HIDE_ONLY_WIDGETS` in `launcher.py`). |
-| `shell/DeskState.qml` | `tipsModel` (agentd's card, cleaned), when the card is present (below), its height (290) and its strip (`tips`, muted, no dot), and what the card asks: `tipsTurn`, `tipsOpen`, `tipsTry`, and `stripClicked` for the strip. |
+| `src/bombadil/desk.py` | The `tips` widget: title "Tips", the word `tips`, the right rail, last in the order (so the top, as the rail stacks from the pill outward), the question "What can I ask it to do?" for its row on the Widgets card, and `calm=True`, so a person can keep it ([A kept Tips card](#a-kept-tips-card)). Not `ALWAYS`, not `OPT_IN`. Putting it away answers "Put Tips away. Say tips to see them again." (`HIDE_NOTES`, for the word, the x and the Widgets card's Off alike). "show tips" and "open tips" are not desk words: the launcher leaves them to the Tips app (`APP_WIDGETS` in `launcher.py`); "keep tips" and "hide tips" are. |
+| `shell/DeskState.qml` | `tipsModel` (agentd's card, cleaned), when the card is present (below), its height (290) and its strip (`tips`, muted, no dot), and what the card asks: `tipsTurn`, `tipsOpen`, `tipsTry`, `putAway` for the x, and `stripClicked` for the strip. |
 | `shell/TipsCard.qml` | The face, on `DeskCard`: the title, the why line (`whyFigures`: tabular figures, so "1 of 6" and "2 of 6" are as wide), the picture, the line, and the button or the marks beside "All tips ›". |
 | `shell/DeskRail.qml`, `shell/DeskStrips.qml` | The face in the rail's loader, and the strip's press. |
 | `shell/PillState.qml`, `shell/shell.qml` | The pill's side of the button (below). |
@@ -300,10 +300,10 @@ The card is present only when all of these hold; `DeskState.tipsPresent` is thei
 
 | Rule | Where |
 |---|---|
-| agentd says `present: true` with a card (`tipsModel` is not null) | agentd: setup ready, first week not over, an untried Start-here tip left, not put away |
+| agentd says `present: true` with a card (`tipsModel` is not null) | agentd: setup ready, not put away, and either the person keeps Tips or the first week is not over and an untried Start-here tip is left. The shell does not look at which: a kept Tips is present whatever the first week says |
 | the person has not put it away (`hidden` has no `tips`) | the x, "hide tips" |
 | setup is over: the pill's setup state is `ready`, or `resting` (the AI out of plan or paused). The desk does not react to the rest: it neither brings the card nor takes it away | `tipsWanted` |
-| the shell is calm **the first time it appears**: the pill is idle (no turn, no ready, welcome or hello line, no closing line, no answer), nothing is stoppable, the desk's plan is idle, and no card of the first minutes is up (`DeskState.cardsUp`) | `tipsCalm` |
+| the shell is calm **the first time it appears**: the pill is idle (no turn, no ready, welcome or hello line, no closing line, no answer to a word such as "keep tips"), nothing is stoppable, the desk's plan is idle, no persona card is up (`pill.personaAsk`), and no other card of the first minutes is up (`DeskState.cardsUp`) | `tipsCalm` |
 
 Calm is a latch (`_tipsUp`): once the card is up it stays through turns, lines and the rest, and goes only when
 `tipsWanted` fails (agentd drops it, the person puts it away, setup is not ready, the socket drops). A card
@@ -311,8 +311,10 @@ agentd takes away and brings back mid-turn waits for calm again. So a person who
 first when that turn's closing line has faded (12 s after the turn ends), and nobody has it appear under a
 running turn.
 
-`DeskState.cardsUp` is the hook for the cards of the first minutes (the persona card, the recovery key): nothing on
-main sets it yet, so the piece that builds each of them binds `deskState.cardsUp` to "one of them is on screen".
+The persona card (the name card after sign-in) holds the card back by itself: `tipsCalm` reads the pill's
+`personaAsk`, so the Tips card comes when the person has answered or skipped it. `DeskState.cardsUp` is the hook
+for the one that is still to come, the recovery key: nothing sets it yet, so the piece that builds that card binds
+`deskState.cardsUp` to "it is on screen".
 
 The desk's own rules apply as for any widget: a window over the slot folds the card to its `tips` strip (150 ms
 out, 400 ms back), a screen narrower than 1016 px keeps it as a strip, a full-screen window hides it, and the
@@ -355,8 +357,56 @@ as for any full card, so the line above it never covers it.
 | presses the arrows, or turns the wheel | `{"type": "tips", "op": "turn", "dir": 1 or -1}` | agentd sends the card for the next tip; the shell crossfades to it. The shell never turns the card itself. |
 | presses the title, "All tips ›" | `{"type": "tips", "op": "open", "id": "<tip>", "play": false}` | the Tips app opens on that tip |
 | presses the picture | the same with `"play": true` | the app opens on that tip, playing |
-| presses the x | `{"type": "desk", "op": "hide", "widget": "tips"}` (the same door as "hide tips") | agentd keeps it in `desk.toml`, says "Put Tips away. Say tips to see them again." on the line (a gesture is its own answer for other cards, but this one has no strip to bring it back), sends the desk and then `present: false` |
+| presses the x | `{"type": "desk", "op": "set", "widget": "tips", "state": "off"}` (what the Widgets card's Off sends: Off at once, kept or not) | agentd keeps it in `desk.toml`, says "Put Tips away. Say tips to see them again." on the line (a gesture is its own answer for other cards, but this one has no strip to bring it back), sends the desk and then `present: false` |
 | presses the button | `{"type": "summon", "text": "<words>", "tip": true, "id": "<tip>"}` | agentd remembers the words for that tip and tells every bar; see below |
+
+### A kept Tips card
+
+Tips is a calm widget (`calm=True` in `desk.py`): it has something true to show with nothing happening, so a person
+can keep it, and its row on the Widgets card has all three parts. The way it was built is the recipe in
+[DESK.md](DESK.md#adding-a-widget): the widget's declaration, a feed that reads `desk.kept`, and the sentences.
+
+| State | Card | What the card is |
+|---|---|---|
+| Keep | Keep | The card after every boot, whatever the first week says. |
+| When needed | When needed | The default: a new person's first week (seven days of use, or the six Start-here tips tried, whichever is first), then gone. |
+| Off | Off | Put away: never on the desk. |
+
+| Typed or pressed | Answer | Desk |
+|---|---|---|
+| `keep tips`, `keep the tips`, `keep tips on the desk`, `keep tips on my desk`; Keep on the Widgets card | "Tips stays on the desk." (again: "Tips is already kept on the desk."; a card that was put away is back) | kept |
+| `hide tips`, `put tips away`, while it is kept | "Tips is no longer kept. Say tips to open the app." | back to When needed: the card stays in the first week and goes after it |
+| `hide tips` again; the x on the card; Off on the Widgets card | "Put Tips away. Say tips to see them again." | Off |
+| `show tips`, `open tips`, `tips`, `help` | the Tips app's own words (the app's piece): it opens the app and does not bring the card back | nothing changes |
+| `put tips on the left`, any longer sentence or question | the agent's `desk` tool, when the words asked for the desk | |
+
+The card is brought back by "keep tips" or by the Widgets card (Keep, or When needed in the first week), and never
+by "show tips": that word means the app, so a person is not told the card is back when it is not. This is the
+brief's rule ("keep tips on the desk brings the card back for good"), and the launcher's: `launcher.match` answers
+`TIPS_COMMANDS` before the widget words, and `APP_WIDGETS` makes the same true before the app's piece has landed.
+
+The x on the card is the leap, as Off is on the Widgets card: a person who presses an x wants the card gone, so a
+kept Tips is put away in one press, where the word "hide tips" first only stops keeping it (a step, so one word
+cannot silence a card by accident, as for Machine). The line says the way back either way.
+
+**What a kept card is at rest.** The same still card (docs above), with the same hover, button and strip. Tips reads
+`desk.kept` (`kept=lambda: "tips" in self.desk.kept` in agentd) and looks again whenever the desk changes
+(`_desk_broadcast` calls `_tips_soon`), so keeping, unkeeping and putting away reach the shell as one `tips`
+message. What agentd says follows `Tips._present`:
+
+- *Kept:* present whenever the AI is ready, Tips is not put away and the card has a tip to show. The card shows the
+  first tip not tried, in the order Start here, Work, Code, This machine, and turns through every backed tip whose
+  button fits the card (`card = true`); a tip that came with an update still waits in the app until it has been in
+  front of the person (`known`). With every tip tried it shows the first one, rather than a bare card.
+- *Not kept:* present only in the first week, as before.
+- *No AI chosen or signed out:* not present, kept or not, and the shell agrees (`pill.setupState` is not `ready` or
+  `resting`), so a kept card never sits over setup.
+
+The shell's own rules do not change for a kept card, so it agrees with agentd without looking at `kept`: it first
+appears only when the shell is calm (no turn, no ready, welcome or "keep tips" line, no persona card), and then
+stays through turns and lines; it folds to its strip under windows and goes under a full-screen window and with the
+socket. The line "Tips stays on the desk." is the answer to the word, so on a calm desk the card arrives when that
+line has faded, the way every first appearance waits for the pill.
 
 ### The button, and the pill
 
@@ -388,13 +438,19 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/te
 - `tests/test_tips_card_qml.py` draws the card inside the real rail with the real `DeskState`, from messages a real
   `Tips` builds over the shipped table: the layout at 1280 x 720 and 1920 x 1080, every card tip of the table (no
   overflow, a long app name elided), marks, the poster, hover, wheel, the crossfade, reduced motion, what each
-  press sends, and the presence rules above (setup, resting, turns, lines, the person's x, agentd going, windows,
-  full screen, a narrow screen, the strip). Set `BOMBADIL_SCREENS=<dir>` to save a picture of each.
-- `tests/test_desk.py` holds the widget's words, rail and sentence; `tests/test_pill_qml.py` the hand-off
-  (the cursor, kept words, the ellipsis, Enter and Esc).
+  press sends, and the presence rules above (setup, resting, turns, lines, the persona card, the person's x, agentd
+  going, windows, full screen, a narrow screen, the strip), and a kept Tips: after the first week the card comes
+  back by `keep` and goes when it is no longer kept, turns through the other sections, never first appears over a
+  turn or a line, folds to its strip, and the x puts it away at once. Set `BOMBADIL_SCREENS=<dir>` to save a
+  picture of each.
+- `tests/test_desk.py` holds the widget's words, rail and sentences, kept and put away, and `keep tips` as a
+  launcher word; `tests/test_agentd_tips.py` agentd's `present` following the desk (kept after the first week, no
+  longer kept, the x, "keep" from away, a restart); `tests/test_widgets_card_qml.py` Tips's row on the Widgets card
+  with its three parts; `tests/test_pill_qml.py` the hand-off (the cursor, kept words, the ellipsis, Enter and Esc).
 - `tests/desktop/driver.py`, section 31: agentd with Tips on in headless sway, the card on the rail, the arrows
   by a virtual pointer, the button (the summon, no turn), Enter (the turn and the tried tip), the card turning
-  12 s after, the x. Every other section runs with `BOMBADIL_TIPS=0`.
+  12 s after, the x, and then the words "keep tips" (the sentence, `desk.toml`, the card back). Every other
+  section runs with `BOMBADIL_TIPS=0`.
 
 What no test shows is the card under Hyprland: how the rail draws it under floating and special-workspace windows,
 and the fold as a window is dragged past it (the same as every card, DESK.md). The poster's look at card density
