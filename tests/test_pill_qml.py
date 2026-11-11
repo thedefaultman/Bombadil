@@ -492,8 +492,9 @@ def test_keep_is_a_launcher_word_of_the_widgets_on_the_card_and_of_nothing_else(
 
 
 @pytest.mark.parametrize("words", [
-    "show tips", "open tips", "Show Tips.", "hide tips", "keep tips", "keep tips on the desk", "close tips",
-    "show machine", "hide machine", "keep machine", "open now", "show away",
+    "Show Tips.", "keep tips on the desk",
+    *[f"{verb} {word}" for word in sorted({w for ws in launcher.WIDGET_WORDS.values() for w in ws})
+      for verb in ("show", "open", "close", "hide", "keep")],
 ])
 def test_the_pill_hints_a_widget_word_only_when_the_launcher_answers_it(bar, words):
     """"show tips" is the Tips app's word and "hide tips" and "keep tips" are the desk's. Until the app answers it,
