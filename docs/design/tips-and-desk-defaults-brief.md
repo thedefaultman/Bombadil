@@ -77,6 +77,8 @@ In this order, each step tested before the next:
 
 ### 2. Your desk (M)
 
+*Built: the recommendation for question 3b (words plus the Widgets card) was taken. How it works, what it says and what it left out is on [Your desk](../architecture/desk.md#your-desk-keep-when-needed-off).*
+
 `keep` for widgets with a calm face, the Widgets card, and a calm Machine. A `keep` op in `desk.py` and on the agent's `desk` tool (the gate already accepts the verb), `kept = [...]` in `desk.toml` beside `hidden` (and beside `stripped`, which is on `main`), the local words "keep <widget>" and "keep <widget> on the desk", the word "widgets", a `WidgetsCard.qml` above the pill (the AI card's shape), and a calm vitals mode for a kept Machine. This touches the desk's code, so it belongs with the dragging work on the desk, which is on `main`.
 
 **Later:** strip click and hover-peek for every strip (drag by the title is already on `main`); tips per app from the apps' `[[does]]` rows; "Watch again" from a turn's event log, using the same player; scenes recorded by the headless desktop test, if hand-written storyboards drift.

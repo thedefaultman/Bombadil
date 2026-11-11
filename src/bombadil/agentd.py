@@ -43,7 +43,13 @@ Client -> daemon:  {"type": "prompt", "text": "..."}   a turn, or a launcher wor
                     "rail": "left"|"right", "rank": 0}  change the desk; the state comes back to everyone
                                                         (fold with no widget is the word "desk"; with one,
                                                         only that card goes to its strip)
-                   {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ...}
+                   {"type": "desk", "op": "set", "widget": "machine", "state": "keep"|"needed"|"off"}
+                   {"type": "desk", "op": "keep", "widget": "machine"}
+                   {"type": "desk", "op": "reset"}      the Widgets card's presses: keep a widget on the desk
+                                                        at rest, show it only when it has something to say,
+                                                        put it away, or put the whole desk back as it ships.
+                                                        Unlike a gesture, each says what it did on the line
+                   {"type": "desk-tool", "id": s, "turn": n, "op": ..., "widget": ..., "state": ...}
                                                         the os-mcp `desk` tool; answered with desk-result
                    {"type": "jobs", "op": "get"}        the jobs table (also sent after `desk get`)
                    {"type": "away", "op": "get"|"seen"}  the Away card again; or: the person has seen it
@@ -99,8 +105,13 @@ Daemon -> clients: {"type": "event", "kind": "turn_start"|"snapshot"|"status"|"t
                    {"type": "tips", "list": [{"id", "section", "order", "line", "words", "marks", "card",
                     "tried", "new", "captions", "beats"}]}
                                                         the answer to a list, to its sender only
-                   {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "rails": {...},
-                    "order": {...}, "screen": ""}       the desk's state: to whoever asks, and on every change
+                   {"type": "desk", "folded": bool, "hidden": [...], "stripped": [...], "kept": [...],
+                    "rails": {...}, "order": {...}, "screen": "", "widgets": [{"id", "title", "question",
+                    "can": ["keep"|"needed"|"off"]}]}   the desk's state: to whoever asks, and on every
+                                                        change. `kept` are the widgets on the desk at rest;
+                                                        `widgets` are the rows of the Widgets card
+                   {"type": "widgets", "op": "open"}    the person asked for the Widgets card ("widgets"):
+                                                        the bar opens it and takes the keyboard
                    {"type": "desk-result", "id": s, "ok": bool, "text": "..."}
                                                         the answer to a desk-tool, to its sender only
                    {"type": "jobs", "jobs": [{"id", "title", "kind": "job"|"watch"|"timer", "state":
@@ -196,10 +207,11 @@ neither. While the table has anything in it agentd looks at it every JOBS_POLL s
 the table when it changes, and when a job ends says one line in the pill (a "local" event with no
 turn) and tells the next turn's prompt.
 
-The Machine card is one message, {"type": "machine", "present", "asked", "why", "strip", "rows"}
+The Machine card is one message, {"type": "machine", "present", "asked", "calm", "why", "strip", "rows"}
 (vitals.py has the whole shape). agentd samples the machine (vitals.py) only while a bar is connected and the
 desk has not put Machine away: every few seconds when calm, every second while the card is up or something
-is close to its line. It broadcasts the message when it differs from the last one, and the answer to
+is close to its line. A Machine the person keeps is up at rest too, in a calm shape ("calm": true: the
+machine is fine, figures rounded so a calm machine says little, no walk of the memory groups). It broadcasts the message when it differs from the last one, and the answer to
 {"type": "desk", "op": "get"} carries it when the card is up. {"type": "vitals", "op": "get"} asks for it
 again; {"type": "vitals", "op": "open", "row": "disk"} draws the disks picture (a click on that row), with
 no model. "show machine" and "how's the machine" raise the card on request (desk.on_ask).
@@ -345,6 +357,8 @@ CONNECT_PRESSED = {"slack_reply": "the person pressed Send on your reply",
 CONNECT_NOTES = {"unread": "showed the unread messages", "connected": "showed what is connected"}
 # What a click on a Machine row opens (vitals.py names the rows that open anything).
 VITALS_OPENS = {"disk": "disks"}
+# The desk's ops that the line above the pill answers for: the Widgets card's presses.
+DESK_SAID = ("set", "keep", "reset")
 # After a turn that tried a tip (or a word that did) the Tips card turns to the next tip this long after it
 # ends.
 TIPS_TURN_AFTER = 12.0
@@ -481,6 +495,7 @@ class AgentD:
         self._vitals_wake = asyncio.Event()         # a client came, the desk changed, or the card was asked for
         self._vitals_last: dict | None = None       # what the shell was last told
         self.desk.on_ask = self._desk_asked
+        self.desk.on_widgets = self._widgets_asked
         # Tips (docs/TIPS.md): what a new person can ask, and what this one has been taught. agentd is the
         # only writer of tips.json. The desk says whether Tips is put away, and (once the desk can keep a
         # widget) whether it is kept. BOMBADIL_TIPS=0 turns Tips off (the tests do: no client is sent a card).
@@ -1026,18 +1041,23 @@ class AgentD:
             if self.away.up:
                 await self._send(writer, self.away.message())
             return
-        if op not in ("fold", "unfold", "hide", "show", "move"):
+        if op not in ("fold", "unfold", "hide", "show", "move", *DESK_SAID):
             return
 
         def change():
             before = self.desk.snapshot()
             # "fold" alone is the word "desk", one press for both ways; with a widget it folds that one card.
             ok, text = self.desk.apply("toggle" if op == "fold" and not msg.get("widget") else op,
-                                       msg.get("widget"), msg.get("rail"), msg.get("rank"))
+                                       msg.get("widget"), msg.get("rail"), msg.get("rank"), msg.get("state"))
             return ok, text, self.desk.snapshot() != before
         ok, text, changed = await asyncio.to_thread(change)
+        if op in DESK_SAID:
+            # A press on the Widgets card has no gesture to show what it did (a card dragged to its place is
+            # its own answer), so the line says it, with a refusal (Needs you cannot be put away) as an error.
+            await self.event("local", turn=None, action="desk", target=str(msg.get("widget") or ""),
+                             phase="done", ok=ok, text=text)
         if ok and changed:
-            # Not said on the line (a gesture is its own answer), but the agent should know.
+            # Not said on the line for a gesture (it is its own answer), but the agent should know.
             self.notes = [*self.notes, f"at the desk: {text}"][-10:]
             self._log_line({"t": time.time(), "kind": "local", "prompt": "at the desk", "action": "desk",
                             "target": str(msg.get("widget") or ""), "result": text, "ok": True})
@@ -1056,11 +1076,11 @@ class AgentD:
             return result(False, "The person did not ask for the desk in this turn, so it stays as it is. "
                                  "Rearrange it only when they ask.")
         op = str(msg.get("op", ""))
-        if op not in ("show", "hide", "move", "fold", "unfold", "state"):
-            return result(False, f"The desk cannot {op or 'do that'}. It can show, hide, move, fold, unfold "
-                                 "and say its state.")
+        if op not in ("show", "hide", "keep", "set", "move", "fold", "unfold", "reset", "widgets", "state"):
+            return result(False, f"The desk cannot {op or 'do that'}. It can show, hide, keep, set, move, fold, "
+                                 "unfold, reset, open the widgets card and say its state.")
         ok, text = await asyncio.to_thread(self.desk.apply, op, msg.get("widget"), msg.get("rail"),
-                                           msg.get("rank"))
+                                           msg.get("rank"), msg.get("state"))
         return result(ok, text)
 
     # -- the machine --
@@ -1069,8 +1089,19 @@ class AgentD:
         """Sample only while a bar is there to draw it and the person has not put Machine away."""
         return self.vitals is not None and bool(self.clients) and "machine" not in self.desk.hidden
 
+    def _widgets_asked(self):
+        """Desk.on_widgets, from a worker thread: the person asked for the Widgets card, so every bar opens it
+        (the one that holds the keyboard draws it)."""
+        try:
+            if self._loop is not None:
+                self._loop.call_soon_threadsafe(self._enqueue_all, {"type": "widgets", "op": "open"})
+        except RuntimeError:
+            pass   # the loop is closed: agentd is stopping
+
     def _vitals_kick(self):
         """Start looking at the machine, or look now: a bar came, the desk changed, or the card was asked for."""
+        if self.vitals is not None:
+            self.vitals.keep("machine" in self.desk.kept)    # a kept Machine is up at rest, in its calm shape
         if not self._vitals_wanted():
             self._vitals_wake.set()      # a loop that is asleep wakes, finds nothing wanted and ends
             return
@@ -1137,19 +1168,21 @@ class AgentD:
         """One sample, the message when it is not what the shell was told, then sleep for as long as the
         readings allow (long when calm, a second when close to a line or when the card is up). A wake
         cuts the sleep short. The loop ends with the last bar or when Machine is put away."""
+        woken = False
         try:
             while self._vitals_wanted():
                 self._vitals_wake.clear()
                 try:
-                    msg = await asyncio.to_thread(self.vitals.tick)
+                    msg = await asyncio.to_thread(self.vitals.tick, woken)
                     if msg is not None:
                         await self._vitals_send(msg)
                 except Exception as e:  # noqa: BLE001 - keep looking whatever one look found
                     print(f"agentd: looking at the machine: {type(e).__name__}: {e}", file=sys.stderr)
                 try:
                     await asyncio.wait_for(self._vitals_wake.wait(), self.vitals.next_delay())
+                    woken = True
                 except asyncio.TimeoutError:
-                    pass
+                    woken = False
         finally:
             # Nobody is looking any more: forget the streaks, and take a card that is up away.
             self.vitals.reset()
