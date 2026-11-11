@@ -193,3 +193,25 @@ def test_stop_lets_pacman_finish_its_package_before_the_rest_stops(tmp_path):
         assert out["waited"] >= 1.0
     finally:
         root.kill()
+
+
+@pytest.mark.parametrize("where, agent", [
+    ("user.slice/user-1000.slice/user@1000.service/app.slice/bombadil-turn-1-2-3.scope", True),
+    # a coding session is an agent's hands as much as a turn is: what only the person does is refused to it
+    ("user.slice/user-1000.slice/user@1000.service/bombadil-dev-acme.slice/bombadil-dev-acme-main-ab12cd.scope", True),
+    ("user.slice/user-1000.slice/user@1000.service/app.slice/app-foot-4242.scope", False),
+    ("user.slice/user-1000.slice/user@1000.service/bombadil-shell.service", False),
+    ("user.slice/user-1000.slice/user@1000.service/bombadil-dev-acme.slice/bombadil-viewer.scope", False),
+])
+def test_a_process_in_a_turn_or_a_coding_session_is_the_agents(tmp_path, monkeypatch, where, agent):
+    proc, root = tmp_path / "proc", tmp_path / "cg"
+    (proc / "77").mkdir(parents=True)
+    (proc / "77" / "cgroup").write_text(f"0::/{where}\n")
+    monkeypatch.setattr(procs, "PROC", proc)
+    monkeypatch.setattr(procs, "CGROUP_ROOT", root)
+    assert (procs.cgroup_of(77) is not None) is agent
+    assert procs.in_turn_scope(77) is agent
+    if agent:
+        assert procs.cgroup_of(77) == root / where
+    with pytest.raises(OSError):   # a process whose cgroup cannot be read is not told apart, and in_turn_scope says so
+        procs.in_turn_scope(78)

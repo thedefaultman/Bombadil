@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""Start the connection service from a checkout, the way bin/bombadil-mail starts the mail service."""
+
+import sys
+from pathlib import Path
+
+# The path is set before the package import on purpose: from a checkout `bombadil` is not installed. Installed in
+# /usr/bin, the directory this adds does not exist and the package is found where the system put it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from bombadil.connect.service import main
+
+sys.exit(main())

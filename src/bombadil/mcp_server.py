@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import apps, hypr, paths, snapshots
-from .desk import RAILS, WIDGETS
+from .desk import RAILS, STATES, WIDGETS
 
 PROTOCOL_VERSION = "2025-06-18"
 Tool = tuple[dict, Callable[[dict], Any]]
@@ -136,12 +136,18 @@ class OsTools:
            "machine, tips, alive). This works ONLY when the person asked for the desk or a widget in their own "
            "words this turn (\"put watching on the right\", \"hide machine\", \"fold the desk\"). In any "
            "other turn it is refused and nothing changes; never rearrange the desk on your own. Ops: show and "
-           "hide a widget (needs cannot be hidden); move a widget to a rail (left or right) and a rank "
+           "hide a widget (needs cannot be hidden; hiding a kept widget first only stops keeping it); keep a "
+           "widget on the desk at rest, after every boot (only one with a calm face: machine today); set a "
+           "widget's state at once, to keep, needed (shown only when it has something to say, the default) or "
+           "off (put away); move a widget to a rail (left or right) and a rank "
            "(0 is nearest the pill, and without a rank it goes last, and a move gives a folded widget its "
            "card back); fold and unfold every widget to a chip beside the pill and back, or with a "
-           "widget only that one; state says what is where.",
-           {"op": {"type": "string", "enum": ["show", "hide", "move", "fold", "unfold", "state"]},
+           "widget only that one; reset puts every widget, rail and place back as the desk ships; widgets "
+           "opens the Widgets card, where the person sets each one; state says what is where.",
+           {"op": {"type": "string", "enum": ["show", "hide", "keep", "set", "move", "fold", "unfold", "reset",
+                                              "widgets", "state"]},
             "widget": {"type": "string", "enum": list(WIDGETS)},
+            "state": {"type": "string", "enum": list(STATES)},
             "rail": {"type": "string", "enum": list(RAILS)},
             "rank": {"type": "integer", "minimum": 0}},
            ["op"])
@@ -174,6 +180,9 @@ class OsTools:
 
         from .mail import tools as mail_tools  # mail_search, mail_read, mail_mark, mail_draft, mail_show
         mail_tools.register(self)
+
+        from .connect import tools as connect_tools  # messages_unread, message_thread, tasks_waiting, ...
+        connect_tools.register(self)
 
         from .appkit import tools as app_tools  # the app kit's tools; they replace the app tools above
         app_tools.register(self)   # last: the tools of the app kit are listed together, at the end
@@ -273,7 +282,7 @@ def _desk(a: dict) -> str:
         raise ToolError("The desk can only be changed from inside a turn, and this process was not told "
                         "which.")
     msg = {"type": "desk-tool", "id": uuid.uuid4().hex, "turn": int(turn),
-           **{k: a[k] for k in ("op", "widget", "rail", "rank") if a.get(k) is not None}}
+           **{k: a[k] for k in ("op", "widget", "rail", "rank", "state") if a.get(k) is not None}}
     reply = _ask_agentd(msg, "desk-result", DESK_TIMEOUT)
     if not reply.get("ok"):
         raise ToolError(str(reply.get("text") or "The desk was not changed."))

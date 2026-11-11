@@ -9,6 +9,7 @@ the API answers it with the 429 a used-up claude.ai plan gets, and {"limit": nul
 """
 
 import json
+import re
 import sys
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -163,6 +164,8 @@ class H(BaseHTTPRequestHandler):
             and isinstance(users[-1].get("content"), list)
             and any(b.get("type") == "tool_result" for b in users[-1]["content"])
         )
+        system = body.get("system")
+        system = system if isinstance(system, str) else "\n".join(b.get("text", "") for b in system or [])
         refused = bool(LIMIT["reset"]) and "haiku" in first
         LOG.write(
             json.dumps(
@@ -171,6 +174,7 @@ class H(BaseHTTPRequestHandler):
                     "model": body.get("model"),
                     "first": first[-200:],
                     "after_tool": after_tool,
+                    "persona": "The user goes by" in system,
                     "prompts": len(prompts),   # more than one: the conversation carries what was said before
                     "refused": refused,
                     "shape": [
@@ -364,6 +368,23 @@ class H(BaseHTTPRequestHandler):
                     },
                 )
                 stop = "tool_use"
+        elif "answer priya" in first:
+            # The connection tools: read what is unread, then draft the reply to the message it names. The ref is
+            # whatever the first tool said (the fake service makes the messages' times when it starts).
+            if rounds == 0:
+                text("Let me look at your messages.")
+                tool(f"toolu_mu{N[0]}", "mcp__bombadil-os__messages_unread", {})
+                stop = "tool_use"
+            elif rounds == 1:
+                said = json.dumps([m.get("content") for m in users[-1:]])
+                refs = re.findall(r"slack:[A-Za-z0-9]+/[A-Z][A-Za-z0-9]+/[0-9]+\.[0-9]+", said)
+                text("I'll draft the reply.")
+                tool(f"toolu_pr{N[0]}", "mcp__bombadil-os__propose",
+                     {"kind": "slack_reply", "target": refs[0] if refs else "slack:none",
+                      "content": "Yes, the 14th works for us."})
+                stop = "tool_use"
+            else:
+                text("The reply is ready. Sending is yours.")
         elif first == "ask me":
             # A coding session asks its user: its dot lights and the pill's line asks.
             if after_tool:
