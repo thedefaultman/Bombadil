@@ -94,7 +94,7 @@ Item {
         stripH: 18, keyH: 20, buttonW: 18, buttonH: 12, margin: 8, pillMin: 72, chipH: 18
     })
     readonly property var appM: ({
-        w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 64, stone: 24, small: false,
+        w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 48, stone: 24, small: false,
         text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 208,
         winW: 380, winH: 176, winTop: 14, winRadius: 12, slide: 28, picW: 440, boxH: 40, border: 1.5,
         stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12, pillMin: 160, chipH: 26
@@ -806,6 +806,10 @@ Item {
                 width: Math.max(0, parent.width - x - (st.m.small ? 12 : 64))
                 height: st.m.text + 8
                 clip: true
+                // The real pill is wider than this one, so an ask that fits it can be wider than the field here. It is
+                // set a little smaller, down to 12 px, so its words stay whole; what still does not fit shows its end.
+                readonly property real askRoom: width - 3 - ghostText.implicitWidth
+                TextMetrics { id: askMetrics; font.family: Theme.fontFamily; font.pixelSize: st.m.text; text: typed.text }
                 Row {
                     id: field
                     anchors.verticalCenter: parent.verticalCenter
@@ -820,7 +824,9 @@ Item {
                         id: typed
                         objectName: "pillText"
                         font.family: Theme.fontFamily
-                        font.pixelSize: st.m.text
+                        font.pixelSize: fieldBox.askRoom > 0 && askMetrics.width > fieldBox.askRoom
+                                        ? Math.max(12, Math.min(st.m.text, Math.floor(st.m.text * fieldBox.askRoom / askMetrics.width)))
+                                        : st.m.text
                         text: st.f.pill.text !== "" ? st.f.pill.text : (st.f.pill.placeholder ? "Ask anything" : "")
                         color: st.f.pill.text !== "" ? Theme.fg : Theme.muted
                     }
@@ -830,6 +836,7 @@ Item {
                         width: 1.5; height: st.m.text + 2; color: Theme.fg
                     }
                     Text {
+                        id: ghostText
                         objectName: "pillGhost"
                         font.family: Theme.fontFamily
                         font.pixelSize: st.m.text

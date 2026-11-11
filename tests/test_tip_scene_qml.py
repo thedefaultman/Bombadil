@@ -623,9 +623,10 @@ def test_a_card_rises_and_updates_in_place_and_folds_to_a_strip(make):
     assert len(s.items("card-now")) == 1 and len(s.items("card-watching")) == 0
 
 
-def test_the_stage_card_says_a_task_and_its_step_whole_and_the_poster_card_keeps_one_line(make):
-    """The stage's card is 208 wide and wraps its heading and its why to two lines; the poster's has no room to
-    spare, so it keeps one line and elides. A tip's scene is never drawn with a clipped task on the stage."""
+def test_the_stage_card_says_a_task_and_its_step_whole_and_the_poster_card_says_only_now(make):
+    """The stage's card is 208 wide and wraps its heading and its why to two lines. The poster's has no room for a
+    task and no names (it is a picture of the machine): it says "Now", not the task cut short. A tip's scene is never
+    drawn with a clipped task."""
     long_task = "Install rust and set it up on this machine"
     tip = dict(fx.ROUTE, beats=[dict(b, title=long_task) if b.get("card") == "now" else b for b in fx.ROUTE["beats"]])
     s = make(tip, "app")
@@ -639,9 +640,10 @@ def test_the_stage_card_says_a_task_and_its_step_whole_and_the_poster_card_keeps
                 and i.property("truncated")]
     p = make(tip, "card")
     p.seek(p.duration)
-    heading = [i for i in p.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()
-               and i.property("text") == long_task]
-    assert len(heading) == 1 and heading[0].property("lineCount") == 1 and heading[0].property("truncated")
+    words = [i for i in p.items() if i.metaObject().className().startswith("QQuickText") and i.isVisible()]
+    assert long_task not in [i.property("text") for i in words]
+    heading = [i for i in words if i.property("text") == "Now"]
+    assert len(heading) == 1 and heading[0].property("lineCount") == 1 and not heading[0].property("truncated")
 
 
 def scene_box(s, item):
@@ -692,7 +694,7 @@ def test_no_strip_of_any_fixture_overlaps_the_pill_at_any_frame_it_stands(make):
 def test_the_pill_is_whole_before_a_fold_and_after_it_is_taken_back(make):
     tip = copy.deepcopy(fx.FOLDS)
     tip["beats"].append({"fold": False, "tag": "template"})
-    for density, side in (("card", 24), ("app", 64)):
+    for density, side in (("card", 24), ("app", 48)):
         s = make(tip, density)
         s.seek(0 if density == "app" else 1)
         pill = scene_box(s, s.item("pill"))
@@ -837,6 +839,23 @@ def test_a_long_ask_in_the_pill_shows_its_end_not_its_start(make):
         assert box.property("clip") and row.width() > box.width()             # longer than the field ...
         assert row.x() < 0 and abs(row.x() + row.width() - box.width()) <= 2.5    # ... so its end is in view
         assert text.property("text") == words
+
+
+def test_an_ask_a_little_wider_than_the_stages_field_is_set_smaller_and_whole_and_never_below_12_px(make):
+    """The real pill is wider than the mini one: an ask that fits it can be wider than this field. It is set smaller
+    (down to 12 px) so its words stay whole; only what still does not fit is scrolled to its end."""
+    asks = {"short": "Make me a ticketing app", "wide": "Run the tests in ~/Projects/shop in the background",
+            "wider": "Draw how the modules in ~/Projects/shop depend on each other"}
+    sizes = {}
+    for name, words in asks.items():
+        tip = {"id": f"fixture-{name}-ask", "captions": ["a", "b", "c"], "beats": [{"type": words}, {"hold": 100}]}
+        s = make(tip, "app")
+        s.seek(s.duration)
+        text = s.item("pillText")
+        row, box = text.parentItem(), text.parentItem().parentItem()
+        sizes[name] = text.property("font").pixelSize()
+        assert text.property("text") == words and row.x() == 0 and row.width() <= box.width(), name   # whole, not scrolled
+    assert sizes["short"] == 16 and 12 <= sizes["wider"] <= sizes["wide"] < 16, sizes
 
 
 def test_a_hold_is_a_pause_and_adds_to_a_beat(make):

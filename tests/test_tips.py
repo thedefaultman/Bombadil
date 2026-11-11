@@ -310,6 +310,28 @@ def test_the_posters_of_the_desks_card_use_no_orange_but_the_state_colours_the_c
         assert count < 30, f"{row.id}: {count} px of {accent} on the poster"
 
 
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
+def test_the_stage_shows_the_words_the_button_puts_in_the_pill_whole_before_enter(row, drawn):
+    """Every tip that types has its words whole in the stage's pill the moment before Enter (the long asks of the
+    tests and the code picture are set smaller to fit, never cut), and never under 12 px."""
+    s = drawn(row, "app")
+    beats = row.beats
+    times = tip_scene_times(beats)
+    for i, b in enumerate(beats):
+        if "type" in b and i + 1 < len(beats) and beats[i + 1].get("key") == "enter":
+            s.seek(times[i + 1][0] + 40)                       # the key is in, and what is typed is still in the pill
+            text = s.item("pillText")
+            row_item, box = text.parentItem(), text.parentItem().parentItem()
+            assert text.property("text") == b["type"], row.id
+            assert row_item.x() == 0 and row_item.width() <= box.width(), f"{row.id}: {b['type']!r} is cut in the pill"
+            assert text.property("font").pixelSize() >= 12, row.id
+
+
+def tip_scene_times(beats):
+    from bombadil import tip_scene
+    return tip_scene.beat_times(beats)
+
+
 @pytest.mark.parametrize("row", [r for r in ROWS if any("card" in b for b in r.beats)], ids=lambda r: r.id)
 def test_a_card_never_reads_done_while_the_stone_works_nor_running_beside_a_line_that_says_done(row, drawn):
     """The scene is one machine: the desk's card goes done in the moment the turn ends and the line and the stone with
