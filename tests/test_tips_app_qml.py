@@ -738,9 +738,11 @@ def test_while_the_ai_rests_the_list_is_the_same_and_the_button_still_fills_the_
 
 def test_every_tip_fits_960_by_516_and_a_very_long_one_does_not_push_anything_out(home):
     out = drive(home, """
+        # Both have a scene: a tip with one has Replay beside its button (or its marks), which is what the long
+        # words must leave room for (a row with no beats has no Replay and would not show that).
         long_one = {"id": "long-one", "section": "work", "order": 9, "line": "A very long line " * 12,
                     "words": "and very long words " * 15, "marks": [], "card": True, "tried": False, "new": False,
-                    "captions": ["one", "two", "three"], "beats": []}
+                    "captions": ["one", "two", "three"], "beats": lab.fx.BUILD["beats"]}
         long_mark = dict(long_one, id="long-marks", order=10, words="", marks=["a mark that goes on " * 3, "Esc", "x"])
         boot(tips=lab.listing(home, tried=("esc",), new=("undo",)) + [long_one, long_mark])
         listed(22)
@@ -763,6 +765,8 @@ def test_every_tip_fits_960_by_516_and_a_very_long_one_does_not_push_anything_ou
             words, replay = find("wordsButton"), find("replayButton")
             if words.isVisible() and replay.isVisible() and scene_rect(words)[2] > scene_rect(replay)[0] + 0.5:
                 bad.append([tip["id"], "words over replay"])
+            if tip["id"] in ("long-one", "long-marks") and not replay.isVisible():
+                bad.append([tip["id"], "no Replay beside the long words"])
             if tip["id"] == "make-an-app":
                 shot("fit-first")
             if tip["id"] in ("long-one", "long-marks"):

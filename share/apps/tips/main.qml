@@ -151,8 +151,10 @@ AppWindow {
                     objectName: "wordsButton"
                     visible: win.hasWords
                     text: win.hasWords ? win.tip.words : ""
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredWidth: implicitWidth
-                    Layout.maximumWidth: 576 - (replayButton.visible ? replayButton.implicitWidth + Theme.gap : 0)
+                    Layout.maximumWidth: implicitWidth
                     onClicked: win.press()
                 }
                 Marks {
@@ -160,6 +162,10 @@ AppWindow {
                     visible: win.hasMarks
                     marks: win.hasMarks ? win.tip.marks : []
                     Layout.alignment: Qt.AlignVCenter
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredWidth: implicitWidth
+                    Layout.maximumWidth: implicitWidth
                 }
                 PillButton {
                     id: replayButton
@@ -170,7 +176,6 @@ AppWindow {
                     text: "Replay"
                     onClicked: win.replay()
                 }
-                Item { Layout.fillWidth: true }
             }
         }
 
