@@ -32,6 +32,7 @@ APP_CARD = (540, 660)
 APP_STEP = 48
 APP_SLOTS = 3
 _APP_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+INITIAL_WORKSPACE_TOKEN = "HL_INITIAL_WORKSPACE_TOKEN"   # Hyprland's "open where this process was started"
 
 
 def app_slots(monitor: dict, card: tuple[int, int] = APP_CARD) -> list[tuple[int, int]]:
@@ -222,6 +223,35 @@ class Hyprland:
         if show != showing:
             self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
         return f"panel {name} {'shown' if show else 'hidden'}{note}"
+
+    def open_terminal(self, spawn=subprocess.Popen) -> str:
+        """Super+Return: a terminal on the desktop. A window that opens while a drawer shows (a special
+        workspace: the details, the files, an app's) lands inside it and leaves with it, so any drawer but
+        the terminal's own is put away first. Never raises over the drawer: the terminal opens anyway.
+
+        Putting the drawer away is not enough on its own. Hyprland's initial workspace tracking
+        (misc:initial_workspace_tracking, on by default) stamps every process it starts, the Super+Return
+        bind's included, with HL_INITIAL_WORKSPACE_TOKEN, the workspace that showed at that moment, and
+        opens the first window of that process tree there for the next few seconds
+        (misc:initial_workspace_token_timeout). The drawer that was showing when the keys went down is
+        that workspace, so the terminal would still open inside it, on a fast machine always and on a slow
+        one whenever the window comes up in time. The terminal is started without the token, so it opens
+        where the desktop is now."""
+        note = ""
+        if self.available:
+            try:
+                monitors = json.loads(self.request("j/monitors"))
+                mon = next((m for m in monitors if m.get("focused")), monitors[0])
+                name = str((mon.get("specialWorkspace") or {}).get("name", "")).removeprefix("special:")
+                if name and name != "terminal" and _APP_NAME.fullmatch(name):
+                    self.dispatch(f'hl.dsp.workspace.toggle_special("{name}")')
+                    note = f", {name} put away"
+            except (OSError, RuntimeError, ValueError, KeyError, IndexError, TypeError) as e:
+                note = f", could not tell which drawer shows: {e}"
+        env = {k: v for k, v in os.environ.items() if k != INITIAL_WORKSPACE_TOKEN}
+        spawn(["foot"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+              start_new_session=True, env=env)
+        return "terminal opened" + note
 
     def screenshot(self, path: Path) -> Path:
         if shutil.which("grim") is None:

@@ -80,7 +80,10 @@ centroid.
 - **Needs you:** amber `#e0a93b`. Knocks twice, tipping 8 degrees to the right and landing back, then
   waits, on a 1.6 s beat. Behind it a filled radial glow breathes 0.25 to 0.6. Never a ring (next to the
   name Bombadil a gold ring is the One Ring). Reduced motion: still, glow held at 0.45. *As built, the
-  glow reaches 16 px from the stone's centre: at the first brief's 11 px it was a 1 px halo at 24 px.*
+  glow reaches 16 px from the stone's centre: at the first brief's 11 px it was a 1 px halo at 24 px. The
+  knock is also a cue that ends: it plays for about ten seconds, then the stone stays amber with the glow held at
+  0.45, and one beat comes each minute while the need stands, because an animation that never stops keeps the bar
+  drawing sixty frames a second on an idle machine (docs/IDLE-COST.md).*
 - **Done:** green, 700 ms, played once: a squash to (1.06, 0.9) about its foot, a 3 px hop, a landing
   squash to (1.1, 0.84), a small rebound, still. Reduced motion: a 600 ms fade in from 0.3.
 - **Stopped:** the Stop button's own square in muted `#8b939c`. Never orange.
@@ -216,7 +219,7 @@ wrong half the time.
 
 - The shell and the app kit share one set of tokens (`share/qml/Bombadil/Theme.qml`), with Inter as the
   family everywhere; the bar starts through `bin/bombadil-shell` so Quickshell can find the kit's theme.
-- `shell/Stone.qml` draws the mark and `PillState.face` says which face it wears; the icons, the lockups,
+- `Kit.Stone` (`share/qml/Bombadil/Stone.qml`) draws the mark and `PillState.face` says which face it wears; the icons, the lockups,
   the repository's pictures and the GRUB theme are in the files table of
   [`docs/brand/README.md`](../brand/README.md), with what a real machine taught us.
 

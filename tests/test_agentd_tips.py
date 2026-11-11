@@ -132,7 +132,9 @@ async def test_a_client_that_connects_is_told_the_card_once_and_the_others_nothi
         "marks": [], "why": "Start here · 1 of 6", "index": 1, "count": 6,
         "tip": d.tips.listed()[0].as_dict()}}
     assert first["card"]["tip"]["captions"] == ["You ask", "It builds", "You have it"]
-    assert first["card"]["tip"]["beats"] == []
+    beats = first["card"]["tip"]["beats"]
+    assert beats and beats == [dict(b) for b in d.tips.listed()[0].beats]     # the scene goes over the socket whole
+    assert json.loads(json.dumps(beats)) == beats
     r2, w2 = await _connect(d)
     assert (await _events_until(r2, _card))[-1] == first
     assert await _tips_heard(r) == []          # nothing changed for the first one, so it is not told again
@@ -338,8 +340,9 @@ async def test_list_is_answered_on_that_connection_and_holds_what_this_machine_b
     ids = [t["id"] for t in answer["list"]]
     # The fake AI is on, nothing else: no app, no project, no installed disk, no card seen. The desk can keep a
     # widget, so that tip is here (the word "widgets" is a launcher word).
-    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang", "passwords", "whyhere",
-                   "draw", "toolchain", "disk", "pause", "keep", "why"]
+    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang",
+                   "passwords",
+                   "whyhere", "draw", "toolchain", "disk", "pause", "keep", "why"]
     assert [t["tried"] for t in answer["list"]][:3] == [False, True, False]
     assert not any(t["new"] for t in answer["list"])
     pause = next(t for t in answer["list"] if t["id"] == "pause")

@@ -68,6 +68,7 @@ audio_sink() { as_user wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[
 apps_in_own_drawers() { hypr_json clients | python3 -c 'import json,sys; w=[c["workspace"]["name"] for c in json.load(sys.stdin) if c["class"].startswith("bombadil-app-") and c["floating"]]; print(w); sys.exit(len(w) < 2 or len(set(w)) != len(w))'; }
 has_layer() { hypr_json layers | grep -q "$1"; }
 special_shown() { hypr_json monitors | grep -q "\"special:$1\""; }
+drawer_away() { ! special_shown "$1"; }
 active_is() { hypr_json activewindow | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("class") != sys.argv[1])' "$1"; }
 # No details window and no drawer showing (a failed hyprctl never counts as gone).
 drawer_gone() {
@@ -174,6 +175,10 @@ shot picture
 # Super+Escape stops a running turn and everything it started.
 # A key press only means something to a machine that is not flat out: under emulation an app that is
 # still starting can make the handover to the pill take longer than the test waits. Wait for calm.
+# The Super tap and Alt+Space fire the bar's global shortcuts (shell/PillKeys.qml), and Hyprland does nothing, and
+# says nothing, for one the bar has not registered: ask Hyprland for the list before a key depends on it.
+pill_shortcuts() { local o; o=$(as_user hyprctl globalshortcuts) && grep -q 'bombadil:pill-release' <<<"$o" && grep -q 'bombadil:pill-press' <<<"$o"; }
+check pill-shortcuts-registered wait_for 60 pill_shortcuts
 wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
 before=$(launcher_done browser "Opened the browser")
 keys meta_l
@@ -181,10 +186,10 @@ SHOT_WAIT=1 shot after-super-tap
 keys b r o w s e r ret
 check super-tap-then-launcher wait_for 60 special_shown browser
 check launcher-without-model wait_for 30 launcher_ran browser "Opened the browser" "$before"
-# A tap that did nothing: was it the bind (Hyprland never ran `bombadil pill`) or the pill? Say which
+# A tap that did nothing: was it the bind (Hyprland never fired the pill's shortcut) or the pill? Say which
 # in the log: ask for the pill by hand and type the word again.
 if ! launcher_ran browser "Opened the browser" "$before"; then
-  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1)"
+  say "DIAG the tap did nothing; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1); release binds: $(hypr_json binds | python3 -c 'import json,sys; print([b["key"] for b in json.load(sys.stdin) if b.get("release")])' 2>&1); shortcuts: $(as_user hyprctl globalshortcuts 2>&1 | tr '\n' ' ')"
   as_user bombadil pill; sleep 3
   keys b r o w s e r ret
   if wait_for 30 launcher_ran browser "Opened the browser" "$before"; then say "DIAG by hand the pill took the word: the Super bind did not fire"
@@ -200,6 +205,15 @@ SHOT_WAIT=1 shot after-alt-space
 keys b r o w s e r ret
 check alt-space-then-launcher wait_for 60 launcher_ran browser "Opened the browser" "$before"
 check browser-hide-third mcp_call hide_panel '{"name":"browser"}'
+# Super+Return opens a terminal on the desktop. A window that opens while a drawer shows lands inside the
+# drawer and leaves with it, so the drawer that shows (here the browser's) is put away first.
+check terminal-with-a-drawer-showing mcp_call show_panel '{"name":"browser"}'
+check terminal-drawer-shown wait_for 60 special_shown browser
+wait_for 240 calm || say "NOTE the machine was still busy when the keys went in"
+keys meta_l+ret
+check super-return-terminal wait_for 60 has_client 'c["class"]=="foot" and not c["workspace"]["name"].startswith("special:")'
+check super-return-puts-the-drawer-away wait_for 30 drawer_away browser
+as_user pkill -x foot
 as_user bombadil ask '!sleep 300' >/tmp/smoke.bang.log 2>&1 &
 check bang-turn-running wait_for 30 pgrep -f -x "sleep 300"
 shot pill-working
@@ -247,6 +261,89 @@ check open-unit-has-keyboard wait_for 30 active_is bombadil-details
 shot open-unit
 keys esc
 check open-unit-esc-closes wait_for 30 drawer_gone
+
+# Signing in (the live system has no provider picked and no login). agentd asks which AI in the
+# pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
+# get as far as their real page (or "No internet", when the VM has none), then are called off;
+# the whole round trip runs against fake_signin.py, a stand-in login on localhost.
+# setup_is STATES [LINE-REGEX [PROVIDER [PHASE [VIEW]]]]: agentd's setup line is in one of STATES
+# (a,b) and matches the rest. It prints what it saw: "state provider phase view | line".
+setup_is() {
+  as_user python3 - "$sock" "$@" <<'PY'
+import json, re, socket, sys
+sock, states = sys.argv[1], sys.argv[2].split(",")
+want = (sys.argv[3:] + ["", "", "", ""])[:4]
+s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sock)
+for raw in s.makefile():
+    m = json.loads(raw)
+    if m.get("type") == "setup":
+        break
+print(m.get("state"), m.get("provider"), m.get("phase"), m.get("view"), "|", m.get("line"), flush=True)
+ok = (m.get("state") in states and re.search(want[0], m.get("line") or "") is not None
+      and all(not w or m.get(k) == w for w, k in zip(want[1:], ("provider", "phase", "view"))))
+sys.exit(0 if ok else 1)
+PY
+}
+not_checking() { ! setup_is checking; }
+# cdp_tab REGEX: a tab in the panel's Chromium has an address that matches.
+cdp_tab() { python3 -c 'import json, re, sys, urllib.request as u
+t = json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20))
+print([x.get("url") for x in t]); sys.exit(not any(re.search(sys.argv[1], x.get("url", "")) for x in t if x.get("type") == "page"))' "$1"; }
+no_cdp_tab() { ! cdp_tab "$1" >/dev/null; }
+panel_away() { ! special_shown browser; }
+gone() { ! pgrep -u user -f "$1"; }
+# restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
+restart_agentd() {
+  # agentd is a user service that systemd starts again when it is killed, in the normal environment:
+  # stop the unit first, so the one started here is the only one.
+  as_user systemctl --user stop bombadil-agentd
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  echo "--- agentd $*" >>/tmp/smoke.agentd.log
+  as_user env "$@" setsid -f agentd >>/tmp/smoke.agentd.log 2>&1 </dev/null
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
+page_or_offline() { setup_is signing_in "" "$1" waiting || setup_is offline "No internet" "$1"; }
+# try_provider NAME PAGE: pick it; its page shows in the panel (or "No internet"); the panel is out.
+try_provider() {
+  agentd_send "{\"type\": \"setup_action\", \"id\": \"provider:$1\"}" || return 1
+  wait_for 240 page_or_offline "$1" || return 1
+  if setup_is offline "" "$1"; then echo "no internet in this VM: $1 stops at the offline line"; return 0; fi
+  wait_for 90 cdp_tab "$2" && wait_for 60 special_shown browser
+}
+# called_off PROVIDER: Cancel (Esc) ends the sign-in; the pill says so.
+called_off() { agentd_send '{"type": "setup_action", "id": "cancel"}'; wait_for 90 setup_is signed_out,offline 'cancelled|No internet' "${1:-}"; }
+port_free() { ! ss -ltn | grep -qE "127\.0\.0\.1:$1\b"; }
+held_prompt_ran() { grep -q "echo: hello there" /tmp/smoke.held.log; }
+signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=manual FAKE_SIGNIN_DELAY=3 && wait_for 180 setup_is ready 'Signed in to Fake'; }
+slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
+browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
+page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
+# What the browser looked like when a check on its page failed: its main processes with their whole
+# command lines, the windows, every target the debugging port lists (with its type), the profile's
+# singleton files and agentd's last words.
+browser_diag() {
+  say "DIAG browser, whole command lines (pid ppid started args): $(ps -u user -o pid=,ppid=,lstart=,args= | grep -F -- '--class=bombadil-browser' | grep -v -e '--type=' -e grep | tr '\n' '|')"
+  say "DIAG windows: $(hypr_json clients | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["title"][:40]) for c in json.load(sys.stdin)])' 2>&1)"
+  say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
+for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
+    print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
+  say "DIAG browser profile: $(ls -la /home/user/.local/share/bombadil/browser 2>&1 | grep -i singleton | tr '\n' '|')"
+  agentd_log
+}
+page_again_or_diag() { page_again || { browser_diag; return 1; }; }
+times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
+offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
+# Back to the unit's agentd, as the session booted.
+agentd_unit_again() {
+  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
+  as_user systemctl --user start bombadil-agentd
+  wait_for 60 test -S "$sock" && wait_for 90 not_checking
+}
+# A sign-in that turns ready with no persona.toml puts the name and voice card up and writes the defaults at once, so
+# a block that signs in only to see the pill's line takes the file away again (the mail block's leaves it for the
+# connection block's sign-in, which then asks for nothing): the voice checks further down need none.
+forget_persona() { rm -f /home/user/.config/bombadil/persona.toml; }
+agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
 # Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
 # slice with a floating viewer, lives on when that window closes, comes back by name and ends.
@@ -358,6 +455,9 @@ if [[ "$mode" != "undo" ]]; then
   launcher_ran browser "Opened the browser" "$before" || say "DIAG the word did not reach the pill; active window: $(hypr_json activewindow | python3 -c 'import json,sys; print(json.load(sys.stdin).get("class"))' 2>&1)"
   check mail-engine-browser-hide mcp_call hide_panel '{"name":"browser"}'
   pkill -u user -f '^foot --app-id (org\.mozilla\.)?Thunderbird -e sleep 120$'
+  # The setup line owns the pill's line until an AI is signed in, and a notice waits behind it (it is shown only
+  # on an idle line), so the notice checks run with the stand-in provider, which needs no sign-in.
+  check mail-agentd-signed-in restart_agentd BOMBADIL_PROVIDER=fake
   check mail-fake-starts fake_mail
   check mail-status wait_for 30 as_user timeout 20 bombadil mail status
   check mail-accounts-listed wait_for 30 mail_accounts_listed
@@ -373,6 +473,7 @@ if [[ "$mode" != "undo" ]]; then
   shot mail
   check mail-window-hide app_hidden mail
   check mail-unit-restored restore_mail
+  check mail-agentd-unit-again agentd_unit_again
   mail_log
 fi
 
@@ -439,7 +540,12 @@ check browserd-unit-answers wait_for 60 browserd_up
 if [[ "$mode" != "undo" ]]; then
   check mako-is-not-running bash -c '! pgrep -x mako'
   check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
+  # The notice waits behind the setup line until an AI is signed in (as the mail notice does): the stand-in provider
+  # needs no sign-in.
+  check notification-agentd-signed-in restart_agentd BOMBADIL_PROVIDER=fake
   check notification-becomes-a-notice notification_becomes_a_notice
+  check notification-agentd-unit-again agentd_unit_again
+  forget_persona
   check connect-fake-starts fake_connect
   check connect-status wait_for 30 connect_says status 'r.get("state") == "ok"'
   check connect-connections-listed wait_for 30 connect_says connections 'r["connections"]'
@@ -448,83 +554,6 @@ if [[ "$mode" != "undo" ]]; then
 fi
 
 
-# Signing in (the live system has no provider picked and no login). agentd asks which AI in the
-# pill; a pick starts that CLI's own login with its page in the browser panel. Claude and Codex
-# get as far as their real page (or "No internet", when the VM has none), then are called off;
-# the whole round trip runs against fake_signin.py, a stand-in login on localhost.
-# setup_is STATES [LINE-REGEX [PROVIDER [PHASE [VIEW]]]]: agentd's setup line is in one of STATES
-# (a,b) and matches the rest. It prints what it saw: "state provider phase view | line".
-setup_is() {
-  as_user python3 - "$sock" "$@" <<'PY'
-import json, re, socket, sys
-sock, states = sys.argv[1], sys.argv[2].split(",")
-want = (sys.argv[3:] + ["", "", "", ""])[:4]
-s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sock)
-for raw in s.makefile():
-    m = json.loads(raw)
-    if m.get("type") == "setup":
-        break
-print(m.get("state"), m.get("provider"), m.get("phase"), m.get("view"), "|", m.get("line"), flush=True)
-ok = (m.get("state") in states and re.search(want[0], m.get("line") or "") is not None
-      and all(not w or m.get(k) == w for w, k in zip(want[1:], ("provider", "phase", "view"))))
-sys.exit(0 if ok else 1)
-PY
-}
-not_checking() { ! setup_is checking; }
-# cdp_tab REGEX: a tab in the panel's Chromium has an address that matches.
-cdp_tab() { python3 -c 'import json, re, sys, urllib.request as u
-t = json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20))
-print([x.get("url") for x in t]); sys.exit(not any(re.search(sys.argv[1], x.get("url", "")) for x in t if x.get("type") == "page"))' "$1"; }
-panel_away() { ! special_shown browser; }
-gone() { ! pgrep -u user -f "$1"; }
-# restart_agentd [VAR=value...]: agentd again, in this environment, its words in /tmp/smoke.agentd.log.
-restart_agentd() {
-  # agentd is a user service that systemd starts again when it is killed, in the normal environment:
-  # stop the unit first, so the one started here is the only one.
-  as_user systemctl --user stop bombadil-agentd
-  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
-  echo "--- agentd $*" >>/tmp/smoke.agentd.log
-  as_user env "$@" setsid -f agentd >>/tmp/smoke.agentd.log 2>&1 </dev/null
-  wait_for 60 test -S "$sock" && wait_for 90 not_checking
-}
-page_or_offline() { setup_is signing_in "" "$1" waiting || setup_is offline "No internet" "$1"; }
-# try_provider NAME PAGE: pick it; its page shows in the panel (or "No internet"); the panel is out.
-try_provider() {
-  agentd_send "{\"type\": \"setup_action\", \"id\": \"provider:$1\"}" || return 1
-  wait_for 240 page_or_offline "$1" || return 1
-  if setup_is offline "" "$1"; then echo "no internet in this VM: $1 stops at the offline line"; return 0; fi
-  wait_for 90 cdp_tab "$2" && wait_for 60 special_shown browser
-}
-# called_off PROVIDER: Cancel (Esc) ends the sign-in; the pill says so.
-called_off() { agentd_send '{"type": "setup_action", "id": "cancel"}'; wait_for 90 setup_is signed_out,offline 'cancelled|No internet' "${1:-}"; }
-port_free() { ! ss -ltn | grep -qE "127\.0\.0\.1:$1\b"; }
-held_prompt_ran() { grep -q "echo: hello there" /tmp/smoke.held.log; }
-signin_manual() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=manual FAKE_SIGNIN_DELAY=3 && wait_for 180 setup_is ready 'Signed in to Fake'; }
-slid_out() { mcp_call hide_panel '{"name":"browser"}' && wait_for 60 setup_is signing_in 'waiting in the browser' fake waiting hidden; }
-browser_closed() { pkill -u user -f -- '--class=bombadil-browser'; wait_for 90 setup_is signing_in 'was closed' fake waiting closed; }
-page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 180 setup_is signing_in 'in the browser' fake waiting shown && wait_for 90 cdp_tab '/authorize'; }
-# What the browser looked like when a check on its page failed: its main processes with their whole
-# command lines, the windows, every target the debugging port lists (with its type), the profile's
-# singleton files and agentd's last words.
-browser_diag() {
-  say "DIAG browser, whole command lines (pid ppid started args): $(ps -u user -o pid=,ppid=,lstart=,args= | grep -F -- '--class=bombadil-browser' | grep -v -e '--type=' -e grep | tr '\n' '|')"
-  say "DIAG windows: $(hypr_json clients | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["title"][:40]) for c in json.load(sys.stdin)])' 2>&1)"
-  say "DIAG browser targets: $(python3 -c 'import json, urllib.request as u
-for t in json.load(u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:9222/json/list", timeout=20)):
-    print(t.get("type"), t.get("url"))' 2>&1 | tr '\n' '|')"
-  say "DIAG browser profile: $(ls -la /home/user/.local/share/bombadil/browser 2>&1 | grep -i singleton | tr '\n' '|')"
-  agentd_log
-}
-page_again_or_diag() { page_again || { browser_diag; return 1; }; }
-times_out() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=never BOMBADIL_SIGNIN_TIMEOUT=20 && wait_for 240 setup_is signed_out 'timed out' fake; }
-offline() { restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2 BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:47811 && wait_for 60 setup_is offline 'No internet' fake; }
-# Back to the unit's agentd, as the session booted.
-agentd_unit_again() {
-  pkill -u user -f 'bin/agentd'; wait_for 20 gone 'bin/agentd' || return 1
-  as_user systemctl --user start bombadil-agentd
-  wait_for 60 test -S "$sock" && wait_for 90 not_checking
-}
-agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
 # The block below picks other providers, starts and cancels their logins (`codex login` revokes a
 # stored Codex login) and deletes the config file at its end. It is for a system with no provider
@@ -597,6 +626,11 @@ if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then
   check signin-page-again page_again_or_diag
   shot signin-page-again
   check signin-esc-cancels called_off fake
+  # Called off, the login page is put away: no tab on it, another tab in its place (the browser's last tab
+  # is never closed, since that would quit it and leave the panel waiting for a window), the window still there.
+  check signin-page-put-away wait_for 30 no_cdp_tab '/authorize'
+  check signin-a-tab-stays cdp_tab '.'
+  check signin-browser-stays has_client 'c["class"]=="bombadil-browser"'
   check signin-cli-ended wait_for 30 gone fake_signin.py
   # Nobody finishes it: it times out. No internet: it waits, and signs in once it is back.
   check signin-times-out times_out
@@ -611,6 +645,74 @@ if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then
   check agentd-restored agentd_unit_again
   agentd_log
 fi
+
+# Left alone, the session costs next to nothing. Hyprland, the bar, the daemon and the brain are watched
+# together, because a bar that redraws forever makes Hyprland draw forever too (docs/IDLE-COST.md): in this
+# very VM that was Hyprland at 265% and the bar at 97% of a core with nothing on screen. Everything is left
+# alone for a while first, since the apps and the browser this run started are still settling.
+# Three slices of IDLE_CPU_SECONDS, and the middle one is what counts: a need standing for the person plays
+# one beat of the stone's knock now and then, which this VM's software compositor pays for with a few cores
+# for a few seconds, so one slice may hold it; a loop that never ends is in every slice. The limit is for
+# this VM (Hyprland draws in software here, and under TCG too, at a tenth of the speed of a real machine):
+# the same stack uses about a tenth of that on real hardware, which tests/desktop/idle.py holds to 10%.
+idle_share() {
+  python3 - "${IDLE_CPU_LIMIT:-30}" "${IDLE_CPU_SECONDS:-10}" <<'PY'
+import os, sys, time
+limit, seconds, clk = float(sys.argv[1]), float(sys.argv[2]), os.sysconf("SC_CLK_TCK")
+MUST = ("Hyprland", "quickshell")           # found by the name of the process
+ALSO = ("agentd", "bombadil-brain")         # scripts: found by the name of the file they run
+def watched():
+    found = {}
+    for p in os.listdir("/proc"):
+        if not p.isdigit():
+            continue
+        try:
+            comm = open(f"/proc/{p}/comm").read().strip()
+            args = open(f"/proc/{p}/cmdline").read().split("\0")
+        except OSError:
+            continue
+        if comm in MUST:
+            found[int(p)] = comm
+        for name in ALSO:
+            if any(os.path.basename(a) == name for a in args[:3]):
+                found[int(p)] = name
+    return found
+def ticks(pid):
+    total = 0
+    try:
+        for t in os.listdir(f"/proc/{pid}/task"):
+            raw = open(f"/proc/{pid}/task/{t}/stat").read()
+            f = raw[raw.rindex(")") + 2:].split()
+            total += int(f[11]) + int(f[12])
+    except OSError:
+        pass
+    return total
+slices, seen = [], set()
+for _ in range(3):
+    before = {pid: (name, ticks(pid)) for pid, name in watched().items()}
+    t0 = time.monotonic()
+    time.sleep(seconds)
+    dt = time.monotonic() - t0
+    share = {}
+    for pid, (name, then) in before.items():
+        share[name] = share.get(name, 0.0) + max(0, ticks(pid) - then) / clk / dt * 100
+    seen |= set(share)
+    slices.append(share)
+totals = sorted(sum(s.values()) for s in slices)
+for share in slices:
+    print("%.0f s, percent of one core: %s, together %.1f" % (
+        seconds, ", ".join("%s %.1f" % kv for kv in sorted(share.items())), sum(share.values())))
+print("middle slice %.1f (limit %g)" % (totals[1], limit))
+missing = [name for name in MUST if name not in seen]
+if missing:
+    print("not running:", ", ".join(missing))
+sys.exit(totals[1] >= limit or bool(missing))
+PY
+}
+wait_for 240 calm || say "NOTE the machine was still busy when the idle cost was measured"
+sleep 30
+check idle-cpu idle_share
+say "NOTE $(tr '\n' ' ' </tmp/smoke.idle-cpu.log)"
 
 # What the installer must refuse, and what it must do, from the live system (a USB-attached ISO is /dev/sda
 # when the host attaches it that way; a CD has no disk, and the check is then skipped).

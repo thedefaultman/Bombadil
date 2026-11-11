@@ -34,12 +34,54 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
 # The installer's GRUB defaults are tested with the installer, in tests/test_installer.py.
 
 
-def test_the_pill_opens_from_super_and_from_alt_space():
-    # A VM window on Windows keeps the Windows key for its Start menu, so Alt+Space is the way in there.
+def _pill_binds():
+    """The lua, and its binds that fire a global shortcut: {keys: (the shortcut, fires on release)}."""
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
     # Anchored at the line start, so a commented-out bind does not count.
-    binds = re.findall(r'^\s*hl\.bind\("([^"]+)", hl\.dsp\.exec_cmd\("bombadil pill"\)', lua, re.MULTILINE)
-    assert {"SUPER + SUPER_L", "SUPER + SUPER_R", "ALT + space"} <= set(binds)
+    binds = {}
+    for m in re.finditer(r'^\s*hl\.bind\("([^"]+)", hl\.dsp\.global\("([^"]+)"\)(, \{ release = true \})?\)', lua, re.M):
+        binds[m.group(1)] = (m.group(2), bool(m.group(3)))
+    return lua, binds
+
+
+def test_the_pill_opens_from_super_and_from_alt_space():
+    # A VM window on Windows keeps the Windows key for its Start menu, so Alt+Space is the way in there.
+    _, binds = _pill_binds()
+    assert binds == {"SUPER + SUPER_L": ("bombadil:pill-release", True),
+                     "SUPER + SUPER_R": ("bombadil:pill-release", True),
+                     "ALT + space": ("bombadil:pill-press", False)}
+
+
+def test_the_pill_keys_start_no_process_the_first_letters_would_wait_for():
+    # `bombadil pill` is a Python start and a round trip through agentd: on a loaded machine the first
+    # letters typed after a tap on Super had gone to the window underneath before the pill had the keyboard.
+    # The keys are the bar's own global shortcuts instead.
+    lua, _ = _pill_binds()
+    code = "\n".join(line for line in lua.splitlines() if not line.lstrip().startswith("--"))
+    assert "bombadil pill" not in code
+
+
+def test_the_shortcuts_the_keys_fire_are_the_ones_the_bar_registers_on_the_edge_it_listens_to():
+    # Hyprland does nothing, and says nothing, for a global shortcut nobody registered, and the bar listens
+    # to one edge of each: a tap (a release bind) to the release, Alt+Space to the press.
+    _, binds = _pill_binds()
+    qml = (ISO.parent / "shell/PillKeys.qml").read_text()
+    registered = {}
+    for block in re.findall(r"GlobalShortcut \{(.*?)\n    \}", qml, re.S):
+        appid, name = (re.search(rf'{key}: "([^"]+)"', block).group(1) for key in ("appid", "name"))
+        registered[f"{appid}:{name}"] = re.findall(r"^\s*on(Pressed|Released): ", block, re.M)
+    assert registered == {"bombadil:pill-release": ["Released"], "bombadil:pill-press": ["Pressed"]}
+    for keys, (shortcut, on_release) in binds.items():
+        assert registered[shortcut] == (["Released"] if on_release else ["Pressed"]), keys
+    # Registered once: the protocol refuses a second client with the same appid and name (the second
+    # crashes), which a copy per screen would be. The bar loads it only under Hyprland.
+    shell = (ISO.parent / "shell/shell.qml").read_text()
+    assert shell.count("PillKeys {") == 1 and shell.index("PillKeys {") < shell.index("Variants {")
+    assert re.search(r"Loader \{\s*active: root\.hyprland\s*sourceComponent: PillKeys \{ pill: pillState \}", shell)
+    # The VM smoke asks Hyprland whether the bar registered them before it taps a key.
+    smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
+    assert all(f"'{shortcut}'" in smoke for shortcut in registered) and "hyprctl globalshortcuts" in smoke
+    assert smoke.index("check pill-shortcuts-registered") < smoke.index("keys meta_l")
 
 
 def test_hyprland_does_not_slide_the_bar_when_a_picture_resizes_it():
@@ -47,6 +89,13 @@ def test_hyprland_does_not_slide_the_bar_when_a_picture_resizes_it():
     # "layers" animation the pill dipped and swung back for half a second each time.
     lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
     assert re.search(r'^\s*hl\.animation\(\{ leaf = "layers", enabled = false \}\)', lua, re.M)
+
+
+def test_super_return_opens_a_terminal_that_does_not_belong_to_the_drawer_showing():
+    # A plain `foot` opens inside the drawer that shows (a special workspace) and goes with it.
+    lua = (ISO / "airootfs/etc/skel/.config/hypr/hyprland.lua").read_text()
+    assert re.search(r'^\s*hl\.bind\("SUPER \+ Return", hl\.dsp\.exec_cmd\("bombadil terminal"\)\)', lua, re.M)
+    assert '"SUPER + Return", hl.dsp.exec_cmd("foot")' not in lua
 
 
 def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():

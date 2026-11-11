@@ -102,6 +102,13 @@ ShellRoot {
         }
     }
 
+    // Super tapped, Alt+Space pressed: Hyprland tells the bar itself, with no `bombadil pill` and no
+    // round trip through agentd in between (PillKeys.qml). Only on Hyprland, and only once.
+    Loader {
+        active: root.hyprland
+        sourceComponent: PillKeys { pill: pillState }
+    }
+
     // "Starting" shows for the first seconds, until agentd answers; after that, no answer is "offline".
     Timer { interval: 15000; running: true; onTriggered: pillState.booting = false }
 
@@ -237,8 +244,8 @@ ShellRoot {
         root.agentd.flush()
     }
 
-    // Super tapped (Hyprland runs `bombadil pill`, agentd relays it here): the pill on the
-    // focused screen takes the keyboard. A second tap gives it back.
+    // Super tapped (Hyprland's global shortcut, or `bombadil pill` relayed by agentd): the pill on
+    // the focused screen takes the keyboard. A second tap gives it back.
     function summon(text) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
@@ -701,7 +708,7 @@ ShellRoot {
                         spacing: 8
 
                         // The stone: Bombadil's mark, in the dot's place. Its face says what the machine is
-                        // doing (Stone.qml); while a turn runs, hover turns it into Stop and a click stops
+                        // doing (Kit.Stone); while a turn runs, hover turns it into Stop and a click stops
                         // it; otherwise a click opens the AI card (and another closes it).
                         Rectangle {
                             id: dotBox
@@ -711,7 +718,7 @@ ShellRoot {
                             radius: 12
                             color: stoppable ? Kit.Theme.accentSoft : "transparent"
                             Behavior on implicitWidth { NumberAnimation { duration: Kit.Theme.fast } }
-                            Stone {
+                            Kit.Stone {
                                 id: stone
                                 objectName: "stone"
                                 visible: !dotBox.stoppable

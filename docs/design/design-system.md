@@ -30,6 +30,7 @@ The mark is the riding b: a smooth three-sided stone (a rounded Reuleaux triangl
 - The mark is ink: `fg` on the dark ground, `inkOnLight` on a light page, black or white in print. The stone takes a colour only in the pill, and only its state's colour (`good` at rest, `accent` while working, `warn` when it needs you). The one fixed touch of orange is the stone that dots the i in the name. `accent` is the exact colour of Claude's logo and Bombadil also runs Codex, so never draw the mark in orange and never put it on an orange or red tile.
 - The tile (app and installer icon) is the mark in ink on `panel` with `radius` corners; it is for 32 px and up. At 16 px use the 16 px drawing, never the tile scaled down.
 - In the pill the stone sits where the old 10 px dot sat, at 18 px, with the b cut 1.6 px wide.
+- One component draws it: `Kit.Stone`, `share/qml/Bombadil/Stone.qml`, in the app kit (internal, so apps the agent writes cannot use it). The pill uses it with its animation on and its state colours; the tip scenes use it with the animation off and its pose written from the scene's clock, at 24 px on the Tips app's stage and in the 16 px drawing, in ink, on the desk card. `animate`, `ink` and `small` are in [`../brand/README.md`](../brand/README.md#stone-in-the-kit) and [`../TIP-SCENES.md`](../TIP-SCENES.md#the-stone-in-the-kit).
 - Every state reads without colour: rest still, listening a lean toward the text, working a roll, needs you two knocks and a soft glow that breathes, done one hop, stopped a grey square, offline a broken `bad` outline. No state uses a stroked amber ring.
 - No Tolkien imagery, no face, no mascot, no logo wallpaper, no boot splash. The character is in how the stone moves.
 
@@ -50,7 +51,7 @@ The mark is the riding b: a smooth three-sided stone (a rounded Reuleaux triangl
 ## Motion
 
 - 120 ms for sizes, 200 ms for fades, 300 ms for the pill's border colour. Windows and panels slide on the bezier (0.16, 1, 0.3, 1).
-- Every movement means one thing. The stone rolls a third of a turn per second while working, knocks twice on a 1.6 s beat when it needs you (its glow breathes on the same beat), hops once when done and leans toward the text while you type. Nothing else moves.
+- Every movement means one thing. The stone rolls a third of a turn per second while working, knocks twice on a 1.6 s beat when it needs you (its glow breathes on the same beat; for ten seconds, then it rests and gives one beat every five minutes), hops once when done and leans toward the text while you type. Nothing else moves.
 - Under reduced motion, working falls back to one pulse (opacity 1 to `pulseLow` and back, 500 ms each way), needs you holds its glow, and the rest stay still.
 - The line stays 12 s after a turn, 5 s after a local answer, 15 s after an undo.
 - Every movement has a still version for reduced motion.
