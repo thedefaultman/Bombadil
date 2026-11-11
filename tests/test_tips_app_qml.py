@@ -248,7 +248,12 @@ def test_the_list_has_its_sections_and_every_tip_agentd_lists_with_its_words_and
         out["selected_rows"] = [ev(r, "line") for r in rows if ev(r, "selected")]
         out["head"] = texts()[:1]
         out["away_shown"] = has("The agent is not answering")
+        from PySide6.QtGui import QFont
+        font = find("tipLine").property("font")
+        out["sizes"] = [find("wordsButton").height(), font.pixelSize(), font.weight() == QFont.Weight.DemiBold,
+                        scene().width()]
     """)
+    assert out["sizes"] == [36, 17, True, 576]       # the spec: a 36 px button, the line 17 DemiBold, a 576 px stage
     assert out["sections"] == ["Start here", "Work", "Code", "This machine"]      # no New: nothing is new
     assert [r[:2] for r in out["rows"]] == out["backend"]
     assert len(out["rows"]) == 20
@@ -360,7 +365,7 @@ def test_a_chosen_tip_plays_once_and_holds_its_payoff_and_replay_and_space_play_
     assert out["after_space"] == [True, True]
     assert out["space_midway"] < 600, "Space restarts a tip that is playing"
     assert out["picked"] == ["picture", "picture", True]
-    assert out["picture_line"] == "Ask for a picture, not a paragraph." or out["picture_line"].startswith("Ask for")
+    assert out["picture_line"] == "Ask for a picture, not a paragraph."
     assert out["picture_end"][0] == out["picture_end"][1]
 
 
@@ -653,7 +658,48 @@ def test_the_window_says_so_while_agentd_is_away_and_has_the_list_when_it_comes_
     assert out["back"] is True and out["after"] == [False, True, "make-an-app"]
 
 
-def test_nothing_to_list_is_said_in_one_line(home):
+def test_the_window_asks_once_each_time_it_comes_forward_and_finds_out_that_agentd_went_away(home):
+    """Once the list has come nothing asks again by itself. The window is hidden and shown from its drawer, which
+    to it is losing and taking the keyboard: that is when it looks, and a look that finds nobody says so."""
+    out = drive(home, """
+        boot()
+        listed(20)
+        spin(300)
+        sys.modules[type(backend).__module__].FRESH_MS = 0       # (a look a moment after an answer is skipped)
+        from PySide6.QtGui import QWindow
+        other = QWindow()
+        other.resize(100, 100)
+        other.show()
+
+        def forward():          # hidden, then shown: the window loses the keyboard and takes it back
+            other.requestActivate()
+            spin(200)
+            assert not win.isActive()
+            win.requestActivate()
+            spin(400)
+            assert win.isActive()
+
+        asked = len(fake.of("tips", "list"))
+        forward()
+        out["asked_when_it_came_forward"] = len(fake.of("tips", "list")) - asked
+        fake.stop()
+        spin(300)
+        out["before_a_look"] = [backend.connected, has("The agent is not answering")]
+        forward()
+        out["after_a_look"] = [backend.connected, has("The agent is not answering"), shown("content")]
+        shot("gone")
+        fake.start()
+        out["back"] = wait_until(lambda: backend.connected and backend.count == 20, 9000)
+        spin(300)
+        out["back_shows"] = [has("The agent is not answering"), shown("content"), backend.selected]
+    """, timeout=170)
+    assert out["asked_when_it_came_forward"] == 1
+    assert out["before_a_look"] == [True, False]       # nobody looked: it still shows what it had
+    assert out["after_a_look"] == [False, True, False]
+    assert out["back"] is True and out["back_shows"] == [False, True, "make-an-app"]
+
+
+def test_nothing_to_list_says_what_is_empty_and_why(home):
     out = drive(home, """
         boot(tips=[])
         assert wait_until(lambda: backend.connected, 8000)
@@ -665,7 +711,9 @@ def test_nothing_to_list_is_said_in_one_line(home):
         key(Qt.Key.Key_Space)
         out["log"] = log[:]
     """)
-    assert "No tips on this computer yet" in out["texts"] and out["content"] is False
+    assert "No tips to show on this computer" in out["texts"]                  # what is empty, and
+    assert "Tips are switched off here, or their table could not be read." in out["texts"]       # why
+    assert out["content"] is False
     assert "The agent is not answering" not in out["texts"] and out["log"] == []
 
 
@@ -845,8 +893,8 @@ def test_the_words_the_window_says_keep_to_the_voice():
                 continue
             assert "!" not in literal and "—" not in literal, (qml.name, literal)
             assert not re.search(r"\b(will|tomorrow|later)\b", literal, re.IGNORECASE), (qml.name, literal)
-    for text in ("The agent is not answering", "Tips come back as soon as it does.", "No tips on this computer yet",
-                 "Start here", "Work", "Code", "This machine", "New", "tried", "Replay"):
+    for text in ("The agent is not answering", "Tips come back as soon as it does.", "No tips to show on this computer",
+                 "Tips are switched off here, or their table could not be read.", "Start here", "Work", "Code", "This machine", "New", "tried", "Replay"):
         assert text in "".join(q.read_text() for q in QML_FILES) + (APP / "app.py").read_text(), text
     assert (APP / "app.toml").read_text().count("What to ask, shown in action") == 1
 

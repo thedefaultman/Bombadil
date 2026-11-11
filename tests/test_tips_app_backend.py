@@ -34,6 +34,8 @@ def mod(monkeypatch):
     """The app's module with short clocks, so a test does not wait the seconds a person would."""
     m = lab.load_app()
     monkeypatch.setattr(m, "RETRY_MS", 120)
+    monkeypatch.setattr(m, "QUIET_MS", 1500)
+    monkeypatch.setattr(m, "FRESH_MS", 0)
     monkeypatch.setattr(m, "ANSWER_MS", 600)
     monkeypatch.setattr(m, "SETTLE_MS", 40)
     monkeypatch.setattr(m, "WATCH_MS", 150)
@@ -86,6 +88,13 @@ def rows(b) -> list[dict]:
 
 def up(b) -> bool:
     return lab.wait_until(lambda: b.connected and b.count > 0)
+
+
+def out_now(b, mod) -> list:
+    """The requests this backend has out at this moment, counted on its own side: each is a socket of its own
+    until it is finished. (What the fake agentd counts lags behind a close, so under load it can see two where
+    the app never had more than one.)"""
+    return [o for o in b.findChildren(mod.Once) if not o._over]
 
 
 def settle(fake, ms: int = 250):
@@ -422,6 +431,25 @@ def test_a_press_while_the_app_is_open_shows_that_tip_and_the_same_press_again_p
     assert lab.wait_until(lambda: len(fake.of("tips", "opened")) == 2)
 
 
+def test_the_same_open_on_read_again_does_not_move_the_window_back(agentd, backend, home, state):
+    """agentd clears `open_on` when it hears "opened", but an agentd that did not (an older one, or the line was
+    lost) leaves it: the next look at the file must not take the person back to that tip."""
+    fake = agentd(lab.listing(home))
+    lab.write_state(state, open_on="disk")
+    b = backend()
+    assert up(b)
+    assert b.selected == "disk"
+    assert lab.wait_until(lambda: len(fake.of("tips", "opened")) == 1)
+    b.select("timer")                                  # the person went somewhere else
+    asked = []
+    b.openRequested.connect(asked.append)
+    lab.write_state(state, tried=["esc"], open_on="disk")        # a tick: the file changes, `open_on` is as it was
+    assert lab.wait_until(lambda: next(r for r in rows(b) if r["key"] == "esc")["tried"])
+    lab.spin(300)
+    assert b.selected == "timer" and asked == []
+    assert len(fake.of("tips", "opened")) == 1                   # and it did not say it read a request again
+
+
 def test_a_request_for_a_tip_that_is_not_listed_is_read_and_changes_nothing(agentd, backend, home, state):
     fake = agentd(lab.listing(home, facts=tips_mod.Facts(ai="Claude")))
     b = backend()
@@ -472,11 +500,33 @@ def test_a_request_made_while_one_is_out_is_asked_once_more_and_not_once_each(ag
     fake.hooks[("tips", "list")] = lambda _m: time.sleep(0.15)
     b = backend()
     assert up(b)
+    settle(fake)
     before = len(fake.of("tips", "list"))
     for _ in range(6):
-        b.refresh()
-    lab.spin(700)
-    assert len(fake.of("tips", "list")) - before <= 2
+        b.refresh()                                    # the first goes out; the other five are one more, together
+    assert lab.wait_until(lambda: len(fake.of("tips", "list")) - before == 2)
+    lab.spin(500)
+    assert len(fake.of("tips", "list")) - before == 2
+
+
+def test_a_folder_that_is_watched_needs_no_clock_and_one_that_is_not_there_yet_is_looked_at_until_it_is(
+        mod, monkeypatch, agentd, backend, home, state):
+    """The watcher says when tips.json changes. A clock under it would wake an idle machine for as long as the
+    window is kept, so it runs only while there is nothing to watch (the state folder is not made yet)."""
+    monkeypatch.setattr(mod, "WATCH_MS", 60)
+    agentd()
+    assert not state.parent.exists()
+    b = backend()
+    assert b._net.isActive() is True                   # nothing to watch yet: look every WATCH_MS
+    lab.write_state(state, tried=["timer"])            # the folder and the file appear
+    assert lab.wait_until(lambda: b._net.isActive() is False)    # watched now: no clock
+    assert lab.wait_until(lambda: b._seen_tried == frozenset({"timer"}))
+    # From here the watcher alone carries every change, with no clock to be the reason a tick shows.
+    lab.write_state(state, tried=["timer", "esc"])
+    assert lab.wait_until(lambda: b._seen_tried == frozenset({"timer", "esc"}))
+    assert b._net.isActive() is False
+    b2 = backend()                                      # a folder that is there from the start: no clock at all
+    assert b2._net.isActive() is False
 
 
 def test_a_check_makes_no_connection_and_reads_nothing(mod, monkeypatch, agentd, backend, home, state):
@@ -505,7 +555,7 @@ def test_it_says_so_while_agentd_is_away_and_keeps_trying_until_it_is_back(agent
     assert len(fake.of("tips", "list")) == asked
 
 
-def test_an_agentd_that_hangs_up_or_says_nothing_is_away_and_nothing_is_left_open(agentd, backend):
+def test_an_agentd_that_hangs_up_or_says_nothing_is_away_and_nothing_is_left_open(agentd, backend, mod):
     fake = agentd()
     fake.mode = "hangup"
     b = backend()
@@ -513,13 +563,96 @@ def test_an_agentd_that_hangs_up_or_says_nothing_is_away_and_nothing_is_left_ope
     assert not b.connected
     fake.mode = "silent"
     seen = fake.connections
-    lab.spin(2300)                                     # past the time an answer is waited for, three times
+    most = 0
+    end = time.monotonic() + 6
+    while time.monotonic() < end and fake.connections <= seen + 1:   # it gives up on one connection, tries another
+        lab.spin(15)
+        most = max(most, len(out_now(b, mod)))
+    assert fake.connections > seen + 1
     assert not b.connected
-    assert fake.connections > seen + 1                 # it gave up on one connection and tried with another
-    assert fake.max_open == 1                          # and never held two at once
+    assert most <= 1                                   # and never has two out at once (counted here, not by the fake)
     fake.mode = "answer"
-    assert lab.wait_until(lambda: b.connected and b.count == 20)
+    assert lab.wait_until(lambda: b.connected and b.count == 20, 6000)
     settle(fake)
+
+
+def test_an_agentd_that_takes_the_line_and_says_nothing_is_not_asked_back_to_back(agentd, backend, mod):
+    """Nothing at the socket fails at once and is looked for often. Something that listens and says nothing holds a
+    socket for the whole wait each time, so after one silent wait the next try is QUIET_MS away, and a request the
+    clock or a tick made while that one was out is not started the moment it ends."""
+    fake = agentd()
+    fake.mode = "silent"
+    b = backend()
+    assert lab.wait_until(lambda: fake.connections == 1)
+    b.refresh()                                         # a tick while the request is out: it is not a reason to
+    lab.spin(1300)                                      # start another the moment this one lapses (at 600 ms)
+    assert not b.connected and fake.connections == 1
+    assert len(out_now(b, mod)) == 0                    # and between the tries nothing is held open
+    fake.mode = "answer"
+    assert lab.wait_until(lambda: b.connected and b.count == 20, 5000)    # the next try, QUIET_MS after the first
+    assert lab.wait_until(lambda: b._retry.isActive() is False)
+
+
+def test_agentd_with_nothing_to_list_answers_and_the_app_holds_nothing(agentd, backend, mod):
+    """Tips off in agentd: it answers the list with an empty one. The app is connected, has nothing to show, and
+    does not keep a socket or a clock going."""
+    fake = agentd([])
+    b = backend()
+    assert lab.wait_until(lambda: b.connected)
+    assert b.count == 0 and b.selected == "" and rows(b) == []
+    seen = fake.connections
+    lab.spin(500)
+    assert fake.connections == seen == 1 and out_now(b, mod) == [] and b._retry.isActive() is False
+    settle(fake)
+
+
+def test_looking_asks_once_and_finds_out_that_agentd_went_away_after_the_list(agentd, backend, mod):
+    """The window asks each time it comes forward. Once the list has come nothing else asks, so an agentd that
+    went away is found out by the look, and the window says so (and tries again until it is back)."""
+    fake = agentd()
+    b = backend()
+    assert up(b)
+    assert b._retry.isActive() is False
+    fake.stop()
+    lab.spin(400)
+    assert b.connected                                  # nobody has looked: a clock would be the only other way
+    b.look()
+    assert lab.wait_until(lambda: not b.connected)
+    assert b._retry.isActive() is True
+    fake.start()
+    assert lab.wait_until(lambda: b.connected and b.count == 20)
+    assert b._retry.isActive() is False
+
+
+def test_a_look_just_after_the_list_came_asks_nothing(mod, monkeypatch, agentd, backend):
+    """The window starts and is shown in the same moment, and comes forward again after a click elsewhere: an
+    answer that is a moment old is as new as a look would be."""
+    monkeypatch.setattr(mod, "FRESH_MS", 700)
+    fake = agentd()
+    b = backend()
+    assert up(b)
+    asked = len(fake.of("tips", "list"))
+    b.look()
+    b.look()
+    lab.spin(200)
+    assert len(fake.of("tips", "list")) == asked
+    lab.spin(600)                                       # a look after that moment asks
+    b.look()
+    assert lab.wait_until(lambda: len(fake.of("tips", "list")) == asked + 1)
+
+
+def test_looking_while_a_request_is_out_asks_nothing_more(agentd, backend, mod):
+    fake = agentd()
+    fake.hooks[("tips", "list")] = lambda _m: time.sleep(0.15)
+    b = backend()
+    assert up(b)
+    settle(fake)
+    before = len(fake.of("tips", "list"))
+    for _ in range(6):
+        b.look()                                        # the first asks; the rest find it out, and are its answer
+    assert lab.wait_until(lambda: len(fake.of("tips", "list")) - before >= 1)
+    lab.spin(800)                                       # (one more would start when the first is answered, 150 ms on)
+    assert len(fake.of("tips", "list")) - before == 1
 
 
 def test_the_tip_in_front_survives_agentd_going_away_and_coming_back(agentd, backend, home, state):
@@ -579,6 +712,26 @@ def test_what_agentd_could_not_have_meant_is_dropped(agentd, backend, home):
     assert long["captions"] == ["a", "b", "c"]
     assert long["beats"] == [{"hold": 1}]
     assert long["order"] == 0 and long["card"] is True and long["tried"] is False
+
+
+def test_the_sections_are_the_ones_agentd_has(mod):
+    """The app keeps its own copy of the sections (it is standalone): a section added to the table and not here
+    would drop every tip of it from the window without a word, so the two are held to each other."""
+    assert list(mod.SECTIONS) == list(tips_mod.SECTIONS.items())
+
+
+def test_an_entry_of_the_wrong_kinds_is_dropped_or_cut_and_never_raises(mod):
+    base = {"id": "a-tip", "section": "start", "line": "a line"}
+    for field, wrong in (("marks", 5), ("marks", "Esc"), ("marks", {"a": 1}), ("captions", "abc"), ("captions", 3),
+                         ("beats", "x"), ("beats", 7), ("beats", {"hold": 1}), ("words", ["a"]), ("order", "3"),
+                         ("card", "no"), ("tried", 1), ("new", "yes")):
+        tip = mod.clean({**base, field: wrong})
+        assert tip is not None, (field, wrong)
+        assert tip["marks"] == [] and tip["captions"] == [] and tip["beats"] == [], (field, wrong)
+        assert tip["words"] == "" and tip["order"] == 0 and tip["card"] is True and tip["tried"] is False
+        assert tip["new"] is False
+    for section in ([], {}, ["start"], 3, None, 1.5):             # not a name, and not always hashable
+        assert mod.clean({**base, "section": section}) is None, section
 
 
 def test_text_is_plain_one_line_and_never_markup(mod):

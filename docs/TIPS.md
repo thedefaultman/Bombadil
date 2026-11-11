@@ -231,8 +231,9 @@ Client to agentd:
 | `{"type": "tips", "op": "list"}` | A one-shot: agentd answers on that connection only with the `list` message above, the tips this machine can back now. Asking is looking: the ids it listed are `known` after. An app asks, then closes the socket (an open socket would count as a bar for the machine sampler). |
 | `{"type": "summon", "text": "...", "tip": true, "id": "<tip id>"}` | A tip's button. agentd remembers the words for that tip, and broadcasts `{"type": "summon", "text": "...", "tip": true}`. With `tip: true` the pill **keeps words the person typed and has not sent** (the Brain's "Ask about this" still replaces them). Only the JSON `true` is true. |
 
-`BOMBADIL_TIPS=0` turns Tips off in agentd (nothing is sent, nothing is kept). The tests that are not about Tips
-run that way, so no other test hears a card.
+`BOMBADIL_TIPS=0` turns Tips off in agentd (no card is sent, nothing is kept). A `list` is still answered, with an
+empty list, so the Tips app says there is nothing to show instead of waiting on a silent socket. The tests that are
+not about Tips run that way, so no other test hears a card.
 
 ## How a tip is added
 
@@ -299,7 +300,9 @@ own Enter runs them (the brief's answer 2a).
   raised row, not an orange one.
 - **Nothing else.** No paragraphs, no search, no counts or streaks, no settings, no "coming soon". A tip that
   this machine cannot back is not in the list at all, not even greyed: the window shows what agentd lists and
-  nothing else.
+  nothing else. When agentd lists nothing at all (Tips is switched off with `BOMBADIL_TIPS=0`, or the table could
+  not be read) the window says what is empty and why ("No tips to show on this computer", "Tips are switched off
+  here, or their table could not be read."), as the voice brief asks of an empty place.
 
 ### Behaviour
 
@@ -310,6 +313,7 @@ own Enter runs them (the brief's answer 2a).
 | Enter, or the button | **Hides the window first, then** puts the exact words in the pill with the cursor at the end (`Agent.draft`). Nothing is sent: the person adds details, presses Enter, or Esc to drop them. For a tip with no button nothing happens. |
 | Esc | Hides the window (the kit's own key). Nothing is put in the pill. |
 | Up, Down | Move through the tips in the order the list shows them, from the first section to New, and stop at the ends. The list scrolls so the tip in front is always whole, with the heading above the first tip of a section. |
+| Coming forward (shown from its drawer, or taking the keyboard back) | Asks agentd for the list once more, a one-shot, unless a request is out or the list came less than a second and a half ago. That is how the window finds out that agentd went away after the list came (it then says so, as below), and what the machine can back now. Nothing else asks by itself. |
 | Nothing | Nothing advances by itself, nothing loops, nothing makes a sound, and nothing moves when a tick arrives: the list keeps its place and the tip in front is not played again. |
 
 A "…" at the end of a tip's words ("In Tickets, add…") is the start of an ask: the button shows it as the table
@@ -329,7 +333,10 @@ there, not the AI to answer (what the person then sends waits in the queue like 
 about the rest.
 
 **When agentd is away** the window says so ("The agent is not answering", "Tips come back as soon as it does.")
-and asks again every two seconds until it answers, like the Brain. Once it has the list it stops asking.
+and asks again every two seconds until it answers, like the Brain (a refused connection costs nothing). An agentd
+that takes the request and says nothing, such as one that has not been restarted since the update, holds a socket
+for the five seconds each try waits, so it is asked again only every thirty. Once the list has come nothing asks
+by itself: the window looks again when it comes forward (above), and a tick of `tried` asks too.
 
 ### How it is built
 
@@ -366,7 +373,7 @@ and allows them here because the app is built in (`apps.is_builtin`).
 
 **The Backend.** QML sees `connected`, `model`, `count`, `selected` (the id), `selectedTip` (the whole row: line,
 words, marks, captions, beats), `selectedRow`, and `select(id)`, `move(delta)`, `draftOf(id)` (the words for the
-pill), `refresh()`. It tells the window `selectedChanged` when a different tip is in front (the window plays it)
+pill), `refresh()`, `look()`. It tells the window `selectedChanged` when a different tip is in front (the window plays it)
 and `openRequested(id)` when a press on the card named the tip already in front (the window plays it again).
 `selectedTipChanged` is emitted before `selectedChanged`, because the window reads the row when it hears the
 second. The Backend cleans what agentd lists (an id that is not kebab-case, an unknown section, an empty line, a
@@ -383,8 +390,10 @@ so the connection it causes is not announced to it (QML would log a binding loop
 connection has. A request made while one is out is asked once more when it ends, not once each.
 
 **`tips.json`.** The Backend never writes it (agentd is its only writer, and its source has no way to write a
-file). It watches the file and its folder (agentd replaces the file, which drops a watch on the file itself) with
-a look every five seconds under it, and a burst of writes becomes one look. Two things come from it:
+file). It watches the file and its folder (agentd replaces the file, which drops a watch on the file itself), and a
+burst of writes becomes one look. The watch is all there is while the state folder exists; a look every five
+seconds runs only until the folder can be watched (agentd makes it, and it may not be there yet), so an idle
+machine is not woken for as long as the window is kept. Two things come from it:
 
 - **A tick.** `tried` changes when a tip is tried. The row changes with a `dataChanged` on that one row, so the list
   keeps its place and the tip in front is not played again, and the Backend asks the list again (what a turn tried
@@ -397,8 +406,10 @@ a look every five seconds under it, and a burst of writes becomes one look. Two 
 **The launcher's words.** `TIPS_COMMANDS` in `launcher.py`: "tips", "the tips", "open tips", "show tips",
 "open the tips", "show the tips", "what can you do", "what can I ask" and "help" (whole sentences only: "help me
 write a poem" and "what can you do about my disk" are for the agent). They are checked after the core commands and
-the Brain's words, and before app names and the desk's widget words, so an app called Tips or Help and a widget
-named "tips" never stand in for it. The Tab completion lists "tips". The action opens the app like the Brain's:
+the Brain's words, and before app names and the desk's widget words, so an app called Help and a widget named
+"tips" never stand in for it. Nor can an app called Tips: the name is reserved like Mail's (`apps.RESERVED`), so
+making one is refused and one dropped into `~/Apps/tips` never runs in place of the window (the agent never
+writes tips, and the word and the card must open Bombadil's own window). The Tab completion lists "tips". The action opens the app like the Brain's:
 bring it forward if it is open, show it from its drawer if it is not, start it if it is not running. It says
 "Opened Tips." and, when that fails, "Could not open Tips."
 
@@ -413,7 +424,7 @@ not sent.
 ### Adding to it
 
 - **A new tip** needs nothing here: add its row (see "How a tip is added"); the app lists whatever agentd lists, and
-  the stage plays its `beats`. A new section needs a name in `SECTIONS` in `tips.py` and in `app.py`.
+  the stage plays its `beats`. A new section needs a name in `SECTIONS` in `tips.py` and in `app.py` (a test holds the two equal).
 - **A new word** for the app goes in `TIPS_COMMANDS`; add it to the near-miss tests in `tests/test_launcher.py` so that
   sentences containing it still go to the agent.
 - **A new thing the app asks agentd** is a one-shot: build it on `Once` (connect, write, read until `answer`, close)

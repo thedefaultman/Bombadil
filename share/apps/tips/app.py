@@ -15,12 +15,15 @@ What QML sees: `connected` (agentd answered the last request), `model` (the rows
 tips, in the order they are shown), `selected` (the id of the tip in front), `selectedTip` (its row, whole:
 line, words, marks, captions, beats), `selectedRow`, `count`; and select(id), move(delta), draftOf(id),
 refresh(). `openRequested(id)` says a press on the card named the tip already in front: play it again.
-While agentd is away the window says so and keeps trying every two seconds, like the Brain.
+While agentd is away the window says so and keeps trying every two seconds, like the Brain; an agentd that
+takes the request and says nothing is tried far less often (it costs a held socket each time). `look()` asks
+once each time the window comes forward, which is how it learns that agentd went away after the list came.
 """
 
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -35,10 +38,12 @@ from PySide6.QtCore import (
 )
 from PySide6.QtNetwork import QLocalSocket
 
-RETRY_MS = 2000      # while agentd does not answer
+RETRY_MS = 2000      # while nothing listens at agentd's socket (a refused connection costs nothing)
+QUIET_MS = 30000     # while something listens and says nothing (each try holds a socket for ANSWER_MS)
 ANSWER_MS = 5000     # a request that is not answered by then is given up on
+FRESH_MS = 1500      # an answer this young is as new as a look would be (the window starts, and comes forward)
 SETTLE_MS = 300      # a burst of writes to tips.json becomes one look
-WATCH_MS = 5000      # a safety net under the file watcher: a look at the file and at what is watched
+WATCH_MS = 5000      # a look at the file while its folder cannot be watched (it is not there yet)
 
 # The order of the list: agentd's sections, then New (tips an update brought that the person has not seen).
 SECTIONS = (("start", "Start here"), ("work", "Work"), ("code", "Code"), ("machine", "This machine"))
@@ -71,16 +76,24 @@ def _text(value, limit: int) -> str:
     return " ".join(value.split())[:limit] if isinstance(value, str) else ""
 
 
+def _list(entry: dict, key: str) -> list:
+    """A list field of an entry, or nothing when it is not one (a string is not a list of its letters)."""
+    value = entry.get(key)
+    return value if isinstance(value, list) else []
+
+
 def clean(entry) -> dict | None:
     """One tip as the window holds it, or None for anything agentd could not have meant to list."""
     if not isinstance(entry, dict):
         return None
     tip_id, section, line = entry.get("id"), entry.get("section"), _text(entry.get("line"), 200)
-    if not isinstance(tip_id, str) or not ID_RE.fullmatch(tip_id) or section not in dict(SECTIONS) or not line:
+    if not isinstance(tip_id, str) or not ID_RE.fullmatch(tip_id) or not line:
         return None
-    marks = [m for m in (_text(m, 60) for m in entry.get("marks") or [] if isinstance(m, str)) if m][:4]
-    captions = [_text(c, 40) for c in entry.get("captions") or []][:3] if isinstance(entry.get("captions"), list) else []
-    beats = [b for b in entry.get("beats") or [] if isinstance(b, dict)] if isinstance(entry.get("beats"), list) else []
+    if not isinstance(section, str) or section not in dict(SECTIONS):      # (a list is not a section, or hashable)
+        return None
+    marks = [m for m in (_text(m, 60) for m in _list(entry, "marks") if isinstance(m, str)) if m][:4]
+    captions = [_text(c, 40) for c in _list(entry, "captions")][:3]
+    beats = [b for b in _list(entry, "beats") if isinstance(b, dict)]
     order = entry.get("order")
     return {"id": tip_id, "section": section, "order": order if isinstance(order, int) else 0, "line": line,
             "words": _text(entry.get("words"), 300), "marks": marks, "captions": captions, "beats": beats,
@@ -112,6 +125,7 @@ class Once(QObject):
         self._answer = answer
         self._buffer = b""
         self._over = False
+        self.silent = False             # it ended because nothing answered in time (and not because nothing listens)
         self._socket = QLocalSocket(self)
         self._socket.connected.connect(self._write)
         self._socket.readyRead.connect(self._read)
@@ -119,7 +133,7 @@ class Once(QObject):
         self._socket.errorOccurred.connect(lambda _e: self._finish(False, None))
         self._timeout = QTimer(self)
         self._timeout.setSingleShot(True)
-        self._timeout.timeout.connect(lambda: self._finish(False, None))
+        self._timeout.timeout.connect(self._lapsed)
         self._timeout_ms = timeout_ms or ANSWER_MS
 
     def start(self) -> "Once":
@@ -146,6 +160,10 @@ class Once(QObject):
             if self._answer is not None and isinstance(msg, dict) and self._answer(msg):
                 self._finish(True, msg)
                 return
+
+    def _lapsed(self):
+        self.silent = True
+        self._finish(False, None)
 
     def _finish(self, ok: bool, message):
         if self._over:
@@ -218,6 +236,7 @@ class Backend(QObject):
         self._selected = ""
         self._row = -1
         self._asking: Once | None = None
+        self._answered_at = float("-inf")    # when the list last came (time.monotonic)
         self._again = False                  # asked again while a request was out
         self._open = ""                      # a press on the desk card named this tip; no list yet to find it in
         self._open_seen: str | None = None   # the last `open_on` the file held, "" or an id
@@ -226,7 +245,7 @@ class Backend(QObject):
 
         self._retry = QTimer(self)
         self._retry.setInterval(RETRY_MS)
-        self._retry.timeout.connect(self.refresh)
+        self._retry.timeout.connect(self.look)
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
         self._settle.setInterval(SETTLE_MS)
@@ -241,7 +260,6 @@ class Backend(QObject):
             return
         self._read_state(first=True)
         self._arm()
-        self._net.start()
         self.refresh()
         self._retry.start()
 
@@ -320,7 +338,9 @@ class Backend(QObject):
 
     @Slot()
     def refresh(self):
-        """Ask agentd which tips this machine can back, once. Never in `check`."""
+        """Ask agentd which tips this machine can back, once. Something changed that the answer in flight may
+        predate (a tip was tried), so a request made while one is out is asked once more when it ends. Never
+        in `check`."""
         if CHECKING:
             return
         if self._asking is not None:
@@ -331,19 +351,32 @@ class Backend(QObject):
         once.finished.connect(self._answered)
         once.start()
 
+    @Slot()
+    def look(self):
+        """Ask once, unless a request is out already or the list came a moment ago (either answer is as new as
+        this one would be). The window asks each time it comes forward, and the clock asks while agentd does not
+        answer: so that agentd having gone away is found out when someone looks, and not by a clock that keeps a
+        machine awake."""
+        if self._asking is None and (time.monotonic() - self._answered_at) * 1000 >= FRESH_MS:
+            self.refresh()
+
     def _answered(self, ok: bool, msg):
-        self._asking = None
+        once, self._asking = self._asking, None
         if ok and isinstance(msg, dict):
+            self._answered_at = time.monotonic()
             self._set_connected(True)
             self._retry.stop()
             self._take(msg["list"])
-        else:
-            self._set_connected(False)
-            if not self._retry.isActive():
-                self._retry.start()
-        if self._again:
-            self._again = False
-            self.refresh()
+            if self._again:
+                self._again = False
+                self.refresh()
+            return
+        self._set_connected(False)
+        self._again = False             # agentd did not answer: nothing newer to ask of it than the clock does
+        # Nothing at the socket fails at once and costs nothing, so it is looked for every RETRY_MS. An agentd that
+        # takes the line and says nothing (an old one, or a stuck one) holds a socket for the whole wait each time,
+        # so it is looked for far less often.
+        self._retry.start(QUIET_MS if once is not None and once.silent else RETRY_MS)
 
     def _set_connected(self, up: bool):
         if up != self._connected:
@@ -392,12 +425,18 @@ class Backend(QObject):
 
     def _arm(self):
         """Watch the file and the folder it is written into (agentd replaces the file, which drops a watch on
-        it). Whatever is not there yet is watched when it is."""
+        it). Whatever is not there yet is watched when it is: the clock looks every WATCH_MS until the folder is
+        watched, and not after (the watch says when the file changes; a clock under it would wake an idle
+        machine for as long as the window is kept)."""
         path = tips_file()
         have = set(self._watcher.files()) | set(self._watcher.directories())
         for want in (path.parent, path):
             if want.exists() and str(want) not in have:
                 self._watcher.addPath(str(want))
+        if str(path.parent) in self._watcher.directories():
+            self._net.stop()
+        elif not self._net.isActive():
+            self._net.start()
 
     def _looked(self):
         self._arm()

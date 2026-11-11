@@ -51,6 +51,13 @@ AppWindow {
         win.show()
     }
 
+    // Each time the window comes forward the list is asked for once more (a one-shot): that is how it finds out
+    // that agentd went away, and what the machine can back now, without a clock that keeps an idle machine awake.
+    Window.onActiveChanged: {
+        if (Window.active)
+            backend.look()
+    }
+
     Connections {
         target: backend
         function onSelectedChanged() { win.show() }
@@ -89,7 +96,8 @@ AppWindow {
         Layout.fillHeight: true
         visible: backend.connected && backend.count === 0
         icon: "sparkles"
-        title: "No tips on this computer yet"
+        title: "No tips to show on this computer"
+        text: "Tips are switched off here, or their table could not be read."
     }
 
     RowLayout {
