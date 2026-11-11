@@ -335,6 +335,10 @@ agentd_unit_again() {
   as_user systemctl --user start bombadil-agentd
   wait_for 60 test -S "$sock" && wait_for 90 not_checking
 }
+# A sign-in that turns ready with no persona.toml puts the name and voice card up and writes the defaults at once, so
+# a block that signs in only to see the pill's line takes the file away again (the mail block's leaves it for the
+# connection block's sign-in, which then asks for nothing): the voice checks further down need none.
+forget_persona() { rm -f /home/user/.config/bombadil/persona.toml; }
 agentd_log() { tail -n 60 /tmp/smoke.agentd.log | while IFS= read -r l; do say "AGENTD-LOG: $l"; done; }
 
 # Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
@@ -532,7 +536,12 @@ check browserd-unit-answers wait_for 60 browserd_up
 if [[ "$mode" != "undo" ]]; then
   check mako-is-not-running bash -c '! pgrep -x mako'
   check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
+  # The notice waits behind the setup line until an AI is signed in (as the mail notice does): the stand-in provider
+  # needs no sign-in.
+  check notification-agentd-signed-in restart_agentd BOMBADIL_PROVIDER=fake
   check notification-becomes-a-notice notification_becomes_a_notice
+  check notification-agentd-unit-again agentd_unit_again
+  forget_persona
   check connect-fake-starts fake_connect
   check connect-status wait_for 30 connect_says status 'r.get("state") == "ok"'
   check connect-connections-listed wait_for 30 connect_says connections 'r["connections"]'

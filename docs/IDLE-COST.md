@@ -90,6 +90,7 @@ a need stands), in ten-second slices, as a share of one core:
 | Before the fixes, nothing on screen | 265% | 97% | the three causes together |
 | Bar stopped | under 0.2% | | the bare compositor draws nothing, so everything below is the bar's doing |
 | At rest, need standing | 1.5 to 2.4% | 7 to 10% | with agentd and the brain, about 12% of one core in all |
+| At rest, at the end of the whole smoke (what `idle-cpu` reads) | 0.3 to 4.8% | 3 to 5% | 6.1, 6.0 and 13.2% of one core in three slices, agentd and the brain 1 to 1.6% each |
 | One beat of the stone's knock | 80 to 130% for about ten seconds | 25 to 50% | 15 to 20 core-seconds a beat; the slice after it is still 20 to 30% |
 | A turn working (the roll, 60 frames a second asked for) | 263 to 275% | 75 to 81% | not an idle state; the compositor is saturated whatever size the bar is |
 
