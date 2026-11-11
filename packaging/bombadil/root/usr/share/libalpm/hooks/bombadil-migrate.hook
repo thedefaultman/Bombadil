@@ -1,0 +1,21 @@
+# Files that another package owns are changed by numbered steps, and a package upgrade can put the original
+# back: pacman.conf comes with pacman, /etc/environment with pam, os-release with filesystem.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = bombadil
+Target = pacman
+Target = filesystem
+Target = pam
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/os-release
+
+[Action]
+Description = Bombadil: checking the files other packages own
+When = PostTransaction
+Exec = /usr/share/bombadil/migrate/run

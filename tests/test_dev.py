@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
+from payload import PAYLOAD
 
 from bombadil import dev, launcher, paths
 
@@ -446,7 +447,7 @@ def test_the_hook_program_spools_when_agentd_is_away_and_skips_the_machine(home)
 
 
 def test_managed_hooks_cover_the_events_the_dots_need():
-    claude = json.loads((ROOT / "iso/airootfs/etc/claude-code/managed-settings.d/50-bombadil.json").read_text())
+    claude = json.loads((PAYLOAD / "etc/claude-code/managed-settings.d/50-bombadil.json").read_text())
     hooks = claude["hooks"]
     for ev in ("SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop",
                "StopFailure", "Notification"):
@@ -454,14 +455,14 @@ def test_managed_hooks_cover_the_events_the_dots_need():
         assert hooks[ev][0]["hooks"][0]["async"] is True
     assert hooks["PreToolUse"][0]["matcher"] == "AskUserQuestion"
     import tomllib
-    codex = tomllib.loads((ROOT / "iso/airootfs/etc/codex/requirements.toml").read_text())
+    codex = tomllib.loads((PAYLOAD / "etc/codex/requirements.toml").read_text())
     for ev in ("SessionStart", "UserPromptSubmit", "PermissionRequest", "PostToolUse", "Stop", "Interrupt",
                "SessionEnd"):
         assert codex["hooks"][ev][0]["hooks"][0]["command"] == "bombadil-signal codex", ev
-    system = tomllib.loads((ROOT / "iso/airootfs/etc/codex/config.toml").read_text())
+    system = tomllib.loads((PAYLOAD / "etc/codex/config.toml").read_text())
     assert system["notify"] == ["bombadil-signal", "codex-notify"]
     assert system["check_for_update_on_startup"] is False and system["tui"]["notification_method"] == "osc9"
-    assert not (ROOT / "iso/airootfs/etc/skel/.codex").exists()   # a skel copy is never updated on an install
+    assert not (PAYLOAD / "etc/skel/.codex").exists()   # a skel copy is never updated on an install
 
 
 def test_paths_default_to_the_projects_folder(home):

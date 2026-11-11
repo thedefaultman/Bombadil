@@ -5,11 +5,12 @@ import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from payload import PAYLOAD
 from qml_theme import THEME
 
 ROOT = Path(__file__).resolve().parents[1]
-ICONS = ROOT / "iso" / "airootfs" / "usr" / "share" / "icons" / "hicolor" / "scalable" / "apps"
-PIXMAPS = ROOT / "iso" / "airootfs" / "usr" / "share" / "pixmaps"
+ICONS = PAYLOAD / "usr" / "share" / "icons" / "hicolor" / "scalable" / "apps"
+PIXMAPS = PAYLOAD / "usr" / "share" / "pixmaps"
 BRAND = ROOT / "docs" / "brand"
 GRUB = ROOT / "share" / "grub" / "bombadil"
 

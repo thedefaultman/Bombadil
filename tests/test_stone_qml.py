@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import pytest
+from payload import PAYLOAD
 from qml_running import running_things
 from qml_theme import THEME
 
@@ -636,7 +637,7 @@ def test_small_faces_stopped_resting_and_offline(app, tmp_path):
 
 def test_the_16_px_stone_is_the_brands_own_drawing(app, tmp_path):
     # One drawing everywhere: the stone and its b are the path of docs/brand's 16 px symbolic icon.
-    icon = ROOT / "iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg"
+    icon = PAYLOAD / "usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg"
     d = re.search(r' d="([^"]+)"', icon.read_text()).group(1)
     stone_path, b_outline = d[: d.index("Z") + 1], d[d.index("Z") + 1:]
     m = build(app, tmp_path, "small: true")

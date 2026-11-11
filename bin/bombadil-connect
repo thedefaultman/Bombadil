@@ -4,8 +4,8 @@
 import sys
 from pathlib import Path
 
-# The path is set before the package import on purpose: from a checkout `bombadil` is not installed. Installed in
-# /usr/bin, the directory this adds does not exist and the package is found where the system put it.
+# The path is set before the package import on purpose: from a checkout `bombadil` is not installed. Installed,
+# /usr/bin/bombadil-connect is a link to this file in /usr/share/bombadil/bin, so the path resolves to the tree's src/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from bombadil.connect.service import main

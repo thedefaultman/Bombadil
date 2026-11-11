@@ -1,36 +1,62 @@
 #!/usr/bin/env bash
-# Build the Bombadil ISO. Needs an Arch host (or container) with archiso installed:
-#   sudo pacman -S archiso   or   podman run --privileged -v "$PWD":/src archlinux ...
+# Build the Bombadil ISO. Needs an Arch host (or container) with archiso, fakeroot and binutils installed:
+#   sudo pacman -S archiso fakeroot binutils   or   podman run --privileged -v "$PWD":/src archlinux ...
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="${WORK:-/tmp/bombadil-work}"
 out="${OUT:-$root/out}"
 profile="$work/profile"
+# One build time for everything: the image, the package and the VERSION file inside it.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 rm -rf "$profile"; mkdir -p "$profile" "$out"
 cp -a "$root/iso/." "$profile/"
-# Ship the whole tree at /usr/share/bombadil so the live system and the installer both have it.
-dest="$profile/airootfs/usr/share/bombadil"
-mkdir -p "$dest"
-cp -a "$root/bin" "$root/src" "$root/shell" "$root/share" "$root/install" "$root/iso/packages.x86_64" "$dest/"
-# What this image is: the date and the commit. The installer records it, and names the first restore point after it.
-# (BOMBADIL_COMMIT comes from scripts/build-in-container.sh, which can read the checkout where the container cannot.)
-commit="${BOMBADIL_COMMIT:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
-echo "$(date --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y.%m.%d) ($commit)" > "$dest/VERSION"
 # The test entries of the boot menu (a serial console with the smoke test, and one that installs to
 # /dev/vda without asking) are only in builds made for the VM tests, never in a release.
 if [[ -z "${BOMBADIL_TEST_ENTRIES:-}" ]]; then
   rm -f "$profile"/efiboot/loader/entries/0[2-9]-*.conf
 fi
-mkdir -p "$profile/airootfs/usr/local/bin"
-for b in agentd bombadil bombadil-app bombadil-browser bombadil-os-mcp bombadil-shell bombadil-signal bombadil-brain bombadil-brain-watch bombadil-mail bombadil-mail-host bombadil-connect bombadil-browserd; do
-  ln -sfn "/usr/share/bombadil/bin/$b" "$profile/airootfs/usr/local/bin/$b"
-done
+# Bombadil comes into the image as a package, like everything else on it: built into a repository here, read by
+# pacstrap from a copy of iso/pacman.conf that names it, and left on the image for the installer and the first update.
+# (BOMBADIL_COMMIT and BOMBADIL_PKGREL come from scripts/build-in-container.sh, which can read the checkout where the
+# container cannot.)
+rm -rf "$work/repo"
+WORK="$work" "$root/scripts/build-package.sh" "$work/repo"
+"$root/scripts/pacman-conf-with-repo.sh" "$root/iso/pacman.conf" "$profile/pacman.conf" "$work/repo"
+grep -qx bombadil "$profile/packages.x86_64" || echo bombadil >> "$profile/packages.x86_64"
+mkdir -p "$profile/airootfs/var/lib/bombadil"; chmod 755 "$profile/airootfs/var/lib/bombadil"
+cp -a "$work/repo" "$profile/airootfs/var/lib/bombadil/repo"
 # Bake the provider CLIs in, so the first-run picker only has to log in.
 if [[ -z "${BOMBADIL_NO_CLIS:-}" ]]; then
   npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \
     --prefix "$profile/airootfs/usr" @anthropic-ai/claude-code @openai/codex
 fi
+# A work directory that is reused skips pacstrap, which would leave the last build's package in the image.
+rm -rf "$work/build"
 mkarchiso -v -w "$work/build" -o "$out" "$profile"
+
+# What the package was meant to leave in the image is read back from the tree it was made from, before the
+# image is read back: a unit that is not enabled or a command that is not a link is found here.
+verify_package() {
+  local rootfs="$work/build/x86_64/airootfs" kind unit n=0 found leak
+  for kind in system user; do
+    [[ -r "$rootfs/usr/share/bombadil/enable.$kind" ]] || { echo "Error: the image has no list of $kind units to enable" >&2; exit 1; }
+    while read -r unit || [[ -n "$unit" ]]; do
+      [[ -z "$unit" || "$unit" == "#"* ]] && continue
+      n=$((n + 1))
+      found=$(find "$rootfs/etc/systemd/$kind" -path "*.wants/$unit" -type l -print -quit 2>/dev/null)
+      [[ -n "$found" ]] || { echo "Error: the image does not enable $unit ($kind)" >&2; exit 1; }
+    done < "$rootfs/usr/share/bombadil/enable.$kind"
+  done
+  (( n > 0 )) || { echo "Error: the package lists no units to enable" >&2; exit 1; }
+  [[ -L "$rootfs/usr/bin/agentd" ]] || { echo "Error: /usr/bin/agentd is not a link into /usr/share/bombadil/bin" >&2; exit 1; }
+  awk '/^\[bombadil\]/ { b = NR } /^\[core\]/ { c = NR } END { exit !(b && c && b < c) }' "$rootfs/etc/pacman.conf" \
+    || { echo "Error: /etc/pacman.conf in the image does not name [bombadil] above [core]" >&2; exit 1; }
+  # The build-time repository is a path on this machine: it must not have leaked into anything the image keeps.
+  leak=$(grep -rIlF -- "$work/repo" "$rootfs/etc" "$rootfs/var" "$rootfs/root" 2>/dev/null | head -n 1 || true)
+  [[ -z "$leak" ]] || { echo "Error: ${leak#"$rootfs"} mentions the build directory $work/repo" >&2; exit 1; }
+  echo "The image holds the package, its units, its commands and its repository entry."
+}
+verify_package
 
 # The image is read back and compared with the tree it was made from: a file the image holds wrongly is
 # found here, not as a driver that will not load on someone's laptop (see profiledef.sh).

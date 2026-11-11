@@ -271,8 +271,8 @@ import urllib.parse
 from dataclasses import replace
 from pathlib import Path
 
-from . import (browser, cards, config, dev, finder, hypr, launcher, narrate, notifications, outbox, paths, procs, providers, rest,
-               signin, snapshots, sysmap, voice, watch)
+from . import (browser, cards, config, dev, finder, homefix, hypr, launcher, narrate, notifications, outbox, paths, procs,
+               providers, rest, signin, snapshots, sysmap, version, voice, watch)
 from .away import Away
 from .brain import client as brain_client
 from .connect import cardmake as connect_cards
@@ -314,6 +314,8 @@ BRAIN_NOTES = {"brain": "opened the Brain", "whyhere": "the brain answered in th
 # for this long, the line says so instead of staying on its last words; the watchdog looks every tick.
 NO_PROGRESS_SECS = 30.0
 WATCHDOG_TICK = 5.0
+# How long what homefix says (a file moved aside, lines it could not keep) stays above the pill.
+HOMEFIX_NOTICE_SECS = 120.0
 # What a failed result says when the account, not the request, is the problem (then the provider's
 # own first line follows, which is where "resets 5pm" is), or when it is only a busy moment.
 # Anything else is passed through as it came.
@@ -394,6 +396,7 @@ class AgentD:
         # Turn numbers go on across restarts, past a turn a crash cut off before its row.
         self.turns = max(_last_turn(paths.turns_log()), _begun())
         self.base_model = provider.model            # what the config says; "use opus" overrides it
+        self.version = version.read()               # the Bombadil this process was started on; an update can change the file
         self.session_model: str | None = None       # "opus" or "sonnet" once the user switched
         self.proc: asyncio.subprocess.Process | None = None
         self.pending: list[tuple[int, str]] = []   # prompts waiting for the running turn
@@ -815,7 +818,10 @@ class AgentD:
                   "busy": self.current is not None or any(self._runnable(p) for _, p in self.pending),
                   "provider": self.provider.name, "setup": self.access, "turns": self.turns,
                   "snapshots": self.snaps.available, "queued": len(self.pending),
-                  "turn": self.current, "queue": queue}
+                  "turn": self.current, "queue": queue,
+                  # What this process started on, and what is installed now: they differ after an update,
+                  # until the next sign-in or a restart.
+                  "version": self.version, "version_installed": version.read()}
         if resting is not None:
             status["rest"] = resting
         return status
@@ -3442,9 +3448,23 @@ def _names_key(d: dev.Dev):
     return tuple(sorted(e["name"] for e in d.names()))
 
 
+def _fix_home() -> list[str]:
+    """Put the home right for the Bombadil that is installed (homefix.py), before the socket opens. Only on a real
+    installed system: a checkout run by a developer must never have its home touched. Whatever goes wrong, agentd
+    still starts: it restarts for ever, so a failure here would be a loop with no pill. Returns what to tell the
+    person."""
+    try:
+        if homefix.should_run():
+            return homefix.run().notes
+    except Exception as e:  # noqa: BLE001
+        print(f"agentd: homefix: {type(e).__name__}: {e}", file=sys.stderr)
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cfg = config.load()
+    notes = _fix_home()
     name = os.environ.get("BOMBADIL_PROVIDER", cfg.provider)
     provider = providers.get(name, model=cfg.model_for(name))
     if not provider.installed:
@@ -3458,6 +3478,8 @@ def main(argv: list[str] | None = None) -> int:
 
     async def run():
         serving = asyncio.ensure_future(daemon.serve())
+        for line in notes:
+            daemon.notices.post("home", line, tone="done", ttl=HOMEFIX_NOTICE_SECS)
         # The unit file names behind "what does networkmanager need": a slow read, so before the first ask.
         asyncio.get_running_loop().run_in_executor(None, sysmap.warm_unit_names)
 

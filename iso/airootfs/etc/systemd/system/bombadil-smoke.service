@@ -1,9 +1,0 @@
-[Unit]
-Description=Bombadil boot smoke test (kernel cmdline: bombadil.smoke)
-ConditionKernelCommandLine=bombadil.smoke
-After=greetd.service
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/bombadil-smoke
-[Install]
-WantedBy=graphical.target

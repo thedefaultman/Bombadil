@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from payload import PAYLOAD
 
 from bombadil import paths
 from bombadil.brain import client, service
@@ -588,22 +589,25 @@ def test_sigterm_closes_cleanly(home, h):
 
 # -- the ISO --
 
-def test_the_iso_starts_the_brain_and_puts_both_programs_on_path():
-    etc = ROOT / "iso" / "airootfs" / "etc" / "systemd" / "user"
-    unit = (etc / "bombadil-brain.service").read_text()
-    assert "\nExecStart=/usr/local/bin/bombadil-brain\n" in unit and "\nWantedBy=default.target\n" in unit
-    link = etc / "default.target.wants" / "bombadil-brain.service"
-    assert link.is_symlink() and os.readlink(link) == "../bombadil-brain.service"
-    assert link.resolve() == (etc / "bombadil-brain.service").resolve()
-    loop = re.search(r"^for b in ([^;]+); do$", (ROOT / "scripts" / "build-iso.sh").read_text(), re.M)
-    assert {"bombadil-brain", "bombadil-brain-watch"} <= set(loop.group(1).split())
+def test_the_package_starts_the_brain_and_puts_both_programs_on_path():
+    unit = (PAYLOAD / "usr/lib/systemd/user/bombadil-brain.service").read_text()
+    assert "\nExecStart=/usr/bin/bombadil-brain\n" in unit and "\nWantedBy=default.target\n" in unit
+    # Turned on by the package's list, once, at install and upgrade.
+    enabled = (PAYLOAD / "usr/share/bombadil/enable.user").read_text().split()
+    assert "bombadil-brain.service" in enabled
+    # /usr/bin gets a link for every command of bin/, which includes both.
+    pkgbuild = (ROOT / "packaging/bombadil/PKGBUILD").read_text()
+    assert 'ln -s "../share/bombadil/bin/${f##*/}" "$pkgdir/usr/bin/${f##*/}"' in pkgbuild
     for name in ("bombadil-brain", "bombadil-brain-watch"):
         assert os.access(ROOT / "bin" / name, os.X_OK)
+    watch = (PAYLOAD / "usr/lib/systemd/system/bombadil-brain-watch.service").read_text()
+    assert "\nExecStart=/usr/bin/bombadil-brain-watch\n" in watch
+    assert "bombadil-brain-watch.service" in (PAYLOAD / "usr/share/bombadil/enable.system").read_text().split()
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 def test_the_smoke_script_parses_and_looks_for_both_programs():
-    smoke = ROOT / "iso" / "airootfs" / "usr" / "local" / "bin" / "bombadil-smoke"
+    smoke = PAYLOAD / "usr" / "bin" / "bombadil-smoke"
     assert subprocess.run(["bash", "-n", str(smoke)], capture_output=True, check=False).returncode == 0
     assert "bombadil-brain bombadil-brain-watch; do command -v" in smoke.read_text()
 

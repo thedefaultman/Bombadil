@@ -17,6 +17,8 @@ import tomllib
 from pathlib import Path
 
 REPO = Path("/repo")
+# The files the bombadil package owns outside /usr/share/bombadil, as they sit in the tree.
+PAYLOAD = REPO / "packaging" / "bombadil" / "root"
 OUT = Path("/out")
 E2E = Path("/e2e")
 OUT.mkdir(exist_ok=True)
@@ -2306,7 +2308,7 @@ standard = mean_pixel("00-resting", 150, 400)
 home = Path.home()
 choice = home / ".config" / "bombadil" / "wallpaper"
 choice.parent.mkdir(parents=True, exist_ok=True)
-shipped = REPO / "iso" / "airootfs" / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
+shipped = PAYLOAD / "etc" / "skel" / ".config" / "bombadil" / "wallpaper"
 choice.write_text(shipped.read_text())
 paint(home / "first.png", "#336699")
 paint(home / "second.png", "#993366")

@@ -1,0 +1,40 @@
+# shellcheck shell=bash
+# Pacman sources this file in bash for the install and upgrade scriptlets.
+#
+# It turns Bombadil's units on once, from two lists the package ships. A unit goes into a ledger when it is
+# enabled, and a unit in the ledger is never enabled again: one that the person turned off stays off through
+# every upgrade. Nothing is started or restarted here, and nothing here can make the transaction fail.
+# The files other packages own are changed by the migrate steps, which an alpm hook runs.
+#
+# BOMBADIL_ROOT is a prefix for the files this reads and writes, so a test can run the functions on a fake root.
+
+bombadil_enable_units() {
+  local root="${BOMBADIL_ROOT:-}" ledger kind unit list
+  local -a flag
+  ledger="$root/var/lib/bombadil/enabled-units"
+  mkdir -p "$root/var/lib/bombadil" 2>/dev/null || return 0
+  for kind in system user; do
+    list="$root/usr/share/bombadil/enable.$kind"
+    [[ -r "$list" ]] || continue
+    flag=()
+    [[ "$kind" == user ]] && flag=(--global)
+    while read -r unit || [[ -n "$unit" ]]; do
+      [[ -z "$unit" || "$unit" == "#"* ]] && continue
+      grep -qxF "$kind $unit" "$ledger" 2>/dev/null && continue
+      if systemctl "${flag[@]}" enable "$unit" </dev/null >/dev/null 2>&1; then
+        echo "$kind $unit" >> "$ledger"
+      else
+        echo "bombadil: could not enable $unit ($kind); it stays off" >&2
+      fi
+    done < "$list"
+  done
+  return 0
+}
+
+post_install() {
+  bombadil_enable_units || true
+}
+
+post_upgrade() {
+  bombadil_enable_units || true
+}

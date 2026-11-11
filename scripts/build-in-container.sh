@@ -16,6 +16,9 @@ mkdir -p "$root/out"
 args=(--rm --privileged -v "$root:/src" -w /src -e SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/dev/null || date +%s)}")
 # The commit is read here: inside the container the checkout belongs to another user, and git refuses to read it.
 args+=(-e BOMBADIL_COMMIT="${BOMBADIL_COMMIT:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}")
+# The package's release number counts the commits, so each build of a later commit is an update of the one before.
+args+=(-e BOMBADIL_PKGREL="${BOMBADIL_PKGREL:-$(git -C "$root" rev-list --count HEAD 2>/dev/null || echo 1)}")
+[[ "${BOMBADIL_PKGVER:-}" ]] && args+=(-e BOMBADIL_PKGVER="$BOMBADIL_PKGVER")
 [[ "${BOMBADIL_HOST_NET:-}" ]] && args+=(--network host)
 [[ "${BOMBADIL_TEST_ENTRIES:-}" ]] && args+=(-e BOMBADIL_TEST_ENTRIES="$BOMBADIL_TEST_ENTRIES")
 for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy; do
@@ -27,6 +30,6 @@ fi
 [[ -d "${PACMAN_CACHE:-}" ]] && args+=(-v "$PACMAN_CACHE:/var/cache/pacman/pkg")
 
 exec "$runtime" run "${args[@]}" "$image" bash -euo pipefail -c '
-  pacman -Syu --noconfirm --needed archiso git nodejs npm
+  pacman -Syu --noconfirm --needed archiso git nodejs npm fakeroot binutils
   WORK=/tmp/bombadil-work OUT=/src/out /src/scripts/build-iso.sh
 '
