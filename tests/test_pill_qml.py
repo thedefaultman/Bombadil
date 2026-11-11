@@ -649,7 +649,27 @@ def test_a_summon_says_whether_it_is_a_tips_button(bar):
     ("", "", False, ""),
 ])
 def test_what_a_summon_puts_in_the_pill(bar, current, text, tip, want):
-    assert bar.call("summonText", current, text, tip) == want
+    assert bar.call("summonText", current, text, tip, "") == want
+
+
+@pytest.mark.parametrize("current, text, tip_words, want", [
+    # words a tip's button put there and nobody changed are not the person's: the next tip replaces them
+    ("Make me a ticketing app", "How am I connected?", "Make me a ticketing app", "How am I connected?"),
+    ("In Tickets, add ", "How's the machine?", "In Tickets, add ", "How's the machine?"),
+    ("Make me a ticketing app", "In Tickets, add…", "Make me a ticketing app", "In Tickets, add "),
+    # one more word and they are the person's, kept as ever
+    ("Make me a ticketing app for four", "How am I connected?", "Make me a ticketing app",
+     "Make me a ticketing app for four"),
+    ("In Tickets, add a due date", "How am I connected?", "In Tickets, add ", "In Tickets, add a due date"),
+    # words typed in an empty pill, or after a tip's were sent or dropped, are kept: nothing remembered matches
+    ("install docker and", "How am I connected?", "", "install docker and"),
+    ("install docker and", "How am I connected?", "Make me a ticketing app", "install docker and"),
+    ("a", "How am I connected?", "Make me a ticketing app", "a"),
+    # no memory at all (an older caller): as before
+    ("Make me a ticketing app", "How am I connected?", None, "Make me a ticketing app"),
+])
+def test_a_tip_replaces_the_words_an_earlier_tip_put_there_and_never_the_ones_typed(bar, current, text, tip_words, want):
+    assert bar.call("summonText", current, text, True, tip_words) == want
 
 
 def test_the_bar_hands_the_tip_flag_to_the_pill_and_takes_the_draft_through_it():
@@ -659,10 +679,12 @@ def test_the_bar_hands_the_tip_flag_to_the_pill_and_takes_the_draft_through_it()
     shell = (SHELL / "shell.qml").read_text()
     assert "onSummoned: (text, tip) => root.summon(text, tip)" in shell
     assert shell.index("root.draftTip = tip === true") < shell.index("root.draft = text")
-    assert "input.text = pillState.summonText(input.text, root.draft, root.draftTip)" in shell
+    assert "input.text = pillState.summonText(input.text, root.draft, root.draftTip, win.tipWords)" in shell
     # typed words that stay keep their cursor; filled ones get it at the end
-    assert 'const kept = root.draftTip && input.text.trim() !== ""' in shell
+    assert 'const kept = root.draftTip && input.text.trim() !== "" && input.text !== win.tipWords' in shell
     assert "if (!kept) input.cursorPosition = input.text.length" in shell
+    # the pill remembers what a tip put in it, so that the next tip can tell those words from the person's
+    assert 'win.tipWords = root.draftTip && !kept ? input.text : ""' in shell
 
 
 def _hover_line(bar):

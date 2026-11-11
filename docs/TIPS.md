@@ -446,8 +446,12 @@ app), agentd broadcasts it, and the pill that has the focus takes the keyboard w
 - a tip's words that end in an ellipsis (`In {app}, add…`) are put in with the ellipsis taken off and a space
   left, so the person finishes the sentence;
 - **words the person had typed and not sent are kept**: `tip: true` fills an empty pill only, where "Ask about this"
-  (the Brain's summon, with no `tip`) still replaces what is there. `PillState.summonText(current, text, tip)`
-  decides, and `shell.qml` applies it when the summoned pill takes its draft.
+  (the Brain's summon, with no `tip`) still replaces what is there. Words an earlier tip's button put in the pill
+  and nobody has changed are not typed words: the next tip replaces them, so turning the card and pressing the
+  new button is never a silent press. The pill remembers what a tip put in (`tipWords`, per screen), and one more
+  word makes them the person's. `PillState.summonText(current, text, tip, tipWords)` decides, and `shell.qml` applies
+  it when the summoned pill takes its draft. (A press that is refused, over words the person typed, still shows
+  nothing: their words are never replaced, and the button is the only one that does not run.)
 
 A tip is tried when the words are sent unedited (agentd's rule above), not by the press.
 
@@ -473,7 +477,9 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/te
 - `tests/test_desk.py` holds the widget's words, rail and sentences, kept and put away, and `keep tips` as a
   launcher word; `tests/test_agentd_tips.py` agentd's `present` following the desk (kept after the first week, no
   longer kept, the x, "keep" from away, a restart); `tests/test_widgets_card_qml.py` Tips's row on the Widgets card
-  with its three parts; `tests/test_pill_qml.py` the hand-off (the cursor, kept words, the ellipsis, Enter and Esc).
+  with its three parts; `tests/test_pill_qml.py` the hand-off (the cursor, kept words, the words an earlier tip
+  put there, the ellipsis). Enter and Esc are the pill's own keys in `shell.qml`, which is Quickshell's and does
+  not load offscreen, so no test presses them.
 - `tests/desktop/driver.py`, section 32: agentd with Tips on in headless sway, the card on the rail, the arrows
   by a virtual pointer, the button (the summon, no turn), Enter (the turn and the tried tip), the card turning
   12 s after, the x, and then the words "keep tips" (the sentence, `desk.toml`, the card back). Every other

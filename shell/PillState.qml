@@ -1013,13 +1013,15 @@ QtObject {
 
     // What the pill holds after a summon with words, given what it holds now. Words an app put there (the
     // Brain's "Ask about this") replace what was typed. A tip's words (`tip`) fill an empty pill only: words
-    // the person typed and has not sent stay, and nothing is lost. A tip whose words end in an ellipsis
-    // ("In Tickets, add…") fills the words before it and a space, so the cursor waits for the person's detail.
-    function summonText(current, text, tip) {
+    // the person typed and has not sent stay, and nothing is lost. Words an earlier tip put there (`tipWords`) and
+    // nobody has changed are not typed words: the next tip replaces them, so a second press is never silent. A tip
+    // whose words end in an ellipsis ("In Tickets, add…") fills the words before it and a space, so the cursor waits
+    // for the person's detail.
+    function summonText(current, text, tip, tipWords) {
         const words = String(text || "")
         if (words === "") return String(current || "")
         if (tip !== true) return words
-        if (String(current || "").trim() !== "") return String(current)
+        if (String(current || "").trim() !== "" && String(current) !== String(tipWords || "")) return String(current)
         return /…\s*$/.test(words) ? words.replace(/\s*…\s*$/, "") + " " : words
     }
 

@@ -411,12 +411,16 @@ ShellRoot {
                 target: pillState
                 function onTyping() { if (win.summoned) idle.restart() }
             }
+            // What a tip's button put in this pill, to tell those words from the person's own when the next one comes.
+            property string tipWords: ""
             function takeDraft() {
                 if (!summoned || root.draft === "") return
-                // A tip's words wait in an empty pill and leave typed words alone (PillState.summonText).
-                const kept = root.draftTip && input.text.trim() !== ""
-                input.text = pillState.summonText(input.text, root.draft, root.draftTip)
+                // A tip's words wait in an empty pill and leave typed words alone (PillState.summonText); words an
+                // earlier tip put there and nobody changed are replaced.
+                const kept = root.draftTip && input.text.trim() !== "" && input.text !== win.tipWords
+                input.text = pillState.summonText(input.text, root.draft, root.draftTip, win.tipWords)
                 if (!kept) input.cursorPosition = input.text.length
+                win.tipWords = root.draftTip && !kept ? input.text : ""
                 root.draft = ""
             }
             Connections {
