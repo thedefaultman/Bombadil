@@ -580,7 +580,7 @@ def test_shell_qml_hands_the_keyboard_to_the_card_without_toggling_it():
     assert "function onFocusPill() { if (win.summoned) input.forceActiveFocus() }" in shell
     assert shell.count("TapHandler { onTapped: win.focusPill() }") == 2   # the pill and its field
     # The keyboard timer waits while the card does, and the input mask follows the card.
-    assert "running: win.summoned && !personaCard.shown" in shell
+    assert "running: win.summoned && !widgetsCard.shown && !personaCard.shown" in shell   # (the Widgets card waits it too)
     assert "Region { item: personaCard.visible ? personaCard : null }" in shell
     # Any fold puts the pill's field back in focus, and gives back a keyboard the card was holding.
     fold = shell[shell.index("function onPersonaAskChanged()"):]
