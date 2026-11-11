@@ -266,7 +266,9 @@ case "$mode" in
     ;;
   live)
     need_entries "$iso" "console=ttyS0,115200 bombadil.smoke"
-    MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -boot d -no-reboot
+    # An empty disk beside the CD: the picture of the disks has something to draw (a CD alone is not a disk).
+    rm -f "$out/live-scratch.qcow2"; qemu-img create -q -f qcow2 "$out/live-scratch.qcow2" 2G
+    MENU_DOWN=1 boot live "BOMBADIL-SMOKE: DONE" -cdrom "$iso" -drive file="$out/live-scratch.qcow2",if=virtio,format=qcow2 -boot d -no-reboot
     logs=("$out/live.serial.log")
     ;;
 esac
