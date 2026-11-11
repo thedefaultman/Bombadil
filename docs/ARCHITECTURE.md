@@ -167,11 +167,21 @@ limit until 15:00", "Claude is paused"); the design's name for the idea appears 
    - Claude: the refusal is an HTTP 429 (`api_error_status`), or `terminal_reason` `api_error` under an
      assistant `rate_limit` or `billing_error`. The evidence is this turn's `rate_limit_event` saying
      `rejected` while paid credits are not carrying on (`isUsingOverage` false), or quota wording in
-     the CLI's text ("hit your session limit", "out of usage credits", "spend cap").
+     the CLI's text ("hit your 5-hour limit", "hit your weekly limit", "out of usage credits",
+     "monthly spend limit"; older versions said "session limit"). Newer versions also name which 429
+     it was in `api_error`, on the assistant message and on the result: `usage_limit_reached` says by
+     itself that the plan or spend cap ran out (the window and its reset can come from the assistant
+     message's `api_error_params`). `model_requires_usage_credits` and `long_context_credits_required`
+     are entitlement checks (also 429s, and their window can read `rejected`), which never rest the
+     machine. A code this version does not know is not taken on the window's word alone: the CLI's
+     words must say it. No code at all, as older versions send, and as a newer one does for a 429 that
+     is no limit (an org's policy), is judged by the rule above, so an uncoded 429 whose window reads
+     `rejected` still rests. Run against the scripted API, the CLI's lines for a used-up plan are in
+     `tests/test_limit.py` (`_real_319`); a real used-up plan has not been seen.
    - Codex: a failed turn saying "hit your usage limit", "out of credits", "spend cap" or "quota
      exceeded".
-   - Not a limit: a result that carries `api_error` (an entitlement check such as
-     `model_requires_usage_credits`), the throttle notice ("not your usage limit"), "high load", a
+   - Not a limit: an entitlement check (`api_error` `model_requires_usage_credits` or
+     `long_context_credits_required`), the throttle notice ("not your usage limit"), "high load", a
      529, a short `api_retry`, the context window, a budget cap, Codex's retried "rate limit
      exceeded:", and anything a `!command` prints. The `rate_limit_event` alone never rests the machine
      (the CLI re-sends it, and a window can read `rejected` while credits pay): it says which window
@@ -302,6 +312,14 @@ Each app lives in its own Hyprland special workspace and gets a chip in the bar.
 agent how to use it. The skill reaches both CLIs from `/etc/skel` (`~/.claude/skills` and
 `~/.agents/skills`) and through the `app_guide` tool.
 
+## Coding sessions
+
+The vendors' own Claude Code and Codex run unchanged in a zellij session (no bars, no keys of its
+own) inside a systemd user scope per session; a foot window is only a viewer, so closing it never
+costs work and typing the session's name brings it back. Managed hooks report each tool's state
+through `bombadil-signal` to agentd, which broadcasts one `dev` message that the bar turns into a
+dot per session and the desk into its Needs you card. See [`dev-sessions.md`](dev-sessions.md).
+
 ## Why lines and pictures
 
 Nothing here asks the model again. `narrate.py` keeps the sentence the agent wrote before each
@@ -337,6 +355,45 @@ agentd's `notice` messages say (new mail, a draft that is ready, a receipt) the 
 above the pill when no turn line has it (`shell/NoticeChips.qml`). `docs/MAIL.md` is the contract:
 processes (with diagrams), wire protocol, the press, the tools and what the ISO adds;
 `docs/design/mail-view.md` is the design: the line, the rules and what the person sees.
+
+## Messages and connections
+
+Slack and the work tools (Notion, Linear, Jira, Todoist, ClickUp) reach Bombadil through `bombadil-connect`, a
+system service that runs as its own user and keeps their tokens where the agent's processes cannot read them
+(a rule with a check today, since the image still gives the user passwordless `sudo`; `docs/CONNECT.md` says
+what that means). Slack is a small private app the person makes in their own workspace from a manifest
+Bombadil prepares, read over Socket Mode; each work tool is an official MCP server the person allows with a
+browser sign-in. `bombadil-browserd` (a user unit) holds one connection to the browser panel's Chromium so
+that the setup can point at a button and read a token off the page into the service without the model seeing
+it. agentd turns what the service says into notices and into three card kinds the bar draws (a message with a
+reply box, a task with its fields, a list), keeps the drafts (`proposals.py`) and runs the press: the agent has
+five tools and none sends, and a reply or a ticket goes only on the person's press on the button of its card,
+which agentd and the service both check against a fingerprint of exactly what the card drew. The bar's own
+`NotificationServer` replaces mako, so a web page's notification becomes the same line with Reply and Open.
+`docs/CONNECT.md` is the contract (processes with diagrams, the wire protocol, the drivers, the press, the
+cards); `docs/design/messages-and-connections.md` is the design.
+
+```mermaid
+flowchart LR
+  subgraph services["Slack, Notion, Linear, Jira, Todoist, ClickUp"]
+  end
+  subgraph connect["bombadil-connect (own user, token store)"]
+    drivers["drivers: Slack, MCP"]
+    perform["perform: the only way anything leaves"]
+  end
+  browserd["bombadil-browserd (read half, no hands)"]
+  agentd["agentd: notices, cards, proposals, the press"]
+  bar["the bar: cards, NotificationServer"]
+  agent["the agent: 5 tools, none sends"]
+  services <--> drivers
+  drivers --> perform
+  browserd -. "a token off a page" .-> connect
+  connect -- "messages, tasks" --> agentd
+  agentd -- "notices, cards" --> bar
+  bar -- "edit, shown, press (the person's)" --> agentd
+  agentd -- "perform + fingerprint" --> perform
+  agent -- "read, propose" --> agentd
+```
 
 ## Next
 

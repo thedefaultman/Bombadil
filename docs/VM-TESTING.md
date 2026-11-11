@@ -53,12 +53,13 @@ Screenshots of the checks that take one (`SHOT name`) land in `out/test/`.
 
 ## What it covers
 
-The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the three user services and
+The session and its processes (`greetd`, Hyprland, the bar, `agentd`), the two user services and
 that each is revived after being killed, the pill taking the keyboard from a Super tap and from
 Alt+Space, a launcher word running without a model, the browser panel sliding in and out, apps
 created and opened each in its own place, the sign-in round trip against a stand-in provider
 (`fake_signin.py`: the page opens, the pill follows it, cancelling frees the port, no internet waits
-and recovers), restore points being created and pruned, the installer (a plain disk, an encrypted one where GRUB
+and recovers), the name and voice card that the first sign-in asks and the `voice` word that brings it
+back, restore points being created and pruned, the installer (a plain disk, an encrypted one where GRUB
 asks for the password once, and a refresh of a disk an older Bombadil installed, which keeps the home
 folder and can put the old system back), and the installed system booting and undoing a change
 across a reboot.

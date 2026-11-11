@@ -925,6 +925,14 @@ def test_a_refresh_keeps_the_account_its_old_password_even_when_a_password_was_g
     assert "user:$6$salt$hash" in log and "chpasswd -e" in log and "the disk password" not in log
 
 
+@pytest.mark.parametrize("mode", ["fresh", "refresh"])
+def test_the_account_lingers_so_coding_sessions_outlive_the_session_that_started_them(tmp_path, mode):
+    # The stick turns this on from bombadil-live.service, which an install does not copy; a refresh of an older
+    # system has no linger file to keep either.
+    log = configure_run(tmp_path, mode=mode, password="x", old_hash="$6$salt$hash")
+    assert "touch /var/lib/systemd/linger/user" in log
+
+
 def test_no_password_leaves_the_account_without_one(tmp_path):
     log = configure_run(tmp_path, mode="fresh", password="")
     assert "passwd -d user" in log

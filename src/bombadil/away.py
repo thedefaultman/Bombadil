@@ -6,7 +6,7 @@ the rows, the sessions, the time the person left and the time now, and gives bac
 `Away` holds the card between "the person came back" and "they have seen it", remembers when that last
 was, and builds the one `away` message the shell draws. agentd owns the triggers. Today that is the
 person asking for it ("show away"); `Away.back` is what the moment they come back from a break will call,
-and the sessions are what `AgentD._away_sessions` will hand over, when agentd has either to say.
+and the sessions are what `AgentD._away_sessions` hands over: the coding sessions' views, the dots' own.
 
 Nothing here raises on a row it cannot make sense of, and nothing here reaches the model.
 """

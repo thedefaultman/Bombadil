@@ -889,7 +889,7 @@ def test_the_message_has_the_shape_the_shell_reads():
         m = v.tick()
         clock.t += 1
     assert m == {
-        "type": "machine", "present": True, "asked": False,
+        "type": "machine", "present": True, "asked": False, "calm": False,
         "why": "Memory is nearly full · sessions use most",
         "strip": {"text": "memory 91%", "dot": "amber"},
         "rows": [
@@ -950,7 +950,7 @@ def test_the_network_row_is_always_there_and_says_the_last_rates():
 
 def test_the_message_for_a_machine_with_nothing_to_say_takes_the_card_away():
     v, fake, clock = rig()
-    assert v.message() == {"type": "machine", "present": False, "asked": False, "why": "",
+    assert v.message() == {"type": "machine", "present": False, "asked": False, "calm": False, "why": "",
                            "strip": {"text": "", "dot": ""}, "rows": []}
     assert v.tick() == v.message()
     json.dumps(v.message())

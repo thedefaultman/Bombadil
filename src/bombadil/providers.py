@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths, rest
+from . import paths, persona, rest
 
 
 def kit_paths() -> tuple[Path, Path]:
@@ -30,8 +30,8 @@ def kit_paths() -> tuple[Path, Path]:
     return share / "qml" / "Bombadil", share / "skills" / "bombadil-apps"
 
 
-def system_prompt() -> str:
-    """What both CLIs get on every turn, fresh or resumed."""
+def base_prompt() -> str:
+    """The prompt every turn starts from, before the user's voice."""
     kit, skill = kit_paths()
     return (
         "You are the operating system's agent on Bombadil, a Linux distro whose main interface is you. "
@@ -62,6 +62,12 @@ def system_prompt() -> str:
         "When an answer has parts, order or change, show it as a picture (system_map for this machine, "
         "show_card otherwise), then say one line."
     )
+
+
+def system_prompt() -> str:
+    """What both CLIs get on every turn, fresh or resumed: the base prompt, then the user's voice and
+    where to change it."""
+    return base_prompt() + ("\n\n" + n if (n := persona.note()) else "")
 
 
 DIAGNOSTIC = "[ede_diagnostic]"   # what the CLI prints when a turn was cut short
@@ -322,11 +328,15 @@ class Claude(Provider):
             # "Not logged in · Please run /login" and its kin: the login is gone. The result
             # line that follows carries the words; this is the structured sign.
             yield {"kind": "signed_out"}
-        elif t == "assistant" and m.get("error") in ("rate_limit", "billing_error") and not m.get("api_error"):
+        elif (t == "assistant" and m.get("error") in ("rate_limit", "billing_error")
+              and m.get("api_error") not in self.ENTITLEMENT_CODES):
             # The account said no: its words are the result's too, and which kind of no it was (a
             # used-up quota, or a busy moment) is decided with the result (limit()). Not the
             # agent's own words, so not text.
             yield {"kind": "limit", "error": m["error"], "status": m.get("api_error_status"),
+                   "api_error": m.get("api_error"),
+                   # The window the CLI itself names (2.1.319): which limit, and when it resets.
+                   "rate_limit": _obj(_obj(m.get("api_error_params")).get("rate_limit_info")) or None,
                    "text": "\n".join(b.get("text", "") for b in m.get("message", {}).get("content", [])
                                      if isinstance(b, dict) and b.get("type") == "text")}
         elif t == "rate_limit_event":
@@ -378,16 +388,27 @@ class Claude(Provider):
     # status "rejected", resetsAt in epoch seconds and rateLimitType (five_hour, seven_day,
     # seven_day_opus, seven_day_sonnet, overage); then an assistant message with error "rate_limit"
     # (or "billing_error") whose text is "You've hit your session limit · resets 3:45pm (Zone)";
-    # then a result with is_error, api_error_status 429 and terminal_reason "api_error". An
-    # assistant message that also carries `api_error` is an entitlement check ("model_requires_
-    # usage_credits"), not a used-up quota. A busy moment is a 529, an api_retry, or the notice
-    # "Server is temporarily limiting requests (not your usage limit)".
+    # then a result with is_error, api_error_status 429 and terminal_reason "api_error". A busy
+    # moment is a 529, an api_retry, or the notice "Server is temporarily limiting requests (not your
+    # usage limit)".
+    # 2.1.319, run against the scripted API as a claude.ai login (what the headless test captures): the
+    # same lines, but the quota's words name the window ("You've hit your 5-hour limit"; the CLI's own
+    # table also has "weekly limit", "Opus limit", "Sonnet limit") and both the assistant message
+    # (with `api_error_params.rate_limit_info`, the window and its reset) and the result carry
+    # `api_error`: "usage_limit_reached". `api_error` is the CLI's name for which 429 it was: that one, a
+    # used-up plan or spend cap; "model_requires_usage_credits" and "long_context_credits_required", a
+    # model or a context size that needs paid credits (an entitlement check, also a 429 with error
+    # "rate_limit", and its window may read "rejected"), which is not a used-up quota. 429s that are
+    # neither (an org's policy, a throttle) carry no code at all.
     # Run against a local fake API (2.1.286, an API key, plain 429s): the CLI retries by itself, api_retry
     # events with error_status 429, error "rate_limit", max_retries 10 and a delay that doubles from half a
     # second, and ends the turn only after the last one, so a busy moment can take minutes to show as an
     # error. Under a host's unattended-retry settings it did not end at all: a rejected rate_limit_event, then
     # api_retry events whose retry_delay_ms was the hours until resetsAt (see waiting()). A real
     # subscription limit was not run.
+
+    LIMIT_CODES = ("usage_limit_reached",)
+    ENTITLEMENT_CODES = ("model_requires_usage_credits", "long_context_credits_required")
 
     QUOTA = re.compile(
         r"you've hit your [^.\n]*?\b(?:limit|budget)\b|usage limit reached|out of (?:extra )?usage|"
@@ -396,7 +417,8 @@ class Claude(Provider):
     BUSY = re.compile(r"not your usage limit|temporarily limiting requests|high load|overloaded|try again in a (?:minute|moment)",
                       re.I)
     SPENDING = re.compile(r"spend|credit|budget|extra usage|out of usage|monthly usage limit", re.I)
-    WINDOWS = (("session limit", "five_hour"), ("weekly limit", "seven_day"), ("opus limit", "seven_day_opus"),
+    WINDOWS = (("session limit", "five_hour"), ("5-hour limit", "five_hour"), ("weekly limit", "seven_day"),
+               ("opus limit", "seven_day_opus"),
                ("sonnet limit", "seven_day_sonnet"), ("fable limit", "seven_day_overage_included"),
                ("usage credit limit", "overage"))
 
@@ -404,10 +426,11 @@ class Claude(Provider):
         if result.get("ok", True):
             return None
         notice = seen.get("notice") or {}
-        info = seen.get("rate_limit") or {}
+        info = seen.get("rate_limit") or notice.get("rate_limit") or {}
         text = rest.fold(result.get("text") or notice.get("text") or "")
         # An entitlement check, or the throttle, is not the account's quota running out.
-        if result.get("api_error") or notice.get("api_error") or self.BUSY.search(text):
+        code = result.get("api_error") or notice.get("api_error")
+        if code in self.ENTITLEMENT_CODES or self.BUSY.search(text):
             return None
         status = result.get("api_error_status") or notice.get("status")
         refused = status == 429 or (result.get("terminal_reason") == "api_error"
@@ -415,7 +438,10 @@ class Claude(Provider):
         # The event says which window; only the refusal says it matters. A window that reads
         # "rejected" while paid credits carry on (isUsingOverage) is not one.
         rejected = info.get("status") == "rejected" and not info.get("isUsingOverage")
-        if not refused or not (rejected or self.QUOTA.search(text)):
+        # The code is the CLI's own word that the quota ran out. Without one, the window or the words say it; a
+        # code this version does not know is not taken on the window's word alone: the words must say it.
+        said = code in self.LIMIT_CODES or (rejected and not code) or self.QUOTA.search(text)
+        if not refused or not said:
             return None
         kind = info.get("rateLimitType") if rejected else ("overage" if info.get("overageStatus") == "rejected" else None)
         low = text.lower()
@@ -552,7 +578,7 @@ class Codex(Provider):
         # OS tools. developer_instructions appends to Codex's prompt (instructions replaces it).
         overrides = ["-c", f"mcp_servers.bombadil-os.command={json.dumps(self.mcp_command)}",
                      "-c", f"mcp_servers.bombadil-os.env_vars={json.dumps(MCP_ENV)}",
-                     "-c", f"developer_instructions={json.dumps(system_prompt())}",
+                     "-c", f"developer_instructions={json.dumps(system_prompt(), ensure_ascii=False)}",
                      # Codex offers update_plan (the plan on the desk) only when its config says so.
                      "-c", "tools.update_plan.enabled=true",
                      "--skip-git-repo-check"]

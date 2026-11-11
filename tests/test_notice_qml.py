@@ -15,6 +15,8 @@ from pathlib import Path
 import pytest
 from qml_theme import THEME
 
+from bombadil import cards
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 QtCore = pytest.importorskip("PySide6.QtCore", exc_type=ImportError)
@@ -36,6 +38,7 @@ Window {
     color: "#3b4a5a"
     property var sent: []
     property int handOffs: 0
+    property int keys: 0
     // What shell.qml does with a line from agentd.
     function feed(line) { pillState.handle(JSON.parse(line)) }
     PillState {
@@ -43,6 +46,7 @@ Window {
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
         onHandOff: w.handOffs += 1
+        onCardKeys: w.keys += 1
     }
     // A delegate, like the bar's PanelWindow in Variants: names resolve as they do in shell.qml.
     Repeater {
@@ -628,3 +632,59 @@ def test_the_bar_loads_without_qml_warnings(bar):
     bar.send(kind="turn_start", turn=1, prompt="hello")
     bar.send(kind="turn_end", turn=1, seconds=1, changed=True, summary="Did it.")
     assert bar.warnings == []
+
+
+# -- Reply on a message or a notification: the card that comes of it takes the keyboard --
+
+def reply_card(by="person", id="msg:n7"):
+    """A message card with a box to reply in, as agentd sends it (made by the validator that guards the bar)."""
+    card = {"type": "message", "id": id, "title": "Priya Shah in #launch", "source": "connect",
+            "say": "Reply in #launch. Sending is yours.",
+            "thread": [{"ref": "slack:w1/C1/1", "from": "Priya Shah", "text": "Can we lock the 14th?",
+                        "ts": time.time() - 60, "mine": False, "unread": True}],
+            "reply": {"proposal": "p1", "kind": "slack_reply", "target": "slack:w1/C1/1", "where": "#launch",
+                      "content": "", "warnings": [], "fingerprint": "", "ready": False, "state": "open", "by": by,
+                      "receipt": None, "note": ""}}
+    out, errors = cards.accept(card)
+    assert out is not None, errors
+    return out
+
+
+def keys(bar):
+    return bar.win.property("keys")
+
+
+@pytest.mark.parametrize("source", ["connect", "notify"])
+def test_a_reply_chip_asks_for_the_keyboard_and_the_card_with_a_box_that_comes_takes_it(bar, source):
+    bar.notice(3, "Priya Shah: Can we lock the 14th?", actions=REPLY, ttl=300, source=source)
+    bar.click_item(bar.chips()[0][1])
+    assert bar.sent[-1] == {"type": "notice_action", "id": 3, "action": "reply"}
+    assert keys(bar) == 0                                  # nothing yet: the card is not there
+    bar.feed(type="card", card=reply_card())
+    assert keys(bar) == 1
+    bar.feed(type="card", card=reply_card())               # the same card again (a draft changed): once is enough
+    assert keys(bar) == 1
+
+
+def test_a_card_an_agent_opened_does_not_take_the_keyboard(bar):
+    bar.feed(type="card", card=reply_card())
+    assert keys(bar) == 0
+    bar.notice(4, "Priya Shah: Can we lock the 14th?", actions=REPLY, ttl=300, source="connect")
+    bar.click_item(bar.chips()[1][1])                      # Open is not Reply
+    bar.feed(type="card", card=reply_card(id="msg:n8"))
+    assert keys(bar) == 0
+
+
+def test_mails_reply_chip_opens_a_window_not_a_card_and_asks_for_no_keys(bar):
+    bar.notice(5, "Priya Shah: Launch date", actions=REPLY, ttl=300, source="mail")
+    bar.click_item(bar.chips()[0][1])
+    bar.feed(type="card", card=reply_card())
+    assert keys(bar) == 0
+
+
+def test_a_card_that_comes_long_after_the_reply_takes_nothing(bar):
+    bar.notice(6, "Priya Shah: Can we lock the 14th?", actions=REPLY, ttl=300, source="connect")
+    bar.click_item(bar.chips()[0][1])
+    bar.pill.setProperty("_askedAt", bar.pill.property("_askedAt") - 9000)      # the ask has lapsed (askGrace is 8 s)
+    bar.feed(type="card", card=reply_card())
+    assert keys(bar) == 0

@@ -27,6 +27,32 @@ def state_dir() -> Path:
     return _env_path("BOMBADIL_STATE", Path(base) / "bombadil")
 
 
+def persona_file() -> Path:
+    return config_dir() / "persona.toml"
+
+
+def ledger_file() -> Path:
+    return state_dir() / "said.json"
+
+
+def greeted_marker() -> Path:
+    return runtime_dir() / "greeted"
+
+
+def updates_file() -> Path:
+    return _env_path("BOMBADIL_UPDATES", Path("/var/lib/bombadil/updates.json"))
+
+
+def voice_lines() -> Path:
+    # Resolved like mcp_server._share(): /usr/share/bombadil/share when installed, the checkout otherwise.
+    default = Path(__file__).resolve().parents[2] / "share" / "voice" / "lines.toml"
+    return _env_path("BOMBADIL_VOICE_LINES", default)
+
+
+def localtime_link() -> Path:
+    return _env_path("BOMBADIL_LOCALTIME", Path("/etc/localtime"))
+
+
 def config_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(home() / ".config")
     return _env_path("BOMBADIL_CONFIG", Path(base) / "bombadil")
@@ -47,6 +73,15 @@ def share_dir() -> Path:
 
 def turns_log() -> Path:
     return state_dir() / "turns.jsonl"
+
+
+def projects_dir() -> Path:
+    return _env_path("BOMBADIL_PROJECTS", home() / "Projects")
+
+
+def dev_dir() -> Path:
+    """Where the coding sessions' registry and last screens live."""
+    return state_dir() / "dev"
 
 
 def is_turn_row(row) -> bool:
@@ -72,6 +107,17 @@ def jobs_dir() -> Path:
     return state_dir() / "jobs"
 
 
+def tips_file() -> Path:
+    """What the Tips card has taught: the day it began, the days of use, the tips tried (tips.py)."""
+    return state_dir() / "tips.json"
+
+
+def tips_table() -> Path:
+    """The tips themselves: share/tips beside this package, so a checkout runs its own and the ISO runs
+    /usr/share/bombadil/share/tips."""
+    return Path(__file__).resolve().parents[2] / "share" / "tips" / "tips.toml"
+
+
 def mail_socket() -> Path:
     return _env_path("BOMBADIL_MAIL_SOCKET", runtime_dir() / "mail.sock")
 
@@ -92,3 +138,22 @@ def mail_profile() -> Path:
 
 def press_log() -> Path:
     return _env_path("BOMBADIL_PRESS_LOG", state_dir() / "presses.jsonl")
+
+
+def connect_socket() -> Path:
+    return _env_path("BOMBADIL_CONNECT_SOCKET", Path("/run/bombadil-connect/connect.sock"))
+
+
+def connect_state() -> Path:
+    """The connection service's own directory (its database, with the tokens). Not the person's: only the
+    service's user can read it."""
+    return _env_path("BOMBADIL_CONNECT_STATE", Path("/var/lib/bombadil-connect"))
+
+
+def browserd_socket() -> Path:
+    return _env_path("BOMBADIL_BROWSERD_SOCKET", runtime_dir() / "browserd.sock")
+
+
+def proposals_file() -> Path:
+    """What waits for a press: the open proposals (docs/CONNECT.md)."""
+    return _env_path("BOMBADIL_PROPOSALS", state_dir() / "proposals.json")

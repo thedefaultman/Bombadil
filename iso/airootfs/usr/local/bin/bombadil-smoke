@@ -6,7 +6,15 @@ set -u
 out=/dev/console
 say() { echo "BOMBADIL-SMOKE: $*" | tee "$out"; }
 ok=0; fail=0
-check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); fi; }
+check() { local name=$1; shift; if "$@" >/tmp/smoke.$name.log 2>&1; then say "PASS $name"; ok=$((ok+1)); else say "FAIL $name: $(tail -c 300 /tmp/smoke.$name.log | tr '\n' ' ')"; fail=$((fail+1)); diag "$name"; fi; }
+# What a failed check leaves to read in the serial log: the windows Hyprland has and the programs that
+# should be running, for the first few failures (each costs a few seconds under emulation).
+ndiag=0
+diag() {
+  ndiag=$((ndiag+1)); (( ndiag > 4 )) && return 0
+  say "DIAG $1 windows: $(as_user hyprctl -j clients 2>&1 | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["pid"]) for c in json.load(sys.stdin)])' 2>&1 | tail -c 600)"
+  say "DIAG $1 programs: $(for n in Hyprland quickshell foot footclient zellij; do printf '%s=%s ' "$n" "$(pgrep -x "$n" | tr '\n' ,)"; done) agentd=$(pgrep -f agentd | head -3 | tr '\n' ,) chromium=$(pgrep -xc chromium)"
+}
 wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep 1; done; return 1; }
 # bombadil.smoke          live checks, then power off
 # bombadil.smoke=install  live checks, install to /dev/vda, power off (the host then boots the disk)
@@ -23,6 +31,10 @@ check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium a
 # `command -v a b` succeeds when either is found, so the brain's two and Mail's three are looked for one by one.
 check brain-tools-installed bash -c 'for b in bombadil-brain bombadil-brain-watch; do command -v $b || exit 1; done'
 check mail-tools-installed bash -c 'for b in thunderbird bombadil-mail bombadil-mail-host; do command -v $b || exit 1; done'
+# Connections: the service and the browser service, the Python they run on, and no mako (the shell owns the notifications).
+check connect-tools-installed bash -c 'for b in bombadil-connect bombadil-browserd notify-send wl-copy; do command -v $b || exit 1; done'
+check connect-python-installed python3 -c 'import httpx, httpx2; from mcp import ClientSession, MCPError'
+check mako-is-not-installed bash -c '! command -v mako'
 check pyside6-imports python3 -c 'import PySide6.QtQml, PySide6.QtQuick'
 check greetd-active wait_for 60 systemctl is-active --quiet greetd
 check hyprland-running wait_for 120 pgrep -x Hyprland
@@ -109,6 +121,7 @@ check app-shown wait_for 30 special_shown app-smoke-test
 check app-status wait_for 30 app_ok smoke-test
 check app-skill-installed as_user test -f /home/user/.claude/skills/bombadil-apps/SKILL.md -a -f /home/user/.agents/skills/bombadil-apps/SKILL.md
 check mail-skill-installed as_user test -f /home/user/.claude/skills/bombadil-mail/SKILL.md -a -f /home/user/.agents/skills/bombadil-mail/SKILL.md
+check connect-skill-installed as_user test -f /home/user/.claude/skills/bombadil-connect/SKILL.md -a -f /home/user/.agents/skills/bombadil-connect/SKILL.md
 shot app
 check create-second-app mcp_call create_app "{\"title\":\"Smoke Two\",\"qml\":\"$qml\"}"
 check second-app-window wait_for 60 has_client 'c["class"]=="bombadil-app-smoke-two" and c["floating"]'
@@ -224,8 +237,7 @@ check agentd-comes-back revives bombadil-agentd
 check agentd-answers-again wait_for 60 as_user bombadil status
 check bar-comes-back revives bombadil-shell
 check bar-layer-again wait_for 60 has_layer bombadil-bar
-check notifications-come-back revives mako
-units_active() { local u; for u in bombadil-agentd bombadil-shell mako; do as_user systemctl --user is-active --quiet "$u" || return 1; done; }
+units_active() { local u; for u in bombadil-agentd bombadil-shell; do as_user systemctl --user is-active --quiet "$u" || return 1; done; }
 check services-are-units units_active
 # A click on a box in a picture that names a service opens it in the same drawer, in the viewer
 # (bombadil view, which needs no pager on the image), and one Esc puts it away.
@@ -236,6 +248,41 @@ shot open-unit
 keys esc
 check open-unit-esc-closes wait_for 30 drawer_gone
 
+# Coding sessions (dev.py): a shell session on a project starts in its own systemd scope and
+# slice with a floating viewer, lives on when that window closes, comes back by name and ends.
+# A shell needs no provider login, so this runs on a fresh VM.
+viewer=bombadil-session-smoke-shell
+unit_active() { as_user systemctl --user list-units --all --no-legend --plain "$1" | grep -q ' active '; }
+unit_gone() { ! unit_active "$1"; }
+zellij_has() { as_user zellij list-sessions --short --no-formatting 2>/dev/null | grep -qx "$1"; }
+zellij_lacks() { ! zellij_has "$1"; }
+no_client() { ! has_client "$1"; }
+says() { local want=$1; shift; as_user bombadil ask "$*" | tee /dev/stderr | grep -q "$want"; }
+hypr_do() { local o; o=$(as_user hyprctl dispatch "$1") && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+close_viewer() { hypr_do "hl.dsp.focus({ window = \"class:^($viewer)\$\" })" && hypr_do 'hl.dsp.window.close()'; }
+# The viewer is most of the screen, not foot's own 700x500.
+viewer_big() { local m c; m=$(hypr_json monitors) && c=$(hypr_json clients) && python3 -c 'import json, sys; m = json.loads(sys.argv[1])[0]; c = [x for x in json.loads(sys.argv[2]) if x["class"] == sys.argv[3]]; print(m["width"], m["height"], [x["size"] for x in c]); sys.exit(not c or c[0]["size"][0] < 0.7 * m["width"] / m.get("scale", 1))' "$m" "$c" "$viewer"; }
+make_project() { as_user bash -c 'mkdir -p ~/Projects/smoke && cd ~/Projects/smoke && git init -q && git -c user.name=smoke -c user.email=smoke@localhost commit -q --allow-empty -m start'; }
+check dev-tools bash -c 'command -v zellij foot footclient bombadil-signal'
+check dev-hooks-parse python3 -c 'import json, tomllib; json.load(open("/etc/claude-code/managed-settings.d/50-bombadil.json")); tomllib.load(open("/etc/codex/requirements.toml", "rb"))'
+check dev-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes'
+check dev-project make_project
+check dev-start says "Started shell on Smoke" shell smoke
+check dev-zellij wait_for 20 zellij_has bombadil-smoke-shell
+check dev-scope wait_for 20 unit_active 'bombadil-dev-smoke-shell-*.scope'
+check dev-slice unit_active 'bombadil-dev-smoke.slice'
+check dev-window wait_for 60 has_client "c['class']=='$viewer' and c['floating']"
+check dev-window-size viewer_big
+shot session
+check dev-close-window close_viewer
+check dev-window-gone wait_for 30 no_client "c['class']=='$viewer'"
+check dev-lives-on zellij_has bombadil-smoke-shell
+check dev-back-by-name says "Back to shell on Smoke" shell smoke
+check dev-window-again wait_for 60 has_client "c['class']=='$viewer'"
+check dev-end says "Ended shell on Smoke" end shell smoke
+check dev-ended wait_for 20 zellij_lacks bombadil-smoke-shell
+check dev-scope-gone wait_for 20 unit_gone 'bombadil-dev-smoke-shell-*.scope'
+check dev-in-history history_has "Ended shell on Smoke"
 # Mail (docs/MAIL.md): Thunderbird is the engine, kept unseen by bombadil-mail, whose user unit starts at
 # login. The live system has no mail account, so what needs mail runs the service on its fake engine (sample
 # mailboxes, a new mail every few seconds) in the unit's place, then puts the unit back. The fake's database
@@ -255,23 +302,26 @@ restore_mail() {
   mail_unit start && wait_for 60 mail_unit is-active --quiet
 }
 # agentd says new mail from someone known as a notice: wait for one on its own socket.
-mail_notice_from_agentd() {
-  as_user python3 - "$sock" <<'PY'
+# notice_from_agentd SOURCE [TEXT]: the first notice of that source, with chips and (when given) TEXT in its line.
+notice_from_agentd() {
+  as_user python3 - "$sock" "$1" "${2:-}" <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(40); s.connect(sys.argv[1])
 for raw in s.makefile():
     m = json.loads(raw)
-    if m.get("type") == "notice" and m.get("source") == "mail":
+    if m.get("type") == "notice" and m.get("source") == sys.argv[2]:
         print(m, flush=True)
-        sys.exit(0 if m.get("line") and m.get("actions") else 1)
+        sys.exit(0 if m.get("line") and m.get("actions") and sys.argv[3] in m["line"] else 1)
 sys.exit(1)
 PY
 }
+mail_notice_from_agentd() { notice_from_agentd mail; }
 # The bar has it, and is showing it (the pill's own line must be free for a notice to show).
 line_state() { as_user timeout 10 quickshell ipc -p /usr/share/bombadil/shell/shell.qml call line state; }
-mail_notice_on_the_line() {
-  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == "mail" and n["actions"] for n in d["notices"])))'
+notice_on_the_line() {
+  line_state | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d); sys.exit(not (d["noticeShown"] and any(n["source"] == sys.argv[1] and n["actions"] for n in d["notices"])))' "$1"
 }
+mail_notice_on_the_line() { notice_on_the_line mail; }
 # Windows of class Thunderbird (the Arch package's is org.mozilla.Thunderbird) open on mail-engine, which is never
 # shown and never has the keyboard. Both spellings are opened by the check, and every class the window rule's own
 # pattern takes is held to it, so a class that matches and landed elsewhere fails as that, not as "no window".
@@ -324,6 +374,77 @@ if [[ "$mode" != "undo" ]]; then
   check mail-window-hide app_hidden mail
   check mail-unit-restored restore_mail
   mail_log
+fi
+
+
+# Connections (docs/CONNECT.md): bombadil-connect is a system unit with its own user, and what it keeps is closed to
+# the person's own processes. The live system has no connection, so what needs one runs the same unit on its fake
+# engine (sample messages and tasks) through a drop-in, with its database in a scratch folder of the unit's own
+# state directory (the real connect.db never sees a sample); the folder and the drop-in are taken away afterwards.
+connect_unit() { systemctl "$@" bombadil-connect.service; }
+connect_dropin=/run/systemd/system/bombadil-connect.service.d
+fake_connect() {
+  install -d "$connect_dropin"
+  install -d -o bombadil-connect -g bombadil-connect -m 0700 /var/lib/bombadil-connect/smoke-fake
+  printf '[Service]\nEnvironment=BOMBADIL_CONNECT_ENGINE=fake BOMBADIL_CONNECT_STATE=/var/lib/bombadil-connect/smoke-fake\n' >"$connect_dropin/fake.conf"
+  systemctl daemon-reload && connect_unit restart && wait_for 30 test -S /run/bombadil-connect/connect.sock
+}
+restore_connect() {
+  rm -rf "$connect_dropin" /var/lib/bombadil-connect/smoke-fake; systemctl daemon-reload
+  connect_unit restart && wait_for 60 connect_unit is-active --quiet
+}
+# connect_says OP EXPRESSION: the service answers the person's own process (not root, not its user) and the
+# answer `r` satisfies EXPRESSION.
+connect_says() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.connect import client
+r = client.request(sys.argv[1], 5); print(r, flush=True); sys.exit(not eval(sys.argv[2]))' "$1" "$2"
+}
+browserd_up() {
+  as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil.browserd import client
+r = client.request("status", 5); print(r, flush=True); sys.exit(not isinstance(r.get("up"), bool))'
+}
+# The directory is its own user's and closed to everyone else, so the person's processes cannot list it. They can still
+# `sudo` on this image (sudoers.d/bombadil), so this is what the unit keeps, not yet a wall against an agent that runs as them.
+connect_state_closed() { [[ "$(stat -c %U:%a /var/lib/bombadil-connect)" == bombadil-connect:700 ]] && ! as_user ls /var/lib/bombadil-connect; }
+# The unit as systemd loaded it, not as the file reads.
+connect_hardened() {
+  local want key
+  for want in User=bombadil-connect NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes PrivateTmp=yes RuntimeDirectoryMode=0755 MemoryMax=314572800; do
+    key=${want%%=*}
+    [[ "$(connect_unit show -P "$key")" == "${want#*=}" ]] || { echo "$key is $(connect_unit show -P "$key"), not ${want#*=}"; return 1; }
+  done
+}
+# The shell's NotificationServer is the one owner of the name, whatever a web page or notify-send calls it by, and a
+# notification becomes one line with Reply and Open, shown by the bar. notify-send stands in for a page's notification.
+notifications_owner_is_the_shell() { as_user busctl --user status org.freedesktop.Notifications | tee /dev/stderr | grep -q '^Comm=quickshell'; }
+notification_becomes_a_notice() {
+  notice_from_agentd notify "Legal just signed off" >/tmp/smoke.notify.log 2>&1 &
+  local listener=$!
+  sleep 2   # the listener is connected before the notification is sent
+  as_user notify-send -a Teams "Priya Shah" "Legal just signed off" || return 1
+  wait_for 8 notice_on_the_line notify || { kill "$listener" 2>/dev/null; cat /tmp/smoke.notify.log; return 1; }
+  wait "$listener"; local heard=$?
+  cat /tmp/smoke.notify.log; return $heard
+}
+check connect-user-exists bash -c 'getent passwd bombadil-connect | grep -q nologin'
+check connect-unit-enabled connect_unit is-enabled
+check connect-unit-active wait_for 60 connect_unit is-active --quiet
+check connect-unit-hardened connect_hardened
+# No connection yet: the service is up and says so, to a process that is not its own user.
+check connect-unit-answers wait_for 60 connect_says status 'r.get("state") == "ok"'
+check connect-state-is-closed connect_state_closed
+check browserd-unit-enabled as_user systemctl --user is-enabled bombadil-browserd.service
+check browserd-unit-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-browserd.service
+check browserd-unit-answers wait_for 60 browserd_up
+if [[ "$mode" != "undo" ]]; then
+  check mako-is-not-running bash -c '! pgrep -x mako'
+  check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
+  check notification-becomes-a-notice notification_becomes_a_notice
+  check connect-fake-starts fake_connect
+  check connect-status wait_for 30 connect_says status 'r.get("state") == "ok"'
+  check connect-connections-listed wait_for 30 connect_says connections 'r["connections"]'
+  check connect-messages-listed wait_for 30 connect_says messages 'r["messages"]'
+  check connect-unit-restored restore_connect
 fi
 
 
@@ -418,6 +539,31 @@ if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then
   check signin-agentd-starts restart_agentd
   check signin-asks-which-ai setup_is choose 'Which AI should run this computer'
   shot signin-choose
+
+  # The voice. The first sign-in that turns ready with no persona.toml puts the name and voice card up in
+  # place of the "Signed in" line, with the keyboard already on it: a typed name and Enter save it, and the
+  # word `voice` brings the card back. (Before a sign-in the pill holds every word, so this comes first.)
+  persona_file=/home/user/.config/bombadil/persona.toml
+  persona_has() { grep -q "$1" "$persona_file"; }
+  check no-persona-before-voice bash -c "! test -e $persona_file"
+  check voice-signin restart_agentd BOMBADIL_PROVIDER=fake BOMBADIL_FAKE_SIGNIN=auto FAKE_SIGNIN_DELAY=2
+  check voice-card-asked wait_for 240 persona_has '^voice = "merry"'
+  check voice-panel-away wait_for 90 panel_away
+  shot voice-card
+  shot voice-card-settled   # the same card a few seconds on: whole, and not still growing
+  keys shift+d a n i e l ret
+  check voice-name-saved wait_for 60 persona_has '^name = "Daniel"'
+  check voice-default-merry persona_has '^voice = "merry"'
+  shot voice-saved
+  # `bombadil pill` is what the Super bind runs. A tap and a word sent right after it race each other under
+  # software emulation (the launcher checks above lose the same race), so ask for the pill and let it settle.
+  as_user bombadil pill; sleep 3
+  keys v o i c e ret
+  check voice-word-answered wait_for 30 history_has "voice: Opened the voice card"
+  shot voice-word
+  keys esc
+  rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml
+  check voice-agentd-restored restart_agentd
   check signin-codex-page try_provider codex '^https://(auth\.openai\.com|chatgpt\.com)/'
   shot signin-codex
   check signin-codex-called-off called_off codex

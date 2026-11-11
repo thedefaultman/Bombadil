@@ -589,6 +589,9 @@ if [[ ! -d /home/user ]]; then
   cp -a /etc/skel/. /home/user/
   chown -R user: /home/user
 fi
+# Lingering keeps the user's systemd running through a compositor crash or a logout, so coding sessions (each in
+# its own scope) outlive the session that started them. The stick does this from its own unit, which is not copied.
+mkdir -p /var/lib/systemd/linger && touch /var/lib/systemd/linger/user
 systemctl enable greetd NetworkManager systemd-timesyncd fstrim.timer snapper-cleanup.timer
 systemd-tmpfiles --create --prefix=/var/log/journal >/dev/null 2>&1 || true
 CH

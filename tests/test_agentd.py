@@ -1,6 +1,8 @@
 import asyncio
 import json
 import re
+import socket
+import time
 
 import pytest
 from test_jobs import Systemd
@@ -44,6 +46,8 @@ async def test_turn_round_trip(home):
     assert entries["type"] == "entries" and any(e["name"] == "browser" for e in entries["entries"])
     setup = json.loads(await r.readline())
     assert setup["type"] == "setup" and setup["state"] == "ready" and setup["actions"] == []
+    sessions = json.loads(await r.readline())
+    assert sessions["type"] == "dev" and sessions["sessions"] == [] and sessions["line"] == ""
     w.write(b'{"type": "prompt", "text": "tell me a joke"}\n')
     await w.drain()
     msgs = await _read_until(r, "turn_end")
@@ -86,6 +90,39 @@ async def _ready(d, state="ready"):
     assert d.access == state
 
 
+def _one_shot(path, line):
+    """A client that sends one line, half-closes and leaves after the first thing it hears, as a
+    script or a key bind may (the greeting it never reads fails agentd's writes to it)."""
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(str(path))
+    s.sendall((line + "\n").encode())
+    s.shutdown(socket.SHUT_WR)
+    s.recv(1 << 20)
+    s.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("greeting_seconds", [0.0, 0.3])
+async def test_a_line_from_a_client_that_leaves_at_once_is_still_read(home, monkeypatch, greeting_seconds):
+    real = launcher.entries
+
+    def slow(*a, **k):
+        time.sleep(greeting_seconds)
+        return real(*a, **k)
+
+    monkeypatch.setattr(launcher, "entries", slow)
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    server = asyncio.create_task(d.serve())
+    await _ready(d)
+    await asyncio.to_thread(_one_shot, d.socket_path, '{"type": "prompt", "text": "tell me a joke"}')
+    for _ in range(100):
+        if d.next_id == 1:
+            break
+        await asyncio.sleep(0.02)
+    assert d.next_id == 1
+    server.cancel()
+
+
 async def _start(d, state="ready"):
     server = asyncio.create_task(d.serve())
     await _ready(d, state)
@@ -93,6 +130,7 @@ async def _start(d, state="ready"):
     await r.readline()   # status
     await r.readline()   # entries
     await r.readline()   # setup
+    await r.readline()   # coding sessions
     return server, r, w
 
 
@@ -704,6 +742,7 @@ async def _another(d):
     await r.readline()   # status
     await r.readline()   # entries
     await r.readline()   # setup
+    await r.readline()   # coding sessions
     return r, w
 
 
@@ -742,7 +781,7 @@ async def test_the_shell_asks_for_the_desk_and_only_the_asker_is_told(home):
     d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
     server, r, w = await _start(d)
     other_r, other_w = await _another(d)
-    assert await _silent(r) and await _silent(other_r)   # the greeting is still status and entries
+    assert await _silent(r) and await _silent(other_r)   # the greeting is still status, entries, setup and the coding sessions
     await _say(w, {"type": "desk", "op": "get"})
     state = json.loads(await asyncio.wait_for(r.readline(), 5))
     assert state == d.desk.snapshot() and state["type"] == "desk" and state["folded"] is False
@@ -1012,11 +1051,14 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
                                                     "Watching, Alive, Needs you, Away and Machine.")),
-        ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, move, fold, unfold "
-                                                    "and say its state.")),
-        ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, move, fold, "
-                                                      "unfold and say its state.")),
-        ({}, False, "The desk cannot do that. It can show, hide, move, fold, unfold and say its state."),
+        ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, keep, set, move, "
+                                                    "fold, unfold, reset, open the widgets card and say its "
+                                                    "state.")),
+        ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, keep, set, "
+                                                      "move, fold, unfold, reset, open the widgets card and "
+                                                      "say its state.")),
+        ({}, False, ("The desk cannot do that. It can show, hide, keep, set, move, fold, unfold, reset, open "
+                     "the widgets card and say its state.")),
     ]):
         await _say(tool_w, {"type": "desk-tool", "id": f"q{i}", "turn": 1, **msg})
         got = await _desk_result(tool_r)
@@ -2655,7 +2697,7 @@ async def test_the_real_os_mcp_job_tool_starts_lists_and_stops_a_job_from_inside
     assert "isError" not in said and text.startswith(f"Started Build as job {job_id}.")
     assert [x["id"] for x in d.jobs.snapshot()["jobs"]] == [job_id]
     assert sd.calls[0][:3] == ["systemd-run", "--user", f"--unit=bombadil-job-{job_id}"]
-    said = await call(Scripted(_mcp_turn({"op": "list"}, "job")), "what is running?")
+    said = await call(Scripted(_mcp_turn({"op": "list"}, "job")), "list my jobs")
     assert said["content"][0]["text"].startswith(f"{job_id} · Build · running ")
     said = await call(Scripted(_mcp_turn({"op": "stop", "id": job_id}, "job")), "stop the build")
     assert said["content"][0]["text"] == "Stopped Build." and "isError" not in said
@@ -2792,6 +2834,17 @@ async def test_a_limit_is_said_plainly_with_the_providers_reset_time_after_it(ho
         agentd.LIMIT_TEXT + "\nYou've hit your usage limit. Resets at 5pm."]
     assert await _errors_for("hello", _failing("Credit balance is too low")) == [
         agentd.LIMIT_TEXT + "\nCredit balance is too low"]
+
+
+@pytest.mark.parametrize("window", ["5-hour limit", "weekly limit", "Opus limit", "Sonnet limit", "usage credit limit"])
+def test_every_window_newer_claude_code_names_is_said_plainly(window):
+    said = f"You've hit your {window} \u00b7 resets 2:50am (UTC)"
+    assert agentd._limit_text(said) == agentd.LIMIT_TEXT + "\n" + said
+
+
+def test_an_entitlement_check_is_passed_through_as_it_came():
+    said = "Usage credits required for 1M context \u00b7 run /extra-usage to turn them on"
+    assert agentd._limit_text(said) == said
 
 
 @pytest.mark.asyncio
@@ -2934,15 +2987,20 @@ MACHINE_GONE = {"type": "machine", "present": False, "asked": False, "why": "", 
 
 class FakeVitals:
     """What agentd needs of vitals.Vitals: tick() answers the message when it is not the last one it
-    answered, message() the current one, next_delay() how long to sleep, ask() and reset()."""
+    answered, message() the current one, next_delay() how long to sleep, ask(), keep() and reset()."""
 
     def __init__(self, *script, delay=0.02, current=None):
         self.script, self.delay = list(script), delay
         self.current = current or MACHINE_GONE
         self.ticks = self.asks = self.resets = 0
+        self.kept = False
 
-    def tick(self):
+    def keep(self, kept):
+        self.kept = bool(kept)
+
+    def tick(self, woken=False):
         self.ticks += 1
+        self.woken = [*getattr(self, "woken", []), woken]
         if not self.script:
             return None
         msg = self.script.pop(0)
