@@ -416,6 +416,33 @@ def test_a_fresh_install_brings_what_the_carry_list_names_and_nothing_else(tmp_p
     assert not (home / ".local/state/bombadil/undo.json").exists()
 
 
+def test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught(tmp_path):
+    live, target = tmp_path / "live", tmp_path / "target"
+    state = live / ".local/state/bombadil"
+    state.mkdir(parents=True)
+    (state / "tips.json").write_text('{"first_ready": "2026-11-09", "days": ["2026-11-09"]}')
+    (state / "desk.toml").write_text('hidden = ["machine"]\n')
+    (state / "turns.jsonl").write_text("a turn\n")            # the log of turns stays with the live session
+    (live / ".config/bombadil").mkdir(parents=True)
+    (live / ".config/bombadil/config.toml").write_text('provider = "claude"\n')
+    (target / "home/user").mkdir(parents=True)
+    run_carry(tmp_path, live, target, "fresh")
+    home = target / "home/user"
+    kept = {str(p.relative_to(home)): p.read_text() for p in home.rglob("*") if p.is_file()}
+    assert kept == {
+        ".local/state/bombadil/tips.json": '{"first_ready": "2026-11-09", "days": ["2026-11-09"]}',
+        ".local/state/bombadil/desk.toml": 'hidden = ["machine"]\n',
+        ".config/bombadil/config.toml": 'provider = "claude"\n'}
+
+
+def test_a_live_system_with_nothing_to_carry_over_installs_all_the_same(tmp_path):
+    live, target = tmp_path / "live", tmp_path / "target"
+    live.mkdir()
+    (target / "home/user").mkdir(parents=True)
+    run_carry(tmp_path, live, target, "fresh")
+    assert list((target / "home/user").rglob("*")) == []
+
+
 def test_only_what_the_person_chose_to_bring_comes(tmp_path):
     live, target = carry_fixture(tmp_path)
     run_carry(tmp_path, live, target, "fresh", carry=[".config/bombadil"])

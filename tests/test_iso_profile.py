@@ -164,41 +164,6 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
     assert install.index('kernel=$(newest_kernel "$image")') < install.index('sgdisk -Z "$disk"')
 
 
-def test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught(tmp_path):
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for f in .claude .claude.json")
-    end = script.index("arch-chroot /mnt chown", start)
-    live, disk = tmp_path / "live", tmp_path / "disk"
-    state = live / ".local/state/bombadil"
-    state.mkdir(parents=True)
-    (state / "tips.json").write_text('{"first_ready": "2026-11-09", "days": ["2026-11-09"]}')
-    (state / "desk.toml").write_text('hidden = ["machine"]\n')
-    (state / "turns.jsonl").write_text("a turn\n")            # the log of turns stays with the live session
-    (live / ".config/bombadil").mkdir(parents=True)
-    (live / ".config/bombadil/config.toml").write_text('provider = "claude"\n')
-    # The loop copies /home/user (the live home) to /mnt/home/user (the disk's): run it on two folders.
-    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
-    subprocess.run(["bash", "-e", "-c", loop], check=True)
-    kept = {str(p.relative_to(disk)): p.read_text() for p in disk.rglob("*") if p.is_file()}
-    assert kept == {
-        ".local/state/bombadil/tips.json": '{"first_ready": "2026-11-09", "days": ["2026-11-09"]}',
-        ".local/state/bombadil/desk.toml": 'hidden = ["machine"]\n',
-        ".config/bombadil/config.toml": 'provider = "claude"\n'}
-
-
-def test_a_live_system_with_nothing_to_carry_over_installs_all_the_same(tmp_path):
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for f in .claude .claude.json")
-    end = script.index("arch-chroot /mnt chown", start)
-    live, disk = tmp_path / "live", tmp_path / "disk"
-    live.mkdir()
-    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
-    subprocess.run(["bash", "-e", "-c", loop], check=True)
-    assert not disk.exists()
-
-
 def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
     import re
     smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()

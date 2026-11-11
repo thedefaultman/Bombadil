@@ -7,8 +7,10 @@
 .claude.json
 .codex
 .config/bombadil
-# The conversation, the turn history and the desk.
-.local/state/bombadil
+# The desk's places, and what Tips has taught (the days of use, the tips tried), so the first week does not begin
+# again on the disk. The log of turns and the conversation stay with the live session.
+.local/state/bombadil/desk.toml
+.local/state/bombadil/tips.json
 # The apps made on the stick.
 Apps
 # The browser's own profile.
