@@ -86,6 +86,28 @@ are exchanged in one step.
 Tested by `tests/test_installer.py` (the decisions, as sourced shell functions) and, in a VM, by
 `scripts/test-vm.sh` with `MODE=install`, `install-encrypted` and `refresh`.
 
+## Bombadil as a package
+
+Bombadil's own files (the agent, the bar, the commands, the units, the installer) are one pacman
+package, `bombadil`, that `scripts/build-package.sh` builds with `makepkg` from `packaging/bombadil`
+and the top-level `bin/`, `src/`, `shell/` and `share/`. The image carries the pacman repository it
+was built from in `/var/lib/bombadil/repo`, `/etc/pacman.conf` lists that repository above `[core]`, and
+an update is a newer build of the package taken with `pacman -Syu`. Where a file sits in the source
+tree decides where it lands:
+
+| In the source tree | On a machine |
+|---|---|
+| `bin/`, `src/`, `shell/`, `share/`, `install/` | `/usr/share/bombadil/`, with `/usr/bin/NAME` a link to each `bin/NAME` |
+| `share/hypr/bombadil.lua` | `/usr/share/bombadil/share/hypr/bombadil.lua`, which the person's `~/.config/hypr/hyprland.lua` loads first |
+| `packaging/bombadil/root/...` | the same path under `/`: the units in `/usr/lib/systemd`, `/etc/skel`, `/etc/sudoers.d`, the managed settings, the installer's commands in `/usr/bin` |
+| `iso/airootfs/...` | the live stick only |
+
+A file another package owns (`/etc/pacman.conf`, `/usr/lib/os-release`, `/etc/environment`) is
+changed by a numbered migrate step that an alpm hook runs; a file in the person's home is changed
+by a numbered homefix step that agentd runs at start, and only creates. The package turns on its
+units once, from two lists. `docs/INSTALLED-OS.md`, "Packages and updates", has the rules for adding
+a file, the config split, the repositories, versions and what an update does to running programs.
+
 ## Signing in
 
 agentd never handles a password or a token: it runs the provider CLI's own login
@@ -353,7 +375,7 @@ Mail is its own view, not a website: one Mail window (`share/apps/mail`, a kit a
 fed by Thunderbird running unseen as the engine: Gmail and Microsoft let a person allow Thunderbird on
 their own, where a new app would wait for a review or an admin. `bombadil-mail` (a user unit) is the
 middle: it owns the window's socket and the drafts, supervises Thunderbird on the `special:mail-engine`
-workspace that nobody opens (a window rule in `hyprland.lua`), and talks to a small add-on inside
+workspace that nobody opens (a window rule in `share/hypr/bombadil.lua`), and talks to a small add-on inside
 Thunderbird through `bombadil-mail-host`. The agent reads, searches, marks and drafts through five tools
 and cannot send: a draft goes only on the person's press on Send, which agentd checks and logs. Whatever
 agentd's `notice` messages say (new mail, a draft that is ready, a receipt) the bar shows as a line

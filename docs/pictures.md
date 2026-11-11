@@ -98,10 +98,11 @@ receipt for stopping a service still shows the state and nothing else.
   pill dipped (by up to about 55 px) and swung back with an overshoot for about half a second, at every
   box added, at the final layout and when the card went. Measured on a real VM at the pill's bottom
   edge about ten times a second, with the animation off it stays put in 739 of 749 samples (the
-  rest are one-frame blips at the resize). `hyprland.lua` in the skeleton has
-  `hl.animation({ leaf = "layers", enabled = false })`. **An installed system keeps its own
-  copy of `hyprland.lua`** (`~/.config/hypr/hyprland.lua`), which does not change when the skeleton
-  does: add that line to it.
+  rest are one-frame blips at the resize). `share/hypr/bombadil.lua`, Bombadil's part of the Hyprland
+  config, has `hl.animation({ leaf = "layers", enabled = false })`. An installed system loads that part
+  from `/usr/share/bombadil`, so an update brings the line; a home that still has the whole old
+  `~/.config/hypr/hyprland.lua` gets the split the first time agentd starts after the update
+  (`INSTALLED-OS.md`, "The Hyprland config").
   What is left (measured on the real VM with the line in place): a card that appears in one size
   step still moves the pill for a sample or two (3 to 5 samples off rest, the longest run 1 or 2,
   22 to 31 px at worst; with the animation on, 6 samples, a run of 4, 36 px). The cause is not
@@ -186,7 +187,7 @@ not answer", "systemd-analyze took longer than expected").
   (`providers.MCP_ENV`), because `system_map` captures inside the os-mcp process. Set it in the
   environment agentd starts in (a drop-in for the agentd user unit with
   `Environment=BOMBADIL_BUDGET_SCALE=4`, say); Claude's tool processes inherit it.
-- The VM smoke (`iso/airootfs/usr/local/bin/bombadil-smoke`) waits for the guest to be calm (load
+- The VM smoke (`packaging/bombadil/root/usr/bin/bombadil-smoke`) waits for the guest to be calm (load
   under 1.5, up to four minutes) before its picture checks, and a capture that says "Could not read ..."
   is asked again, up to three tries, with 1, 4 then 12 times the time (and a wait for calm between).
   A picture in the wrong shape fails the first time. The log says which try worked ("try 2, 4x the time")
@@ -198,4 +199,4 @@ not answer", "systemd-analyze took longer than expected").
 (the phrases), `tests/test_diagram_qml.py` and `tests/test_pill_qml.py` (the layout and the card
 host, in an offscreen window), and the headless desktop test (`tests/desktop/run.sh`) which draws a
 streamed card in the real bar. Set `BOMBADIL_SCREENS=<dir>` to save pictures of the QML tests.
-`iso/airootfs/usr/local/bin/bombadil-smoke` prints how long each capture takes on a booted machine.
+`packaging/bombadil/root/usr/bin/bombadil-smoke` prints how long each capture takes on a booted machine.

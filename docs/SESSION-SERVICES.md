@@ -22,7 +22,8 @@ started keep running. Stopping the unit ends the daemon, nothing else.
 
 ## Who starts them
 
-Hyprland's start hook (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua`) hands the session's
+Hyprland's start hook (in Bombadil's part of the config, `share/hypr/bombadil.lua`, which is
+`/usr/share/bombadil/share/hypr/bombadil.lua` on a machine) hands the session's
 environment to the user manager and then restarts the units:
 
 ```lua
@@ -33,7 +34,10 @@ end)
 
 `WAYLAND_DISPLAY` and the compositor's signature exist only inside the session, not in the user
 manager, so the import comes first. Nothing else starts the daemon or the bar, so no second
-copy can race the first. Notifications are the bar's own: its `NotificationServer` owns
+copy can race the first. (The home's own `~/.config/hypr/hyprland.lua` is a short stub that loads
+that file. If the file is missing, the stub runs the old whole config kept beside it as
+`hyprland.lua.before-split`, and with none of that it has the same `systemctl` line of its own, so
+the pill and the bar still start.) Notifications are the bar's own: its `NotificationServer` owns
 `org.freedesktop.Notifications`, and no notification daemon is installed.
 
 | Key | Does |
@@ -47,7 +51,7 @@ Alt+Space exists for a machine whose host keeps the Super key (a virtual machine
 Windows opens the host's Start menu).
 
 **How a tap reaches the pill.** The tap and Alt+Space are Hyprland *global shortcuts* answered inside
-the bar's own process. `hyprland.lua` binds a release of Super to `hl.dsp.global("bombadil:pill-release")`
+the bar's own process. `share/hypr/bombadil.lua` binds a release of Super to `hl.dsp.global("bombadil:pill-release")`
 and Alt+Space to `bombadil:pill-press`; `shell/PillKeys.qml` registers a `GlobalShortcut` with each of
 those names and calls `PillState.summon()`, the same function a bar message from `bombadil pill` calls.
 They used to run `bombadil pill`, a Python start and a round trip through the daemon, and on a loaded
@@ -63,9 +67,13 @@ keyboard. Two things to know when changing it:
   name and the client that comes second crashes, so `PillKeys.qml` is not made per screen.
 
 `bombadil pill` still works, for scripts and for a session without Hyprland (the headless desktop test).
-**An installed system keeps its own copy of `hyprland.lua`** (`~/.config/hypr/hyprland.lua`), which does
-not change when the skeleton does: until the new lines are copied into it, a tap keeps running
-`bombadil pill` and Super+Return keeps running plain `foot`, both as they were.
+These binds are in Bombadil's part of the config, which comes with the package, so an update changes
+them on a machine that already exists; Hyprland reads them at its next start. The home's own
+`~/.config/hypr/hyprland.lua` is a stub that loads that part and then holds the person's own lines.
+A home that still has the whole old file (from before the config was split) is fixed the first time
+agentd starts after the update: homefix moves the old file aside as `hyprland.lua.before-split` and
+writes the stub (`docs/INSTALLED-OS.md`, "The Hyprland config"). Until then a tap keeps running
+`bombadil pill` and Super+Return keeps running plain `foot`, as they did.
 
 Setup and the terminal client's hints restart the daemon through systemd too (`systemctl --user
 restart bombadil-agentd`), so a settings change and a crash take the same path.
@@ -99,8 +107,15 @@ provider never writes the default into the file, so a later change of default re
 
 ## Updating a running system
 
-Files under `/etc/skel` are copied into a home directory once, when it is created. A change to
-`hyprland.lua` therefore does not reach a system that already exists: updating in place means
-copying the new `hyprland.lua` to `~/.config/hypr/` as well as the units to `/etc/systemd/user/`.
-The new binaries (`bin/`) and sources (`src/`, `shell/`, `share/`) are in `/usr/share/bombadil`,
-with the commands symlinked from `/usr/local/bin`.
+An update is a newer `bombadil` package, taken with `pacman -Syu`. It replaces the commands (`bin/`),
+the sources (`src/`, `shell/`, `share/`, which include Bombadil's part of the Hyprland config) in
+`/usr/share/bombadil`, and the units in `/usr/lib/systemd`; each command is a link from `/usr/bin`
+into that tree. The package cannot ship a file that another package owns, and it does not write into
+a home. Numbered migrate steps (run by a pacman hook) change the first kind, and numbered homefix
+steps (run by agentd at start) the second. Files under `/etc/skel` are copied into a home once, when
+it is created; what a new release adds to a home that exists is a homefix step's job.
+
+Nothing restarts when the package is replaced. `bombadil-agentd` and `bombadil-shell` keep the code
+they loaded until the next sign-in, when the start hook above restarts them (or until
+`systemctl --user restart bombadil-agentd bombadil-shell`). `docs/INSTALLED-OS.md`, "Packages and
+updates", has the whole story.

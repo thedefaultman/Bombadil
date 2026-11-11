@@ -10,6 +10,8 @@ The page with the drawn mock-ups is https://claude.ai/artifact/9oTinWh1W1cjrJnhT
 
 Refs: `main` = origin/main at d9dde3b (29 Sep, PR #7 merged). `kit` = claude/app-kit-x0bitn (PR #2), `dev` = claude/dev-sessions-gqk92e (PR #4), `brain` = claude/brain-8d4ltb, `login` = claude/native-login-zfasd2 (PR #5). UB, DB, BB, WB and RB are the ux, dev, brain, widgets and riding briefs. "Inferred" marks what I did not check myself.
 
+Paths cited as `main:` are where the file was at that commit: the commands, units, skel and installer scripts under `iso/airootfs/` have since moved to `packaging/bombadil/root/`, and the Hyprland config to `share/hypr/bombadil.lua` (see `docs/INSTALLED-OS.md`, "Packages and updates").
+
 ## What it looks like
 
 **Tuesday 09:05.** Daniel opens the laptop. Wallpaper, the pill, and the desk's Away card, which was going to rise anyway after a night away: "batch finished, 300 done", "reviewer is waiting [Open]", and one orange row, "Changed 2 things about itself [See]", with two muted lines under it: "New apps no longer open on top of each other." "The agent restarts in 1 s instead of 4." He taps Open on reviewer and the card goes. Right of the pill a small chip reads "noticed 1". He ignores it all morning.
@@ -179,7 +181,7 @@ A seventh, "the launcher smoke check passed for the wrong reason" (PR #7), is a 
 A rung grows only when a change merged by a person adds the check that proves it. The first such step is the room: when it can run Hyprland, shell QML moves from rung 4 to rung 3.
 
 **The mender session.** A dev-layer session (DB) with role `mender`, project Bombadil, named for the finding (`apps-stacked`), started by agentd when the budget allows.
-- *Its copy:* `~/Projects/.work/Bombadil/<fp>`, checked out at the exact commit the machine runs. The installed tree has no commit stamp and no `.git` today (main:scripts/build-iso.sh:14 copies bin, src, shell and share), so the image gains a VERSION stamp and the loop keeps a clone.
+- *Its copy:* `~/Projects/.work/Bombadil/<fp>`, checked out at the exact commit the machine runs. The installed tree had no commit stamp and no `.git` (main:scripts/build-iso.sh:14 copied bin, src, shell and share); the package build now writes `/usr/share/bombadil/VERSION` (`YYYY.MM.DD (commit)`), and the loop keeps a clone.
 - *Out of sight:* a dot in the Bombadil chip, no window. `Dev.open` takes no task and `_show` always opens a window today (dev:src/bombadil/dev.py:272, 481), so both change.
 - *The fence:* DB piece 3 (`setpriv --no-new-privs`, its own slice with a memory limit, its own ports), no os-mcp, no web. Designed, not built.
 - *Its permissions are set by its role, not by the flags agentd uses for his turns* (`--permission-mode bypassPermissions --dangerously-skip-permissions`, main:providers.py:99-101). Allowed: git, python, pytest, ruff, qmllint, `bombadil-check`, `bombadil-room`. Denied: sudo, ssh, push, the network, and the protected paths. The repository's own `.claude/settings.json` pre-approves `Bash(sudo *)` (line 27), so the mender runs with managed settings that must outrank it (inferred; to verify).
@@ -197,11 +199,11 @@ The room is the one unknown that decides how much it can fix. Hyprland does not 
 
 **Quiet or noticeable.** A fix is *noticeable* when its diff touches what he sees or types into (shell QML, window placement, launcher words, the look of apps or the kit), what the agent is told (system prompt, skill, memory), or anything that leaves the machine. Everything else is *quiet*. Quiet fixes land at the next calm moment and show in Away and Time with Undo. Noticeable ones wait in Noticed as a card with two pictures, before and after, "Checked 4 ways, reviewed by Codex", and [Use it] [Not now]; ready for 7 days, then dropped and kept as a proposal.
 
-**Landing as a generation.** Bombadil's own code today sits at /usr/share/bombadil, copied in by build-iso.sh and linked from /usr/local/bin.
+**Landing as a generation.** Bombadil's own code today sits at /usr/share/bombadil, installed there by the `bombadil` package, with a link for each command in /usr/bin.
 1. agentd (not the session) exports the tested tree to `~/.local/share/bombadil/gen/<sha>/{bin,src,shell,share}` with a manifest: base commit, tree hash, gate results, and what it needs from the system (`requires`).
 2. It waits for a calm moment (away, empty queue), flips the `current` link to the new generation, keeps `previous`, and restarts only what changed.
-3. `paths.share_dir()`, the kit's `qml_dirs()` (kit:src/bombadil/appkit/engine.py:18-21), the /usr/local/bin stubs and the shell's launcher resolve through `current` when it is blessed, and fall back to /usr/share/bombadil otherwise. A running process stays on the generation it started with and never mixes two.
-4. The first generations need one "install this build" (DB:182): an ordinary turn that ships the resolving stubs and a launcher line in place of `quickshell -p /usr/share/bombadil/shell/shell.qml` in hyprland.lua (main:iso/airootfs/etc/skel/.config/hypr/hyprland.lua:9). An installed machine holds its own copy of that file, so this takes his tap once.
+3. `paths.share_dir()`, the kit's `qml_dirs()` (kit:src/bombadil/appkit/engine.py:18-21), the /usr/bin links and the shell's launcher resolve through `current` when it is blessed, and fall back to /usr/share/bombadil otherwise. A running process stays on the generation it started with and never mixes two.
+4. The first generations need one "install this build" (DB:182): an ordinary turn that ships the resolving stubs and a launcher line in place of `quickshell -p /usr/share/bombadil/shell/shell.qml` in the Hyprland config (main:iso/airootfs/etc/skel/.config/hypr/hyprland.lua:9, now `share/hypr/bombadil.lua`). That file is Bombadil's part, which the package carries and the home's own `hyprland.lua` only loads, so the line changes with a package update and no longer needs a change to a file the person holds.
 
 Packages, /etc, the kernel and boot never change by generation. They are rung 4.
 

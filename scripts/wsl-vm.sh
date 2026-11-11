@@ -5,14 +5,18 @@
 # exec bits), and the VM's disk lives in that clone's out/.
 #   wsl-vm.sh            boot the installed disk; the first time, build the ISO and install it
 #   wsl-vm.sh live       boot the live ISO (the disk is not touched)
-#   wsl-vm.sh refresh    keep the disk and everything on it (the Claude login, apps, files): stop the VM, take
-#                        a qemu-img restore point of the disk, boot it and move it to this checkout in place
+#   wsl-vm.sh update     build the package from this checkout, serve it to the VM on 127.0.0.1:8123 while it runs and
+#                        boot the installed disk; say "update" to the agent there and pacman installs it. Everything
+#                        on the disk stays. Needs a disk installed or refreshed since Bombadil became a package.
+#   wsl-vm.sh refresh    the installer's own refresh: stop the VM, take a qemu-img restore point of the disk, boot
+#                        this checkout's ISO and let the installer replace the system on the disk and keep the home
+#                        folder (the Claude login, apps, files), then boot the disk
 #   wsl-vm.sh reinstall  rebuild the ISO if the checkout changed it, then wipe the disk and install; it asks
 #                        first (--yes or BOMBADIL_YES=1 skips that), and keeps the old disk as
 #                        bombadil.qcow2.before-reinstall
 #   wsl-vm.sh build      only build the ISO
 #   wsl-vm.sh stop       shut the running VM down cleanly (the ACPI power button), or kill it if it will not
-# Tools to drive a running VM without a window (keys, shell, smoke checks, in-place updates): vm-tools/.
+# Tools to drive a running VM without a window (keys, shell, smoke checks): vm-tools/.
 # MEM (default 5G), SMP (4), RES (1600x900) and GL (0) go to run-vm.sh; RES is also pinned in the
 # installed system. WSLg's host OpenGL is often llvmpipe, and then the guest rendering in software
 # itself is the faster of the two.
@@ -24,7 +28,7 @@ out="$tree/out"; vm="$out/vm"; disk="$out/bombadil.qcow2"
 export MEM="${MEM:-5G}" SMP="${SMP:-4}" GL="${GL:-0}" RES="${RES:-1600x900}"
 
 setup() {
-  local pkgs=(archiso qemu-desktop edk2-ovmf git nodejs npm python)
+  local pkgs=(archiso qemu-desktop edk2-ovmf git nodejs npm python fakeroot binutils)
   if ! pacman -Q "${pkgs[@]}" >/dev/null 2>&1; then
     pacman-key --init && pacman-key --populate archlinux
     pacman -Syu --noconfirm --needed "${pkgs[@]}"
@@ -43,7 +47,7 @@ sync_tree() {
 }
 
 # What goes into the ISO, so a commit that only touches docs or VM scripts reuses the last build.
-iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:install HEAD:scripts/build-iso.sh | sha1sum | cut -c1-12; }
+iso_key() { git -C "$tree" rev-parse HEAD:bin HEAD:src HEAD:shell HEAD:share HEAD:iso HEAD:install HEAD:packaging HEAD:scripts/build-iso.sh HEAD:scripts/build-package.sh | sha1sum | cut -c1-12; }
 
 build() {
   local key; key=$(iso_key)
@@ -75,18 +79,13 @@ confirm_wipe() {
   [[ "$a" == wipe ]] || { echo "Left the disk as it is." >&2; exit 1; }
 }
 
-# Install onto a fresh disk without a window: boot the ISO's serial-console entry with the smoke
-# test edited off its command line, which leaves a root shell on the serial port, and run
-# bombadil-install there. The installed system keeps a serial console (a login for "user").
-install() {
-  build
-  confirm_wipe
+# Boot the ISO's serial-console entry with the smoke test edited off its command line, which leaves a root shell
+# on the serial port, type LINE there and wait for the guest to power itself off. LINE ends in "echo INSTALL-DONE;
+# poweroff" (written with a split the typed text never matches in the log). Succeeds when INSTALL-DONE shows.
+serial_session() {  # serial_session LINE
   local iso; iso=$(ls -t "$out"/*.iso | head -1)
   local log="$vm/install.log" qmp="$vm/install.qmp" sock="$vm/install.sock"
-  mkdir -p "$vm"; : > "$log"; rm -f "$qmp" "$sock" "$out/.installed"
-  [[ -f "$disk" ]] && mv -f "$disk" "$disk.before-reinstall"
-  qemu-img create -q -f qcow2 "$disk" 40G
-  echo "Installing onto the VM's disk (a few minutes, no window)..."
+  mkdir -p "$vm"; : > "$log"; rm -f "$qmp" "$sock"
   qemu-system-x86_64 -enable-kvm -cpu host -m "$MEM" -smp "$SMP" -display none -device virtio-vga \
     -bios /usr/share/edk2/x64/OVMF.4m.fd -cdrom "$iso" -boot d -no-reboot \
     -drive file="$disk",if=virtio,format=qcow2 -netdev user,id=n0 -device virtio-net,netdev=n0 \
@@ -97,25 +96,41 @@ install() {
   local keys=(down e end); for _ in $(seq 15); do keys+=(backspace); done   # " bombadil.smoke"
   python3 "$tree/scripts/qmp.py" "$qmp" send-keys "${keys[@]}" ret
   wait_log "$log" 'root@[^ ]+ [^ ]+\]#' 300 $pid
-  # Then pin the screen to the VM window's size: QEMU's GTK window tells the guest 640x480 before
-  # it grows, so Hyprland's "preferred" mode would be 640x480.
   # Typed a few bytes at a time and the socket held open: QEMU drops whatever the UART hasn't
-  # taken yet when the client hangs up. The echo is split so the typed line never matches it.
-  python3 - "$sock" "$RES" <<'PY'
+  # taken yet when the client hangs up.
+  python3 - "$sock" "$1" <<'PY'
 import socket, sys, time
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
-monitor = f'hl.monitor({{ output = "Virtual-1", mode = "{sys.argv[2]}@60", position = "0x0", scale = 1 }})'
-# The installer leaves the new system mounted for this, and unmounts it afterwards.
-line = ("BOMBADIL_INSTALL_LEAVE_MOUNTED=1 BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200' bombadil-install /dev/vda --yes"
-        f" && echo '{monitor} -- the VM window (scripts/wsl-vm.sh)' >> /mnt/home/user/.config/hypr/hyprland.lua"
-        " && sync && umount -R /mnt && echo INSTALL-''DONE; poweroff\r").encode()
+line = (sys.argv[2] + "\r").encode()
 for i in range(0, len(line), 8):
     s.sendall(line[i:i + 8]); time.sleep(0.05)
 time.sleep(1)
 PY
   wait $pid || true
-  grep -aq "INSTALL-DONE" "$log" || { echo "install failed; see $log"; exit 1; }
+  grep -aq "INSTALL-DONE" "$log"
+}
+
+# What the installer is told on the serial console: the installed system keeps a serial console (a login for "user").
+installer_env="BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200'"
+
+# Install onto a fresh disk without a window, with bombadil-install on the serial console.
+install() {
+  build
+  confirm_wipe
+  rm -f "$out/.installed" "$out/.installed-packaged"
+  [[ -f "$disk" ]] && mv -f "$disk" "$disk.before-reinstall"
+  qemu-img create -q -f qcow2 "$disk" 40G
+  echo "Installing onto the VM's disk (a few minutes, no window)..."
+  # Then pin the screen to the VM window's size: QEMU's GTK window tells the guest 640x480 before
+  # it grows, so Hyprland's "preferred" mode would be 640x480. The line goes under the stub, among the person's own
+  # (it is theirs to change), and stays there through updates and refreshes. The installer leaves the new system
+  # mounted for this, and the line unmounts it afterwards. The echo is split so the typed line never matches it.
+  local monitor="hl.monitor({ output = \"Virtual-1\", mode = \"$RES@60\", position = \"0x0\", scale = 1 })"
+  serial_session "BOMBADIL_INSTALL_LEAVE_MOUNTED=1 $installer_env bombadil-install /dev/vda --yes \
+&& echo '$monitor -- the VM window (scripts/wsl-vm.sh)' >> /mnt/home/user/.config/hypr/hyprland.lua \
+&& sync && umount -R /mnt && echo INSTALL-''DONE; poweroff" || { echo "install failed; see $vm/install.log"; exit 1; }
   { iso_key; git -C "$tree" log -1 --format='%h %s'; } > "$out/.installed"
+  git -C "$tree" rev-parse --short HEAD > "$out/.installed-packaged"
   echo "Installed Bombadil ($(sed -n 2p "$out/.installed")) onto $disk."
 }
 
@@ -141,36 +156,54 @@ run() {  # run-vm.sh, with QEMU's own messages kept in out/vm/qemu.log
   "$tree/scripts/run-vm.sh" "$@" 2>&1 | tee "$vm/qemu.log"
 }
 
+vm_running() { pgrep -f "qemu-system-x86_64.*-name Bombadil " >/dev/null; }
+
 stop() {  # the ACPI power button (the guest shuts down and closes its disk), then QEMU exits
-  pgrep -f "qemu-system-x86_64.*-name Bombadil " >/dev/null || { echo "The VM is not running."; return 0; }
+  vm_running || { echo "The VM is not running."; return 0; }
   python3 "$tree/scripts/qmp.py" "$vm/qmp.sock" powerdown 2>/dev/null || true
-  for _ in $(seq 60); do pgrep -f "qemu-system-x86_64.*-name Bombadil " >/dev/null || { echo "The VM is off."; return 0; }; sleep 1; done
+  for _ in $(seq 60); do vm_running || { echo "The VM is off."; return 0; }; sleep 1; done
   echo "It did not shut down in 60 s; stopping QEMU."; pkill -f "qemu-system-x86_64.*-name Bombadil " || true
 }
 
-# Keep the disk: a host-side restore point, then the installed Bombadil moves to this checkout in
-# place (vm-tools/update-in-place: packages, GRUB and home files are not part of it). This is the
-# quick way for a development VM; the installer's own refresh (bombadil-install --refresh, tested by
-# MODE=refresh scripts/test-vm.sh) replaces the whole system and keeps the home folder.
+# The installer's own refresh (bombadil-install --refresh, which MODE=refresh of scripts/test-vm.sh tests): the system
+# on the disk is replaced by this checkout's, the home folder stays, and the old system is kept aside on the disk.
+# A host-side restore point of the whole disk comes first.
 refresh() {
   [[ -f "$out/.installed" && -f "$disk" ]] || { echo "Nothing to refresh: there is no installed disk yet. Run without arguments first." >&2; exit 1; }
-  local tools="$tree/scripts/vm-tools" rev snap
-  [[ -x "$tools/update-in-place" ]] || { echo "$tools/update-in-place is missing: this checkout has no vm-tools." >&2; exit 1; }
-  rev=$(git -C "$tree" rev-parse --short HEAD)
+  local snap
   stop
-  snap="before-refresh-$(date +%Y%m%d-%H%M%S)-$rev"
+  snap="before-refresh-$(date +%Y%m%d-%H%M%S)-$(git -C "$tree" rev-parse --short HEAD)"
   qemu-img snapshot -c "$snap" "$disk"
   echo "Kept a restore point of the disk: $snap"
   echo "  put it back, with the VM off:  qemu-img snapshot -a $snap $disk     (list: qemu-img snapshot -l $disk)"
-  mkdir -p "$vm"; wslg_check
-  (setsid "$tree/scripts/run-vm.sh" --installed >"$vm/qemu.log" 2>&1 < /dev/null &)
-  for _ in $(seq 60); do [[ -S "$vm/serial.sock" ]] && break; sleep 1; done
-  (setsid python3 "$tools/serialpump" >"$vm/pump.log" 2>&1 < /dev/null &)
-  sleep 25   # until the guest shows its login prompt on the serial console
-  "$tools/vmlogin"
-  "$tools/update-in-place" --reboot HEAD
-  { iso_key; git -C "$tree" log -1 --format='%h %s (refreshed in place)'; } > "$out/.installed"
-  echo "Refreshed: the VM runs $(git -C "$tree" log -1 --format='%h %s')."
+  build
+  echo "Refreshing the VM's disk with this checkout (a few minutes, no window)..."
+  serial_session "$installer_env bombadil-install --refresh /dev/vda --yes && sync && echo INSTALL-''DONE; poweroff" \
+    || { echo "refresh failed; see $vm/install.log. The restore point above puts the disk back."; exit 1; }
+  { iso_key; git -C "$tree" log -1 --format='%h %s (refreshed)'; } > "$out/.installed"
+  git -C "$tree" rev-parse --short HEAD > "$out/.installed-packaged"
+  echo "Refreshed: the VM's disk now holds $(git -C "$tree" log -1 --format='%h %s')."
+}
+
+# A newer Bombadil with everything on the disk kept: this checkout's package, built here and served to the VM, which
+# installs it with pacman when the person says "update" to the agent. /etc/pacman.d/bombadil.conf in the VM tries the
+# host (10.0.2.2:8123) first.
+update() {
+  [[ -f "$out/.installed" && -f "$disk" ]] || { echo "Nothing to update: there is no installed disk yet. Run without arguments first." >&2; exit 1; }
+  [[ -f "$out/.installed-packaged" ]] || { echo "This disk was installed before Bombadil was a package, so it has nothing to update: 'refresh' replaces its system and keeps the home folder." >&2; exit 1; }
+  vm_running && { echo "The VM is running: stop it first ('wsl-vm.sh stop'), then update." >&2; exit 1; }
+  local pkgwork=/var/tmp/bombadil-pkg-work
+  echo "Building the package for $(git -C "$tree" log -1 --format='%h %s')..."
+  (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) BOMBADIL_COMMIT=$(git rev-parse --short HEAD) BOMBADIL_PKGREL=$(date +%s) \
+    WORK="$pkgwork" scripts/build-package.sh "$out/repo")
+  rm -rf "$pkgwork"
+  mkdir -p "$vm"
+  python3 -m http.server 8123 --bind 127.0.0.1 --directory "$out/repo" >"$vm/update-server.log" 2>&1 &
+  server_pid=$!
+  trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+  sleep 1; kill -0 "$server_pid" 2>/dev/null || { echo "Port 8123 is taken; see $vm/update-server.log." >&2; exit 1; }
+  echo 'The package is served to the VM. In the VM, say "update" to the agent.'
+  run --installed
 }
 
 if [[ "${1:-}" == stop ]]; then stop; exit 0; fi
@@ -180,14 +213,18 @@ sync_tree
 case "${1:-}" in
   "") if [[ -f "$out/.installed" && -f "$disk" ]]; then
         echo "Booting the installed VM: $(sed -n 2p "$out/.installed")"
-        [[ "$(head -1 "$out/.installed")" == "$(iso_key)" ]] ||
-          echo "This checkout has a newer Bombadil; 'bombadil-vm refresh' puts it on the VM and keeps its disk ('reinstall' wipes it)."
+        if [[ ! -f "$out/.installed-packaged" ]]; then
+          echo "This disk was installed before Bombadil was a package; 'bombadil-vm refresh' brings it to this checkout and keeps its home folder ('reinstall' wipes it)."
+        elif [[ "$(head -1 "$out/.installed")" != "$(iso_key)" ]]; then
+          echo "This checkout has a newer Bombadil; 'bombadil-vm update' installs it in the VM ('refresh' replaces the system and keeps the home folder, 'reinstall' wipes it)."
+        fi
       else install; fi
       run --installed ;;
   live) build; run ;;
   reinstall) install; run --installed ;;
-  refresh) refresh ;;
+  update) update ;;
+  refresh) refresh; run --installed ;;
   build) build ;;
   stop) stop ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  *) sed -n '2,22p' "$0"; exit 2 ;;
 esac

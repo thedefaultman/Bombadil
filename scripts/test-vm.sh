@@ -8,12 +8,21 @@
 #                                     # the installer with a password: GRUB is asked for it once, nothing asks again
 #   MODE=refresh OLD_ISO=old.iso scripts/test-vm.sh
 #                                     # install with OLD_ISO, refresh the disk with this ISO, boot it, put the old system back
+#   MODE=update scripts/test-vm.sh    # install from this ISO, build a newer package and serve it to the VM, boot the
+#                                     # installed disk: it updates with pacman, checks the result, undoes it over a reboot
+#   REUSE_DISK=1 MODE=update scripts/test-vm.sh
+#                                     # the same on the disk an earlier MODE=update run left, without the install
 #   MODE=installed scripts/test-vm.sh # boot the disk the last install run left (its second boot), at the password prompt too
 #   TIMEOUT=2400 scripts/test-vm.sh   # uses KVM if /dev/kvm exists, else software emulation (slow)
 #
 # The install modes need an ISO built with BOMBADIL_TEST_ENTRIES=1 (scripts/build-in-container.sh), which has
 # the boot entries that run them. The ISO is attached as a USB stick with 8 GB of memory, which is how the
 # installer meets copy-to-RAM on a real stick.
+# MODE=update builds the package a second time (scripts/build-in-container.sh package, into out/repo) with a newer
+# release number and a commit that ends in +update, and serves out/repo on 127.0.0.1:8123 while the VM runs: QEMU's
+# user network shows the host to the guest as 10.0.2.2, which is where /etc/pacman.d/bombadil.conf looks first.
+# QEMU's own option syntax has commas in it (-accel tcg,thread=multi); they are not array separators.
+# shellcheck disable=SC2054
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 iso="${ISO:-$(ls -t "$root"/out/*.iso | head -1)}"
@@ -22,7 +31,7 @@ out="$root/out/test"; mkdir -p "$out"
 timeout="${TIMEOUT:-2400}"
 
 ovmf=""
-for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+for f in "${OVMF_CODE:-}" /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF.4m.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
   [[ -f "$f" ]] && { ovmf="$f"; break; }
 done
 [[ "$ovmf" ]] || { echo "no OVMF firmware found; install edk2-ovmf (Arch) or ovmf (Debian/Ubuntu)"; exit 2; }
@@ -31,10 +40,27 @@ done
 # Quickshell's render threads), so emulate a CPU without AVX.
 accel=(-accel tcg,thread=multi -cpu "${QEMU_CPU:-Nehalem}")
 [[ -w /dev/kvm ]] && accel=(-enable-kvm -cpu host)
+# The ISO has the test boot entry whose options hold TEXT, or the run is refused before anything is changed.
+need_entries() {  # need_entries ISO TEXT
+  grep -aqF -- "$2" "$1" || { echo "$1 has no boot entry for $2: build it with BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh"; exit 2; }
+}
+
+# What this script starts in the background (the VM, the server of the update) ends with it.
+bg=()
+cleanup() { (( ${#bg[@]} == 0 )) || kill "${bg[@]}" 2>/dev/null || true; }
+trap cleanup EXIT
+
 disk="$out/disk.qcow2"
 case "$mode" in
   live|installed) ;;
   install|install-encrypted|refresh) rm -f "$disk"; qemu-img create -q -f qcow2 "$disk" 40G ;;
+  update)
+    need_entries "$iso" "bombadil.smoke=install-update"
+    if [[ "${REUSE_DISK:-}" ]]; then
+      [[ -f "$disk" ]] || { echo "REUSE_DISK=1 needs the disk an earlier MODE=update run left ($disk): run it once without"; exit 2; }
+    else
+      rm -f "$disk"; qemu-img create -q -f qcow2 "$disk" 40G
+    fi ;;
   *) echo "unknown MODE=$mode"; exit 2 ;;
 esac
 
@@ -92,7 +118,7 @@ boot() {
     -netdev user,id=n0 -device virtio-net,netdev=n0 \
     -chardev "socket,id=s0,path=$out/$name.serial.sock,server=on,wait=off,logfile=$log" -serial chardev:s0 -qmp "unix:$qmp,server,nowait" "$@" &
   local pid=$!
-  trap "kill $pid 2>/dev/null || true" EXIT
+  bg+=("$pid")
   if [[ "${MENU_DOWN:-}" ]]; then
     # Pick a smoke entry from the systemd-boot menu as soon as it shows on the serial console
     # (it counts down from a few seconds).
@@ -130,14 +156,31 @@ boot() {
   python3 "$root/scripts/qmp.py" "$qmp" screenshot "$out/$name-last.png" 2>/dev/null || true
   [[ -z "${STOP:-}" ]] || kill $pid 2>/dev/null || true
   wait $pid || true
-  trap - EXIT
+  unset 'bg[${#bg[@]}-1]'
   echo "--- $name ---"
   grep -a "BOMBADIL-SMOKE" "$log" || echo "no smoke output; see $log"
 }
 
-# Every line the installer and the installed system print is on a serial log; the tests read them there.
-need_entries() {  # need_entries ISO TEXT: the ISO has the boot entry whose options hold TEXT
-  grep -aqF -- "$2" "$1" || { echo "$1 has no boot entry for $2: build it with BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh"; exit 2; }
+# The package the update installs: a newer build of this checkout, made in the same kind of container as the ISO and
+# served on the host's loopback. Its release number is the time now, which is above the image's (a count of commits),
+# and its commit says +update, which is how the VM tells it from the one it had.
+serve_update() {
+  local day commit server
+  if [[ "$(basename "$iso")" =~ ^bombadil-([0-9]{4}\.[0-9]{2}\.[0-9]{2})- ]]; then day=${BASH_REMATCH[1]}; else day=$(date +%Y.%m.%d); fi
+  commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)
+  echo "Building the newer package ($commit+update, version $day) into out/repo..."
+  BOMBADIL_COMMIT="$commit+update" BOMBADIL_PKGREL="$(date +%s)" BOMBADIL_PKGVER="$day" "$root/scripts/build-in-container.sh" package
+  [[ -s "$root/out/repo/bombadil.db" ]] || { echo "the build left no repository in out/repo"; exit 2; }
+  python3 -m http.server 8123 --bind 127.0.0.1 --directory "$root/out/repo" >"$out/update-server.log" 2>&1 &
+  server=$!
+  bg+=("$server")
+  # A server that could not start (the port is taken) must not leave the VM talking to somebody else's.
+  for _ in $(seq 20); do
+    kill -0 "$server" 2>/dev/null || break
+    python3 -c 'import urllib.request as u; u.build_opener(u.ProxyHandler({})).open("http://127.0.0.1:8123/bombadil.db", timeout=3).read(1)' 2>/dev/null && return 0
+    sleep 0.5
+  done
+  echo "the server for the update did not come up on 127.0.0.1:8123; see $out/update-server.log"; exit 2
 }
 
 case "$mode" in
@@ -188,6 +231,22 @@ case "$mode" in
       echo "the refreshed system started a second time: the undo did not put the old one back"; exit 1
     fi
     logs=("$out/old-install.serial.log" "$out/refresh.serial.log" "$out/refreshed.serial.log")
+    ;;
+  update)
+    # The install is the install of MODE=install, from the entry whose installed system starts as `update`: it checks the
+    # package, updates it from the host, checks the result and undoes the update over a reboot (its second boot).
+    if [[ -z "${REUSE_DISK:-}" ]]; then
+      stick_for "$iso"
+      MENU_DOWN=5 boot live-install "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
+      grep -aqE "BOMBADIL-SMOKE: PASS install[[:space:]]*$" "$out/live-install.serial.log" || exit 1
+    fi
+    serve_update
+    MENU_DOWN="" boot installed "BOMBADIL-SMOKE: DONE" -drive file="$disk",if=virtio,format=qcow2
+    # The first boot ends in a REBOOT line (the undo applies on the next start), the second in DONE: a failure in the
+    # first has to show here, because only the DONE line of the second is read below.
+    grep -aqE "BOMBADIL-SMOKE: REBOOT pass=[0-9]+ fail=0" "$out/installed.serial.log" || { echo "the first boot of the installed system did not finish clean"; exit 1; }
+    logs=("$out/installed.serial.log")
+    [[ -n "${REUSE_DISK:-}" ]] || logs=("$out/live-install.serial.log" "$out/installed.serial.log")
     ;;
   installed)
     # The disk an earlier MODE=install or MODE=install-encrypted run left: boot it again. For an undo round trip

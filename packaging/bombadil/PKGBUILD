@@ -27,7 +27,8 @@ package() {
   # (the agent runs as user) cannot read would break every start, so the modes are set here, not trusted.
   find "$pkgdir" -type d -exec chmod 755 {} +
   find "$pkgdir" -type f -exec chmod go-w,a+rX {} +
-  # Git cannot hold 0440.
+  # Git cannot hold 0440. The folder is sudo's, which keeps it at 750: the same mode here, so pacman has nothing to say.
+  chmod 750 "$pkgdir/etc/sudoers.d"
   chmod 440 "$pkgdir/etc/sudoers.d/bombadil"
   # Every launcher finds src/ through its own resolved path, so /usr/bin holds links, never copies.
   install -d "$pkgdir/usr/bin"

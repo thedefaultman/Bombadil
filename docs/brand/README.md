@@ -16,7 +16,7 @@ In the machine the mark is the pill's dot. It says what the machine is doing wit
 | `docs/brand/bombadil-tile.svg` | The mark on its dark tile, for icons. |
 | `docs/brand/bombadil-lockup.svg`, `-lockup-light.svg` | The name in drawn letters with a small stone as the i's dot, for dark and light pages (the README banner). |
 | `docs/brand/bombadil-avatar.png`, `-social-preview.png` | The repository's avatar and social preview, for upload in its settings. |
-| `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil{,-symbolic}.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg` | The installed icon. None uses an SVG `<mask>`, which Qt's renderer ignores; the b is drawn in the tile's colour, or cut out with even-odd fill in the symbolic one. |
+| `packaging/bombadil/root/usr/share/icons/hicolor/scalable/apps/bombadil{,-symbolic}.svg`, `packaging/bombadil/root/usr/share/pixmaps/bombadil.svg` | The installed icon. None uses an SVG `<mask>`, which Qt's renderer ignores; the b is drawn in the tile's colour, or cut out with even-odd fill in the symbolic one. |
 | `share/grub/bombadil/` | The theme for the password screen of an installed disk (its own README). |
 | `share/qml/Bombadil/Stone.qml` | `Kit.Stone`: the mark, drawn and animated; the pill uses it at 24 px, the tip scenes at 16 and 24 (see [Stone in the kit](#stone-in-the-kit)). The geometry in it is the drawing in the files above. |
 | `tests/test_stone_qml.py`, `tests/test_brand.py` | Every face read back pixel by pixel, at 24 and 16 px, animated, still and in ink; the files' colours and sizes. |

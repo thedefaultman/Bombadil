@@ -13,8 +13,8 @@ the mark is in [`brand/`](../brand/).
 | Firmware | The maker's own logo, or nothing. Not ours to change. | the machine |
 | Boot loader, live stick | systemd-boot's text menu for three seconds. It has no pictures; the first entry boots by itself. | `iso/efiboot/loader/` |
 | Boot loader, installed | GRUB, hidden unless Esc is held at power-on; with the disk encrypted it asks for the password on the mark in the ground colour. | `share/grub/bombadil/`, wired by the installed-system build |
-| Kernel and start-up | An empty console in the ground colour. Nothing is printed unless a start fails; no cursor, no kernel logo, no Hyprland banner. | the kernel parameters in this page, `greetd/config.toml` |
-| The desk | The wallpaper under the cards, the pill and every window. | `hyprland.lua`, `shell/Wallpaper.qml` |
+| Kernel and start-up | An empty console in the ground colour. Nothing is printed unless a start fails; no cursor, no kernel logo, no Hyprland banner. | the kernel parameters in this page, `packaging/bombadil/root/usr/share/bombadil/greetd/config.toml` |
+| The desk | The wallpaper under the cards, the pill and every window. | `share/hypr/bombadil.lua`, `shell/Wallpaper.qml` |
 
 Each stage changes the screen once, to the next one's ground, so nothing flashes from black to dark
 grey on the way. The desk's ground is the console's ground is the GRUB theme's ground.
@@ -40,7 +40,7 @@ the same job: the screen stays the ground colour from the loader to the desk.
 
 ## Why the desk was black
 
-`hyprland.lua` set `misc.background_color = 0x101214`. Hyprland reads that as `0xAARRGGBB`, so
+The Hyprland config (now `share/hypr/bombadil.lua`) set `misc.background_color = 0x101214`. Hyprland reads that as `0xAARRGGBB`, so
 `0x101214` is alpha `00`, red `10`, green `12`, blue `14`, and it draws a colour with no alpha as pure
 black. Every boot, and every screenshot of the desk, showed `(0, 0, 0)` behind the cards. The value
 is `0xff101214` now. `tests/test_boot_console.py` fails if it loses its alpha again.
@@ -98,9 +98,10 @@ folder from QML. `share/` sits beside `shell/` in the repository and in the inst
 
 `~/.config/bombadil/wallpaper` names the picture: the last line that is not a `#` comment is the path
 of any image (so adding a line changes it) (`~/` and `file://` work). New systems ship the file with only comments in it (from
-`iso/airootfs/etc/skel`), because a file that does not exist cannot be watched; with the comments
-there the bar notices a first path, and every change after it, at once, with no restart. A system installed before the file was shipped needs the file created and the bar started again once,
-because a file that was not there when the bar started is not watched. Emptying the
+`packaging/bombadil/root/etc/skel`), because a file that does not exist cannot be watched; with the comments
+there the bar notices a first path, and every change after it, at once, with no restart. A system installed before the file was shipped gets it from homefix the first time agentd starts after an
+update. The bar may have started a moment before, and a file that was not there when the bar started is not
+watched, so the first picture is noticed after the bar's next start (the next sign-in). Emptying the
 file or deleting it brings the standard picture back. A picture that will not load falls back to the
 standard one, and so does a line that is not a path: an image written into the file itself (the usual
 mistake) logs one line, `wallpaper: ... holds the path of an image, on one line, not the image itself`,
@@ -127,7 +128,7 @@ colour fails it.
 ## The quiet console
 
 The live system's boot entry (`iso/efiboot/loader/entries/01-bombadil.conf`) and an installed
-system's GRUB drop-in (`iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`) carry the same
+system's GRUB drop-in (`packaging/bombadil/root/etc/default/grub.d/zz-bombadil-console.cfg`) carry the same
 kernel parameters:
 
 | Parameter | What it does |
@@ -150,7 +151,7 @@ test, keep their kernel output: the VM tests read them on the serial console.
 
 Between the kernel and Hyprland, greetd runs `start-hyprland`, and greetd's standard output is the
 console. Hyprland writes a banner and a screenful of start-up debugging there until its config is
-read. `greetd/config.toml` now runs it as `systemd-cat -t hyprland start-hyprland`, which sends that
+read. greetd's config (`packaging/bombadil/root/usr/share/bombadil/greetd/config.toml`) now runs it as `systemd-cat -t hyprland start-hyprland`, which sends that
 text to the journal (`journalctl -t hyprland`) instead. Nothing is lost; it is not on the screen.
 
 ## Not here

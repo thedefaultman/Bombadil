@@ -406,11 +406,11 @@ burst becomes "+N" on the last); no notice at all for a notification whose summa
 notification text is other people's words; text that is not a string counts as empty, and a notification with the
 same shell id is an update, not a new notice. The bar holds at most 64 notifications (the oldest is dismissed when a
 65th arrives), cuts text at 2000 characters and actions at 8; one that arrives while agentd is away waits and is
-sent once. An invoke with no matching or default action dismisses it, so Open on a notification that has no `default` action puts it away. `mako` leaves `iso/packages.x86_64` and `hyprland.lua`.
+sent once. An invoke with no matching or default action dismisses it, so Open on a notification that has no `default` action puts it away. `mako` leaves `iso/packages.x86_64` and `share/hypr/bombadil.lua`.
 
 ## The image
 
-`python-mcp` (2.3.0) and `python-httpx` are added to `iso/packages.x86_64`. `python-mcp` now pulls
+`python-mcp` (2.3.0) and `python-httpx` are added to `iso/packages.x86_64` (and to the `bombadil` package's `depends`). `python-mcp` now pulls
 `python-mcp-types` and `python-httpx2` as well as the SDK's other dependencies, all in Arch's `extra`;
 `python-httpx` stays because `slack.py` imports it. The VM smoke imports `httpx`, `httpx2` and `MCPError` (which
 exists only in 2.x, so it is also a version guard). `wl-clipboard` and `libnotify` were already there; `mako` is gone.
@@ -424,9 +424,9 @@ is a system unit (`User=bombadil-connect`, `StateDirectory=bombadil-connect` mod
 `MemoryMax=300M`, `Restart=on-failure`, and the kernel-facing keys systemd offers that the service does not need:
 `PrivateDevices`, `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectControlGroups`, an empty
 `CapabilityBoundingSet`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`; not
-`ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), enabled by a symlink in `multi-user.target.wants`; the user comes from
+`ProtectProc` or `PrivateUsers`, because the press check reads `/proc/<pid>` of the caller), turned on once by the `bombadil` package's scriptlet (its name is in `usr/share/bombadil/enable.system`); the unit file is `packaging/bombadil/root/usr/lib/systemd/system/bombadil-connect.service` and the user comes from
 `/usr/lib/sysusers.d/bombadil-connect.conf`. `bombadil-browserd.service` is a user unit like mail's: it starts at login, before the session has a screen, so the session's `hyprland.start` hook hands it the display and the compositor's instance and starts it again, as it does for mail (opening a page starts Chromium on that display and slides the panel in), and `KillMode=process` lets a browser it started outlive a restart of the service. `share/skills/bombadil-connect/SKILL.md`
-tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills`.
+tells the agent what it may and may not do, and is linked into `/etc/skel/.claude/skills` and `.agents/skills` (`packaging/bombadil/root/etc/skel`).
 
 ## Modules
 

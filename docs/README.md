@@ -4,7 +4,7 @@ The project's documents, next to its code.
 
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
-- `INSTALLED-OS.md`: Bombadil as an installed system: the principles, the disk and how it is opened (with diagrams), fresh install, refresh and undo, the install plan, and how to test a change to it.
+- `INSTALLED-OS.md`: Bombadil as an installed system: the principles, the disk and how it is opened (with diagrams), fresh install, refresh and undo, the install plan, Bombadil as a package (what it owns, the migrate and homefix steps, the config split, updates), and how to test a change to it.
 - `dev-sessions.md`: coding sessions that outlive their window and come back by name, and the dots beside the pill: principles, UX, how it is built, how it is tested.
 - `SESSION-SERVICES.md`: how the session stays alive (the two user services, who starts them, restore
   points, the installer's kernel rule, models, updating a running system).

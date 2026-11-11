@@ -28,7 +28,7 @@ permission prompt.
 | `bin/agentd` | Starts at login as a systemd user service (`bombadil-agentd`, like the bar's `bombadil-shell`), which systemd starts again if it dies. Takes prompts on `$XDG_RUNTIME_DIR/bombadil/agentd.sock`, snapshots, runs one provider turn, streams events to every connected client, logs the turn. |
 | `bin/bombadil-os-mcp` | MCP server both CLIs load. Tools: `show_panel`, `hide_panel`, the app tools (`app_guide`, `create_app`, `check_app`, `open_app`, `show_app`, `hide_app`, `close_app`, `app_status`, `list_apps`, `app_template`), `show_card`, `system_map` (pictures), the mail tools (`mail_search`, `mail_read`, `mail_mark`, `mail_draft`, `mail_show`; none of them sends), `screenshot`, `snapshot`, `list_snapshots`, `rollback`, `notify`, `desk` (arranges the widgets beside the pill, only when the person asked for the desk), `job` (background jobs, watchers and timers for the Watching card). |
 | `bin/bombadil-app` | Runs a generated app (`~/Apps/<name>/main.qml` + optional `app.py`) in its own slide-in drawer with hot reload; `bombadil-app check` loads one offscreen and returns errors and a screenshot. |
-| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`, `view` (the details drawer's viewer), `remote` (starts Claude Code's remote control so claude.ai/code or the Claude app can steer a session on this computer), `snapshot` (a restore point now). |
+| `bin/bombadil` | Terminal client: `bombadil ask "…"`, `status`, `undo`, `provider claude\|codex`, `signin`, `open URL`, `view` (the details drawer's viewer), `remote` (starts Claude Code's remote control so claude.ai/code or the Claude app can steer a session on this computer), `snapshot` (a restore point now), `version` (which Bombadil this is and when it was installed). |
 | `bin/bombadil-browser` | `$BROWSER` and the default browser: a link from anything (a CLI's login, `xdg-open`) opens in the browser panel. |
 | `bin/bombadil-shell` | Starts the bar: Quickshell on `shell/shell.qml`, with `share/qml` on its import path so the shell can `import Bombadil`. Every launcher (Hyprland, a unit, `scripts/dev-session.sh`) runs this, never `quickshell` directly. |
 | `shell/shell.qml` | The Quickshell bar: the pill, the line above it, the desk. Its colours, sizes and type are `Theme`'s (`shell/DeskTheme.js` mirrors them for the desk; `tests/test_theme.py` keeps the two equal). |
@@ -41,7 +41,8 @@ permission prompt.
 | `bin/bombadil-connect` | The connection service, a system unit (`bombadil-connect.service`) that runs as its own user, `bombadil-connect`. Owns `/run/bombadil-connect/connect.sock` and the token store in `/var/lib/bombadil-connect` (mode 0700), runs the Slack and MCP drivers, keeps a ring of recent messages in memory, and performs a Slack reply, a ticket or a comment only for a press the person made (`docs/CONNECT.md`). `BOMBADIL_CONNECT_ENGINE=fake` runs it on sample messages and tasks. |
 | `bin/bombadil-browserd` | The browser service, a user unit (`bombadil-browserd.service`): one connection to the browser panel's Chromium that opens, reads, points at a button and takes a token off a page into the connection service. It has no hands. |
 | `share/skills/bombadil-connect` | The skill both CLIs load for messages and connections: the five tools, the rules (other people's words, no send, no token) and how a service is connected. |
-| `iso/` | archiso profile: Arch, Hyprland, greetd autologin, passwordless sudo, first-run setup, `bombadil-install` to an encrypted or plain btrfs disk with snapper (layout in `docs/INSTALLED-OS.md`). |
+| `packaging/bombadil/` | Bombadil as a pacman package: `PKGBUILD`, the install scriptlet, and `root/`, a mirror of `/` for every file the package puts outside `/usr/share/bombadil`: the units, the installer and setup commands (`bombadil-install`, `bombadil-setup`, `bombadil-rollback`), greetd autologin, passwordless sudo, the managed settings, `/etc/skel`, and the migrate steps that change files other packages own. `bin/`, `src/`, `shell/` and `share/` are installed at `/usr/share/bombadil`, and each command in `bin/` gets a link in `/usr/bin`. `scripts/build-package.sh` builds it. How a file reaches a machine, and how to add one: `docs/INSTALLED-OS.md`, "Packages and updates". |
+| `iso/` | The archiso profile of the live stick: the package list (which includes `bombadil`), the boot entries, and the few files only the stick needs (`iso/airootfs/`). `bombadil-install` writes the system to an encrypted or plain btrfs disk with snapper (layout in `docs/INSTALLED-OS.md`). |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools
 are the same MCP server either way. The model is set per provider in the same file
@@ -67,13 +68,18 @@ scripts/dev-session.sh                     # bar + agentd against this checkout
 BOMBADIL_PROVIDER=claude scripts/dev-session.sh
 ```
 
-Build and boot the ISO (needs an Arch host or container with `archiso`, and `qemu`):
+Build and boot the ISO (needs an Arch host or container with `archiso`, `fakeroot` and `binutils`, and
+`qemu`; `scripts/build-in-container.sh` does the build in a container from any Linux with Docker or Podman):
 
 ```sh
-scripts/build-iso.sh
+scripts/build-iso.sh         # builds the bombadil package first, then the image that installs it
 scripts/run-vm.sh            # live
 scripts/run-vm.sh --disk     # then `sudo bombadil-install /dev/vda` inside
 ```
+
+The image holds Bombadil as a package, so a machine that is installed gets a newer Bombadil by an
+update, not by a new image: `scripts/build-package.sh REPO_DIR` builds the package into a pacman
+repository directory. `docs/INSTALLED-OS.md` says how to serve it and what an update changes.
 
 On first boot the pill asks which AI should run the computer and signs in to it, with the
 provider's page in the browser panel (see "Signing in" in `docs/ARCHITECTURE.md`).
@@ -81,9 +87,11 @@ provider's page in the browser panel (see "Signing in" in `docs/ARCHITECTURE.md`
 On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an Arch WSL
 distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
 checkout has checked out, installs it onto a VM disk, and opens the VM as a window. Run it again
-to boot the same VM. `bombadil-vm refresh` keeps the disk (the login, apps and files on it), takes a
-`qemu-img` restore point first and moves the VM to this checkout in place; `bombadil-vm stop` shuts
-it down cleanly; `bombadil-vm reinstall` wipes the disk and asks first; `wsl --unregister bombadil`
+to boot the same VM. `bombadil-vm update` builds the package from this checkout, serves it to the VM
+and boots it: the new Bombadil arrives as a normal pacman update and the disk, the home folder and the
+programs on it stay. `bombadil-vm refresh` keeps the disk (the login, apps and files on it) but replaces
+the system with the one from this checkout's image, after a `qemu-img` restore point; `bombadil-vm stop`
+shuts it down cleanly; `bombadil-vm reinstall` wipes the disk and asks first; `wsl --unregister bombadil`
 removes everything. `scripts/vm-tools/` drives a running VM without a window (keys, a shell,
 screenshots, the smoke checks, scratch copies to try a branch on); see its README.
 

@@ -21,10 +21,22 @@ wait_for() { local n=$1; shift; for _ in $(seq "$n"); do "$@" && return 0; sleep
 # bombadil.smoke=install-encrypted
 #                         the installer alone, with a password (the host types it at GRUB on the next start)
 # bombadil.smoke=refresh  on a disk an older Bombadil installed: plant a marker in its home folder, refresh, power off
+# bombadil.smoke=install-update
+#                         the same as install, but the installed system starts as `update`
 # bombadil.smoke=undo     on an installed system: its layout, then an undo round trip over a reboot
+# bombadil.smoke=update   on an installed system: a pacman update from a newer build the host serves, then an undo
+#                         round trip over a reboot that brings the old build back
 # bombadil.smoke=refreshed  on a refreshed system: the old home folder is there, the old system is kept aside
 mode="$(tr ' ' '\n' < /proc/cmdline | sed -n 's/^bombadil\.smoke=\?//p' | head -1)"
 say "START mode=${mode:-live}"
+# install-update is install: the same live checks and the same install. Only the system it installs starts as
+# something else (the update), which is what the cmdline of the installed system names.
+installed_mode=undo
+if [[ "$mode" == install-update ]]; then mode=install; installed_mode=update; fi
+# The installed system is tried through a round trip over a reboot in these modes: what plays a mail account or a
+# connection on the live stick does not run there.
+round_trip=""
+[[ "$mode" == undo || "$mode" == update ]] && round_trip=1
 
 check user-exists id user
 check tools-installed bash -c 'command -v Hyprland quickshell python3 chromium agentd bombadil bombadil-app bombadil-os-mcp'
@@ -42,6 +54,7 @@ uid=$(id -u user 2>/dev/null || echo 1000)
 run="/run/user/$uid"
 sock="$run/bombadil/agentd.sock"
 # Run a command inside the user's Hyprland session.
+# shellcheck disable=SC2010
 as_user() {
   sudo -u user env HOME=/home/user XDG_RUNTIME_DIR="$run" \
     HYPRLAND_INSTANCE_SIGNATURE="$(ls "$run/hypr" 2>/dev/null | head -1)" \
@@ -321,6 +334,7 @@ page_again() { agentd_send '{"type": "setup_action", "id": "show"}' && wait_for 
 # What the browser looked like when a check on its page failed: its main processes with their whole
 # command lines, the windows, every target the debugging port lists (with its type), the profile's
 # singleton files and agentd's last words.
+# shellcheck disable=SC2010
 browser_diag() {
   say "DIAG browser, whole command lines (pid ppid started args): $(ps -u user -o pid=,ppid=,lstart=,args= | grep -F -- '--class=bombadil-browser' | grep -v -e '--type=' -e grep | tr '\n' '|')"
   say "DIAG windows: $(hypr_json clients | python3 -c 'import json,sys; print([(c["class"], c["workspace"]["name"], c["title"][:40]) for c in json.load(sys.stdin)])' 2>&1)"
@@ -441,7 +455,7 @@ check mail-unit-enabled mail_unit is-enabled
 check mail-unit-active wait_for 60 mail_unit is-active --quiet
 # The unit's own service answers on its socket (no account yet: the engine is off, not broken).
 check mail-unit-answers wait_for 60 as_user timeout 20 bombadil mail status
-if [[ "$mode" != "undo" ]]; then
+if [[ -z "$round_trip" ]]; then
   : >/tmp/smoke.mail.log
   # Thunderbird's windows map while the pill holds the keyboard (a tap on Super), as they do when the engine
   # starts or a compose window opens under someone typing: "silent" has to leave the keyboard where it is, and
@@ -537,7 +551,7 @@ check connect-state-is-closed connect_state_closed
 check browserd-unit-enabled as_user systemctl --user is-enabled bombadil-browserd.service
 check browserd-unit-active wait_for 60 as_user systemctl --user is-active --quiet bombadil-browserd.service
 check browserd-unit-answers wait_for 60 browserd_up
-if [[ "$mode" != "undo" ]]; then
+if [[ -z "$round_trip" ]]; then
   check mako-is-not-running bash -c '! pgrep -x mako'
   check notifications-owner-is-the-shell wait_for 30 notifications_owner_is_the_shell
   # The notice waits behind the setup line until an AI is signed in (as the mail notice does): the stand-in provider
@@ -558,7 +572,7 @@ fi
 # The block below picks other providers, starts and cancels their logins (`codex login` revokes a
 # stored Codex login) and deletes the config file at its end. It is for a system with no provider
 # chosen yet (the live ISO), never one a person has signed in on. The install modes that plant a sign-in
-# of their own (install-encrypted, refresh) do not run it either.
+# of their own (install-encrypted, refresh) and the update modes do not run it either.
 signin_config=/home/user/.config/bombadil/config.toml
 if [[ "$mode" =~ ^(install|live|)$ && -e "$signin_config" ]]; then
   say "SKIP signin: a provider is already chosen here, and these checks would change it"
@@ -714,13 +728,91 @@ sleep 30
 check idle-cpu idle_share
 say "NOTE $(tr '\n' ' ' </tmp/smoke.idle-cpu.log)"
 
+# The package. Bombadil is a pacman package on the stick and on an installed system alike, so every mode runs
+# these: what it owns, that its commands are links and not loose copies, what it turned on, and what it changed
+# in files other packages own.
+# prints WANT COMMAND...: the command prints WANT (is-enabled exits non-zero for "disabled", so its words are read).
+prints() { local want=$1 got; shift; got=$("$@" 2>&1); echo "$got"; [[ "$got" == "$want" ]]; }
+owned_by_bombadil() { local o; o=$(pacman -Qoq "$1" 2>&1); echo "$1: $o"; [[ "$o" == bombadil ]]; }
+package_complete() { local o rc; o=$(pacman -Qk bombadil 2>&1); rc=$?; echo "$o"; (( rc == 0 )) && grep -q ' 0 missing files' <<<"$o"; }
+# The old image linked every command into the local bin directory. The path is written in two parts because a test
+# holds that nothing the package ships names that directory.
+nothing_loose_in_local_bin() { local top=/usr o; o=$(find "$top/local/bin" -maxdepth 1 \( -name 'bombadil*' -o -name agentd \) 2>/dev/null); echo "${o:-none}"; [[ -z "$o" ]]; }
+version_has_its_shape() {
+  local o re='^Bombadil [0-9]{4}\.[0-9]{2}\.[0-9]{2} \([^)]+\)'
+  o=$(as_user bombadil version 2>&1); echo "$o"; [[ "$o" =~ $re ]]
+}
+repo_above_core() { awk '/^\[bombadil\]/ { b = NR } /^\[core\]/ { c = NR } END { exit !(b && c && b < c) }' /etc/pacman.conf; }
+repo_has_its_servers() { local o; o=$(pacman-conf -r bombadil Server 2>&1); echo "$o"; grep -qx 'file:///var/lib/bombadil/repo' <<<"$o"; }
+# Where the image was built is a path on another machine: nothing under /etc may still name it.
+no_build_path_in_etc() { local o; o=$(grep -rIl /tmp/bombadil-work /etc 2>/dev/null); echo "${o:-none}"; [[ -z "$o" ]]; }
+# pacman reads the copy on the image as the user alpm, which has to get through every directory on the way.
+repo_db_readable_by_everyone() {
+  local m; m=$(stat -L -c %a /var/lib/bombadil/repo/bombadil.db 2>&1); echo "mode $m"
+  [[ "$m" =~ ^[0-7]+$ ]] && (( m % 10 >= 4 )) && as_user test -r /var/lib/bombadil/repo/bombadil.db
+}
+# The units the package turns on once (usr/share/bombadil/enable.system and enable.user), and the ledger that says it did.
+ledger=/var/lib/bombadil/enabled-units
+six_units=("system bombadil-brain-watch.service" "system bombadil-connect.service" "system bombadil-smoke.service"
+           "user bombadil-brain.service" "user bombadil-browserd.service" "user bombadil-mail.service")
+ledger_has_the_six() { local got want; got=$(sort "$ledger" 2>&1); want=$(printf '%s\n' "${six_units[@]}" | sort); echo "$got"; [[ "$got" == "$want" ]]; }
+# unit_checks PREFIX [UNIT]: the package's units are as it left them. UNIT is one that was turned off by hand: it still is.
+# bombadil-agentd and bombadil-shell have no [Install] section (Hyprland starts them), so they read "static".
+unit_checks() {
+  local p=$1 off=${2:-} u
+  for u in bombadil-brain-watch bombadil-connect bombadil-smoke; do
+    check "$p-system-unit-$u-enabled" prints enabled systemctl is-enabled "$u.service"
+  done
+  for u in bombadil-brain bombadil-browserd bombadil-mail; do
+    if [[ "$u.service" == "$off" ]]; then check "$p-user-unit-$u-stays-off" prints disabled as_user systemctl --user is-enabled "$u.service"
+    else check "$p-user-unit-$u-enabled" prints enabled as_user systemctl --user is-enabled "$u.service"; fi
+  done
+  for u in bombadil-agentd bombadil-shell; do check "$p-user-unit-$u-static" prints static as_user systemctl --user is-enabled "$u.service"; done
+}
+greetd_runs_the_packages_config() { local o; o=$(systemctl show -p ExecStart greetd 2>&1); echo "$o"; grep -qF /usr/share/bombadil/greetd/config.toml <<<"$o"; }
+os_release_has_the_logo() { grep -hxE 'LOGO="?bombadil"?' /usr/lib/os-release /etc/os-release 2>/dev/null | grep -q .; }
+# Hyprland has the binds of Bombadil's part: Super+Return, Alt+Space and the release binds the Super tap needs.
+bombadil_binds() {
+  hypr_json binds | python3 -c 'import json, sys
+b = json.load(sys.stdin)
+keys = {x.get("key", "").lower() for x in b}
+print(sorted(keys), [x.get("key") for x in b if x.get("release")])
+sys.exit(not (any(x.get("release") for x in b) and {"return", "space", "escape"} <= keys))'
+}
+hypr_loads_the_part() { grep -qF 'pcall(require, "/usr/share/bombadil/share/hypr/bombadil")' /home/user/.config/hypr/hyprland.lua; }
+
+check package-owns-share-agentd owned_by_bombadil /usr/share/bombadil/bin/agentd
+check package-owns-usr-bin-agentd owned_by_bombadil /usr/bin/agentd
+check package-owns-installer owned_by_bombadil /usr/bin/bombadil-install
+check package-owns-user-unit owned_by_bombadil /usr/lib/systemd/user/bombadil-agentd.service
+check package-owns-sudoers owned_by_bombadil /etc/sudoers.d/bombadil
+check package-owns-hyprland-skel owned_by_bombadil /etc/skel/.config/hypr/hyprland.lua
+check package-no-missing-files package_complete
+check package-agentd-is-a-link test -L /usr/bin/agentd
+check package-nothing-loose-in-local-bin nothing_loose_in_local_bin
+check package-version-line version_has_its_shape
+check package-repo-above-core repo_above_core
+check package-repo-has-its-servers repo_has_its_servers
+check package-no-build-path-in-etc no_build_path_in_etc
+check package-repo-db-readable-by-everyone repo_db_readable_by_everyone
+unit_checks package
+check package-ledger-has-the-six-units ledger_has_the_six
+check package-greetd-runs-the-packages-config greetd_runs_the_packages_config
+check package-os-release-logo os_release_has_the_logo
+check package-browser-env grep -qx 'BROWSER=/usr/bin/bombadil-browser' /etc/environment
+check package-sudoers-mode prints 440 stat -c %a /etc/sudoers.d/bombadil
+# agentd moves the home's hyprland.lua to the stub a moment after login (homefix), and Hyprland reloads it.
+check package-hypr-part-loaded wait_for 60 hypr_loads_the_part
+check package-hypr-binds wait_for 30 bombadil_binds
+check package-hypr-config-clean wait_for 30 no_config_errors
+
 # What the installer must refuse, and what it must do, from the live system (a USB-attached ISO is /dev/sda
 # when the host attaches it that way; a CD has no disk, and the check is then skipped).
 stick=$(lsblk -dnro NAME,TYPE,TRAN | awk '$2 == "disk" && $3 == "usb" { print "/dev/" $1; exit }')
 stick_refused() { local o; o=$(bombadil-install "$stick" --yes 2>&1) && return 1; grep -q 'is the USB stick Bombadil started from' <<<"$o"; }
 no_uefi_needed() { [[ -d /sys/firmware/efi ]]; }
 
-cmdline_installed="console=tty0 console=ttyS0,115200 bombadil.smoke=undo"
+cmdline_installed="console=tty0 console=ttyS0,115200 bombadil.smoke=$installed_mode"
 
 if [[ "$mode" == "install" ]]; then
   [[ -z "$stick" ]] || check install-refuses-the-stick stick_refused
@@ -743,6 +835,10 @@ PLAN
     bombadil-install --plan /tmp/smoke-plan.json --password-fd 3 3< <(printf '%s\n' 'correct-horse-battery-staple')"
 fi
 
+# A line of the person's own at the end of the old Hyprland config. The old file holds Bombadil's part and the
+# person's lines together; the refreshed system's homefix has to keep this one through the split (refresh-homefix-*).
+smoke_user_line="hl.bind(\"SUPER + F9\", hl.dsp.exec_cmd(\"true\")) -- smoke: a line of the person's"
+
 if [[ "$mode" == "refresh" ]]; then
   # The disk was installed by an older Bombadil. Put things in its home folder that a refresh must keep, and
   # things in its system that only belong to it, then refresh.
@@ -751,6 +847,7 @@ if [[ "$mode" == "refresh" ]]; then
     mkdir -p "$top"
     mount -o subvolid=5 /dev/vda2 "$top" || return 1
     echo planted >"$top/@home/user/.bombadil-refresh-marker"
+    printf '\n%s\n' "$smoke_user_line" >>"$top/@home/user/.config/hypr/hyprland.lua" || { umount "$top"; return 1; }
     mkdir -p "$top/@home/user/.claude" "$top/@home/user/Projects/demo"
     echo home-login >"$top/@home/user/.claude/credentials.json"
     echo code >"$top/@home/user/Projects/demo/main.py"
@@ -764,6 +861,16 @@ if [[ "$mode" == "refresh" ]]; then
   mkdir -p /home/user/.claude; echo stick-login >/home/user/.claude/credentials.json; chown -R user: /home/user/.claude
   check refresh-runs bash -c "BOMBADIL_INSTALL_CMDLINE='console=tty0 console=ttyS0,115200 bombadil.smoke=refreshed' bombadil-install --refresh /dev/vda --yes"
 fi
+
+# The undo, the refresh and the update each end their first boot by restarting the machine. The second boot is told
+# by a file in the home folder, which the undo does not roll back.
+phase=/home/user/.bombadil-smoke-phase
+reboot_for_phase_two() {
+  echo 2 > "$phase"; chown user: "$phase"
+  say "REBOOT pass=$ok fail=$fail"
+  [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
+  exit 0
+}
 
 # The shape of an installed disk (layout 1), from inside the installed system.
 layout_checks() {
@@ -782,6 +889,8 @@ layout_checks() {
   check layout-snapper bash -c 'snapper list-configs | grep -qw root && snapper list-configs | grep -qw home && snapper -c root --csvout get-config | grep -q "^NUMBER_LIMIT,30"'
   check layout-home-subvolumes bash -c 'for d in .cache .claude .codex .config/chromium Projects; do btrfs subvolume show "/home/user/$d" >/dev/null || exit 1; done'
   check layout-time-sync systemctl is-enabled systemd-timesyncd
+  # The package's tmpfiles.d line makes the linger file; nothing else does.
+  check layout-linger bash -c 'loginctl show-user user -p Linger --value | grep -qx yes && test -e /var/lib/systemd/linger/user'
   if [[ "$enc" == True ]]; then
     check layout-encrypted bash -c 'cryptsetup status root | grep -q "type: *LUKS2"'
     check layout-three-ways-in bash -c 'dev=$(cryptsetup status root | awk "/device:/ {print \$2}"); [[ "$(cryptsetup luksDump "$dev" | grep -cE "^ +[0-9]+: luks2")" == 3 ]]'
@@ -794,7 +903,6 @@ layout_checks() {
 }
 
 if [[ "$mode" == "undo" ]]; then
-  phase=/home/user/.bombadil-smoke-phase   # home is not rolled back, so it remembers the phase
   if [[ ! -f "$phase" ]]; then
     # The brain, where the watcher has btrfs to watch: every save is named by its writer (a
     # turn's file is the machine's, a file you write is yours) and a rename keeps the thing.
@@ -836,16 +944,74 @@ if [[ "$mode" == "undo" ]]; then
     check snapshot-is-prunable bash -c 'snapper -c root --jsonout list | grep -Eq "\"cleanup\": *\"number\""'
     check snapshots-are-pruned bash -c 'grep -q "^NUMBER_LIMIT=\"30\"" /etc/snapper/configs/root && grep -q "^TIMELINE_CREATE=\"no\"" /etc/snapper/configs/root && systemctl is-enabled --quiet snapper-cleanup.timer'
     check undo as_user bombadil undo
-    echo 2 > "$phase"; chown user: "$phase"
-    say "REBOOT pass=$ok fail=$fail"
-    [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
-    exit 0
+    reboot_for_phase_two
   fi
   check undo-applied bash -c '! test -e /etc/bombadil-smoke-marker'
   # The kernel that started is the one that goes with these modules: a restore point holds both.
   check undo-kernel-matches-modules bash -c 'test -d "/usr/lib/modules/$(uname -r)" && modinfo -k "$(uname -r)" btrfs >/dev/null'
   check undo-layout-kept bash -c 'findmnt -no OPTIONS / | grep -Eq "subvol=/@(,|$)" && test -s /boot/vmlinuz-linux'
   rm -f "$phase"
+fi
+
+# The update (docs/VM-TESTING.md). The host serves a newer build of the package at 10.0.2.2:8123 (scripts/test-vm.sh),
+# and pacman installs it as the machine's own update does. The VM has no route to the Arch mirrors, so this run's
+# pacman.conf holds the [options] of the real one and only the [bombadil] section. The restore point comes first and the
+# unit is turned off after it, so the undo that ends the run takes both back. The second boot checks that the old
+# build is back; what the first boot saw is kept in the home folder for it, which the undo does not roll back.
+if [[ "$mode" == "update" ]]; then
+  update_conf=/tmp/update-pacman.conf
+  was_file=/home/user/.bombadil-smoke-update-was
+  migrate_log=/var/log/bombadil-migrate.log
+  off_unit=bombadil-mail.service
+  version_now() { as_user bombadil version 2>&1; }
+  same_as() { echo "now: $1"; echo "was: $2"; [[ "$1" == "$2" ]]; }
+  host_serves_the_package() { python3 -c 'import urllib.request as u; u.build_opener(u.ProxyHandler({})).open("http://10.0.2.2:8123/bombadil.db", timeout=30).read(1)'; }
+  write_update_conf() {
+    awk '/^\[/ { options = ($0 == "[options]") } options' /etc/pacman.conf >"$update_conf" && grep -q '^\[options\]' "$update_conf" \
+      && printf '\n[bombadil]\nInclude = /etc/pacman.d/bombadil.conf\n' >>"$update_conf"
+  }
+  update_package() { local rc; pacman --config "$update_conf" -Syu --noconfirm >/tmp/update-pacman.log 2>&1; rc=$?; tail -n 25 /tmp/update-pacman.log; return $rc; }
+  # The commit of the served build ends in +update (scripts/test-vm.sh names it so).
+  version_is_the_served_build() { local o; o=$(version_now); echo "now: $o"; echo "was: $was_version"; [[ "$o" != "$was_version" && "$o" == *"+update)"* ]]; }
+  package_version_changed() { local o; o=$(pacman -Q bombadil 2>&1); echo "now: $o"; echo "was: $was_package"; [[ "$o" != "$was_package" ]]; }
+  migrate_log_clean() { local new; new=$(tail -n +$(($1 + 1)) "$migrate_log" 2>/dev/null); echo "${new:-no new lines}"; ! grep -q FAILED <<<"$new"; }
+  ledger_unchanged() { local now; now=$(sort "$ledger"); echo "$now"; [[ "$now" == "$ledger_was" ]]; }
+  bar_answers() { line_state | python3 -c 'import json, sys; print(json.load(sys.stdin))'; }
+  if [[ ! -f "$phase" ]]; then
+    was_version=$(version_now); was_package=$(pacman -Q bombadil); ledger_was=$(sort "$ledger")
+    printf '%s\n%s\n' "$was_version" "$was_package" >"$was_file"; chown user: "$was_file"
+    check update-restore-point as_user python3 -c 'import sys; sys.path.insert(0, "/usr/share/bombadil/src"); from bombadil import snapshots; print(snapshots.Snapshots().create("turn:1: smoke update"))'
+    # A user unit is turned off for every user with --global (it is enabled there); `systemctl --user disable` would
+    # leave that link where it is.
+    check update-turn-a-unit-off systemctl --global disable "$off_unit"
+    check update-unit-is-off prints disabled as_user systemctl --user is-enabled "$off_unit"
+    check update-host-serves-the-package host_serves_the_package
+    check update-conf-written write_update_conf
+    log_lines=0; [[ -f "$migrate_log" ]] && log_lines=$(wc -l <"$migrate_log")
+    check update-pacman-runs update_package
+    check update-version-is-the-served-build version_is_the_served_build
+    check update-package-version-changed package_version_changed
+    check update-package-owns-agentd owned_by_bombadil /usr/bin/agentd
+    check update-package-no-missing-files package_complete
+    check update-agentd-is-a-link test -L /usr/bin/agentd
+    check update-migrate-log-clean migrate_log_clean "$log_lines"
+    check update-hyprland-runs pgrep -x Hyprland
+    check update-hypr-config-ok wait_for 30 no_config_errors
+    check update-bar-layer wait_for 60 has_layer bombadil-bar
+    check update-bar-answers wait_for 30 bar_answers
+    unit_checks update "$off_unit"
+    check update-ledger-unchanged ledger_unchanged
+    check update-ledger-has-the-six-units ledger_has_the_six
+    check update-undo as_user bombadil undo
+    reboot_for_phase_two
+  fi
+  mapfile -t old <"$was_file"
+  check update-undo-brought-the-old-version-back same_as "$(version_now)" "${old[0]:-}"
+  check update-undo-brought-the-old-package-back same_as "$(pacman -Q bombadil 2>&1)" "${old[1]:-}"
+  check update-home-keeps-the-stub hypr_loads_the_part
+  check update-hypr-config-ok wait_for 30 no_config_errors
+  check update-bar-layer wait_for 60 has_layer bombadil-bar
+  rm -f "$phase" "$was_file"
 fi
 
 if [[ "$mode" == "refreshed" ]]; then
@@ -858,14 +1024,23 @@ if [[ "$mode" == "refreshed" ]]; then
   check refresh-old-system-kept bash -c 'top=$(mktemp -d); mount -o subvolid=5 "$(findmnt -no SOURCE / | sed "s/\[.*//")" "$top" && ls -d "$top"/@.before-refresh-* >/dev/null && test -f "$top"/@.before-refresh-*/etc/bombadil-old-marker && test -s "$top"/@.before-refresh-*/boot/vmlinuz-linux; r=$?; umount "$top"; exit $r'
   check refresh-record python3 -c 'import json; d=json.load(open("/var/lib/bombadil/install.json")); assert d["mode"] == "refresh" and d["kept_aside"], d'
   check refresh-home-restore-points bash -c 'snapper -c home list >/dev/null'
+  # agentd's homefix (it starts a moment after login, before the socket opens) moved the old hyprland.lua aside, put
+  # the stub in its place and kept the line the person had at the end of it.
+  lua=/home/user/.config/hypr/hyprland.lua
+  skel_lua=/etc/skel/.config/hypr/hyprland.lua
+  starts_with_the_stub() { cmp -n "$(stat -c %s "$skel_lua")" "$lua" "$skel_lua"; }
+  old_file_kept() { grep -qxF "$smoke_user_line" "$lua.before-split" && grep -q 'hyprland.start' "$lua.before-split"; }
+  homefix_recorded_step_one() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["steps"]); sys.exit("1" not in d["steps"])' /home/user/.local/state/bombadil/home.json; }
+  check refresh-homefix-wrote-the-stub wait_for 90 starts_with_the_stub
+  check refresh-homefix-kept-the-old-file old_file_kept
+  check refresh-homefix-kept-the-persons-line grep -qxF "$smoke_user_line" "$lua"
+  check refresh-homefix-recorded-step-one wait_for 90 homefix_recorded_step_one
+  check refresh-homefix-hypr-config-ok wait_for 30 no_config_errors
+  check refresh-homefix-left-the-sign-in bash -c 'test "$(cat /home/user/.claude/credentials.json)" = home-login'
   # Put the old system back: the same GRUB then starts it, which the host sees as that system's own session coming up.
-  phase=/home/user/.bombadil-smoke-phase
   if [[ ! -f "$phase" ]]; then
     check refresh-undo bombadil-rollback refresh
-    echo 2 > "$phase"; chown user: "$phase"
-    say "REBOOT pass=$ok fail=$fail"
-    [[ "${BOMBADIL_SMOKE_NO_POWEROFF:-}" ]] || systemctl reboot
-    exit 0
+    reboot_for_phase_two
   fi
 fi
 

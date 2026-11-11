@@ -151,7 +151,9 @@ def test_package_makes_a_link_in_usr_bin_for_every_command_and_sets_every_mode(t
     # Modes: sudo's file is 440; directories 755; nothing is writable by group or others; what had x keeps it.
     assert stat.S_IMODE((pkgdir / "etc/sudoers.d/bombadil").stat().st_mode) == 0o440
     modes = {p: stat.S_IMODE(p.lstat().st_mode) for p in pkgdir.rglob("*") if not p.is_symlink()}
-    assert [p for p, m in modes.items() if p.is_dir() and m != 0o755] == []
+    # (sudo's folder keeps sudo's 750, so pacman has no mode to differ on when the package's entry for it arrives.)
+    assert [p for p, m in modes.items() if p.is_dir() and m != 0o755 and p != pkgdir / "etc/sudoers.d"] == []
+    assert modes[pkgdir / "etc/sudoers.d"] == 0o750
     assert [p for p, m in modes.items() if p.is_file() and m & 0o022] == []
     others_read = [p for p, m in modes.items() if p.is_file() and p.name != "bombadil" and not m & 0o004]
     assert others_read == [], "a file the user's own programs cannot read"

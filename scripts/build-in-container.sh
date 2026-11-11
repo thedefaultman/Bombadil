@@ -4,6 +4,9 @@
 #
 #   scripts/build-in-container.sh
 #   BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh     for the VM tests: adds the boot entries they use
+#   scripts/build-in-container.sh package                     only the package, as a pacman repository in ./out/repo
+#                                                             (BOMBADIL_COMMIT, BOMBADIL_PKGREL and BOMBADIL_PKGVER choose
+#                                                             what it says it is; MODE=update of scripts/test-vm.sh uses it)
 #
 # Behind an HTTP(S) proxy, export HTTPS_PROXY (and SSL_CERT_FILE for a private CA) and set
 # BOMBADIL_HOST_NET=1 if the proxy listens on localhost; both are passed through to pacman.
@@ -29,7 +32,16 @@ if [[ "${SSL_CERT_FILE:-}" ]]; then
 fi
 [[ -d "${PACMAN_CACHE:-}" ]] && args+=(-v "$PACMAN_CACHE:/var/cache/pacman/pkg")
 
-exec "$runtime" run "${args[@]}" "$image" bash -euo pipefail -c '
-  pacman -Syu --noconfirm --needed archiso git nodejs npm fakeroot binutils
-  WORK=/tmp/bombadil-work OUT=/src/out /src/scripts/build-iso.sh
-'
+case "${1:-iso}" in
+  iso) steps='
+    pacman -Syu --noconfirm --needed archiso git nodejs npm fakeroot binutils
+    WORK=/tmp/bombadil-work OUT=/src/out /src/scripts/build-iso.sh
+  ' ;;
+  package) steps='
+    pacman -Syu --noconfirm --needed fakeroot binutils
+    WORK=/tmp/bombadil-work /src/scripts/build-package.sh /src/out/repo
+  ' ;;
+  *) echo "usage: $0 [package]" >&2; exit 2 ;;
+esac
+
+exec "$runtime" run "${args[@]}" "$image" bash -euo pipefail -c "$steps"
