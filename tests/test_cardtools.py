@@ -110,6 +110,14 @@ def test_agentd_refusing_the_card_passes_its_reasons_on(home):
     fake.close()
 
 
+@pytest.mark.parametrize("kind", ["message", "task", "list"])
+def test_a_message_task_or_list_is_refused_here_and_the_reason_points_to_the_connections(tools, kind):
+    with pytest.raises(ValueError) as e:
+        call(tools, "show_card", {**DIAGRAM, "kind": kind})
+    assert str(e.value) == (f"kind {kind!r} is not drawn here: only diagram is. "
+                            "Messages, tasks and lists come from your connections, not from show_card.")
+
+
 def test_system_map_draws_the_real_machine_and_the_agent_only_points(tools, home, monkeypatch):
     (home / "run").mkdir()
     fake = FakeAgentd(home / "run" / "agentd.sock")

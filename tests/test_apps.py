@@ -96,6 +96,13 @@ def test_the_mail_window_cannot_be_replaced_by_an_app_of_the_same_name(home, tmp
     assert apps.app_dir("mail") == built / "mail"
 
 
+@pytest.mark.parametrize("title", ["Slack", "Messages", "Unread", "Connections", "Connected"])
+def test_an_app_cannot_take_a_word_the_pill_answers_itself(home, title):
+    with pytest.raises(ValueError, match="answers itself"):
+        apps.create(title, "import QtQuick\nRectangle {}\n")
+    assert not (home / "Apps" / title.lower()).exists()
+
+
 def test_a_built_in_apps_saved_state_lives_with_the_other_apps_state(home, tmp_path, monkeypatch):
     from bombadil.appkit import context
     built = tmp_path / "builtin"

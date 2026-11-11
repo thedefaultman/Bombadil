@@ -336,9 +336,10 @@ async def test_list_is_answered_on_that_connection_and_holds_what_this_machine_b
     await _say(app_w, {"type": "tips", "op": "list"})
     answer = (await _events_until(app_r, _list))[-1]
     ids = [t["id"] for t in answer["list"]]
-    # The fake AI is on, nothing else: no app, no project, no installed disk, no card seen, nothing to keep.
+    # The fake AI is on, nothing else: no app, no project, no installed disk, no card seen. The desk can keep a
+    # widget, so that tip is here (the word "widgets" is a launcher word).
     assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang", "passwords", "whyhere",
-                   "draw", "toolchain", "disk", "pause", "why"]
+                   "draw", "toolchain", "disk", "pause", "keep", "why"]
     assert [t["tried"] for t in answer["list"]][:3] == [False, True, False]
     assert not any(t["new"] for t in answer["list"])
     pause = next(t for t in answer["list"] if t["id"] == "pause")
@@ -556,6 +557,7 @@ async def _typed(d, w, r, text):
     ("how's the machine", ["machine"]), ("show machine", ["machine"]), ("hide machine", []),
     ("tickets", ["open-app"]), ("open tickets", ["open-app"]), ("close tickets", []),
     ("how am I connected", ["picture"]), ("where did my disk go", ["picture", "disk"]),
+    ("widgets", ["keep"]), ("show my widgets", ["keep"]),
     ("brain", []), ("history", []), ("tell me about desks", None)])
 async def test_a_launcher_word_that_worked_tries_the_tip_it_is(home, monkeypatch, typed, tried):
     apps.create("Tickets", "import QtQuick\nItem {}\n")

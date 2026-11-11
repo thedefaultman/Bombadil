@@ -122,7 +122,7 @@ def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
     widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
     assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
     assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
-                                "words": ["needs", "needs you"]}
+                                "words": ["needs", "needs you"], "keep": True}
     assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]
     assert {"name": "desk", "title": "Desk", "kind": "command", "words": ["desk"]} in e
 
@@ -1148,3 +1148,111 @@ def test_send_still_answers_when_the_window_will_not_open(home, monkeypatch, cap
     assert launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0)).run(launcher.Action("send", "d1")) == \
         (True, "Sending is yours. It's under the pointer.")
     assert "no screen" in capsys.readouterr().err
+
+
+# -- messages and connections --
+
+@pytest.mark.parametrize("text, target, title", [
+    ("slack", "unread", "your unread messages"), ("Slack.", "unread", "your unread messages"),
+    ("messages", "unread", "your unread messages"), ("unread", "unread", "your unread messages"),
+    ("what did I miss", "unread", "your unread messages"),
+    ("What did I miss on Slack?", "unread", "your unread messages"),
+    ("open slack", "unread", "your unread messages"), ("show the messages", "unread", "your unread messages"),
+    ("connections", "connected", "Connected here"), ("connected", "connected", "Connected here"),
+    ("whats connected", "connected", "Connected here"), ("What's connected?", "connected", "Connected here"),
+    ("what’s connected", "connected", "Connected here"), ("what is connected", "connected", "Connected here"),
+    ("show connections", "connected", "Connected here"), ("go to the connections", "connected", "Connected here"),
+])
+def test_the_words_for_messages_and_connections_open_their_cards(home, text, target, title):
+    a = launcher.match(text, _apps(home))
+    assert a is not None and (a.kind, a.target, a.verb, a.title) == ("messages", target, "open", title)
+    assert launcher.match(text, _apps(home), busy=True) == a          # a turn running does not change it
+
+
+@pytest.mark.parametrize("service, title", [("slack", "Slack"), ("linear", "Linear"), ("notion", "Notion"),
+                                            ("jira", "Jira"), ("todoist", "Todoist"), ("clickup", "ClickUp")])
+def test_connect_and_a_service_starts_its_setup(home, service, title):
+    for text in (f"connect {service}", f"Connect {service.upper()}.", f"  connect   {service}  "):
+        a = launcher.match(text, _apps(home))
+        assert a is not None and (a.kind, a.target, a.verb, a.title) == ("connect", service, "open", title), text
+
+
+@pytest.mark.parametrize("text", [
+    "connect", "connect to wifi", "connect to slack", "connect slack to the launch channel", "connect the linear",
+    "connect linear please", "connect nothing", "connect a service", "connect bluetooth", "connected to what",
+    "what is connected to my wifi", "slack priya that i am late", "check slack", "my messages", "unread messages",
+    "show me my messages", "what did i miss on twitter", "what did i miss yesterday", "message priya",
+    "close messages", "hide slack", "quit connections", "slack!!!1", "!slack", "slack ☕", "connection",
+    "reconnect slack", "disconnect slack", "disconnect",
+])
+def test_a_sentence_about_messages_or_connections_is_the_agents(home, text):
+    a = launcher.match(text, _apps(home))
+    assert a is None or a.kind not in ("messages", "connect"), text
+
+
+def _every_other_word():
+    tables = [launcher.PANEL_WORDS, launcher.WIDGET_WORDS, launcher.CORE_COMMANDS, launcher.BRAIN_COMMANDS,
+              launcher.UTILITY_COMMANDS, launcher.MAIL_WORDS, launcher.PROVIDER_WORDS, launcher.REST_TARGETS,
+              launcher.MODEL_WORDS, launcher.PICTURE_PHRASES, launcher.WIDGET_QUESTIONS]
+    words = {launcher.normalize(w) for table in tables for ws in table.values() for w in ws}
+    words |= {launcher.normalize(w) for w in (*launcher.SIGNIN_WORDS, *launcher.SEND_WORDS, *launcher.WHY_WORDS)}
+    words |= {p.name for p in apps.builtin_dir().iterdir() if p.is_dir()}
+    return words
+
+
+def test_no_word_for_messages_or_connections_is_another_words_or_a_built_in_apps():
+    mine = {launcher.normalize(w) for ws in launcher.CONNECT_VIEWS.values() for w in ws}
+    mine |= {f"{launcher.CONNECT_VERB} {service}" for service in launcher.SERVICES}
+    assert mine and not mine & _every_other_word()
+    assert len({launcher.normalize(w) for ws in launcher.CONNECT_VIEWS.values() for w in ws}) == sum(
+        len(ws) for ws in launcher.CONNECT_VIEWS.values())            # and no word in both views
+
+
+def test_no_other_word_is_taken_for_one_of_them(home):
+    for word in sorted(_every_other_word()):
+        a = launcher.match(word, [])
+        assert a is None or a.kind not in ("messages", "connect"), word
+
+
+def _app_from_before(title: str) -> None:
+    """An app of yours that was made before these words were the pill's own: `apps.create` refuses the name now."""
+    apps.create("Older", "import QtQuick\nItem {}\n")
+    apps.own_dir("older").rename(apps.own_dir(apps.slug(title)))
+
+
+@pytest.mark.parametrize("title", ["Slack", "Messages", "Connections", "Unread"])
+def test_an_app_of_yours_with_such_a_name_does_not_stand_in_front_of_the_word(home, title):
+    _app_from_before(title)
+    app_list = apps.list_apps()
+    a = launcher.match(title.lower(), app_list)
+    assert a is not None and a.kind == "messages"
+    assert launcher.match(f"open {title.lower()}", app_list).kind == "messages"
+    assert [e["kind"] for e in launcher.entries(app_list) if e["name"] == title.lower()] in ([], ["command"])
+    assert all(e["name"] != title.lower() or e["kind"] == "command" for e in launcher.entries(app_list))
+
+
+def test_messages_and_connections_are_offered_for_tab_once_each_as_commands(home):
+    _app_from_before("Messages")                                       # yours, with the word's own name
+    entries = launcher.entries(apps.list_apps())
+    for name, title in (("messages", "Messages"), ("connections", "Connections")):
+        [e] = [e for e in entries if e["name"] == name]
+        assert e == {"name": name, "title": title, "kind": "command", "words": [name]}
+    assert len({e["name"] for e in entries}) == len(entries)           # no name is offered twice
+
+
+def test_the_line_says_what_the_connection_words_are_doing_and_what_went_wrong(home):
+    doing, failed = launcher.Launcher.doing, launcher.Launcher.failed
+    unread, connected = launcher.match("slack", []), launcher.match("connections", [])
+    setup = launcher.match("connect linear", [])
+    assert doing(unread) == "Looking at your messages" and doing(connected) == "Opening Connected here"
+    assert doing(setup) == "Setting up Linear"
+    assert failed(unread) == "Could not read your messages" and failed(connected) == "Could not open what is connected"
+    assert failed(setup) == "Could not set up Linear"
+
+
+def test_a_connection_word_is_not_run_by_the_launcher_but_left_for_agentd(home):
+    """The cards and the setup are agentd's (the connection service is asked from there, never from a thread of the
+    launcher's), so the launcher refuses to run one rather than doing something else."""
+    lx = launcher.Launcher(hyprland=FakeHypr(), snaps=Snaps(0))
+    ok, text = lx.run(launcher.match("slack", []))
+    assert ok is False and text
