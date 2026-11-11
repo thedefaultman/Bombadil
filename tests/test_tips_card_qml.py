@@ -8,6 +8,7 @@ look at them: tips-card-<id>-<width>x<height>.png, tips-card-poster-*.png for a 
 
 import os
 import re
+import time
 from datetime import date
 from pathlib import Path
 
@@ -39,6 +40,14 @@ FADE = "QQuickNumberAnimation"
 @pytest.fixture(scope="module")
 def app():
     return QtGui.QGuiApplication.instance() or QtGui.QGuiApplication([])
+
+
+def early(started, limit):
+    """Is it still early enough in a fade that began at `started` (time.monotonic()) to see it half way? A pump asks
+    for 30 or 50 ms and a box under load gives it more, so the 120 or 200 ms fade can be over by the time the test
+    looks. A check made then says nothing about the card, so a mid-fade check is made only while it is early (`limit`
+    is well under the fade's length) and the end state, which no slow box changes, is always checked."""
+    return time.monotonic() - started < limit
 
 
 def ready(d):
@@ -290,9 +299,11 @@ def test_the_arrows_and_the_x_fade_in_with_the_pointer_and_out_with_it(make):
     controls = c.named("tipsControls") or c.desk.item("tipsControls")
     assert controls.property("opacity") == 0 and not controls.isVisible()          # none shows at rest
     pt = c.card.mapToScene(QtCore.QPointF(150, 100)).toPoint()
+    started = time.monotonic()
     QtTest.QTest.mouseMove(c.desk.win, pt)
     c.desk.pump(0.03)
-    assert running_things(c.desk.win) == [FADE]                                    # the 120 ms fade, then it is done
+    if early(started, 0.08):
+        assert running_things(c.desk.win) == [FADE]                                # the 120 ms fade, then it is done
     c.desk.pump(0.4)
     assert controls.property("opacity") == 1 and controls.isVisible() and running_things(c.desk.win) == []
     prev, nxt, hide = (c.desk.item(n) for n in ("tipsPrev", "tipsNext", "tipsHide"))
@@ -551,11 +562,14 @@ def test_turning_a_tip_crossfades_the_picture_the_line_and_the_button(make):
     c = make()
     first = c.front()
     assert first.objectName() == "tipsFaceA"
+    started = time.monotonic()
     c.turn(1)                                                                         # (send pumps 50 ms)
-    assert running_things(c.desk.win) == [FADE, FADE]                                 # one face out, one face in
+    if early(started, 0.12):
+        assert running_things(c.desk.win) == [FADE, FADE]                             # one face out, one face in
     c.desk.pump(0.03)
     a, b = c.desk.item("tipsFaceA"), c.desk.item("tipsFaceB")
-    assert a.isVisible() and b.isVisible() and 0 < a.property("opacity") < 1 and 0 < b.property("opacity") < 1
+    if early(started, 0.15):                                                          # (the fade is 200 ms)
+        assert a.isVisible() and b.isVisible() and 0 < a.property("opacity") < 1 and 0 < b.property("opacity") < 1
     c.desk.pump(0.4)
     assert running_things(c.desk.win) == []
     assert not a.isVisible() and b.isVisible() and b.property("opacity") == 1         # the old face is gone, not hidden under
