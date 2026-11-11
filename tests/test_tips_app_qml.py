@@ -7,8 +7,8 @@ exist once per process. The child runs the runtime's own `Host` on the real app 
 fake agentd in a thread (tests/tips_app_lab.py) that lists the shipped tips and records every line it is sent, in a
 temp home. It drives the window with mouse and key events (QTest), reads what is drawn from the item tree and prints
 what it found as JSON for the test to judge. With BOMBADIL_SCREENS=<dir> the scenarios also save pictures there
-(tips-app-<name>.png; every shipped tip plays its own scene, the fixture scenes of tests/tip_fixtures.py are only
-for a row that arrives without beats).
+(tips-app-<name>.png; every shipped tip plays its own scene, and the made-up rows add a fixture scene of
+tests/tip_fixtures.py so Replay stands beside their words).
 
 What is held to what: the list has its sections and only the tips agentd lists; a tip plays once when it is chosen
 and holds its payoff, and nothing advances or loops by itself; Replay and Space play it again; Up and Down choose;
@@ -43,6 +43,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from bombadil import tips as tips_mod
 from bombadil.appkit import context, engine, runtime
+import tip_fixtures as fx
 import tips_app_lab as lab
 from tips_app_lab import spin, wait_until
 
@@ -766,7 +767,7 @@ def test_every_tip_fits_960_by_516_and_a_very_long_one_does_not_push_anything_ou
         # words must leave room for (a row with no beats has no Replay and would not show that).
         long_one = {"id": "long-one", "section": "work", "order": 9, "line": "A very long line " * 12,
                     "words": "and very long words " * 15, "marks": [], "card": True, "tried": False, "new": False,
-                    "captions": ["one", "two", "three"], "beats": lab.fx.BUILD["beats"]}
+                    "captions": ["one", "two", "three"], "beats": fx.BUILD["beats"]}
         long_mark = dict(long_one, id="long-marks", order=10, words="", marks=["a mark that goes on " * 3, "Esc", "x"])
         boot(tips=lab.listing(home, tried=("esc",), new=("undo",)) + [long_one, long_mark])
         listed(22)

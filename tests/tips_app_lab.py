@@ -6,8 +6,7 @@ sessions: all things the app must ignore), answers {"type": "tips", "op": "list"
 keeps every line it is sent and how many connections are open at any moment, so a test can say that nothing the
 app does leaves a socket open. `listing()` is what agentd's list says on a machine that can back every tip: the
 shipped table through the real Tips object. Every shipped row has its own beats, so the window plays the real
-scenes; the fixture scenes (tests/tip_fixtures.py) are only for a row that arrives without beats (a row being
-added), and a test that needs a tip with no scene adds a made-up row with `beats = []` to the listing.
+scenes, and a test that needs a tip with no scene adds a made-up row with `beats = []` to the listing.
 """
 
 import copy
@@ -21,7 +20,6 @@ import time
 from datetime import date
 from pathlib import Path
 
-import tip_fixtures as fx
 from PySide6.QtCore import QEventLoop, QTimer
 
 from bombadil import tips as tips_mod
@@ -53,12 +51,6 @@ def wait_until(cond, timeout_ms: int = 4000) -> bool:
     return cond()
 
 
-# The fixture scenes, for a tip of the table that arrives without beats of its own (none does today: every
-# shipped row has its scene, and `listing()` leaves a row that has beats alone).
-SCENES = {"make-an-app": fx.BUILD, "picture": fx.PICTURE, "esc": fx.ESC, "timer": fx.TIMER, "machine": fx.MACHINE,
-          "bang": fx.BANG, "change-app": fx.CHANGE, "open-app": fx.OPEN,
-          "passwords": fx.LOCK,
-          "toolchain": fx.ROUTE, "disk": fx.DISK}
 MACHINE = tips_mod.Facts(ai="Claude", installed=True, app="Tickets", project="myapp", desk_seen=True, keep=True)
 
 
@@ -67,18 +59,14 @@ _LISTINGS = itertools.count()      # each listing starts from a state of its own
 
 def listing(tmp: Path, facts=MACHINE, tried=(), new=()) -> list[dict]:
     """agentd's list: `tips.listing()` on the shipped table for a machine with these facts. `tried` are marked, `new`
-    are tips an update brought (not known). A row without beats (none today) gets its fixture scene."""
+    are tips an update brought (not known). Every shipped row has its own scene, so the window plays the real ones."""
     t = tips_mod.Tips(path=tmp / f"lab-tips-{next(_LISTINGS)}.json", clock=lambda: date(2026, 11, 9))
     t.facts = facts
     t.ready()
     if new:
         t.state.known = [i for i in t.state.known if i not in new]
     t.tried(list(tried))
-    rows = t.listing()
-    for row in rows:
-        if not row["beats"] and row["id"] in SCENES:
-            row["beats"] = copy.deepcopy(SCENES[row["id"]]["beats"])
-    return rows
+    return t.listing()
 
 
 def write_state(path: Path, **fields) -> None:

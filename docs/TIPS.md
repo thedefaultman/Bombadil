@@ -476,9 +476,9 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_app_backend.py tests
   tip fitting 960 x 516 (and two absurdly long ones with a scene, so Replay stands beside them; the 36 px button
   and the 17 px line among the sizes held, words and marks whole when they have the room and elided when they
   have not), the list scrolling with the keys, and no orange of its own in the item tree or the pixels.
-  `BOMBADIL_SCREENS=<dir>` saves pictures (`tips-app-<name>.png`). The window plays the twenty real scenes: the
-  fixture scenes of `tests/tip_fixtures.py` stand in (in `tips_app_lab.listing`) only for a row that arrives
-  without beats, and none does today.
+  `BOMBADIL_SCREENS=<dir>` saves pictures (`tips-app-<name>.png`). The window plays the twenty real scenes; the made-up
+  rows (a very long one, a tip with no scene) are added to the listing by the tests themselves, with a fixture scene
+  from `tests/tip_fixtures.py` where Replay has to stand beside the words.
 - The tests wait on conditions and never on a longer sleep, so a busy machine only makes them slower: a tick in
   `tips.json` is answered by a list that says the tip is tried, as agentd's would, and the `opened` line is waited
   for before it is counted.
