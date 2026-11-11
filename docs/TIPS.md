@@ -313,7 +313,9 @@ own Enter runs them (the brief's answer 2a).
   for the phase it is in in the ink and the others muted. Under them, the tip's one line in 17 px DemiBold, then
   the button with the exact words (36 px high, neutral: orange means the machine is acting, and a tip is
   nobody's) and Replay beside it. A tip with marks and no button (Esc, `why`, `undo`) shows its marks in place
-  of the button and has nothing to press.
+  of the button and has nothing to press. The words and the marks are drawn whole when they have the room, and
+  when with Replay they are wider than the stage's 576 px they give up the room and elide (the layout shares the
+  row, in whole pixels, so a short word is never cut for a fraction of one); nothing pushes the column out.
 - **Right, the list.** Sections in the table's order: Start here, Work, Code, This machine, and **New**, which
   exists only after an update brought tips the person has not seen (a tip that is new is in New alone, not in its
   section as well, and stays there while the app is open even though asking made it known). Each row is the line
@@ -330,7 +332,7 @@ own Enter runs them (the brief's answer 2a).
 | What | Does |
 |---|---|
 | Choosing a tip (a click on its row, Up, Down) | The tip plays once from its start and holds its payoff. Choosing the same tip again does nothing. |
-| Replay, or Space | Plays the tip in front again from its start (also while it is playing). Not shown, and no effect, under reduced motion or for a tip that has no scene. |
+| Replay, or Space | Plays the tip in front again from its start (also while it is playing). Not shown, and no effect, under reduced motion or for a tip that came without a scene (every shipped tip has one; a row being added may not, and its stage is empty). |
 | Enter, or the button | **Hides the window first, then** puts the exact words in the pill with the cursor at the end (`Agent.draft`). Nothing is sent: the person adds details, presses Enter, or Esc to drop them. For a tip with no button nothing happens. |
 | Esc | Hides the window (the kit's own key). Nothing is put in the pill. |
 | Up, Down | Move through the tips in the order the list shows them, from the first section to New, and stop at the ends. The list scrolls so the tip in front is always whole, with the heading above the first tip of a section. |
@@ -469,10 +471,17 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_app_backend.py tests
   scenario) and drives it with mouse and key events: the sections and rows, a tip plays once and holds, Replay and
   Space, Up and Down, Enter and the button (the log shows the window hiding before the summon, the summon is
   exactly the words and nothing is sent as a prompt), marks, Esc, reduced motion, ticks that leave the list in
-  place, agentd away and back, the window looking when it comes forward, the AI resting, every tip fitting 960 x 516
-  (and two absurdly long ones, the 36 px button and the 17 px line among the sizes held), the list scrolling with
-  the keys, and no orange of its own in the item tree or the pixels. `BOMBADIL_SCREENS=<dir>`
-  saves pictures (`tips-app-<name>.png`).
+  place, agentd away and back, the window looking when it comes forward, the AI resting, a tip with no scene (a
+  made-up row with `beats = []` added to the listing: the stage is empty and there is nothing to replay), every
+  tip fitting 960 x 516 (and two absurdly long ones with a scene, so Replay stands beside them; the 36 px button
+  and the 17 px line among the sizes held, words and marks whole when they have the room and elided when they
+  have not), the list scrolling with the keys, and no orange of its own in the item tree or the pixels.
+  `BOMBADIL_SCREENS=<dir>` saves pictures (`tips-app-<name>.png`). The window plays the twenty real scenes: the
+  fixture scenes of `tests/tip_fixtures.py` stand in (in `tips_app_lab.listing`) only for a row that arrives
+  without beats, and none does today.
+- The tests wait on conditions and never on a longer sleep, so a busy machine only makes them slower: a tick in
+  `tips.json` is answered by a list that says the tip is tried, as agentd's would, and the `opened` line is waited
+  for before it is counted.
 - Tests in `tests/test_launcher.py` (every word, the near misses, completion), `tests/test_agentd_tips.py` (the open
   and opened ops, and the empty list when Tips is off), `tests/test_apps.py` (an app called Tips cannot stand in
   for the window) and `tests/test_appkit_native.py` (`Agent.draft`, and that a binding, a handler or a read of the
