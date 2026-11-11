@@ -32,7 +32,7 @@ env = dict(
     BOMBADIL_PROVIDER="claude",
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
-    BOMBADIL_TIPS="0",      # no card of Tips over the sections that are not about it (section 31 starts agentd with it on)
+    BOMBADIL_TIPS="0",      # no card of Tips over the sections that are not about it (section 32 starts agentd with it on)
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
     # Connections run on their fake engine, in the container's own folders: the service, agentd and the shell all read
     # these, and a container's user is outside the service's default range of people (1000 to 59999).
