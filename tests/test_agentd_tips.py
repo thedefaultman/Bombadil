@@ -516,8 +516,9 @@ async def test_with_tips_off_nothing_is_sent_and_nothing_is_kept(home, monkeypat
     await _say(w, {"type": "tips", "op": "list"})
     await _say(w, {"type": "summon", "text": "hi", "tip": True, "id": "bang"})
     # (what agentd says to every client on connecting, the coding sessions among it, is not what this is about)
+    # A window that asks for the list is answered, with nothing in it: it must not be left waiting on a socket.
     assert [m for m in await _heard(r) if m["type"] in ("summon", "tips")] == [
-        {"type": "summon", "text": "hi", "tip": True}]
+        {"type": "tips", "list": []}, {"type": "summon", "text": "hi", "tip": True}]
     await _ask(w, "tell me a joke")
     await _read_until(r, "turn_end")
     assert not paths.tips_file().exists()

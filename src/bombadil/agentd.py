@@ -1134,6 +1134,8 @@ class AgentD:
         """The card's arrows and wheel, a press on its title or picture, and the Tips app's one-shot list."""
         op = str(msg.get("op", ""))
         if self.tips is None:
+            if op == "list":        # Tips is off: a window that asks is told there is nothing, not left waiting
+                await self._send(writer, {"type": "tips", "list": []})
             return
         if op == "turn":
             if self.tips.turn(msg.get("dir")):
