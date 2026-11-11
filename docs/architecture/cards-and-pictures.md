@@ -33,7 +33,7 @@ commands, and a reason is the agent's own sentence from just before it acted.
 | Cards the agent draws other than `diagram`: list, checklist, timer, control, markdown reader | Designed | [UX brief, piece 5](../design/ux-brief.md#5-answers-you-can-touch). The `list` card that exists comes from connections and the agent cannot draw it |
 | Cards the agent writes in QML | Designed | UX brief, piece 5 |
 | The `teach` explain level (a faint chip on system words that opens their picture) | Designed | [Passenger brief, "How much does it explain?"](../design/passenger-brief.md#decisions-i-picked-a-default-for) |
-| Tips: a desk card and an app whose scenes reuse `Diagram` at app size, and that count a local action such as a picture word as a tip tried | Designed | [Tips and the desk after boot](../design/tips-and-desk-defaults-brief.md). No `share/tips`, `tips.py` or Tips card exists |
+| Tips: a desk card and an app whose scenes reuse `Diagram` at app size, and that count a local action such as a picture word as a tip tried | Partly shipped | [Tips and the desk after boot](../design/tips-and-desk-defaults-brief.md). The data side is on `main` (`src/bombadil/tips.py`, `share/tips/tips.toml`, agentd's `tips` message and the local actions it counts as a tip tried: [tips](tips.md)); no Tips card, app or scene exists |
 
 The desk draws its own cards (`DeskCard.qml`, `RowsCard.qml`, `NowCard.qml`); they do not use `Diagram` and are
 described in [the desk](desk.md). The status line's other behaviours (the counter, the command, Undo, Details, the cut

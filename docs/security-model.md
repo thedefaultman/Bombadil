@@ -57,7 +57,7 @@ flowchart TB
         B["Chromium: 127.0.0.1:9222"]
         BR["Brain: brain.sock, mode 0600"]
         ML["Mail service: mail.sock, mode 0600"]
-        D["Coding sessions: vendor CLI in zellij, own scope, taken for the person"]
+        D["Coding sessions: vendor CLI in zellij, own scope, on the agent's side of the press check"]
     end
     R["Root: sudo, brain watcher on watch.sock, mode 0666"]
     V["Provider vendor, over the network"]
