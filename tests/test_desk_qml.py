@@ -42,6 +42,7 @@ Window {
     property var actions: []
     property var opened: []
     property int machineChanges: 0
+    property int widgetsAsked: 0
     property int awayChanges: 0
     // What shell.qml does with a line from agentd: parse it, and hand it to the pill and the desk.
     function feed(line) {
@@ -77,6 +78,7 @@ Window {
         onRowAction: (widget, key, action) => w.actions = w.actions.concat([[widget, key, action]])
         onRowOpen: (widget, key, opens) => w.opened = w.opened.concat([[widget, key, opens]])
         onMachineModelChanged: w.machineChanges += 1
+        onWidgetsRequested: w.widgetsAsked += 1
         onAwayModelChanged: w.awayChanges += 1
     }
     // What shell.qml puts in its windows: a rail each side, the pill, and the strips beside it.
@@ -1469,7 +1471,7 @@ def test_watching_never_reaches_the_model(desk):
     desk.click(desk.inside(desk.card_row("f7a8"), "rowsButton"))
     desk.click(desk.inside(desk.card_row("a1b2"), "rowsRemove"))
     assert {m["type"] for m in desk.sent} == {"jobs"} and len(desk.sent) == 2
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
 
 
 def test_a_row_action_for_another_widget_or_word_is_not_watchings(desk):
@@ -1779,7 +1781,7 @@ def test_open_sends_the_session_to_agentd_and_nothing_else(desk):
     assert desk.sent == [{"type": "dev", "action": "open", "key": "k2"},
                          {"type": "dev", "action": "open", "key": "k1"}]
     assert [r["key"] for r in desk.needs["rows"]] == ["k1", "k2"]      # agentd's next message says what changed
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
     assert plain(desk.win.property("actions")) == [["needs", "k2", "Open"], ["needs", "k1", "Open"]]
 
 
@@ -2000,11 +2002,12 @@ def test_a_tap_on_the_disk_row_asks_agentd_to_open_it_and_nothing_else(desk):
     assert desk.sent == hello + [{"type": "vitals", "op": "open", "row": "disk"}]
     assert plain(desk.win.property("opened")) == [["machine", "disk", "disk"]]
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []   # (the hello is not a prompt)
+    assert desk.prop("_phase") == "idle"
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeta"))
     desk.click(desk.inside(desk.card_row("disk"), "rowsMeter"))
     assert [m for m in desk.sent[1:]] == [{"type": "vitals", "op": "open", "row": "disk"}] * 3
-    assert plain(desk.win.property("pillSent")) == []
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == []
 
 
 def test_only_machines_opens_are_a_message(desk):
@@ -3081,6 +3084,379 @@ def test_a_desk_message_with_folded_widgets_is_what_the_desk_reads(desk, home):
     assert [c["text"] for c in desk.prop("rightStrips")] == ["2 need you"]
 
 
+# -- your desk: Keep, When needed, Off --
+
+# The rows of the Widgets card as agentd lists them: what each widget answers, and which of the three states
+# it can take (only one with a calm face can be kept; Needs you cannot be put away).
+WIDGET_ROWS = [
+    {"id": "now", "title": "Now", "question": "What is it doing, and why?", "can": ["needed", "off"]},
+    {"id": "watching", "title": "Watching", "question": "What is it keeping an eye on?", "can": ["needed", "off"]},
+    {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
+    {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?", "can": ["keep", "needed", "off"]},
+]
+
+
+def your_desk(**kw):
+    """agentd's desk message with what the Widgets card reads in it: nothing kept, the four rows."""
+    return desk_msg(**{"kept": [], "widgets": WIDGET_ROWS, **kw})
+
+
+def calm(second=0):
+    """The Machine card of a machine that is fine and kept on the desk: every figure a meter, none of them in a colour."""
+    memory = {k: v for k, v in MEMORY.items() if k != "parts"}
+    return (dict(memory, kind="meter", tone="you", meter=0.45 + 0.01 * second, meterText=f"{7.2 + 0.1 * second:.1f} of 16 GB"),
+            dict(DISK, tone="you", meter=0.40, meterText="92 of 230 GB"),
+            dict(CPU, meter=0.05 + 0.01 * second, meterText="5% busy · 41°"),
+            NET)
+
+
+def calm_msg(*table, **kw):
+    return machine_msg(*(table or calm()), **{"calm": True, "why": "The machine is fine",
+                                               "strip": {"text": "", "dot": ""}, **kw})
+
+
+def test_a_desk_message_carries_what_is_kept_and_the_rows_of_the_widgets_card(desk):
+    assert desk.prop("kept") == [] and desk.prop("widgetList") == [] and desk.prop("widgetsOpen") is False
+    desk.send(**your_desk(kept=["machine"]))
+    assert desk.prop("kept") == ["machine"]
+    assert desk.prop("widgetList") == WIDGET_ROWS                      # agentd's rows, whole, in agentd's order
+    desk.send(**your_desk(widgets=list(reversed(WIDGET_ROWS))))
+    assert [r["id"] for r in desk.prop("widgetList")] == ["machine", "needs", "watching", "now"]
+    assert desk.prop("kept") == []
+
+
+def test_kept_and_the_rows_are_cleaned_like_the_rest_of_the_desk_message(desk):
+    desk.send(**your_desk(kept=["machine", "machine", "nonsense", 7, None, "constructor", "watching"]))
+    assert desk.prop("kept") == ["machine", "watching"]                  # known widgets, once each
+    odd = [None, 5, "text", [], {"id": "now"},                           # nothing to draw: no name, no state
+           {"id": "nonsense", "title": "x", "can": ["off"]}, {"id": "constructor", "title": "x", "can": ["off"]},
+           {"id": 7, "title": "x", "can": ["off"]},
+           {"id": "alive", "title": "Alive", "question": 5, "can": ["toggle", "off", "off", 3, None]},
+           {"id": "alive", "title": "Alive again", "can": ["needed"]},   # a widget has one row
+           {"id": "away", "title": 5, "can": ["off"]},                   # a name that is not text
+           {"id": "now", "title": "Now", "can": "off"},                  # states that are not a list
+           {"id": "watching", "title": "Watching", "can": ["toggle", "hide"]},    # none of the three
+           {"id": "machine", "title": "Machine", "question": "Is it?", "can": ["off", "keep", "off"]}]
+    desk.send(**your_desk(kept=["machine"], widgets=odd))
+    assert desk.prop("widgetList") == [
+        {"id": "alive", "title": "Alive", "question": "", "can": ["off"]},
+        {"id": "machine", "title": "Machine", "question": "Is it?", "can": ["off", "keep"]}]
+    # A list is an answer, even an empty one; anything else is not, and leaves the card as it was.
+    desk.send(**your_desk(kept="machine", widgets={"machine": 1}))
+    assert desk.prop("kept") == ["machine"]
+    assert [r["id"] for r in desk.prop("widgetList")] == ["alive", "machine"]
+    desk.send(**your_desk(widgets=[]))
+    assert desk.prop("widgetList") == []
+
+
+def test_a_desk_message_that_leaves_kept_and_the_rows_out_leaves_them_as_they_were(desk):
+    desk.send(**your_desk(kept=["machine"]))
+    desk.send(**desk_msg(folded=True, hidden=["now"]))
+    desk.send(type="desk")
+    assert desk.prop("kept") == ["machine"] and desk.prop("widgetList") == WIDGET_ROWS
+    assert desk.prop("folded") and desk.prop("hidden") == ["now"]
+    desk.send(**your_desk(kept=[], widgets=[]))
+    assert desk.prop("kept") == [] and desk.prop("widgetList") == []
+
+
+def test_a_widget_is_off_before_it_is_kept_and_kept_before_it_is_needed(desk):
+    ids = ("now", "watching", "needs", "machine", "alive", "nonsense")
+    assert [desk.call("stateOf", w) for w in ids] == ["needed"] * 6
+    desk.send(**your_desk(kept=["machine"], hidden=["now"]))
+    assert [desk.call("stateOf", w) for w in ids] == ["off", "needed", "needed", "keep", "needed", "needed"]
+    # Never both, but a message that says both is read one way everywhere: put away wins.
+    desk.send(**your_desk(kept=["machine"], hidden=["machine"]))
+    assert desk.call("stateOf", "machine") == "off"
+    # Nothing puts Needs you away (the desk filters it out of `hidden`), so it is never off.
+    desk.send(**your_desk(hidden=["needs"]))
+    assert desk.call("stateOf", "needs") == "needed"
+
+
+def test_a_press_asks_agentd_for_one_state_and_changes_nothing_itself(desk):
+    desk.set("connected", True)
+    desk.send(**your_desk())
+    hello = list(desk.sent)
+    assert desk.call("setWidget", "machine", "off") is True
+    assert desk.sent == hello + [{"type": "desk", "op": "set", "widget": "machine", "state": "off"}]
+    # The desk follows agentd's answer, not the press.
+    assert desk.prop("hidden") == [] and desk.prop("kept") == [] and desk.call("stateOf", "machine") == "needed"
+    assert desk.call("setWidget", "machine", "keep") is True
+    assert desk.sent[-1] == {"type": "desk", "op": "set", "widget": "machine", "state": "keep"}
+    assert desk.prop("hidden") == [] and desk.prop("kept") == []
+    desk.send(**your_desk(kept=["machine"]))
+    assert desk.call("setWidget", "machine", "needed") is True
+    assert desk.sent[-1] == {"type": "desk", "op": "set", "widget": "machine", "state": "needed"}
+    assert len(desk.sent) == len(hello) + 3
+
+
+def test_a_press_agentd_would_not_take_is_not_sent(desk):
+    desk.set("connected", True)
+    desk.send(**your_desk(kept=["machine"], hidden=["now"]))
+    hello = list(desk.sent)
+    refused = [("machine", "keep"),                         # what it already is: now, kept
+               ("now", "off"),                              # ... and put away
+               ("watching", "needed"),                      # ... and shown when needed
+               ("now", "keep"), ("watching", "keep"),       # a state it cannot take: no calm face
+               ("needs", "off"), ("needs", "keep"),         # Needs you cannot be put away
+               ("alive", "off"), ("away", "needed"),        # not on the card at all
+               ("nonsense", "off"), ("", "off"), (None, "off"),
+               ("machine", "toggle"), ("machine", ""), ("machine", None), ("machine", 5), ("machine", "OFF"),
+               ("machine", ["off"])]
+    for widget, state in refused:
+        assert desk.call("setWidget", widget, state) is False, (widget, state)
+    assert desk.sent == hello
+    # The same press goes once agentd's answer makes it a change.
+    assert desk.call("setWidget", "machine", "off") is True and desk.call("setWidget", "now", "needed") is True
+    assert desk.sent[len(hello):] == [{"type": "desk", "op": "set", "widget": "machine", "state": "off"},
+                                      {"type": "desk", "op": "set", "widget": "now", "state": "needed"}]
+
+
+def test_nothing_is_asked_while_agentd_is_away(desk):
+    desk.send(**your_desk())
+    assert desk.call("setWidget", "machine", "keep") is False and desk.call("resetDesk") is False
+    assert desk.sent == []
+    desk.set("connected", True)
+    desk.call("lost")
+    assert desk.call("setWidget", "machine", "keep") is False and desk.call("resetDesk") is False
+    assert desk.sent == [{"type": "desk", "op": "get"}]      # only the hello of the one connection
+
+
+def test_reset_the_desk_asks_once_and_changes_nothing_itself(desk):
+    desk.set("connected", True)
+    desk.send(**your_desk(kept=["machine"], hidden=["now"], folded=True))
+    hello = list(desk.sent)
+    assert desk.call("resetDesk") is True
+    assert desk.sent == hello + [{"type": "desk", "op": "reset"}]
+    assert desk.prop("kept") == ["machine"] and desk.prop("hidden") == ["now"] and desk.prop("folded") is True
+
+
+def test_the_words_widgets_open_the_card_and_ask_for_the_keyboard_every_time(desk):
+    assert desk.win.property("widgetsAsked") == 0
+    desk.send(type="widgets", op="open")
+    assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 1
+    desk.send(type="widgets", op="open")                    # already up: the pill still takes the keyboard again
+    assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 2
+    desk.call("closeWidgets")
+    assert desk.prop("widgetsOpen") is False and desk.win.property("widgetsAsked") == 2
+    desk.call("openWidgets")                                # the shell's own: no one is asked for the keyboard
+    assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 2
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.sent == []   # (the hello is not a prompt)
+
+
+def test_only_open_opens_the_card_and_nothing_closes_it_from_agentd(desk):
+    odd = [{"type": "widgets"}, {"type": "widgets", "op": "close"}, {"type": "widgets", "op": None},
+           {"type": "widgets", "op": "OPEN"}, {"type": "widgets", "op": ["open"]}, {"type": "widgets", "open": True}]
+    for msg in odd:
+        desk.send(**msg)
+    assert desk.prop("widgetsOpen") is False and desk.win.property("widgetsAsked") == 0
+    desk.send(type="widgets", op="open")
+    for msg in odd:
+        desk.send(**msg)
+    assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 1
+    desk.send(**your_desk())                                # a desk message is not a reason to close it either
+    desk.send(type="machine", present=False)
+    assert desk.prop("widgetsOpen") is True
+
+
+def test_the_card_goes_with_the_socket_and_does_not_come_back_with_it(desk):
+    desk.set("connected", True)
+    desk.send(**your_desk())
+    desk.send(type="widgets", op="open")
+    assert desk.prop("widgetsOpen") is True
+    desk.call("lost")
+    assert desk.prop("widgetsOpen") is False and desk.prop("connected") is False
+    desk.set("connected", True)                             # agentd is back, the card is not
+    assert desk.prop("widgetsOpen") is False
+    desk.send(type="widgets", op="open")
+    desk.set("connected", False)                            # the property alone does the same
+    assert desk.prop("widgetsOpen") is False
+    desk.call("openWidgets")                                # and a lost() with nothing to flip still closes it
+    desk.call("lost")
+    assert desk.prop("widgetsOpen") is False
+
+
+def test_what_the_widgets_card_reads_waits_for_a_drop_with_the_rest_of_the_desk_message(desk):
+    a_full_desk(desk)
+    desk.send(**your_desk())
+    take(desk, "needs", 100, 900)
+    desk.send(**your_desk(kept=["machine"], hidden=["watching"], widgets=WIDGET_ROWS[:2]))
+    assert desk.prop("kept") == [] and desk.prop("hidden") == [] and desk.prop("widgetList") == WIDGET_ROWS
+    assert desk.call("stateOf", "machine") == "needed"          # the card is as the person last saw it
+    desk.call("dragCancel")
+    assert desk.prop("kept") == ["machine"] and desk.prop("hidden") == ["watching"]
+    assert desk.prop("widgetList") == WIDGET_ROWS[:2] and desk.call("stateOf", "machine") == "keep"
+    assert sent_ops(desk) == []
+    # A drop applies it first, then sends its own message; losing agentd mid-drag applies it too.
+    take(desk, "now", 960, 1050)
+    desk.send(**your_desk(kept=[], widgets=WIDGET_ROWS))
+    assert desk.prop("kept") == ["machine"]
+    desk.call("dragEnd", 960, 1050)
+    assert desk.prop("kept") == [] and desk.prop("widgetList") == WIDGET_ROWS
+    assert sent_ops(desk) == [{"type": "desk", "op": "fold", "widget": "now"}]
+    take(desk, "needs", 960, 1050)
+    desk.send(**your_desk(kept=["machine"], widgets=[]))
+    desk.call("lost")
+    assert desk.prop("dragging") is False and desk.prop("kept") == ["machine"] and desk.prop("widgetList") == []
+
+
+def test_the_card_is_asked_for_even_in_the_middle_of_a_drag(desk):
+    # It is the bar's card, not a rail's: nothing is rebuilt under the hand that holds a card.
+    a_full_desk(desk)
+    take(desk, "needs", 100, 900)
+    desk.send(type="widgets", op="open")
+    assert desk.prop("widgetsOpen") is True and desk.win.property("widgetsAsked") == 1
+    assert desk.prop("dragging") is True
+
+
+def test_the_snapshot_says_what_is_kept_and_whether_the_card_is_up(desk):
+    snap = desk.call("snapshot")
+    assert snap["kept"] == [] and snap["widgets"] == [] and snap["widgetsOpen"] is False
+    desk.send(**your_desk(kept=["machine"]))
+    desk.send(type="widgets", op="open")
+    snap = desk.call("snapshot")
+    assert snap["kept"] == ["machine"] and snap["widgets"] == WIDGET_ROWS and snap["widgetsOpen"] is True
+    assert snap["hidden"] == [] and snap["stripped"] == [] and snap["folded"] is False       # the rest as it was
+
+
+def test_keeping_the_machine_brings_no_card_until_the_machine_says_it_is_fine(desk):
+    desk.set("connected", True)
+    hello = list(desk.sent)
+    desk.send(**your_desk(kept=["machine"]))
+    assert desk.machine is None and not desk.prop("present")["machine"] and desk.faces["machine"] == "hidden"
+    assert "machine" not in desk.slots
+    desk.vitals(*calm(), calm=True, why="The machine is fine", strip={"text": "", "dot": ""})
+    assert desk.machine == {"title": "Machine", "why": "The machine is fine", "rows": [shown(r) for r in calm()]}
+    assert desk.prop("present")["machine"] and desk.faces["machine"] == "full"
+    assert desk.slots["machine"] == {"side": "right", "x": 1920 - 316, "y": 1000 - 214, "w": 300, "h": 214}
+    desk.pump(0.4)
+    card = desk.item("deskCard-machine")
+    assert desk.at(card) == (1920 - 316, 1000 - 214) and desk.shown("deskCard-machine")
+    assert desk.inside(card, "rowsWhy").property("text") == "The machine is fine"
+    by_place = sorted(desk.items("rowsRow"), key=lambda r: desk.at(r)[1])
+    assert [(r.property("key"), r.property("kind")) for r in by_place] == [
+        ("memory", "meter"), ("disk", "meter"), ("cpu", "meter"), ("net", "plain")]
+    assert [desk.inside(r, "rowsPercent").property("text") for r in by_place[:3]] == ["45%", "40%", "5%"]
+    assert desk.sent == hello and desk.prop("widgetsOpen") is False       # a kept Machine says nothing to agentd
+    desk.snap("machine-calm")
+    # It is a card like the others: a window folds it to its strip, and the strip says what it is.
+    desk.cover((1700, 800, 200, 100))
+    assert desk.faces["machine"] == "strip" and [s["text"] for s in desk.prop("rightStrips")] == ["machine"]
+    desk.cover()
+    # Put away wins, whatever the machine message goes on saying.
+    desk.send(**your_desk(hidden=["machine"]))
+    desk.vitals(*calm(1), calm=True, why="The machine is fine")
+    assert desk.call("stateOf", "machine") == "off" and not desk.prop("present")["machine"]
+    desk.send(**your_desk(kept=["machine"]))
+    assert desk.prop("present")["machine"] and desk.call("stateOf", "machine") == "keep"
+    # No socket, no card: it is agentd's, as every reading is.
+    desk.call("lost")
+    assert desk.machine is None and desk.prop("kept") == ["machine"]
+
+
+def test_a_kept_machine_takes_the_slot_a_raised_one_does(desk):
+    desk.vitals()
+    raised = desk.slots["machine"]
+    desk.vitals(*calm(), calm=True, why="The machine is fine")
+    assert desk.slots["machine"] == raised and desk.faces["machine"] == "full"
+    assert desk.call("heightOf", "machine") == 214 == raised["h"]
+
+
+def test_the_machine_goes_from_calm_to_a_line_crossed_and_back_in_place_and_without_motion(desk):
+    desk.vitals(*calm(), calm=True, why="The machine is fine")
+    desk.pump(0.4)
+    card = desk.item("deskCard-machine")
+    memory, disk = desk.card_row("memory"), desk.card_row("disk")
+    memory.setProperty("marker", 1)
+    washed = desk.items("rowsCard")[0]
+    changes = desk.win.property("machineChanges")
+
+    def still(kind, fraction, parts):
+        # Right after the message, not a moment later: nothing eases toward it.
+        assert desk.card_row("memory") is memory and desk.card_row("disk") is disk and memory.property("marker") == 1
+        assert desk.item("deskCard-machine") is card and card.property("opacity") == 1 and card.property("scale") == 1
+        assert desk.prop("present")["machine"] and desk.faces["machine"] == "full"
+        assert memory.property("kind") == kind
+        track = desk.inside(memory, "rowsMeter")
+        assert track.property("fillWidth") == pytest.approx(fraction * 272, abs=0.01)
+        assert [c for _, _, c in desk.parts(memory)] == parts
+        assert washed.property("washLevel") == 0
+        assert desk.warnings == []
+
+    still("meter", 0.45, [])
+    desk.vitals()                                                         # memory crosses its line
+    still("stack", 0.0, [THEME["accent"], THEME["info"], THEME["fg"]])
+    assert desk.inside(memory, "rowsPercent").property("color").name() == THEME["warn"]
+    assert desk.inside(card, "rowsWhy").property("text") == WHY
+    desk.vitals(*calm(), calm=True, why="The machine is fine")           # and comes back under it
+    still("meter", 0.45, [])
+    assert desk.inside(memory, "rowsPercent").property("color").name() == THEME["muted"]
+    assert desk.inside(card, "rowsWhy").property("text") == "The machine is fine"
+    assert desk.win.property("machineChanges") == changes + 2
+    # A calm machine's figures change every few seconds: the meters follow in place.
+    for second in range(1, 4):
+        desk.vitals(*calm(second), calm=True, why="The machine is fine")
+    still("meter", 0.48, [])
+    assert desk.inside(memory, "rowsMeta").property("text") == "7.5 of 16 GB"
+    assert desk.inside(desk.card_row("cpu"), "rowsPercent").property("text") == "8%"
+    assert desk.slots["machine"]["h"] == 214 and desk.warnings == []
+
+
+def test_the_new_messages_load_without_qml_warnings(desk):
+    desk.set("connected", True)
+    desk.send(**your_desk(kept=["machine"]))
+    desk.send(type="widgets", op="open")
+    desk.send(type="widgets", op="close")
+    desk.vitals(*calm(), calm=True, why="The machine is fine")
+    desk.call("setWidget", "machine", "off")
+    desk.call("resetDesk")
+    desk.send(**your_desk(kept=["nonsense", None], widgets=[None, 5, {"id": "now"}]))
+    desk.call("snapshot")
+    desk.call("lost")
+    desk.pump(0.3)
+    assert desk.warnings == []
+
+
+def test_what_the_real_desk_lists_and_keeps_is_what_the_shell_reads_and_a_press_is_what_it_answers(desk, home):
+    """Both ends of the Widgets card joined: the shell's press goes to the real Desk, whose answer is read back."""
+    from bombadil import desk as pydesk
+    py = pydesk.Desk()
+
+    def agentd():
+        m = sent_ops(desk)[-1]
+        ok, _ = py.apply(m["op"], m.get("widget"), state=m.get("state"))
+        assert ok
+        desk.send(**json.loads(json.dumps(py.snapshot())))
+
+    desk.set("connected", True)
+    desk.send(**json.loads(json.dumps(py.snapshot())))
+    listed = py.snapshot()["widgets"]
+    assert listed and desk.prop("widgetList") == listed                     # every row agentd lists is one the card draws
+    # Every state a row says it can take is one the real Desk takes, and the shell asks for no other.
+    for r in listed:
+        for state in r["can"]:
+            assert pydesk.Desk().apply("set", r["id"], state=state)[0], (r["id"], state)
+        for state in ("keep", "needed", "off"):
+            assert (desk.call("setWidget", r["id"], state) is True) == (
+                state in r["can"] and state != desk.call("stateOf", r["id"])), (r["id"], state)
+    assert desk.call("setWidget", "machine", "keep") is True
+    agentd()
+    assert desk.prop("kept") == ["machine"] and desk.call("stateOf", "machine") == "keep"
+    assert desk.call("setWidget", "machine", "off") is True
+    agentd()
+    assert desk.prop("kept") == [] and "machine" in desk.prop("hidden") and desk.call("stateOf", "machine") == "off"
+    assert desk.call("setWidget", "machine", "needed") is True
+    agentd()
+    assert desk.call("stateOf", "machine") == "needed" and "machine" not in desk.prop("hidden")
+    assert desk.call("setWidget", "needs", "off") is False                   # the card never asks, so nothing is refused
+    py.apply("keep", "machine")
+    py.apply("move", "now", "right", 0)
+    desk.send(**json.loads(json.dumps(py.snapshot())))
+    assert desk.prop("kept") == ["machine"] and desk.prop("rails")["now"] == "right"
+    assert desk.call("resetDesk") is True
+    agentd()
+    assert desk.prop("kept") == [] and desk.prop("rails")["now"] == "left" and desk.prop("hidden") == ["alive"]
+
+
 # -- Away: what happened while the person was gone --
 
 def test_an_away_message_puts_the_card_on_the_right_rail_with_its_rows(desk):
@@ -3233,7 +3609,7 @@ def test_a_button_does_what_it_says_and_then_the_card_is_seen(desk):
     assert desk.sent[-2:] == [{"type": "jobs", "op": "why", "id": "ab12"}, seen]
     assert desk.away is not None                              # agentd takes the card away, and says so
     # It never reaches the model: the pill heard nothing, and no turn began.
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_button_that_does_not_match_its_row_opens_nothing_and_still_means_seen(desk):
@@ -3276,7 +3652,7 @@ def test_a_tap_anywhere_on_the_card_is_the_person_having_seen_it(desk):
     assert desk.away is not None
     desk.send(type="away", since=0, count=0, why="", rows=[])
     assert desk.away is None
-    assert plain(desk.win.property("pillSent")) == [] and desk.prop("_phase") == "idle"
+    assert [m for m in plain(desk.win.property("pillSent")) if m["type"] != "bar"] == [] and desk.prop("_phase") == "idle"   # (the hello is not a prompt)
 
 
 def test_a_tap_on_another_cards_title_or_caption_leaves_away_alone(desk):

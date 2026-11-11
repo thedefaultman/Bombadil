@@ -43,8 +43,8 @@ APP_ONLY = {"draw", "tests", "code-picture"}
 MARKED = {"esc": ["Esc"], "whyhere": ["where did this come from?"], "why": ["why"], "undo": ["undo"]}
 KEYS = {"Esc", "Tab", "Enter", "Super"}
 # Gates whose code is not on main: a tip that needs one is shown nowhere yet, so what it says is not checked
-# against the launcher (piece 2 makes "widgets" a launcher word).
-NOT_ON_MAIN = {"sessions", "mail", "noticed", "keep"}
+# against the launcher.
+NOT_ON_MAIN = {"sessions", "mail", "noticed"}
 
 SAMPLE = Facts(ai="Claude", installed=True, app="Customer Dashboard", project="myapp", desk_seen=True, keep=True)
 THEIRS = SimpleNamespace(name="customer-dashboard", title="Customer Dashboard")
@@ -729,13 +729,15 @@ def test_read_facts_puts_the_machine_together(tmp_path):
     facts = read_facts(ai="Claude", installed=True, desk_seen=True, apps_dir=tmp_path / "Apps",
                        projects_dir=tmp_path / "Projects", has_module=lambda name: name == "bombadil.dev")
     assert facts == Facts(ai="Claude", installed=True, app="Tickets", project="myapp", sessions=True,
-                          desk_seen=True)
+                          desk_seen=True, keep=True)
     bare = read_facts(apps_dir=tmp_path / "x", projects_dir=tmp_path / "y", has_module=lambda n: False)
-    assert bare == Facts() and not bare.model
+    assert bare == Facts(keep=True) and not bare.model       # the desk keeps widgets whatever else is missing
     # Where the coding-sessions code is not on this machine, there is no module to find.
     assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path, has_module=lambda n: False).sessions is False
     # and where it is (it is, since the coding sessions merged), the fact is true with no argument at all.
     assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path).sessions is True
+    # The desk can keep a widget (piece 2 is on main), so the "keep" tip is backed with no argument at all.
+    assert read_facts(apps_dir=tmp_path, projects_dir=tmp_path).keep is True
 
 
 def test_the_apps_a_machine_has_are_read_the_way_the_launcher_reads_them(home):

@@ -11,9 +11,19 @@ heat), each of which takes a few samples over it to be crossed and more under a 
 a reading that wobbles around its line does not make the card flicker, and builds the one `machine`
 message the shell draws. agentd owns the loop: it calls `tick()` in a worker thread, waits
 `next_delay()`, and sends what `tick()` returns; nothing runs while no shell is connected.
+
+A Machine the person keeps on the desk (`keep()`) is up at rest too, in a calm shape: "The machine is fine",
+sampled every CALM_EVERY seconds like any calm machine, with its figures rounded (a meter in steps of five
+points, the processor's share in fifths, heat in fives, a rate to one figure and nothing under 10 kB/s) and held
+where they are until the reading is clearly in the next step, so a message goes out only when a figure the card
+shows has really moved, and with no memory by who holds it, so memory is one meter and not a stack. It is drawn
+once a second sample (a second after the first) has given it a processor share and rates, never half-known. Its
+samples are the cheap ones: the cgroup tree is walked only by the first and, with the lists of mounts and sensors,
+every SLOW_EVERY seconds. Once a line is crossed, or the card is asked for, it is the card it always was.
 """
 
 import json
+import math
 import os
 import re
 import threading
@@ -27,6 +37,14 @@ NEAR_EVERY = 2.0         # ...while a reading is near its line (the same cheap s
 FAST_EVERY = 1.0         # ...while the card is up, asked for, or a line is one sample from being crossed
 SLOW_EVERY = 30.0        # the list of mounts and of sensors, and the cgroup walk, when calm
 ASK_FOR = 30.0           # how long "how's the machine" keeps the card up
+CALM_STEP = 0.05         # a kept card at rest moves a meter in steps of five points...
+CALM_CPU_STEP = 0.20     # ...the processor's share, which jumps about even at rest, in fifths...
+CALM_DEGREES = 5         # ...and heat in fives; a figure moves only when the reading is...
+CALM_HOLD = 0.75         # ...this many steps from the one it shows, so a reading on the edge between two says nothing
+CALM_QUIET = 10_000      # a rate under this (10 kB/s) is "0 B/s": the chatter of an idle machine is not news
+CALM_RATE_HOLD = 1.5     # ...and a rate moves only when it is this many times more or less than the one it shows
+MIN_GAP = 0.5            # a wake (a bar came, the desk changed) never samples again within this: a rate over so
+                         # short a stretch is noise, and two samples a moment apart are not two in a row
 ENTER_SAMPLES = 3        # samples in a row over a line to cross it
 LEAVE_SAMPLES = 10       # ...and in a row under its lower mark to come back
 MIN_UP = 10.0            # seconds a line stays up once it crossed
@@ -513,18 +531,65 @@ def _digits(n: float, whole_from: float) -> str:
     return f"{n:.0f}" if n >= whole_from else f"{n:.1f}".removesuffix(".0")
 
 
-def size_text(used: float, total: float) -> str:
+def size_text(used: float, total: float, whole_from: float = 100) -> str:
     """"14.5 of 16 GB": both in the unit the total suits."""
     if total <= 0:
         return "0 B"
     k = _unit(total)[1]
-    return f"{_digits(used / 1000 ** k, 100)} of {_digits(total / 1000 ** k, 100)} {UNITS[k]}"
+    return f"{_digits(used / 1000 ** k, whole_from)} of {_digits(total / 1000 ** k, whole_from)} {UNITS[k]}"
 
 
 def rate_text(bytes_per_second: float) -> str:
     """"1.2 MB/s", "40 kB/s", "0 B/s"."""
     n, k = _unit(max(0.0, bytes_per_second))
     return f"{_digits(n, 10) if k else f'{n:.0f}'} {UNITS[k]}/s"
+
+
+def calm_rate(bytes_per_second: float, shown: float | None = None) -> float:
+    """A rate in bytes a second to one figure (2 MB/s, 40 kB/s), and nothing under CALM_QUIET. Given the rate the
+    card shows now, it stays there until the reading is clearly another (CALM_RATE_HOLD times more or less, or
+    quiet), so a rate that wobbles between two figures does not change the card at every sample."""
+    n = max(0.0, bytes_per_second)
+    if shown is not None:
+        if shown <= 0:
+            if n < CALM_QUIET:
+                return 0.0
+        elif n < CALM_QUIET * CALM_HOLD:
+            return 0.0
+        elif shown / CALM_RATE_HOLD <= n <= shown * CALM_RATE_HOLD:
+            return shown
+    if n < CALM_QUIET:
+        return 0.0
+    n, k = _unit(n)
+    step = 10 ** math.floor(math.log10(n))
+    return round(n / step) * step * 1000 ** k
+
+
+def _calm_rate_words(rate: float) -> str:
+    if rate <= 0:
+        return "0 B/s"
+    n, k = _unit(rate)
+    return f"{n:.0f} {UNITS[k]}/s"
+
+
+def calm_rate_text(bytes_per_second: float) -> str:
+    """"2 MB/s", "40 kB/s", "0 B/s": a rate to one figure, and nothing under 10 kB/s."""
+    return _calm_rate_words(calm_rate(bytes_per_second))
+
+
+def _calm(x: float, step: float = CALM_STEP, shown: float | None = None) -> float:
+    """A fraction held to 0..1 and rounded to the nearest `step`, or the figure the card shows now while the
+    reading is not yet CALM_HOLD steps away from it."""
+    x = min(1.0, max(0.0, x))
+    if shown is not None and abs(x - shown) <= step * CALM_HOLD:
+        return shown
+    return round(int(x / step + 0.5) * step, 2)
+
+
+def _calm_deg(c: float, shown: float | None = None) -> int:
+    if shown is not None and abs(c - shown) <= CALM_DEGREES * CALM_HOLD:
+        return int(shown)
+    return int(c / CALM_DEGREES + 0.5) * CALM_DEGREES
 
 
 def holders(memory: Memory, cgroups: Cgroups) -> tuple[int, int, int]:
@@ -584,15 +649,16 @@ class _Line:
         return value is not None and value >= self.enter - self.near
 
 
-def _strip_text(key: str, value: float, crossed: bool = True) -> str:
+def _strip_text(key: str, value: float, crossed: bool = True, calm: bool = False) -> str:
     if key == "heat":
-        return f"hot · {_deg(value)}°" if crossed else f"heat {_deg(value)}°"
-    return f"{key} {_pct(value)}%"
+        deg = _calm_deg(value) if calm else _deg(value)
+        return f"hot · {deg}°" if crossed else f"heat {deg}°"
+    return f"{key} {_pct(_calm(value) if calm else value)}%"
 
 
 def _absent() -> dict:
-    return {"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""},
-            "rows": []}
+    return {"type": "machine", "present": False, "asked": False, "calm": False, "why": "",
+            "strip": {"text": "", "dot": ""}, "rows": []}
 
 
 class Vitals:
@@ -610,18 +676,29 @@ class Vitals:
         self._lines = [_Line(*r) for r in RULES]
         self._reading: Reading | None = None
         self._asked_until = 0.0
+        self._kept = False                   # the person keeps Machine on the desk: up at rest, in a calm shape
         self._near = False
         self._sent: str | None = None
         self._generation = 0                 # reset() moves it, and a sample that began before is thrown away
         self._sampler_stale = False          # the sampler is told to forget before its next sample
+        self._sampled_at = 0.0               # when the last sample was taken
+        self._taken = 0                      # samples taken since the last reset: a rate needs two
+        self._shown: dict[str, float] = {}   # the figures a calm card shows now, which it holds against a wobble
 
     def reset(self) -> None:
         """Forget everything: no shell is listening, so nothing that was true is any more."""
         with self._lock:
             self._lines = [_Line(*r) for r in RULES]
             self._reading, self._asked_until, self._near, self._sent = None, 0.0, False, None
+            self._taken, self._shown = 0, {}
             self._generation += 1
             self._sampler_stale = True       # told at the next sample, which cannot be one in flight
+
+    def keep(self, kept: bool) -> None:
+        """The person keeps Machine on the desk, or stops. That is how the card is set up, not a reading, so
+        `reset()` leaves it alone. The next `tick()` says the card as it now is."""
+        with self._lock:
+            self._kept = bool(kept)
 
     def ask(self, seconds: float = ASK_FOR) -> None:
         """"How's the machine": the card is up for `seconds` even with no line crossed."""
@@ -631,19 +708,30 @@ class Vitals:
     def next_delay(self) -> float:
         with self._lock:
             now = self._clock()
-            return FAST_EVERY if self._fast(now) else NEAR_EVERY if self._near else CALM_EVERY
+            # A kept card's first sample has no processor share or rates yet (they need two reads): the second
+            # comes a second later, once, and the card waits for it (see _build).
+            if self._fast(now) or (self._kept and self._taken == 1):
+                return FAST_EVERY
+            return NEAR_EVERY if self._near else CALM_EVERY
 
     def message(self) -> dict:
         """The card as it is now, for a shell that has just connected."""
         with self._lock:
             return self._build(self._clock())
 
-    def tick(self) -> dict | None:
+    def tick(self, woken: bool = False) -> dict | None:
         """Take one sample. The message when it is not the one the last tick returned (the first after a
-        reset always is), else None: a calm machine says nothing."""
+        reset always is), else None: a calm machine says nothing. `woken` is a tick that came before its time
+        (a bar connected, the desk changed, the card was asked for): within MIN_GAP of the last sample it reads
+        nothing more and says the card as it now is."""
         with self._tick_lock:
             with self._lock:
                 now = self._clock()
+                if woken and self._reading is not None and now - self._sampled_at < MIN_GAP:
+                    # Not another read a moment after the last: its rates would cover next to nothing and its
+                    # line would count twice. What changed is how the card is set up (kept, asked), and that is
+                    # said from the last reading.
+                    return self._say(now)
                 # The first sample reads everything, so what a client connecting sees is not half-known.
                 fast = self._reading is None or self._fast(now)
                 generation = self._generation
@@ -657,13 +745,19 @@ class Vitals:
                 if generation != self._generation:
                     return None                       # reset() came while it was reading: that was another world
                 self._reading = reading
+                self._sampled_at = now
+                self._taken += 1
                 self._advance(reading, now)
-                message = self._build(now)
-                sent = json.dumps(message, sort_keys=True)
-                if sent == self._sent:
-                    return None
-                self._sent = sent
-                return message
+                return self._say(now)
+
+    def _say(self, now: float) -> dict | None:
+        """The card as it is, when it is not what the shell was last told."""
+        message = self._build(now)
+        sent = json.dumps(message, sort_keys=True)
+        if sent == self._sent:
+            return None
+        self._sent = sent
+        return message
 
     # -- the state --
 
@@ -693,26 +787,58 @@ class Vitals:
         r = self._reading
         ups = [line for line in self._lines if line.up]
         asked = now < self._asked_until
-        if r is None or not (ups or asked):
+        if r is None or not (ups or asked or self._kept):
+            return _absent()
+        if self._taken < 2 and not (ups or asked):
+            # A kept card's processor share and rates need two reads, so its first frame would say "0%" and dashes:
+            # it waits the second the second sample takes, and is never drawn half-known.
             return _absent()
         # A card that was asked for does not say the machine is fine while a reading is already over its line,
-        # even when that line has not held for its three samples yet.
-        shown = ups if ups or not asked else [line for line in self._lines if line.value >= line.enter]
-        rows = [row for row in (self._memory_row(r, shown), self._disk_row(r, shown)) if row]
-        rows += [self._cpu_row(r), self._net_row(r)]
-        return {"type": "machine", "present": True, "asked": not ups, "why": self._why(shown, r),
-                "strip": self._strip(shown, r), "rows": rows}
+        # even when that line has not held for its three samples yet. A card that is only kept waits for the
+        # line: a spike must not flicker it, and its meters say what they read in the meantime.
+        shown = ups or ([line for line in self._lines if line.value >= line.enter] if asked else [])
+        # A kept card with nothing to say and nobody asking is the calm one: it says little, and cheaply.
+        calm = not shown and not asked
+        figures = self._figures(r) if calm else None
+        if calm:
+            rows = [row for row in (self._calm_memory_row(r, figures), self._calm_disk_row(r, figures)) if row]
+            rows += [self._calm_cpu_row(r, figures), self._calm_net_row(r, figures)]
+        else:
+            rows = [row for row in (self._memory_row(r, shown), self._disk_row(r, shown)) if row]
+            rows += [self._cpu_row(r), self._net_row(r)]
+        return {"type": "machine", "present": True, "asked": asked and not ups, "calm": calm,
+                "why": self._why(shown, r), "strip": self._strip(shown, r, figures), "rows": rows}
 
-    def _strip(self, ups: list[_Line], r: Reading) -> dict:
+    def _figures(self, r: Reading) -> dict[str, float | None]:
+        """What a calm card says: every figure rounded to its step and held where it is until the reading is clearly
+        in the next one, so a reading that sits on the edge between two says nothing and the card is the same
+        sample after sample. The rows and the chip are all made from these, so they agree."""
+        shown, out = self._shown, {}
+        for key, x in self._values(r).items():
+            if x is None:
+                out[key] = None
+                continue
+            held = shown.get(key)
+            out[key] = shown[key] = _calm_deg(x, held) if key == "heat" else _calm(x, shown=held)
+        out["cpu"] = shown["cpu"] = _calm(r.cpu or 0.0, CALM_CPU_STEP, shown.get("cpu"))
+        for key, rate in zip(("down", "up"), r.net or (None, None), strict=True):
+            out[key] = None
+            if rate is not None:
+                out[key] = shown[key] = calm_rate(rate, shown.get(key))
+        return out
+
+    def _strip(self, ups: list[_Line], r: Reading, figures: dict | None = None) -> dict:
         if ups:
             # The dot is the card's worst, whichever line the words are about.
             red = any(line.key == "disk" and line.value >= DISK_RED for line in ups)
             return {"text": _strip_text(ups[0].key, ups[0].value), "dot": "red" if red else "amber"}
-        # Asked and nothing crossed: the reading nearest its line, and no dot, as nothing is wrong.
-        values = self._values(r)
+        # Asked or kept and nothing crossed: the reading nearest its line, and no dot, as nothing is wrong. A
+        # calm card picks and says it in the card's own held figures, so the chip does not change on a wobble.
+        values = {k: figures[k] for k in self._values(r)} if figures is not None else self._values(r)
         read = [line for line in self._lines if values[line.key] is not None]
         near = max(read, key=lambda line: values[line.key] / line.enter, default=None)
-        return {"text": _strip_text(near.key, values[near.key], crossed=False) if near else "machine", "dot": ""}
+        text = _strip_text(near.key, values[near.key], crossed=False, calm=figures is not None) if near else "machine"
+        return {"text": text, "dot": ""}
 
     @staticmethod
     def _why(ups: list[_Line], r: Reading) -> str:
@@ -747,6 +873,36 @@ class Vitals:
                 else "amber" if any(line.key == "disk" for line in ups) else "you")
         return {"key": "disk", "kind": "meter", "title": "Disk", "meter": _frac(r.disk.fraction),
                 "meterText": size_text(r.disk.used, r.disk.total), "tone": tone, "opens": "disk"}
+
+    @staticmethod
+    def _calm_memory_row(r: Reading, figures: dict) -> dict | None:
+        """One meter, not the stack of who holds it: that needs the walk of the memory groups, and a card at
+        rest has nothing to say about who."""
+        if r.memory is None:
+            return None
+        q = figures["memory"]
+        return {"key": "memory", "kind": "meter", "title": "Memory", "meter": q,
+                "meterText": size_text(q * r.memory.total, r.memory.total, 10), "tone": "you", "opens": ""}
+
+    @staticmethod
+    def _calm_disk_row(r: Reading, figures: dict) -> dict | None:
+        if r.disk is None:
+            return None
+        q = figures["disk"]
+        return {"key": "disk", "kind": "meter", "title": "Disk", "meter": q,
+                "meterText": size_text(q * r.disk.total, r.disk.total, 10), "tone": "you", "opens": "disk"}
+
+    @staticmethod
+    def _calm_cpu_row(r: Reading, figures: dict) -> dict:
+        busy = f"{figures['heat']}°" if figures["heat"] is not None else ""
+        return {"key": "cpu", "kind": "meter", "title": "Processor", "meter": figures["cpu"],
+                "meterText": busy, "tone": "you", "opens": ""}
+
+    @staticmethod
+    def _calm_net_row(r: Reading, figures: dict) -> dict:
+        down, up = (_calm_rate_words(figures[k]) if figures[k] is not None else "–" for k in ("down", "up"))
+        return {"key": "net", "kind": "plain", "title": "Network", "tone": "you", "opens": "",
+                "sub": f"↓ {down}   ↑ {up}"}
 
     @staticmethod
     def _cpu_row(r: Reading) -> dict:

@@ -5,6 +5,9 @@ the screen, and chips beside the pill when a card has no room. This page is how 
 extend it. Why it looks and behaves the way it does is in [`design/widgets-brief.md`](design/widgets-brief.md);
 read that first for the rules (a widget answers one question a passenger asks, the middle of the screen
 belongs to what the AI brings, a widget is present only with something to say, colour says who).
+What a person can set, and the Widgets card they set it on, is [Your desk](#your-desk-keep-when-needed-off);
+why it is built that way is in [`design/tips-and-desk-defaults-brief.md`](design/tips-and-desk-defaults-brief.md)
+("Shaping your desk", question 3b).
 
 ## The pieces
 
@@ -15,12 +18,13 @@ belongs to what the AI brings, a widget is present only with something to say, c
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
 | `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
 | `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Away, Machine; a row is a dot, a meter, a stacked meter or plain text). |
+| `shell/WidgetsCard.qml` | The card the word "widgets" opens above the pill, in the AI card's shape: one row per widget with its three-part control (Keep, When needed, Off), and "Reset the desk". It draws what `DeskState` says and changes nothing itself. |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
-| `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away or folded by hand, each widget's rail and place. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
+| `src/bombadil/desk.py` | What the desk remembers: folded or not, which widgets are put away, kept on the desk or folded by hand, each widget's rail and place, and which states each widget may take. Kept in `~/.local/state/bombadil/desk.toml`, outside the restore points, so an undo never moves the desk. |
 | `src/bombadil/jobs.py` | Watching's table of background jobs. |
 | `src/bombadil/away.py` | The Away card's rows: what the turn log and the coding sessions say happened since the person was last seen, in the order they would want it, and the one `away` message built from them. Pure Python; the log's path and the clock are parameters, so the tests hand it rows and a time. |
-| `src/bombadil/vitals.py` | The Machine card's readings: memory by who uses it, the disk, the processor and its heat, the network, the lines that raise the card and the sentence that says why. Pure Python on the standard library; every file it reads is a parameter, so the tests hand it text. |
+| `src/bombadil/vitals.py` | The Machine card's readings: memory by who uses it, the disk, the processor and its heat, the network, the lines that raise the card and the sentence that says why, and the calm shape of a Machine the person keeps. Pure Python on the standard library; every file it reads is a parameter, so the tests hand it text. |
 | `src/bombadil/agentd.py` | Sends the plan, the jobs table, the coding sessions and the desk's state to the shell, and takes the shell's requests back. |
 
 ```mermaid
@@ -61,10 +65,12 @@ drops the rest.
 | `{"type":"event","kind":"plan",...}` | agentd to shell | The whole step table of the running turn, stamped with the turn. Now draws it. A plan from another turn is dropped. |
 | `{"type":"jobs","jobs":[...]}` | agentd to shell | Watching's table, replaced whole each time. |
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
-| `{"type":"machine","present":...,"asked":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. See [the Machine card](#the-machine-card). |
+| `{"type":"machine","present":...,"asked":...,"calm":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. `calm: true` is a kept Machine at rest ("The machine is fine"); the shell draws it as it draws every Machine card. See [the Machine card](#the-machine-card). |
 | `{"type":"away","since":...,"count":...,"why":...,"rows":[...]}` | agentd to shell | The Away card, replaced whole. `rows: []` takes it away. See [the Away card](#the-away-card). |
-| `{"type":"desk","folded":...,"hidden":...,"stripped":...,"rails":...,"order":...}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand. Whatever it leaves out stays as it was. |
+| `{"type":"desk","folded":...,"hidden":...,"stripped":...,"kept":...,"rails":...,"order":...,"widgets":[...]}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand, `kept` the ones kept on the desk at rest, and `widgets` the rows of the Widgets card (`{id, title, question, can}`, where `can` lists the states the widget may take). Whatever it leaves out stays as it was. |
+| `{"type":"widgets","op":"open"}` | agentd to shell | The person typed "widgets" (or the agent asked): open the Widgets card and take the keyboard for it. Every time, even with the card up. There is no message to close it. |
 | `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
+| `{"type":"desk","op":"set","widget":...,"state":"keep"\|"needed"\|"off"}`, `{"type":"desk","op":"reset"}` | shell to agentd | A press on the Widgets card. Answered with the new `desk` state like any change, and with one sentence on the line above the pill (a `local` event, `phase: "done"`), because a press has no gesture to show what it did: "Machine stays on the desk.", or a refusal ("Needs you cannot be hidden."). |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
 | `{"type":"away","op":"get"\|"seen"}` | shell to agentd | `get` asks for the Away card again; `seen` says the person has looked at it (a tap on it), so it can go. Neither reaches the model. |
@@ -122,10 +128,142 @@ At 24 px the knock is a small tilt that moves the stone about one pixel at its c
 foot, and the glow is a faint halo of one to three pixels, so it is the amber colour that tells you
 first. If that proves too quiet on a real screen, the fix is in the kit's `Stone.qml`, not in the desk.
 
+## Your desk: keep, when needed, off
+
+The desk ships quiet: after boot it is the wallpaper and the pill, and a widget comes up only with
+something to say. A person can change that for each widget, with words or on the Widgets card, and the choice
+is kept in `desk.toml` and so survives every boot. A widget is in one of three states:
+
+| State | The card's name | What it means | In `desk.toml` |
+|---|---|---|---|
+| keep | Keep | On the desk at rest, after every boot. | `kept = ["machine"]` |
+| needed | When needed | The default: there only while it has something to say. | in neither list |
+| off | Off | Put away: not on the desk, and it does not raise itself either. | `hidden = [...]` |
+
+**Which widget can be which.** Only a widget with a calm face, one that has something true to show while
+nothing is happening, can be kept (`Widget.calm` in `desk.py`). Today that is Machine; Tips will be the second.
+Now and Watching have nothing to show at rest, so they offer *When needed* and *Off*. Needs you offers only
+*When needed*: it is the one place two sessions' requests can be answered together, so it cannot be put away.
+Away offers the same two, now that it has a face. Alive has none yet and is not listed (`Widget.listed`). `desk.can(widget)` says the states a
+widget may take, and agentd sends them as `can` on each row, so the shell draws what agentd allows and decides
+nothing. A widget is never both kept and put away: one press moves it from one to the other, and of the two a
+hand-edited `desk.toml` can say at once, *off* wins. A file from before keeping, with no `kept` line, keeps
+nothing.
+
+**Words.** All of them are launcher words (no model, offline), answered by `Desk.apply` with one sentence:
+
+| Typed | Answer | Desk |
+|---|---|---|
+| `keep machine`, `keep the machine`, `keep machine on the desk`, `keep machine on my desk` | "Machine stays on the desk." (again: "Machine is already kept on the desk."; a hand-folded card is unfolded: "Unfolded Machine.") | Machine kept, and brought back if it was put away |
+| `keep watching`, `keep now`, `keep needs you`, `keep away` | "Watching shows only while something counts." (and the like: each widget says when it does show; one that is put away says "Watching is put away. Say show watching to bring it back.") | nothing changes, nothing is saved |
+| `hide machine` while it is kept | "Machine is no longer kept. It still comes up when something needs a look." | back to *When needed* |
+| `hide machine` again | "Put Machine away." | *Off*; its warnings stop too |
+| `show machine` | "Here is the machine." (+ " It is back on the desk." if it was put away) | raises the card for 30 s, as before |
+| `widgets` (also `my widgets`, `show widgets`, `open the widgets`) | "Here are the widgets." | opens the Widgets card |
+| `keep alive` (no row on the card yet), any longer sentence, any question (`widgets?`) | the agent | the agent's `desk` tool, when the words asked for the desk. Alive ships put away, so it answers "Alive is put away. Say show alive to bring it back." until it is shown |
+
+The pill knows the words too: `launcher.entries()` marks each widget on the card with `keep`, so `keep mach` is
+completed with Tab and `keep machine` (or `... on the desk`) shows the same `↵ Machine` hint as `show machine`; an
+app's name after `keep` is not a launcher word, and a question (`keep machine?`) is for the agent.
+
+"Hide" on a kept widget is a step, not a leap, so one word cannot silence a warning by accident. The card's
+*Off* is the leap, and a press on a part always means exactly that part: `Desk.apply("set", widget, state=...)`
+sets the state at once whatever it was ("Put Machine away.", "Put Machine on the desk.", "Machine stays on the
+desk.", or, from kept to *When needed*, "Machine is no longer kept. ..."). The same op is on the agent's `desk`
+tool, with `keep`, `reset` and `widgets`; the gate is unchanged: it works only in a turn whose own words asked for
+the desk, and "keep", "widgets" and "desk" already count. The line above the pill while the tool runs says what it
+does ("Keeping Machine on the desk", "Putting Machine away", "Putting the desk back as it came", "Opening the
+widgets"), like the other ops, and claims no change: a call can be refused.
+
+**The Widgets card.** The word `widgets` makes agentd send `{"type":"widgets","op":"open"}`, and a card rises
+above the pill in the AI card's shape: 360 px wide, the same glass, radius and border, a title with a small ×,
+then one row for each widget in `desk.widgets`.
+
+```text
+Widgets                                      ×
+Machine                      Keep · When needed · Off
+Is the machine in trouble?
+Now                                  When needed · Off   (Keep drawn faint)
+What is it doing, and why?
+...
+Reset the desk
+```
+
+The name is on the first line with the three-part control at the right; the question the widget answers (the
+widgets brief's own) is on the second, at the row's full width, cut with an ellipsis rather than overflowing.
+The part the desk says the widget is in is raised; the others are muted and brighten on hover. A part the widget
+cannot take is drawn faint, with no hover and no press. Nothing on the card is orange: orange is the machine
+acting, and this is the person choosing. "Reset the desk" puts every widget, rail and place back as the desk ships
+("The desk is back as it came."; the screen the desk lives on stays; on a desk already as it came, "The desk is
+already as it came." and nothing is saved).
+
+```mermaid
+sequenceDiagram
+    participant P as pill (words)
+    participant A as agentd / desk.py
+    participant D as DeskState
+    participant W as WidgetsCard
+    P->>A: "widgets"
+    A-->>D: {"type":"widgets","op":"open"}
+    D->>D: openWidgets(), widgetsRequested()
+    Note over D,P: shell.qml takes the keyboard for the pill
+    W->>D: press "Keep" on Machine: setWidget("machine", "keep")
+    D->>A: {"type":"desk","op":"set","widget":"machine","state":"keep"}
+    A->>A: Desk.apply: kept = [machine], saved
+    A-->>D: {"type":"desk","kept":["machine"],...} and the line "Machine stays on the desk."
+    D-->>W: stateOf("machine") is "keep", so Keep is raised
+```
+
+- **A press never draws its own answer.** `DeskState.setWidget(id, state)` sends only what agentd would take
+  (connected, the widget on the card, a state its `can` lists, and not the state it is already in), and returns
+  whether it did. The raised part, `kept` and `hidden` change only when agentd's `desk` message says so. A press
+  remembers the widget and state under the finger at the press, so a message that reorders the rows before the
+  release cannot send the press for another row.
+- **The card is open only while the pill holds the keyboard.** One rule in `shell.qml` does most of it: when
+  `summonedOn` becomes empty the card closes. So Esc (the pill's Esc handler closes the card first, before it stops a running turn: a launcher word does not wait
+  for a turn, so the card can be up while one runs, and the first Esc closes it and a second stops the turn; closing
+  gives the keyboard back), a click
+  elsewhere (`HyprlandFocusGrab`), a tap on Super, Enter and the drawer taking the keyboard all close it. Typing
+  closes it, as it puts the AI card away; opening the AI card closes it, so only one card sits over the pill;
+  the small × closes it; and a dropped socket closes it, because a press would reach nobody. Each `widgets/open`
+  takes the keyboard again (`takeKeyboard()`, which unlike a tap on Super never toggles it away) on the screen
+  that was typed into, else the focused monitor's (the same `focusedScreenName()` the card with a box uses). The pill's idle
+  timer, which gives the keyboard back after twenty seconds, is held while the card is shown: it is read at the
+  person's pace.
+- **It sits in the bar's window,** between the AI card and the pill, in the window's input mask like the AI card.
+  It touches nothing in the rails, but a desk message that arrives during a drag is held until the drag ends,
+  like every other (the card follows the desk's state and never the press, so it shows the change a moment late
+  and never the wrong one). While it is up the picture over the pill steps aside (`suppressed`, as under a
+  full-screen window; it is still there after): the picture may take 60% of the screen and the two together would
+  push its top off a small one.
+- **What the agent is told.** A press is a change at the desk like a drag: the next turn's prompt says "at the
+  desk: Machine stays on the desk." and the history keeps the line.
+
+**What a kept Machine is.** The Machine card, with its message arriving at rest. The shell has no new behaviour
+for it: `present` and the rows decide, so a kept Machine takes the right rail's slot, folds to its strip under a
+window and goes under a full-screen window like every card. agentd keeps `Vitals` in step with the desk
+(`vitals.keep(...)` in `_vitals_kick`, which runs when a bar connects and whenever the desk changes), so a kept
+Machine is sampled from the first bar after boot. See [A kept Machine at rest](#a-kept-machine-at-rest).
+
+**Known limits.**
+
+- *What only Hyprland shows was not run.* The click-elsewhere close (`HyprlandFocusGrab.onCleared` calls
+  `release()`), and a typed "widgets" giving the keyboard back before agentd takes it again, are Hyprland's.
+  The offscreen tests cannot load `shell.qml` (Quickshell is not installed there), so its wiring is checked as
+  text, the way `tests/test_rest_qml.py` checks the rest wiring; the headless sway run checks the words, the
+  card opening, Esc and the line.
+- *A double press sends two messages.* agentd answers the second as "already", and what is raised follows its
+  answer.
+- *Its motion is the design's tokens,* as the AI card's: it fades (`Theme.normal`) and its height eases (`Theme.fast`), so under reduced motion ([MOTION.md](MOTION.md)) it appears and goes at once.
+- *Only Machine can be kept today.* Tips will make it two: its widget is declared with `calm=True` and a
+  `quiet` and `then` sentence, and its row appears on the card by itself.
+- *There is no word for "reset the desk".* It is the card's footer, and the agent's `reset` op.
+
 ## The Machine card
 
 The Machine card answers "is the machine all right?" and appears only when it is not: when a line is
-crossed, or when the person asks ("show machine", "how's the machine"). It says in one sentence why it is
+crossed, or when the person asks ("show machine", "how's the machine"), or, for a Machine the person keeps,
+always ([a kept Machine at rest](#a-kept-machine-at-rest)). It says in one sentence why it is
 there, stacks memory by who is using it, and says the disk, the processor and its heat, and the network.
 When every reading is back under its line it leaves on its own. `vitals.py` takes the readings and decides;
 the shell draws what the one `machine` message says and knows none of the numbers.
@@ -166,7 +304,9 @@ used memory or more. Each unit's memory is its cgroup's `memory.current` less th
 dropped. Where the cgroup tree is not readable the stack shows one part, *you*, and the sentence leaves out
 the "who".
 
-**Cost.** Nothing runs while no shell is connected or while Machine is put away. A calm sample is a handful of
+**Cost.** Nothing runs while no shell is connected or while Machine is put away. Otherwise a machine is sampled
+at rest too, in the cheapest way, because a line can be crossed while no card is up; keeping Machine changes what
+that sample shows, not how often it is taken (see below). A calm sample is a handful of
 small reads: `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`, the thermal files, how full `/` and `/home` are
 (one `statvfs` each, so a line that counts samples counts readings), and the sessions' slice, re-read from
 where the last walk found it. The list of mounts, the list of sensors and the walk of the cgroup tree (at most
@@ -178,7 +318,13 @@ the thermal zones and the processor's own chips (`coretemp`, `k10temp`, ...), an
 when neither has anything to say. `agentd` runs each sample in a worker thread and Vitals holds its lock
 only to read or change its state, never across a read, so a bar connecting during a slow sample is
 answered at once. `BOMBADIL_VITALS=0` turns the loop off (the tests set it). The message is sent only
-when it differs from the last, and its numbers are rounded for that, so a calm machine sends nothing.
+when it differs from the last. An unkept calm machine has no card, so it sends nothing; the figures of a kept
+one are rounded and held for that (below).
+
+A bar that connects, or a desk change, wakes the loop for an immediate sample. A wake within half a second
+of the last sample (`MIN_GAP`) reads nothing more: a rate over so short a stretch is noise, and a burst of
+short-lived connections would count as samples in a row over a line. It says the card as it now is, from the
+last reading.
 
 **Asking.** `show machine`, or the whole sentence "how's the machine" (also "how is my computer"), raises
 the card for 30 seconds even when nothing is wrong, answers "Here is the machine." (adding "It is back on
@@ -186,6 +332,43 @@ the desk." when Machine had been put away, which asking undoes), and sends it wi
 sentence on the card is "The machine is fine" and the chip the reading nearest its line (`heat 52°`,
 `disk 36%`), or, when a reading is already over its line, what a raised card would say. The agent's `desk` tool does the same when the person asked for the desk in that turn. A longer
 question about the machine goes to the agent as before.
+
+### A kept Machine at rest
+
+A person who keeps Machine (`keep machine`, or *Keep* on the Widgets card) has the card on the desk after every
+boot, in a shape that costs little and says little. agentd tells `Vitals` (`Vitals.keep(True)`), which is set up
+by the person's choice, not a reading, so `reset()` leaves it alone. Until a line is crossed or the card is asked
+for, the one message is the *calm* one (`"calm": true`):
+
+- *Words:* "The machine is fine", the chip the reading nearest its line (`heat 60°`), no dot.
+- *Rows:* Memory as one meter (not the stack of who holds it: that needs the walk of the memory groups, and a
+  card at rest has nothing to say about who), Disk as a meter that still opens the disks picture, Processor as a
+  meter with the heat as its words, Network as plain text (`↓ 1 MB/s   ↑ 40 kB/s`). All in the "you" tone.
+- *Figures are rounded and held, so a calm machine says next to nothing:* a meter moves in steps of five points,
+  the processor's share in fifths, heat in fives, and a rate to one figure with nothing under 10 kB/s (the
+  chatter of an idle machine is not news). A figure moves only when the reading is clearly in the next step (three
+  quarters of a step away from the one it shows; a rate when it is more than half as much again as the one it shows,
+  or less than two thirds of it), so a reading on the edge between two says nothing, and the chip is made from the
+  same held figures. A message goes out only when a shown figure has moved, so an idle machine sends a handful in
+  an hour (`tests/test_vitals_calm.py` counts them over a wobbling one), and one whose figures really move says so:
+  that is a card telling the truth, not noise. The sizes are rounded with their meter ("6.4 of 16 GB").
+- *Cost:* the sample is the cheap one every 5 seconds (2 seconds when a reading is within five points of its
+  line). The cgroup tree is walked by the first sample, which reads everything, and again with the lists of mounts
+  and sensors every 30 seconds; the rest of the samples do not. A card at rest needs a processor share and
+  rates, which take two reads, so the second sample comes a second after the first, once, and the card waits for
+  it: it is drawn a second after the bar connects, with everything known, and never as "0%" and dashes.
+- *When a line is crossed* it becomes the card it always was: the sentence says why, memory is the stack, the
+  chip has its amber dot, sampling is every second. A kept card waits for the line to hold its three samples
+  (a spike does not flicker it; its meters say what they read meanwhile). Back under its lower mark for long
+  enough, it is calm again, in a message of its own.
+- *Asking* ("show machine") gives the live card for 30 seconds as before, and an asked card never says the
+  machine is fine over a line that is already crossed. When the 30 seconds pass, a kept Machine is calm again
+  and an unkept one leaves.
+- *No longer kept:* the next sample says `present: false` and the card goes, unless a line is crossed.
+
+The shell draws a calm model like any other: the meters have no animation, so a calm card whose figures are
+updated in place does not wash or move (`tests/test_desk_qml.py` proves the change from the calm kind to the
+raised kind and back leaves the card present and its rows updated in place).
 
 **Rows that open something.** A row with an `opens` value is a button. The Disk row asks `agentd` to draw the
 disks picture (the one "where did my disk go" draws), and nothing reaches the model.
@@ -212,7 +395,8 @@ the last changes nothing.
 - *The card's sentence is cut at the card's width,* so with several lines crossed only the first ones are
   readable; the chip and the meters carry the rest.
 - *The first frame after nobody was looking can be a second old.* After Machine is put away and asked for
-  again, the processor reads 0% and the network shows dashes until the next sample, a second later.
+  again, the processor reads 0% and the network shows dashes until the next sample, a second later. A kept card
+  at rest does not have this: it waits for its second sample.
 
 ## The Away card
 
@@ -359,9 +543,15 @@ the real shell, so the first limit below is about Hyprland alone:
 
 ## Adding a widget
 
-1. Add it to `WIDGETS` in `src/bombadil/desk.py` (id, title, launcher words, default rail) and to
-   `widgetIds` and the default `rails` and `order` in `DeskState.qml`, so the word "hide machine" and the
-   saved desk know it.
+1. Add it to `WIDGETS` in `src/bombadil/desk.py` (id, title, launcher words, default rail, and the one
+   `question` it answers, which is its row on the Widgets card) and to `widgetIds` and the default `rails` and
+   `order` in `DeskState.qml`, so the word "hide machine" and the saved desk know it. Say whether it can be
+   kept: `calm=True` only when it has something true to show with nothing happening, with `then` (what it does
+   once it is no longer kept: "Machine is no longer kept. It still comes up when something needs a look."), and
+   for one that cannot, `quiet` (when it does show: the answer to "keep watching"). A calm widget also needs a
+   feed that reads `desk.kept` and says its calm face at rest, as agentd does for Machine (`vitals.keep(...)` in
+   `_vitals_kick`); declaring `calm=True` alone puts "Keep" on its row and nothing on the desk. `listed=False`
+   keeps a widget with no face yet off the Widgets card. The card, the words and `can` follow from those fields.
 2. Give `DeskState` a model for it (`machineModel` and `awayModel` are the examples to copy) filled from one
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
 3. Say how tall its full face is in `heightOf`, and give it a strip in `_stripOf`.
@@ -376,6 +566,16 @@ the real shell, so the first limit below is about Hyprland alone:
 - `pytest tests/test_desk.py tests/test_desk_qml.py tests/test_desk_cards_qml.py`: the desk's state file
   and its words, and the whole desk drawn offscreen (set `BOMBADIL_SCREENS=<dir>` to save pictures).
   They need PySide6 and, in a bare container, the system libraries Qt loads (libEGL, libxkbcommon).
+- Your desk: `tests/test_desk_keep.py` (keep, set, reset, the file, a hand-edited `kept`, a random run of
+  every op that must leave a consistent desk that round-trips, and threads), `tests/test_launcher_keep.py` (the
+  words, and every sentence that must stay the agent's), `tests/test_agentd_desk_keep.py` (a press on the card
+  over the real socket, the word "widgets", the agent's tool and its gate, and a kept Machine sampled calm from
+  the first bar), `tests/test_vitals_calm.py` (the calm message: rounding, no message for a wobble, cost, a line
+  crossed and back, asked and kept), and, offscreen, `tests/test_widgets_card_qml.py` (the card drawn against a
+  real `DeskState`: the raised part, a faint part that does nothing, nothing orange, text that fits at 360 px,
+  closing) with the `DeskState` rules in `tests/test_desk_qml.py` (what a press sends and refuses, a dropped
+  socket, a desk message that leaves `kept` out, a kept Machine in its slot, calm to raised and back).
+  `BOMBADIL_SCREENS=<dir>` saves the card's pictures: Machine kept, needed, off, and long text.
 - `pytest tests/test_away.py tests/test_agentd_away.py`: the Away card's rows and wording from rows of a log
   and a clock they are handed, and agentd's side of it (who is told, what puts it away).
 - `pytest tests/test_desk_drag_qml.py`: dragging, in the three windows (the left rail, the right one and
@@ -387,5 +587,8 @@ the real shell, so the first limit below is about Hyprland alone:
   dragging section starts `tests/desktop/pointer.py`: a virtual pointer (wlroots' protocol, spoken by hand so
   the image needs nothing more than Python) that takes `move X Y`, `press` and `release` on stdin and
   answers `ok` once the compositor has them.
+  The "your desk" section types `widgets`, `keep machine` and `hide machine` into the real pill and checks the
+  answers, `desk.toml`, the card opening, Esc closing it, and a calm Machine message drawn in the right rail.
 - Not covered anywhere but a real Hyprland session: the rails drawing under floating and special-workspace
-  windows, `dim_special` dimming them, and a window being dragged past a card.
+  windows, `dim_special` dimming them, a window being dragged past a card, and the Widgets card closing on a
+  click elsewhere (the focus grab).
