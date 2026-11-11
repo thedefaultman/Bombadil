@@ -20,7 +20,8 @@ Calling `create_app` again with the same title updates the same app.
 Some apps ship with the OS (`/usr/share/bombadil/share/apps/<name>/`, read-only). They run
 by name like yours (`bombadil-app run <name>`), keep their saved state in
 `~/.local/state/bombadil/apps/<name>/data/`, and are not listed among your apps. An app of
-your own with the same name takes its place.
+your own with the same name takes its place, except Mail and Tips, which nothing replaces:
+`create_app` refuses those two titles, so pick another name.
 
 ## Loading and hot reload
 
