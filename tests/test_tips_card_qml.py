@@ -270,9 +270,8 @@ def test_the_card_has_no_dots_no_timer_and_nothing_running_at_rest(make):
     assert not [it for it in c.all("", False) if "dot" in it.objectName().lower() or "page" in it.objectName().lower()]
     source = (SHELL / "TipsCard.qml").read_text()
     assert "Timer" not in source and "Infinite" not in source and "SequentialAnimation" not in source
-    # the scene is a still poster, never played: nothing in it runs either
-    for stage in c.all("stage"):
-        assert stage.parentItem() is not None
+    # the scene is a still poster, never played: it is drawn, and nothing in it runs
+    assert len(c.all("stage")) == 1
     assert running_things(c.card) == []
 
 
@@ -316,6 +315,29 @@ def test_the_arrows_and_the_x_fade_in_with_the_pointer_and_out_with_it(make):
     c.snap("tips-card-hover-1280x720")
     c.leave()
     assert controls.property("opacity") == 0 and not controls.isVisible()
+
+
+def test_a_press_on_a_tip_with_no_button_sends_nothing_and_a_press_on_one_that_has_gone_sends_nothing(make):
+    c = make()
+    c.forget()
+    c.desk.call("tipsTry", "make-an-app")
+    assert c.sent == [{"type": "summon", "text": "Make me a ticketing app", "tip": True, "id": "make-an-app"}]
+    c.show({"type": "tips", "present": True,
+            "card": {"id": "esc", "line": fx.ESC["line"], "words": "", "marks": fx.ESC["marks"],
+                     "why": "Start here · 3 of 6", "index": 3, "count": 6, "tip": fx.ESC}})
+    c.desk.pump(0.4)
+    c.forget()
+    c.desk.call("tipsTry", "esc")                           # its words only make sense mid-turn: no button, no summon
+    assert c.sent == []
+    c.turn(1)                                               # the card is on a tip that has a button again
+    c.desk.pump(0.4)
+    c.forget()
+    on = c.desk.prop("tipsModel")["id"]
+    assert on != "make-an-app" and c.desk.prop("tipsModel")["words"]
+    c.desk.call("tipsTry", "make-an-app")                   # a press that was for another tip, which has gone
+    assert c.sent == []
+    c.desk.call("tipsTry", on)                              # and the card's own tip still sends
+    assert [m["id"] for m in c.sent] == [on]
 
 
 def test_the_controls_send_the_turn_and_the_hide_and_nothing_else(make):
@@ -573,6 +595,7 @@ def test_turning_a_tip_crossfades_the_picture_the_line_and_the_button(make):
     c.desk.pump(0.4)
     assert running_things(c.desk.win) == []
     assert not a.isVisible() and b.isVisible() and b.property("opacity") == 1         # the old face is gone, not hidden under
+    assert len(c.all("stage", visible_only=False)) == 1       # and its poster is not built: a face that is away costs nothing
     assert c.inside(b, "tipsLine").property("text") == "Ask for a picture, not a paragraph."
     assert c.inside(b, "tipsButtonText").property("text") == "How am I connected?"
     # the title is the same card throughout, and a turn back crosses over the other way
@@ -581,6 +604,16 @@ def test_turning_a_tip_crossfades_the_picture_the_line_and_the_button(make):
     assert c.desk.item("tipsFaceA").isVisible() and not c.desk.item("tipsFaceB").isVisible()
     assert c.text("tipsLine") == "Say what you need. It gets made."
     assert c.card.height() == 290
+
+
+def test_a_card_agentd_takes_away_folds_with_what_it_last_said_and_does_not_empty_first(make):
+    c = make()
+    started = time.monotonic()
+    c.show({"type": "tips", "present": False, "card": None})                          # (send pumps 50 ms)
+    assert c.desk.faces["tips"] == "hidden" and c.desk.prop("tipsModel") is None
+    if early(started, 0.1):                                                           # the desk's fold takes 150 ms
+        assert c.text("tipsLine") == "Say what you need. It gets made." and c.text("tipsWhy") == "Start here · 1 of 6"
+        assert c.text("tipsButtonText") == "Make me a ticketing app"
 
 
 def test_the_same_tip_saying_something_new_changes_in_place_without_a_crossfade(make):
@@ -879,6 +912,21 @@ def test_a_kept_card_waits_for_the_answer_to_keep_tips_to_fade(make):
     assert c.desk.faces["tips"] == "hidden"
     c.desk.pill_call("dismiss")
     assert c.desk.pill.property("mode") == "idle" and c.desk.faces["tips"] == "full"
+
+
+def test_a_card_of_the_first_minutes_holds_the_tips_card_back_and_it_comes_when_that_card_is_gone(make):
+    """`DeskState.cardsUp` is the hook for the recovery key's card, which is not built: whoever builds it binds the
+    property to "it is on screen", and Tips stays under it as it does under the persona card."""
+    c = make(up=False)
+    c.desk.send(type="status", busy=False, provider="claude", queue=[])
+    setup(c, "ready")
+    c.desk.set("cardsUp", True)
+    c.show()
+    assert c.desk.prop("tipsModel") is not None and c.desk.faces["tips"] == "hidden"
+    c.desk.set("cardsUp", False)
+    assert c.desk.faces["tips"] == "full"
+    c.desk.set("cardsUp", True)                               # once it is up, another card does not take it away
+    assert c.desk.faces["tips"] == "full"
 
 
 def test_a_persona_card_holds_back_the_card_kept_or_not_and_the_card_comes_when_it_is_answered(make):
