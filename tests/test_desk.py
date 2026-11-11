@@ -606,8 +606,8 @@ def test_a_kept_tips_survives_a_restart_and_the_install_and_the_desk_reset_forge
 
 def test_keep_tips_is_a_launcher_word_and_show_tips_and_open_tips_are_the_apps(home):
     """The words: "keep tips" (and "... on the desk") keep it; "hide tips" is the two steps; "show tips" and "open
-    tips" open the Tips app (its own words, TIPS_COMMANDS of the app's piece), never the desk's, so the card comes
-    back by "keep tips" or the Widgets card and not by a word that means the app."""
+    tips" open the Tips app (its own words, TIPS_COMMANDS), never the desk's, so the card comes back by "keep tips"
+    or the Widgets card and not by a word that means the app."""
     from bombadil import launcher
     keep = launcher.Action("widget", "tips", "keep", "Tips")
     for words in ("keep tips", "Keep Tips", "keep the tips", "keep tips on the desk", "keep tips on my desk"):
@@ -615,9 +615,9 @@ def test_keep_tips_is_a_launcher_word_and_show_tips_and_open_tips_are_the_apps(h
     # a longer sentence or a question is the agent's, as it is for every widget
     for words in ("keep tips?", "keep tips coming", "keep tips for git", "keep tips on the left", "keep my tips"):
         assert launcher.match(words, []) is None, words
-    for words in ("show tips", "open tips", "bring up tips"):
-        action = launcher.match(words, [])
-        assert action is None or action.kind != "widget", words
+    for words in ("show tips", "open tips"):
+        assert launcher.match(words, []).kind == "tips", words       # the app's
+    assert launcher.match("bring up tips", []) is None
     lx = launcher.Launcher(desk=fresh(home))
     assert lx.run(launcher.match("keep tips", [])) == (True, "Tips stays on the desk.")
     assert lx.run(launcher.match("keep tips on the desk", [])) == (True, "Tips is already kept on the desk.")
@@ -631,20 +631,22 @@ def test_show_tips_is_not_a_desk_word(home):
     """"show tips" opens the Tips app (the app's own words); the desk's launcher never answers it, so a person
     who put the card away is not told "Put Tips on the desk." by a word that means the app."""
     from bombadil import launcher
-    for words in ("show tips", "open tips", "bring up tips", "Show Tips"):
-        action = launcher.match(words, [])
-        assert action is None or action.kind != "widget", words
+    for words in ("show tips", "open tips", "Show Tips"):
+        assert launcher.match(words, []).kind == "tips", words
+    assert launcher.match("bring up tips", []) is None            # the desk does not answer an open verb for Tips
     # the other widgets keep their verbs
     assert launcher.match("show machine") == launcher.Action("widget", "machine", "open", "Machine")
 
 
-def test_the_entries_tell_the_pill_that_show_tips_is_not_the_desks_word_until_the_app_answers_it(home):
+def test_the_pill_hints_show_tips_since_the_app_answers_it_and_is_told_otherwise_when_nothing_does(home, monkeypatch):
     from bombadil import launcher
     widgets = {e["name"]: e for e in launcher.entries([]) if e["kind"] == "widget"}
-    if launcher.match("show tips", []) is None:        # nothing answers it: the pill must not hint "Tips" for it
-        assert widgets["tips"]["open"] is False
-    else:                                              # the Tips app's words answer it, so the hint is true
-        assert "open" not in widgets["tips"]
+    assert "open" not in widgets["tips"]               # the Tips app's words answer it, so the hint is true
+    assert not [name for name, e in widgets.items() if "open" in e]
+    # were nothing to answer it, the pill must not hint "Tips" for "show tips" as it does for "show machine"
+    monkeypatch.setattr(launcher, "TIPS_COMMANDS", {})
+    widgets = {e["name"]: e for e in launcher.entries([]) if e["kind"] == "widget"}
+    assert widgets["tips"]["open"] is False
     assert not [name for name, e in widgets.items() if name != "tips" and "open" in e]
 
 

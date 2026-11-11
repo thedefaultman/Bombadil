@@ -75,8 +75,9 @@ BRAIN_COMMANDS = {
 }
 # The Tips app (a kit app that ships with Bombadil, docs/TIPS.md): what to ask, shown in action. Checked after
 # the core commands and before app names and the desk's widget words, so "show tips" opens the app whatever an
-# app of yours is called and whatever widget Tips becomes on the desk. Only these whole sentences: "help me write
-# a poem" and "what can you do about my disk" are for the agent.
+# app of yours is called and although Tips is also a widget on the desk (APP_WIDGETS below keeps the desk out of
+# its open words). Only these whole sentences: "help me write a poem" and "what can you do about my disk" are for
+# the agent.
 TIPS_COMMANDS = {
     "tips": ["tips", "the tips", "open tips", "show tips", "open the tips", "show the tips", "what can you do",
              "what can I ask", "help"],
@@ -164,10 +165,11 @@ HIDE_VERBS = ("hide", "put away")
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"),
                 (("keep",), "keep"))
 KEEP_TAILS = (" on the desk", " on my desk")
-# A widget whose name is also the Tips app's word: "show tips" and "open tips" open the app, which is not the desk's
-# to answer, so only "hide tips", "put tips away" and "keep tips" are desk words. What brings the card back is
-# "keep tips" (or a press on the Widgets card), never "show tips".
-APP_WIDGETS = {"tips"}
+# A widget whose name is also the Tips app's command ("tips" is both): its open words are the app's, so "tips",
+# "show tips" and "open tips" open the app (TIPS_COMMANDS, the one table of them) and the desk never answers an open
+# verb for it. Only "hide tips", "put tips away" and "keep tips" are desk words. Saying "tips" never brings a card
+# that was put away back: the card comes back by "keep tips" (or a press on the Widgets card).
+APP_WIDGETS = {w for w in WIDGETS if w in TIPS_COMMANDS}
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",

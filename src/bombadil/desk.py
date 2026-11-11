@@ -76,7 +76,10 @@ OPT_IN = ("alive",)
 # brings the card up even when nothing is wrong ("how's the machine": for a while; "show away": until it is
 # seen, with "nothing happened" when that is so). The sentence is the answer.
 ASKABLE = {"machine": "Here is the machine.", "away": "Here is what happened while you were away."}
-# What putting a widget away adds to its sentence, when the person would not otherwise know the way back.
+# What putting a widget away adds to its sentence, when the person would not otherwise know the way back. For Tips the
+# word is the Tips app's (launcher.TIPS_COMMANDS): "tips" opens the app, which lists every tip, so "see them again" is
+# true of the tips. It does not bring a put-away card back, nor undo "no longer kept" (`then` above says the same of
+# the app): the card comes back by "keep tips" or the Widgets card.
 HIDE_NOTES = {"tips": " Say tips to see them again."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.

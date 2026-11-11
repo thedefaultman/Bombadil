@@ -8,7 +8,7 @@ the table of tips, what agentd knows about them, what counts as tried, and the m
 fed by. The two things a person sees have their own sections at the end of this page:
 
 - [the **Tips app**](#the-tips-app) (the window where each tip plays), and
-- the **Tips card** on the desk (its piece's section).
+- [the **Tips card**](#the-tips-card-on-the-desk) on the desk (the still card of a new person's first week).
 
 The scenes a tip plays are drawn by `share/qml/Bombadil/TipScene.qml`, and every row of the table ships with its
 scene; how to write the beats of a tip, the whole vocabulary, the twenty scenes and the test that fails when a
@@ -36,7 +36,7 @@ scene is not true are in [`TIP-SCENES.md`](TIP-SCENES.md).
 | `src/bombadil/paths.py` | `tips_file()` (`~/.local/state/bombadil/tips.json`) and `tips_table()` (`share/tips/tips.toml` beside the package). |
 | `iso/airootfs/usr/local/bin/bombadil-install` | Copies `tips.json` and `desk.toml` to the installed disk with the sign-in, so the first week does not begin again after an install. |
 | `share/apps/tips/` | The Tips app: a built-in kit app, the window where each tip plays. Its own section is below. |
-| `src/bombadil/launcher.py` | `TIPS_COMMANDS`: the words that open the app. |
+| `src/bombadil/launcher.py` | `TIPS_COMMANDS`: the words that open the app, and `APP_WIDGETS`, made from it: the desk widgets whose open words are the app's ([one word, two owners](#a-kept-tips-card)). |
 | `src/bombadil/appkit/native/agent.py` | `Agent.draft(text)`: the app's button. |
 | `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_iso_profile.py` | The table, the gates and the card, and the twenty scenes drawn; agentd's side; the installer's copy. |
 | `tests/tip_truth.py`, `tests/test_tip_truth.py` | The sentences the real code says, made by calling it, and every string of every scene held to them ([`TIP-SCENES.md`](TIP-SCENES.md#the-truth-test)). |
@@ -430,9 +430,9 @@ machine is not woken for as long as the window is kept. Two things come from it:
 "open the tips", "show the tips", "what can you do", "what can I ask" and "help" (whole sentences only: "help me
 write a poem" and "what can you do about my disk" are for the agent). They are checked after the core commands and
 the Brain's words, and before app names and the desk's widget words, so an app called Help and a widget named
-"tips" never stand in for it. Nor can an app called Tips: the name is reserved like Mail's (`apps.RESERVED`), so
+"tips" never stand in for it (Tips is a widget on the desk too: see [one word, two owners](#a-kept-tips-card)). Nor can an app called Tips: the name is reserved like Mail's (`apps.RESERVED`), so
 making one is refused and one dropped into `~/Apps/tips` never runs in place of the window (the agent never
-writes tips, and the word and the card must open Bombadil's own window). The Tab completion lists "tips". The action opens the app like the Brain's:
+writes tips, and the word and the card must open Bombadil's own window). The Tab completion lists "tips" (the command entry; the widget's entry is the desk's verbs). The action opens the app like the Brain's:
 bring it forward if it is open, show it from its drawer if it is not, start it if it is not running. It says
 "Opened Tips." and, when that fails, "Could not open Tips."
 
@@ -530,7 +530,7 @@ for the one that is still to come, the recovery key: nothing sets it yet, so the
 The desk's own rules apply as for any widget: a window over the slot folds the card to its `tips` strip (150 ms
 out, 400 ms back), a screen narrower than 1016 px keeps it as a strip, a full-screen window hides it, and the
 socket going takes it away (`lost()`; agentd sends the card again to a bar that connects). A press on the strip
-opens the Tips app on its first tip (`{"type": "tips", "op": "open", "id": ""}`). The pill narrows for the card
+opens the Tips app, on the tip it was on (`{"type": "tips", "op": "open", "id": ""}`). The pill narrows for the card
 as for any full card, so the line above it never covers it.
 
 ### The card
@@ -566,8 +566,9 @@ as for any full card, so the line above it never covers it.
 | The person | The card asks | Then |
 |---|---|---|
 | presses the arrows, or turns the wheel | `{"type": "tips", "op": "turn", "dir": 1 or -1}` | agentd sends the card for the next tip; the shell crossfades to it. The shell never turns the card itself. |
-| presses the title, "All tips ›" | `{"type": "tips", "op": "open", "id": "<tip>", "play": false}` | the Tips app opens on that tip |
-| presses the picture | the same with `"play": true` | the app opens on that tip, playing |
+| presses the title, "All tips ›" | `{"type": "tips", "op": "open", "id": "<tip>", "play": false}` | agentd keeps the id as `open_on` and shows the Tips app (`Launcher.open_tips`: slid in from its drawer, or brought forward, quietly); the app reads `open_on`, shows that tip, plays it once and says `opened` |
+| presses the picture | the same with `"play": true` | the same. The app plays every tip it comes to on (one already in front is played again), so `play` is what the press meant and changes nothing in the app |
+| presses the strip | `{"type": "tips", "op": "open", "id": ""}` | the Tips app, on the tip it was on |
 | presses the x | `{"type": "desk", "op": "set", "widget": "tips", "state": "off"}` (what the Widgets card's Off sends: Off at once, kept or not) | agentd keeps it in `desk.toml`, says "Put Tips away. Say tips to see them again." on the line (a gesture is its own answer for other cards, but this one has no strip to bring it back), sends the desk and then `present: false` |
 | presses the button | `{"type": "summon", "text": "<words>", "tip": true, "id": "<tip>"}` | agentd remembers the words for that tip and tells every bar; see below |
 
@@ -588,18 +589,33 @@ can keep it, and its row on the Widgets card has all three parts. The way it was
 | `keep tips`, `keep the tips`, `keep tips on the desk`, `keep tips on my desk`; Keep on the Widgets card | "Tips stays on the desk." (again: "Tips is already kept on the desk."; a card that was put away is back) | kept |
 | `hide tips`, `put tips away`, while it is kept | "Tips is no longer kept. Say tips to open the app." | back to When needed: the card stays in the first week and goes after it |
 | `hide tips` again; the x on the card; Off on the Widgets card | "Put Tips away. Say tips to see them again." | Off |
-| `show tips`, `open tips`, `tips`, `help` | the Tips app's own words (the app's piece): it opens the app and does not bring the card back | nothing changes |
+| `tips`, `show tips`, `open tips`, `help` (the app's words, below) | "Opened Tips." and the Tips app opens | nothing changes: a card that was put away stays away, and a card that is no longer kept stays so |
 | `put tips on the left`, any longer sentence or question | the agent's `desk` tool, when the words asked for the desk. "tips" is a plain word, so after on, to, in or at the gate wants a place on the desk (the left, the right, the other rail, the card): "keep tips in mind" and "put tips in the README" are not the desk (`desk.py`'s `_DESK_ASK`) | |
 
-The card is brought back by "keep tips" or by the Widgets card (Keep, or When needed in the first week), and never
-by "show tips": that word means the app, so a person is not told the card is back when it is not. This is the
-brief's rule ("keep tips on the desk brings the card back for good"), and the launcher's: `launcher.match` answers
-`TIPS_COMMANDS` before the widget words, and `APP_WIDGETS` makes the same true before the app's piece has landed.
+**One word, two owners.** "tips" is the Tips app's word and the Tips widget's name, and the launcher gives each its
+own sentences, the app's first (`launcher.match` answers `TIPS_COMMANDS` before the widget words):
 
-The pill's hint and completion follow the launcher: the entry of a widget whose "show" and "open" words are the app's
-says `open: false` while nothing answers them (`launcher.entries`), and the pill then hints and completes `hide tips`
-and `keep tips` but not `show tips`, so "Enter opens Tips" is never promised over a sentence that goes to the agent.
-Once the app's words answer `show tips` the key is gone and the hint is true.
+| Said | Whose | What happens |
+|---|---|---|
+| `tips`, `the tips`, `open tips`, `show tips`, `open the tips`, `show the tips`, `what can you do`, `what can I ask`, `help` | the app's (`TIPS_COMMANDS`) | The Tips app opens. Nothing on the desk changes. |
+| `hide tips`, `put tips away`, `keep tips` (and the forms in the table above) | the desk's (`Desk.apply`) | The sentences above. |
+| `bring up tips`, `launch tips` and the like | nobody's | They go to the agent, as every longer sentence does. The desk never answers an open verb for Tips. |
+
+The two sentences the desk says about the app are true because of this split, and say exactly this. "Say tips to
+open the app." is the app's word, so it opens it. "Put Tips away. Say tips to see them again." says *them* of the
+tips, not of the card: the app lists every tip this machine can back and plays each, and that is where saying
+"tips" takes the person. The word never brings back a card that was put away, and never undoes "no longer kept"
+either: the card is brought back only by "keep tips" or by the Widgets card (Keep, or When needed in the first
+week), so a person who says "tips" is never left believing a card is back when it is not. That is the brief's rule
+("keep tips on the desk brings the card back for good"; "tips" opens the app), kept as little as possible: there is
+no second effect on the word. `APP_WIDGETS` in `launcher.py` is made from `TIPS_COMMANDS` (the widgets whose id is
+one of its keys), so the words that open the app and the verbs the desk keeps out of its words cannot disagree.
+
+The pill's hint and completion follow the launcher, as for every widget word. `launcher.entries` offers two
+entries named "tips": the widget (the pill takes it only after a verb: hide, keep, close, and open or show, which
+the app answers, so the hint "Enter opens Tips" is true) and the command (the bare word, which Tab
+completes). Were nothing to answer `show tips`, the widget's entry would say `open: false` and the pill would hint
+and complete `hide tips` and `keep tips` but not `show tips`; the entry carries the flag only then.
 `tests/test_pill_qml.py` holds the two to each other for every widget word.
 
 The x on the card is the leap, as Off is on the Widgets card: a person who presses an x wants the card gone, so a
@@ -666,7 +682,8 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/te
   turn or a line, folds to its strip, and the x puts it away at once. Set `BOMBADIL_SCREENS=<dir>` to save a
   picture of each.
 - `tests/test_desk.py` holds the widget's words, rail and sentences, kept and put away, and `keep tips` as a
-  launcher word; `tests/test_agentd_tips.py` agentd's `present` following the desk (kept after the first week, no
+  launcher word; `tests/test_launcher.py` the split of the word (the app's `tips`, `show tips` and `open tips`, the
+  desk's `hide tips`, `put tips away` and `keep tips`, and that saying `tips` changes nothing on the desk); `tests/test_agentd_tips.py` agentd's `present` following the desk (kept after the first week, no
   longer kept, the x, "keep" from away, a restart); `tests/test_widgets_card_qml.py` Tips's row on the Widgets card
   with its three parts; `tests/test_pill_qml.py` what the pill takes from a summon (`PillState.draftFor`: runs of presses over an
   empty pill, over words an earlier tip put there, over words the person typed, the ellipsis, the cursor) and, read
@@ -675,8 +692,10 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/te
   focus and cursor of a real field are not shown by a test.
 - `tests/desktop/driver.py`, section 32: agentd with Tips on in headless sway, the card on the rail, the arrows
   by a virtual pointer, the button (the summon, no turn), Enter (the turn and the tried tip), the card turning
-  12 s after, the x, and then the words "keep tips" (the sentence, `desk.toml`, the card back). Every other
-  section runs with `BOMBADIL_TIPS=0`.
+  12 s after, the x, the word "tips" (the app opens as a window of its own, as the drawers are Hyprland's, and
+  the card stays away), the words "keep tips" (the sentence, `desk.toml`, the card back), a press on the picture
+  (the app opens and its `opened` clears the request in `tips.json`), and "hide tips", which puts the desk back as
+  `idle.py` expects it. Every other section runs with `BOMBADIL_TIPS=0`.
 
 What no test shows is the card under Hyprland: how the rail draws it under floating and special-workspace windows,
 and the fold as a window is dragged past it (the same as every card, DESK.md). The poster's look at card density

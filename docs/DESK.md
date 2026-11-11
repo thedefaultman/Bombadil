@@ -166,7 +166,7 @@ nothing.
 | `hide machine` while it is kept | "Machine is no longer kept. It still comes up when something needs a look." | back to *When needed* |
 | `hide tips` while it is kept | "Tips is no longer kept. Say tips to open the app." | back to *When needed*: the card shows in the first week and goes after it |
 | `hide tips`, the x on the card | "Put Tips away. Say tips to see them again." (the x is one press, kept or not) | *Off* |
-| `show tips`, `open tips` | not the desk's: they open the Tips app (`APP_WIDGETS` in `launcher.py` keeps them out of the desk's words; the card comes back by `keep tips` or the Widgets card) | nothing changes |
+| `tips`, `show tips`, `open tips` | not the desk's: they open the Tips app (`TIPS_COMMANDS` in `launcher.py` answers them first, and `APP_WIDGETS`, made from it, keeps the desk out of the open verbs; the card comes back by `keep tips` or the Widgets card, never by these) | nothing changes |
 | `hide machine` again | "Put Machine away." | *Off*; its warnings stop too |
 | `show machine` | "Here is the machine." (+ " It is back on the desk." if it was put away) | raises the card for 30 s, as before |
 | `widgets` (also `my widgets`, `show widgets`, `open the widgets`) | "Here are the widgets." | opens the Widgets card |
@@ -570,7 +570,7 @@ the real shell, so the first limit below is about Hyprland alone:
    feed that reads `desk.kept` and says its calm face at rest, as agentd does for Machine (`vitals.keep(...)` in
    `_vitals_kick`) and for Tips (`Tips(kept=...)`, which also looks again when the desk changes); declaring
    `calm=True` alone puts "Keep" on its row and nothing on the desk. A widget whose word is also an app's ("tips")
-   keeps `show` and `open` out of the desk's words (`APP_WIDGETS` in `launcher.py`); its `hide` and `keep` stay. `listed=False`
+   keeps `show` and `open` out of the desk's words (`APP_WIDGETS` in `launcher.py`, made from the app's own table, `TIPS_COMMANDS`); its `hide` and `keep` stay. `listed=False`
    keeps a widget with no face yet off the Widgets card. The card, the words and `can` follow from those fields.
 2. Give `DeskState` a model for it (`machineModel` and `awayModel` are the examples to copy) filled from one
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
