@@ -5,17 +5,19 @@ The project's documents, next to its code.
 - `CHRONICLE.md`: who asked what, what was decided, what was built and merged, and what is open. Start here.
 - `ARCHITECTURE.md`: how the pieces of the first milestone fit together.
 - `dev-sessions.md`: coding sessions that outlive their window and come back by name, and the dots beside the pill: principles, UX, how it is built, how it is tested.
-- `SESSION-SERVICES.md`: how the session stays alive (the three user services, who starts them, restore
+- `SESSION-SERVICES.md`: how the session stays alive (the two user services, who starts them, restore
   points, the installer's kernel rule, models, updating a running system).
 - `VM-TESTING.md`: the whole-system smoke test in a VM, with a diagram, what it covers and its traps.
+- `VOICE.md`: the name card, the three voices, the welcome line and empty places: how it is built and how to extend it.
 - `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
-- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
+- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget, and Your desk (Keep, When needed and Off for each widget, the Widgets card, a kept Machine at rest).
 - `MOTION.md`: reduced motion: the one switch (`Theme.reducedMotion`, from `BOMBADIL_REDUCE_MOTION=1`), what every surface does under it, how to honour it in a new component, how to test it, and the guard that fails an animation that forgot it.
 - `TIPS.md`: Tips, what a new person can ask: the table of tips and its gates, what counts a tip as tried, `tips.json`, the card agentd tells the shell, the wire protocol, how to add a tip, and the Tips app (its window, words, how it reads the list and `tips.json`, `Agent.draft`, how it is tested). Has a marked place for the Tips card.
 - `TIP-SCENES.md`: how a tip is drawn: the storyboard of nine beats on a copy of the screen, the exact vocabulary, the timing, the card's poster and the app's stage, `Kit.TipScene` and `Kit.Stone`, and the truth rule that tags every string a scene shows.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
 - `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
 - `MAIL.md`: the contract the Mail view is built to: processes and diagrams, the wire protocol, the press, the agent's tools and what the image adds.
+- `CONNECT.md`: the contract messages and connections are built to: the connection service and its token store, Slack and the work tools, the browser service, proposals and the press, the card kinds, notifications in place of mako, and what the image adds.
 - `design/`: the design briefs. Every decision in them was confirmed by Daniel.
   - `foundation-choices.md`: base distro, compositor, agent runtime, app toolkit.
   - `ux-brief.md`: how Bombadil feels (the pill, the status line, undo).
@@ -29,9 +31,10 @@ The project's documents, next to its code.
   - `design-system.md`: the look written down: colour, type, shape, space, motion, icons and the pill's states.
   - `rust-question.md`: whether Bombadil should use Rust, with measurements.
   - `poor-man-switch-brief.md`: what Bombadil does when the AI runs out of plan or money: a resting state that keeps everything already made working, holds asks until the reset, finds things on the computer, and has a switch. Questions answered 1a 2a 3a.
-  - `tips-and-desk-defaults-brief.md`: what is on the desk after boot (nothing, on purpose), a still Tips card for a new user's first week that opens into a Tips app where each tip plays on a small copy of the screen, and Keep, When needed and Off for each widget. Four questions open. Its page, `pages/tips-and-your-desk.html`, plays the twenty seed tips.
+  - `tips-and-desk-defaults-brief.md`: what is on the desk after boot (nothing, on purpose), a still Tips card for a new user's first week that opens into a Tips app where each tip plays on a small copy of the screen, and Keep, When needed and Off for each widget. The owner answered 1a 2a 3b 4a (the recommendations); the build is in `TIPS.md`, `TIP-SCENES.md` and `MOTION.md`. Its page, `pages/tips-and-your-desk.html`, plays the twenty seed tips.
   - `boot-and-wallpaper.md`: every screen from power-on to the desk in the design system's colours: the quiet console, the wallpaper under the desk, and why the desk used to be black.
   - `mail-view.md`: Mail, every account in one list in Bombadil's own view, with Thunderbird unseen as the engine and the person's press on Send as the only way a mail leaves.
+  - `messages-and-connections.md`: messages and the work tools, one line and one card for what is for you, a reply or a ticket that waits for the person's press, and somewhere safe for the keys.
 - `design/pages/`: the published pages of those briefs as standalone HTML, with the drawn mock-ups.
   Open them in a browser. Fonts load from Google Fonts when you are online and fall back to system
   fonts without a connection. They are copies of what the pages showed on 2026-09-30.

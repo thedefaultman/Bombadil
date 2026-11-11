@@ -190,7 +190,7 @@ class Dev:
     def _load(self) -> None:
         try:
             data = json.loads(self.registry().read_text())
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):   # (a file nested past the parser's depth is one more bad file)
             data = {}
         now = self.clock()
         for d in data.get("sessions", []) if isinstance(data, dict) else []:

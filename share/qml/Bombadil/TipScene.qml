@@ -91,13 +91,13 @@ Item {
         w: 272, h: 153, radius: 8, pillH: 32, pillBottom: 6, pillSide: 24, stone: 16, small: true,
         text: 12, lineText: 12, title: 12, row: 12, caption: 12, rowH: 15, pad: 5, gap: 5, lineH: 22, cardW: 84,
         winW: 232, winH: 75, winTop: 6, winRadius: 6, slide: 10, picW: 236, boxH: 20, border: 1,
-        stripH: 18, keyH: 20, buttonW: 18, buttonH: 12, margin: 8, pillMin: 72
+        stripH: 18, keyH: 20, buttonW: 18, buttonH: 12, margin: 8, pillMin: 72, chipH: 18
     })
     readonly property var appM: ({
-        w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 64, stone: 24, small: false,
-        text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 168,
+        w: 576, h: 324, radius: 12, pillH: 52, pillBottom: 14, pillSide: 48, stone: 24, small: false,
+        text: 16, lineText: 15, title: 16, row: 14, caption: 12, rowH: 28, pad: 12, gap: 8, lineH: 36, cardW: 208,
         winW: 380, winH: 176, winTop: 14, winRadius: 12, slide: 28, picW: 440, boxH: 40, border: 1.5,
-        stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12, pillMin: 160
+        stripH: 28, keyH: 30, buttonW: 0, buttonH: 24, margin: 12, pillMin: 160, chipH: 26
     })
 
     implicitWidth: poster ? cardM.w : appM.w
@@ -209,10 +209,14 @@ Item {
         function at(list, i) { return list && i >= 0 && i < list.length ? list[i] : blank }
 
         readonly property real pillTop: m.h - m.pillBottom - m.pillH
-        readonly property real slotTop: pillTop - m.gap - m.lineH          // where a one-line line sits
+        // Waiting asks stand as chips just above the pill, under the line (shell/QueueChips.qml), and lift it.
+        // (Guarded on the data, not on `visible`: a seek back to the start clears the frame's line and queue before
+        // `visible` follows, and a binding that reads `.alpha` of null is a TypeError at run time.)
+        readonly property real queueLift: queueRow.q ? (m.chipH + m.gap) * queueRow.q.alpha : 0
+        readonly property real slotTop: pillTop - m.gap - m.lineH - queueLift   // where a one-line line sits
         // The rails and the picture rest on the line: a line of several lines grows upward from the pill and
         // lifts them as it arrives, so it never covers a card or the picture.
-        readonly property real lineLift: lineBox.visible ? (lineBox.height - m.lineH) * lineBox.ln.alpha : 0
+        readonly property real lineLift: lineBox.ln ? (lineBox.height - m.lineH) * lineBox.ln.alpha : 0
         readonly property real railBottom: slotTop - m.gap - lineLift
         // Folded, the strips stand beside the pill on the left and the pill is what they leave, with its
         // right edge where it was: the pill never runs under a strip, however many there are.
@@ -442,7 +446,7 @@ Item {
                     width: win.width * 0.5; height: st.m.small ? 18 : 30; radius: 6
                     color: Theme.panel
                     border.width: 1
-                    border.color: st.ink ? Theme.borderActive : Theme.accent
+                    border.color: Theme.borderActive         // waiting for a password; orange is the machine acting
                 }
             }
         }
@@ -710,6 +714,59 @@ Item {
             }
         }
 
+        // -- asks that wait, as grey chips under the line: the label (what they wait for), then the words --
+        Row {
+            id: queueRow
+            objectName: "queue"
+            readonly property var q: st.f.queue
+            readonly property int n: q ? q.asks.length : 0
+            visible: q !== null
+            opacity: q ? q.alpha : 0
+            spacing: 6
+            x: (st.m.w - width) / 2
+            y: st.pillTop - st.m.gap - st.m.chipH + (q ? (1 - q.alpha) * 4 : 0)
+            Repeater {
+                model: queueRow.n
+                delegate: Rectangle {
+                    id: qc
+                    required property int index
+                    readonly property string ask: queueRow.q && index < queueRow.q.asks.length ? queueRow.q.asks[index] : ""
+                    objectName: "queueChip"
+                    // each takes its words' width, or its share of the line's room, whichever is less
+                    readonly property real room: (st.m.w - 2 * st.m.margin - queueRow.spacing * (queueRow.n - 1)) / Math.max(1, queueRow.n)
+                    width: Math.min(chipRow.implicitWidth + 20, room)
+                    height: st.m.chipH
+                    radius: height / 2
+                    color: Theme.glassChip
+                    border.width: 1; border.color: Theme.border
+                    Row {
+                        id: chipRow
+                        anchors.centerIn: parent
+                        spacing: 8
+                        Text {
+                            id: waitText
+                            objectName: "queueWait"
+                            anchors.verticalCenter: parent.verticalCenter
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.captionSize
+                            text: queueRow.q ? queueRow.q.wait : ""
+                            color: Theme.faint
+                        }
+                        Text {
+                            objectName: "queueAsk"
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.min(implicitWidth, qc.room - 20 - waitText.implicitWidth - chipRow.spacing)
+                            elide: Text.ElideRight
+                            font.family: Theme.fontFamily
+                            font.pixelSize: st.m.small ? 12 : Theme.smallSize
+                            text: qc.ask
+                            color: Theme.muted
+                        }
+                    }
+                }
+            }
+        }
+
         // -- the pill --
         Rectangle {
             id: pill
@@ -742,36 +799,50 @@ Item {
                 hopSx: st.f.stone.hopSx
                 hopSy: st.f.stone.hopSy
             }
-            Row {
-                id: field
+            Item {
+                id: fieldBox
                 x: stone.x + stone.width + 8
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.max(0, parent.width - x - (st.m.small ? 12 : 64))
+                height: st.m.text + 8
                 clip: true
-                Rectangle {      // the text cursor: solid, because nothing here blinks
-                    visible: st.f.pill.caret && st.f.pill.text === ""
+                // The real pill is wider than this one, so an ask that fits it can be wider than the field here. It is
+                // set a little smaller, down to 12 px, so its words stay whole; what still does not fit shows its end.
+                readonly property real askRoom: width - 3 - ghostText.implicitWidth
+                TextMetrics { id: askMetrics; font.family: Theme.fontFamily; font.pixelSize: st.m.text; text: typed.text }
+                Row {
+                    id: field
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 1.5; height: st.m.text + 2; color: Theme.fg
-                }
-                Text {
-                    id: typed
-                    objectName: "pillText"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: st.m.text
-                    text: st.f.pill.text !== "" ? st.f.pill.text : (st.f.pill.placeholder ? "Ask anything" : "")
-                    color: st.f.pill.text !== "" ? Theme.fg : Theme.muted
-                }
-                Rectangle {
-                    visible: st.f.pill.caret && st.f.pill.text !== "" && st.f.pill.ghost === ""
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 1.5; height: st.m.text + 2; color: Theme.fg
-                }
-                Text {
-                    objectName: "pillGhost"
-                    font.family: Theme.fontFamily
-                    font.pixelSize: st.m.text
-                    text: st.f.pill.ghost
-                    color: Theme.faint
+                    // an ask longer than the pill shows its end, where the caret is
+                    x: Math.min(0, fieldBox.width - width - 2)
+                    Rectangle {      // the text cursor: solid, because nothing here blinks
+                        visible: st.f.pill.caret && st.f.pill.text === ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 1.5; height: st.m.text + 2; color: Theme.fg
+                    }
+                    Text {
+                        id: typed
+                        objectName: "pillText"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: fieldBox.askRoom > 0 && askMetrics.width > fieldBox.askRoom
+                                        ? Math.max(12, Math.min(st.m.text, Math.floor(st.m.text * fieldBox.askRoom / askMetrics.width)))
+                                        : st.m.text
+                        text: st.f.pill.text !== "" ? st.f.pill.text : (st.f.pill.placeholder ? "Ask anything" : "")
+                        color: st.f.pill.text !== "" ? Theme.fg : Theme.muted
+                    }
+                    Rectangle {
+                        visible: st.f.pill.caret && st.f.pill.text !== "" && st.f.pill.ghost === ""
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 1.5; height: st.m.text + 2; color: Theme.fg
+                    }
+                    Text {
+                        id: ghostText
+                        objectName: "pillGhost"
+                        font.family: Theme.fontFamily
+                        font.pixelSize: st.m.text
+                        text: st.f.pill.ghost
+                        color: Theme.faint
+                    }
                 }
             }
             Text {
@@ -836,7 +907,9 @@ Item {
         opacity: c.shown
         scale: 0.6 + 0.4 * c.arrive
         transformOrigin: fromRight ? Item.BottomRight : Item.BottomLeft
-        readonly property string heading: c.kind === "now" && c.title !== "" ? c.title
+        // A Now card says its task (the ask, in the user's words). A poster is a picture of the machine, with no
+        // names in it, and the task does not fit 84 px whole: it says "Now", as the card does with no task.
+        readonly property string heading: c.kind === "now" && c.title !== "" && !ink ? c.title
                                          : c.kind === "now" ? "Now" : c.kind === "watching" ? "Watching" : "Machine"
         Column {
             id: body
@@ -851,6 +924,8 @@ Item {
                 text: cd.heading
                 color: Theme.fg
                 elide: Text.ElideRight
+                wrapMode: m.small ? Text.NoWrap : Text.Wrap          // the stage's card has the room to say a task whole
+                maximumLineCount: m.small ? 1 : 2
             }
             Text {
                 visible: !cd.ink && cd.c.why !== ""
@@ -860,6 +935,8 @@ Item {
                 text: cd.c.why
                 color: Theme.muted
                 elide: Text.ElideRight
+                wrapMode: m.small ? Text.NoWrap : Text.Wrap
+                maximumLineCount: m.small ? 1 : 2
             }
             Repeater {
                 model: cd.c.rows.length

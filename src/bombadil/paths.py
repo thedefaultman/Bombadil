@@ -27,6 +27,32 @@ def state_dir() -> Path:
     return _env_path("BOMBADIL_STATE", Path(base) / "bombadil")
 
 
+def persona_file() -> Path:
+    return config_dir() / "persona.toml"
+
+
+def ledger_file() -> Path:
+    return state_dir() / "said.json"
+
+
+def greeted_marker() -> Path:
+    return runtime_dir() / "greeted"
+
+
+def updates_file() -> Path:
+    return _env_path("BOMBADIL_UPDATES", Path("/var/lib/bombadil/updates.json"))
+
+
+def voice_lines() -> Path:
+    # Resolved like mcp_server._share(): /usr/share/bombadil/share when installed, the checkout otherwise.
+    default = Path(__file__).resolve().parents[2] / "share" / "voice" / "lines.toml"
+    return _env_path("BOMBADIL_VOICE_LINES", default)
+
+
+def localtime_link() -> Path:
+    return _env_path("BOMBADIL_LOCALTIME", Path("/etc/localtime"))
+
+
 def config_dir() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(home() / ".config")
     return _env_path("BOMBADIL_CONFIG", Path(base) / "bombadil")
@@ -112,3 +138,22 @@ def mail_profile() -> Path:
 
 def press_log() -> Path:
     return _env_path("BOMBADIL_PRESS_LOG", state_dir() / "presses.jsonl")
+
+
+def connect_socket() -> Path:
+    return _env_path("BOMBADIL_CONNECT_SOCKET", Path("/run/bombadil-connect/connect.sock"))
+
+
+def connect_state() -> Path:
+    """The connection service's own directory (its database, with the tokens). Not the person's: only the
+    service's user can read it."""
+    return _env_path("BOMBADIL_CONNECT_STATE", Path("/var/lib/bombadil-connect"))
+
+
+def browserd_socket() -> Path:
+    return _env_path("BOMBADIL_BROWSERD_SOCKET", runtime_dir() / "browserd.sock")
+
+
+def proposals_file() -> Path:
+    """What waits for a press: the open proposals (docs/CONNECT.md)."""
+    return _env_path("BOMBADIL_PROPOSALS", state_dir() / "proposals.json")

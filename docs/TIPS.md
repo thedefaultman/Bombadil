@@ -10,8 +10,9 @@ fed by. The two things a person sees have their own sections at the end of this 
 - [the **Tips app**](#the-tips-app) (the window where each tip plays), and
 - the **Tips card** on the desk (its piece's section).
 
-The scenes a tip plays are drawn by `share/qml/Bombadil/TipScene.qml`; how to write the beats of a tip, and the
-whole vocabulary, are in [`TIP-SCENES.md`](TIP-SCENES.md).
+The scenes a tip plays are drawn by `share/qml/Bombadil/TipScene.qml`, and every row of the table ships with its
+scene; how to write the beats of a tip, the whole vocabulary, the twenty scenes and the test that fails when a
+scene is not true are in [`TIP-SCENES.md`](TIP-SCENES.md).
 
 ## The rules the code keeps
 
@@ -19,6 +20,7 @@ whole vocabulary, are in [`TIP-SCENES.md`](TIP-SCENES.md).
 |---|---|
 | A tip is one line, one picture and the exact words | `tips.toml` has one `line`, a `words` and a scene per row; `tests/test_tips.py` measures every line at 13 px Inter against the card's 272 px, and the button with "All tips ›" beside it. |
 | A tip is true on this machine | `needs` gates and `{app}`, `{project}`, `{ai}` placeholders: a tip whose gate is not met or whose placeholder cannot be filled is not in the list, not on the card, and not in the app, even greyed (`tips.backed`). |
+| A tip's scene shows only what is true | Every string in `beats` carries a tag. A `template` string is held whole to a sentence the real code says, what is typed is the tip's own words, and a reply is a plain agent's: `tests/test_tip_truth.py`. A real line that changes fails there, in the scene that shows it. |
 | Nothing runs on a click | agentd only *remembers* the words a button put in the pill (`summon` with `tip: true`); a tip is tried when the person's own Enter sends them. |
 | It never speaks | Tips has no line, no mark and no sound; its one message is data for a card the person can ignore. agentd sends it only when it changed. |
 | It steps aside | seven days of typing in the pill, or six Start-here tips tried, and `present` goes false (unless the person keeps Tips). A tip that came with an update waits in the app (`new`) and is never put on the card unasked. |
@@ -28,7 +30,7 @@ whole vocabulary, are in [`TIP-SCENES.md`](TIP-SCENES.md).
 
 | File | What it is |
 |---|---|
-| `share/tips/tips.toml` | The twenty seed tips, one `[[tip]]` row each. The only place a tip's words live. |
+| `share/tips/tips.toml` | The twenty seed tips, one `[[tip]]` row each, each with its scene in `beats`. The only place a tip's words live. |
 | `src/bombadil/tips.py` | Loads and checks the table, decides which tips this machine can back (`Facts`, `backed`), fills the placeholders, keeps `tips.json`, picks the card, counts tips as tried. Standard library only; every file it reads and the clock are parameters, so the tests hand it text and a date. |
 | `src/bombadil/agentd.py` | Owns one `Tips`. Tells every client the `tips` message when it changed, answers the shell's `tips` ops, remembers a button's words, and feeds `Tips` the evidence it sees (the words typed, a launcher action, a tool, a job, a `!` command, a stop). |
 | `src/bombadil/paths.py` | `tips_file()` (`~/.local/state/bombadil/tips.json`) and `tips_table()` (`share/tips/tips.toml` beside the package). |
@@ -36,7 +38,8 @@ whole vocabulary, are in [`TIP-SCENES.md`](TIP-SCENES.md).
 | `share/apps/tips/` | The Tips app: a built-in kit app, the window where each tip plays. Its own section is below. |
 | `src/bombadil/launcher.py` | `TIPS_COMMANDS`: the words that open the app. |
 | `src/bombadil/appkit/native/agent.py` | `Agent.draft(text)`: the app's button. |
-| `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_iso_profile.py` | The table, the gates and the card; agentd's side; the installer's copy. |
+| `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_iso_profile.py` | The table, the gates and the card, and the twenty scenes drawn; agentd's side; the installer's copy. |
+| `tests/tip_truth.py`, `tests/test_tip_truth.py` | The sentences the real code says, made by calling it, and every string of every scene held to them ([`TIP-SCENES.md`](TIP-SCENES.md#the-truth-test)). |
 | `tests/test_tips_app_backend.py`, `tests/test_tips_app_qml.py`, `tests/tips_app_lab.py` | The app's backend and its window, and the fake agentd they stand on. |
 
 ```mermaid
@@ -73,7 +76,7 @@ exclamation mark, no em-dash, no "will", "tomorrow" or "later".
 | `card` | `true` by default. `false` when the tip's button does not fit the card's row (the button, its inset and "All tips ›" must fit 272 px): only the app shows it. |
 | `tried_when` | Evidence agentd matches against its own live events (below). |
 | `captions` | Three phase captions of at most three words, under the stage in the app and beneath the three stills under reduced motion. "You ask", "It works", "You have it" unless the brief words a tip's own (it does for the first tip only: "You ask", "It builds", "You have it"). Like the lines, they are proposals for the voice thread. |
-| `beats` | The scene. The scene piece fills it; a row ships with `beats = []` and the card then draws its still poster from the line alone. |
+| `beats` | The scene: a list of beats, 6 to 8 s, every string tagged (`TIP-SCENES.md`). Every shipped row has one, and `tests/test_tips.py` fails on a row without. The loader still accepts `beats = []` (a row being added), and the card then has no poster to draw. |
 
 `load_rows` checks every row and **leaves out** a bad one instead of half-using it (a wrong gate, captions that are
 not three, evidence nothing sees, a second row with a used id, a field that is not in the table above, so a typo
@@ -94,7 +97,7 @@ A tip is shown only where every gate in `needs` is met (the brief's rule 2). `Fa
 | `sessions` | the coding-sessions code is on this machine. |
 | `mail` | the mail tips' code is on this machine (false until a tip needs it; the PR that ships it flips the fact). |
 | `noticed` | the self-improvement code is on this machine (as `mail`). |
-| `keep` | the desk can keep a widget (as `mail`: the desk thread's piece 2 flips it). |
+| `keep` | the desk can keep a widget: true, since the desk's piece 2 (`kept` in `desk.py`, the word "widgets" and the Widgets card, [DESK.md](DESK.md#your-desk-keep-when-needed-off)). The "Keep a widget on your desk" tip is tried by the launcher word `widgets` (`local:widgets`). |
 | `desk-seen` | a desk card other than Tips has been on the screen. agentd sees the Machine card present, a plan of two steps, a step that touches the system or a job on the desk, and remembers it in `tips.json`. |
 
 ### Placeholders
@@ -237,22 +240,32 @@ not about Tips run that way, so no other test hears a card.
 
 ## How a tip is added
 
-**A PR that adds something a person can ask ships its tip row and beats in the same PR, gated by a `needs` flag
-until its code is on main.** It ships them the way it ships its docs: the row says what to ask, the gate keeps it
-off every machine that cannot do it yet, and the PR that puts the code on main flips the gate's fact in
-`read_facts`. (The beats are written as `docs/TIP-SCENES.md` says; a row whose beats are not written yet ships
-with `beats = []`, and `tip_scene.validate(row, allow_empty=True)` accepts it.) There is no
-`CONTRIBUTING` file in the repository yet to carry this line; when one is added it should point here.
+**A PR that adds something a person can ask ships its tip row and its scene in the same PR, gated by a `needs`
+flag until its code is on main.** It ships them the way it ships its docs: the row says what to ask, the scene
+shows it, the gate keeps both off every machine that cannot do it yet, and the PR that puts the code on main
+flips the gate's fact in `read_facts`. There is no `CONTRIBUTING` file in the repository yet to carry this line;
+when one is added it should point here.
 
 1. Add a `[[tip]]` row to `share/tips/tips.toml` with a new id and the next `order` in its section. The row is a
    claim about this machine: put every gate it needs in `needs`, and write `tried_when` from the list above.
 2. If it needs a thing the machine may not have, add a gate to `GATES` and its fact to `Facts`, set from
    `read_facts` (a gate that is a piece of code is `find_spec(...)`, so a branch without it hides the tip).
-3. Write its scene in `beats` (`docs/TIP-SCENES.md`: "Writing the beats for a tip"). The poster on the card is
-   the last beat's state, so there is no still to draw. Until the beats are written leave `beats = []`.
-4. Run `tests/test_tips.py`. It fails on a line that does not fit the card, a malformed or reused id, a voice
-   rule broken, a button that does not fit the card's row while `card` is true, words that reach nothing, and
-   evidence that nothing sees.
+3. Write its scene in `beats` (`docs/TIP-SCENES.md`: "Writing the beats for a tip"), three captions, 6 to 8 s,
+   ending on what the tip gives. Type the tip's words. Every sentence the machine says is copied from the code
+   that says it and tagged `template`; the agent's replies are `model`. The poster on the card is the last beat's
+   state, so there is no still to draw. A new kind of thing to draw is a new beat kind (`TIP-SCENES.md`, "Adding a
+   beat kind").
+4. Add the test that fails when the scene is untrue. If the scene says a sentence from a function the truth test
+   does not call yet, add the call to `tests/tip_truth.py`; if no code says a string yet, name it in `UNTIED` in
+   `tests/test_tip_truth.py` with why, and say which change takes it out. A scene is only as true as the test
+   that holds it.
+5. Run `tests/test_tips.py` and `tests/test_tip_truth.py`. Together they fail on a line that does not fit the
+   card, a malformed or reused id, a voice rule broken, a button that does not fit the card's row while `card` is
+   true, words that reach nothing, evidence that nothing sees, a row without beats, a scene that is invalid or
+   outside 6 to 8 s, a template string that is not a sentence the code says, typed words that are not the tip's,
+   and a poster or stage that has text under 12 px or anything clipped.
+6. Look at it: `BOMBADIL_SCREENS=<dir>` saves the contact sheets of the twenty posters and stage payoffs and the
+   three stage frames of each Start-here tip. An empty poster or a stray colour is seen at once.
 
 To retire a tip, remove its row. Its id stays in `tried` and `known` in the people's files, which is why an id is
 never reused for another tip.
@@ -260,7 +273,7 @@ never reused for another tip.
 ## Testing
 
 ```
-QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips.py tests/test_agentd_tips.py -q -p no:cacheprovider
+QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips.py tests/test_tip_truth.py tests/test_agentd_tips.py -q -p no:cacheprovider
 ```
 
 - `tests/test_tips.py` runs the rules over the shipped table (ids, voice, 272 px with Inter, captions, evidence),
@@ -268,10 +281,18 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips.py tests/test_agentd
   damage, the card (choice, the why line, turning, the first week, keeping), and every kind of evidence. The width
   test measures with Inter at 13 px (Medium for the button); where Inter or PySide6 is not installed it holds the
   line and the card's button to a character count instead (the reverse test, that the app-only tips really do
-  not fit the row, needs the font and is skipped).
+  not fit the row, needs the font and is skipped). It also holds the twenty scenes: every row has beats that
+  validate and run 6 to 8 s (10 at most) and end on their payoff; every `card = true` poster is drawn offscreen
+  with no text under 12 px and nothing off it or cut, no machine's names or figures, no stray orange; every tip is
+  drawn at the app's density with nothing elided, its words whole in the pill before Enter and no orange where the
+  stone is not working; no window cuts what is in it; a card never reads done while the stone works; replaying
+  a tip raises no QML error; three stage frames of each Start-here tip differ; and the contact sheets are saved. These need PySide6's QtQuick and are skipped as a test where it is not installed.
+- `tests/test_tip_truth.py` is the truth test (`TIP-SCENES.md`, "The truth test"): the sentences the real code says,
+  by role, and every `template` string of every scene whole among them; typed is the tip's words; a `model` string
+  is at most four plain lines; the voice rules over all of it; the strings no code can be asked for are named.
 - `tests/test_agentd_tips.py` drives a real `AgentD` on a socket with the Fake provider or a Python one-liner: the
   card sent once and only when it changed, the ops, the summon, the day of use, the evidence from each source,
-  the 12 s turn (patched to 0.4 s), and Tips off. Nothing calls a model.
+  the 12 s turn (patched to 0.4 s), the beats that reach the card and the list, and Tips off. Nothing calls a model.
 - `tests/test_iso_profile.py` runs the installer's copy loop on two folders.
 - `tests/test_tips_app_backend.py` and `tests/test_tips_app_qml.py` are the app's: see [the app's tests](#how-the-app-is-tested).
 

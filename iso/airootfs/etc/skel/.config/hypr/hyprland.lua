@@ -4,16 +4,22 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
 -- the preferred mode and never moves off it. 1920x1080 is always in the virtual display's list.
 hl.monitor({ output = "Virtual-1", mode = "1920x1080@60", position = "auto", scale = 1 })
 
--- The agent daemon, the bar and the notifications run as user services, so systemd starts any of
--- them again if it dies (Restart=always). They need the session's environment first.
+-- The agent daemon and the bar run as user services, so systemd starts either again if it dies (Restart=always).
+-- They need the session's environment first.
 hl.on("hyprland.start", function()
-    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell mako")
+    hl.exec_cmd("systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell")
+    -- No notification daemon is started: the bar's NotificationServer owns org.freedesktop.Notifications on the
+    -- session bus, and a second owner (mako, dunst) would take web pages' notifications away from the line.
     -- One foot server for the coding sessions' windows, so a session's window rises at once.
     hl.exec_cmd("foot --server")
     -- Mail's service is a user unit that starts at login, before this session has a screen, and
     -- Thunderbird, which it keeps unseen, needs one: hand the unit this session's and start it again.
     hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
         .. " && systemctl --user restart bombadil-mail.service")
+    -- The browser service starts at login too, and opening a page for it needs the same: this session's
+    -- Wayland display to start Chromium on, and its Hyprland instance to slide the panel in.
+    hl.exec_cmd("systemctl --user import-environment WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_CURRENT_DESKTOP"
+        .. " && systemctl --user restart bombadil-browserd.service")
     -- First boot happens in the pill: agentd asks which AI and signs in through the browser panel.
 end)
 
@@ -49,7 +55,7 @@ hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 5, bezier = "e
 hl.animation({ leaf = "fade", enabled = true, speed = 4, bezier = "ease" })
 -- The bar is a layer, and Hyprland slides a layer to its new place whenever it is resized, which
 -- is every time a picture appears or grows: the pill dipped and swung back for half a second each
--- time. Layers (the bar, the notifications) just take their new size.
+-- time. Layers (the bar) just take their new size.
 hl.animation({ leaf = "layers", enabled = false })
 
 -- Panels are special workspaces; os-mcp toggles them. They also have keys.

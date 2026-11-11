@@ -1,6 +1,6 @@
 # Bombadil's voice
 
-You sign in to Claude and the browser slides away. A small card rises above the pill with one field that says "Your name" and three rows under it: Merry, Plain and Quiet. Each row shows how it would welcome you. You type Daniel, and the rows rewrite themselves as you type. Merry reads "Welcome, Daniel. Let's go for a walk!", Plain reads "Welcome, Daniel.", and Quiet says it will not speak on an ordinary morning. Merry is already highlighted, so you press Enter. The card folds, the Merry line takes its place above the pill for a few seconds, and the ten-second tour and the example chips carry on exactly as decided. That was the whole setup. About ten seconds, no settings page, no model call.
+You sign in to Claude and the browser slides away. A small card rises above the pill with one field that says "Your name" and three rows under it: Merry, Plain and Quiet. Each row shows how it would welcome you. You type Daniel, and the rows rewrite themselves as you type. Merry reads "Welcome, Daniel. Let's go for a walk!", Plain reads "Welcome, Daniel.", and Quiet says it will not speak on an ordinary morning. Merry is already highlighted, so you press Enter. The card folds, the Merry line takes its place above the pill for a few seconds, and the Tips card settles into the corner (it replaced the ten-second tour and the example chips this brief first carried on, which were never built). That was the whole setup. About ten seconds, no settings page, no model call.
 
 The next morning you boot and see wallpaper and a pill. A second later one line rises above the pill: "Good morning, Daniel. Where to today?" You touch the keyboard, and eight seconds later the line is gone. After lunch, "While you were away: builder finished (4 files), the ISO download is done." After a week, "Welcome back, Daniel. Since last time you built Passwords and Tracker, and 214 updates are waiting." If you close every window, nothing appears at all, because a screen at rest is wallpaper and a pill. In an empty folder in the Brain you read "Receipts is empty. Drop files in, or ask for what belongs here." with one chip that does it. If you type "call me Dan" or "be less chatty", the next reply, and the next greeting, already use the change.
 
@@ -64,7 +64,7 @@ Two pieces. The first gives Bombadil a name for you and a voice, and puts Daniel
 
 ## A day with the voice
 
-**First boot.** The browser slides away after sign-in. The line says "Signed in to Claude. What should I call you?" and the card is under it. You type Daniel and press Enter. "Welcome, Daniel. Let's go for a walk!" holds above the pill while the tour runs, and the three example chips and the faint "Super to talk. Esc to stop. Say undo to go back." follow as decided. On a live USB the Install chip and the note that undo starts after install come first, as decided.
+**First boot.** The browser slides away after sign-in. The line says "Signed in to Claude. What should I call you?" and the card is under it. You type Daniel and press Enter. "Welcome, Daniel. Let's go for a walk!" holds above the pill, and the faint "Super to talk. Esc to stop. Say undo to go back." follows as decided; the Tips card arrives after the greeting has faded (the tour and the three example chips were replaced by Tips, answer 4a in `tips-and-desk-defaults-brief.md`). On a live USB the Install chip and the note that undo starts after install come first, as decided.
 
 **08:40, the next morning.** One second after the bar is up the line reads "Good morning, Daniel. Where to today?" (or, while the clock is still on UTC, "Welcome, Daniel. Where to today?"). It waits until you touch the keyboard or the mouse, then fades eight seconds later. Plain would say "Good morning, Daniel." and Quiet says nothing.
 
@@ -167,7 +167,7 @@ Each forks; I picked a default and say why, with the alternatives for the record
 
 **How far does the voice reach?** Default: greetings, goodbyes and the agent's own closing sentence. The working line, receipts, errors, limits and empty places stay plain in every voice. Other options: greetings only (fully predictable, but the character vanishes the moment you ask for anything); everything including the working line (the line stops being a plain record of what the machine is doing).
 
-**Does Bombadil ask what the machine is mostly for?** Default: no. The ten-second tour already ends with the chip "Make me something for what I do", which asks at the moment the answer pays off, and nothing consumes the answer on day one. Other options: one optional tap on the card (about three more seconds, to seed the first week's chips).
+**Does Bombadil ask what the machine is mostly for?** Default: no. Nothing consumes the answer on day one, and Tips, not a tour, is where a new user first sees what to ask (the tour and its "Make me something for what I do" chip were replaced by Tips, answer 4a in `tips-and-desk-defaults-brief.md`). Other options: one optional tap on the card (about three more seconds, to seed the first week's chips).
 
 **Does Bombadil ask what to call itself?** Default: no. The OS is called Bombadil and says "I" or nothing. A renamed agent would touch every error line, brief and doc for no gain.
 
@@ -189,14 +189,14 @@ Each forks; I picked a default and say why, with the alternatives for the record
 
 **What happens when nobody answers the card?** Default: the defaults were saved when it appeared, the card folds on the first real ask or Esc, and it is never asked again. "call me Dan" stays available. A question that returns every boot is a dialog by another name.
 
-**Do chips ride on the greeting?** Default: no. The three example chips on day one, and the habit chips after about 20 turns, stay exactly as the first brief decided, above the empty pill when you tap Super. The greeting neither carries nor removes them. The one exception is the time-zone chip on a UTC machine.
+**Do chips ride on the greeting?** Default: no. The greeting carries no chips. The first brief's three example chips and its habit chips are gone (replaced by the Tips card, answer 4a in `tips-and-desk-defaults-brief.md`; noticing repeats is the Noticed chip's job), and every chip is still a sentence you could have typed. The one exception is the time-zone chip on a UTC machine.
 
 **Speech?** Default: writing only. A greeting that speaks, or a chime, belongs with the speech service and the sound defaults the earlier briefs set.
 
 ## Cut, and why
 
 - **A setting for how Bombadil refers to itself.** The name is the product. Each voice decides "I" or nothing, and there is nothing for a setting to change.
-- **A question about what the machine is mostly for.** Nothing consumes the answer on day one, and the tour's chip asks it when it pays off.
+- **A question about what the machine is mostly for.** Nothing consumes the answer on day one, and the tour that would have asked it was replaced by Tips.
 - **Sliders, or a long list of tones.** Named voices are chosen in one glance. Sliders invite tuning instead of choosing, and multiply the strings to write and test.
 - **Warm, Dry and Steward voices.** Warm's reassurances ("nothing else on the machine changed") are claims no receipt backs, Dry's jokes are hard to keep off failures by rule, and Steward is Plain with longer words.
 - **A model-written greeting.** It breaks the 200 ms rule, fails offline at boot and costs tokens for eight seconds of text.
@@ -214,7 +214,7 @@ Each forks; I picked a default and say why, with the alternatives for the record
 
 ## Extends or changes the earlier briefs
 
-- **First brief, piece 6 (first boot in the pill):** "Signed in. Ask me for anything." is replaced, on the first sign-in only, by the card and the chosen voice's first line. The ten-second tour, the Install chip and undo note, the three example chips and the faint day-one line are unchanged and keep their order. The faint line waits for the greeting to fade and ends the first time Super or Esc is pressed.
+- **First brief, piece 6 (first boot in the pill):** "Signed in. Ask me for anything." is replaced, on the first sign-in only, by the card and the chosen voice's first line. The Install chip and undo note and the faint day-one line are unchanged and keep their order; the ten-second tour and the three example chips were replaced by the Tips card, which comes after the greeting has faded (answer 4a in `tips-and-desk-defaults-brief.md`). The faint line waits for the greeting to fade and ends the first time Super or Esc is pressed.
 - **First brief, "A week later":** the welcome-back line keeps its decided words (Plain reproduces them) and gains a name and a voice. It is the same line as the return greeting, still built locally with no model call, and fades after a touch instead of "a few seconds".
 - **First brief, "what skips the model":** gains one word, `voice`. The shutdown answer gains a goodbye clause, and restart is unchanged.
 - **First brief decisions:** "Ask anything" stays the resting placeholder in every voice; agent text stays one line while working and at most four after. The voice may not lengthen either.

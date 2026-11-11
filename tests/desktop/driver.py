@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from pathlib import Path
 
 REPO = Path("/repo")
@@ -32,6 +33,13 @@ env = dict(
     BOMBADIL_SHARE=str(REPO / "share"),
     BOMBADIL_BAR_INJECT="1",   # the bar takes injected notices (section 10); a bar on the image does not
     BOMBADIL_VITALS="0",    # the Machine card is injected below; the real machine must not answer over it
+    # Connections run on their fake engine, in the container's own folders: the service, agentd and the shell all read
+    # these, and a container's user is outside the service's default range of people (1000 to 59999).
+    BOMBADIL_CONNECT_ENGINE="fake",
+    BOMBADIL_CONNECT_UIDS="0-65535",
+    BOMBADIL_CONNECT_SOCKET=str(xdg / "connect" / "connect.sock"),
+    BOMBADIL_CONNECT_STATE=str(xdg / "connect" / "state"),
+    DBUS_SESSION_BUS_ADDRESS=f"unix:path={xdg}/bus",   # the shell's NotificationServer owns the name on this bus
     QT_QUICK_BACKEND="software",
     LANG="C.UTF-8",
     PATH=f"{E2E}/bin:{REPO}/bin:/usr/local/bin:/usr/bin:/bin",
@@ -119,6 +127,17 @@ for _ in range(100):
     time.sleep(0.1)
 env["WAYLAND_DISPLAY"] = socks[0].name
 env["SWAYSOCK"] = next(iter(xdg.glob("sway-ipc.*")), Path("")).as_posix()
+# The session bus first, so that the shell's NotificationServer is the only owner of org.freedesktop.Notifications
+# (nothing else in the image claims it), then the connection service on its fake engine, so that agentd's first look
+# at it finds it. A notification is posted to the bus the way a web page's is (gdbus or busctl; libnotify is not in the image).
+start("dbus", ["dbus-daemon", "--session", "--nofork", f"--address={env['DBUS_SESSION_BUS_ADDRESS']}"])
+(xdg / "connect" / "state").mkdir(mode=0o700, parents=True, exist_ok=True)
+start("connect", [str(REPO / "bin" / "bombadil-connect")])
+for path in (xdg / "bus", xdg / "connect" / "connect.sock"):
+    for _ in range(100):
+        if path.exists():
+            break
+        time.sleep(0.1)
 start("agentd", [str(REPO / "bin" / "agentd")])
 sock_path = xdg / "bombadil" / "agentd.sock"
 for _ in range(100):
@@ -210,6 +229,15 @@ def api_requests():
         return 0
 
 
+def until(pred, timeout=10):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def api_log():
     try:
         return [json.loads(ln) for ln in (OUT / "api-requests.jsonl").read_text().splitlines()]
@@ -252,6 +280,97 @@ body = mean_pixel("00-resting", 640, 260)
 check("the stone lies faintly in the middle, lighter than its ground", body[2] - lit[2] >= 5 and body[2] <= 46, f"{body} vs {lit}")
 check("nothing in the wallpaper is orange", all(r - b <= 3 for r, g, b in corners + [lit, body]), [lit, body])
 
+# 0. Bombadil says hello. No persona.toml yet, so the first bar to connect gets the card (name and voice),
+# with the keyboard already on it; Enter saves, the greeting follows, and the next turn's system prompt
+# carries the persona. Then the launcher word `voice` reopens it.
+HOME = Path(os.environ["HOME"])
+persona_toml = HOME / ".config" / "bombadil" / "persona.toml"
+said_json = HOME / ".local" / "state" / "bombadil" / "said.json"
+turns_jsonl = HOME / ".local" / "state" / "bombadil" / "turns.jsonl"
+greeted = xdg / "bombadil" / "greeted"
+
+
+def persona_now():
+    try:
+        return tomllib.loads(persona_toml.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def boot_rows():
+    try:
+        rows = [json.loads(line) for line in turns_jsonl.read_text(encoding="utf-8").splitlines()]
+    except (OSError, ValueError):
+        return []
+    return [r for r in rows if r.get("action") == "boot"]
+
+
+def card_up():
+    # The card's words are light text; nothing else above the pill is on a fresh desk (the wallpaper is dark
+    # to its brightest point, and the pill's own rows are left out). File size would say nothing: the
+    # wallpaper alone makes a picture of tens of KB.
+    from PySide6.QtGui import QImage
+    probe = OUT / "probe.png"
+    run("grim", str(probe))
+    img = QImage(str(probe))
+    if img.isNull():
+        return False
+    light = 0
+    for y in range(0, min(730, img.height()), 2):
+        for x in range(0, img.width(), 2):
+            c = img.pixelColor(x, y)
+            light += c.red() + c.green() + c.blue() > 3 * 170
+    return light > 60
+
+
+check("the card is asked on the first sign-in", until(lambda: persona_now() is not None, 20), persona_now())
+# The card is asked when sign-in turns ready, and the bar may still be starting: it gets the card the moment
+# it says hello, so wait until it is on screen before typing into it.
+check("the card is on screen", until(card_up, 30))
+time.sleep(1.0)
+shot("00a-card")
+p0 = persona_now() or {}
+check("defaults are written and this login counts as greeted", p0.get("voice") == "merry" and greeted.exists(), p0)
+typ("Daniel")
+shot("00b-card-typed")
+key("Return")
+check(
+    "Enter on the card saves the name, with no summon first",
+    until(lambda: (persona_now() or {}).get("name") == "Daniel", 10),
+    persona_now(),
+)
+time.sleep(1.2)
+shot("00c-welcome-line")
+check(
+    "the first hello was shown, and logged as a boot row that said something",
+    until(lambda: any(r.get("greeted") for r in boot_rows()), 15),
+    boot_rows(),
+)
+ledger = json.loads(said_json.read_text()) if said_json.exists() else {}
+check("the ledger has the day it began", bool(ledger.get("setup_day")), ledger)
+
+# the word `voice` reopens the card with what is saved; Down picks the next voice, Enter keeps it
+summon()
+typ("voice")
+n = mark()
+key("Return")
+vd = wait(ev("local", action="voice", phase="done"), 10, n)
+time.sleep(1.0)
+shot("00d-voice-word")
+check("the word voice answers locally", vd and vd.get("ok"), vd)
+key("Down")
+time.sleep(0.3)
+shot("00e-voice-plain")
+key("Return")
+check(
+    "Down then Enter picks the Plain voice and keeps the name",
+    until(lambda: (persona_now() or {}).get("voice") == "plain", 10),
+    persona_now(),
+)
+check("the name is unchanged", (persona_now() or {}).get("name") == "Daniel", persona_now())
+time.sleep(0.8)
+shot("00f-after-voice")
+
 # 1. install ffmpeg: On it at once, then the step in plain words with its exact command.
 summon()
 typ("install ffmpeg")
@@ -283,6 +402,12 @@ end = wait(ev("turn_end"), 40, n)
 time.sleep(0.6)
 shot("04-ffmpeg-done")
 check("ffmpeg turn ends changed, with a summary", end and end.get("changed"), end)
+reqs = [json.loads(x) for x in (OUT / "api-requests.jsonl").read_text().splitlines()]
+check(
+    "the turn's system prompt carried the name and voice",
+    any(r.get("persona") and "install ffmpeg" in r.get("first", "") for r in reqs),
+    [(r.get("persona"), r.get("first", "")[:30]) for r in reqs[:4]],
+)
 
 # 2. make me a password manager: the line counts lines as the QML streams.
 summon()
@@ -447,15 +572,6 @@ def focused_app():
             return node.get("app_id") or node.get("name")
         todo += node.get("nodes", []) + node.get("floating_nodes", [])
     return None
-
-
-def until(pred, timeout=10):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if pred():
-            return True
-        time.sleep(0.1)
-    return False
 
 
 # 7. every way out of the drawer: Esc in it, Details again, Esc in the pill. (Clicks on the line
@@ -1627,6 +1743,194 @@ st = desk_state()
 check("and agentd saying there is none takes it away", st["faces"]["away"] == "hidden" and st.get("away") is None,
       st.get("faces"))
 
+# 14. your desk: Keep, When needed, Off. A widget is kept on the desk at rest, comes up only with something to say
+# (the default) or is put away; agentd says which of the three each can be and keeps the choice in desk.toml, and the
+# bar draws what agentd tells it. "widgets" opens the Widgets card above the pill; "keep", "hide" and "show" are
+# launcher words, and none of them calls a model. The vitals loop is off here (BOMBADIL_VITALS=0), so a kept Machine's
+# calm message is injected the way section 11's are; everything else is typed to the real pill and answered by the
+# real agentd.
+desk_file = Path.home() / ".local" / "state" / "bombadil" / "desk.toml"
+WIDGET_ROWS = [   # the Widgets card's rows in the order it draws them (Alive has no face yet: not listed)
+    {"id": "now", "title": "Now", "question": "What is it doing, and why?", "can": ["needed", "off"]},
+    {"id": "watching", "title": "Watching", "question": "What is it keeping an eye on?", "can": ["needed", "off"]},
+    {"id": "needs", "title": "Needs you", "question": "What is waiting for me?", "can": ["needed"]},
+    {"id": "away", "title": "Away", "question": "What happened while I was gone?", "can": ["needed", "off"]},
+    {"id": "machine", "title": "Machine", "question": "Is the machine in trouble?", "can": ["keep", "needed", "off"]},
+]
+# A Machine at rest with no line crossed, as vitals.py says it: memory, the disk and the processor are meters (figures
+# rounded), only the network is plain, every tone is "you", and the chip names the reading nearest its line, no dot.
+CALM_MACHINE = {
+    "type": "machine", "present": True, "calm": True, "asked": False, "why": "The machine is fine",
+    "strip": {"text": "memory 40%", "dot": ""},
+    "rows": [
+        {"key": "memory", "kind": "meter", "title": "Memory", "meterText": "6.4 of 16 GB", "meter": 0.4,
+         "tone": "you", "opens": ""},
+        {"key": "disk", "kind": "meter", "title": "Disk", "meterText": "92 of 230 GB", "meter": 0.4,
+         "tone": "you", "opens": "disk"},
+        {"key": "cpu", "kind": "meter", "title": "Processor", "meterText": "40\u00b0", "meter": 0.1,
+         "tone": "you", "opens": ""},
+        {"key": "net", "kind": "plain", "title": "Network", "sub": "\u2193 10 kB/s   \u2191 3 kB/s",
+         "tone": "you", "opens": ""}]}
+# A strip of the screen down where the 360 px card stands over the pill, 10 px inside its left edge: the card's glass
+# is in it while the card is up (the pixels are counted live, as glass_pixels does for the picture).
+CARD_STRIP = (470, 360, 370)
+
+
+def desk_toml():
+    """desk.toml as agentd keeps it: its text, and what that parses to (nothing, if it is not there)."""
+    import tomllib
+    try:
+        text = desk_file.read_text()
+        return text, tomllib.loads(text)
+    except (OSError, ValueError):
+        return "", {}
+
+
+def desk_until(pred, timeout=10):
+    """The desk's state once pred holds of it (agentd tells the bar a moment after it decides), else as it last
+    was."""
+    end = time.monotonic() + timeout
+    st = desk_state()
+    while not pred(st) and time.monotonic() < end:
+        time.sleep(0.2)
+        st = desk_state()
+    return st
+
+
+def desk_word(word):
+    """Say a word to the pill as a person does and wait for agentd's own answer: the local event that is done, whose
+    text is the sentence on the line above the pill."""
+    summon()
+    typ(word)
+    n = mark()
+    key("Return")
+    return wait(ev("local", phase="done"), 10, n)
+
+
+# (a) the word "widgets": agentd answers, the bar opens the card and lists what agentd says it can show.
+bare = glass_pixels(*CARD_STRIP)
+before = api_requests()
+summon()
+typ("widgets")
+n = mark()
+key("Return")
+asked = wait(lambda m: m.get("type") == "widgets" and m.get("op") == "open", 10, n)
+st = desk_until(lambda s: s.get("widgetsOpen") is True)
+time.sleep(0.8)   # the card fades in; the pill took the keyboard back for it a moment after Enter gave it up
+shot("47-widgets-card")
+up = glass_pixels(*CARD_STRIP)
+check("the word widgets makes agentd ask for the Widgets card, and the bar opens it, with no model call",
+      asked is not None and st.get("widgetsOpen") is True and api_requests() == before and st.get("kept") == [],
+      (asked, st.get("widgetsOpen"), st.get("kept"), api_requests() - before))
+rows = [{k: r.get(k) for k in ("id", "title", "question", "can")} for r in st.get("widgets") or []]
+check("it lists Now, Watching, Needs you, Away and Machine, each with what it can be (Needs you: only when needed)",
+      rows == WIDGET_ROWS, rows)
+check("Quickshell draws the card above the pill", up - bare > 150, f"{bare} -> {up}")
+
+# (b) Esc. The card is open only while the pill holds the keyboard: the shell takes it back when agentd asks for the
+# card (the keyboard path the typing above went through), so this Esc reaches the pill's own handler, which puts the
+# card away and lets the keyboard go. No summon() first: it would toggle the pill off, and that closes the card by
+# itself, which is another rule (checked offscreen) and not Esc.
+key("Escape")
+st = desk_until(lambda s: s.get("widgetsOpen") is False, 5)
+time.sleep(0.8)
+down = glass_pixels(*CARD_STRIP)
+check("Esc puts the Widgets card away", st.get("widgetsOpen") is False and up - down > 150,
+      f"open {st.get('widgetsOpen')}, {up} -> {down}")
+if st.get("widgetsOpen"):   # the key did not get there: hand the keyboard back as Super does, so the rest starts clean
+    summon()
+    desk_until(lambda s: not s.get("widgetsOpen"), 5)
+
+# (c) keep machine: the sentence, desk.toml, the bar's list. Keeping draws nothing by itself: the card is the machine
+# message's, which the vitals loop sends while Machine is kept and which is injected next.
+before = api_requests()
+kept = desk_word("keep machine")
+text, data = desk_toml()
+check("keep machine says Machine stays on the desk., with no model call",
+      kept and kept.get("ok") and kept.get("text") == "Machine stays on the desk." and api_requests() == before,
+      kept and (kept.get("ok"), kept.get("text")))
+check('desk.toml gains kept = ["machine"], and Machine is not put away',
+      'kept = ["machine"]' in text and data.get("kept") == ["machine"]
+      and "machine" not in data.get("hidden", []), text)
+st = desk_until(lambda s: "machine" in (s.get("kept") or []))
+check("the bar's desk lists Machine as kept, and not as put away",
+      st.get("kept") == ["machine"] and "machine" not in (st.get("hidden") or []), (st.get("kept"), st.get("hidden")))
+check("a kept widget alone puts no card on the desk: the card comes with the machine message",
+      not (st.get("present") or {}).get("machine"), st.get("present"))
+
+# (d) the calm Machine: present and in full on the right rail, with the calm rows and no wash of amber.
+inject(CALM_MACHINE)
+st = desk_until(lambda s: (s.get("faces") or {}).get("machine") == "full")
+time.sleep(1.0)
+shot("48-desk-kept-machine")
+mc = st.get("machine") or {}
+slot = (st.get("slots") or {}).get("machine") or {}
+check("a kept Machine is present and in full on the right rail, the desk open",
+      (st.get("present") or {}).get("machine") and (st.get("faces") or {}).get("machine") == "full"
+      and slot.get("side") == "right" and st.get("mode") == "open",
+      (st.get("present"), st.get("faces"), slot, st.get("mode")))
+rows = mc.get("rows") or []
+check("its card is calm: The machine is fine, memory, the disk and the processor as meters, the network plain",
+      mc.get("why") == "The machine is fine"
+      and [(r.get("key"), r.get("kind")) for r in rows] == [("memory", "meter"), ("disk", "meter"), ("cpu", "meter"),
+                                                            ("net", "plain")]
+      and not rows[0].get("parts"), (mc.get("why"), rows))
+box = (slot.get("x", 0), slot.get("y", 0), slot.get("w", 0), slot.get("h", 0))
+figures = region_pixels("48-desk-kept-machine", box, "#e6e8eb")
+crossed = {name: region_pixels("48-desk-kept-machine", box, colour)
+           for name, colour in (("amber", "#e0a93b"), ("red", "#d05555"))}
+check("the calm card draws its figures and no amber and no red: no line is crossed",
+      figures > 60 and crossed["amber"] < 20 and crossed["red"] < 20, (figures, crossed))
+check("the card is the face, so no chip stands beside the pill", not (st.get("strips") or {}).get("right"),
+      st.get("strips"))
+
+# (e) hide machine: the first stops keeping it and says it still comes up when something needs a look, the second puts
+# it away as it always did; show machine brings it back. The bar goes on drawing the injected message until Machine is
+# put away: taking a calm card down once it is no longer kept is agentd's end (the vitals loop), which is not here.
+before = api_requests()
+first = desk_word("hide machine")
+text, data = desk_toml()
+st = desk_until(lambda s: s.get("kept") == [])
+check("hide machine says Machine is no longer kept. It still comes up when something needs a look.",
+      first and first.get("ok")
+      and first.get("text") == "Machine is no longer kept. It still comes up when something needs a look."
+      and api_requests() == before, first and (first.get("ok"), first.get("text")))
+check("desk.toml keeps nothing, and neither it nor the bar's desk lists Machine as put away",
+      not data.get("kept") and "machine" not in data.get("hidden", []) and st.get("kept") == []
+      and "machine" not in (st.get("hidden") or []), (text, st.get("kept"), st.get("hidden")))
+second = desk_word("hide machine")
+text, data = desk_toml()
+st = desk_until(lambda s: "machine" in (s.get("hidden") or []))
+check("hide machine again says Put Machine away.",
+      second and second.get("ok") and second.get("text") == "Put Machine away.",
+      second and (second.get("ok"), second.get("text")))
+check("desk.toml and the bar's desk list Machine as put away, and its card is gone",
+      "machine" in data.get("hidden", []) and "machine" in (st.get("hidden") or []) and not data.get("kept")
+      and not (st.get("present") or {}).get("machine") and (st.get("faces") or {}).get("machine") == "hidden",
+      (text, st.get("hidden"), st.get("faces")))
+back = desk_word("show machine")
+text, data = desk_toml()
+st = desk_until(lambda s: "machine" not in (s.get("hidden") or []))
+check("show machine says Here is the machine. It is back on the desk.",
+      back and back.get("ok") and back.get("text") == "Here is the machine. It is back on the desk.",
+      back and (back.get("ok"), back.get("text")))
+check("and Machine is on the desk again, in desk.toml and in the bar, and still not kept",
+      "machine" not in data.get("hidden", []) and not data.get("kept") and "machine" not in (st.get("hidden") or [])
+      and st.get("kept") == [] and (st.get("present") or {}).get("machine"),
+      (text, st.get("hidden"), st.get("kept"), st.get("present")))
+
+# the desk as the sections after this one expect it: nothing kept, nothing put away but Alive, no Machine card
+inject({"type": "machine", "present": False, "asked": False, "why": "", "strip": {"text": "", "dot": ""}, "rows": []})
+st = desk_until(lambda s: (s.get("faces") or {}).get("machine") == "hidden")
+text, data = desk_toml()
+check("and the desk is as it was: nothing kept, Machine not put away, no card",
+      not data.get("kept") and "machine" not in data.get("hidden", []) and not st.get("kept")
+      and "machine" not in (st.get("hidden") or []) and not (st.get("present") or {}).get("machine"),
+      (text, st.get("kept"), st.get("hidden")))
+summon()
+key("Escape")   # the last sentence leaves the line; put it away so the next section starts on an idle pill
+time.sleep(0.5)
+
 # 10. Mail's notices: another service's line takes the idle line above the pill, with chips, and the
 # cross puts it away. First a message as agentd would send it (injected), then the real chain: the mail
 # service on its fake engine says new mail, agentd turns it into a notice, the bar shows it.
@@ -1718,6 +2022,255 @@ plain_bar.wait(10)
 qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell.log").read_text()).splitlines()
               if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
 check("the shell logged no QML errors", not qml_errors, "; ".join(qml_errors[:3]))
+
+# 31. Messages and connections (docs/CONNECT.md): the real chain end to end. The connection service runs on its fake
+# engine (Acme and Linear, started above); the bar's own NotificationServer owns the session bus's notification
+# name; a virtual pointer and wtype are the person's hands. Nothing is injected into the bar's own state: a
+# notification is posted on the bus, a message is said to the service, and the person's Reply, typing and Send are
+# real clicks and keys.
+def click(x, y):
+    pointer(f"move {x} {y}")
+    time.sleep(0.3)
+    pointer("press")
+    time.sleep(0.1)
+    pointer("release")
+    time.sleep(0.6)
+
+
+def say_to_connect(op, **args):
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(str(xdg / "connect" / "connect.sock"))
+    s.sendall((json.dumps({"id": 1, "op": op, **args}) + "\n").encode())
+    answer = json.loads(s.makefile("r").readline())
+    s.close()
+    return answer
+
+
+def notify(app, summary, body):
+    """A page's notification, as a browser posts it on the session bus."""
+    return run("busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+               "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", app, "0", "", summary, body, "0", "0", "30000")
+
+
+# A task card is built and checked here the way agentd does it.
+sys.path.insert(0, str(REPO / "src"))
+from bombadil import cards, paths
+from bombadil.connect import cardmake
+
+key("Escape")
+connect_bar = start("quickshell-connect", [str(REPO / "bin" / "bombadil-shell")])
+until_state(lambda st: "mode" in st, 30)
+time.sleep(2)
+r = run("busctl", "--user", "status", "org.freedesktop.Notifications")
+check("the bar owns the notification name on the session bus (nothing else does)", "Comm=quickshell" in r.stdout,
+      (r.stdout[:200] + r.stderr[:200]).replace("\n", " "))
+
+# a web page's notification becomes the line above the pill, with Reply and Open
+n = mark()
+notify("Teams", "Priya Shah", "Legal just signed off")
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "notify", 10, n)
+check("a notification posted on the session bus reaches agentd and comes back as a notice with Reply and Open",
+      got and got["line"] == "Priya Shah: Legal just signed off" and [a["id"] for a in got["actions"]] == ["reply", "open"], got)
+st = until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("50-notification-notice")
+check("and the bar shows it", st.get("noticeShown") and [x["line"] for x in st["notices"]] == ["Priya Shah: Legal just signed off"],
+      st.get("notices"))
+
+# Reply (a real click on the chip) opens a card whose box takes the keys; Copy and open puts the words on the
+# clipboard and is no send
+pointer("move 956 704")
+time.sleep(0.3)
+click(956, 704)
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("source") == "notification", 10, n)
+st = until_state(lambda st: st.get("card") and st["card"]["type"] == "message")
+check("Reply on that line opens a card of the notification, with a box and Copy and open (no draft, no ring)",
+      c and c["card"]["reply"]["kind"] == "copy" and st.get("card") and st["card"]["draft"]["proposal"] == "", (c, st.get("card")))
+typ("Thanks, will do.")
+time.sleep(1)
+shot("51-notification-reply")
+n = mark()
+click(444, 669)
+inv = wait(lambda m: m.get("type") == "notification_invoke", 10, n)
+pasted = run("wl-paste", "--no-newline")
+check("Copy and open puts what was typed on the clipboard (the keys went to the card's box) and brings the page forward",
+      inv is not None and pasted.stdout == "Thanks, will do.", (inv, pasted.stdout, pasted.stderr))
+key("Escape")
+time.sleep(1)
+
+# a message in the service: the notice, the card, a draft that lights only when it is what was drawn, the person's
+# click, one receipt, and a second click that does nothing
+n = mark()
+check("the service takes a message", say_to_connect("fake_inject", message={
+    "from": {"id": "U0PRIYA", "name": "Priya Shah"}, "text": "Legal just signed off. Can we lock the 14th for the launch?",
+    "ts": time.time()}).get("ok") is True)
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect", 15, n)
+check("it reaches the bar as a notice with Reply and Open", got and got["line"].startswith("Priya Shah: Legal just signed off")
+      and [a["id"] for a in got["actions"]] == ["reply", "open"], got)
+until_state(lambda st: st.get("noticeShown"))
+time.sleep(0.6)
+shot("52-message-notice")
+click(956, 704)
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "message" and m["card"].get("source") == "connect", 10, n)
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["proposal"])
+check("Reply opens the message card with an empty draft of the person's own that is not lit",
+      c and c["card"]["reply"]["by"] == "person" and st["card"]["draft"]["state"] == "open" and st["card"]["draft"]["ready"] is False,
+      st.get("card"))
+time.sleep(1)
+shot("53-message-card")
+typ("Yes, lock the 14th.")
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["ready"], 10)
+time.sleep(0.8)
+shot("54-message-ready")
+check("what was typed lights the button only once agentd has the draft and the card has drawn it",
+      st.get("card") and st["card"]["draft"]["ready"] is True, st.get("card"))
+n = mark()
+click(411, 668)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect"
+           and "Replied to Priya in a direct message" in m.get("line", ""), 10, n)
+check("a click on Send is one press, and the receipt is a notice saying where it went",
+      res and res["tone"] == "done" and res["line"].startswith("Replied to Priya in a direct message"), res)
+time.sleep(1.2)
+shot("55-message-sent")
+n = mark()
+click(411, 668)
+time.sleep(1.5)
+check("a second click on the same place sends nothing more",
+      not [m for m in events[n:] if m.get("type") == "notice" and "Replied" in m.get("line", "")],
+      [m for m in events[n:] if m.get("type") in ("press_result", "notice")])
+key("Escape")
+time.sleep(1)
+
+# the next card does not inherit what the last one said
+n = mark()
+say_to_connect("fake_inject", message={"from": {"id": "U0MARCUS", "name": "Marcus Webb"},
+                                       "text": "Can you look at the pricing copy before noon?", "ts": time.time()})
+got = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and m["line"].startswith("Marcus Webb"), 15, n)
+until_state(lambda st: st.get("noticeShown"))
+click(956, 704)
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["proposal"] not in ("", "p1"))
+time.sleep(1)
+shot("56-next-card")
+
+
+def reply_box(name):
+    """Where the card's reply box is in a screenshot: its dark inside is a run of pixels down the box's right side,
+    whatever stands above the card (a receipt line, a chip row) has moved it to."""
+    from PySide6.QtGui import QImage
+    img, run, on_card = QImage(str(OUT / f"{name}.png")), [], False
+    for y in range(380, 740):
+        c = img.pixelColor(892, y)
+        if abs(c.red() - 25) < 4 and abs(c.green() - 29) < 4 and abs(c.blue() - 34) < 4:
+            on_card = True          # (the page behind the card is darker than the box is, so start from the card)
+        elif on_card and abs(c.red() - 13) < 4 and abs(c.green() - 13) < 4 and abs(c.blue() - 17) < 4:
+            run.append(y)
+        elif len(run) >= 40:
+            break
+        else:
+            run = []
+    return (390, run[0] + 4, 500, run[-1] - run[0] - 8) if len(run) >= 40 else None     # (x, y, w, h)
+
+
+where_box = reply_box("56-next-card")
+box = region_pixels("56-next-card", where_box, "#e6e6e6", tol=60) if where_box else -1
+check("a new reply to someone else opens with an empty box (no words of the one before)",
+      st.get("card") and st["card"]["draft"]["ready"] is False and 0 <= box < 40, (st.get("card"), box, where_box))
+words_box = reply_box("54-message-ready")     # the same look at the box that had words in it finds them
+check("and looking at a box that holds words does find them (the look has teeth)",
+      words_box is not None and region_pixels("54-message-ready", words_box, "#e6e6e6", tol=60) > 100, words_box)
+key("Escape")
+time.sleep(1)
+
+# the launcher's words: unread, and what is connected, with no model
+summon()
+typ("unread")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "list", 10, n)
+time.sleep(1.2)
+shot("57-unread")
+check("the word 'unread' opens the list of what waits, without the model",
+      c and c["card"]["id"] == "list:unread" and len(c["card"]["rows"]) >= 2, c and c["card"].get("rows"))
+key("Escape")
+time.sleep(0.8)
+summon()
+typ("connections")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "list" and m["card"].get("id") != "list:unread", 10, n)
+time.sleep(1.2)
+shot("58-connected-here")
+rows = c["card"]["rows"] if c else []
+check("the word 'connections' opens Connected here: Slack and Linear, no token or key anywhere on it",
+      c and any("Acme" in r["title"] or "Slack" in r["title"] for r in rows) and any("Linear" in r["title"] for r in rows)
+      and "xox" not in json.dumps(c) and "xapp" not in json.dumps(c), rows)
+key("Escape")
+time.sleep(0.8)
+
+# the agent's side, through the real CLI and the real os-mcp server (the API is scripted): it reads what is unread and
+# drafts a reply; the draft is on a card for the person, lit only by what the card drew, and nothing has gone until
+# the person's own click
+def find_colour(name, colour, box, tol=10):
+    """The middle of the pixels of this colour in the box of a screenshot (None when there are none)."""
+    from PySide6.QtGui import QColor, QImage
+    want, img, xs, ys = QColor(colour), QImage(str(OUT / f"{name}.png")), [], []
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            c = img.pixelColor(x, y)
+            if abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < tol * 3:
+                xs.append(x)
+                ys.append(y)
+    return (sum(xs) // len(xs), sum(ys) // len(ys)) if xs else None
+
+
+n = mark()
+summon()
+typ("answer priya, say yes")
+key("Return")
+c = wait(lambda m: m.get("type") == "card" and m["card"].get("type") == "message"
+         and m["card"].get("reply", {}).get("by") == "agent", 90, n)
+check("the agent read the messages and its draft arrived as a card of its own, with the words it wrote",
+      c and c["card"]["reply"]["content"] == "Yes, the 14th works for us." and c["card"]["reply"]["kind"] == "slack_reply", c)
+end = wait(ev("turn_end"), 60, n)
+check("the turn ended on its own words and nothing in it sent", end is not None and not end.get("stopped"), end and end.get("summary"))
+st = until_state(lambda st: st.get("card") and st["card"]["draft"] and st["card"]["draft"]["ready"], 15)
+time.sleep(1)
+shot("60-agent-draft")
+check("what the agent wrote is lit for the person's press once the card has drawn it, and sent nothing yet",
+      st.get("card") and st["card"]["draft"]["ready"] is True and st["card"]["draft"]["state"] == "open", st.get("card"))
+turn_log = paths.turns_log()
+turns = [json.loads(ln) for ln in turn_log.read_text().splitlines()] if turn_log.exists() else []
+check("the turn log keeps no message text", "Can we lock the 14th" not in json.dumps(turns) and "Priya Shah" not in json.dumps(turns),
+      json.dumps(turns)[-300:])
+where = find_colour("60-agent-draft", "#d97757", (360, 440, 450, 735))
+n = mark()
+if where:
+    click(*where)
+res = wait(lambda m: m.get("type") == "notice" and m.get("source") == "connect" and "Posted in #launch" in m.get("line", ""), 10, n)
+check("the person's click on Send is the one thing that sends it", where and res and res["tone"] == "done", (where, res))
+key("Escape")
+time.sleep(1)
+
+# a task card, built the way agentd builds one, drawn by the real shell
+card = cardmake.task_card(service="linear", task={
+    "ref": "linear:LIN-42", "service": "linear", "connection": "mcp:linear", "title": "Review the launch checklist",
+    "why": "assigned to you", "status": "In progress", "due": "2026-10-03", "url": "https://linear.acme.test/issue/LIN-42",
+    "fields": [{"key": "team", "label": "Team", "value": "Launch"}]},
+    task_fields={"comment": [{"key": "text", "label": "Comment", "edit": "text", "required": True}]})
+card, errors = cards.accept(card, now=time.time())
+check("agentd's own check takes the card it built", card is not None, errors)
+inject({"type": "card", "card": card})
+st = until_state(lambda st: st.get("card") and st["card"]["type"] == "task")
+time.sleep(1.2)
+shot("59-task-card")
+check("a task card is drawn by the shell, with its comment box and no lit button",
+      st.get("card") and st["card"]["type"] == "task" and not st["card"]["draft"]["ready"], st.get("card"))
+key("Escape")
+
+qml_errors = [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-connect.log").read_text()).splitlines()
+              if re.search(r"\.qml\[|\.qml:\d+|Unable to assign|is not defined|TypeError|ERROR", ln)]
+check("the shell logged no QML errors while connections were on screen", not qml_errors, "; ".join(qml_errors[:3]))
+connect_bar.terminate()
+connect_bar.wait(10)
 
 # 30. the user's own wallpaper: ~/.config/bombadil/wallpaper names an image. The file new systems ship
 # holds only comments, so the standard picture shows and a first path is noticed with no restart; the

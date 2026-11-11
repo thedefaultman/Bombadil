@@ -84,7 +84,7 @@ the same `make_engine`, so a check sees what the window sees.
 | The pill's width | eases over 150 ms as cards and windows come and go | instant |
 | A new row on a card | its colour washes the card's left edge for 600 ms | no wash; the row is there |
 | The ring around a live dot | breathes from small and strong to large and gone, 2 s | holds still, at 1.2 times and 60 % |
-| The line above the pill, the picture above it, the AI card, the chips | fade 200 ms, grow 120 ms, border colours 120 to 300 ms | instant |
+| The line above the pill, the picture above it, the AI card, the Widgets card, the chips | fade 200 ms, grow 120 ms, border colours 120 to 300 ms | instant |
 | The bar's app chips and the pill's border | colour eases over 150 and 300 ms | instant |
 | Style controls (buttons, switches, checkboxes, sliders, fields, tabs, menus, popups, dialogs, tooltips, stack pushes, scrollbars fading) | 120 to 200 ms fades, slides and colours | instant |
 | A coding session's dot, working | its opacity pulses 1 to 0.3 and back, 1.2 s | the same pulse: it is the form the stone falls back to, and nothing in it moves |

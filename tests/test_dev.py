@@ -236,6 +236,16 @@ def test_agentd_restarting_keeps_running_sessions(projects):
     assert (s.alive, s.state, s.last) == (False, "failed", "Stopped unexpectedly")
 
 
+def test_a_registry_that_is_not_a_registry_starts_with_none(projects):
+    """agentd builds a Dev when it starts: a registry file that is unreadable, not JSON, or nested past the
+    parser's depth must leave an empty one, never stop agentd from starting."""
+    registry = dev.Dev.registry()
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    for text in ("{not json", "[" * 200000 + "]" * 200000, ""):
+        registry.write_text(text)
+        assert dev.Dev(runner=FakeZellij(), spawn=Spawns()).sessions == {}
+
+
 def test_a_zellij_that_cannot_be_asked_is_never_taken_for_gone(projects):
     d, z, _ = _dev()
     d.open("claude", "myapp")

@@ -13,9 +13,11 @@ that works and the exact vocabulary a beat is written in. Why a tip moves at all
 | `share/qml/Bombadil/TipScene.qml` | `Kit.TipScene`: draws the frame at the card's measures (a poster) or the app's (plays). Pure QtQuick: `Theme`, `QtQuick.Shapes` and `Kit.Stone`, with `font.family` set on every Text. Internal: not in the apps skill, and `bombadil-app check` refuses it in an app the agent writes. |
 | `share/qml/Bombadil/TipScene.js` | A `.pragma library` that says what is on the mini screen at any time `t`: `compile(beats)` lays the beats end to end, `frameAt(compiled, t)` returns the frame. It draws nothing and runs nothing. |
 | `share/qml/Bombadil/Stone.qml` | `Kit.Stone`, the mark: the pill's stone and the scenes' stone. See [The stone in the kit](#the-stone-in-the-kit). |
-| `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. `tests/test_tips.py` calls `validate(row, allow_empty=True)` on every row of `share/tips/tips.toml`, so a bad scene in the table fails there. |
-| `tests/tip_fixtures.py` | Sixteen tips written for the tests, which between them use every beat, key and modifier. |
+| `share/tips/tips.toml` | The twenty tips, each with its scene in `beats`: see [The twenty scenes](#the-twenty-scenes). |
+| `src/bombadil/tip_scene.py` | The same vocabulary and timing for Python, standard library only, and the validator. `tests/test_tips.py` calls `validate(row, strict=True)` on every row of `share/tips/tips.toml`, so a bad scene in the table fails there. |
+| `tests/tip_fixtures.py` | Seventeen tips written for the renderer's tests, which between them use every beat, key and modifier. The renderer is tested against these, not against the twenty tips, so a tip's wording can change without a renderer test failing. |
 | `tests/test_tip_scene_qml.py`, `tests/test_tip_scene.py` | The renderer's frames, sizes and "nothing runs" tests, and the validator's. |
+| `tests/tip_truth.py`, `tests/test_tip_truth.py` | The truth test: the sentences the real code says, made by calling it, and every `template` string of every scene held to them. See [The truth test](#the-truth-test). |
 
 ## Why storyboards, not video
 
@@ -30,7 +32,7 @@ line the real machine never says. The truth rule below is what pays for that.
 flowchart LR
     ROW["tip row (tips.toml)<br/>line, words, marks,<br/>captions, beats"] --> VAL["tip_scene.validate<br/>keys, values, tags,<br/>10 s, three captions"]
     ROW --> STR["tip_scene.strings<br/>every string with its tag"]
-    STR --> TRUTH["the truth test, added with the beats<br/>template: matched to the code<br/>typed: the tip's words"]
+    STR --> TRUTH["the truth test (test_tip_truth.py)<br/>template: the code's own sentences<br/>typed: the tip's words"]
     ROW --> COMP["TipScene.js compile<br/>beats end to end:<br/>duration, phases"]
     CLK["t, in ms<br/>one animation while playing;<br/>seek(ms) sets it"] --> FR
     COMP --> FR["frameAt(compiled, t)<br/>pill, stone, key, line,<br/>window, cards, picture, fold"]
@@ -82,6 +84,7 @@ TipScene { tip: row; density: "app"; reducedMotion: Theme.reducedMotion
 | Line buttons | unlabelled outlines (no Undo sits on a widget) | labelled |
 | Counter | none | the seconds, while the stone works |
 | Pictures of the machine | generic shapes: no names, numbers or values | the names and the figures |
+| Desk cards | 84 wide; the title and the why each on one line, elided; a Now card says only "Now", because a poster has no names and the task does not fit | 208 wide; the title and the why wrap to two lines, so a task is said whole and a step is not clipped |
 | Captions | none | three, in a row under the stage, the current one in `fg` |
 
 **Reduced motion** (app density) draws three stills instead of a stage, each the last frame of its phase with its
@@ -100,6 +103,11 @@ On the card, at 12 px, a line holds about 36 characters, or about 29 beside the 
 any fixture line or window row that is elided at either density (a working line apart), and the same loop is
 the check for the tips' own lines.
 
+**The pill's field** keeps a long ask whole where it can and follows its end where it cannot. The real pill is far
+wider than the mini one, so an ask that fits it (the two long asks of `tests` and `code-picture`) can be wider than
+the field here: on the stage it is set a little smaller, down to 12 px (never less), and only an ask still too wide at
+12 px is scrolled, as the real field does: the last words stay in view and the first are scrolled out.
+
 **Strips and the pill.** Folded, the strips stand on the left in the pill's row, and the pill is what they
 leave: its right edge stays where it was and its left edge is where the strips end, so it never runs under one,
 however many there are. It keeps at least 72 px on the card and 160 on the stage, and strips too long to leave
@@ -107,9 +115,13 @@ that are elided. A keycap pressed while strips stand is drawn in the margin on t
 
 **A window** is as tall as what is in it, up to the room above the line: its rows, its lines of grey (`doc`) or
 its lock screen under the title. It holds three rows on the card's poster and four on the stage, which is why
-the validator allows a window three (`MAX_WINDOW_ROWS`); a `card` may have more.
+the validator allows a window three (`MAX_WINDOW_ROWS`); a `card` may have more. The room is what is left above the
+line, so on the poster a reply of two lines takes a row's worth of it: a window holds its three rows there only
+under a one-line reply, and a lock screen only too. A window never cuts what is in it: the tests fail on a poster or
+a stage whose window's bottom edge runs through a row, the lock screen or the title, so a reply that is too long for
+its window is shortened (the replies of the two scenes that make an app are one line for this).
 
-## The nine beats
+## The ten beats
 
 A scene is a list of beats, played one after the other. A beat is a table. Its drawing keys say what happens, its
 modifier keys say how; the keys of one beat happen together, so the beat lasts as long as its longest one, and
@@ -121,6 +133,7 @@ modifier keys say how; the keys of one beat happen together, so the beat lasts a
 | `type` | words typed into the mini pill, 25 characters a second | `ghost`, `phase` |
 | `stone` | the stone takes a face: `rest`, `listening`, `working`, `needs`, `done`, `stopped` or `resting` | `phase` |
 | `line` | the line above the pill; `""` clears it | `tag`, `tone`, `command`, `counter`, `buttons`, `phase` |
+| `queue` | asks that wait, as grey chips above the line; `[]` takes them away | `tag`, `wait`, `phase` |
 | `window` | an app window slides in from its drawer (a title); `false` or `""` slides it out | `tag`, `rows`, `columns`, `lock`, `doc`, `reload`, `from`, `phase` |
 | `card` | a desk card: `watching`, `now` or `machine` | `tag`, `rows`, `title`, `why`, `phase` |
 | `picture` | a picture card above the line (its title) | `tag`, `boxes` or `bars`, `lit`, `phase` |
@@ -143,6 +156,8 @@ A beat needs at least one drawing key, and a modifier needs a drawing key it goe
 | `command` | a string | With `line`: the command, in mono. |
 | `counter` | `true`, `false`, or a number of seconds | With `line`: the seconds counter, which counts while the stone works. A number starts it from there. `false` stops it. |
 | `buttons` | one or two labels, such as `["Undo", "Details"]` | With `line`: the line's buttons. They are tagged `template`. |
+| `queue` | a list of at most two asks, or `[]` | Asks the machine keeps while it cannot run them: a grey chip for each, between the line and the pill, holding the ask in the user's own words (they are `typed`). `[]` takes them away. |
+| `wait` | a string | With `queue`: the small word on each chip that says why it waits ("paused"). Without it a chip says "next". Needs a `tag`. |
 | `window` | a title, or `false` or `""` | An app window slides in from its drawer in 300 ms. A title with `reload` and a window already open changes it in place. |
 | `rows` | strings, or `[label, value]` lists | With `window`: its rows, at most three, arriving 200 ms apart. With `card`: its rows (see `card`). |
 | `columns` | `[heading, cell, cell, ...]` lists | With `window`: columns added to the rows, one every 200 ms. |
@@ -200,6 +215,7 @@ holds a shipped tip to 6 to 8 s. The numbers are in `tip_scene.py`, mirrored in 
 | `card` | 800 ms: 150 ms of arrival and a pause |
 | `picture` | 300 ms to slide on, 320 ms per box or bar, then 600 ms to read |
 | `fold` | 1000 ms, the fade 150 ms |
+| `queue` | 300 ms, the fade 200 ms |
 | `hold` | what it says |
 
 Slides take 300 ms on the system's curve, (0.16, 1, 0.3, 1), which does not overshoot; fades take 200 ms. Nothing
@@ -232,27 +248,171 @@ a beat with strings (`line`, `window`, `card`, `picture`, a `fold` with `strips`
 | Tag | The string is | Checked by |
 |---|---|---|
 | `template` | a sentence the code really says, placeholders filled ("Building Tickets, 140 lines") | matched whole against the sentences in the code, so it fails the day one changes |
-| `typed` | the tip's own words, what the button puts in the pill | `type` beats are always `typed`; compared with the tip's `words` |
-| `model` | a reply in the agent's register, at most four plain lines | read by a person: it is a plausible answer, not a fixed one |
-| `output` | a command's example output, drawn in mono | read by a person |
+| `typed` | the tip's own words, what the button puts in the pill | `type` beats are always `typed`; the test compares them with the tip's `words`, and asks the launcher where each goes |
+| `model` | a reply in the agent's register, at most four plain lines. Also the example content of a window (its title, rows, lock words) and the steps of a `now` card, which are the agent's own plan, whatever the beat's tag says | a person reads it for plausibility; the test holds it to four lines, plain, in the agent's register and the voice rules (no markdown, no second line, no emoji, no "!") |
+| `output` | a command's example output, drawn in mono | the test runs the real command and holds the example to the shape of its output, and to the shell's own result |
 | `caption` | one of the three phase captions | at most three words |
 
 `tip_scene.strings(tip)` returns every string a scene shows as `(tag, text)`, the captions included, for the tips
-table's own tests. Button labels are `template`. A row's string value (`"High"`, `"24:59"`) is read with the
+table's own tests. Button labels are `template`, and so are a card's `title` and `why`, whatever the beat's tag says
+of the rest: they are the desk's own words, so one beat can carry the agent's reply on its line (`model`) and the card
+that goes with it, as the shell does when a turn ends. A row's string value (`"High"`, `"24:59"`) is read with the
 row's tag; a number is a meter and is not text.
+
+## The truth test
+
+`tests/test_tip_truth.py` is what makes the truth rule more than a promise. It does not keep a copy of the
+sentences: `tests/tip_truth.py` makes them, by calling the real code with fixture inputs and recording each
+sentence by the role it plays (a line, a command, a button, a chip's word, a card's title, why, label or value, a
+picture and its boxes and bars, a strip, a window, a lock). Then it walks every scene, and every string a scene
+shows must be there, **whole**, for its role: a line is not found among the buttons, nor a strip among the lines.
+
+| Where the sentences are made | By |
+|---|---|
+| A step ("Building Tickets, 140 lines", "Installing docker" and its command, the amber edge), the reply ("Installed htop."), "Stopped while installing docker.", the reason | `narrate.tool_step`, `shell_step`, `Narrator.summary`, `stopped_line`, `why_text` |
+| What the launcher answers ("Opened Tickets.", "Folded the desk.", "Here are the widgets.", "Undone. System files go back to before ...", the Brain's lines), the lines of the pictures and the widget, and what a press on the Widgets card says ("Machine stays on the desk.") | `launcher.Launcher` (its `_app`, `_widget`, `_widgets`, `_undo`, `_brain`, `_whyhere`, `doing`), `desk.Desk.apply` (`toggle`, `set`), `agentd.AgentD.picture` and `stop` |
+| A timer's title and its ending, the Machine card's rows and its why | `jobs.timer_title` and `ending`, `vitals.Vitals` |
+| The pause and its chip words | `rest.words`, `kept`, `back` |
+| The network picture and the disk picture, with their boxes and bars | `sysmap.capture_network` and `capture_disks` on the fixtures of `tests/test_sysmap.py` |
+| The Watching and Now cards' labels, values and why, the strips, "On it", the buttons | the shell's own QML, driven by the harnesses of `tests/test_desk_qml.py` and `tests/test_pill_qml.py` |
+| The Widgets card: its title, the widgets it lists in its order, the words of the three parts of each control and which part is raised | the shell's own `WidgetsCard.qml`, driven by the harness of `tests/test_widgets_card_qml.py` with the rows `desk.Desk.snapshot` sends, once for the desk as it ships and once for one that keeps Machine |
+| A command's output | `providers.Shell`, and the command itself |
+| The Brain's sentence about a file | the fixture of `tests/test_brain_focus.py` |
+
+What else the test holds, beyond "this sentence is said":
+
+- **One step is one step.** A line with a `command` has the amber edge that command has; a window is the app the
+  line before it names ("Building Tickets" then a `Tickets` window); a picture is the one "Drawing ..." and
+  "Showing ..." say it is; a stop is of the step that was running and an undo of what was asked.
+- **Buttons are for a turn that changed something.** Undo and Details close a turn that changed something, and the
+  test holds it both ways: a real `!command` is run through agentd and its `turn_end` (nothing changed) is given to
+  the real pill, which draws no button under it, so a bang scene shows none; and every line with buttons comes after a
+  step the narrator counts as a change.
+- **A finished job reads the same everywhere.** The Watching row for a job that ended reads "done in 3 min", the card
+  says "finished", and the line says "Shop tests is done in 3 min.", in one beat; the scenes tests (`test_tips.py`)
+  also fail on a frame where a card reads "done in" while the stone is working, or still counts ("so far", "left")
+  beside a line that says a job is done.
+- **The Widgets card is the desk's.** The `keep` scene's panel has the card's title, its rows in the order the desk
+  lists them, and the part that is raised in each: "When needed" for every widget as the desk ships. The press on Keep
+  for Machine says what the desk says, and the same panel then reads Keep on that row alone, changed in place.
+- **Pictures are the real ones.** The boxes of the network picture are a prefix of the nodes `capture_network`
+  draws; the bars are filesystems `capture_disks` draws, amber exactly where it warns; the Machine card shows the
+  rows the vitals make and how full each meter is; a fold shows the strips of the cards it folds; the reason is
+  what `why` answers with.
+- **Typed is the tip's words.** What a scene types is the tip's `words` (a trailing `…` means more follows, and
+  `{app}` is filled), apart from the asks a stop, an undo or a pause is of, named in the test. Each goes where the
+  scene says (the launcher's `match` says a picture, a widget, a rest, an undo, a command), and the word a scene
+  completes is the word the pill completes.
+- **A `model` string is plain.** At most four lines on the card, no markdown, no second line, no emoji, a
+  sentence when it is a line.
+- **The voice rules hold** over everything a scene says that is not the person's own: no "!", no em-dash, no
+  "will", "tomorrow" or "later".
+- **Every string has one of the five tags**, and `fields()` in the test, which says where each string is, is held
+  equal to `tip_scene.strings`.
+
+### What no code can be asked for
+
+A string can be shown that no code says yet. It is named in `UNTIED` in `tests/test_tip_truth.py`, one string at a
+time, as `(tip, role, string)` with why. **Nothing is named today**: every `template` string of every scene is a
+sentence the code says. The three that were (the `keep` tip's window `Widgets` and its values `Keep` and `When
+needed`) were taken out the day the desk's keep piece reached main, which is how the list is meant to work: an entry
+is only allowed while the scene shows the string and no code says it, and the day the code does say it, the test
+fails until the entry is taken out, so an exception cannot outlast its reason. The same day, `GOES` learned that the
+word "widgets" is the launcher's (it said "model" while no launcher word matched it).
+
+### Keeping a scene true when a line changes
+
+1. A real line changes (a word in `narrate`, a reply in the launcher, a card's label). The test that holds it
+   fails in the scene that shows it: it names the tip, the role and the string, and the nearest sentence the code
+   does say.
+2. Change the scene's string to the new sentence in `share/tips/tips.toml`. If the sentence is longer, look at
+   the poster and the stage again (below): the card holds about 36 characters on a line.
+3. If the line is made by a function the registry does not call yet, add the call to `tests/tip_truth.py` with the
+   role it plays. A scene string is never added to the registry by hand: the registry only ever holds what the code
+   said when it was called.
+4. A string that really cannot be asked of the code goes in `UNTIED` with its reason, and the PR that makes the
+   code say it takes it out again.
+
+To see the test do its work, change one real sentence, or one word of a scene's string: the test fails for that
+scene alone and passes again when they agree.
+
+## The twenty scenes
+
+One scene for each row of `share/tips/tips.toml`, each 6 to 8 s, each tagged on every string, each ending on what
+the tip gives you (its last frame is its poster and its reduced-motion still). They are written against the real
+machine: what a scene says is what the code says (see [The truth test](#the-truth-test)), what it types is the
+tip's words, and what it draws is what the desk draws.
+
+| Tip | The scene | Its sentences come from |
+|---|---|---|
+| `make-an-app` | Super, the ask, Enter; "On it", "Building Tickets, 140 lines"; the Tickets window slides in; the reply, with Undo and Details | the pill, `narrate.tool_step`; the reply and the window's rows are the agent's |
+| `picture` | the ask; "Drawing how you're connected"; the four boxes of the picture, streaming in; "Showing how you're connected." | `launcher`, `agentd.picture`, `sysmap.capture_network` |
+| `esc` | an amber install step with its command, counting; Esc; "Stopping"; the grey square; "Stopped while installing docker." | `narrate.shell_step`, `Narrator.stopped_line` |
+| `timer` | the ask; "Watching Timer, 25 min"; the Watching card counting; a window slides over it; the card folds to "1 counting" | `jobs.timer_title`, the Watching card, the desk's strip |
+| `machine` | the ask; "Here is the machine."; the Machine card, its why and three meters | `launcher`, `desk.ASKABLE`, `vitals.Vitals` |
+| `bang` | the bang key and `!uname -r`; "On it"; "Running uname"; the output in mono, with no buttons | `narrate.shell_step`, the pill; the output is what `uname -r` prints, and nothing it did changed anything, so no Undo or Details |
+| `change-app` | Tickets open; the ask; "Changing Tickets, 180 lines"; the window reloads in place with a Due column; the reply | `narrate.tool_step`; the reply is the agent's |
+| `open-app` | Super; "tic" and the faint "kets"; Tab, Enter; "Opened Tickets."; the window | `launcher.Launcher._app` |
+| `passwords` | the ask; the build lines; the window on its lock screen, which says it locks after 5 minutes idle; the reply | `narrate.tool_step`; the lock words and the reply are the agent's |
+| `whyhere` | a file open; "where did this come from?"; the Brain's own sentence about it; the word "brain"; the Brain window | the Brain's `focus` and `launcher._whyhere`, `_brain` |
+| `draw` | the ask; "Drawing “How a VPN works”"; four boxes; the agent's explanation | `agentd.picture`; the explanation is the agent's |
+| `toolchain` | the Now card with the route and its why; an amber step with its command, the counter near 40 s; the next step; the card goes done in the same moment as "Installed rust. cargo is ready." and its Undo and Details | the Now card's own words, `narrate.shell_step`; the plan's steps and the reply are the agent's |
+| `tests` | the ask; "Watching Shop tests"; the Watching card counting; the reply; the card reads "done in 3 min" and "finished" as the line says "Shop tests is done in 3 min." | `jobs.ending`, the Watching card |
+| `code-picture` | the ask; "Drawing “How the shop modules fit”"; cli, server and store with one lit; the explanation | `agentd.picture`; the boxes and the explanation are the agent's |
+| `disk` | "Drawing your disks"; three bars, the fullest amber; "Showing your disks." | `sysmap.capture_disks` |
+| `pause` | "pause Claude"; the pause line; an ask that waits as a grey chip; "resume claude"; "Claude is back. Running your waiting ask." | `rest.words`, `kept`, `back` |
+| `desk` | a Now card; "desk"; it folds to the strip "step 2 of 2"; "Folded the desk."; "desk" again; the card is back and "Unfolded the desk." | `desk.Desk.apply`, the strips' own words |
+| `keep` | "widgets"; "Here are the widgets." and the Widgets card, a row for each widget with the part that is raised; Machine changes to Keep, "Machine stays on the desk."; the Machine card kept | `launcher.Launcher._widgets`, `desk.Desk.apply`, the Widgets card's own QML, `vitals.Vitals` |
+| `why` | the ask "install docker and set it up"; an amber install, counting; Super, "why"; the agent's reason, the install still going | `narrate.shell_step`, `Narrator.why_text` |
+| `undo` | an install and "Installed htop." with Undo; "undo"; "Undoing the last change"; the real undo reply | `narrate`, `launcher.Launcher._undo` |
+
+Where a scene is less than the whole tip, it says so here, so the next person does not take it for a mistake:
+
+- `desk` shows one Now card, not the brief's Now and Watching: unfolded, two cards are 90 px tall and the poster has
+  79 px above the line, so the cards back again would run off its top. The timer tip already shows a Watching card
+  folding.
+- `why` ends on the reason it gives, not on the return to the step: the reason is the payoff, and the step it
+  came from is the scene's middle.
+- `pause` ends with the stone at rest after "Claude is back. Running your waiting ask." The real stone is working a
+  moment later, but a line over a working stone is one line, elided, and this one is 41 characters: it would be cut on
+  the poster. The poster's stone is in ink and stands the same in either face.
+- `code-picture` draws the picture but not a click on a box that opens the file.
+- `passwords` shows the lock screen, but not the time that passes before it locks: the lock screen's own words say it.
+- `picture` is drawn for a machine on a cable, four boxes, which is one of the shapes `capture_network` makes.
+- `keep` draws the Widgets card with the `window` beat: a panel above the line with one value for each row, the part
+  that is raised, and not the card's three-part control, its questions or "Reset the desk". It shows three of the
+  five widgets the card lists (Now, Watching and Machine, in the card's own order; a window holds three rows on the
+  poster) and not the restart a kept widget survives: the scene ends on the Machine card the desk then shows.
+- The example content of a window (the Tickets rows, Notes, the Brain's rows) is tagged `model`: it is the
+  agent's work, not a sentence of the code.
 
 ## Tests
 
 - `tests/test_tip_scene_qml.py` draws the fixture tips offscreen and grabs frames at chosen `t`: every beat kind,
   the poster being the last frame, the card's sizes and 12 px floor, no words or numbers in a poster's machine
-  pictures, the stone's colours and ink, the app's measures, reduced motion's three stills, that nothing runs
-  while the scene is not playing (no running animation or timer anywhere under the window), that `play()` runs
-  one animation, emits `finished` once and holds, and that every line fits on one line.
+  pictures, the stone's colours and ink, the app's measures (the card's width, the heading that wraps on the stage
+  and elides on the poster), reduced motion's three stills, that nothing runs while the scene is not playing (no
+  running animation or timer anywhere under the window), that `play()` runs one animation, emits `finished`
+  once and holds, and that every line fits on one line.
   Set `BOMBADIL_SCREENS=<dir>` to save pictures of the frames.
 - `tests/test_tip_scene.py` tests the validator: unknown keys, bad values (a list or a number where a word goes
   is reported, never a crash), strings without a tag, over 10 s, the wrong number of captions; and that the
   renderer's JS keeps the timing and vocabulary the validator keeps.
-- `tests/test_tips.py` validates every row of the tips table with `tip_scene.validate`.
+- `tests/test_tip_truth.py` is the truth test above. It needs PySide6 (the shell's own QML makes some of the
+  sentences) and is skipped as a whole where QtQml is not installed.
+- `tests/test_tips.py` holds the twenty scenes as a table: every row has beats and `validate(tip, strict=True)`
+  passes, each runs 6 to 10 s and ends on its payoff, not a clearing. It draws them: every row with `card = true`
+  renders its poster with no text under 12 px, none cut short and nothing off the poster, no poster shows a name (a
+  Now card's task included), a number or a value of the machine or a label on a button, and none uses orange beyond
+  the card's state colours; no window cuts through its rows, its lock screen or its title; every tip
+  renders at the app's density at its last frame with nothing elided and no orange where the stone is not working;
+  the words of a tip are whole in the stage's pill before Enter; a card never reads done while the stone works;
+  three stage frames of each Start-here tip (the ask, the work, the result) differ from one another, and reduced
+  motion draws three stills. Replaying any tip (a seek back to the start) raises no QML error: the harness collects
+  what QML says at run time, because a binding that throws is a message on stderr and not an exception.
+  It saves the contact sheet of the twenty posters and the one of the twenty stage payoffs on every run, and
+  keeps them in `BOMBADIL_SCREENS` when that is set, with a picture of each tip and the three stage frames of each
+  Start-here tip.
 - `tests/test_stone_qml.py` holds the stone: its faces, its pose, `animate`, `ink`, the 16 px drawing.
 - `tests/test_appkit_internal.py` holds that `bombadil-app check` refuses `Stone` and `TipScene` in an app, that an
   app's own component of that name is let through only where QML really builds it, and that the load refuses too.
@@ -260,11 +420,19 @@ row's tag; a number is a meter and is not text.
 ## Writing the beats for a tip
 
 1. Say the tip in three phases (you ask, it works, you have it) and give each a caption of at most three words.
-2. Write the beats, putting `phase = 1` and `phase = 2` on the beats that open the second and third phase.
-3. Tag every string. Anything the code says is `template`, and it has to be the real sentence.
-4. Run `validate(tip, strict=True)`: it names the beat that is wrong, and says if the scene is not 6 to 8 s.
-5. Look at the poster and the stage with `BOMBADIL_SCREENS`. The poster is the last beat's state, so end on the
-   payoff, and keep a line short enough for the card.
+2. Write the beats, putting `phase = 1` and `phase = 2` on the beats that open the second and third phase. Type
+   the tip's own words, and let what the machine says be what the code says: find the sentence in the code first
+   (`narrate`, `launcher`, `desk`, `jobs`, `vitals`, `rest`, `sysmap`) and copy it, with its placeholders filled.
+3. Tag every string. Anything the code says is `template`, and it has to be the real sentence. The agent's reply,
+   the example content of a window and the steps of a plan are `model`; a command's output is `output`.
+4. Run `tests/test_tip_truth.py`. A `template` string that is not a sentence the code says fails there with the
+   nearest one that is. If the code cannot be asked for it yet, name it in `UNTIED` with why, and say which
+   change takes it out.
+5. Run `tests/test_tips.py`: `validate(tip, strict=True)` names the beat that is wrong and says if the scene is
+   not 6 to 8 s, and the render tests fail on a poster with text under 12 px or a stage with anything elided.
+6. Look at the poster and the stage with `BOMBADIL_SCREENS=<dir>` (the two contact sheets, and the three stage
+   frames of a Start-here tip). The poster is the last beat's state, so end on the payoff, and keep a line short
+   enough for the card.
 
 ## The frame
 

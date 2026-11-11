@@ -1051,11 +1051,14 @@ async def test_the_desk_tool_works_in_the_turn_that_asked_for_the_desk(home):
         ({"op": "hide", "widget": "needs"}, False, "Needs you cannot be hidden."),
         ({"op": "hide", "widget": "sofa"}, False, ("There is no widget called 'sofa'. The widgets are Now, "
                                                     "Watching, Alive, Needs you, Away and Machine.")),
-        ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, move, fold, unfold "
-                                                    "and say its state.")),
-        ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, move, fold, "
-                                                      "unfold and say its state.")),
-        ({}, False, "The desk cannot do that. It can show, hide, move, fold, unfold and say its state."),
+        ({"op": "make", "widget": "batch"}, False, ("The desk cannot make. It can show, hide, keep, set, move, "
+                                                    "fold, unfold, reset, open the widgets card and say its "
+                                                    "state.")),
+        ({"op": "remove", "widget": "batch"}, False, ("The desk cannot remove. It can show, hide, keep, set, "
+                                                      "move, fold, unfold, reset, open the widgets card and "
+                                                      "say its state.")),
+        ({}, False, ("The desk cannot do that. It can show, hide, keep, set, move, fold, unfold, reset, open "
+                     "the widgets card and say its state.")),
     ]):
         await _say(tool_w, {"type": "desk-tool", "id": f"q{i}", "turn": 1, **msg})
         got = await _desk_result(tool_r)
@@ -2984,15 +2987,20 @@ MACHINE_GONE = {"type": "machine", "present": False, "asked": False, "why": "", 
 
 class FakeVitals:
     """What agentd needs of vitals.Vitals: tick() answers the message when it is not the last one it
-    answered, message() the current one, next_delay() how long to sleep, ask() and reset()."""
+    answered, message() the current one, next_delay() how long to sleep, ask(), keep() and reset()."""
 
     def __init__(self, *script, delay=0.02, current=None):
         self.script, self.delay = list(script), delay
         self.current = current or MACHINE_GONE
         self.ticks = self.asks = self.resets = 0
+        self.kept = False
 
-    def tick(self):
+    def keep(self, kept):
+        self.kept = bool(kept)
+
+    def tick(self, woken=False):
         self.ticks += 1
+        self.woken = [*getattr(self, "woken", []), woken]
         if not self.script:
             return None
         msg = self.script.pop(0)

@@ -54,6 +54,10 @@ def builtin_dir() -> Path:
 # place Bombadil teaches from, and the agent never writes tips: the word "tips" and the desk card open this
 # window, not an app that happens to be called Tips.
 RESERVED = frozenset({"mail", "tips"})
+# Words the pill answers itself (docs/CONNECT.md, "Launcher words"): they open the unread messages and "Connected here"
+# before any app of yours, so an app made with one of these names could never be opened from the pill. They are not
+# built-in apps, so `app_dir` has nothing to point at; only `create` refuses them.
+CLAIMED = frozenset({"slack", "messages", "unread", "connections", "connected"})
 
 
 def own_dir(name: str) -> Path:
@@ -111,6 +115,9 @@ def create(title: str, qml: str, python: str | None = None, description: str = "
     name = slug(title)
     if name in RESERVED:
         raise ValueError(f"{name!r} is one of Bombadil's own apps and cannot be replaced: pick another name")
+    if name in CLAIMED:
+        raise ValueError(f"{name!r} is a word Bombadil answers itself, so an app with that name could not be opened "
+                         "from the pill: pick another name")
     d = own_dir(name)
     extra = {_extra_path(rel): text for rel, text in (files or {}).items()}
     for rel, text in extra.items():

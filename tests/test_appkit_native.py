@@ -1204,6 +1204,9 @@ def _agentd(monkeypatch, tmp_path, provider, **kw):
     sock = tmp_path / "agentd.sock"
     monkeypatch.setenv("BOMBADIL_SOCKET", str(sock))
     monkeypatch.setenv("BOMBADIL_STATE", str(tmp_path / "state"))
+    # The voice asks its card when the fake provider turns ready: persona.toml and the greeted marker.
+    monkeypatch.setenv("BOMBADIL_CONFIG", str(tmp_path / "config"))
+    monkeypatch.setenv("BOMBADIL_RUNTIME", str(tmp_path / "run"))
     daemon = agentd.AgentD(provider, agentd._NoSnapshots(), socket_path=sock, **kw)
     loop = asyncio.new_event_loop()
     task = loop.create_task(daemon.serve())
@@ -1244,7 +1247,7 @@ def test_agent_talks_to_agentd(kit, monkeypatch, tmp_path):
             a.ask("what is running?")               # queued until the connection is up
             a.start()
             assert wait_until(lambda: a.property("connected"), 5000)
-            assert a.property("provider") == "fake"
+            assert wait_until(lambda: a.property("provider") == "fake", 5000)   # (the hello follows the connection)
             assert wait_until(lambda: replies, 5000)
             assert replies[0] == f"echo: [from app {kit.ctx.name}] what is running?"
             assert a.property("reply") == replies[0]
