@@ -2560,7 +2560,14 @@ shot("39-ended")
 # is tried), and the card turning to the next tip 12 s after that turn ends.
 run("swaymsg", '[app_id=".*"] kill')       # a window over the right rail would fold the card to its strip
 time.sleep(1.5)
-old_agentd = [p for p in procs if p.args[0].endswith("agentd")][-1]
+# The card comes up on a calm shell only (nothing else asking for the person), and the sections above leave what they
+# drew: the Slack reply card the connect section ended on stays in the shell until it is put away, the way the
+# person's x puts it away (the same message agentd sends when a card is gone).
+left = pill_state().get("card") or {}
+if left.get("id"):
+    inject({"type": "card", "card": {"gone": True, "id": left["id"]}})
+until_state(lambda st: not st.get("card"), 5)
+old_agentd =[p for p in procs if p.args[0].endswith("agentd")][-1]
 old_agentd.terminate()
 old_agentd.wait(5)
 procs.remove(old_agentd)
@@ -2640,10 +2647,10 @@ check("tips.json keeps that the first was tried (and nothing about the second)",
       "make-an-app" in tips_file.get("tried", []) and "picture" not in tips_file.get("tried", []), tips_file)
 
 # The x puts Tips away, the same as the words "hide tips".
-tslot = desk_state()["slots"]["tips"]
-pointer(f"move {tslot['x'] + 150} {tslot['y'] + 120}")
+tslot = (desk_state().get("slots") or {}).get("tips") or {}      # (absent when the card is not up: the checks say so)
+pointer(f"move {tslot.get('x', 0) + 150} {tslot.get('y', 0) + 120}")
 time.sleep(0.8)
-pointer(f"move {tslot['x'] + 300 - 8 - 12} {tslot['y'] + 8 + 12}")
+pointer(f"move {tslot.get('x', 0) + 300 - 8 - 12} {tslot.get('y', 0) + 8 + 12}")
 time.sleep(0.3)
 n = mark()
 pointer("press")
