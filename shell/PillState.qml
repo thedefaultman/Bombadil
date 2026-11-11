@@ -7,8 +7,8 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
-    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    // The bar is asked to take the keyboard (Super was tapped, or Alt+Space was pressed), or an app
+    // asked for the pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
     signal summoned(string text)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
@@ -379,6 +379,17 @@ QtObject {
         }
     }
 
+    // The pill is asked for: agentd relays `bombadil pill` and the apps' words, and the bar's own
+    // global shortcuts (PillKeys.qml, from Hyprland's Super tap and Alt+Space) call it directly.
+    function summon(text) {
+        summoned(text)
+        // The pill comes up: say why the AI does not answer, unless a line is being read.
+        if (resting && setupLine) {
+            if (foundShown) return   // the line of what was found is being read: it stays
+            if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
+        }
+    }
+
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
         if (ev.type === "status") {
@@ -406,15 +417,7 @@ QtObject {
         if (ev.type === "card") { _takeCard(ev.card); return }
         if (ev.type === "proposal") { _takeProposal(ev.proposal); return }
         if (ev.type === "press_result") { _pressResult(ev); return }
-        if (ev.type === "summon") {
-            summoned(typeof ev.text === "string" ? ev.text : "")
-            // The pill comes up: say why the AI does not answer, unless a line is being read.
-            if (resting && setupLine) {
-                if (foundShown) return   // the line of what was found is being read: it stays
-                if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
-            }
-            return
-        }
+        if (ev.type === "summon") { summon(typeof ev.text === "string" ? ev.text : ""); return }
         if (ev.type === "welcome") { _welcome(ev); return }
         if (ev.type === "persona_ask") { _ask(ev); return }
         if (ev.type === "persona") { personaAsk = null; return }
@@ -857,6 +860,9 @@ QtObject {
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
+        } else if (mode === "setup") {
+            // "Sign in" and "Claude" chips under a dead agentd answer nobody; the new one sends the setup again.
+            mode = "idle"; line = ""
         }
     }
 

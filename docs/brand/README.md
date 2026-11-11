@@ -45,13 +45,20 @@ and shows `listening` over `rest` while the screen holds the keyboard.
 | `listening` | green, leans 6 degrees toward the text (240 ms) | the screen that holds the keyboard is up |
 | `working` | orange, a third of a turn a second about its centroid (hold 300 ms, turn 120 degrees in 550 ms, hold 150 ms) | a turn runs or a sign-in is under way |
 | `starting` | the working roll, with "Starting" in the field | since boot, until agentd first answers |
-| `needs` | amber, two 8-degree knocks every 1.6 s, with a glow that breathes | a coding session asks, or setup waits on the person |
+| `needs` | amber, two 8-degree knocks every 1.6 s, with a glow that breathes, for about ten seconds; then still, with the glow held at 0.45, and one more beat (1.6 s) each minute | a coding session asks, or setup waits on the person |
 | `done` | green, one 700 ms hop with a squash on landing | a turn just finished |
 | `stopped` | the Stop button's own grey square | the closing line says the turn was stopped |
 | `offline` | the outline alone, dashed, red; the b stays | agentd was there and is gone, or never came |
 
 Reduced motion (`BOMBADIL_REDUCE_MOTION=1`) turns the roll into a pulse (opacity 1, 0.3, 1 a second),
 holds the glow still at 0.45, makes the lean instant and replaces the hop with a fade.
+
+The knock is a cue, not a loop: it plays for 9.6 s (six beats) when the need appears, rests, and comes
+back as a single beat every five minutes while the need stands; a new need knocks again for the full ten seconds.
+It used to knock until the person answered, and an animation that never ends keeps the whole bar drawing
+sixty frames a second for as long as someone is away (a stone left knocking on an idle machine was one of
+three causes of its idle cost, see [IDLE-COST](../IDLE-COST.md)). `Stone.qml` has the three numbers
+(`cueMs`, `remindMs`, and the single beat's 1 600 ms).
 
 ## Drawing it
 

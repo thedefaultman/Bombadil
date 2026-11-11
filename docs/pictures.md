@@ -106,8 +106,13 @@ receipt for stopping a service still shows the state and nothing else.
   step still moves the pill for a sample or two (3 to 5 samples off rest, the longest run 1 or 2,
   22 to 31 px at worst; with the animation on, 6 samples, a run of 4, 36 px). The cause is not
   known. Making the bar's window a fixed height, so it is never resized, would end it, at the price
-  of compositing a large transparent surface all the time, which costs CPU under software
-  rendering. It is left as it is until that cost has been measured.
+  of compositing a large transparent surface all the time. That price was measured on the real VM, whose
+  compositor draws in software and so pays most: at rest and with a turn working, a bar fixed at 600 px
+  and one fixed at the full 1080 px cost the same as the shipped one, within the noise (Hyprland
+  1.4 to 2.1% and the bar 6.8 to 8.8% of a core at rest, the compositor saturated either way while a turn
+  works; the table is in [IDLE-COST](IDLE-COST.md#a-fixed-height-bar-costs-nothing-extra)). Cost is no
+  reason to keep the resizing; the fixed height still has to be chosen (what the tallest card needs) and
+  the input mask already keeps clicks off the transparent part.
 - **The card is placed once.** A card whose height grew over a few frames resized the window every
   frame, one blip each. `shell/CardHost.qml` takes its height at once and eases in by fading and
   rising a few pixels inside that space; it hands the space back after it has faded out. (This did

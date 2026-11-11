@@ -15,6 +15,7 @@ The project's documents, next to its code.
 - `TIPS.md`: Tips, what a new person can ask: the table of tips and its gates, what counts a tip as tried, `tips.json`, the card agentd tells the shell, the wire protocol, how to add a tip. Has marked places for the Tips app and the Tips card.
 - `TIP-SCENES.md`: how a tip is drawn: the storyboard of nine beats on a copy of the screen, the exact vocabulary, the timing, the card's poster and the app's stage, `Kit.TipScene` and `Kit.Stone`, and the truth rule that tags every string a scene shows.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.
+- `IDLE-COST.md`: what the desktop costs when nothing is happening: the three loops that once kept it busy, how they were found, the watch that keeps them from coming back (a frame count and a CPU limit, in the headless test and the VM smoke), and the rules for anything that moves, ticks or polls.
 - `brand/`: the mark (a stone with a b cut through it): what it is, its colours and faces, how Stone.qml draws it, and what a real machine taught us. Holds the lockups, tile, avatar and social preview.
 - `MAIL.md`: the contract the Mail view is built to: processes and diagrams, the wire protocol, the press, the agent's tools and what the image adds.
 - `CONNECT.md`: the contract messages and connections are built to: the connection service and its token store, Slack and the work tools, the browser service, proposals and the press, the card kinds, notifications in place of mako, and what the image adds.

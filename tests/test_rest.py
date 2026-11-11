@@ -42,7 +42,8 @@ def test_the_file_can_be_read_by_other_users_and_is_written_whole(home):
     assert not list(rest.path().parent.glob("*.tmp"))
 
 
-def test_a_limit_lapses_a_minute_after_its_time_and_a_reader_never_sees_it_after(home):
+def test_a_limit_lapses_a_minute_after_its_time_and_a_reader_never_sees_it_after(home, monkeypatch):
+    monkeypatch.setattr(rest, "now", lambda: AT)   # (`due` asks the clock; AT is a fixed day, not today)
     rest.set_limit("claude", rest.Limit("limit", "five_hour", AT + 600), AT)
     assert rest.limit("claude", AT + 600 + rest.RESET_GRACE - 1) is not None
     assert rest.limit("claude", AT + 600 + rest.RESET_GRACE) is None

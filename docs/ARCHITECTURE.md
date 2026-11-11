@@ -45,7 +45,12 @@ credentials exactly as it would in a terminal of yours (`signin.py`).
    still opening in a slow browser is dropped, never slid in afterwards); 10 minutes without
    an end times out (`BOMBADIL_SIGNIN_TIMEOUT`). Success is confirmed with `claude auth
    status` or `codex login status`. A browser that cannot open the page is an error the pill
-   shows with "Open it again", not a quiet success.
+   shows with "Open it again", not a quiet success. However it ends (done, cancelled, timed
+   out), the sign-in puts its own tab away. When that tab is the browser's only one, closing
+   it would quit Chromium and leave the panel waiting for a window that is going away, so a
+   blank tab (`about:blank`) takes its place first (`browser.close_spare_tab`); the next time
+   the panel opens it shows nothing stale, never the login page. Once the page is away the
+   pill's Show button does nothing (`signin.show()` is for a live login only).
 5. No internet (no TCP connection to the provider's sign-in host): the pill says so, offers
    Wi-Fi, and the sign-in starts once the host answers.
 6. A turn whose CLI says the login is gone (`authentication_failed`, a 401) signs in again

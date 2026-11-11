@@ -51,7 +51,7 @@ The mark is the riding b: a smooth three-sided stone (a rounded Reuleaux triangl
 ## Motion
 
 - 120 ms for sizes, 200 ms for fades, 300 ms for the pill's border colour. Windows and panels slide on the bezier (0.16, 1, 0.3, 1).
-- Every movement means one thing. The stone rolls a third of a turn per second while working, knocks twice on a 1.6 s beat when it needs you (its glow breathes on the same beat), hops once when done and leans toward the text while you type. Nothing else moves.
+- Every movement means one thing. The stone rolls a third of a turn per second while working, knocks twice on a 1.6 s beat when it needs you (its glow breathes on the same beat; for ten seconds, then it rests and gives one beat every five minutes), hops once when done and leans toward the text while you type. Nothing else moves.
 - Under reduced motion, working falls back to one pulse (opacity 1 to `pulseLow` and back, 500 ms each way), needs you holds its glow, and the rest stay still.
 - The line stays 12 s after a turn, 5 s after a local answer, 15 s after an undo.
 - Every movement has a still version for reduced motion.
