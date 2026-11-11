@@ -676,6 +676,26 @@ async def test_a_launcher_word_that_worked_tries_the_tip_it_is(home, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_press_at_the_desk_is_not_the_word_desk_so_it_teaches_nothing(home):
+    """The Tips card's x, a press on the Widgets card and its Reset send a desk op, which agentd answers on the line
+    as it does a launcher word. Only the word `desk` is what the tip "Say desk to fold the cards" teaches: a person
+    who pressed an x has not said it, and the app and a kept card would otherwise tick a tip they were never shown."""
+    d = machine()
+    server, r, w, _ = await _serve(d)
+    for msg in ({"op": "set", "widget": "tips", "state": "off"}, {"op": "set", "widget": "machine", "state": "keep"},
+                {"op": "keep", "widget": "watching"}, {"op": "reset"}):
+        await _say(w, {"type": "desk", **msg})
+        done = (await _events_until(r, _done))[-1]
+        assert done["action"] == "desk", msg                      # it is still said on the line, as before
+        await asyncio.sleep(0.05)
+    assert d.tips.state.tried == []
+    await _typed(d, w, r, "desk")                                 # the word is the word
+    assert d.tips.state.tried == ["desk"]
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_a_launcher_word_that_failed_tries_nothing(home, monkeypatch):
     d = machine()
     monkeypatch.setattr(d.launcher, "run", lambda action: (False, "Could not."))

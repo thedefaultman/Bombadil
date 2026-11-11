@@ -1057,9 +1057,10 @@ class AgentD:
             # A press on the Widgets card has no gesture to show what it did (a card dragged to its place is
             # its own answer), so the line says it, with a refusal (Needs you cannot be put away) as an error.
             # So does the x on the Tips card, which sends a `set` to "off": the card leaves with no strip to bring
-            # it back, so the line says the way ("Put Tips away. Say tips to see them again.").
+            # it back, so the line says the way ("Put Tips away. Say tips to see them again."). A press is not the
+            # word `desk`, so it is not evidence for the tip that teaches the word (`teaches=False`).
             await self.event("local", turn=None, action="desk", target=str(msg.get("widget") or ""),
-                             phase="done", ok=ok, text=text)
+                             phase="done", ok=ok, text=text, teaches=False)
         if ok and changed:
             # Not said on the line for a gesture (it is its own answer), but the agent should know.
             self.notes = [*self.notes, f"at the desk: {text}"][-10:]
@@ -2760,13 +2761,15 @@ class AgentD:
                 # (Not when "use codex" came mid-turn: that login was not the one that failed.)
                 await self._signed_out_turn(turn_id, prompt, stopped)
 
-    async def event(self, kind: str, **fields):
+    async def event(self, kind: str, *, teaches: bool = True, **fields):
+        """Tell every client, and log it in the turn's file. `teaches=False` keeps a local event from counting as
+        evidence for Tips (it is for what a press did, which is not the person saying the word); it is not sent."""
         fields.setdefault("turn", self.current)
         msg = {"type": "event", "kind": kind, **fields}
         # A launcher action that worked is something a tip counts. (Stop is counted where a turn is really
         # stopped: "Nothing is running." is not a try.)
-        if (kind == "local" and fields.get("phase") == "done" and fields.get("ok") and fields.get("action")
-                and fields["action"] != "stop"):
+        if (teaches and kind == "local" and fields.get("phase") == "done" and fields.get("ok")
+                and fields.get("action") and fields["action"] != "stop"):
             self._tips_saw(*local_keys(str(fields["action"]), str(fields.get("target") or ""),
                                        str(fields.get("verb") or "open")))
         log = self.turn_logs.get(fields["turn"]) if fields["turn"] is not None else None

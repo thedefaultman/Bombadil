@@ -173,7 +173,7 @@ sees is left out, so a tip can never silently be impossible to try.
 | Evidence | Where in agentd |
 |---|---|
 | words | the `prompt` branch of `handle`, for a prompt the person typed (not an app's `asked_by`, not a `[from app …]` ask), through `_tips_typed` |
-| launcher action | the `local` event's `done` phase, ok only, through `local_keys(action, target, verb)` |
+| launcher action | the `local` event's `done` phase, ok only, through `local_keys(action, target, verb)`. A press at the desk (the Tips card's x, the Widgets card's parts and Reset) is answered on the line the same way but teaches nothing (`event(..., teaches=False)`): only the word `desk` is the tip "Say desk to fold the cards". |
 | a stop | `AgentD.stop(by_person=True)` for a turn that was really running, as `local:stop`: Esc (the shell's `stop`, or `cancel`) and the word "stop". The word with nothing running teaches nothing, and neither does undo, restart, shutdown or the setup card's cancel, which stop a turn too and are not Esc. |
 | tool | `_on_event` for a `tool` event, counted when its `tool_result` arrives without an error (`_tips_tool`) |
 | job | `_job_tool`'s start, through `job_keys(kind)` |
