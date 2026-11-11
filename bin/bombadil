@@ -34,6 +34,8 @@
   bombadil mail list [VIEW]            the newest mail in a view (all, needs_reply, drafts, acct:ID)
   bombadil mail show [VIEW]            open the Mail window on a view
                                        (nothing sends from here: Send is a button in the Mail window)
+  bombadil remote [status|url|show|stop]  let claude.ai/code or the Claude app steer a Claude Code session on this computer
+  bombadil snapshot [--hook]           take a restore point now (--hook: for a Claude Code hook, labelled by its prompt)
 """
 import json
 import os
@@ -44,7 +46,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from bombadil import config, dev, notices, pager, paths, snapshots, watch  # noqa: E402
+from bombadil import config, dev, notices, pager, paths, remote, snapshots, watch  # noqa: E402
 
 NO_AGENTD = 3   # follow_setup's exit code when nothing answers on agentd's socket (bombadil-setup looks for it)
 EX_TEMPFAIL = 75   # `ask` when the AI rests: it does not wait for the reset (sysexits.h)
@@ -459,6 +461,26 @@ def main() -> int:
         return follow_setup({"type": "signin", **({"provider": args[0]} if args else {})})
     elif cmd == "mail":
         return mail(args)
+    elif cmd == "remote":
+        return remote.main(args)
+    elif cmd == "snapshot":
+        # Never fails: as a hook, a non-zero answer would stop the prompt it is taken for.
+        label = snapshots.label_from_hook(sys.stdin.read()) if "--hook" in args else "turn: " + (" ".join(args) or "by hand")
+        try:
+            # A turn starts a new history, as one from the pill does (agentd does this before its restore point):
+            # without it the pill's "undo" would skip this turn and take back an older one.
+            from bombadil import launcher
+            launcher.Launcher().clear_undo()
+        except Exception as e:  # noqa: BLE001
+            print(f"undo marker: {e}", file=sys.stderr)
+        try:
+            snap = snapshots.Snapshots().create(label)
+        except Exception as e:  # noqa: BLE001
+            print(f"no restore point: {e}", file=sys.stderr)
+            return 0
+        if snap is not None and "--hook" not in args:
+            print(f"restore point {snap.number}")
+        return 0
     elif cmd == "open":
         if not args:
             print(__doc__)

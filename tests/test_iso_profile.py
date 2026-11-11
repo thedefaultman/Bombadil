@@ -31,49 +31,7 @@ def test_pacman_has_an_active_mirror_and_the_agent_upgrades_as_it_installs():
     assert "That also updates every other package, so say so in one plain sentence" in providers.system_prompt()
 
 
-ARCH_GRUB_DEFAULTS = """\
-# GRUB boot loader configuration
-
-GRUB_DEFAULT=0
-GRUB_TIMEOUT=5
-GRUB_DISTRIBUTOR="Arch"
-GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"
-GRUB_CMDLINE_LINUX=""
-
-# Uncomment to use basic console
-#GRUB_TERMINAL_INPUT=console
-
-# Uncomment to disable graphical terminal
-#GRUB_TERMINAL_OUTPUT=console
-GRUB_TIMEOUT_STYLE=menu
-"""
-
-
-def _installer_grub_lines(tmp_path, defaults: str) -> list[str]:
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for kv in GRUB_TIMEOUT_STYLE")
-    end = script.index("grub-install", start)
-    # The loop runs inside the chroot on /etc/default/grub; run the same lines on a copy.
-    assert script.index("grub-mkconfig") > end
-    grub = tmp_path / "grub"
-    grub.write_text(defaults)
-    subprocess.run(["bash", "-e", "-c", script[start:end].replace("/etc/default/grub", str(grub))], check=True)
-    return grub.read_text().splitlines()
-
-
-def test_grub_boots_straight_in_with_the_menu_one_esc_away(tmp_path):
-    lines = _installer_grub_lines(tmp_path, ARCH_GRUB_DEFAULTS)
-    for want in ("GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=1", "GRUB_TERMINAL_OUTPUT=console"):
-        assert lines.count(want) == 1
-    assert "GRUB_TIMEOUT=5" not in lines and "GRUB_TIMEOUT_STYLE=menu" not in lines
-    assert 'GRUB_CMDLINE_LINUX_DEFAULT="loglevel=3 quiet"' in lines and "#GRUB_TERMINAL_INPUT=console" in lines
-
-
-def test_grub_settings_missing_from_the_defaults_are_added(tmp_path):
-    lines = _installer_grub_lines(tmp_path, "GRUB_DEFAULT=0\n")
-    assert lines[0] == "GRUB_DEFAULT=0"
-    assert set(lines[1:]) == {"GRUB_TIMEOUT_STYLE=hidden", "GRUB_TIMEOUT=1", "GRUB_TERMINAL_OUTPUT=console"}
+# The installer's GRUB defaults are tested with the installer, in tests/test_installer.py.
 
 
 def _pill_binds():
@@ -146,6 +104,47 @@ def test_the_agent_is_told_a_replaced_kernel_needs_a_restart():
     assert "If an upgrade replaced the kernel, tell the user a restart is needed" in providers.system_prompt()
 
 
+def test_the_stick_carries_everything_the_installer_calls():
+    # bombadil-install checks for these tools before it touches a disk, and mkinitcpio builds the
+    # initramfs that opens an encrypted one; the microcode packages are what the installed system's initramfs embeds.
+    assert {"grub", "efibootmgr", "btrfs-progs", "snapper", "dosfstools", "gptfdisk", "arch-install-scripts",
+            "cryptsetup", "mkinitcpio", "amd-ucode", "intel-ucode", "parted"} <= _packages()
+
+
+def test_the_installed_clock_is_kept_right_by_timesyncd():
+    # The installed system is a copy of the image; a service enabled in the image is enabled there.
+    link = ISO / "airootfs/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service"
+    assert link.is_symlink() and link.readlink().name == "systemd-timesyncd.service"
+
+
+def test_the_image_has_what_remote_control_runs_in():
+    # `bombadil remote` keeps Claude Code's remote-control server in a detached tmux session.
+    assert "tmux" in _packages()
+
+
+def test_the_image_is_built_without_erofs_tail_packing():
+    # erofs-utils 1.9.4 zeroed the last block of some incompressible files with `-E ztailpacking`, among them kernel
+    # modules; the installer reads every module back and refuses an install from an image like that.
+    profiledef = (ISO / "profiledef.sh").read_text()
+    options = re.search(r"^airootfs_image_tool_options=\((.*)\)", profiledef, re.M).group(1)
+    assert "ztailpacking" not in options
+
+
+def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():
+    script = (ISO.parent / "scripts/build-iso.sh").read_text()
+    assert "verify_image" in script and "diff -rq" in script
+
+
+def test_every_script_the_image_adds_to_the_path_or_to_grub_is_executable():
+    # mkarchiso copies airootfs without modes, so a script that is not listed in file_permissions is not runnable
+    # (and grub-mkconfig skips a file in /etc/grub.d that is not executable).
+    profiledef = (ISO / "profiledef.sh").read_text()
+    listed = set(re.findall(r'\["(/[^"]+)"\]="0:0:755"', profiledef))
+    for folder in ("usr/local/bin", "etc/grub.d"):
+        shipped = {f"/{folder}/{p.name}" for p in (ISO / "airootfs" / folder).iterdir() if p.is_file()}
+        assert shipped <= listed, sorted(shipped - listed)
+
+
 USER_UNITS = ISO / "airootfs/etc/systemd/user"
 
 
@@ -199,7 +198,7 @@ def test_setup_and_the_cli_restart_the_daemon_through_systemd():
 def test_the_installed_system_prunes_its_restore_points_and_takes_no_hourly_ones():
     install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
     assert "set-config TIMELINE_CREATE=no NUMBER_CLEANUP=yes NUMBER_LIMIT=30" in install
-    assert "systemctl enable snapper-cleanup.timer" in install
+    assert re.search(r"^systemctl enable .*\bsnapper-cleanup\.timer\b", install, re.M)
     # The config has to exist before it is changed.
     assert install.index("create-config") < install.index("set-config")
 
@@ -209,44 +208,9 @@ def test_the_installer_takes_the_kernel_from_the_system_it_copies_not_from_the_b
     # kernel is copied, which used to stop the script after the disk was wiped and copied.
     install = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
     assert "bootmnt" not in install
-    assert 'cp "$kernel" /mnt/boot/vmlinuz-linux' in install
+    assert 'install -Dm644 "$kernel" "$target/boot/vmlinuz-linux"' in install
     # It is found, and checked, before the disk is erased.
-    assert install.index('kernel=$(ls -d /usr/lib/modules/*/vmlinuz') < install.index('sgdisk -Z "$disk"')
-
-
-def test_the_installed_system_keeps_the_desks_places_and_what_tips_has_taught(tmp_path):
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for f in .claude .claude.json")
-    end = script.index("arch-chroot /mnt chown", start)
-    live, disk = tmp_path / "live", tmp_path / "disk"
-    state = live / ".local/state/bombadil"
-    state.mkdir(parents=True)
-    (state / "tips.json").write_text('{"first_ready": "2026-11-09", "days": ["2026-11-09"]}')
-    (state / "desk.toml").write_text('hidden = ["machine"]\n')
-    (state / "turns.jsonl").write_text("a turn\n")            # the log of turns stays with the live session
-    (live / ".config/bombadil").mkdir(parents=True)
-    (live / ".config/bombadil/config.toml").write_text('provider = "claude"\n')
-    # The loop copies /home/user (the live home) to /mnt/home/user (the disk's): run it on two folders.
-    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
-    subprocess.run(["bash", "-e", "-c", loop], check=True)
-    kept = {str(p.relative_to(disk)): p.read_text() for p in disk.rglob("*") if p.is_file()}
-    assert kept == {
-        ".local/state/bombadil/tips.json": '{"first_ready": "2026-11-09", "days": ["2026-11-09"]}',
-        ".local/state/bombadil/desk.toml": 'hidden = ["machine"]\n',
-        ".config/bombadil/config.toml": 'provider = "claude"\n'}
-
-
-def test_a_live_system_with_nothing_to_carry_over_installs_all_the_same(tmp_path):
-    import subprocess
-    script = (ISO / "airootfs/usr/local/bin/bombadil-install").read_text()
-    start = script.index("for f in .claude .claude.json")
-    end = script.index("arch-chroot /mnt chown", start)
-    live, disk = tmp_path / "live", tmp_path / "disk"
-    live.mkdir()
-    loop = script[start:end].replace("/mnt/home/user", str(disk)).replace("/home/user", str(live))
-    subprocess.run(["bash", "-e", "-c", loop], check=True)
-    assert not disk.exists()
+    assert install.index('kernel=$(newest_kernel "$image")') < install.index('sgdisk -Z "$disk"')
 
 
 def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_after_a_reboot_too():
@@ -263,7 +227,7 @@ def test_the_smokes_key_requests_are_numbered_per_boot_so_the_host_sends_them_af
 def test_the_smokes_sign_in_block_never_runs_where_a_provider_is_already_chosen():
     # It picks other providers, cancels their logins and deletes the config file at its end.
     smoke = (ISO / "airootfs/usr/local/bin/bombadil-smoke").read_text()
-    gate = 'if [[ "$mode" != "undo" && ! -e "$signin_config" ]]; then'
+    gate = 'if [[ "$mode" =~ ^(install|live|)$ && ! -e "$signin_config" ]]; then'
     assert 'signin_config=/home/user/.config/bombadil/config.toml' in smoke and gate in smoke
     assert smoke.index(gate) < smoke.index("check signin-agentd-starts") < smoke.index("rm -f /home/user/.fake-signin /home/user/.config/bombadil/config.toml")
     # The gate is one block: what the fresh ISO runs is inside it, up to the install step.
