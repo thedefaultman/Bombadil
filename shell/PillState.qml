@@ -1021,8 +1021,25 @@ QtObject {
         const words = String(text || "")
         if (words === "") return String(current || "")
         if (tip !== true) return words
-        if (String(current || "").trim() !== "" && String(current) !== String(tipWords || "")) return String(current)
+        if (_typed(current, tipWords)) return String(current)
         return /…\s*$/.test(words) ? words.replace(/\s*…\s*$/, "") + " " : words
+    }
+
+    // Words in the pill that are the person's: not empty, and not what a tip's button put there and nobody has
+    // changed (`tipWords`, which the pill remembers; one more typed word makes them the person's).
+    function _typed(current, tipWords) {
+        return String(current || "").trim() !== "" && String(current) !== String(tipWords || "")
+    }
+
+    // What the pill takes from a summon with words: its new text, whether the person's own typed words stayed (`kept`,
+    // so the cursor stays where it was; otherwise it goes to the end), and what a tip's button put there now
+    // (`tipWords`, "" when the words are the person's or came from an app). The pill (shell.qml) applies it as it is,
+    // so a press of a tip's button over typed words changes nothing in the pill and the draft is never lost.
+    function draftFor(current, text, tip, tipWords) {
+        const out = summonText(current, text, tip, tipWords)
+        if (String(text || "") === "") return { text: out, kept: true, tipWords: String(tipWords || "") }
+        const kept = tip === true && _typed(current, tipWords)
+        return { text: out, kept: kept, tipWords: tip === true && !kept ? out : "" }
     }
 
     // What an exact launcher word would open ("Passwords"), or "" when it goes to the agent.

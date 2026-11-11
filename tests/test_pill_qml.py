@@ -672,19 +672,70 @@ def test_a_tip_replaces_the_words_an_earlier_tip_put_there_and_never_the_ones_ty
     assert bar.call("summonText", current, text, True, tip_words) == want
 
 
+def _draft(bar, current, text, tip, tip_words):
+    """What the pill takes from a summon, as shell.qml applies it: (the text, whether the cursor stays, what a tip
+    put there)."""
+    got = bar.call("draftFor", current, text, tip, tip_words)
+    got = got.toVariant() if hasattr(got, "toVariant") else got
+    return got["text"], got["kept"], got["tipWords"]
+
+
+def test_a_run_of_tip_buttons_over_an_empty_pill_then_typing_then_another_button(bar):
+    """The hand-off over time, as the bar keeps it: the pill's text and what a tip put in it (`tipWords`). A tip's
+    button fills an empty pill with the cursor at the end; the next button replaces those words while nobody has
+    changed them; the person's own word makes them theirs, and then no button touches them (a typed draft is never
+    lost); an app's summon (the Brain's "Ask about this") still replaces whatever is there."""
+    text, tip_words = "", ""
+    # a press in an empty pill: the words, the cursor at the end, remembered as the tip's
+    text, kept, tip_words = _draft(bar, text, "Make me a ticketing app", True, tip_words)
+    assert (text, kept, tip_words) == ("Make me a ticketing app", False, "Make me a ticketing app")
+    # the card turned and its button pressed, nothing typed: the new words, not a silent press
+    text, kept, tip_words = _draft(bar, text, "How am I connected?", True, tip_words)
+    assert (text, kept, tip_words) == ("How am I connected?", False, "How am I connected?")
+    # the person adds a word: the pill's words are theirs now
+    text += " today"
+    text, kept, tip_words = _draft(bar, text, "Make me a ticketing app", True, tip_words)
+    assert (text, kept, tip_words) == ("How am I connected? today", True, "")
+    text, kept, tip_words = _draft(bar, text, "In Tickets, add…", True, tip_words)       # and again: still theirs
+    assert (text, kept, tip_words) == ("How am I connected? today", True, "")
+    # the Brain's "Ask about this" is not a tip: it replaces them, and what it put is nobody's tip words
+    text, kept, tip_words = _draft(bar, text, "About ~/Documents/lease.pdf: ", False, tip_words)
+    assert (text, kept, tip_words) == ("About ~/Documents/lease.pdf: ", False, "")
+    # and a button after that keeps it, because it is not a tip's
+    text, kept, tip_words = _draft(bar, text, "How am I connected?", True, tip_words)
+    assert (text, kept, tip_words) == ("About ~/Documents/lease.pdf: ", True, "")
+
+
+def test_a_tip_button_over_a_draft_the_person_typed_changes_nothing_not_even_the_cursor(bar):
+    """The person typed before they pressed: the draft stays whole, the cursor stays where it was, and nothing is
+    remembered as the tip's (so a second press does not take it either)."""
+    for typed in ("install docker and", "a", "In Tickets, add a due date"):
+        assert _draft(bar, typed, "Make me a ticketing app", True, "") == (typed, True, "")
+        assert _draft(bar, typed, "In Tickets, add…", True, "") == (typed, True, "")
+        # what an earlier tip put there is not what is in the pill now
+        assert _draft(bar, typed, "How am I connected?", True, "Make me a ticketing app") == (typed, True, "")
+    # a button ending in an ellipsis fills the words before it and a space, for the person's detail
+    assert _draft(bar, "", "In Tickets, add…", True, "") == ("In Tickets, add ", False, "In Tickets, add ")
+    # and the next button, over those untouched words, replaces them
+    assert _draft(bar, "In Tickets, add ", "How am I connected?", True, "In Tickets, add ") == (
+        "How am I connected?", False, "How am I connected?")
+    # nothing to put in: nothing changes, and what a tip put there is still the tip's
+    assert _draft(bar, "Make me a ticketing app", "", True, "Make me a ticketing app") == (
+        "Make me a ticketing app", True, "Make me a ticketing app")
+
+
 def test_the_bar_hands_the_tip_flag_to_the_pill_and_takes_the_draft_through_it():
-    """shell.qml is Quickshell's, so it cannot load offscreen: what it must do is read from its source. The tip's
-    flag goes from the pill's summon to the draft before the draft (whose change takes it), and the draft is taken
-    by PillState.summonText, which keeps typed words for a tip."""
+    """shell.qml is Quickshell's, so it cannot load offscreen: the plumbing that must be there is read from its
+    source, and what it decides is PillState.draftFor (tested above). The tip's flag goes from the pill's summon to
+    the draft before the draft (whose change takes it), the draft is taken through draftFor, the pill's text and
+    cursor follow what it says, and the pill remembers what a tip put in it."""
     shell = (SHELL / "shell.qml").read_text()
     assert "onSummoned: (text, tip) => root.summon(text, tip)" in shell
     assert shell.index("root.draftTip = tip === true") < shell.index("root.draft = text")
-    assert "input.text = pillState.summonText(input.text, root.draft, root.draftTip, win.tipWords)" in shell
-    # typed words that stay keep their cursor; filled ones get it at the end
-    assert 'const kept = root.draftTip && input.text.trim() !== "" && input.text !== win.tipWords' in shell
-    assert "if (!kept) input.cursorPosition = input.text.length" in shell
-    # the pill remembers what a tip put in it, so that the next tip can tell those words from the person's
-    assert 'win.tipWords = root.draftTip && !kept ? input.text : ""' in shell
+    assert "pillState.draftFor(input.text, root.draft, root.draftTip, win.tipWords)" in shell
+    assert "input.text = taken.text" in shell
+    assert "if (!taken.kept) input.cursorPosition = input.text.length" in shell
+    assert "win.tipWords = taken.tipWords" in shell
 
 
 def _hover_line(bar):

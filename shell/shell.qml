@@ -415,12 +415,12 @@ ShellRoot {
             property string tipWords: ""
             function takeDraft() {
                 if (!summoned || root.draft === "") return
-                // A tip's words wait in an empty pill and leave typed words alone (PillState.summonText); words an
-                // earlier tip put there and nobody changed are replaced.
-                const kept = root.draftTip && input.text.trim() !== "" && input.text !== win.tipWords
-                input.text = pillState.summonText(input.text, root.draft, root.draftTip, win.tipWords)
-                if (!kept) input.cursorPosition = input.text.length
-                win.tipWords = root.draftTip && !kept ? input.text : ""
+                // A tip's words wait in an empty pill and leave typed words alone (the person's draft is never lost);
+                // words an earlier tip put there and nobody changed are replaced (PillState.draftFor decides).
+                const taken = pillState.draftFor(input.text, root.draft, root.draftTip, win.tipWords)
+                input.text = taken.text
+                if (!taken.kept) input.cursorPosition = input.text.length
+                win.tipWords = taken.tipWords
                 root.draft = ""
             }
             Connections {
