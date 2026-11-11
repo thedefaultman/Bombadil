@@ -1375,10 +1375,12 @@ def test_draft_puts_the_words_in_the_pill_and_sends_nothing(kit, monkeypatch, tm
 
 
 def test_draft_keeps_the_words_exactly_and_names_a_tip_only_when_it_is_given(kit, monkeypatch, tmp_path):
+    from bombadil.appkit.native import agent as agent_mod
     from bombadil.appkit.native.agent import Agent
 
     server = _Server(tmp_path / "agentd.sock")
     monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
+    monkeypatch.setattr(agent_mod, "SHOT_SECONDS", 30)    # so only the line being written can close the connection
     a = Agent(kit.ctx)
     try:
         a.draft("In Tickets, add ")                  # the cursor waits after the space, for the person's detail
@@ -1411,9 +1413,11 @@ def test_draft_says_nothing_for_nothing_and_in_check(kit, checking, monkeypatch,
 
 
 def test_draft_with_agentd_away_does_nothing_and_leaves_nothing_behind(kit, monkeypatch, tmp_path):
+    from bombadil.appkit.native import agent as agent_mod
     from bombadil.appkit.native.agent import Agent, _OneShot
 
     monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "none.sock"))
+    monkeypatch.setattr(agent_mod, "SHOT_SECONDS", 30)    # so only the refused connection can end it
     a = Agent(kit.ctx)
     a.draft("Make me a ticketing app", "make-an-app")         # nobody listens: no error, nothing queued
     assert wait_until(lambda: not a.findChildren(_OneShot), 3000)
