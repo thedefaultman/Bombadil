@@ -18,7 +18,7 @@ RowLayout {
         delegate: Rectangle {
             id: mark
             required property string modelData
-            readonly property real natural: label.implicitWidth + 24
+            readonly property real natural: Math.ceil(label.implicitWidth) + 24      // whole pixels, as PillButton's
             Layout.preferredHeight: 28
             Layout.fillWidth: true
             Layout.minimumWidth: 0

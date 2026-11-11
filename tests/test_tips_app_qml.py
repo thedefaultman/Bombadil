@@ -791,6 +791,19 @@ def test_every_tip_fits_960_by_516_and_a_very_long_one_does_not_push_anything_ou
                 bad.append([tip["id"], "words over replay"])
             if tip["id"] in ("long-one", "long-marks") and not replay.isVisible():
                 bad.append([tip["id"], "no Replay beside the long words"])
+            # Words or marks that have the room are drawn whole ("desk" was once "de..." for the want of a
+            # fraction of a pixel), and ones that have not are elided, not pushed out.
+            for n in ("wordsButton", "marks"):
+                it = find(n)
+                if not it.isVisible():
+                    continue
+                need = it.property("implicitWidth") + (replay.property("implicitWidth") + theme.property("gap")
+                                                      if replay.isVisible() else 0)
+                cut = [t.property("text") for t in walk(it) if "QQuickText" in lineage(t) and t.property("truncated")]
+                if need <= 576 and cut:
+                    bad.append([tip["id"], n, "elided with room", cut])
+                if need > 576 and not cut:
+                    bad.append([tip["id"], n, "too long and not elided"])
             if tip["id"] == "make-an-app":
                 shot("fit-first")
             if tip["id"] in ("long-one", "long-marks"):

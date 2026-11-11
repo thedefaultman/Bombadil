@@ -18,7 +18,9 @@ Item {
     readonly property color ink: quiet && !hover.hovered ? Theme.muted : Theme.fg
 
     implicitHeight: Theme.controlHeight
-    implicitWidth: Math.min(label.implicitWidth + (icon !== "" ? 22 : 0) + 32, maxWidth)
+    // A whole number of pixels: a layout that shares a row hands out whole pixels, and a width a fraction short of
+    // the text's own elides a short word ("desk" as "de...").
+    implicitWidth: Math.min(Math.ceil(label.implicitWidth) + (icon !== "" ? 22 : 0) + 32, maxWidth)
     Accessible.role: Accessible.Button
     Accessible.name: text
     Accessible.onPressAction: root.clicked()
