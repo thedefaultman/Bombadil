@@ -52,6 +52,31 @@ stood in for). In `tests/test_welcome_qml.py` and `tests/test_persona_card_qml.p
 no Qt passed and the other 36 and 26 skipped. The added lines of the smoke and the changes to the desktop test
 were read, and the scripts parse; neither was run.
 
+The change between `f0485c2` and `24c836c` was added on 2026-11-09, and nothing else on the page was read again:
+messages and connections (the connection service and the browser service, proposals and the press, three
+kinds of card, the bar's own notification server in place of `mako`, and five tools for the agent). The tests
+were counted in a container with Python 3.13.18, pytest 9.2.0 and pytest-asyncio 1.4.1, with no PySide6.
+`pytest --collect-only -q` collected 5695 tests in 94 of the 114 `test_*.py` files and ended with two collection
+errors, for want of `httpx` and `httpx2`; with `httpx` 0.28.1 and `mcp` 2.3.0 (which brings `httpx2`) from the
+Python package index it collected 5960 in 96. These files were run one at a time, with those two packages
+installed, and passed: `tests/test_iso_profile.py` (46 tests), `tests/test_connect_store.py` (22),
+`tests/test_connect_client.py` (17), `tests/test_connect_service.py` (104), `tests/test_connect_slack.py` (165),
+`tests/test_connect_mcp.py` (100), `tests/test_connect_tools.py` (104), `tests/test_connect_watch.py` (91),
+`tests/test_connect_e2e.py` (6), `tests/test_agentd_connect.py` (74), `tests/test_proposals.py` (67),
+`tests/test_outbox.py` (103), `tests/test_cards.py` (81), `tests/test_cardmake.py` (33),
+`tests/test_plaintext.py` (48), `tests/test_ws.py` (9), `tests/test_notifications.py` (48),
+`tests/test_launcher.py` (382), `tests/test_narrate.py` (252), `tests/test_procs.py` (14),
+`tests/test_apps.py` (14), `tests/test_cardtools.py` (15) and `tests/test_mcp_server.py` (46, with the warning
+described under [Run the tests](#run-the-tests)). `tests/test_browserd.py` (75) and `tests/test_slack_setup.py`
+(76) passed against a real headless Chrome that the container had, and none was skipped. Read and not run,
+because they need PySide6, Docker or a VM: `tests/test_connect_cards_qml.py` (66 test functions), the tests added
+to `tests/test_pill_qml.py` and `tests/test_notice_qml.py`, the desktop test with its section on connections and
+the smoke with its connection checks. `tests/desktop/driver.py` and `tests/desktop/fake_api.py` parse, and
+`fake_api.py` was started on its own and answered a streamed request for the prompt `answer priya` with the
+`messages_unread` call and, after its result, the `propose` call. `scripts/dev-session.sh` was not run: the test
+in `tests/test_iso_profile.py` that reads it runs `bash -n` on it and checks the order in which it starts what it
+starts. The ruff figures were counted again, with ruff 0.15.20 and 0.16.9.
+
 ## Set up
 
 Python 3.11 or newer is required (`requires-python`, and the code uses `tomllib`). The package has no
@@ -61,26 +86,31 @@ runtime dependencies: `dependencies = []`. Use a virtual environment kept outsid
 ```sh
 python3 -m pip install -e '.[dev,apps]'
 python3 -m pip install cryptography                # the Vault tests
+python3 -m pip install httpx mcp                   # the connection drivers, and the two test files that import them
 python3 -m pip install pillow numpy cairosvg       # the two wallpaper tests that draw the picture again
 pytest
 ```
 
 | Extra | Packages | What needs it |
 |---|---|---|
-| none | `dependencies = []` | `agentd`, `bombadil`, `bombadil-os-mcp`, the launcher, the card and picture code and the brain (`src/bombadil/brain/`): standard library only |
+| none | `dependencies = []` | `agentd`, `bombadil`, `bombadil-os-mcp`, the launcher, the card and picture code, the brain (`src/bombadil/brain/`), the connection service on its fake engine (`bin/bombadil-connect`) with its client, and the browser service (`bin/bombadil-browserd`): standard library only |
 | `dev` | `pytest`, `pytest-asyncio`, `ruff` | the tests and the linter |
-| `apps` | `PySide6` | the app kit and its runtime (`bombadil-app`), the Focus window's app (`share/apps/brain/`), the Mail window's app (`share/apps/mail/`), the 17 test modules that skip as a whole without it (listed under [Run the tests](#run-the-tests)), 94 tests in four files that skip one by one (`tests/test_appkit_reload.py`, `tests/test_appkit_runtime.py`, `tests/test_welcome_qml.py` and `tests/test_persona_card_qml.py`), and five pixel tests in `tests/test_wallpaper.py` |
+| `apps` | `PySide6` | the app kit and its runtime (`bombadil-app`), the Focus window's app (`share/apps/brain/`), the Mail window's app (`share/apps/mail/`), the 18 test modules that skip as a whole without it (listed under [Run the tests](#run-the-tests)), 94 tests in four files that skip one by one (`tests/test_appkit_reload.py`, `tests/test_appkit_runtime.py`, `tests/test_welcome_qml.py` and `tests/test_persona_card_qml.py`), and five pixel tests in `tests/test_wallpaper.py` |
 | not declared | `cryptography` | `Vault` (`src/bombadil/appkit/native/vault.py`); 27 tests failed without it on 2026-10-01 (see below) |
 | not declared | `pillow`, `numpy`, `cairosvg` | `scripts/make-wallpaper.py`, and the two tests in `tests/test_wallpaper.py` that draw the picture again; they skip without them |
+| not declared | `httpx`, and `mcp` (which needs `httpx2`) | the connection service's real drivers: `src/bombadil/connect/slack.py` imports `httpx`, and `src/bombadil/connect/mcpconn.py` imports `httpx2` and `mcp`, so a connection on the real engine needs them and the fake engine needs neither. `tests/test_connect_slack.py` and `tests/test_connect_mcp.py` fail at collection without them, and a plain `pytest` then runs nothing (see [Run the tests](#run-the-tests)). The image installs `python-httpx` and `python-mcp` (`iso/packages.x86_64`) |
 
-In `src/`, third-party imports exist only under `src/bombadil/appkit/`: `PySide6`, `shiboken6`
-(installed with PySide6) and `cryptography`. The apps the kit runs import `PySide6` as well
-(`share/app-template/app.py`, `share/apps/brain/app.py`, `share/apps/mail/app.py`). `scripts/make-wallpaper.py` is the one script
-that imports packages of its own (`pillow`, `numpy`, `cairosvg`). The ISO installs `pyside6` and
-`python-cryptography` as packages (`iso/packages.x86_64`). The editable install adds `src/` to the
-import path through a `.pth` file; it is optional, because `pythonpath = ["src"]` in the pytest
-configuration and a `sys.path.insert` at the top of nine of the ten Python entry points in `bin/` do the same
-for the tests and the commands (`bin/bombadil-signal` uses the standard library only and needs no path).
+In `src/`, third-party imports exist in two places: under `src/bombadil/appkit/` (`PySide6`, `shiboken6`,
+installed with PySide6, and `cryptography`) and in two drivers of the connection service
+(`src/bombadil/connect/slack.py` imports `httpx`, and `src/bombadil/connect/mcpconn.py` imports `httpx2` and
+`mcp`; the service imports a driver by name only when it starts a connection of that kind). The apps the kit runs
+import `PySide6` as well (`share/app-template/app.py`, `share/apps/brain/app.py`, `share/apps/mail/app.py`).
+`scripts/make-wallpaper.py` is the one script that imports packages of its own (`pillow`, `numpy`, `cairosvg`).
+The ISO installs `pyside6`, `python-cryptography`, `python-mcp` and `python-httpx` as packages
+(`iso/packages.x86_64`). The editable install adds `src/` to the import path through a `.pth` file; it is
+optional, because `pythonpath = ["src"]` in the pytest configuration and a `sys.path.insert` at the top of
+eleven of the twelve Python entry points in `bin/` do the same for the tests and the commands
+(`bin/bombadil-signal` uses the standard library only and needs no path).
 
 Other layers need more than Python:
 
@@ -88,7 +118,7 @@ Other layers need more than Python:
 |---|---|
 | Mail add-on tests (JavaScript) | `node` 22 or later on `PATH`, nothing else: no package install, no Thunderbird. `tests/test_mail_addon.py` skips without it |
 | Mail tests on a real Thunderbird | an unpacked Thunderbird (`BOMBADIL_TEST_THUNDERBIRD`, else `~/.cache/bombadil-lab/thunderbird-157.0/thunderbird`, which `tests/mail/lab/fetch-thunderbird.sh` downloads) and `dovecot` on `PATH`; one test in `tests/test_mail_engine.py` needs `Xvfb` and `xwininfo` instead of `dovecot`. They skip without them (see [The tests of Mail](#the-tests-of-mail)) |
-| dev session | a Hyprland desktop with `quickshell` (panels, drawers and app placement need Hyprland; the bar alone also ran under sway in the desktop test); `pyside6` only to create or open apps, the Mail window included; `zellij` and `foot` only for coding sessions. Mail runs on its fake engine, so no Thunderbird is needed |
+| dev session | a Hyprland desktop with `quickshell` (panels, drawers and app placement need Hyprland; the bar alone also ran under sway in the desktop test); `pyside6` only to create or open apps, the Mail window included; `zellij` and `foot` only for coding sessions. Mail runs on its fake engine, so no Thunderbird is needed, and connections run on theirs, so no Slack account, no key and neither `httpx` nor `mcp` is needed |
 | desktop test | Docker, and a self-contained `claude` binary (`CLAUDE_BIN`) |
 | ISO build | an Arch host with `archiso` and `npm`, or Docker or Podman (`scripts/build-in-container.sh`) |
 | ISO smoke | `qemu-system-x86_64`, OVMF firmware (`edk2-ovmf` or `ovmf`), a built ISO, and `qemu-img` for the install mode; KVM is optional |
@@ -109,8 +139,9 @@ python3 docs/tools/check_docs.py --mermaid    # the file checks of the docs: lin
 
 The configuration defines no markers. Selection is by file or `-k`. Async tests carry
 `@pytest.mark.asyncio` (strict mode: `asyncio_mode` is not set), on the test or, in
-`tests/test_mail_bridge.py`, `tests/test_mail_service.py` and `tests/test_mail_e2e_real.py`, once for the
-module in its `pytestmark` (see Conventions). Three
+`tests/test_mail_bridge.py`, `tests/test_mail_service.py`, `tests/test_mail_e2e_real.py`,
+`tests/test_connect_mcp.py`, `tests/test_connect_service.py`, `tests/test_connect_slack.py` and `tests/test_ws.py`,
+once for the module in its `pytestmark` (see Conventions). Three
 tests need root and skip without it: `test_real_kernel_events_parse` in `tests/test_brain_fanotify.py`,
 `test_real_fork_events` in `tests/test_brain_forks.py` and
 `tests/test_brain_watch.py::test_the_service_end_to_end` (which also needs `setpriv` and a working
@@ -124,17 +155,28 @@ it ignored. Stop's SIGINT then does nothing to the child that
 table.
 
 What collects, and what skips, depends on what is installed. On 2026-11-09, without PySide6, `pytest
---collect-only -q` collected 4728 tests in 80 of the 97 `test_*.py` files (at `f0485c2`; 3636 in 68 of 84 at
-`ca7f80a`, and 3484 in 65 of 80 at `7176e55`). Of the four test files added between `7176e55` and `ca7f80a`
+--collect-only -q` collected 5695 tests in 94 of the 114 `test_*.py` files at `24c836c` and ended with `2 errors
+during collection` (4728 in 80 of 97 at `f0485c2`, 3636 in 68 of 84 at `ca7f80a`, and 3484 in 65 of 80 at
+`7176e55`). The two errors are `tests/test_connect_slack.py`, which imports `httpx`, and
+`tests/test_connect_mcp.py`, which imports `httpx2`; no extra declares either. Pytest stops at a collection error
+and runs nothing, so `pytest` on `.[dev,apps]` needs `pip install httpx mcp` first (`mcp` brings `httpx2`), or
+`--ignore` for those two files, which collected the same 5695 with no error. With both packages installed it
+collected 5960 tests in 96 files. Of the four test files added between `7176e55` and `ca7f80a`
 (`tests/test_dev.py`, `tests/test_away.py`, `tests/test_agentd_away.py` and `tests/test_sessions_qml.py`), three
 collect tests: `tests/test_dev.py` has 26 (25 at `ca7f80a`), `tests/test_away.py` 75 and `tests/test_agentd_away.py`
-11. The fourth, `test_sessions_qml`, is one of the 17 files that skip as a whole without PySide6: `test_appkit_agent`,
-`test_appkit_kit`, `test_appkit_native`, `test_brain_app`, `test_desk_cards_qml`, `test_desk_drag_qml`,
+11. The fourth, `test_sessions_qml`, is one of the 18 files that skip as a whole without PySide6: `test_appkit_agent`,
+`test_appkit_kit`, `test_appkit_native`, `test_brain_app`, `test_connect_cards_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`,
 `test_desk_qml`, `test_diagram_qml`, `test_found_qml`, `test_mail_app_backend`, `test_mail_app_qml`, `test_motion`,
 `test_notice_qml`, `test_pill_qml`, `test_rest_qml`, `test_sessions_qml` and `test_stone_qml` (`test_found_qml` and
 `test_rest_qml` import the modules that skip). Thirteen files were added after `ca7f80a`, and [the table of where
 each kind of change is tested](#which-layer-covers-a-change) gives their counts: twelve collect tests and
-`test_motion` skips as a whole. Four more files skip one test at a time: 18 tests in `test_appkit_reload.py` and 14
+`test_motion` skips as a whole. Seventeen more were added after `f0485c2` (`test_agentd_connect`, `test_browserd`,
+`test_cardmake`, `test_connect_cards_qml`, `test_connect_client`, `test_connect_e2e`, `test_connect_mcp`,
+`test_connect_service`, `test_connect_slack`, `test_connect_store`, `test_connect_tools`, `test_connect_watch`,
+`test_notifications`, `test_plaintext`, `test_proposals`, `test_slack_setup` and `test_ws`, whose coverage
+[Connect](../architecture/connect.md) lists): fourteen collect tests with no extra package,
+`test_connect_cards_qml` skips as a whole without PySide6, and the two that import `httpx` and `httpx2` do not
+collect without them. Four more files skip one test at a time: 18 tests in `test_appkit_reload.py` and 14
 in `test_appkit_runtime.py` call `pytest.importorskip("PySide6")` inside the test, and 36 of the 39 tests of
 `test_welcome_qml.py` and 26 of the 29 of `test_persona_card_qml.py` skip when the file's own import of PySide6
 failed, so the three tests of each that read the QML as text still run. `tests/test_wallpaper.py` skips five tests that need
@@ -145,7 +187,9 @@ change; `pytest --collect-only -q | tail -1` gives the count for your checkout. 
 2026-11-08 or 2026-11-09, so no pass count or time is given for it. The slowest single tests are the waits in
 `tests/test_launcher.py` (two of 10 s and two of 5 s, 33 s for the file on 2026-11-08) and
 `tests/test_brain_watch.py::test_the_service_end_to_end` (3 s). `tests/test_mail_service.py` and
-`tests/test_mail_engine.py` together took 69 s on that date.
+`tests/test_mail_engine.py` together took 69 s on that date. On 2026-11-09 `tests/test_slack_setup.py` took
+157 s, `tests/test_connect_mcp.py` 48 s and `tests/test_browserd.py` 28 s; no other file added after `f0485c2`
+took more than 12 s.
 
 On 2026-10-01 (Python 3.11.15, pytest 9.1.1, pytest-asyncio 1.4.1, PySide6 6.11.2) a whole run with
 `.[dev,apps]` and `cryptography` had no failure, and these were the failures that other setups gave:
@@ -161,10 +205,10 @@ can (see Known gaps).
 
 A run also reports pytest warnings, each a stray thread exception in a test stand-in. One
 appears in every run: a `BrokenPipeError` in the `serve` function of the `_agentd` stand-in
-(`tests/test_mcp_server.py`, line 146, the greeting's `conn.sendall`). It writes its greeting after the
+(`tests/test_mcp_server.py`, line 148, the greeting's `conn.sendall`). It writes its greeting after the
 client has hung up, and pytest reports it against
 `test_without_a_turn_the_job_tool_says_so_and_asks_nobody` (seen again on 2026-11-08: 32 passed, 1
-warning). The other appears sometimes: a `PytestUnhandledThreadExceptionWarning` from the `_browse` thread
+warning, and on 2026-11-09: 46 passed, 1 warning). The other appears sometimes: a `PytestUnhandledThreadExceptionWarning` from the `_browse` thread
 of the `FakePanel` stand-in (`tests/test_signin.py`, line 62, an `http.client.IncompleteRead` that the
 `except OSError` does not catch), reported against
 `tests/test_agentd_signin.py::test_hidden_panel_and_show`; it did not appear in the runs of 2026-10-01. No
@@ -173,20 +217,26 @@ test fails because the container has no Hyprland, no systemd or no snapper: the 
 
 `ruff check` has one setting, `line-length = 110`, and otherwise uses ruff's default rules; nothing pins
 the version. With ruff 0.15.20 it reported 63 findings on `src tests bin scripts share iso` on 2026-11-09, at
-`ca7f80a` and again at `f0485c2`, none under `src/`, `share/` or `iso/`: 22 in `scripts/vm-tools/` (`agentprobe.py` and `scratch_api.py`:
+`ca7f80a` and again at `f0485c2`, and 67 at `24c836c`, none under `src/`, `share/` or `iso/`: 22 in
+`scripts/vm-tools/` (`agentprobe.py` and `scratch_api.py`:
 13 `E701` and 9 `E702`, several statements on one line), 32 in `tests/mail/lab/` (the lab's question
-scripts) and nine in the rest of `tests/` (five lambda assignments, two unused imports, two imports
-below code). On 2026-11-08 it was 62: `_run_picture` in `tests/test_iso_profile.py` has since added the
+scripts) and, in the rest of `tests/`, nine at `f0485c2` and 13 at `24c836c` (five lambda assignments, two unused
+imports, and six imports below code: the four added are two in `tests/test_connect_cards_qml.py` and two in
+`tests/desktop/driver.py`, in the connections section, which imports `bombadil` after it puts `src/` on the path).
+On 2026-11-08 it was 62: `_run_picture` in `tests/test_iso_profile.py` has since added the
 fifth lambda assignment (`E731`). Ruff 0.16.9, the version that `pip install '.[dev]'` fetched on
-2026-10-01, applies more default rules and reported 541 on the same command at `ca7f80a` and 543 at `f0485c2`:
-the two added ones are in `tests/test_greet_sources.py` (`C408` and `UP031`). The command
+2026-10-01, applies more default rules and reported 541 on the same command at `ca7f80a`, 543 at `f0485c2` and 552
+at `24c836c`: the two added up to `f0485c2` are in `tests/test_greet_sources.py` (`C408` and `UP031`), and the nine
+added since are 14 findings that the change brought (nine in `src/bombadil/connect/`, five in `tests/test_connect_slack.py` and
+`tests/test_ws.py`) less five that the same change took out of `src/bombadil/cards.py` and `tests/test_pill_qml.py`.
+The command
 does not cover Python scripts without a `.py` extension, because ruff scans a folder for `*.py` only: the
-ten Python entry points in `bin/` and the eight VM tools `serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink`,
-`vmlogin`, `stonecrop` and `lifttrace`. Named on the command line, the ten in `bin/` (`bombadil-signal`
+twelve Python entry points in `bin/` and the eight VM tools `serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink`,
+`vmlogin`, `stonecrop` and `lifttrace`. Named on the command line, the twelve in `bin/` (`bombadil-signal`
 among them) are clean and the eight VM tools report 47 (0.15.20). `ruff check .` also reaches
-`docs/tools/check_docs.py` and reported 64. `ruff format --check` would reformat 206 of the 215 Python files in
-those folders (187 of 197 at `ca7f80a`), and 207 of 216 with `docs/tools/check_docs.py` (`ruff format --check .`; 0.15.20), so the formatter
-is not applied.
+`docs/tools/check_docs.py` and reported 68. `ruff format --check` would reformat 253 of the 266 Python files in
+those folders (206 of 215 at `f0485c2`, 187 of 197 at `ca7f80a`), and 254 of 267 with `docs/tools/check_docs.py`
+(`ruff format --check .`; 0.15.20), so the formatter is not applied.
 
 ## How it works
 
@@ -207,10 +257,10 @@ flowchart LR
 | Layer | Real | Faked | Proves | Run it |
 |---|---|---|---|---|
 | file checks | the files of the checkout, read as text | everything they describe: no Bombadil process starts; a few tests run short bash or Python scripts on copies of the files, and `--mermaid` starts a renderer | every relative link and anchor in the docs resolves, no name or token has leaked, every Mermaid diagram renders (`docs/tools/check_docs.py`, see [documenting.md](documenting.md#checking-your-docs)); the ISO profile, the units, the tokens, the brand files and the boot parameters hold what the code relies on (`tests/test_iso_profile.py`, `test_theme.py`, `test_brand.py`, `test_boot_console.py`); the smoke's picture checks ask a capture that gave up again with more time (its `picture()` function, run in bash in `tests/test_iso_profile.py`); the installer carries the desk's places and what Tips has taught to the disk, and installs all the same when the live home has nothing to carry (its carry loop, run in bash on two folders in the same file) | `python3 docs/tools/check_docs.py --mermaid`; `pytest tests/test_theme.py tests/test_iso_profile.py tests/test_brand.py tests/test_boot_console.py` |
-| pytest unit tests | the Python code, sockets in a temp folder, plain files, SQLite files (the brain, the mail service); as root, a real fanotify mark and process-event socket in three brain files (`test_brain_fanotify.py`, `test_brain_forks.py`, `test_brain_watch.py`) | Hyprland, snapper, systemd, btrfs (a recorded mount table), zellij and foot (`FakeZellij` in `tests/test_dev.py` records the commands and keeps the sessions it was asked to start), `/proc` and the cgroup tree (recorded text), the provider CLIs (`providers.Fake`, a `Scripted` adapter, a scripted CLI that refuses with a 429), Thunderbird (the service's `FakeEngine`, a stand-in program), `bombadil-app check`, the voice's bars and clock (`Client` and `Clock` in `tests/test_voice.py`) | the socket protocol and turn lifecycle, provider stream parsing from recorded output, the resting state and the finder, the machine's readings, notices, tool results, plain-word narration, the launcher, jobs, the desk model (with a card folded by hand), card checking, picture parsers, the brain's store, watcher stream, writer attribution and search, the mail service and its press, `bombadil watch` and `history` (a command that Stop ended reads stopped, not failed), coding sessions (`dev.py`: the registry, the states a tool's hooks move a session through, the launcher's words for them, the hook program `bin/bombadil-signal` run as a program, and the three managed hook files parsed as JSON and TOML, with `share/zellij/config.kdl` only checked to exist), the Away card's rows (`away.py`), a restarted daemon keeping the conversation and the session's model, the voice (the persona file, the greeting engine and the lines it picks, the readers of what happened while the person was away, and agentd's name card, welcome line and goodbye) and Tips (the table, what a machine can back, what counts as tried, and agentd's card) | `pytest` |
-| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd in the shell tests, which send the events it would (the `Agent` type's tests run a real `AgentD` on a Unix socket: with the fake provider in `test_appkit_native.py`, with a scripted CLI in `test_appkit_agent.py`); the brain in the Focus window's tests (`test_brain_app.py`); the mail service on its fake engine, in a thread, in the Mail window's tests; the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys, a card or a strip dragged by its title is grabbed across the desk's three windows (`tests/test_desk_drag_qml.py`), and a picture asked for beside a window takes about 560 px, wider than the 360 px pill, or what the rails leave of a smaller screen and never under 360 (`tests/test_desk_qml.py`), the dots, chips and peek of coding sessions follow agentd's `dev` message (`tests/test_sessions_qml.py`), the Away card is drawn from its `away` message (`tests/test_desk_qml.py`), the name and voice card and the welcome line follow agentd's messages (`tests/test_persona_card_qml.py`, `tests/test_welcome_qml.py`), and every movement has a still version under reduced motion (`tests/test_motion.py`) | `pytest` with `.[apps]` |
-| desktop test | Quickshell, agentd, the real Claude Code CLI (also inside zellij and a `foot` window, as a coding session, with the ISO's managed hook file installed), `bombadil` commands, a Wayland compositor (sway), a virtual pointer (`pointer.py`), the mail service (`bin/bombadil-mail`) | the model (a scripted Anthropic API, which can also refuse as a used-up plan does), the mail engine (`BOMBADIL_MAIL_ENGINE=fake`), the machine's readings (injected), Hyprland, systemd, snapper | the pieces work together: timings, a key press to the screen, Stop ends everything a turn started, pictures streamed into the bar (one beside a window drawn wider than the pill), the desk and its cards (also dragged with a real pointer), the Away card, the model words, the AI at rest and the finder, a mail notice from the service to the line, the wallpaper, the name and voice card asked at the first sign-in, saved with Enter and brought back by the word `voice`, with the name in the next turn's system prompt, a real Claude Code started by name from the pill in zellij with a viewer window, its dot moving with its hooks | `tests/desktop/run.sh` |
-| ISO smoke | the built image, Hyprland, greetd, systemd and the three user services (`bombadil-agentd`, `bombadil-shell`, `mako`), zellij and `foot` for a coding session, the installer, snapper on btrfs, the brain's watcher on the installed btrfs layout, the mail user unit and Hyprland's window rule for Thunderbird's windows | the model (the coding-sessions block starts a shell session, so no tool and no model is involved); sign-in uses a stand-in login, plus the real Codex and Claude pages when the VM has internet; the mail service runs on the fake engine (the image has no mail account), and `foot` windows with Thunderbird's class stand in for its windows | a booted machine does what the product promises: session, bar, panels, apps, a shell coding session in its own scope and slice with a floating viewer window that needs no provider login, pictures (after a wait for a calm guest, and asked again with more time when a capture runs out of it), the pill keys, the user services coming back after a kill, mail, sign-in, the name and voice card with the `voice` word, install, the brain, restore points filed so snapper may prune them (the installed config keeps 30; no cleanup is run), undo over a reboot | `scripts/test-vm.sh` in three modes: `live`, `MODE=install` and `MODE=installed` (boots the disk the last install run left, the undo's second boot; it exits 2 when there is no `out/test/disk.qcow2`); a planned `MODE=update` is designed, not in the script ([the installed-OS brief](../design/installed-os-brief.md)). See [vm-testing.md](vm-testing.md) |
+| pytest unit tests | the Python code, sockets in a temp folder, plain files, SQLite files (the brain, the mail service); as root, a real fanotify mark and process-event socket in three brain files (`test_brain_fanotify.py`, `test_brain_forks.py`, `test_brain_watch.py`); the connection service and the browser service on real sockets in a temp folder (`test_connect_service.py`, `test_browserd.py`), and a real headless Chrome for the tests of the browser service and of the Slack setup that need one (they skip without it) | Hyprland, snapper, systemd, btrfs (a recorded mount table), zellij and foot (`FakeZellij` in `tests/test_dev.py` records the commands and keeps the sessions it was asked to start), `/proc` and the cgroup tree (recorded text), the provider CLIs (`providers.Fake`, a `Scripted` adapter, a scripted CLI that refuses with a 429), Thunderbird (the service's `FakeEngine`, a stand-in program), `bombadil-app check`, the voice's bars and clock (`Client` and `Clock` in `tests/test_voice.py`), Slack and the work tools (`FakeSlack` and `FakeMcp` in `tests/connect_fakes/`), the connection service in agentd's tests (`StubConnect`), Chromium's debugging port (`FakeChrome` in `tests/browserd_fakes/`) | the socket protocol and turn lifecycle, provider stream parsing from recorded output, the resting state and the finder, the machine's readings, notices, tool results, plain-word narration, the launcher, jobs, the desk model (with a card folded by hand), card checking, picture parsers, the brain's store, watcher stream, writer attribution and search, the mail service and its press, `bombadil watch` and `history` (a command that Stop ended reads stopped, not failed), coding sessions (`dev.py`: the registry, the states a tool's hooks move a session through, the launcher's words for them, the hook program `bin/bombadil-signal` run as a program, and the three managed hook files parsed as JSON and TOML, with `share/zellij/config.kdl` only checked to exist), the Away card's rows (`away.py`), a restarted daemon keeping the conversation and the session's model, the voice (the persona file, the greeting engine and the lines it picks, the readers of what happened while the person was away, and agentd's name card, welcome line and goodbye) and Tips (the table, what a machine can back, what counts as tried, and agentd's card), and messages and connections (the service's protocol and its checks of who may talk, the Slack and work-tool drivers against a played Slack and work tracker, proposals and the press, the three kinds of card as agentd builds and checks them, agentd's side of them, the browser service and the Slack setup, and how a notification becomes a notice; [Connect](../architecture/connect.md) lists the files) | `pytest` |
+| QML tests | the QML files, Qt Quick, the kit's native types, pixels | agentd in the shell tests, which send the events it would (the `Agent` type's tests run a real `AgentD` on a Unix socket: with the fake provider in `test_appkit_native.py`, with a scripted CLI in `test_appkit_agent.py`); the brain in the Focus window's tests (`test_brain_app.py`); the mail service on its fake engine, in a thread, in the Mail window's tests; agentd's side of a draft in the connection cards' tests (a small stand-in in `tests/test_connect_cards_qml.py`); Quickshell's notification module (`tests/qml/quickshell_stub/`); the compositor | a component loads with no warnings, binds to the events, draws the right face, reacts to clicks and keys, a card or a strip dragged by its title is grabbed across the desk's three windows (`tests/test_desk_drag_qml.py`), and a picture asked for beside a window takes about 560 px, wider than the 360 px pill, or what the rails leave of a smaller screen and never under 360 (`tests/test_desk_qml.py`), the dots, chips and peek of coding sessions follow agentd's `dev` message (`tests/test_sessions_qml.py`), the Away card is drawn from its `away` message (`tests/test_desk_qml.py`), the name and voice card and the welcome line follow agentd's messages (`tests/test_persona_card_qml.py`, `tests/test_welcome_qml.py`), and every movement has a still version under reduced motion (`tests/test_motion.py`), the faces of the message, task and list cards that connections make follow agentd's messages, a typed reply goes to agentd as it was typed and the button is lit only for what the card drew, and the bar's own notification server hands every notification to agentd (`tests/test_connect_cards_qml.py`; the Reply chip's hold on the keyboard is in `tests/test_notice_qml.py`) | `pytest` with `.[apps]` |
+| desktop test | Quickshell, agentd, the real Claude Code CLI (also inside zellij and a `foot` window, as a coding session, with the ISO's managed hook file installed), `bombadil` commands, a Wayland compositor (sway), a virtual pointer (`pointer.py`), the mail service (`bin/bombadil-mail`), a session bus (`dbus-daemon`) with the bar's own notification server on it, the connection service (`bin/bombadil-connect`), the clipboard (`wl-paste`) | the model (a scripted Anthropic API, which can also refuse as a used-up plan does), the mail engine (`BOMBADIL_MAIL_ENGINE=fake`), the connection engine (`BOMBADIL_CONNECT_ENGINE=fake`: an invented workspace and tracker), the machine's readings (injected), Hyprland, systemd, snapper | the pieces work together: timings, a key press to the screen, Stop ends everything a turn started, pictures streamed into the bar (one beside a window drawn wider than the pill), the desk and its cards (also dragged with a real pointer), the Away card, the model words, the AI at rest and the finder, a mail notice from the service to the line, the wallpaper, the name and voice card asked at the first sign-in, saved with Enter and brought back by the word `voice`, with the name in the next turn's system prompt, a real Claude Code started by name from the pill in zellij with a viewer window, its dot moving with its hooks, a notification posted on the session bus becoming a notice with Reply and Open, a message in the service reaching the bar as a notice and then a card, a reply typed with real keys and sent by one real click, and the agent's draft lit for the person's press and sent by nothing else | `tests/desktop/run.sh` |
+| ISO smoke | the built image, Hyprland, greetd, systemd and the two user services it kills (`bombadil-agentd`, `bombadil-shell`), zellij and `foot` for a coding session, the installer, snapper on btrfs, the brain's watcher on the installed btrfs layout, the mail user unit and Hyprland's window rule for Thunderbird's windows, the connection service's system unit, the browser service's user unit, and the session bus with the bar's notification server on it | the model (the coding-sessions block starts a shell session, so no tool and no model is involved); sign-in uses a stand-in login, plus the real Codex and Claude pages when the VM has internet; the mail service runs on the fake engine (the image has no mail account), and `foot` windows with Thunderbird's class stand in for its windows; the connection service is put on its fake engine through a drop-in for the checks that need a connection (the image has none), and `notify-send` stands in for a web page's notification | a booted machine does what the product promises: session, bar, panels, apps, a shell coding session in its own scope and slice with a floating viewer window that needs no provider login, pictures (after a wait for a calm guest, and asked again with more time when a capture runs out of it), the pill keys, the user services coming back after a kill, mail, connections (the service's account, unit and closed state directory, its answers on the fake engine, and a notification on the session bus becoming a notice), sign-in, the name and voice card with the `voice` word, install, the brain, restore points filed so snapper may prune them (the installed config keeps 30; no cleanup is run), undo over a reboot | `scripts/test-vm.sh` in three modes: `live`, `MODE=install` and `MODE=installed` (boots the disk the last install run left, the undo's second boot; it exits 2 when there is no `out/test/disk.qcow2`); a planned `MODE=update` is designed, not in the script ([the installed-OS brief](../design/installed-os-brief.md)). See [vm-testing.md](vm-testing.md) |
 | VM tools | a running VM you keep | the model, when agentd is pointed at `scratch_api.py` | a shell, keys, clicks and screenshots on a VM without a window; `vmsmoke` runs the smoke inside it; `stonecrop` and `lifttrace` measure what the screen shows | `scripts/vm-tools/` |
 
 Beside the layers, `tests/vm/btrfs-kernel.sh` boots Arch's own kernel on the installed disk layout for
@@ -224,12 +274,12 @@ crosses a process or the compositor.
 
 ```mermaid
 flowchart LR
-    c1["agentd, provider, launcher, jobs, rest, finder, away, voice, tips, coding sessions, mail service"] --> U["pytest unit tests"]
+    c1["agentd, provider, launcher, jobs, rest, finder, away, voice, tips, coding sessions, mail service, connection service"] --> U["pytest unit tests"]
     c2["os-mcp tool"] --> U
     c3["card or picture"] --> U
     c3 --> Q["QML tests"]
     c4["kit component or native type"] --> Q
-    c5["pill, line, desk, session dots, stone, name card"] --> Q
+    c5["pill, line, desk, session dots, stone, name card, message and task cards"] --> Q
     c6["theme token"] --> U
     c6 --> Q
     c7["ISO profile, installer, boot"] --> U
@@ -243,17 +293,18 @@ Where to add a test for each kind of change:
 
 | Change | Add the test to | Pattern to copy |
 |---|---|---|
-| agentd: a message, a turn step, the queue, setup | `tests/test_agentd.py`; the sign-in flow in `tests/test_agentd_signin.py`; the AI at rest in `tests/test_agentd_rest.py`; what the finder offers in `tests/test_agentd_found.py`; the Away card's messages and ops in `tests/test_agentd_away.py` (11 tests) | `agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())` with `_start`, `_ask`, `_read_until` (the sign-in file has its own `_start`, `_send` and `_until`; the rest and found files import `Scripted`, `_start` and `_ask` from `test_agentd` and add the `Cli` class, a scripted CLI that refuses with a 429 until its mode is flipped) |
+| agentd: a message, a turn step, the queue, setup | `tests/test_agentd.py`; the sign-in flow in `tests/test_agentd_signin.py`; the AI at rest in `tests/test_agentd_rest.py`; what the finder offers in `tests/test_agentd_found.py`; the Away card's messages and ops in `tests/test_agentd_away.py` (11 tests); agentd's side of connections (the notices, the cards, the press and the agent's tools) in `tests/test_agentd_connect.py` (74 tests) | `agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())` with `_start`, `_ask`, `_read_until` (the sign-in file has its own `_start`, `_send` and `_until`; the rest and found files import `Scripted`, `_start` and `_ask` from `test_agentd` and add the `Cli` class, a scripted CLI that refuses with a 429 until its mode is flipped; the connection file imports its helpers from `test_agentd` and adds `StubConnect` and the `connect_paths` fixture from `tests/connect_agentd_stub.py`) |
 | a provider adapter, or what a CLI prints | `tests/test_providers.py`, with a recorded line file in `tests/fixtures/`; the one-shot command the brain uses (`describe_command`) in `tests/test_brain_describe.py`; whether a failed turn is the account's limit (`limit`, `waiting`) in `tests/test_limit.py` (Claude's `limit` takes the CLI's own `api_error` code: `usage_limit_reached` is a used-up plan, `model_requires_usage_credits` and `long_context_credits_required` are not); which model a turn asks for (Claude defaults to Sonnet, `use opus` and `use sonnet` switch the session without writing `config.toml`) in `tests/test_config.py` (`model_for`), `tests/test_launcher.py` (the words), `tests/test_agentd.py` and `tests/test_agentd_signin.py` (the switch) | `_kinds(p, "claude-plan.jsonl")` |
 | the plain words of a step or a risk | `tests/test_narrate.py`, which has several parametrized tables: a shell command is a row of the `(command, text, risk)` table, an os-mcp tool a row of the `(name, args, text, done)` table of `test_tools_in_plain_words`, named `mcp__bombadil-os__<tool>` | a row of the table that matches |
 | a launcher word | `tests/test_launcher.py`; the words for coding sessions (`claude acme`, `end reviewer`, `sessions`) in `tests/test_dev.py` | `launcher.match(text, app_list=[])`; `launcher.match(text, [], d)` with the `Dev` of `_dev()` for the session words |
-| an os-mcp tool | `tests/test_mcp_server.py`; picture tools `tests/test_cardtools.py`; app tools `tests/test_appkit_tools.py` | `make()` and `call(server, "tool", **args)` in the first and last; the `tools` fixture and `call(tools, name, args)` in `test_cardtools.py`; the `fake_check` fixture in `test_appkit_tools.py` |
-| a card or a `system_map` subject | `tests/test_cards.py` (checking, layout, text twin), `tests/test_sysmap.py` (parsers fed recorded command output, the before and after receipts, and the time each capture is given with `BOMBADIL_BUDGET_SCALE` set or not), `tests/test_diagram_qml.py` (drawn) | `fake({...})` from `tests/test_sysmap.py` (`import test_sysmap as fixtures` in the QML tests) |
+| an os-mcp tool | `tests/test_mcp_server.py` (the five connection tools' listing and wire lines too); picture tools `tests/test_cardtools.py`; app tools `tests/test_appkit_tools.py`; what agentd does for each connection tool in `tests/test_connect_tools.py` | `make()` and `call(server, "tool", **args)` in the first and last; the `tools` fixture and `call(tools, name, args)` in `test_cardtools.py`; the `fake_check` fixture in `test_appkit_tools.py` |
+| a card or a `system_map` subject | `tests/test_cards.py` (checking, layout, text twin, and the message, task and list cards that connections make), `tests/test_cardmake.py` (the builders of those three), `tests/test_sysmap.py` (parsers fed recorded command output, the before and after receipts, and the time each capture is given with `BOMBADIL_BUDGET_SCALE` set or not), `tests/test_diagram_qml.py` (drawn); the faces of the three connection cards in `tests/test_connect_cards_qml.py` | `fake({...})` from `tests/test_sysmap.py` (`import test_sysmap as fixtures` in the QML tests) |
 | a job or a desk widget | `tests/test_jobs.py`, `tests/test_desk.py` (the desk model: rails, places, put-away widgets and a widget folded by hand, which `desk.toml` keeps and a move or `show` gives back); their cards and the desk's rules, including where a drop lands, how wide a picture is beside a window, where the rails stop above a row of session chips and the Away card, in `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py` (`ASKABLE`, the widgets "show" is also a question to, is tested in `tests/test_desk.py`); dragging a card by its title or a chip (the handles, the grab across the three windows, what is drawn) in `tests/test_desk_drag_qml.py` | the `Systemd` stand-in in `test_jobs.py`; the `Desk` helper and `desk_msg` of `test_desk_qml.py`, which `test_desk_drag_qml.py` imports |
 | the machine's readings and the Machine card (`vitals.py`) | `tests/test_vitals.py`: the parsers on recorded `/proc` and cgroup text served by a stand-in file tree, and `Vitals` against a scripted sampler and a clock for the lines it crosses; the card in `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; the injected message in the desktop test | `rig()` and `run(v, fake, clock, n, **now)` in `test_vitals.py`. agentd samples the real machine unless `BOMBADIL_VITALS=0`: the autouse `no_vitals` fixture in `tests/conftest.py` sets it, and a test that wants the card passes `vitals=` to `AgentD` |
 | the AI at rest (`rest.py`, `Provider.limit`, `Provider.waiting`) | `tests/test_rest.py` (the state file `rest.json`, a provider's reset time, the words; the tests of a limit's lapse pass the time in, `rest.limit(provider, at)` and `rest.due(provider, at)`, so they do not read the real clock), `tests/test_limit.py` (51 tests: Claude's and Codex's refusals as recorded lines, including the CLI's `api_error` code that tells a used-up plan from a model that needs credits), `tests/test_agentd_rest.py`, `tests/test_launcher_rest.py` (the words that pause and resume by hand), `tests/test_bombadil_ask.py` (`bombadil ask` ends with exit 75 instead of waiting), the pill's line, chips and the AI card in `tests/test_rest_qml.py`, the stone's grey face in `tests/test_stone_qml.py` | `Cli(home, mode="refuse")` in `test_agentd_rest.py`; the `LIMIT` and `PAUSED` messages in `test_rest_qml.py` |
 | the finder (`finder.py`) | `tests/test_finder.py` (pure), the `found` message and the press in `tests/test_agentd_found.py`, the chips in `tests/test_found_qml.py` | `_find(text)` with `APPS` and `ASKS` in `test_finder.py` |
-| notices and the press log (`notices.py`, `outbox.py`) | `tests/test_notices.py`, `tests/test_outbox.py`, and the chips above the pill in `tests/test_notice_qml.py` | `make()` in `test_notices.py` |
+| notices, notifications, proposals and the press log (`notices.py`, `notifications.py`, `proposals.py`, `outbox.py`) | `tests/test_notices.py`, `tests/test_notifications.py`, `tests/test_proposals.py`, `tests/test_outbox.py`, and the chips above the pill in `tests/test_notice_qml.py` | `make()` in `test_notices.py` |
+| messages and connections (`src/bombadil/connect/`, `bin/bombadil-connect`, `src/bombadil/browserd/`, `bin/bombadil-browserd`) | see [Connect](../architecture/connect.md): the service in `tests/test_connect_service.py`, `test_connect_store.py`, `test_connect_client.py` and `test_connect_e2e.py` (the real service behind a real agentd); the drivers in `tests/test_connect_slack.py` and `tests/test_connect_mcp.py` (they need `httpx` and `mcp`); agentd's watch in `tests/test_connect_watch.py` and its tools in `tests/test_connect_tools.py`; `bombadil.ws` in `tests/test_ws.py` and the rule for characters that draw as nothing in `tests/test_plaintext.py`; the browser service and the Slack setup in `tests/test_browserd.py` and `tests/test_slack_setup.py` | the fakes named under Fakes in Conventions: `FakeDriver`, `FakeSlack`, `FakeMcp`, `StubConnect`, `FakeChrome` |
 | coding sessions (`dev.py`, `bin/bombadil-signal`, the managed hooks) | `tests/test_dev.py` (25 tests: names and the launcher's words, the registry, a session's states as a tool's hooks move it, the one line in the pill and Tab, the hook program run as a program, and the three managed hook files parsed as JSON and TOML, with `share/zellij/config.kdl` only checked to exist); the dots, chips and peek in `tests/test_sessions_qml.py`; agentd's side in `tests/test_agentd.py`; the real thing in the desktop test's coding-sessions section and the smoke's `dev-*` checks | `_dev()` and the `projects` fixture of `test_dev.py`, which run a `Dev` on a `FakeZellij` in a temp `~/Projects`; `Bar` and `_s(key, state)` in `test_sessions_qml.py` |
 | the Away card (`away.py`) | `tests/test_away.py` (75 tests: what is worth a row since the person left, and the message, with the rows, the sessions and the clock handed in), `tests/test_agentd_away.py` (11: agentd builds the card, tells every bar once, remembers what was seen in `away.json` and puts the card away at the person's next ask), the card in `tests/test_desk_qml.py` and the desktop test | `turn(...)`, `job(...)` and `items([...], since=LEFT, now=NOW)` in `test_away.py`; `_seed(...)`, `_card(r)` and `_daemon()` in `test_agentd_away.py`; `away_msg(...)` in `test_desk_qml.py` |
 | the voice: the name and voice card, the welcome line, the goodbye (`voice.py`, `greet.py`, `greet_sources.py`, `persona.py`, `share/voice/lines.toml`) | `tests/test_persona.py` (176 tests: the name check, the file's defaults and its atomic save, the sentence added to the system prompt, the card's rows), `tests/test_greet.py` (200: the engine against a table of every moment and voice, the line budget, the ledger), `tests/test_greet_sources.py` (94: the readers of the turn log, of what was made, of updates and of the coding sessions' registry), `tests/test_voice.py` (97: agentd's side with fake bars and a clock the test moves), `tests/test_voice_launcher.py` (29: the word `voice`), `tests/test_voice_narrate.py` (123: the plain step for an edit of `persona.toml`, and the apps a turn made), `tests/test_voice_providers.py` (49: the system prompt in both providers), `tests/test_voice_watch.py` (6: `bombadil history`); the card in `tests/test_persona_card_qml.py` (29) and the welcome line in `tests/test_welcome_qml.py` (39); the real thing in the desktop test and the smoke's `voice-*` checks. [The voice](../architecture/voice.md#tests) says what each file covers | the `clock` fixture, `make(clock)` and `Client` of `test_voice.py`; `build(...)` and `commit(...)` with a `Ledger` in `test_greet.py`; `write(text)` in `test_persona.py` |
@@ -266,11 +317,11 @@ Where to add a test for each kind of change:
 | a kit component | `tests/test_appkit_kit.py`; add the component to a gallery in `tests/qml/` | `run(home, qml, body)` |
 | a native type (`App`, `System`, `Processes`, `Command`, `Vault`, `TextFile`, `Clipboard`, `Agent`, `Highlighter`, `KitFiles`), or the `Store` component | `tests/test_appkit_native.py` (`Store` is the QML component `share/qml/Bombadil/Store.qml` over `KitFiles`, and its tests are here too); `Agent` against agentd's events in `tests/test_appkit_agent.py` | the `kit` fixture and `make(kit, source)` |
 | the app runtime: hot reload, placement, status | `tests/test_appkit_runtime.py`, `tests/test_appkit_reload.py`, `tests/test_appkit_placement.py` | `drive(name, body)` (defined in `test_appkit_runtime.py`, also used by `test_appkit_reload.py`) for hot reload and status; `FakeHypr` and `ScriptedHypr` for placement |
-| a shell component | the line, chips and card host: `tests/test_pill_qml.py`; the AI card and the resting pill: `tests/test_rest_qml.py`; the found chips: `tests/test_found_qml.py`; the notice chips: `tests/test_notice_qml.py`; the dots, chips and peek of coding sessions (`DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`): `tests/test_sessions_qml.py`; the desk: `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; dragging on the desk (`DeskDrag.qml`, with `DeskRail.qml` and `DeskStrips.qml`): `tests/test_desk_drag_qml.py`; the stone: `tests/test_stone_qml.py`; the name and voice card (`PersonaCard.qml`): `tests/test_persona_card_qml.py`; the welcome mode of the line (`PillState.qml`, `StatusLine.qml`): `tests/test_welcome_qml.py` | the `Bar`, `Desk` or `Cards` helper class with a `HARNESS` string (`test_rest_qml` and `test_found_qml` reuse `test_pill_qml`'s `Bar`; `test_welcome_qml` and `test_persona_card_qml` each define their own) |
-| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`, `Wallpaper.qml`) | the desktop test: no offscreen test loads them (`tests/test_wallpaper.py`, `test_rest_qml.py`, `test_found_qml.py`, `test_notice_qml.py`, `test_desk_drag_qml.py`, `test_welcome_qml.py`, `test_persona_card_qml.py` and `test_motion.py` read `shell.qml` or `Wallpaper.qml` as text, and the desktop test checks the wallpaper's pixels and drags a card with a real pointer) | a check in `tests/desktop/driver.py` |
+| a shell component | the line, chips and card host: `tests/test_pill_qml.py`; the AI card and the resting pill: `tests/test_rest_qml.py`; the found chips: `tests/test_found_qml.py`; the notice chips, and what a Reply chip does to the keyboard: `tests/test_notice_qml.py`; the message, task and list cards that connections make (`MessageFace.qml`, `TaskFace.qml`, `ListFace.qml`, `Draft.qml`, `DraftBar.qml`) and the bar's notification server (`Notifications.qml`, over the stand-in in `tests/qml/quickshell_stub/`): `tests/test_connect_cards_qml.py`; the dots, chips and peek of coding sessions (`DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`): `tests/test_sessions_qml.py`; the desk: `tests/test_desk_qml.py` and `tests/test_desk_cards_qml.py`; dragging on the desk (`DeskDrag.qml`, with `DeskRail.qml` and `DeskStrips.qml`): `tests/test_desk_drag_qml.py`; the stone: `tests/test_stone_qml.py`; the name and voice card (`PersonaCard.qml`): `tests/test_persona_card_qml.py`; the welcome mode of the line (`PillState.qml`, `StatusLine.qml`): `tests/test_welcome_qml.py` | the `Bar`, `Desk` or `Cards` helper class with a `HARNESS` string (`test_rest_qml` and `test_found_qml` reuse `test_pill_qml`'s `Bar`; `test_welcome_qml`, `test_persona_card_qml` and `test_connect_cards_qml` each define their own, the last with an `Agentd` stand-in for what agentd does with a draft) |
+| a shell file that imports `Quickshell` (`shell.qml`, `DeskRails.qml`, `HyprCover.qml`, `Wallpaper.qml`, `Notifications.qml`) | the desktop test: no offscreen test loads the first four (`tests/test_wallpaper.py`, `test_rest_qml.py`, `test_found_qml.py`, `test_notice_qml.py`, `test_desk_drag_qml.py`, `test_welcome_qml.py`, `test_persona_card_qml.py`, `test_connect_cards_qml.py` and `test_motion.py` read `shell.qml` or `Wallpaper.qml` as text, and the desktop test checks the wallpaper's pixels and drags a card with a real pointer). `Notifications.qml` is loaded offscreen over a stand-in for Quickshell's notification module in `tests/test_connect_cards_qml.py`, and the name on a real bus is seen in the desktop test and the smoke | a check in `tests/desktop/driver.py` |
 | a token or the look | edit `share/qml/Bombadil/Theme.qml`; `tests/test_theme.py` keeps `shell/DeskTheme.js` equal and `shell/*.qml` free of hex colours and `"white"` and `"black"`; `tests/test_brand.py` for brand files. A changed `bg`, `sunken`, `panel`, `raised` or `border`, or a changed mark, means running `scripts/make-wallpaper.py` again, or `tests/test_wallpaper.py` fails; its tests also read `overlay` and `muted`, which the script does not draw with, as limits | the `THEME` dict from `tests/qml_theme.py` |
 | the wallpaper (`share/wallpaper/bombadil.png`, `shell/Wallpaper.qml`) | `tests/test_wallpaper.py`: the picture's pixels against the tokens (PySide6) and `Wallpaper.qml` read as text; the picture is drawn again and compared (`pillow`, `numpy`, `cairosvg`) | `_mean(img, cx, cy)` and `rgb(token)` |
-| the ISO profile or installer | static facts in `tests/test_iso_profile.py` (packages, mirror list, the agent's system-prompt rules for installing with `pacman -Syu` and for a replaced kernel, the installer's GRUB edit, the binds and the `layers` animation in the skeleton Hyprland config; the three user units `bombadil-agentd`, `bombadil-shell` and the `mako` drop-in restarting on death, the Hyprland start hook importing the environment before it restarts them, `bombadil-setup` and `bin/bombadil` restarting the daemon through systemd; the installer pruning restore points (`NUMBER_LIMIT=30`, no hourly ones, `snapper-cleanup.timer`) and taking the kernel from the copied system before the disk is erased; the installer carrying the desk's places and what Tips has taught (its carry loop run in bash on two folders: `tips.json`, `desk.toml` and `config.toml` arrive, the turn log stays, and a live home with nothing to carry still installs); the smoke's numbered key requests, its sign-in gate and its unit-based agentd replacement; its picture checks (the `picture()` function run in bash against a stand-in for os-mcp: three tries at 1, 4 and 12 times the time with a wait for calm between, no second try for a reply in the wrong shape, and the wait for calm placed before the pictures with `calm` defined once); and Mail's: the `thunderbird` package and its policy file, the mail unit and its link, Thunderbird's window rule, the session handing the unit its screen, the mail skill's links, the dev session's scratch mail folder); the brain's unit and link, and the `for b in ...; do` loop of `scripts/build-iso.sh` that links the commands, in `tests/test_brain_service.py` (its section "the ISO"), which also runs `bash -n` on `bombadil-smoke` and matches the text `bombadil-brain bombadil-brain-watch; do command -v`; booted behaviour as a check in `bombadil-smoke` | `_packages()`, `_installer_grub_lines()` |
+| the ISO profile or installer | static facts in `tests/test_iso_profile.py` (packages, mirror list, the agent's system-prompt rules for installing with `pacman -Syu` and for a replaced kernel, the installer's GRUB edit, the binds and the `layers` animation in the skeleton Hyprland config; the two user units `bombadil-agentd` and `bombadil-shell` restarting on death, the Hyprland start hook importing the environment before it restarts them (and the browser service), `bombadil-setup` and `bin/bombadil` restarting the daemon through systemd; the installer pruning restore points (`NUMBER_LIMIT=30`, no hourly ones, `snapper-cleanup.timer`) and taking the kernel from the copied system before the disk is erased; the installer carrying the desk's places and what Tips has taught (its carry loop run in bash on two folders: `tips.json`, `desk.toml` and `config.toml` arrive, the turn log stays, and a live home with nothing to carry still installs); the smoke's numbered key requests, its sign-in gate and its unit-based agentd replacement; its picture checks (the `picture()` function run in bash against a stand-in for os-mcp: three tries at 1, 4 and 12 times the time with a wait for calm between, no second try for a reply in the wrong shape, and the wait for calm placed before the pictures with `calm` defined once); and Mail's: the `thunderbird` package and its policy file, the mail unit and its link, Thunderbird's window rule, the session handing the unit its screen, the mail skill's links, the dev session's scratch mail folder, and connections': `python-mcp` and `python-httpx` in the package list and no `mako` or other notification daemon, the connection service's system unit with the account that `systemd-sysusers` makes from its file and its closed state directory, the browser service's user unit, the build linking the two commands, the connect skill reaching both CLIs, the smoke's connection and notification checks, a dev session starting the connection service on its fake engine before agentd, and the desktop test starting the session bus and the service before agentd); the brain's unit and link, and the `for b in ...; do` loop of `scripts/build-iso.sh` that links the commands, in `tests/test_brain_service.py` (its section "the ISO"), which also runs `bash -n` on `bombadil-smoke` and matches the text `bombadil-brain bombadil-brain-watch; do command -v`; booted behaviour as a check in `bombadil-smoke` | `_packages()`, `_installer_grub_lines()` |
 | the quiet console between the boot loader and the desk | `tests/test_boot_console.py` keeps the kernel parameters in `iso/efiboot/loader/entries/01-bombadil.conf` and `iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg` equal to the output of `scripts/console-palette.py` (paste that output again when a token it maps changes), the serial smoke entries loud, the installer copying the live `/etc` so the drop-in arrives, greetd keeping Hyprland's start-up text off the console, and `hyprland.lua`'s background opaque | `kernel_options(text)`, `colour_params(options)` |
 | anything that needs the real Hyprland: the Super binds, drawers, focus | a check in `bombadil-smoke` | `has_client`, `special_shown`, `active_is` |
 | a fact about the kernel or the btrfs layout | a test folder for `tests/vm/btrfs-kernel.sh` | `tests/vm/samples/` |
@@ -342,8 +393,8 @@ Pytest does not collect it. The mail checks of the desktop test and the ISO smok
 
 ## Run a dev session against a checkout
 
-`scripts/dev-session.sh` runs agentd, the mail service and the bar from the checkout on an existing
-Hyprland desktop:
+`scripts/dev-session.sh` runs agentd, the mail service, the connection service and the bar from the checkout on an
+existing Hyprland desktop:
 
 1. puts `bin/` first on `PATH`, so `bombadil` and `bombadil-shell` resolve to the checkout;
 2. sets `BOMBADIL_PROVIDER` to `fake` unless it is already set, and `BOMBADIL_SHARE` to `share/`;
@@ -352,18 +403,29 @@ Hyprland desktop:
    `BOMBADIL_MAIL_ENGINE=fake` and points `BOMBADIL_MAIL_DB`, `BOMBADIL_MAIL_FILES`, `BOMBADIL_PRESS_LOG`
    and `BOMBADIL_MAIL_SOCKET` into it, so nothing lands in the mail of a Bombadil you also use, and agentd,
    the launcher and `bombadil mail` talk to the fake service and not to a real one in the runtime folder;
-4. starts `bin/agentd` and `bin/bombadil-mail` in the background, waits half a second, and runs
-   `bombadil-shell` in the foreground; leaving it kills both and removes the scratch folder.
+4. unless `BOMBADIL_CONNECT_ENGINE` is set to something other than `fake`, runs connections on their fake
+   engine (an invented workspace with sample messages, and sample tasks; no account, no key) in a second
+   scratch folder: it sets `BOMBADIL_CONNECT_ENGINE=fake` and points `BOMBADIL_CONNECT_SOCKET` and
+   `BOMBADIL_CONNECT_STATE` (a folder of mode 0700) into it, and `BOMBADIL_CONNECT_UIDS` to your own user id
+   unless you set it, so the service lets in only the user who runs the session. With another value of the
+   engine variable no service starts, and agentd looks for the system unit's socket;
+5. starts `bin/bombadil-connect` (when it is on the fake engine) first, so that agentd's first look at it finds
+   it, then `bin/agentd` and `bin/bombadil-mail`, in the background, waits half a second, and runs
+   `bombadil-shell` in the foreground; leaving it kills them and removes the scratch folders.
 
 ```sh
 scripts/dev-session.sh                          # fake provider: the bar echoes what you type
 BOMBADIL_PROVIDER=claude scripts/dev-session.sh # the real CLI, which must be signed in
 BOMBADIL_MAIL_ENGINE=thunderbird scripts/dev-session.sh   # the real mail service, on the real state
+BOMBADIL_CONNECT_ENGINE=real scripts/dev-session.sh       # no connection service of its own: the system unit's, if one runs
 ```
 
-Mail is the one thing the script isolates (`test_a_dev_session_keeps_all_of_its_mail_in_its_scratch_folder_the_socket_too`
-in `tests/test_iso_profile.py` pins the four paths). Without overrides a dev session uses the real state
-folder (`$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil`: the turn log, desk file and `brain.db`),
+Mail and connections are the two things the script isolates
+(`test_a_dev_session_keeps_all_of_its_mail_in_its_scratch_folder_the_socket_too` and
+`test_a_dev_session_runs_connections_on_the_fake_engine_in_its_scratch_folder_the_socket_too` in
+`tests/test_iso_profile.py` pin the paths, and the second the order: the connection service before agentd).
+Without overrides a dev session uses the real state
+folder (`$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil`: the turn log, desk file, `proposals.json` and `brain.db`),
 the real config folder (`$XDG_CONFIG_HOME/bombadil`, else `~/.config/bombadil`), `~/Apps` and
 `$XDG_RUNTIME_DIR/bombadil/agentd.sock`.
 Point those elsewhere with the variables in `src/bombadil/paths.py`:
@@ -393,6 +455,10 @@ keeps `brain.db`, and `bin/bombadil-brain-watch` is the root watcher, which want
 `--path DIR` to watch the filesystem holding a directory, for development). `bombadil brain status`
 answers "The brain is not running yet." without the service. How the brain works is in
 [brain](../architecture/brain.md).
+
+Nor does it start the browser service: `bin/bombadil-browserd` runs it from a checkout, as `bin/bombadil-mail`
+does Mail, and it answers on `$BOMBADIL_RUNTIME/browserd.sock`. How connections work is in
+[Connect](../architecture/connect.md), and the contract is [docs/CONNECT.md](../CONNECT.md).
 
 Coding sessions start from the pill in a dev session (`claude <project>`, `codex <project>` or `shell
 <project>`, in the subfolders of `$BOMBADIL_PROJECTS`, default `~/Projects`) when `zellij` and `foot` are
@@ -434,11 +500,13 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
               '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | bin/bombadil-os-mcp
 ```
 
-On 2026-11-09 it listed 26 tools: `show_panel`, `hide_panel`, `screenshot`, `snapshot`,
-`list_snapshots`, `rollback`, `notify`, `desk`, `job`, `show_card`, `system_map`, `mail_search`,
-`mail_read`, `mail_mark`, `mail_draft`, `mail_show`, `app_guide`, `create_app`, `check_app`, `open_app`,
-`show_app`, `hide_app`, `close_app`, `app_status`, `list_apps` and `app_template`. The tools themselves
-are described in [os-mcp](../architecture/os-mcp.md).
+On 2026-11-09 it listed 31 tools (26 before the connection tools): `show_panel`, `hide_panel`, `screenshot`,
+`snapshot`, `list_snapshots`, `rollback`, `notify`, `desk`, `job`, `show_card`, `system_map`, `mail_search`,
+`mail_read`, `mail_mark`, `mail_draft`, `mail_show`, `messages_unread`, `message_thread`, `tasks_waiting`,
+`connections`, `propose`, `app_guide`, `create_app`, `check_app`, `open_app`, `show_app`, `hide_app`,
+`close_app`, `app_status`, `list_apps` and `app_template`. The tools themselves are described in
+[os-mcp](../architecture/os-mcp.md), and the five connection tools (`messages_unread` to `propose`) in
+[Connect](../architecture/connect.md).
 
 ### The fake provider
 
@@ -475,10 +543,10 @@ CLAUDE_BIN=/path/to/claude tests/desktop/run.sh     # defaults to `command -v cl
 
 | Part | What it does |
 |---|---|
-| `tests/desktop/run.sh` | builds the image `bombadil-desktop-test` if it is missing (`docker rmi` it to rebuild: an image built before `zellij` and `git` joined the Dockerfile lacks them, and the coding-sessions section needs both); mounts the checkout at `/repo` and `tests/desktop` at `/e2e` (both read-only), the output folder at `/out` and the `claude` binary at `/opt/claude` (read-only); passes if `driver.log` contains `DONE pass=N fail=0`. `OUT` (default `out/desktop`) is deleted first |
-| `tests/desktop/Dockerfile` | Arch with `quickshell`, `sway`, `hyprland`, `foot`, `zellij`, `git`, `grim`, `wtype`, `pyside6`, `inter-font` and the Qt 6 modules the shell imports (the coding-sessions section needs `zellij` and `git`) |
+| `tests/desktop/run.sh` | builds the image `bombadil-desktop-test` if it is missing (`docker rmi` it to rebuild: an image built before `zellij` and `git` joined the Dockerfile lacks them, and the coding-sessions section needs both; one built before `wl-clipboard` joined it lacks that, and the connections section needs it); mounts the checkout at `/repo` and `tests/desktop` at `/e2e` (both read-only), the output folder at `/out` and the `claude` binary at `/opt/claude` (read-only); passes if `driver.log` contains `DONE pass=N fail=0`. `OUT` (default `out/desktop`) is deleted first |
+| `tests/desktop/Dockerfile` | Arch with `quickshell`, `sway`, `hyprland`, `foot`, `zellij`, `git`, `grim`, `wtype`, `wl-clipboard`, `pyside6`, `inter-font` and the Qt 6 modules the shell imports (the coding-sessions section needs `zellij` and `git`, and the connections section reads the clipboard with `wl-paste`) |
 | `tests/desktop/inside.sh` | in the container, creates an ordinary user with passwordless sudo (as Bombadil's), installs the ISO's managed Claude Code settings (`50-bombadil.json`, the hooks) in `/etc/claude-code/managed-settings.d`, copies sway so it drops its file capability, runs the driver as that user |
-| `tests/desktop/driver.py` | starts the scripted API, sway, agentd and `bin/bombadil-shell` (and, for their sections, `bin/bombadil-mail` on the fake engine, the virtual pointer, and a project folder with one commit for the coding sessions); types with `wtype`, summons the pill with `bombadil pill`, screenshots with `grim`, reads pixels with PySide6's `QImage`, listens on the agentd socket; prints `PASS` or `FAIL` for each `check(...)` and ends with `DONE pass=N fail=M`, and writes a screenshot for each `shot(...)` (the first, `00-resting`, is taken again until the wallpaper has loaded). It sets `BOMBADIL_BAR_INJECT=1` and `BOMBADIL_VITALS=0` for the bar and agentd |
+| `tests/desktop/driver.py` | starts the scripted API, sway, a session bus (`dbus-daemon`), the connection service (`bin/bombadil-connect`, on its fake engine), agentd and `bin/bombadil-shell` (and, for their sections, `bin/bombadil-mail` on the fake engine, the virtual pointer, and a project folder with one commit for the coding sessions); types with `wtype`, summons the pill with `bombadil pill`, screenshots with `grim`, reads pixels with PySide6's `QImage`, listens on the agentd socket; prints `PASS` or `FAIL` for each `check(...)` and ends with `DONE pass=N fail=M`, and writes a screenshot for each `shot(...)` (the first, `00-resting`, is taken again until the wallpaper has loaded). It sets `BOMBADIL_BAR_INJECT=1` and `BOMBADIL_VITALS=0` for the bar and agentd, and gives every process `BOMBADIL_CONNECT_ENGINE=fake`, `BOMBADIL_CONNECT_UIDS=0-65535` (a container's user is outside the service's default range of 1000 to 59999), a socket and a state folder of the connection service in the run's own folders, and the session bus's address |
 | `tests/desktop/fake_api.py` | a scripted Anthropic Messages API, started by the driver on port 18555, that answers by keyword in the newest prompt (below) |
 | `tests/desktop/pointer.py` | a wlroots virtual pointer (`zwlr_virtual_pointer_v1`, spoken on the Wayland wire with the standard library only), because the test session has no pointer. It reads one word per line on standard input, `move X Y`, `press`, `release` or `quit`, and answers `ok` when the compositor has taken it. `EXTENT` is the output's size (default `1280x800`) |
 | `tests/desktop/bin/claude` | first on `PATH`: runs the real binary with `ANTHROPIC_BASE_URL` pointing at the scripted API, a fake key (a fake claude.ai token while the driver keeps `~/.e2e-claude-ai`, which the out-of-plan section needs) and telemetry off |
@@ -494,14 +562,15 @@ paragraph is exactly `ask me`.
 | `ffmpeg` | thinking, then `sudo pacman -S --noconfirm --print ffmpeg; sleep 4` |
 | `password` | a streamed `create_app` call for a Passwords app |
 | `docker` | `sudo sh -c 'echo installing docker; sleep 120'`, for Stop to end |
-| `ask me` (the whole prompt, exactly; tried after `docker` and before `vpn`) | an `AskUserQuestion` call ("Run the migration on the local database?", with the options Yes and No), for a coding session's question; after its result, the text "Migrated the local database." |
+| `answer priya` (tried after `docker` and before `ask me`) | the connection tools: a `messages_unread` call; once it has a result, a `propose` call of kind `slack_reply` whose target is the message ref found in that result and whose content is "Yes, the 14th works for us."; after that result, the text "The reply is ready. Sending is yours." |
+| `ask me` (the whole prompt, exactly; tried after `answer priya` and before `vpn`) | an `AskUserQuestion` call ("Run the migration on the local database?", with the options Yes and No), for a coding session's question; after its result, the text "Migrated the local database." |
 | `vpn` | a slowly streamed `show_card` call (a four-box chain) |
 | `joke` | text only |
 | `haiku` | text only; while the driver has set a limit (`POST /__control` with `{"limit": {"reset": <epoch>}}`) the API refuses it with the 429 that a used-up claude.ai plan gets |
 | anything else | `OK.` |
 
 What the checks cover, grouped by area, not in the order the driver runs them (the wallpaper's ground
-is checked first and the name and voice card right after it, the Away section comes after dragging, and the sections on a picture of the user's own
+is checked first and the name and voice card right after it, the Away section comes after dragging, and the sections on connections, on a picture of the user's own
 and on coding sessions come last, in that order, after the QML check; the launcher
 timing runs after the app turn, `!uname -sr` after Stop, and the picture word after the pictures):
 
@@ -527,14 +596,16 @@ timing runs after the app turn, `!uname -sr` after Stop, and the picture word af
 | the Away card | `show away` answers "Here is what happened while you were away." with no model; the card is up in full on the right rail; its rows run what failed first, then what went well, with a reason line; a failure is drawn red and what went well green; a tap on the card puts it away and nothing reaches the model; asked again, it says nothing happened; the person's next ask puts it away; an injected card of five rows draws three colours, buttons on the rows that have one and a chip that says "back · 7 things"; an empty one takes the card away |
 | coding sessions | `claude spike` starts the unchanged Claude Code ("Started claude on Spike.") in its own window, of class `bombadil-session-spike-claude`, with no zellij bars; its hooks move its dot (working, then done) and the project's chip shows above the pill's left end (`dev chips`); Shift+Enter makes a newline and sends nothing; closing the window leaves the session running, and its name brings it back mid-sentence; a second session gets its own copy under `~/Projects/.work`, and its question lights its dot, becomes the pill's line and makes the stone knock; Tab from the empty pill goes to it; sessions outlive an agentd restart; `end reviewer` ends it and keeps its copy |
 | Mail notices | an injected notice takes the idle line with its Reply and Open chips, a warning stays ahead of newer news, agentd ending them clears the line; new mail from the fake mail service (`bin/bombadil-mail`) reaches the bar as a notice, and a dismissal reaches agentd; a bar not started with `BOMBADIL_BAR_INJECT=1` takes no injected notice and still takes the other kinds |
-| QML errors | the shell logged no QML error (Quickshell logs one as a warning and carries on, so no other check would notice); the wallpaper section does the same for the shell it starts again |
+| connections | the bar owns the notification name on the container's session bus and nothing else does; a notification posted there the way a web page's is (`busctl`) becomes a notice with Reply and Open, and Reply opens a card of it with a box that takes the keys and a Copy and open button (the words go to the clipboard, read with `wl-paste`, and agentd is told to invoke the notification; no draft, no send); a message said to the service (`fake_inject`) reaches the bar as a notice, and Reply opens the message card with an empty draft of the person's own, not lit; typed words light the button only once agentd has the draft and the card has drawn it; one click on Send is one press and the receipt is a notice that says where it went, and a second click sends nothing; the next card opens with an empty box, and the look at the box finds words when there are some; the words `unread` and `connections` open list cards, the second with no token or key on it; the real CLI, against the scripted API's `answer priya` and the real os-mcp server, reads the messages and its draft arrives as a card of its own, lit for the person's press and sent by nothing but that click, with no message text in the turn log; a task card built the way agentd builds one is drawn with its comment box and no lit button; the shell logged no QML error while all this was on screen |
+| QML errors | the shell logged no QML error (Quickshell logs one as a warning and carries on, so no other check would notice); the wallpaper section and the connections section do the same for the shell each starts again |
 
 Outputs land in `out/desktop/`: `driver.log`, `results.json` (checks and timings), `events.jsonl`
 (every event agentd sent), `api-requests.jsonl` (one line per model request, with `n`, `model`, `first`,
 `after_tool`, `persona` (true when the system prompt holds "The user goes by"), `prompts`, `refused` and `shape`), a log per process (`quickshell.log`,
-`quickshell-wallpaper.log` for the shell that the wallpaper section starts again, and
-`quickshell-plain.log` for the bar that the Mail section starts without `BOMBADIL_BAR_INJECT`) and the
-screenshots. The shell exposes five hooks for the driver through Quickshell IPC, in `shell/shell.qml`:
+`quickshell-wallpaper.log` for the shell that the wallpaper section starts again,
+`quickshell-plain.log` for the bar that the Mail section starts without `BOMBADIL_BAR_INJECT`, and
+`quickshell-connect.log` for the bar of the connections section; the session bus and the connection service write
+`dbus.log` and `connect.log`) and the screenshots. The shell exposes five hooks for the driver through Quickshell IPC, in `shell/shell.qml`:
 `quickshell ipc -p shell/shell.qml call desk state` (what the desk is showing), `... desk cover
 '{"windows": [...]}'` for stand-in windows, `... desk inject '<message>'` to feed the shell a message as
 agentd would (the `away` message among them), `... line state` (what the line above the pill is saying,
@@ -546,7 +617,10 @@ before.
 Not run on 2026-11-08 or 2026-11-09: the container has no Docker daemon. The scripts pass `bash -n`, the
 Python files parse, and `fake_api.py` was started on its own on 2026-11-09 and answered a streamed request
 for the prompt `ask me` with the `AskUserQuestion` call, `Migrated the local database.` after its result, and
-`OK.` for a longer prompt that only contains those words. It was started again on 2026-11-09 at `f0485c2` and logged `persona` true for a streamed request whose system prompt held "The user goes by" and false for one whose system prompt did not. On 2026-11-08 it had answered a streamed request
+`OK.` for a longer prompt that only contains those words. It was started again on 2026-11-09 at `f0485c2` and logged `persona` true for a streamed request whose system prompt held "The user goes by" and false for one whose system prompt did not. It was started again on 2026-11-09 at `24c836c` and answered a
+streamed request for `answer priya` with the `messages_unread` call and, once a result held a message ref, the
+`propose` call for that ref with the words "Yes, the 14th works for us."; the driver's section on connections was read and
+not run. On 2026-11-08 it had answered a streamed request
 for "tell me a joke" and a `count_tokens` call, and logged the request with its `model`.
 
 ## The ISO smoke
@@ -563,11 +637,12 @@ of checks, with their names and what each proves. They are not repeated here.
 
 | Kernel argument | Mode | What runs | Boot entry (`iso/efiboot/loader/entries/`) |
 |---|---|---|---|
-| `bombadil.smoke` | live | the common checks (among them a shell coding session and the mail unit checks), then the mail checks on the fake engine, then the sign-in checks (the name and voice card's among them), then power off | `02-bombadil-serial.conf` |
+| `bombadil.smoke` | live | the common checks (among them a shell coding session, the mail unit checks and the checks of the connection and browser services), then the mail checks on the fake engine, then the notification checks and the connection service on its fake engine, then the sign-in checks (the name and voice card's among them), then power off | `02-bombadil-serial.conf` |
 | `bombadil.smoke=install` | install | the same, then `bombadil-install /dev/vda --yes` with the next boot's kernel argument set to `bombadil.smoke=undo` through `BOMBADIL_INSTALL_CMDLINE` | `03-bombadil-install-test.conf` (erases `/dev/vda` without asking) |
 | `bombadil.smoke=undo` | undo, on the installed disk | the common checks, then the brain checks, a restore point filed for pruning, a change, `bombadil undo` and a reboot; after the reboot the common checks run again and `undo-applied` checks the change is gone | set by the install mode; `MODE=installed scripts/test-vm.sh` boots that disk again |
 
-The mail and sign-in checks do not run in the undo mode. The sign-in checks also skip themselves, with a
+The mail checks, the notification and fake-engine connection checks and the sign-in checks do not run in the undo
+mode. The sign-in checks also skip themselves, with a
 `SKIP signin` line, on a machine that already has a `~/.config/bombadil/config.toml`, because they pick
 other providers and cancel their logins. A fresh ISO has no such file, so `test-vm.sh` treats that line in
 the first log as a failure. The name and voice card's checks open that block, right after the question of which AI
@@ -597,7 +672,9 @@ that does not restart, and a change to the smoke's own protocol sooner.
 
 Not run on 2026-11-08: the container has no QEMU and no `/dev/kvm`. `bombadil-smoke` and `test-vm.sh`
 pass `bash -n`, `scripts/qmp.py` parses, and the unit tests that read the smoke as text passed
-(`tests/test_iso_profile.py`, `tests/test_boot_console.py`).
+(`tests/test_iso_profile.py`, `tests/test_boot_console.py`). The smoke's 21 checks of connections and notifications
+were added after that date and were read and not run; `tests/test_iso_profile.py` reads them as text and passed on
+2026-11-09 (46 tests).
 
 ## The VM tools
 
@@ -705,6 +782,11 @@ third boot entry erases `/dev/vda` without asking.
   `volume up`, `volume down`, `mute` and `unmute` are launcher words that run without one, and `set the
   volume to 65` is not (checked on 2026-11-08 with `launcher.match`, which returns an action for the
   first four and `None` for the last).
+- **A copy of a disk that holds a connection holds its tokens.** The connection service keeps them in
+  `/var/lib/bombadil-connect/connect.db`, starts at boot as a system unit and starts every connection it finds
+  there (`Service.run` in `src/bombadil/connect/service.py`: this is from the code, not from a script's comment
+  and was not run), so a scratch copy reaches the same Slack workspace or work tool as the original, with the
+  same tokens. Copy a disk that has no connection.
 - **`probe` on a real VM runs a real turn**, which spends the account's quota and moves its
   conversation on.
 - **`vmsmoke` refuses on a VM that has `~/.config/bombadil/config.toml`**, because the sign-in checks
@@ -716,16 +798,21 @@ third boot entry erases `/dev/vda` without asking.
   chosen, a second run of `vmsmoke` in the same guest fails `no-persona-before-voice`: the name card writes
   `~/.config/bombadil/persona.toml` and nothing in the smoke removes it ([the traps](vm-testing.md#traps)).
 - **`update-in-place` does not move** packages, the GRUB defaults, the pacman mirror list, the systemd
-  user units under `/etc/systemd/user` (`bombadil-agentd.service`, `bombadil-shell.service`, the `mako`
-  drop-in, `bombadil-brain.service` and `bombadil-mail.service`, with their links), or the files in the
-  user's home (`~/.config/hypr/hyprland.lua`, `~/.config/chromium-flags.conf`). Apply those by hand:
-  packages with `sudo pacman -Syu --noconfirm --needed ...`, GRUB defaults in `/etc/default/grub` and then
-  `sudo grub-mkconfig -o /boot/grub/grub.cfg`, units and the start hook as [the session
+  user units under `/etc/systemd/user` (`bombadil-agentd.service`, `bombadil-shell.service`,
+  `bombadil-brain.service`, `bombadil-mail.service` and `bombadil-browserd.service`, with their links), the
+  connection service's system unit and its account (`bombadil-connect.service` under `/etc/systemd/system` and
+  `bombadil-connect.conf` under `/usr/lib/sysusers.d`), or the files in the user's home
+  (`~/.config/hypr/hyprland.lua`, `~/.config/chromium-flags.conf`). Apply those by hand:
+  packages with `sudo pacman -Syu --noconfirm --needed ...` (the connection service needs `python-mcp` and
+  `python-httpx`), GRUB defaults in `/etc/default/grub` and then `sudo grub-mkconfig -o /boot/grub/grub.cfg`,
+  units, the account and the start hook as [the session
   services](../architecture/session-services.md#updating-a-running-system) says. It does copy the system
-  files the ISO profile owns (`SYSTEM` in the script) unless `--no-system`. It does copy the
+  files the ISO profile owns (`SYSTEM` in the script) unless `--no-system`, and it links every program of
+  `bin/` into `/usr/local/bin`, `bombadil-connect` and `bombadil-browserd` among them. It does copy the
   `bombadil-smoke` of the ref, so on a VM installed before the services became units the smoke's
-  `agentd-comes-back`, `bar-comes-back`, `notifications-come-back` and `services-are-units` checks fail
-  until the units are in place.
+  `agentd-comes-back`, `bar-comes-back` and `services-are-units` checks fail until the units are in place,
+  and on a VM installed before connections its `connect-*`, `browserd-*` and `mako-is-not-*` checks fail until
+  the packages, the account and the two units are in place and `mako` is gone.
 - **Restart agentd in the guest** with `systemctl --user restart bombadil-agentd`, as `bombadil-setup`
   does. agentd is a user service with `Restart=always` ([the session
   services](../architecture/session-services.md)), so systemd starts it again about a second after a kill
@@ -883,25 +970,28 @@ an offline catch-up and system paths. Start it with `tests/vm/samples/brain-watc
 
 | Path | What lives there |
 |---|---|
-| `bin/` | entry points: `agentd`, `bombadil`, `bombadil-app`, `bombadil-brain`, `bombadil-brain-watch`, `bombadil-browser`, `bombadil-mail`, `bombadil-mail-host`, `bombadil-os-mcp` and `bombadil-signal` (Python; all but the last insert `src/` on the path, and `bombadil-signal` uses the standard library only) and `bombadil-shell` (shell script: Quickshell on `shell/shell.qml` with `share/qml` on the import path). `bombadil-mail` starts the mail service from a checkout; `bombadil-mail-host` is the program Thunderbird starts for Mail's add-on; `bombadil-signal` is what the coding tools' hooks run |
-| `src/bombadil/` | the Python package: `agentd.py` (session daemon), `providers.py`, `signin.py`, `fake_signin.py`, `snapshots.py`, `procs.py`, `narrate.py`, `launcher.py`, `rest.py` (the AI at rest), `finder.py` (what the pill finds while the AI rests), `notices.py`, `outbox.py` (a press becomes one act), `vitals.py` (the Machine widget's numbers), `jobs.py`, `desk.py`, `away.py` (the Away card's rows and message), `dev.py` (coding sessions: the registry, the states, the launcher's words for them), `voice.py` (agentd's side of the name and voice card, the welcome line and the goodbye), `greet.py` and `greet_sources.py` (the greeting engine and the readers of its facts), `persona.py` (the name and voice file), `tips.py` (the Tips table, its state and its card), `cards.py`, `cardtools.py`, `sysmap.py`, `mcp_server.py`, `hypr.py`, `browser.py`, `apps.py`, `pager.py`, `watch.py`, `config.py`, `paths.py`, and `app_runtime.py`, a seven-line shim over `appkit.runtime` kept for callers of the first milestone (nothing in the tree imports it) |
+| `bin/` | entry points: `agentd`, `bombadil`, `bombadil-app`, `bombadil-brain`, `bombadil-brain-watch`, `bombadil-browser`, `bombadil-browserd`, `bombadil-connect`, `bombadil-mail`, `bombadil-mail-host`, `bombadil-os-mcp` and `bombadil-signal` (Python; all but the last insert `src/` on the path, and `bombadil-signal` uses the standard library only) and `bombadil-shell` (shell script: Quickshell on `shell/shell.qml` with `share/qml` on the import path). `bombadil-mail` starts the mail service from a checkout, and `bombadil-connect` and `bombadil-browserd` start the connection service and the browser service (on the image they are the commands that the two units run); `bombadil-mail-host` is the program Thunderbird starts for Mail's add-on; `bombadil-signal` is what the coding tools' hooks run |
+| `src/bombadil/` | the Python package: `agentd.py` (session daemon), `providers.py`, `signin.py`, `fake_signin.py`, `snapshots.py`, `procs.py`, `narrate.py`, `launcher.py`, `rest.py` (the AI at rest), `finder.py` (what the pill finds while the AI rests), `notices.py`, `notifications.py` (what the bar's own notification server hands agentd, and the notice that becomes of each), `outbox.py` (a press becomes one act), `proposals.py` (what the agent or the person wants to send and has not yet pressed), `vitals.py` (the Machine widget's numbers), `jobs.py`, `desk.py`, `away.py` (the Away card's rows and message), `dev.py` (coding sessions: the registry, the states, the launcher's words for them), `voice.py` (agentd's side of the name and voice card, the welcome line and the goodbye), `greet.py` and `greet_sources.py` (the greeting engine and the readers of its facts), `persona.py` (the name and voice file), `tips.py` (the Tips table, its state and its card), `cards.py`, `cardtools.py`, `sysmap.py`, `mcp_server.py`, `hypr.py`, `browser.py`, `ws.py` (a WebSocket client on asyncio streams, and the framing a test server needs), `plaintext.py` (the characters that draw as nothing, named in one place), `apps.py`, `pager.py`, `watch.py`, `config.py`, `paths.py`, and `app_runtime.py`, a seven-line shim over `appkit.runtime` kept for callers of the first milestone (nothing in the tree imports it) |
 | `src/bombadil/brain/` | the brain: `store.py`, `ingest.py`, `witnesses.py`, `watch.py` (the root watcher), `fanotify.py`, `forks.py`, `service.py`, `client.py`, `focus.py`, `this.py`, `describe.py`, `index.py`, `rules.py`, `actors.py`, `words.py` |
 | `src/bombadil/mail/` | Mail: `service.py` (the user service that owns `mail.sock` and `mail.db`), `engine.py` (Thunderbird as a child of the service), `bridge.py` (the link to the add-on), `store.py`, `protocol.py`, `client.py` (the blocking client of `mail.sock`), `watch.py` (agentd's side), `tools.py` (the five mail tools), `drafts.py`, `accounts.py`, `text.py`, `fake.py` (the engine that is not Thunderbird). The contract is [docs/MAIL.md](../MAIL.md); the page is [mail.md](../architecture/mail.md) |
+| `src/bombadil/connect/` | connections: `service.py` (the system service that owns `connect.sock`, the token store and the message ring), `store.py` (`connect.db`), `protocol.py`, `client.py` (the blocking client of `connect.sock`), `driver.py` (what a driver is), `slack.py` and `slack_setup.py` (the Slack driver, and the walk through making the person's own Slack app), `mcpconn.py` and `recipes.py` (one driver for the five work tools, and what is particular to each as data), `manifest.py` (the Slack app Bombadil asks for), `fake.py` (the engine that is not an account), `watch.py` (agentd's side), `tools.py` (the agent's five tools) and `cardmake.py` (the three kinds of card). The contract is [docs/CONNECT.md](../CONNECT.md); the page is [connect.md](../architecture/connect.md) |
+| `src/bombadil/browserd/` | the browser service: `service.py` (the read half, answering on `browserd.sock`), `cdp.py` (one DevTools connection to one tab), `overlay.py` (the scripts it runs in a page, and only those) and `client.py` (the blocking client) |
 | `src/bombadil/appkit/` | the app runtime: `runtime.py`, `check.py`, `placement.py`, `engine.py`, `context.py`, `cli.py`, `tools.py`; `native/` holds the Python types registered into the QML module (`App`, `System`, `Processes`, `Command`, `Vault`, `TextFile`, `Clipboard`, `Agent`, `Highlighter`, and `KitFiles`, the helper behind the kit's `Store`) |
-| `shell/` | the Quickshell bar: `shell.qml`, the pill and line (`PillState.qml`, `StatusLine.qml`, `QueueChips.qml`, `SetupChips.qml`, `FoundChips.qml`, `NoticeChips.qml`, `LineButton.qml`, `CardHost.qml`, `AiCard.qml`, `Stone.qml`, `PersonaCard.qml`: the name and voice card), coding sessions (`DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`: the dots beside the pill and their peek), the desk (`DeskState.qml`, `DeskRails.qml`, `DeskRail.qml`, `DeskStrips.qml`, `DeskStrip.qml`, `DeskCard.qml`, `DeskDrag.qml`, `NowCard.qml`, `RowsCard.qml`, `HyprCover.qml`, `DeskTheme.js`) and `Wallpaper.qml`, the picture on the Background layer under the desk |
+| `shell/` | the Quickshell bar: `shell.qml`, the pill and line (`PillState.qml`, `StatusLine.qml`, `QueueChips.qml`, `SetupChips.qml`, `FoundChips.qml`, `NoticeChips.qml`, `LineButton.qml`, `CardHost.qml`, `AiCard.qml`, `Stone.qml`, `PersonaCard.qml`: the name and voice card), coding sessions (`DevState.qml`, `SessionChips.qml`, `SessionPeek.qml`: the dots beside the pill and their peek), the cards that connections make (`MessageFace.qml`, `TaskFace.qml` and `ListFace.qml`, with `Draft.qml`, `DraftBar.qml`, `CardBox.qml`, `CardButton.qml`, `CardScroll.qml` and `ScrollThumb.qml`) and `Notifications.qml`, the bar's own notification server, the desk (`DeskState.qml`, `DeskRails.qml`, `DeskRail.qml`, `DeskStrips.qml`, `DeskStrip.qml`, `DeskCard.qml`, `DeskDrag.qml`, `NowCard.qml`, `RowsCard.qml`, `HyprCover.qml`, `DeskTheme.js`) and `Wallpaper.qml`, the picture on the Background layer under the desk |
 | `share/qml/Bombadil/` | the app kit (`import Bombadil`): `Theme.qml`, components, `Style/` (the look of every Qt Quick control), `icons/`, `qmldir` |
 | `share/app-template/` | the starter `main.qml` and `app.py` that the `app_template` tool returns |
 | `share/apps/brain/` | the Focus window, an app of the kit that the image ships (`main.qml`, `app.py` and its parts) |
 | `share/apps/mail/` | the Mail window, the other app of the kit that the image ships (`main.qml`, `app.py`, `app.toml` and its parts) |
 | `share/mail/extension/` | Mail's Thunderbird add-on (`manifest.json` and the JavaScript modules around `background.js`) |
-| `share/skills/` | the skills both CLIs load: `bombadil-apps/` (`SKILL.md`, `references/`, `examples/` with `memory` and `password-manager`) and `bombadil-mail/` (`SKILL.md`) |
+| `share/connect/` | `recipes/`, one TOML file for each of the five work tools (Notion, Linear, Jira, Todoist and ClickUp), and `client-metadata.json` |
+| `share/skills/` | the skills both CLIs load: `bombadil-apps/` (`SKILL.md`, `references/`, `examples/` with `memory` and `password-manager`), `bombadil-mail/` (`SKILL.md`) and `bombadil-connect/` (`SKILL.md`) |
 | `share/voice/`, `share/tips/` | `lines.toml`, nearly every word of the greetings, goodbyes and empty places, and `tips.toml`, the Tips rows |
 | `share/zellij/` | `config.kdl`, the zellij configuration of a coding session's pane (no bars, no keys of its own), used with `zellij --config` |
 | `share/grub/bombadil/` | the GRUB theme |
 | `share/wallpaper/` | `bombadil.png`, the standard wallpaper that `shell/Wallpaper.qml` shows (drawn by `scripts/make-wallpaper.py`), and a README on using a picture of your own; the design is in [boot and the wallpaper](../design/boot-and-wallpaper.md) |
-| `iso/` | the archiso profile: `profiledef.sh`, `packages.x86_64`, `pacman.conf`, `airootfs/` (an overlay of `etc/` and `usr/`, including `usr/local/bin/bombadil-setup`, `-install`, `-rollback` and `-smoke`, the coding tools' managed settings (`etc/claude-code/managed-settings.d/50-bombadil.json`, `etc/codex/config.toml` and `etc/codex/requirements.toml`: the hooks that run `bombadil-signal`), and the units under `etc/systemd/`: in `user/`, `bombadil-agentd.service`, `bombadil-shell.service`, `bombadil-brain.service` and `bombadil-mail.service` with the links that start the brain and Mail at login, and the `mako.service.d/restart.conf` drop-in that makes mako restart when it dies (Hyprland's start hook restarts agentd, the bar and mako once it has handed them the session's environment, and starts `foot --server` for the coding sessions' windows); in `system/`, among others the live user's unit (which also turns on lingering for the user, so the coding sessions outlive the compositor), the brain's root watcher and the smoke) and `efiboot/loader/entries/` (three boot entries) |
+| `iso/` | the archiso profile: `profiledef.sh`, `packages.x86_64`, `pacman.conf`, `airootfs/` (an overlay of `etc/` and `usr/`, including `usr/local/bin/bombadil-setup`, `-install`, `-rollback` and `-smoke`, the coding tools' managed settings (`etc/claude-code/managed-settings.d/50-bombadil.json`, `etc/codex/config.toml` and `etc/codex/requirements.toml`: the hooks that run `bombadil-signal`), and the units under `etc/systemd/`: in `user/`, `bombadil-agentd.service`, `bombadil-shell.service`, `bombadil-brain.service`, `bombadil-mail.service` and `bombadil-browserd.service` with the links that start the brain, Mail and the browser service at login (Hyprland's start hook restarts agentd and the bar once it has handed them the session's environment, then Mail and the browser service the same way, and starts `foot --server` for the coding sessions' windows; nothing starts a notification daemon, because the bar owns that name); in `system/`, among others the live user's unit (which also turns on lingering for the user, so the coding sessions outlive the compositor), the connection service's unit `bombadil-connect.service` (its account comes from `usr/lib/sysusers.d/bombadil-connect.conf`), the brain's root watcher and the smoke) and `efiboot/loader/entries/` (three boot entries) |
 | `scripts/` | `dev-session.sh`, `build-iso.sh`, `build-in-container.sh`, `run-vm.sh`, `test-vm.sh`, `qmp.py` (a small QMP client), `make-wallpaper.py` (draws `share/wallpaper/bombadil.png` from the tokens; needs `pillow`, `numpy` and `cairosvg`), `console-palette.py` (prints the kernel console's colour parameters from the tokens), `wsl-vm.sh` (builds the ISO, installs it headless and boots it; under WSL or on an Arch host) with `bombadil-vm.cmd` (its Windows entry point, see [the Windows launcher](../architecture/iso-and-install.md#the-windows-launcher)), and `vm-tools/` |
-| `tests/` | `conftest.py`, `qml_theme.py`, `mail_stub.py` and `mail_app_lab.py` (stand-ins that the mail tests share), `test_*.py`, `fixtures/` (recorded CLI output), `qml/` (four example windows for `bombadil-app check`), `mail/` (the JavaScript tests of the add-on, `fake_thunderbird.py` and the lab, see [The tests of Mail](#the-tests-of-mail)), `desktop/` (the Docker test), `vm/` (the btrfs kernel VM and its samples) |
+| `tests/` | `conftest.py`, `qml_theme.py`, `mail_stub.py` and `mail_app_lab.py` (stand-ins that the mail tests share), `connect_agentd_stub.py`, `connect_fakes/` and `browserd_fakes/` (the stand-ins of connections: the client side of the service's socket, a Slack and a work tracker, and Chromium's debugging port with imitation Slack pages), `test_*.py`, `fixtures/` (recorded CLI output), `qml/` (four example windows for `bombadil-app check`, and `quickshell_stub/`, a stand-in for Quickshell's notification module), `mail/` (the JavaScript tests of the add-on, `fake_thunderbird.py` and the lab, see [The tests of Mail](#the-tests-of-mail)), `desktop/` (the Docker test), `vm/` (the btrfs kernel VM and its samples) |
 | `docs/` | this documentation (start at [docs/README.md](../README.md)), `docs/tools/check_docs.py` (checks links, anchors, Mermaid diagrams and leaks; see [documenting.md](documenting.md)), and `docs/brand/`, the logos that `tests/test_brand.py` and the README read |
 | `pyproject.toml` | package metadata, the extras, the pytest and ruff settings |
 | `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `LICENSE` | the front page (`tests/test_brand.py` reads its lockup), [how to contribute](../../CONTRIBUTING.md), the guide for coding agents, and the licence text |
@@ -912,7 +1002,9 @@ an offline catch-up and system paths. Start it with `tests/vm/samples/brain-watc
 `tests/qml/*.qml` are not run by pytest. Each is a window that loads with `bombadil-app check`, which
 reports errors as JSON and saves a screenshot, for example
 `bin/bombadil-app check tests/qml/style_gallery.qml --screenshot gallery.png` (add `--wait 2500` for
-`charts_gallery.qml`). It needs PySide6, so the four were not run on 2026-11-08.
+`charts_gallery.qml`). It needs PySide6, so the four were not run on 2026-11-08. `tests/qml/quickshell_stub/` is not one of them:
+`tests/test_connect_cards_qml.py` puts it on the import path so that `shell/Notifications.qml` loads without
+Quickshell.
 
 ## Conventions
 
@@ -920,15 +1012,15 @@ These are visible in the code and the configuration; none is written down elsewh
 
 | Area | Convention |
 |---|---|
-| Python | 3.11 syntax (`X \| None`, built-in generics), a docstring at the top of every module in `src/bombadil/`, comments that say why. Standard library only outside `appkit/` |
+| Python | 3.11 syntax (`X \| None`, built-in generics), a docstring at the top of every module in `src/bombadil/`, comments that say why. Standard library only outside `appkit/` and the connection service's two real drivers (`connect/slack.py`, `connect/mcpconn.py`) |
 | Format and lint | `line-length = 110` is the only ruff setting; ruff's default rules apply. The formatter is not applied, nothing pins the ruff version, there is no type-checker configuration, and the repository has no CI workflow or pre-commit file |
-| Test files | `tests/test_<surface>.py`; the thirteen tests of the bar and the pictures it draws, and of the Mail window, end in `_qml` (`test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_found_qml`, `test_notice_qml`, `test_rest_qml`, `test_mail_app_qml`, `test_sessions_qml`, `test_welcome_qml` and `test_persona_card_qml`), while the seven other files that load QML or run an app of the kit (`test_appkit_kit`, `test_appkit_native`, `test_appkit_runtime`, `test_appkit_reload`, `test_appkit_agent`, `test_brain_app`, `test_motion`) and the Mail window's backend (`test_mail_app_backend`) have no suffix. There is no `tests/__init__.py`, so test file names must be unique across the folder and modules import each other by bare name (`from test_jobs import Systemd`, `from qml_theme import THEME`, `import test_pill_qml as base`) |
+| Test files | `tests/test_<surface>.py`; the fourteen tests of the bar and the pictures it draws, and of the Mail window, end in `_qml` (`test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_found_qml`, `test_notice_qml`, `test_rest_qml`, `test_mail_app_qml`, `test_sessions_qml`, `test_welcome_qml`, `test_persona_card_qml` and `test_connect_cards_qml`), while the seven other files that load QML or run an app of the kit (`test_appkit_kit`, `test_appkit_native`, `test_appkit_runtime`, `test_appkit_reload`, `test_appkit_agent`, `test_brain_app`, `test_motion`) and the Mail window's backend (`test_mail_app_backend`) have no suffix. There is no `tests/__init__.py`, so test file names must be unique across the folder and modules import each other by bare name (`from test_jobs import Systemd`, `from qml_theme import THEME`, `import test_pill_qml as base`) |
 | Test names | a snake-case sentence that states the behaviour (`test_a_dead_session_is_dropped`, `test_the_pill_opens_from_super_and_from_alt_space`); a comment or docstring gives the reason where it is not obvious. A few early tests are short (`test_defaults`) |
-| Isolation | the `home` fixture (`tests/conftest.py`) points `HOME`, `BOMBADIL_RUNTIME`, `BOMBADIL_STATE`, `BOMBADIL_CONFIG`, `BOMBADIL_APPS` and `XDG_DATA_HOME` at a temp folder and clears `HYPRLAND_INSTANCE_SIGNATURE`; the brain's and Mail's sockets, databases and folders follow, because `paths` defaults them into the runtime, state and data folders, and so do the coding sessions' registry (`dev/` in the state folder), the Away card's `away.json`, the voice's `persona.toml` (config folder), `said.json` (state folder) and `greeted` marker (runtime folder), and Tips' `tips.json`; the projects folder defaults to `Projects` in the temp home. An autouse fixture, `no_vitals`, sets `BOMBADIL_VITALS=0` for every test, so agentd does not sample the machine for the Machine card unless a test passes `vitals=`; a second, `no_tips`, sets `BOMBADIL_TIPS=0`, so agentd sends no client the Tips card unless a test passes `tips=`. agentd writes `persona.toml` and the `greeted` marker when sign-in turns ready and no persona is saved, so a test that starts a daemon outside the `home` fixture points `BOMBADIL_CONFIG` and `BOMBADIL_RUNTIME` at a temp folder as well (`_agentd` in `tests/test_appkit_native.py` does), and the sign-in tests of `tests/test_agentd_signin.py` save a persona first, so that the name card does not replace the lines they read. None of the three resets `BOMBADIL_SOCKET`, `BOMBADIL_PROVIDER`, `BOMBADIL_SHARE`, `BOMBADIL_DATA`, `BOMBADIL_BRAIN_SOCKET`, `BOMBADIL_BRAIN_DB`, `BOMBADIL_WATCH_SOCKET`, `BOMBADIL_PROJECTS` or the `BOMBADIL_MAIL_*` and `BOMBADIL_PRESS_LOG` overrides, so run pytest in a shell that has none of a dev session's `BOMBADIL_*` variables exported: with `BOMBADIL_SOCKET` set, an agentd test serves on that path, and `AgentD.serve` deletes a socket that is already there; with `BOMBADIL_PROJECTS` set, 21 of the 26 tests of `tests/test_dev.py` failed on 2026-11-09 (21 of 25 at `ca7f80a`), because they make their projects in `Projects` of the temp home. Use the fixture in any test that touches a path or a socket |
-| Fakes | mostly defined in the test module that needs them, not in a shared mock library: `FakeHypr`, `FakeSnaps`, `FakeAgentd`, `FakePanel`, `FakeWatcher`, `FakeVitals`, `FakeBrain`, `FakeZellij`, `Systemd`, `Scripted`. Shared ones are imported from the module that owns them. Mail has three that are shared on purpose: `FakeEngine` and `FakeProcess` in `src/bombadil/mail/fake.py` (the service also runs on them with `BOMBADIL_MAIL_ENGINE=fake`), `StubMail` in `tests/mail_stub.py` (the client side of `mail.sock`) and `Lab` in `tests/mail_app_lab.py` (the service on the fake engine with a fake agentd, for the Mail window's tests). Tests give agentd `agentd._NoSnapshots()`, the class `main` also uses when `config.toml` sets `snapshots = false` |
-| Async | `@pytest.mark.asyncio` on every `async def test_`, or once for the module as `pytestmark` in `test_mail_bridge.py`, `test_mail_service.py` and `test_mail_e2e_real.py`; agentd is served on a Unix socket in the temp runtime folder and read with `asyncio.open_unix_connection` |
-| Recorded data | `tests/fixtures/*.jsonl` are lines a provider CLI printed; `tests/test_sysmap.py` holds recorded command output; a parser is fed text, never the live tool; the brain's watcher tests hold a recorded mount table. The narration tests build their sample passwords at run time (`"not" + "-a-" + "real-one"` in `tests/test_narrate.py`) so no secret scanner mistakes them for real ones; the desktop test's `claude` wrapper uses a literal fake API key |
-| Qt tests | `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`, which `test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_notice_qml`, `test_sessions_qml`, `test_welcome_qml`, `test_persona_card_qml`, `test_motion` and `test_appkit_native` put in `os.environ` (`setdefault`, except the platform in `test_appkit_native`), and which the kit, runtime, reload and `test_mail_app_qml` tests pass to the processes they start. `test_appkit_agent`, `test_brain_app` and `test_mail_app_backend` set only `QT_QPA_PLATFORM`; `test_found_qml` and `test_rest_qml` import `test_pill_qml` and take its settings. `tests/conftest.py` puts `share/qml` on `QML2_IMPORT_PATH` for every test. Three forms of skipping without PySide6: `pytest.importorskip("PySide6")` at module level in `test_appkit_agent`, `test_appkit_kit`, `test_appkit_native`, `test_brain_app`, `test_mail_app_backend` and `test_mail_app_qml`, and inside the tests that need Qt in `test_appkit_runtime` (14 of its 27 tests) and `test_appkit_reload` (18 of its 23), so the rest of those files still runs; `pytest.importorskip("PySide6.QtCore", exc_type=ImportError)` (with the other Qt modules) at module level in `test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_notice_qml`, `test_sessions_qml` and `test_motion`, which `test_found_qml` and `test_rest_qml` inherit by importing them; and, in `test_welcome_qml` and `test_persona_card_qml`, a `try` around the import of PySide6 at the top of the file whose error the `app` fixture hands to `pytest.skip`, so the tests that read the QML as text still run. QML warnings and binding errors are collected (`engine.warnings`, `qInstallMessageHandler`) and asserted empty; `BOMBADIL_SCREENS=<dir>` saves a PNG of each state |
+| Isolation | the `home` fixture (`tests/conftest.py`) points `HOME`, `BOMBADIL_RUNTIME`, `BOMBADIL_STATE`, `BOMBADIL_CONFIG`, `BOMBADIL_APPS` and `XDG_DATA_HOME` at a temp folder and clears `HYPRLAND_INSTANCE_SIGNATURE`; the brain's and Mail's sockets, databases and folders follow, because `paths` defaults them into the runtime, state and data folders, and so do the coding sessions' registry (`dev/` in the state folder), the Away card's `away.json`, the voice's `persona.toml` (config folder), `said.json` (state folder) and `greeted` marker (runtime folder), and Tips' `tips.json`, and so do the open proposals' `proposals.json` (state folder) and the browser service's `browserd.sock` (runtime folder); the projects folder defaults to `Projects` in the temp home. The connection service's own socket and state folder are the exception: they default to the system's (`/run/bombadil-connect/connect.sock` and `/var/lib/bombadil-connect`), outside the temp home, so a test that talks to the service or to a stand-in for it sets `BOMBADIL_CONNECT_SOCKET` and `BOMBADIL_CONNECT_STATE` itself (the `connect_paths` fixture of `tests/connect_agentd_stub.py` points them into the temp home). An autouse fixture, `no_vitals`, sets `BOMBADIL_VITALS=0` for every test, so agentd does not sample the machine for the Machine card unless a test passes `vitals=`; a second, `no_tips`, sets `BOMBADIL_TIPS=0`, so agentd sends no client the Tips card unless a test passes `tips=`. agentd writes `persona.toml` and the `greeted` marker when sign-in turns ready and no persona is saved, so a test that starts a daemon outside the `home` fixture points `BOMBADIL_CONFIG` and `BOMBADIL_RUNTIME` at a temp folder as well (`_agentd` in `tests/test_appkit_native.py` does), and the sign-in tests of `tests/test_agentd_signin.py` save a persona first, so that the name card does not replace the lines they read. None of the three resets `BOMBADIL_SOCKET`, `BOMBADIL_PROVIDER`, `BOMBADIL_SHARE`, `BOMBADIL_DATA`, `BOMBADIL_BRAIN_SOCKET`, `BOMBADIL_BRAIN_DB`, `BOMBADIL_WATCH_SOCKET`, `BOMBADIL_PROJECTS` or the `BOMBADIL_MAIL_*`, `BOMBADIL_CONNECT_*`, `BOMBADIL_BROWSERD_SOCKET`, `BOMBADIL_PROPOSALS` and `BOMBADIL_PRESS_LOG` overrides, so run pytest in a shell that has none of a dev session's `BOMBADIL_*` variables exported: with `BOMBADIL_SOCKET` set, an agentd test serves on that path, and `AgentD.serve` deletes a socket that is already there; with `BOMBADIL_PROJECTS` set, 21 of the 26 tests of `tests/test_dev.py` failed on 2026-11-09 (21 of 25 at `ca7f80a`), because they make their projects in `Projects` of the temp home. Use the fixture in any test that touches a path or a socket |
+| Fakes | mostly defined in the test module that needs them, not in a shared mock library: `FakeHypr`, `FakeSnaps`, `FakeAgentd`, `FakePanel`, `FakeWatcher`, `FakeVitals`, `FakeBrain`, `FakeZellij`, `Systemd`, `Scripted`. Shared ones are imported from the module that owns them. Mail has three that are shared on purpose: `FakeEngine` and `FakeProcess` in `src/bombadil/mail/fake.py` (the service also runs on them with `BOMBADIL_MAIL_ENGINE=fake`), `StubMail` in `tests/mail_stub.py` (the client side of `mail.sock`) and `Lab` in `tests/mail_app_lab.py` (the service on the fake engine with a fake agentd, for the Mail window's tests). Connections have the same kind: `FakeDriver` in `src/bombadil/connect/fake.py` (the service also runs on it with `BOMBADIL_CONNECT_ENGINE=fake`), `StubConnect` in `tests/connect_agentd_stub.py` (the client side of `connect.sock`, for agentd's tests), `FakeSlack` and `FakeMcp` in `tests/connect_fakes/` (a Slack's Web API and Socket Mode on a local port, and a work tracker's MCP and OAuth servers in one process), and `FakeChrome` and `FakePage` in `tests/browserd_fakes/` (a stand-in for Chromium's debugging port, with imitation Slack pages that a real Chrome can show as well). Tests give agentd `agentd._NoSnapshots()`, the class `main` also uses when `config.toml` sets `snapshots = false` |
+| Async | `@pytest.mark.asyncio` on every `async def test_`, or once for the module as `pytestmark` in `test_mail_bridge.py`, `test_mail_service.py`, `test_mail_e2e_real.py`, `test_connect_mcp.py`, `test_connect_service.py`, `test_connect_slack.py` and `test_ws.py`; agentd is served on a Unix socket in the temp runtime folder and read with `asyncio.open_unix_connection` |
+| Recorded data | `tests/fixtures/*.jsonl` are lines a provider CLI printed; `tests/test_sysmap.py` holds recorded command output; a parser is fed text, never the live tool; the brain's watcher tests hold a recorded mount table. The narration tests build their sample passwords at run time (`"not" + "-a-" + "real-one"` in `tests/test_narrate.py`) so no secret scanner mistakes them for real ones, and the connection and browser tests build their Slack-shaped tokens at run time for the same reason; the desktop test's `claude` wrapper uses a literal fake API key |
+| Qt tests | `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`, which `test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_notice_qml`, `test_sessions_qml`, `test_welcome_qml`, `test_persona_card_qml`, `test_connect_cards_qml`, `test_motion` and `test_appkit_native` put in `os.environ` (`setdefault`, except the platform in `test_appkit_native`), and which the kit, runtime, reload and `test_mail_app_qml` tests pass to the processes they start. `test_appkit_agent`, `test_brain_app` and `test_mail_app_backend` set only `QT_QPA_PLATFORM`; `test_found_qml` and `test_rest_qml` import `test_pill_qml` and take its settings. `tests/conftest.py` puts `share/qml` on `QML2_IMPORT_PATH` for every test, and `test_connect_cards_qml` also adds `tests/qml/quickshell_stub/` to its engine's import path, so that `shell/Notifications.qml` loads without Quickshell. Three forms of skipping without PySide6: `pytest.importorskip("PySide6")` at module level in `test_appkit_agent`, `test_appkit_kit`, `test_appkit_native`, `test_brain_app`, `test_mail_app_backend` and `test_mail_app_qml`, and inside the tests that need Qt in `test_appkit_runtime` (14 of its 27 tests) and `test_appkit_reload` (18 of its 23), so the rest of those files still runs; `pytest.importorskip("PySide6.QtCore", exc_type=ImportError)` (with the other Qt modules) at module level in `test_pill_qml`, `test_stone_qml`, `test_diagram_qml`, `test_desk_qml`, `test_desk_cards_qml`, `test_desk_drag_qml`, `test_notice_qml`, `test_sessions_qml`, `test_connect_cards_qml` and `test_motion`, which `test_found_qml` and `test_rest_qml` inherit by importing them; and, in `test_welcome_qml` and `test_persona_card_qml`, a `try` around the import of PySide6 at the top of the file whose error the `app` fixture hands to `pytest.skip`, so the tests that read the QML as text still run. QML warnings and binding errors are collected (`engine.warnings`, `qInstallMessageHandler`) and asserted empty; `BOMBADIL_SCREENS=<dir>` saves a PNG of each state |
 | Shell QML | colours come from `Theme` tokens through `import Bombadil as Kit`, and `DeskTheme.js` mirrors them for the desk; every `Text` and `TextField` sets a font family; every launcher runs `bin/bombadil-shell` and none starts `quickshell -p` directly. `tests/test_theme.py` checks exactly this much: `Theme.qml` carries the tokens the shell and the design system name (and that the accent is `#d97757`); in `shell/*.qml`, no hex colour of 6 to 8 digits and no `"white"` or `"black"` (other named colours and 3-digit hex are not checked), a `font.family` or whole `font` in every `Text` and `TextField` block, and `import Bombadil as Kit` as the only import that names the kit; `DeskTheme.js` equal to `Theme.qml` for the tokens it maps; and no `quickshell -p ...shell.qml` in the ISO's `hyprland.lua`, `scripts/dev-session.sh` and `tests/desktop/driver.py` (another launcher is not checked) |
 | Scripts | mostly `bash` with `set -euo pipefail` (`bombadil-smoke`, `vmsmoke` and `vmwatch` use `set -u`, so one failed command does not end the run, `tests/desktop/inside.sh` uses `set -e`, and `tests/vm/btrfs-init.sh`, the VM's PID 1, sets nothing); `bin/bombadil-shell` and `tests/desktop/bin/claude` are `sh`, and `scripts/qmp.py`, `scripts/make-wallpaper.py`, `scripts/console-palette.py` and eight of the VM tools (`serialpump`, `vmsh`, `vmpy`, `vmin`, `vmlink`, `vmlogin`, `stonecrop`, `lifttrace`) are Python. A header comment gives the usage and the variables. Options are mostly variables with defaults; `run-vm.sh` (`--disk`, `--installed`) and `update-in-place` (`--reboot`, `--no-system`, `--from`) also take flags, and `wsl-vm.sh` takes subcommands |
 | Smoke lines | `BOMBADIL-SMOKE: PASS <name>`, `FAIL <name>: <tail>`, `SHOT <name>`, `KEYS <bootid>-<n> <qcode>...`, `DONE pass=N fail=M`, and lines for a reader that the host does not act on, except `SKIP signin`: `START`, `REBOOT`, `DIAG`, `NOTE`, `AGENTD-LOG` and `MAIL-LOG`. Each has its meaning and the host's action in [the serial protocol](vm-testing.md#the-serial-protocol) |
@@ -944,9 +1036,9 @@ Variables a developer sets. The paths come from `src/bombadil/paths.py`.
 | Variable | Read by | Effect |
 |---|---|---|
 | `BOMBADIL_PROVIDER` | `agentd.py` (`main`), `cardtools.py` | `fake`, `claude` or `codex`; wins over `config.toml` and counts as chosen |
-| `BOMBADIL_RUNTIME` | `paths.runtime_dir` (Python only; `shell.qml` does not read it) | the runtime folder: the agentd socket by default, `brain.sock`, `mail.sock`, `agentd-state.json` and `app-placements.json` with its lock (`hypr.py`); default `$XDG_RUNTIME_DIR/bombadil`, else `/run/user/<uid>/bombadil` |
+| `BOMBADIL_RUNTIME` | `paths.runtime_dir` (Python only; `shell.qml` does not read it) | the runtime folder: the agentd socket by default, `brain.sock`, `mail.sock`, `browserd.sock`, `agentd-state.json` and `app-placements.json` with its lock (`hypr.py`); default `$XDG_RUNTIME_DIR/bombadil`, else `/run/user/<uid>/bombadil` |
 | `BOMBADIL_SOCKET` | `paths.socket_path`, `shell.qml` | the agentd socket; default `<runtime>/agentd.sock` for Python, and `$XDG_RUNTIME_DIR/bombadil/agentd.sock` for the bar, which reads only this variable. To move a session, set both |
-| `BOMBADIL_STATE` | `paths.state_dir` | `turns.jsonl`, `turns/`, `desk.toml`, `jobs/`, `brain.db`, `rest.json`, `mail.db`, `presses.jsonl` and more (see Where state lives); default `$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil` |
+| `BOMBADIL_STATE` | `paths.state_dir` | `turns.jsonl`, `turns/`, `desk.toml`, `jobs/`, `brain.db`, `rest.json`, `mail.db`, `presses.jsonl`, `proposals.json` and more (see Where state lives); default `$XDG_STATE_HOME/bombadil`, else `~/.local/state/bombadil` |
 | `BOMBADIL_CONFIG` | `paths.config_dir`, `shell/Wallpaper.qml` | `config.toml`, and the optional `wallpaper` file; default `$XDG_CONFIG_HOME/bombadil`, else `~/.config/bombadil`. The bar reads the same folder for `wallpaper`: one path (`~/`, `/` or `file://`) on the last line that is not a `#` comment names a picture, and a picture that fails to load falls back to `share/wallpaper/bombadil.png` (`tests/test_wallpaper.py`) |
 | `BOMBADIL_DATA`, `BOMBADIL_APPS` | `paths` | data (default `$XDG_DATA_HOME/bombadil`, else `~/.local/share/bombadil`; it holds `browser/`, the browser's profile, and `mail/`, Thunderbird's profile for Mail) and generated apps (default `~/Apps`) |
 | `BOMBADIL_PROJECTS` | `paths.projects_dir` | the folder whose subfolders are the projects that coding sessions start in; default `~/Projects`. A session's own copy of a repository goes in `<it>/.work/<project>/<role>` |
@@ -955,6 +1047,7 @@ Variables a developer sets. The paths come from `src/bombadil/paths.py`.
 | `BOMBADIL_MAIL_ENGINE`, `BOMBADIL_MAIL_FAKE_DRIP` | `mail/service.py` (`main`) | `fake` runs the service on `FakeEngine`, with sample accounts and no Thunderbird; any other value, or none, starts the real engine. `BOMBADIL_MAIL_FAKE_DRIP=<seconds>` makes the fake engine deliver a canned new mail on that interval |
 | `BOMBADIL_MAIL_THUNDERBIRD` | `mail/engine.py` | the Thunderbird executable the engine starts; unset, it uses `thunderbird` on `PATH`. The real-Thunderbird tests read `BOMBADIL_TEST_THUNDERBIRD` instead (see [The tests of Mail](#the-tests-of-mail)) |
 | `BOMBADIL_MAIL_SAMPLE` | `share/apps/mail/app.py` | with `BOMBADIL_CHECK=1` (`bombadil-app check mail`), `first-run` or `reply` picks another sample for the window to show |
+| `BOMBADIL_CONNECT_ENGINE`, `BOMBADIL_CONNECT_SOCKET`, `BOMBADIL_CONNECT_STATE`, `BOMBADIL_CONNECT_UIDS`, `BOMBADIL_BROWSERD_SOCKET`, `BOMBADIL_PROPOSALS` | `connect/service.py`, `paths.connect_socket`, `connect_state`, `browserd_socket` and `proposals_file`, `scripts/dev-session.sh` | `fake` runs the connection service on `FakeDriver`, with an invented workspace and tracker and no account; any other value, or none, runs the real engine. The service's socket (default `/run/bombadil-connect/connect.sock`), its own state folder (default `/var/lib/bombadil-connect`, which only the service's user can read) and the range `min-max` of user ids it lets in (default 1000 to 59999; a container, or a test run as another user, sets it). `BOMBADIL_BROWSERD_SOCKET` is the browser service's socket (default `<runtime>/browserd.sock`) and `BOMBADIL_PROPOSALS` the file of open proposals (default `<state>/proposals.json`). A dev session sets the first four, into a scratch folder. The other variables of connections (the seconds of the fake sign-in, the OAuth callback port, the client metadata address, Slack's API address, the DevTools port) are in [Connect](../architecture/connect.md) |
 | `BOMBADIL_VITALS` | `AgentD.__init__` | `0` turns off the sampling for the Machine card; the autouse fixture `no_vitals` and the desktop test set it |
 | `BOMBADIL_TIPS` | `AgentD.__init__` | `0` turns Tips off, so no client is sent the Tips card; the autouse fixture `no_tips` sets it, and `tests/test_agentd_tips.py` hands agentd a `Tips` of its own instead. The desktop test does not set it |
 | `BOMBADIL_VOICE_LINES`, `BOMBADIL_GREET_WINDOW`, `BOMBADIL_GREET_DELAY`, `BOMBADIL_IDLE_SECONDS`, `BOMBADIL_UPDATES`, `BOMBADIL_LOCALTIME`, `BOMBADIL_LIVE` | `paths.py`, `voice.py`, `greet.py`, `shell/shell.qml` | the voice's: another table of words, the boot window and delay, the idle timeout, the file of waiting updates, the time zone link, and whether this is the live image. The voice tests set them to move a clock or a file; each is described in [the voice](../architecture/voice.md#interfaces-other-pieces-depend-on) |
@@ -964,7 +1057,7 @@ Variables a developer sets. The paths come from `src/bombadil/paths.py`.
 | `BOMBADIL_FAKE_SIGNIN`, `BOMBADIL_FAKE_SIGNIN_HOST`, `FAKE_SIGNIN_DELAY`, `BOMBADIL_SIGNIN_TIMEOUT` | `providers.Fake`, `fake_signin.py`, `signin.py` | with `BOMBADIL_FAKE_SIGNIN` set to `auto`, `manual`, `never` or `fail`, the fake provider needs signing in through `fake_signin.py`, which plays a login on localhost (the smoke uses it); `BOMBADIL_FAKE_SIGNIN_HOST=127.0.0.1:9` plays a sign-in server out of reach; `FAKE_SIGNIN_DELAY` is how many seconds its page shows (default 2); `BOMBADIL_SIGNIN_TIMEOUT` is how many seconds a sign-in may wait on its page (default 600) |
 | `BOMBADIL_WATCH_SOCKET`, `BOMBADIL_WATCH_STATE`, `BOMBADIL_WATCH_PATH` | `brain/watch.py`, `brain/service.py` (the socket only) | the watcher's socket (default `/run/bombadil-brain/watch.sock`), its state folder (default `/var/lib/bombadil-brain`), and a directory whose filesystem it watches directly for development |
 | `BOMBADIL_CHROMIUM_DIRS` | `brain/witnesses.py` | colon-separated Chromium folders the history witness reads instead of the defaults |
-| `BOMBADIL_SHARE` | `paths.share_dir` | the installed tree, default `/usr/share/bombadil`, whose `share/` is a subfolder. Code run from a checkout finds `share/` beside `src/` first. The readers differ: `appkit/engine.py` and `appkit/tools.py` append `share/`, `providers.kit_paths` tries `<value>/share` and then `<value>`, and `skill_dir` and `mcp_server.py` also take `<value>` as the `share/` folder itself, which is how `dev-session.sh` sets it |
+| `BOMBADIL_SHARE` | `paths.share_dir` | the installed tree, default `/usr/share/bombadil`, whose `share/` is a subfolder. Code run from a checkout finds `share/` beside `src/` first. The readers differ: `appkit/engine.py` and `appkit/tools.py` append `share/`, `providers.kit_paths` tries `<value>/share` and then `<value>`, and `skill_dir` and `mcp_server.py` also take `<value>` as the `share/` folder itself, which is how `dev-session.sh` sets it, and `connect/recipes.py` tries `<value>/share/connect`, then `<value>/connect`, then the checkout's `share/connect` |
 | `BOMBADIL_NO_SCOPE=1` | `procs.py` (`scope_supported`, which `dev.py` asks too) | do not run a turn, or a coding session, in a systemd user scope. It is read once and kept, so a test that sets it also resets `procs._scope_ok` (the `projects` fixture of `tests/test_dev.py` does) |
 | `BOMBADIL_REDUCE_MOTION=1` | `shell/shell.qml`, `appkit/engine.py` (`reduced_motion`, `set_reduced_motion`) | sets `Theme.reducedMotion`, the one switch every movement reads: the stone pulses instead of rolling, and the fades, slides and folds of the shell, the desk, the kit and the apps are instant (`Theme.fast`, `normal` and `slow` read 0). See [motion](../MOTION.md) |
 | `BOMBADIL_CHECK=1` | set by `bombadil-app check` | tells `app.py` and the programs `Command` runs that it is a check |
@@ -979,7 +1072,7 @@ Set by agentd, not by a developer. agentd adds these to the environment of each 
 
 | Variable | Set | Read by | Effect |
 |---|---|---|---|
-| `BOMBADIL_TURN` | for each turn: the turn number | `mcp_server.py` (the `desk` and `job` tools), `mail/tools.py` (the mail tools) | says which turn the tool speaks for; without a number these tools refuse |
+| `BOMBADIL_TURN` | for each turn: the turn number | `mcp_server.py` (the `desk` and `job` tools), `mail/tools.py` (the mail tools), `connect/tools.py` (the connection tools) | says which turn the tool speaks for; without a number these tools refuse |
 | `BOMBADIL_TURN_SNAPSHOT` | for a turn that took a restore point: its number | `snapshots.py` (`undo_last_turn`) | "undo that" inside a turn skips that restore point and newer ones |
 | `BOMBADIL_SOCKET` | for each turn: agentd's own socket path | `paths.socket_path`, so the OS tools reach this agentd | |
 | `BROWSER` | for each turn and for a sign-in login: `bin/bombadil-browser` of the checkout when it exists, else `bombadil-browser` | the CLIs | a link the agent opens goes to agentd, which slides the browser panel in |
@@ -1031,9 +1124,10 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
 
 | What | Where |
 |---|---|
-| a running agentd | the socket `$BOMBADIL_SOCKET` (default `$BOMBADIL_RUNTIME/agentd.sock`); the turn log `$BOMBADIL_STATE/turns.jsonl` and `turns/`; the conversation and the session's model in `$BOMBADIL_RUNTIME/agentd-state.json`; a limit or a pause of the AI in `$BOMBADIL_STATE/rest.json`; when the Away card was last seen in `$BOMBADIL_STATE/away.json`; what the voice has said in `$BOMBADIL_STATE/said.json` and whether this login was greeted in `$BOMBADIL_RUNTIME/greeted`; what Tips has taught in `$BOMBADIL_STATE/tips.json`; app slots in `$BOMBADIL_RUNTIME/app-placements.json` |
+| a running agentd | the socket `$BOMBADIL_SOCKET` (default `$BOMBADIL_RUNTIME/agentd.sock`); the turn log `$BOMBADIL_STATE/turns.jsonl` and `turns/`; the conversation and the session's model in `$BOMBADIL_RUNTIME/agentd-state.json`; a limit or a pause of the AI in `$BOMBADIL_STATE/rest.json`; when the Away card was last seen in `$BOMBADIL_STATE/away.json`; what the voice has said in `$BOMBADIL_STATE/said.json` and whether this login was greeted in `$BOMBADIL_RUNTIME/greeted`; what Tips has taught in `$BOMBADIL_STATE/tips.json`; the open proposals in `$BOMBADIL_STATE/proposals.json`; app slots in `$BOMBADIL_RUNTIME/app-placements.json` |
 | coding sessions | the registry `$BOMBADIL_STATE/dev/sessions.json` (written by agentd alone), `$BOMBADIL_STATE/dev/signals.jsonl` (what the hooks said while agentd was away) and the last screen of a session that stopped (`$BOMBADIL_STATE/dev/<slug of the key>.last`), all in `paths.dev_dir`; the projects in `$BOMBADIL_PROJECTS` (default `~/Projects`), with each further session's own copy in `$BOMBADIL_PROJECTS/.work/<project>/<role>`; the sessions themselves are zellij sessions in systemd user scopes, which are not files |
 | Mail | the socket `$BOMBADIL_MAIL_SOCKET` (default `$BOMBADIL_RUNTIME/mail.sock`); the database `$BOMBADIL_MAIL_DB` (`$BOMBADIL_STATE/mail.db`); copies of draft attachments in `$BOMBADIL_MAIL_FILES` (`$BOMBADIL_STATE/mail/`); the log of presses `$BOMBADIL_PRESS_LOG` (`$BOMBADIL_STATE/presses.jsonl`); Thunderbird's profile `$BOMBADIL_MAIL_PROFILE` (`$BOMBADIL_DATA/mail`); the logs `mail-engine.log` and `mail-host.log` in `$BOMBADIL_STATE`. A dev session keeps the first four in a scratch folder |
+| connections | the connection service's socket `$BOMBADIL_CONNECT_SOCKET` (default `/run/bombadil-connect/connect.sock`) and its database in `$BOMBADIL_CONNECT_STATE` (default `/var/lib/bombadil-connect`; the tokens are in it, and only the service's user can read the folder); the browser service's socket `$BOMBADIL_BROWSERD_SOCKET` (default `$BOMBADIL_RUNTIME/browserd.sock`). A dev session keeps the first two in a scratch folder. [Connect](../architecture/connect.md) lists the rest |
 | the brain | `$BOMBADIL_STATE/brain.db` and `$BOMBADIL_RUNTIME/brain.sock` (the service); `/run/bombadil-brain/watch.sock` and `/var/lib/bombadil-brain` (the root watcher) |
 | the user's choice of provider | `$BOMBADIL_CONFIG/config.toml`, over `/etc/bombadil/config.toml` |
 | the user's name and voice | `$BOMBADIL_CONFIG/persona.toml`, written when the name card is first asked and when it is answered |
@@ -1042,7 +1136,7 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
 | the ISO build | `out/*.iso`; the work folder `WORK` (default `/tmp/bombadil-work`; `wsl-vm.sh` uses `/var/tmp/bombadil-work`) |
 | the VM | `out/bombadil.qcow2` (installed disk); `out/.installed` and `out/.iso-key` (what `wsl-vm.sh` built and installed); `out/vm/` (sockets, `serial.log`, `install.log`, `shots/`, `smoke/`); `out/scratch/` (the copy) |
 | a smoke run on the host | `out/test/` (`<boot>.serial.log`, `<boot>.qmp.sock`, key markers, screenshots, `disk.qcow2`; the files are listed in [vm-testing.md](vm-testing.md#running-it)) |
-| a smoke run in the guest | `/tmp/smoke.<check>.log` per check, `/tmp/smoke.agentd.log`, `/tmp/smoke.mail.log` with the mail service's scratch folder `/tmp/smoke-mail/`, `~/.config/bombadil/persona.toml`, which the voice checks leave behind, and `~/.bombadil-smoke-phase` while an undo run reboots |
+| a smoke run in the guest | `/tmp/smoke.<check>.log` per check, `/tmp/smoke.agentd.log`, `/tmp/smoke.mail.log` with the mail service's scratch folder `/tmp/smoke-mail/`, `/tmp/smoke.notify.log` (the notification check's listener), the connection service's drop-in `/run/systemd/system/bombadil-connect.service.d/` and scratch state folder `/var/lib/bombadil-connect/smoke-fake`, which `connect-unit-restored` takes away, `~/.config/bombadil/persona.toml`, which the voice checks leave behind, and `~/.bombadil-smoke-phase` while an undo run reboots |
 | the desktop test | `out/desktop/` |
 | the btrfs kernel VM | `out/btrfs-vm/` (the cached root filesystem, kernel and initramfs, and `runs/<time>-<pid>/serial.log`) |
 | the measuring tools | the screendumps `stonecrop` and `lifttrace` ask QEMU to write: `/tmp/stone<N>.ppm` and `/tmp/lt.ppm` |
@@ -1062,7 +1156,9 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
 - [Degrade and recover](../principles.md#degrade-and-recover): the suite runs with parts missing, on
   purpose: no snapper (`_NoSnapshots`), no Hyprland (`home` clears the signature), no PySide6 (the QML
   modules skip), no root or no btrfs (the watcher tests skip or read recorded tables), no Thunderbird
-  (the mail tests run on `FakeEngine`, and the ones that need a real Thunderbird skip), no network
+  (the mail tests run on `FakeEngine`, and the ones that need a real Thunderbird skip), no Slack or work tool (the
+  connection tests run on `FakeDriver`, `FakeSlack` and `FakeMcp`), no Chrome (the browser service's tests run on
+  `FakeChrome`, and the ones that need a real one skip), no network
   (`BOMBADIL_FAKE_SIGNIN_HOST`, the smoke's `signin-offline`). The trap: another dependency with no test
   for the day it is missing.
 - [One design language](../principles.md#one-design-language): `tests/test_theme.py` fails on a 6 to 8 digit hex
@@ -1080,7 +1176,9 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
   The trap: a background process that Stop cannot reach; add a check that it is gone after Stop.
 - [The person's press reaches people](../principles.md#the-persons-press-reaches-people): the mail tools
   give the agent no way to send (`test_the_five_mail_tools_are_there_and_none_of_them_sends` in
-  `tests/test_mail_tools.py`), and `tests/test_outbox.py` checks that a press does one act, once, and that a
+  `tests/test_mail_tools.py`) and the five connection tools likewise
+  (`test_the_five_connection_tools_are_listed_and_none_of_them_sends` in `tests/test_mcp_server.py`), and
+  `tests/test_outbox.py` checks that a press, of a mail or of a proposal, does one act, once, and that a
   press from inside an agent's turn is refused. The trap: a tool or message added later that sends on the agent's
   word; any act that leaves the machine needs a test that the agent cannot cause it.
 - [Full access with undo](../principles.md#full-access-with-undo): only the smoke's `undo` mode proves that
@@ -1099,7 +1197,8 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
    agentd._NoSnapshots())`, serve it with `_start(d)`, send with `_ask(w, "text")` and read with
    `_read_until(r, "turn_end")`; end with `w.close()` and `server.cancel()`. `_start` reads the four
    greeting messages (status, entries, setup and the coding sessions' `dev` message) for you; a notice that has not
-   ended comes before the `dev` message, and the Away card, when it is up, after it. The autouse `no_machine_captures` fixture in
+   ended, a message, task or list card that is still open and a proposal that was mid-press at a restart come
+   before the `dev` message (a test of those reads up to it), and the Away card, when it is up, after it. The autouse `no_machine_captures` fixture in
    `tests/test_agentd.py` stubs the machine pictures. To script what a CLI prints, use `Scripted` (defined
    in `tests/test_agentd.py`) with a Python one-liner that prints stream-json lines. Two traps. These
    helpers are `tests/test_agentd.py`'s, where `_start` returns `(server, r, w)`; `tests/test_agentd_signin.py`
@@ -1107,14 +1206,17 @@ scripts share iso`, `scripts/dev-session.sh`, `tests/desktop/run.sh`, `scripts/b
    and `_send` and `_until` instead of `_ask` and `_read_until`. And `providers.Fake` runs `cat` through `Fake.binary`, which is read from
    `BOMBADIL_FAKE_PROVIDER` once, at import: a test that needs another program sets `providers.Fake.binary`
    (for example with `monkeypatch.setattr`), because setting the variable then has no effect.
-   `tests/test_agentd_rest.py`, `tests/test_agentd_found.py`, `tests/test_agentd_away.py` and
-   `tests/test_mail_agentd.py` import their helpers from `tests/test_agentd.py` (the mail one adds `StubMail` from
-   `tests/mail_stub.py`).
-4. For an os-mcp tool, find where it is registered, because there are four places
+   `tests/test_agentd_rest.py`, `tests/test_agentd_found.py`, `tests/test_agentd_away.py`,
+   `tests/test_agentd_connect.py` and `tests/test_mail_agentd.py` import their helpers from `tests/test_agentd.py`
+   (the mail one adds `StubMail` from `tests/mail_stub.py`, the connection one `StubConnect` and the
+   `connect_paths` fixture from `tests/connect_agentd_stub.py`).
+4. For an os-mcp tool, find where it is registered, because there are five places
    (`src/bombadil/mcp_server.py`). `@t(name, description, properties, required)` inside `OsTools._register`
    defines most of them. At its end it calls `cardtools.register(self)` (`show_card` and `system_map`),
    `mail_tools.register(self)` (`bombadil.mail.tools`: the five mail tools, whose own steps are in
-   [Mail](../architecture/mail.md#extending-it)) and `app_tools.register(self)` (`bombadil.appkit.tools`),
+   [Mail](../architecture/mail.md#extending-it)), `connect_tools.register(self)` (`bombadil.connect.tools`: the five
+   connection tools, described in [Connect](../architecture/connect.md)) and `app_tools.register(self)`
+   (`bombadil.appkit.tools`),
    whose app tools replace the `create_app`, `open_app`, `list_apps` and `app_template` that `_register`
    defined earlier. Register a tool before the `app_tools.register` call: `test_app_tools_are_listed_together_and_point_at_the_guide` (`tests/test_appkit_tools.py`) expects
    the last ten tools to be the app tools. The model learns of a tool from its description in
@@ -1184,6 +1286,11 @@ A native type goes in `tests/test_appkit_native.py` through the shared `kit` fix
 Then add the component to a gallery in `tests/qml/` and run `bin/bombadil-app check <gallery> --screenshot
 out.png`.
 
+A shell file that imports a Quickshell module can still be loaded offscreen when the module is stood in for:
+`tests/test_connect_cards_qml.py` adds `tests/qml/quickshell_stub/` to the engine's import path
+(`engine.addImportPath`) and loads `shell/Notifications.qml` over a `NotificationServer` that has the same
+properties and an `arrive` method that hands the shell a notification as the real one would.
+
 ### Add a desktop-test scenario
 
 1. If the scenario needs the model to act, add a branch to `do_POST` in `tests/desktop/fake_api.py`:
@@ -1198,11 +1305,13 @@ out.png`.
    `api_requests()` to assert that no model call happened. `desk_ipc` and `desk_state` are defined just
    before the desk section of the driver (the one commented `# 8.`) and `inject` at the start of the next
    (`# 9.`), so a check placed earlier in the file cannot call them. The section numbers in the comments
-   do not follow the file's order, so go by where a helper is defined. To read a pixel of a picture use `mean_pixel(name, x, y)`
+   do not follow the file's order, so go by where a helper is defined. The connections section (`# 31.`) defines `click`, `say_to_connect` (one
+   request to the service's socket) and `notify` (a notification on the session bus) where it starts. To read a pixel of a picture use `mean_pixel(name, x, y)`
    (the mean of a small square, for a dithered picture) or `pixel(name, x, y)`.
 4. Put the checks before the "the shell logged no QML errors" check, which reads the whole Quickshell log.
-   The wallpaper section after it stops Quickshell and starts it again with its own log
-   (`quickshell-wallpaper.log`), so a check that needs the first shell comes before that check. Run
+   The connections section and the wallpaper section after it each start a shell again, with a log of their own
+   (`quickshell-connect.log` and `quickshell-wallpaper.log`), so a check that needs the first shell comes before
+   that check. Run
    `tests/desktop/run.sh` and read `out/desktop/driver.log`; a failing check prints `FAIL` with its detail.
 
 ### Add a smoke check
@@ -1210,9 +1319,11 @@ out.png`.
 1. Open `iso/airootfs/usr/local/bin/bombadil-smoke` and put the line in the block that matches the mode.
    A check that runs in every mode goes in the first part of the file, before any block that tests
    `$mode`, with the coding-sessions block (a shell session on `~/Projects/smoke`, which needs no provider
-   login) and the mail unit checks (the `undo` mode runs these before and after the reboot). Then
-   come four blocks: `if [[ "$mode" != "undo" ]]`, the mail checks on the fake engine, for live and
-   install only; `if [[ "$mode" != "undo" && ! -e "$signin_config" ]]`, the sign-in checks, which run only
+   login) and the mail unit checks (the `undo` mode runs these before and after the reboot); the checks of the
+   connection and browser services also run in every mode, and sit after the mail block. Then come five
+   blocks, in this order: `if [[ "$mode" != "undo" ]]`, the mail checks on the fake engine, for live and
+   install only; a second `if [[ "$mode" != "undo" ]]`, the notification checks and the connection service on
+   its fake engine; `if [[ "$mode" != "undo" && ! -e "$signin_config" ]]`, the sign-in checks, which run only
    on a machine with no provider chosen (when there is one the smoke prints `SKIP signin` instead);
    `if [[ "$mode" == "install" ]]`, the installer's own check; and `if [[ "$mode" == "undo" ]]`, before the
    reboot, for the brain checks, the restore-point checks and the reboot test (a brain check needs a btrfs
@@ -1224,7 +1335,11 @@ out.png`.
    ahead of the first of them, and `tests/test_iso_profile.py` keeps it so.
 3. Use the helpers: `as_user` runs a command in the user's session; `mcp_call TOOL 'JSON'` calls an os-mcp tool;
    `hypr_json WHAT` is `hyprctl -j` retried; `has_client 'python expression on c'`, `special_shown NAME`,
-   `active_is CLASS` and `drawer_gone` read Hyprland; `agentd_send 'JSON'` writes to the agentd socket.
+   `active_is CLASS` and `drawer_gone` read Hyprland; `agentd_send 'JSON'` writes to the agentd socket;
+   `connect_says OP EXPRESSION` asks the connection service as the person's own process and tests its answer `r`
+   against the expression; `notice_from_agentd SOURCE [TEXT]` and `notice_on_the_line SOURCE` look for a notice
+   of that source on agentd's socket and on the line; `fake_connect` and `restore_connect` put the service on its
+   fake engine through a drop-in, and back, for a check that needs a connection.
 4. If a person would press keys or look at the result, ask the host: `keys meta_l+esc` (qcodes, `+` for a chord)
    and `shot NAME`. `test-vm.sh` and `vmsmoke` both answer these lines.
 5. If the check needs a package or a file, put it in the image (`iso/packages.x86_64`, `iso/airootfs/`) and,
@@ -1263,7 +1378,7 @@ The tests that guard this page's subject, the development setup itself:
 |---|---|
 | `tests/test_theme.py` | `Theme.qml` carries the tokens the shell and the design system name, and `DeskTheme.js` equals it; the ISO's `hyprland.lua`, `scripts/dev-session.sh` and `tests/desktop/driver.py` never start `quickshell -p` bare; `bin/bombadil-shell` puts `share/qml` on the import path; `scripts/build-iso.sh` links `bombadil-shell`; `shell/*.qml` has no 6 to 8 digit hex colour, `"white"` or `"black"`, and every `Text` sets a font family |
 | `tests/test_brand.py` | the README banner, the installed icons, the sizes of two PNGs in `docs/brand/` and of the GRUB background, and the GRUB theme naming its files and the ground; the brand SVGs are parsed, not rendered |
-| `tests/test_iso_profile.py` | the image's packages (sound, Thunderbird), the mirror list and the agent's system-prompt rules for installing and for a replaced kernel, the installer's GRUB edit (run on a copy of `/etc/default/grub`) and its kernel copy, the installer carrying the desk's places and what Tips has taught to the disk (its carry loop run on two folders), the Super and Alt+Space binds and the `layers` animation being off in the skeleton Hyprland config, the user units for agentd, the bar, the notifications and Mail (their restart rules, the start hook and its hand-over of the session's environment), the restore-point pruning settings, the smoke's numbered key requests, its sign-in gate and its use of the units, its picture checks (a wait for a calm guest and up to three tries with more time), the mail skill, Thunderbird's windows going to a workspace nobody opens, and that a dev session keeps its mail in a scratch folder |
+| `tests/test_iso_profile.py` | the image's packages (sound, Thunderbird, what connections run on, and no notification daemon), the mirror list and the agent's system-prompt rules for installing and for a replaced kernel, the installer's GRUB edit (run on a copy of `/etc/default/grub`) and its kernel copy, the installer carrying the desk's places and what Tips has taught to the disk (its carry loop run on two folders), the Super and Alt+Space binds and the `layers` animation being off in the skeleton Hyprland config, the user units for agentd and the bar (their restart rules, the start hook and its hand-over of the session's environment), for Mail and for the browser service, the connection service's system unit, its account and its closed state directory, the restore-point pruning settings, the smoke's numbered key requests, its sign-in gate and its use of the units, its picture checks (a wait for a calm guest and up to three tries with more time) and its connection checks, the mail skill and the connect skill, Thunderbird's windows going to a workspace nobody opens, and that a dev session keeps its mail and its connections in scratch folders and the desktop test starts the session bus and the connection service before agentd |
 | `tests/test_boot_console.py` | the kernel console's colour parameters in the boot entries and the GRUB drop-in, equal to `scripts/console-palette.py`; that greetd keeps Hyprland's start-up text off the console and that Hyprland's own background is the opaque ground |
 | `tests/test_config.py` | provider names accepted from `config.toml`, the default model of each provider, the `[models]` table and a bare `model`, and that switching provider keeps the models |
 | `tests/test_snapshots.py` | a turn's restore point is made with snapper's `number` cleanup algorithm, so snapper may prune it |
@@ -1285,23 +1400,29 @@ Each of these was verified in the files named. Defects of the product are in
   first `status` message (`src/bombadil/appkit/native/agent.py`). It did not fail in the runs on 2026-10-01.
 - `pillow`, `numpy` and `cairosvg` are imported by `scripts/make-wallpaper.py` and used by two tests in
   `tests/test_wallpaper.py`, but no extra declares them; the tests skip without them.
+- `httpx` is imported by `src/bombadil/connect/slack.py` and `httpx2` and `mcp` by `src/bombadil/connect/mcpconn.py`,
+  and `tests/test_connect_slack.py` and `tests/test_connect_mcp.py` import them at module level, but no extra
+  declares them (`pyproject.toml`): without them `pytest` ends with two collection errors and runs no test
+  (checked on 2026-11-09).
 - `tests/test_mcp_server.py` leaves a stand-in server that raises `BrokenPipeError` after its test, which
   pytest reports as a warning in every run. The stand-in browser in `tests/test_signin.py` sometimes leaves
   an `http.client.IncompleteRead` in its `_browse` thread, which pytest reports as a second warning.
 - agentd's handling of a coding tool's hook line has no unit test. No test sends `dev-signal` to a running
-  `AgentD` (`src/bombadil/agentd.py:650`), and none reads the `kind: "dev"` row that `_dev_signals` writes to the
-  turn log when a session ends on its own (`agentd.py:843`) or the line `bombadil history` prints for it
+  `AgentD` (`src/bombadil/agentd.py:731`), and none reads the `kind: "dev"` row that `_dev_signals` writes to the
+  turn log when a session ends on its own (`agentd.py:932`) or the line `bombadil history` prints for it
   (`src/bombadil/watch.py:279`). `Dev.signal` is tested on its own in `tests/test_dev.py`, and the desktop test
   sends real hooks through `bin/bombadil-signal`.
 - The repository has no CI workflow and no pre-commit file, so nothing in it runs the suite for you; the
   desktop test, the ISO smoke and the btrfs kernel VM are started by hand. A fork that wants checks on
   every push has to add them. Nothing pins the ruff version either, and the count of findings depends on it.
 - No test loads `shell/shell.qml`, `shell/DeskRails.qml`, `shell/HyprCover.qml` or `shell/Wallpaper.qml`
-  offscreen. `test_desk_drag_qml.py`, `test_found_qml.py`, `test_notice_qml.py`, `test_rest_qml.py`, `test_welcome_qml.py`, `test_persona_card_qml.py` and `test_motion.py` read
+  offscreen. `test_desk_drag_qml.py`, `test_found_qml.py`, `test_notice_qml.py`, `test_rest_qml.py`, `test_welcome_qml.py`, `test_persona_card_qml.py`, `test_connect_cards_qml.py` and `test_motion.py` read
   `shell.qml` as text for the few lines they depend on, `tests/test_wallpaper.py` reads `Wallpaper.qml` as text
   (the desktop test checks its pixels), and the smoke has no desk check: its `shot desktop` is a picture that
   nothing asserts on. `HyprCover.qml` does nothing without Hyprland, so the desktop test stands in for the
-  windows with `desk cover`, and the part that asks Hyprland where windows are has no automated test.
+  windows with `desk cover`, and the part that asks Hyprland where windows are has no automated test. `shell/Notifications.qml`, which imports
+  Quickshell's notification module, is loaded offscreen over a stand-in (`tests/qml/quickshell_stub/`), so only the
+  desktop test and the smoke see the name on a real bus.
 - The header of `scripts/dev-session.sh` says "no snapshots", which holds only on a machine without a snapper
   `root` configuration.
 - The VM tools and `scripts/wsl-vm.sh` default `BOMBADIL_TREE` to the literal `/root/Bombadil`, not to the

@@ -30,8 +30,13 @@ change from `ca7f80a` to `f0485c2` was added and checked on 2026-11-09 and nothi
 again: the smoke's checks of the name and voice card (25 lines of `bombadil-smoke`, in the sign-in block), the
 installer carrying the desk's places and what Tips has taught, and the tests that read them. They were checked
 by reading the two scripts, which pass `bash -n`, and by running `tests/test_iso_profile.py` (34 tests, one of
-them the installer's carry loop run in bash on two folders); no VM was booted. The rest of the page is as it was
-checked on 2026-11-08 at `7176e55`.
+them the installer's carry loop run in bash on two folders); no VM was booted. The change from `f0485c2` to
+`24c836c` was added and checked on 2026-11-09 and nothing else on the page was read again: the smoke's 21 checks of
+the connection service, the browser service and the notifications, the one it dropped (the bar and the daemon are
+the two user services it kills now, and `mako` is gone), and the tests that read them. They were checked by reading
+the smoke, which passes `bash -n`, and by running `tests/test_iso_profile.py` (46 tests, all passed, with the one that
+runs `systemd-sysusers` on a scratch root among them); no VM was booted. The rest of the page is as it was checked
+on 2026-11-08 at `7176e55`.
 
 ## How it fits together
 
@@ -179,15 +184,17 @@ Every mode runs the common checks. The catalogue, with every check name, is in
 [ISO and install](../architecture/iso-and-install.md#the-smoke-test); this is what the groups prove.
 
 - **The image.** The user exists, the programs are on `PATH` (`tools-installed` passes when any one of
-  its names is found, so the brain's two programs and Mail's three are looked for one by one), PySide6
+  its names is found, so the brain's two programs, Mail's three and the connection service's four are looked for
+  one by one), PySide6
   imports, the mirror list has a `Server =` line, both provider CLIs answer `--version`, and the
   os-mcp tool list names `show_panel` and `system_map`.
 - **The session.** `greetd`, Hyprland, the bar's `bombadil-bar` layer and `agentd` run, Hyprland
   reports no config errors, a `Virtual-` display is not narrower than 1280 px (it fails below that),
   and the sound output is a real sink, not PipeWire's dummy.
-- **The three user services.** `bombadil-agentd`, `bombadil-shell` and `mako` each come back as a
-  different process after `kill -9`, and all three are active units ([the session
-  services](../architecture/session-services.md)).
+- **The two user services.** `bombadil-agentd` and `bombadil-shell` each come back as a
+  different process after `kill -9`, and both are active units ([the session
+  services](../architecture/session-services.md)). The image has no notification daemon: the notifications
+  checks below look for one.
 - **Panels and apps.** The browser panel slides in (`browser-window` and `browser-shown` read
   Hyprland). The hide steps (`browser-hide`, `browser-hide-again`, `browser-hide-third` and
   `mail-engine-browser-hide`) prove only that `hide_panel` returns without `"isError": true`; no check
@@ -221,6 +228,17 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   Thunderbird's class stay on `special:mail-engine` without taking the keyboard, the service runs on
   its fake engine, a mail that arrives becomes a notice on the line, the word `mail` opens the Mail
   window, and the unit is put back (`mail-unit-restored`).
+- **Connections and notifications**, 21 checks that [Connect](../architecture/connect.md) owns and [ISO and
+  install](../architecture/iso-and-install.md#the-smoke-test) lists. In every mode, `undo` included: the
+  commands, the Python libraries and the skill are on the image and `mako` is not; the connection service's account
+  exists with no login, its system unit is enabled and active, the loaded unit has the sandbox its file asks for,
+  and the service answers the person's own process on its socket; the state directory is its account's, mode 0700,
+  and the person's own `ls` of it fails (the directory's mode, not a wall: the person has `sudo`); the browser
+  service's user unit is enabled and active and answers on its socket. In every mode but `undo`: no `mako` runs, the
+  owner of the session bus's notification name is the shell, and a `notify-send` notification, standing in for a web
+  page's, becomes a notice on the line with actions. The live image has no connection and no account, so the
+  service is then put on its fake engine through a drop-in, answers `status`, `connections` and `messages`, and the
+  unit is put back (`connect-unit-restored`). No real Slack or work tool is reached, and no key is held.
 - **Sign-in**, in every mode but `undo`, when no provider is chosen. The real Codex and Claude pages
   are opened in the browser panel (or the offline line shows when the VM has no internet) and
   cancelled, with a check that cancelling Codex frees port 1455. The stand-in login
@@ -282,7 +300,12 @@ Every mode runs the common checks. The catalogue, with every check name, is in
 - **Replacing the daemon means replacing its unit.** The daemon is a user service that systemd starts
   again when it is killed, so the smoke stops the unit first, starts its own daemon with the
   environment a check needs, and starts the unit again afterwards (`agentd-restored`). Mail's unit
-  gets the same treatment (`fake_mail` and `restore_mail`).
+  gets the same treatment (`fake_mail` and `restore_mail`). So does the connection service's, through a drop-in
+  instead: `fake_connect` writes `/run/systemd/system/bombadil-connect.service.d/fake.conf` (the fake engine and a
+  scratch state folder, `/var/lib/bombadil-connect/smoke-fake`), reloads systemd and restarts the unit, and
+  `restore_connect` removes both and restarts it (`connect-unit-restored`). A run that stops between the two leaves
+  the unit on the fake engine until the drop-in is removed or the guest restarts, and in a VM kept up with `vmsmoke`
+  that is a service that answers with sample messages.
 - **Keys are QMP `send-key`.** `scripts/qmp.py` sends one `send-key` command per word, with one
   `qcode` per part of a `+` chord, so a chord is pressed together. The words are QEMU's key names
   (`meta_l`, `alt+spc`, `ret`, `esc`).
@@ -367,7 +390,9 @@ and 12 times the time and the guest is let settle before each further try, a cap
 time is asked once, one that never answers fails after three tries, and a reply in the wrong shape fails
 at once and is not asked again (the boot picture must still hold three timed lines). Another test reads
 the script for the wait: it comes before the picture checks, and `calm` is defined once, before the wait
-for the pictures and the wait for the keys. `tests/test_brain_service.py` runs `bash -n` on it and matches the loop that looks
+for the pictures and the wait for the keys. A third reads the script for the connection and notification checks: it
+holds the 21 names, the fake engine, its scratch folder and `restore_connect`, and what the smoke asks of the loaded
+unit equal to what `bombadil-connect.service` says. `tests/test_brain_service.py` runs `bash -n` on it and matches the loop that looks
 for the brain's two programs one by one. `tests/test_boot_console.py` keeps the two serial entries
 loud (no `quiet`, no colour parameters), because the host reads them on the serial console. Run one
 file with `pytest tests/test_iso_profile.py`; they do not boot anything.
