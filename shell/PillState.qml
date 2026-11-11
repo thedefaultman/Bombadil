@@ -992,6 +992,10 @@ QtObject {
 
     function _title(s) { return String(s || "").trim().split(/\s+/).join(" ").toLowerCase() }
 
+    // A widget entry that says `open: false` has "open" and "show" words nothing answers (they are the Tips app's,
+    // not the desk's), so the pill hints and completes it only with the verbs that are the desk's.
+    function _opens(e, verb) { return !(e.open === false && (verb === "open " || verb === "show ")) }
+
     // The rest of the word Tab would fill in, or "".
     function completion(text) {
         const s = _split(text)
@@ -999,7 +1003,7 @@ QtObject {
         for (const e of entries) {
             if (s.verb && e.kind === "command") continue
             if (s.verb === "keep ") { if (e.kind !== "widget" || !e.keep) continue }
-            else if (e.kind === "widget" && _widgetVerbs.indexOf(s.verb) < 0) continue
+            else if (e.kind === "widget" && (_widgetVerbs.indexOf(s.verb) < 0 || !_opens(e, s.verb))) continue
             for (const w of (e.words || [])) {
                 if (w.length > s.rest.length && w.startsWith(s.rest)) return w.slice(s.rest.length)
             }
@@ -1038,7 +1042,8 @@ QtObject {
             if (s.verb === "keep " && (e.kind !== "widget" || !e.keep || asks)) continue
             if (e.kind === "app" && title === _title(e.title)) return e.title || e.name
             if (!k || (s.verb && e.kind === "command")) continue
-            if (e.kind === "widget" && (asks || (s.verb !== "keep " && _widgetVerbs.indexOf(s.verb) < 0))) continue
+            if (e.kind === "widget" && (asks || !_opens(e, s.verb)
+                    || (s.verb !== "keep " && _widgetVerbs.indexOf(s.verb) < 0))) continue
             if (asks && e.name === "desk") continue
             for (const w of (e.words || []).concat([e.name, String(e.title || "").toLowerCase()])) {
                 if (_key(w) === k) return e.title || e.name

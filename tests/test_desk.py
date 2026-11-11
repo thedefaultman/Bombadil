@@ -638,6 +638,16 @@ def test_show_tips_is_not_a_desk_word(home):
     assert launcher.match("show machine") == launcher.Action("widget", "machine", "open", "Machine")
 
 
+def test_the_entries_tell_the_pill_that_show_tips_is_not_the_desks_word_until_the_app_answers_it(home):
+    from bombadil import launcher
+    widgets = {e["name"]: e for e in launcher.entries([]) if e["kind"] == "widget"}
+    if launcher.match("show tips", []) is None:        # nothing answers it: the pill must not hint "Tips" for it
+        assert widgets["tips"]["open"] is False
+    else:                                              # the Tips app's words answer it, so the hint is true
+        assert "open" not in widgets["tips"]
+    assert not [name for name, e in widgets.items() if name != "tips" and "open" in e]
+
+
 def test_tips_put_away_survives_a_restart_and_the_install(home):
     d = fresh(home)
     d.apply("hide", "tips")

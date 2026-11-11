@@ -406,6 +406,12 @@ by "show tips": that word means the app, so a person is not told the card is bac
 brief's rule ("keep tips on the desk brings the card back for good"), and the launcher's: `launcher.match` answers
 `TIPS_COMMANDS` before the widget words, and `APP_WIDGETS` makes the same true before the app's piece has landed.
 
+The pill's hint and completion follow the launcher: the entry of a widget whose "show" and "open" words are the app's
+says `open: false` while nothing answers them (`launcher.entries`), and the pill then hints and completes `hide tips`
+and `keep tips` but not `show tips`, so "Enter opens Tips" is never promised over a sentence that goes to the agent.
+Once the app's words answer `show tips` the key is gone and the hint is true.
+`tests/test_pill_qml.py` holds the two to each other for every widget word.
+
 The x on the card is the leap, as Off is on the Widgets card: a person who presses an x wants the card gone, so a
 kept Tips is put away in one press, where the word "hide tips" first only stops keeping it (a step, so one word
 cannot silence a card by accident, as for Machine). The line says the way back either way.

@@ -492,8 +492,13 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     # `keep`: the ones "keep ..." is a launcher word of (the widgets on the Widgets card; "keep watching" is answered
     # here, and says when Watching shows), so the pill can hint and complete it as it does "show machine".
-    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
-            for w, words in WIDGET_WORDS.items()]
+    for w, words in WIDGET_WORDS.items():
+        entry = {"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
+        # "show tips" and "open tips" are the Tips app's words, not the desk's. While nothing answers them (the app is
+        # another piece) the pill must not hint or complete them as it does "show machine", so the entry says so.
+        if w in APP_WIDGETS and match(f"show {words[0]}", []) is None:
+            entry["open"] = False
+        out.append(entry)
     for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]

@@ -491,6 +491,28 @@ def test_keep_is_a_launcher_word_of_the_widgets_on_the_card_and_of_nothing_else(
     assert bar.call("completion", "keep cal") == "" and bar.call("completion", "keep wat") == "ching"
 
 
+@pytest.mark.parametrize("words", [
+    "show tips", "open tips", "Show Tips.", "hide tips", "keep tips", "keep tips on the desk", "close tips",
+    "show machine", "hide machine", "keep machine", "open now", "show away",
+])
+def test_the_pill_hints_a_widget_word_only_when_the_launcher_answers_it(bar, words):
+    """"show tips" is the Tips app's word and "hide tips" and "keep tips" are the desk's. Until the app answers it,
+    the launcher leaves "show tips" to the agent, and a hint "Enter opens Tips" over it would promise what does not
+    happen. The entries say which (`open: false`), so the pill and the launcher cannot disagree."""
+    hinted = bar.call("exact", words)
+    answered = launcher.match(words, []) is not None
+    assert (hinted != "") == answered, (words, hinted, answered)
+
+
+def test_a_widget_whose_open_words_are_the_apps_still_completes_with_the_desks_verbs(bar):
+    entry = next(e for e in launcher.entries([]) if e["name"] == "tips")
+    app_answers = launcher.match("show tips", []) is not None
+    assert ("open" in entry) is not app_answers            # `open: false` only while nothing answers "show tips"
+    assert bar.call("completion", "hide ti") == "ps" and bar.call("completion", "keep ti") == "ps"
+    assert (bar.call("completion", "show ti") == "ps") is app_answers
+    assert (bar.call("completion", "open ti") == "ps") is app_answers
+
+
 def test_the_bar_loads_without_qml_warnings(bar):
     bar.call("submit", "hello")
     bar.send(kind="turn_start", turn=1, prompt="hello")
