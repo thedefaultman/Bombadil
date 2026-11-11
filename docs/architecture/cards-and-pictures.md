@@ -1,24 +1,28 @@
 # Cards and pictures
 
 > **Status:** Partly shipped
-> **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/agentd.py`, `src/bombadil/watch.py`, `src/bombadil/providers.py`, `src/bombadil/config.py`, `bin/bombadil`, `shell/CardHost.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Diagram.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
-> **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch)
-> **Verified:** 2026-11-08 against `main` at `7176e55`. The change since that commit (a picture beside a window up to 560 px wide, the scale for the captures' time, the smoke's calm wait and retries) was added and checked against the code at `9d5c729`; the rest of the page was not read again.
+> **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/connect/cardmake.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/agentd.py`, `src/bombadil/watch.py`, `src/bombadil/providers.py`, `src/bombadil/config.py`, `bin/bombadil`, `shell/CardHost.qml`, `shell/CardBox.qml`, `shell/CardButton.qml`, `shell/CardScroll.qml`, `shell/MessageFace.qml`, `shell/TaskFace.qml`, `shell/ListFace.qml`, `shell/Draft.qml`, `shell/DraftBar.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Diagram.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
+> **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch), [Messages and connections](../design/messages-and-connections.md)
+> **Verified:** 2026-11-08 against `main` at `7176e55`. The change since that commit (a picture beside a window up to 560 px wide, the scale for the captures' time, the smoke's calm wait and retries) was added and checked against the code at `9d5c729`; the rest of the page was not read again. The change since `f0485c2` (the `message`, `task` and `list` cards, how a card is checked, their faces and the box with its button, the keyboard and the screen a card with a box has, and what puts a card away) was added and checked against the code at `24c836c`; the rest of the page was not read again.
 
-A card is validated data for a picture that the shell draws above the status line. One card type exists,
-`diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`), and every finished card carries a `text`
-twin of itself (a draft that is still streaming does not). Cards come from four places: the agent (`show_card`), the
-machine itself (`system_map`), exact questions typed in the pill such as "how am I connected" (no turn, no model), and
-the receipt that follows a turn. The same piece keeps why the agent did each step (`because`) and what it had read from
-outside (`after`), so a person can see the road without asking. Nothing in it asks a model: pictures of the machine are
-read from real commands, and a reason is the agent's own sentence from just before it acted.
+A card is validated data that the shell draws above the status line. The machine and the agent draw one kind,
+`diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`). The person's connections make three more,
+`message`, `task` and `list`: other people's words, and for the first two a box to write in and a button that only the
+person presses (see [connections](connect.md)). Every finished card carries a `text` twin of itself (a draft that is
+still streaming does not). Cards come from five places: the agent (`show_card`), the machine itself (`system_map`),
+exact questions typed in the pill such as "how am I connected" (no turn, no model), the receipt that follows a turn,
+and the connection service, from which agentd makes a `message`, `task` or `list` card. The agent cannot draw one of
+those three. The same piece keeps why the agent did each step (`because`) and what it had read from outside (`after`),
+so a person can see the road without asking. Nothing in it asks a model: pictures of the machine are read from real
+commands, and a reason is the agent's own sentence from just before it acted.
 
 ## What is built and what is designed
 
 | Part | Status | Where |
 |---|---|---|
 | `diagram` card, four shapes, text twin | Shipped | `cards.py`, `Diagram.qml`, `CardHost.qml` |
-| Tools `show_card` and `system_map` | Shipped | `cardtools.py`, registered from `mcp_server.py` |
+| Tools `show_card` and `system_map`, which draw diagrams and nothing else | Shipped | `cardtools.py`, registered from `mcp_server.py` |
+| `message`, `task` and `list` cards from the person's connections: their checks, the faces, the box and the button that only the person presses | Shipped | `cards.py`, `connect/cardmake.py`, `CardHost.qml`, `MessageFace.qml`, `TaskFace.qml`, `ListFace.qml`, `Draft.qml`, `DraftBar.qml`. The connection side is in [connections](connect.md) |
 | Picture words typed in the pill | Shipped | `launcher.py` (`PICTURE_PHRASES`), `agentd.py` (`picture`) |
 | Streaming a card a box at a time | Shipped for Claude only | `cards.py` (`CardStream`), `agentd.py` |
 | Receipts, a before and after of what a turn changed | Shipped | `sysmap.py` (`receipt`), `agentd.py` (`_receipt`) |
@@ -26,7 +30,7 @@ read from real commands, and a reason is the agent's own sentence from just befo
 | Details drawer and `bombadil view` | Shipped | `launcher.py`, `pager.py` |
 | A card that keeps its line, is placed once, is wider than the pill beside a window and gives way to a window that opens or a full-screen window | Shipped | `CardHost.qml`, `PillState.qml`, `DeskState.qml`, `StatusLine.qml`, `shell.qml` |
 | The boot picture from `systemd-analyze plot`, btrfs subvolumes in the disks picture, a receipt for boot, the two snapshots stored beside the turn's log | Designed | [Passenger brief, piece 2](../design/passenger-brief.md#2-pictures-from-the-machine) |
-| Other card kinds: list, checklist, timer, control, markdown reader | Designed | [UX brief, piece 5](../design/ux-brief.md#5-answers-you-can-touch) |
+| Cards the agent draws other than `diagram`: list, checklist, timer, control, markdown reader | Designed | [UX brief, piece 5](../design/ux-brief.md#5-answers-you-can-touch). The `list` card that exists comes from connections and the agent cannot draw it |
 | Cards the agent writes in QML | Designed | UX brief, piece 5 |
 | The `teach` explain level (a faint chip on system words that opens their picture) | Designed | [Passenger brief, "How much does it explain?"](../design/passenger-brief.md#decisions-i-picked-a-default-for) |
 | Tips: a desk card and an app whose scenes reuse `Diagram` at app size, and that count a local action such as a picture word as a tip tried | Designed | [Tips and the desk after boot](../design/tips-and-desk-defaults-brief.md). No `share/tips`, `tips.py` or Tips card exists |
@@ -49,32 +53,45 @@ flowchart LR
     ACC --> BC["agentd: card event to every client"]
     PW["typed picture word"] -->|"sysmap in agentd, no model"| BC
     RC["receipt after a turn"] --> BC
+    CN["connection card (cardmake)"] -->|"cards.accept as its kind"| BC
     BC --> PS["PillState._takeCard"]
     PS --> CH["CardHost.qml"]
-    CH --> DG["Diagram.qml"]
+    CH --> DG["Diagram.qml, or a face: MessageFace, TaskFace, ListFace"]
 ```
 
 1. **A card is made.** The agent fills in `show_card`, or asks `system_map` for a subject (both are tools of
    [os-mcp](os-mcp.md), registered by `cardtools.register`, which `mcp_server.py` calls). `system_map` runs
    `sysmap.capture`, which reads the machine and builds its own card through the same `cards.validate_diagram`.
    With `system_map` the agent supplies only a subject, a pointer and one line. With `show_card` it supplies the whole
-   diagram, and the tool's description tells it never to draw this machine's state that way.
+   diagram, and the tool's description tells it never to draw this machine's state that way and that it draws diagrams
+   only (messages, tasks and lists come from the person's connections).
 2. **The tool delivers it.** `cardtools.deliver` writes `{"type":"card","card":{...}}` to the `agentd` socket and
    waits for `{"type":"card_ack"}` (the socket timeout is `ACK_TIMEOUT`, 2 seconds). The tool's result is the card's
    text twin plus a note on whether it was drawn, so the agent writes one short line instead of describing the
    picture.
 3. **[`agentd`](agentd.md) checks it again.** `cards.accept` re-validates, so nothing malformed reaches the bar whoever wrote
    to the socket, and keeps the three fields only the OS adds (`source`, `target`, `receipt`). It broadcasts a
-   `card` event to every client, then answers `card_ack`.
-4. **Two other doors lead to the same event.** A typed picture word is answered inside `agentd` (`picture`), with a
+   `card` event to every client, then answers `card_ack`. A card that arrives on the socket from a client is taken as a
+   diagram only (`cards.accept(..., diagrams_only=True)`): a `message`, `task` or `list` card there is refused with
+   "Messages, tasks and lists come from your connections, not from show_card." Any process of the person's can write to
+   the socket, the agent's shell included, and a message card in the agent's hands would be words made to look like
+   somebody else's.
+4. **Three other doors lead to the same event.** A typed picture word is answered inside `agentd` (`picture`), with a
    `local` line first and no model call. A receipt is made after the turn closes (`_receipt`). Both go straight to
-   `_show` with no socket hop.
+   `_show` with no socket hop. A connection card is made by agentd from what the connection service holds
+   (`connect/cardmake.py`, see [connections](connect.md)), checked again by `cards.accept` as its own kind
+   (`AgentD._connect_card`) and broadcast the same way. agentd keeps the open one and hands it to a bar that connects
+   later, as it would be drawn at that moment; a diagram or a receipt shown after it takes its place (`_show`).
 5. **The shell draws it.** `PillState._takeCard` keeps one card. `CardHost.qml`, loaded through a `Loader`, holds
-   the title, a source label, a close mark, the kit's `Diagram` inside a scroll area (the shell caps the host at 60
-   percent of the screen height, and a taller picture scrolls), and the `say` line, which shows at most three lines
-   (`maximumLineCount: 3`). `shell.qml` makes the host as wide as the pill, or up to 560 px beside a window
-   (`Layout.maximumWidth: Math.max(360, win.pictureMax)`, see Where the card sits), so a picture stays between the
-   desk's rails. The `Diagram` draws the card and places its boxes;
+   the title, a source label, a close mark, the sentence under it (the `say` line, at most three lines,
+   `maximumLineCount: 3`) and the body, which depends on the card's type. A diagram is the kit's `Diagram` inside a
+   scroll area (the shell caps the host at 60 percent of the screen height, and a taller picture scrolls). A `message`,
+   `task` or `list` card is a face loaded by a second `Loader` (`MessageFace`, `TaskFace`, `ListFace`), built when the
+   card comes and dropped when a card of another kind does, so nothing one card holds is left over in the next. The
+   source label of a diagram is "drawn by the agent", "from this machine" or "drawing…"; for the other kinds it is the
+   card's `via` (see Cards from connections). `shell.qml` makes the host as wide as the pill, or up to 560 px beside a
+   window, for a diagram, and at most 560 px for a `message` or `task` card and 480 px for a `list` (see Where the
+   card sits), so a picture stays between the desk's rails. The `Diagram` draws the card and places its boxes;
    Python computes only the `rank` and `col` of a `layers` card and the `row` pairing of a `compare` card.
 
 ### A turn that records a reason and ends with a receipt
@@ -88,7 +105,7 @@ sequenceDiagram
     participant C as Provider CLI
     participant S as sysmap
     Bar->>D: prompt "set my DNS to 1.1.1.1"
-    D->>Bar: turn_start (the bar puts away any card)
+    D->>Bar: turn_start (the bar puts away any card the person is not writing in)
     D-->>S: snapshot of network, disks, sound and screens (background)
     C->>D: text "NetworkManager owns DNS here, so I will change its settings."
     D->>N: on_event(text)
@@ -112,8 +129,9 @@ the receipt is made after `turn_end`.
 
 ### What a card is
 
-There is one card type. `cards.validate_diagram` is the only validator and returns every fixable error at once, each
-saying what and why, so the agent can correct the call in one go. This is what it accepts.
+The agent and the machine draw one kind of card, `diagram`. `cards.validate_diagram` checks it and returns every
+fixable error at once, each saying what and why, so the agent can correct the call in one go. This is what it accepts.
+The three kinds that come from connections have their own checks (see Cards from connections).
 
 | Card field | Rule |
 |---|---|
@@ -166,7 +184,7 @@ looks like this (the input was three boxes, one of them with `state` and `opens`
  "text": "How a VPN works: Your device → VPN server [new] → Website\nTraffic goes through the VPN server first."}
 ```
 
-`cards.accept` keeps three fields that only the OS itself may add: `source` (one of `network`, `boot`, `service`,
+For a diagram, `cards.accept` keeps three fields that only the OS itself may add: `source` (one of `network`, `boot`, `service`,
 `disks`, `sound`, `screens`; the shell labels the picture "from this machine" when it is present and "drawn by the
 agent" when it is not), `target` (a unit name, set by the `service` capture) and `receipt: true`. `agentd` then
 stamps an `id` (`card-<n>`, or `stream-<tool id>` when the card was drawn while it streamed). A draft also carries
@@ -218,23 +236,126 @@ In the shell a draft shows the label "drawing…", and each box fades in as it a
 a `layers` draft shows its boxes in one row until the finished card replaces it. A `chain` draft (`partial` and no links)
 reserves room for link labels of about 14 characters, so the finished chain does not wrap again when its links arrive.
 
+### Cards from connections
+
+A `message`, `task` or `list` card is made by agentd from what the connection service, the mail service or a proposal
+says (`connect/cardmake.py`: `message_card`, `notification_card`, `task_card`, `unread_card`, `connected_card`) and
+checked again by `cards.accept`, which sends it to the validator of its kind (`validate_message`, `validate_task`,
+`validate_list`; `cards.KINDS`, `cards.VALIDATORS`). Where the words come from, what a proposal is and how a press is
+sent are in [connections](connect.md) and in [the contract](../CONNECT.md#cards); this page is the card.
+
+| Field of every kind | Rule |
+|---|---|
+| `id` | required: letters, digits and `_ . : @ / + = -`, up to 200. The id is stable per thing (`msg:<ref>`, `task:<ref>`, `list:unread`, `list:connected`), so showing the same thing again swaps the card in place |
+| `title` | required, up to 80 characters. A longer title is cut with an ellipsis, not refused (a diagram's is an error) |
+| `source` | required: `connect`, `notification` or `mail` |
+| `say` | optional, one sentence, cut at 160 characters |
+| `open` | `message` and `task`: what the card's own "Open in <via>" button opens, checked like a diagram box's `opens` |
+
+| Kind | What it holds |
+|---|---|
+| `message` | `thread`: the last 6 messages, oldest first (a longer thread is cut at its start). Each has `ref` (such as `slack:T1/C1/1700000000.000100`), `ts` (seconds since 1970, not negative), `from` (up to 120 characters, "Someone" when empty), `text` (up to 4000, line breaks kept, at most one blank line in a row), `mine` and `unread` (true only for `true`). `reply`: the draft, or none |
+| `task` | `service` (required, up to 40 characters), `status` (60), `why` (240), `fields` and `proposal` (required: a draft of kind `task_create` or `task_comment`; a `reply` is read as it). At most 12 `fields`, each `key` (starts with a letter, up to 40, unique), `label` (required, 40), `value` and `edit` (`line`, `text`, `date` or none: a box the person can write in, or a row only the service can change) |
+| `list` | `rows`, at most 12 (more is an error). Each has `id` (unique), `title` (required, 80), `sub` (240), `when` (24), `state` (one of the six states of a diagram box, `ok` unless given) and `opens`: `{"kind": "card", "value": <card or row id>}` or what a diagram box opens. At most 2 `actions` per row, each `id` one of `open`, `disconnect`, `connect`, `copy_open` or `dismiss`, `label` (required, 24) and `style` (`primary` or `quiet`) |
+
+The draft of a card (a message's `reply`, a task's `proposal`) is where the person's words and the button stand:
+
+| Draft field | Rule |
+|---|---|
+| `kind` | `slack_reply` or `copy` on a message, `task_create` or `task_comment` on a task. `copy` is the card of a notification and is no send |
+| `proposal` | the draft's id (letters, digits, `_` and `-`, up to 40), or null while nobody has started one: the box is there all the same and the person's first key starts the draft |
+| `target`, `where` | what the draft answers (an id) and where it goes, in words (up to 80) |
+| `content` | what would be sent: text up to 20 000 characters for a reply; for a task an object of at most 12 values, each text up to 5000, under keys like a field's |
+| `warnings` | at most 4, each of kind `new_place`, `broadcast`, `long` or `tainted`, with a plain sentence (its own, or the kind's standard one) |
+| `fingerprint`, `ready` | agentd's word on the content: up to 128 characters of `A-Za-z0-9_-`, and `ready`, true only when it is |
+| `state` | `open`, `sending`, `sent`, `unknown` or `discarded` |
+| `by` | `person` or `agent`: who made the draft |
+| `receipt`, `note` | `receipt` is `{line, web?: {name, url}}` (`web` an http or https address); `note` is a sentence. `line` and `note` are cut at 240 characters |
+| `button` | worked out from `kind`: Send, Copy and open, Create or Comment |
+
+These cards hold other people's words, so the check is stricter than a diagram's. Every text is made plain (control,
+invisible and direction-changing characters are taken out, by `plaintext.strip`) and cut to its limit, and a key that
+is not part of a kind's shape is dropped. The one exception is the `content` of a draft, which is what would be sent:
+it is not altered but refused when it holds such characters or is over its limit, because a box that shows something
+other than what would go must never light the button. Each validator returns every error at once, like
+`validate_diagram`.
+
+What both the picture and the twin say is worked out once, so they cannot disagree: `via` (the source word on the
+card's head: "Slack" for a message, the service for a task, the app a notification came from, "Mail" for source `mail`,
+"Connections" for a list), `when` on each message (the time today, the weekday and time within six days, else the day
+and month), `button`, and `lines` on a message and a task: the two sentences a draft can say that the receipt does not,
+`sending` ("Sending…") and `unknown` ("I can't tell whether that went. Look in <via> before you press again."), so a
+face that hears of a change of state without another card says them in the words the twin does. `text` is the card in
+words: a message reads one line per message (who, when, `unread`, the text), then `say`, `Reply: <content>`, the
+draft's warnings, state line and note, `Button: <label>` and `Open in <via>`; a task reads its status, `why` and
+`label: value` per box or row; a list reads one line per row with its state in words and its button labels.
+
+The agent can read and propose through the five connection tools (see [connections](connect.md)), and `propose` puts a
+draft in a card's box that only the person can send. It cannot draw one of these cards: `show_card` refuses any `kind`
+but `diagram`, and the socket refuses the three kinds from a client (see How it works).
+
+#### What the bar draws
+
+`CardHost.qml` picks the face by the card's `type`; `shell.qml` gives a `message` or `task` card at most 560 px and a
+`list` 480 (`CardHost.preferredWidth`). Each face scrolls its own rows (`CardScroll`) inside what the host leaves
+(`bodyMax`: the host's cap of 60 percent of the screen's height, less 120 px, and at least 160 px), so the box and the
+button stay in view.
+
+| Face | Draws |
+|---|---|
+| `MessageFace.qml` | the thread (who or "You", when, the text as plain text; an unread message has the kit's dot; it starts at its newest message and does not rebuild while the thread is unchanged), the reply box (`CardBox`), the warnings, state and button of the draft (`DraftBar`) and "Open in <via>". A card with no `reply` has no box, only its way out |
+| `TaskFace.qml` | the status and `why`, then each field as a labelled row: a box where `edit` is set (one line for `line`, up to six for `text`, a `YYYY-MM-DD` hint for `date`), plain text where only the service can change it, and the draft's button. The boxes are rebuilt only when the fields change, never for a draft that did. The words go to agentd as an object `{key: text}` with `""` for a box nobody typed in |
+| `ListFace.qml` | a row each: a mark for its state in the kit's colours and never colour alone (`ok` a tick, `warn` a triangle, `bad` a cross, `new` a dot, `gone` a dash and a dim title, `active` a ring), the title, its line under it (two lines at most), `when` and up to two buttons. A button asks agentd for its action on that row (`card_action`). A row with `opens` opens on a click, Enter or Space: a `card` is opened by agentd, anything else the way a diagram box is (`PillState.openThing`). Nothing in the face changes anything itself |
+
+#### The box and the button
+
+A box is plain text (`CardBox.qml`): Enter is a new line in a box of several lines and does nothing in one of one
+line, Tab goes on to the next thing on the card, Esc closes the card, and a click asks for the keyboard. It is
+read-only unless the draft is `open`. `Draft.qml` keeps the rules that make the button the person's and `DraftBar.qml`
+draws what stands under the boxes.
+
+| Part | What it does |
+|---|---|
+| Typing | 150 ms after the last key the bar sends the changed content to the draft (`proposal` message, `op` `edit`), and 200 ms after it, on the frame that holds it, that the card has drawn exactly that (`op` `shown`), so agentd lights `ready` only for what is on the screen. The first key in a box with no draft yet asks agentd for one (`op` `open`, with the kind and target) and what was typed meanwhile is sent when the draft has its id |
+| Updates | agentd's word on the draft is shown as it comes. Its content goes into a box only for a draft the person has not typed in and whose boxes are empty or just opened: a person who is typing is not written over, and one who emptied the box does not get the old words back from a late answer. When agentd took out characters that draw as nothing, the box gets the words that would go only while it still holds exactly what was cleaned |
+| The button | live only while agentd says `ready`, the boxes hold exactly the draft's content and it has been so for 300 ms (`Draft.armDelay`), so a click that was on its way to something else when the card changed does not press. Live, it has the orange ring and "Yours: Send" (or Create, or Comment) beside it; not live, it is dimmed and says nothing about why. One press sends one `press` message with the `fingerprint` agentd last gave for that content, and the button stays dim until agentd answers (`press_result`) |
+| A press that may have gone | the card says so in its own words and the button comes back only after the person ticks "I looked in <via>"; the next press carries `again`. A press that was out when the connection to agentd dropped says it cannot tell whether it went |
+| What stands under the box | the warnings in an amber block (they are the system's words, not the sender's), "Sending…", the receipt line with "Open in <name>" when the receipt has a page (the card's own Open button is then left out), the note, and what a refused press said |
+| A notification | its card has a `copy` draft: nothing goes to agentd for it. The button "Copy and open" is quiet (no ring, no "Yours") and live when the box has words; it sends `card_action` `copy_open` with them |
+
+The card that comes of the person's Reply (a chip on a notice, a button on a card, a row that opens a thread) takes the
+keyboard when it arrives within 8 seconds of that press (`PillState.askGrace`), unless its draft is the agent's:
+`shell.qml` summons the bar on the card's screen and `CardHost.focusBox` gives the box the keyboard. A card that arrives
+on its own takes nothing, and a click in a box asks for it. While the person is in a box or has words in it
+(`PillState.composing`), the bar waits 120 seconds before it gives the keyboard back to the windows, not 20 or 60.
+
+A `message`, `task` or `list` card is drawn on one screen: the one the person is on when it arrives (`shell.qml`:
+`cardScreen`, the screen the bar was summoned on, else Hyprland's focused monitor, else the first). Two boxes for one
+draft would be two people typing into one. A diagram is drawn on every screen (`CardHost.onThisScreen`).
+
 ### Replacing in place
 
-The shell holds one card (`PillState.card`). A card event whose `type` is not `diagram` is ignored. Any other card
-replaces the one on screen, and one with the same `id` is the same picture changing: the draft grows into the
-finished card in place. A card leaves when:
+The shell holds one card (`PillState.card`). A card event whose `type` is not one of `PillState.cardKinds` (`diagram`,
+`message`, `task`, `list`) is ignored, and so is a `message`, `task` or `list` card with no id, because a face keys its
+box on it. Any other card replaces the one on screen, and one with the same `id` is the same picture changing: the draft
+grows into the finished card in place. A card that replaces one being written in is not refused: the words typed in the
+last moments are said to the draft they were typed into first. A card leaves when:
 
 | Event | Effect |
 |---|---|
-| The next turn starts (`turn_start`) | any card is put away |
-| Esc with nothing to stop and an empty input (`PillState.dismiss`, which puts the line away too), or the close mark (`PillState.dismissCard`) | put away |
+| The next turn starts (`turn_start`) * | any card is put away |
+| Esc with nothing to stop and an empty input (`PillState.dismiss`, which puts the line away too), Esc in a card's box, or the close mark (`PillState.dismissCard`) | put away. For a `message`, `task` or `list` card the bar also tells agentd (`card_action`, `dismiss`), and an open draft with no words in the box is discarded (`proposal` message, `op` `discard`); one with words stays as a draft that agentd keeps. If the box had the keyboard it goes back to the windows. The close mark is reached with Tab and pressed with Return or Space |
 | `{"id", "gone": true}` for the card on screen | put away |
-| A picture word that could not be drawn (`local` event, `action` `picture`, `phase` `done`, `ok` false) | the old card is put away so the error does not read as about it |
-| A window the launcher opened (`local` event, `phase` `done`, `ok` true, `verb` `open`, `action` `brain`, `app` or `panel`) | put away, so it does not sit over the window. Hiding or closing a window does not |
-| Any window comes onto the desk's screen, however it was opened (`DeskState.setWindows` sees more windows than before and emits `windowOpened`, which `shell.qml` passes to `PillState.windowOpened`) | put away, so the picture does not sit over it. Not a draft; not a card taken less than 2.5 seconds ago (`windowGrace`: the window is probably what the same ask opened); not one a box was clicked in less than 5 seconds ago (`clickGrace`: the window is what the click opened). A window that closes or is dragged changes nothing |
+| agentd says the card's draft is `discarded` (`proposal` message) | put away |
+| A picture word that could not be drawn (`local` event, `action` `picture`, `phase` `done`, `ok` false) * | the old card is put away so the error does not read as about it |
+| A window the launcher opened (`local` event, `phase` `done`, `ok` true, `verb` `open`, `action` `brain`, `app` or `panel`) * | put away, so it does not sit over the window. Hiding or closing a window does not |
+| Any window comes onto the desk's screen, however it was opened (`DeskState.setWindows` sees more windows than before and emits `windowOpened`, which `shell.qml` passes to `PillState.windowOpened`) * | put away through `dismissCard`, so the picture does not sit over it. Not a draft; not a card taken less than 2.5 seconds ago (`windowGrace`: the window is probably what the same ask opened); not one a box was clicked in less than 5 seconds ago (`clickGrace`: the window is what the click opened). A window that closes or is dragged changes nothing |
 | The connection to `agentd` drops while the card is a draft | put away (`lost`) |
 | The closing line fades (`fade`) | only a receipt goes. A picture the person asked for stays until Esc or the next turn |
 | A window already on the stage goes full-screen | not put away: `CardHost.suppressed` hides it and it returns when the window leaves full screen. (A window that opens full-screen is one more window, so the row above applies and the card goes) |
+
+A card whose box the person is in or has words in (`PillState.composing`: the box has the keyboard, or holds words) is
+kept through the rows marked with an asterisk, because the person is in the middle of something (`PillState._keepsCard`).
 
 The closing line fades after 12 seconds (15 with a receipt, so the two are read together), and resting the pointer on
 the line or the card holds it. A turn that changed something keeps its closing line with Undo until the next prompt
@@ -251,7 +372,7 @@ rules keep a card from moving the pill or its own close mark, and keep what it d
 | The card is placed once | `CardHost.qml`: `implicitHeight` has no `Behavior`, and a `Translate` of 14 px | The card takes its height at once and fades in and rises inside that space, and it hands the space back after it has faded out. A height that grew over several frames resized the window every frame. This does not cure the dip the `layers` animation caused (that is the switch in the row above); it only keeps a card to one resize |
 | A picture the person asked for keeps its line | `PillState.pictureStays`, `StatusLine.qml` (`lineTimer`, `done` check) | The card sits above the line in a column anchored to the bottom, so a line that grew, shrank or went moved the card by the line's height and a click aimed at its close mark missed. `pictureStays` is true while a card is up that is not a receipt and not a draft; the line does not fade while it is true, and its timer stops running when the pill is not working and no flash is showing, so a picture left up costs no wake-ups. Esc puts line and picture away together. The close mark clears the card and the line fades on the timer's next tick unless it is `sticky`. A receipt is not asked for and fades with its line |
 | A card being drawn keeps the layout it will end with | `Diagram.qml`: `if (partial && links.length === 0) longest = 14` | The boxes of a streamed chain arrive before its links, and the links' labels decide how wide the gaps are, so a finished chain would lay itself out again from one row into two |
-| A picture beside a window is wider than the pill | `DeskState.qml`: `pictureTarget`, `pictureWidth`; `shell.qml`: `pictureMax` | At 360 px a picture can have labels cut short and a chain wrapped to three rows. While a window shares the stage the card host may be as wide as `Math.min(560, stageRoom)`, centred above the 360 px line and pill (see below). With no window it is as wide as the pill |
+| A picture beside a window is wider than the pill | `DeskState.qml`: `pictureTarget`, `pictureWidth`; `shell.qml`: `pictureMax` | At 360 px a picture can have labels cut short and a chain wrapped to three rows. While a window shares the stage the card host may be as wide as `Math.min(560, stageRoom)`, centred above the 360 px line and pill (see below). With no window it is as wide as the pill. A `message` or `task` card is held to 560 px and a `list` to 480 px within that room, with or without a window (`CardHost.preferredWidth`, the `Layout.maximumWidth` of the host in `shell.qml`) |
 | A before and after sits together | `Diagram.qml`: `maxCompareWidth`, `compareGap` | The two columns are at most 230 px wide with 76 px between them for the arrow, centred, instead of one at each edge of a wide card |
 | A note under a box stays on the picture | `Diagram.qml`: `boxNote` | A note is centred under its box and at least 170 px wide, which is wider than a box in a narrow card. The first box of a row sits at the picture's left edge, so a note centred under it started off the picture and lost its first letters (seen at 360 px, the width a card had beside a window before it was allowed up to 560, and the least a card gets). The note's `x` is clamped between the picture's two edges and stays centred wherever it fits. A chain at 360 px also wraps to rows with long connectors (the network picture to three), which is the card's width and not a fault of the note |
 | A full-screen window puts the card away | the `Binding` in `shell.qml` that sets `CardHost.suppressed` from `win.capsule` | In a full-screen window the pill is a dot and a clock in a 100 px capsule (see [the desk](desk.md)), and a card above it would land over whatever the window shows. The card is still `PillState.card`, so it comes back when the window goes. Only a window in Hyprland's full-screen state counts (`HyprCover.qml` reads `fullscreen` 2 or 3): a tiled or maximized terminal does not, so try this with a window in that state |
@@ -267,7 +388,8 @@ stage and the picture gets 560, and a 1024 px screen leaves 368 and it gets that
 target with the same animation as the pill's width. The host's `Layout.maximumWidth` is never under 360: under a
 full-screen window the width is 100, the host is held at 360 and hidden (see the last row of the table above). A screen
 that is not the desk's uses the theme's `pillMaxWidth` for both. A window that opens still puts a picture away (see
-Replacing in place).
+Replacing in place). A `message`, `task` or `list` card takes the smaller of its own width (560 or 480 px) and that
+room.
 
 The card's top edge is its own height above the line, so two different pictures sit at different heights; the same
 picture sits at the same place each time.
@@ -287,7 +409,10 @@ flowchart LR
 ```
 
 `Diagram` emits `picked(node)` for every tap on a box and `opened(target)` when the box has `opens`. `CardHost` listens
-to `opened` only. `PillState.openThing` sends nothing while the socket is down (it flashes "Not connected to the agent
+to `opened` only. The faces of the connection cards send a `card_action` message (`open`, `disconnect`, `connect`,
+`copy_open` or `dismiss`, with the card and, for a row, the row) for a button, and for a list row that opens a card; a
+row or a receipt link that names a page or a file goes through `PillState.openThing` like a box, and agentd handles
+the actions (see [connections](connect.md)). `PillState.openThing` sends nothing while the socket is down (it flashes "Not connected to the agent
 yet."). A `turn` target first gives the keyboard back so the drawer can take it (`handOff`) and sends
 `{"type":"details","turn":n}`, which `agentd` routes to `details`, not to `open_thing`; every other target sends
 `{"type":"open","kind":"...","value":"..."}`. `agentd.open_thing` runs `cards.check_opens` again, because the
@@ -429,7 +554,9 @@ Any other wording goes to the agent, which has `system_map` for the same picture
 thread (`AgentD._match`), and the service form asks the machine inside it. `AgentD.handle` matches the words before it
 looks at the AI's state, so a picture word is answered while the AI rests (out of plan or paused, see
 [agentd](agentd.md)) or is signed out. A neighbouring list, `launcher.WIDGET_QUESTIONS` ("how's the machine"), is
-answered by the desk's Machine card and draws no picture: see [the desk](desk.md).
+answered by the desk's Machine card and draws no picture: see [the desk](desk.md). Another, `launcher.CONNECT_VIEWS`
+("unread", "connections" and the words beside them), opens a `list` card that agentd makes, and "connect linear" starts
+a setup: see [connections](connect.md).
 
 | Picture | Phrases (`launcher.PICTURE_PHRASES`) |
 |---|---|
@@ -490,11 +617,12 @@ from the turn's own log.
 | `screen` | a `[Screen]` block at the start of a line in the prompt, if one is there (`narrate.prompt_reads`). Nothing on `main` writes it: the "this" chip that would is designed | it holds a page address or a selection |
 | `session`, `app` | a line `[asked by <who>, untrusted]` in the prompt (`narrate.prompt_reads`; `app <name>` is an `app`, anything else a `session`). Nothing on `main` writes it either | always |
 | `mail` | the os-mcp tools `mail_read` (label "a mail") and `mail_search` (label "your mail"), in `narrate.tool_reads`; see [mail](mail.md) | always: a mail is other people's words |
+| `messages`, `tasks` | the os-mcp tools `messages_unread` (label "your messages"), `message_thread` ("a conversation") and `tasks_waiting` ("what waits on you"), in `narrate.CONNECT_READS`; see [connections](connect.md) | always: they are other people's words |
 
 The list keeps the last 50 reads (`MAX_READS`), and a repeat moves to the end. **`after`** is the latest outside read,
 attached only to a step that carries a mark (`system` or `irreversible`), as `{"label", "kind", "text"}` with text such
 as "after reading wireguard.com/quickstart", "after searching the web for ...", "after reading the page on screen",
-"after a request from builder" or "after reading a mail". It says what came first, not what caused the step: the order
+"after a request from builder", "after reading a mail" or "after reading your messages". It says what came first, not what caused the step: the order
 is known, the cause is not.
 
 **Where they show.**
@@ -591,7 +719,9 @@ cannot leave on Esc, and it was not on the image.
 | What goes wrong | What happens |
 |---|---|
 | `show_card` input is invalid | The tool returns an error result (`isError`), and its text is "ValueError: The picture was not drawn:" followed by one line per fix. The server stays up |
-| `kind` is not `diagram` | "kind '...' is not drawn yet: only diagram is" |
+| `kind` is not `diagram` | "kind '...' is not drawn here: only diagram is. Messages, tasks and lists come from your connections, not from show_card." |
+| A client writes a `message`, `task` or `list` card to the socket | `card_ack` has `shown: false` and the same sentence in `errors`, and nothing is drawn |
+| A connection card fails its second check in agentd | agentd writes its first error to stderr and shows nothing (`_connect_card`) |
 | `agentd` is not running | The tool returns the card's text with "(agentd is not running, so nothing could be drawn.)" |
 | `agentd` does not answer within 2 seconds | "(agentd did not answer, so it may not have been drawn.)" |
 | No other client is connected | `card_ack` has `shown: false`, and the tool adds "(No screen is showing it: here it is in words.)" |
@@ -599,7 +729,8 @@ cannot leave on Esc, and it was not on the image.
 | A capture cannot read anything | `system_map` returns the one-sentence reason as its result. A picture word shows it as the line and puts the old card away |
 | A command is slow or missing | It counts as missing and the picture is drawn from the rest |
 | `CardHost.qml` cannot load | By design the `Loader` in `shell.qml` is not `Ready`, the host stays invisible and the bar is unaffected. No test forces a load failure |
-| The shell gets an odd card | `_takeCard` ignores anything that is not a `diagram` object, and a message that is not valid JSON is dropped by `shell.qml` |
+| The shell gets an odd card | `_takeCard` ignores anything that is not an object of one of the four kinds (and a `message`, `task` or `list` card with no id), and a message that is not valid JSON is dropped by `shell.qml` |
+| The connection to `agentd` drops while a press is out | the button stays dim and the card says "I lost touch with the agent while that went, so I can't tell whether it did."; when the connection is back, agentd's state of the draft decides whether the button can be pressed again |
 | A click names something that cannot be opened | `agentd` says why in one line ("Cannot open that: ...", "<name> is not there.", "Could not open ...") and the card stays |
 | `narrate.py` raises on an odd event | `agentd` logs it and drops that line, never the turn |
 | The streaming follower raises | `agentd` writes to stderr, and the card is drawn when whole |
@@ -613,7 +744,10 @@ lists what this piece owns.
 |---|---|---|
 | `show_card` | os-mcp tool | `shape`, `title`, `nodes` required; `kind`, `links`, `highlight`, `say`, `linked`. Returns the text twin and "(shown above the bar)" or why not |
 | `system_map` | os-mcp tool | `kind` required (`network`, `boot`, `service`, `disks`, `sound`, `screens`); `target` for `service`; `highlight`, `say` optional |
-| `{"type":"card","card":{...}}` | socket message, client to `agentd` | answered with `{"type":"card_ack","shown":bool}`, or `{"type":"card_ack","shown":false,"errors":[...]}` |
+| `{"type":"card","card":{...}}` | socket message, client to `agentd` | a diagram only. Answered with `{"type":"card_ack","shown":bool}`, or `{"type":"card_ack","shown":false,"errors":[...]}`, which is also the answer to a `message`, `task` or `list` card |
+| `{"type":"card","card":{...}}` | socket message, `agentd` to the bar | a `message`, `task` or `list` card as `cards.accept` made it, with no `turn`. A bar that connects while one is open is sent it again |
+| `{"type":"proposal","proposal":{...}}`, `{"type":"press_result",...}` | socket messages, `agentd` to the bar | agentd's word on a draft and on a press. `PillState` merges the first into the card on screen (`_takeProposal`) and shows the second (`_pressResult`) |
+| `{"type":"proposal","op":...}`, `{"type":"press",...}`, `{"type":"card_action",...}` | socket messages, bar to `agentd` | what the faces send: `op` `open`, `edit`, `shown` or `discard`; a press with its `fingerprint`; a button on a card or a row. See [agentd](agentd.md) and [connections](connect.md) |
 | `{"type":"open","kind","value"}` | socket message | what a box names; answered with a `local` event, `action` `open`. For `kind` `turn` it ends in `details`: nothing comes back when that works, and the "not kept" line when the turn's log is gone |
 | `{"type":"details","turn":n}` | socket message | the turn's log in the drawer; again while it shows closes it. A turn whose log is not kept shows the newest log instead (see Known gaps) |
 | `{"type":"close_details"}` | socket message | puts the drawer away (Esc in the pill) |
@@ -631,9 +765,14 @@ lists what this piece owns.
 | `bombadil watch [--file PATH] [--follow]` | command | a turn's log in the drawer (the newest turn's without `--file`); `agentd.details` runs it, `--follow` for the running turn. `watch.py` owns the layout |
 | `Diagram` (`import Bombadil`) | kit component | `spec`, `showTitle`, `minBoxWidth` (132), `maxBoxWidth` (208), `maxCompareWidth` (230), `compareGap` (76); signals `opened(target)` and `picked(node)`. Also used by apps, see [the app kit](app-kit.md); documented in `share/skills/bombadil-apps/references/components.md` |
 | `PillState.card`, `dismissCard()`, `openThing(target)`, `pictureStays`, `windowOpened()` | shell state | what `CardHost.qml` and `StatusLine.qml` read and call. `windowOpened()` is called by `shell.qml` when `DeskState` emits its `windowOpened` signal |
-| `CardHost.suppressed` | shell property | true while a full-screen window has the screen; `shell.qml` sets it |
+| `PillState.cardKinds`, `cardId`, `cardEpoch`, `composing`, `pressOut`, `pressLine` | shell state | the kinds the bar draws (`diagram`, `message`, `task`, `list`), the id of the card on screen, how many whole cards agentd has handed the bar (a face that drew one before tells agentd again what it drew), whether the person is writing in a card's box, the proposal whose press is out and what a refused press said |
+| `PillState.compose()`, `openReply()`, `proposalEdit()`, `proposalShown()`, `press()`, `cardAction()`, `copyOpen()`, `wantKeys()`, `noteTyped()` | shell functions | what the faces call (`Draft.qml`, `DraftBar.qml`, `ListFace.qml`); each sends one message to agentd, and nothing while the socket is down |
+| `PillState.snapshot()` | shell function | the line state for `quickshell ipc call line state`, which also names the card on screen (`id`, `type`, `title`) and where its draft stands (`proposal`, `state`, `ready`) |
+| `CardHost.suppressed`, `onThisScreen`, `preferredWidth`, `focusBox()` | shell members | `suppressed` is true while a full-screen window has the screen and `onThisScreen` false on a screen that does not hold a `message`, `task` or `list` card; `shell.qml` sets both. `preferredWidth` is 560 for a `message` or `task`, 480 for a `list` and 0 for a diagram. `focusBox()` gives the face's box the keyboard and returns false when the card has none |
 | `DeskState.pictureTarget`, `pictureWidth`, `stageRoom` | shell state | how wide the card host may be: the pill's width, or up to 560 px (never under 360) while a window shares the stage. `shell.qml` reads `pictureWidth` as `win.pictureMax` for the desk's screen |
-| `cards.validate_diagram`, `cards.accept`, `cards.text_of`, `cards.check_opens` | Python | the data contract |
+| `cards.validate_diagram`, `cards.accept`, `cards.text_of`, `cards.check_opens` | Python | the data contract. `accept(card, now=None, diagrams_only=False)` sends a `message`, `task` or `list` card to its validator and refuses it when `diagrams_only` is set, which `agentd` sets for a card that comes from a client |
+| `cards.validate_message`, `cards.validate_task`, `cards.validate_list`, `cards.KINDS`, `cards.VALIDATORS` | Python | the checks of the connection kinds (see Cards from connections) |
+| `cardmake.message_card`, `notification_card`, `task_card`, `unread_card`, `connected_card`, `refreshed` | Python (`connect/cardmake.py`) | what agentd calls to make a connection card, and to draw it again with its draft as it stands. See [connections](connect.md) |
 | `sysmap.capture`, `sysmap.snapshot`, `sysmap.receipt`, `sysmap.apply_overrides` | Python | captures and receipts |
 | `sysmap.find_unit`, `sysmap.warm_unit_names` | Python | the unit a typed name means, and the background read of the unit-file names that `agentd` starts |
 | `narrate.Narrator` | Python | `step_notes`, `why_text`, `read_list`, `parts`, `drew` |
@@ -643,6 +782,7 @@ lists what this piece owns.
 | What | Where |
 |---|---|
 | The card on screen | memory, in `PillState.card`, with `cardAt` and `clickedAt` (the times `windowOpened` compares). Nothing stores it: a picture that has gone is made again by asking again, and Details lists it in words |
+| The open connection card and what is in its box | `agentd` memory (`_open_card`), so that a bar that connects later is given the card as it would be drawn at that moment. The draft behind a box is agentd's (see [connections](connect.md)); what the person has typed and not yet said is in the face (`Draft.qml`) for the 150 ms before it is sent, and a card that goes first has it said to its draft |
 | Open drafts, the card counter, snapshots, `Narrator`, the notes for the next prompt | `agentd` memory (`_stream_ids`, `_card_seq`, `_befores`, `narrator`, `notes`). The last 50 turns' log paths are in `turn_logs` |
 | The unit-file names | memory of the process that captures (`sysmap._FILES`), read by `warm_unit_names`. Nothing is stored on disk |
 | The turn's event log | `~/.local/state/bombadil/turns/<milliseconds>-<turn>.jsonl` (`BOMBADIL_STATE` overrides the directory). Finished cards with a turn, receipts included, are logged. Drafts are not. `tool` events carry `because` and `after` |
@@ -670,9 +810,14 @@ sentence why before a step that changes the machine, and show an answer with par
 - [The answer is the thing](../principles.md#the-answer-is-the-thing): a card is the answer. It has parts, it opens
   what it names, and the agent adds one line (`say` is limited to 160 characters). The trap is a card that only links
   to a text window, or a tool result that invites a paragraph. The result is the text twin so the agent has nothing to
-  describe.
+  describe. On a `message` or `task` card the answer includes the box and the button, which keep
+  [the person's press](../principles.md#the-persons-press-reaches-people): the bar lights the button only while agentd
+  says `ready` and the box holds exactly the draft's content, the agent has no tool that draws such a card, and the
+  check refuses a card whose draft holds characters that draw as nothing instead of cleaning them. The trap is a button
+  that lights for words other than the ones the person can read.
 - [Quiet at rest](../principles.md#quiet-at-rest): one card at a time, replaced, and gone on Esc, on the close mark,
-  at the next turn or when a window opens over it. A receipt appears only when a part the turn touched really changed,
+  at the next turn or when a window opens over it. A card whose box the person is writing in is the one exception: a
+  turn or a window that opens does not put it away. A receipt appears only when a part the turn touched really changed,
   and a value that moves on its own is never a change. The trap is a card that outlives its turn, a receipt for
   something the turn did not do, or a card whose height or place changes while the bar's window is resized: the pill
   moves with it (see Where the card sits).
@@ -717,28 +862,38 @@ There is no card-type registry and no subject registry. These steps follow how t
 
 ### Add a card type
 
-`diagram` is the only type, and three places assume it, so a second type touches all of them.
+Four kinds exist, and three places know them: the check in `cards.py`, the shell's list of kinds and the host's choice
+of face. The connection kinds (`message`, `task`, `list`) are the example to follow; `diagram` is the only one
+`show_card` draws.
 
-1. In `cards.py`, write a validator next to `validate_diagram` that returns the card and a `text` twin, and make
-   `accept` call it by `card["type"]`. `accept` calls `validate_diagram` for every card, and `AgentD._card_message` (in
-   `agentd.py`) runs `accept` on every card that reaches the socket, so a card of another type is refused ("shape must
-   be one of ...") until `accept` dispatches on the type.
-2. In `cardtools.py`, add the kind to the `enum` of `show_card`'s `kind` and its properties to the schema, and branch on
-   `kind` in `show_card`. It has one flat schema and raises for any `kind` but `diagram`. `cardtools.deliver` and
-   `AgentD._show` carry any card unchanged. Describe the type in `SHOW_CARD`, the only place the agent is told what each
-   kind is for, and keep the two tool listings under 6500 characters (asserted in `tests/test_cardtools.py`).
-3. In `shell/PillState.qml`, let `_takeCard` accept the type (it returns for anything but `diagram`). In
-   `shell/CardHost.qml`, add a face for it next to the `Diagram` and choose by `card.type`. Put a reusable drawing
-   component in the kit (a file in `share/qml/Bombadil/`, a line in `qmldir`, a section in
+1. In `cards.py`, write `validate_<kind>(spec, now=None)` next to `validate_message`. Start from `_common` (id, title,
+   source, `say`), make other people's words plain with `_line` and `_block`, take what would be sent with `_typed`,
+   and set `text` with `text_of` after adding a twin function to `_TWINS`. Add the kind to `KINDS` and to `VALIDATORS`:
+   `accept` then checks a card of that type with it, and refuses it from a client on the socket (`diagrams_only`) with
+   no further change.
+2. Make the card where the data is. For a kind that connections make, add a builder to `connect/cardmake.py`, which
+   agentd shows with `AgentD._connect_card` (see [connections](connect.md)). For a kind that `show_card` is to draw,
+   add the kind to the `enum` of its `kind` and its properties to the schema, branch on `kind` in `show_card` (it has
+   one flat schema and raises for any `kind` but `diagram`), and let `accept` take the kind from the socket, which it
+   refuses for every kind in `VALIDATORS`. `cardtools.deliver` and `AgentD._show` carry any card unchanged. Describe the
+   type in `SHOW_CARD`, the only place the agent is told what each kind is for, and keep the two tool listings under
+   6500 characters (asserted in `tests/test_cardtools.py`).
+3. In `shell/PillState.qml`, add the type to `cardKinds` (`_takeCard` ignores any other). In `shell/CardHost.qml`, add
+   a `Component` for its face and a branch of the face `Loader`'s `sourceComponent` (a diagram has its own `Flickable`
+   beside it), and a width in `preferredWidth` (0 takes the width the host is given). A face that holds a box uses
+   `CardBox`, `Draft` and `DraftBar` and tells the pill with `compose()`. Put a reusable drawing component in the kit (a
+   file in `share/qml/Bombadil/`, a line in `qmldir`, a section in
    `share/skills/bombadil-apps/references/components.md`), as `Diagram` is, so apps can use it too.
 4. Keep `text` on the card: `watch.py` lists each picture in words from it. If the type can stream, extend
    `CardStream` and `partial_diagram`, which follow diagrams only.
 5. Controls that act on the machine, from the UX brief, have no registration point.
-6. Tests: the validator in `tests/test_cards.py`, the tool in `tests/test_cardtools.py`, the shell in
-   `tests/test_pill_qml.py`, and the component with a test like `tests/test_diagram_qml.py`. Two existing tests state
-   that only `diagram` exists and change with the new type: the `kind: "list"` refusal in
-   `test_show_card_returns_every_fixable_error_at_once` (`tests/test_cardtools.py`) and the `{"type": "list"}` case of
-   `test_odd_cards_change_nothing` (`tests/test_pill_qml.py`).
+6. Tests: the check in `tests/test_cards.py` (and the builder in `tests/test_cardmake.py`), the tool in
+   `tests/test_cardtools.py`, the shell in `tests/test_pill_qml.py`, a face in `tests/test_connect_cards_qml.py`, and a
+   drawing component with a test like `tests/test_diagram_qml.py`. Some tests state which kinds exist and change with an
+   added kind: the refusals in `tests/test_cardtools.py` (`test_show_card_returns_every_fixable_error_at_once`, which
+   refuses `kind: "list"`, and `test_a_message_task_or_list_is_refused_here_and_the_reason_points_to_the_connections`)
+   and the `{"type": "checklist"}` case of `test_odd_cards_change_nothing` (`tests/test_pill_qml.py`), which stands for a
+   kind nobody draws.
 
 ### Add a diagram shape
 
@@ -795,7 +950,7 @@ which an adapter reports its account's limit (`Provider.limit` and `Provider.wai
 2. Another source the turn reads: add a program to `_READ_PROGS` or a branch to `command_reads` for a shell command, a
    branch to `tool_reads` for a tool, or a marker to `prompt_reads` for something in the prompt. Build a
    `Read(label, kind, outside)`. If it is a `kind` that does not exist yet, give `Read.after` its text, or it says
-   "after reading <label>" (the way `mail` does).
+   "after reading <label>" (the way `mail`, `messages` and `tasks` do).
 3. A reason that comes out wrong: tune `_FILLER_RE`, `_LEAD_RE` (openers) or `_VERBS` (which verbs become `-ing`) and add
    the sentence to the `reason_from` cases in `tests/test_narrate.py`.
 4. The live line for an os-mcp tool: add a branch to `_os_tool` (and `partial_step` if the call streams).
@@ -804,8 +959,9 @@ which an adapter reports its account's limit (`Provider.limit` and `Provider.wai
 
 | File | Covers |
 |---|---|
-| `tests/test_cards.py` | validation limits and errors, `opens`, `layers` ranking, text twins, `accept`, `partial_diagram` and `CardStream` |
-| `tests/test_cardtools.py` | the two tools' inputs and results, delivery and every failure note, a card crossing a real socket |
+| `tests/test_cards.py` | validation limits and errors, `opens`, `layers` ranking, text twins, `accept`, `partial_diagram` and `CardStream`; for the connection kinds, the limits, plain text, a draft's content refused and not cleaned, keys that are dropped, and `diagrams_only` |
+| `tests/test_cardmake.py` | `connect/cardmake.py`: the cards made from a message, a notification, a task, a proposal and the two lists |
+| `tests/test_cardtools.py` | the two tools' inputs and results, delivery and every failure note (a `message`, `task` or `list` kind refused with its reason), a card crossing a real socket |
 | `tests/test_sysmap.py` | each parser on captured output (the C-locale boot tree, `blame`, PipeWire levels, escaped unit names), each capture's card and errors, the unit lookup and its kept list, budgets, the scale (`BOMBADIL_BUDGET_SCALE`: its limits, that a budget asked for is exact, the provider connection's time), `receipt` |
 | `tests/test_mcp_server.py` (`test_codex_hands_a_slow_machines_capture_scale_to_the_tool_too`) | `BOMBADIL_BUDGET_SCALE` is in `providers.MCP_ENV` |
 | `tests/test_narrate.py` | step words, `reason_from`, reads and their origin, parts touched |
@@ -813,7 +969,8 @@ which an adapter reports its account's limit (`Provider.limit` and `Provider.wai
 | `tests/test_pager.py` | layout, scrolling, keys, a real terminal run |
 | `tests/test_agentd.py` | a card reaching every bar, `card_ack`, streaming and taking a draft back, picture words, receipts, clicks, `why`, `verb` on a launcher event |
 | `tests/test_launcher.py` | picture phrases, a service typed with capitals, the drawer and what each `opens.kind` runs |
-| `tests/test_pill_qml.py` | the card lifecycle in the shell, hover and fade, `because` and `after` on the line, a card placed in one resize, a picture that keeps its line, a full-screen window, a window the launcher opens and a window that opens (`windowOpened`: not a card just drawn or just clicked in, not a draft) |
+| `tests/test_connect_cards_qml.py` | the faces of the three connection kinds in an offscreen window, driven by agentd's messages: the host choosing a face by type, the thread, the box, what goes to agentd for a key (`edit`, `shown`, `open`) and for a press (one message with the fingerprint, an unknown outcome, a press out when the socket drops), the keyboard that goes to the card of a Reply and not to an agent's, a card with a box on one screen, Esc and a discarded draft, a list's rows and buttons, Tab order |
+| `tests/test_pill_qml.py` | the card lifecycle in the shell (one card at a time whatever its kind, a connection card with no id not drawn, the line state that names the card), hover and fade, `because` and `after` on the line, a card placed in one resize, a picture that keeps its line, a full-screen window, a window the launcher opens and a window that opens (`windowOpened`: not a card just drawn or just clicked in, not a draft) |
 | `tests/test_desk_qml.py` (`test_a_window_that_opens_puts_the_picture_away_and_one_that_goes_or_moves_does_not`, `test_a_picture_beside_a_window_is_wider_than_the_pill`, `test_a_picture_beside_a_window_takes_what_the_rails_leave_on_a_smaller_screen`) | `DeskState` emitting `windowOpened` only when the list of windows grew, wired to `PillState` as `shell.qml` does; `pictureWidth` is the pill's with no window, 560 beside a window and 100 under a full-screen one, and what the rails leave on a 1280 px screen (`stageRoom` 624, picture 560) and a 1024 px one (368) |
 | `tests/test_iso_profile.py` | the smoke's `picture()` function run in bash with os-mcp stood in for: three tries at 1, 4 and 12 times the time with a wait for calm before each new one, one try when the capture works, three when it never answers, one for a picture in the wrong shape (the boot included); `calm` defined once and waited for before the pictures |
 | `tests/test_watch.py` | `why:`, `after` and pictures in Details, and a command that Stop ended reading `stopped` and not `failed` (`test_a_command_that_stop_ended_reads_stopped_not_failed`) |
@@ -869,8 +1026,9 @@ Esc closes it.
 - The design keeps both snapshots beside the turn's log; the code keeps them in memory and logs only the receipt card.
   The designed boot picture from `systemd-analyze plot`, btrfs subvolumes in the disks picture and a receipt for boot
   (`sysmap.BEFORE_KINDS` has no `boot`) are not built.
-- Only `diagram` exists. `show_card` refuses other kinds and `_takeCard` ignores them. List, checklist, timer, control and
-  reader cards, and cards the agent writes in QML, are designed only.
+- The agent draws only `diagram`. `show_card` refuses any other `kind`, and the socket refuses a `message`, `task` or
+  `list` card from a client (`cardtools.py`, `cards.accept`). Checklist, timer, control and reader cards, and cards the
+  agent writes in QML, are designed only, and `_takeCard` ignores a card of any kind it does not know.
 - `explain = "teach"` is accepted by `config.py` and nothing reads it. No launcher word sets `explain`, so it changes only
   by editing `config.toml`.
 - Streaming is Claude only, and a draft has no links, so a `layers` draft is one row (`providers.py`, `cards.py`).
