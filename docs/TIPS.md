@@ -440,16 +440,22 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_app_backend.py tests
   (`tests/tips_app_lab.py`: it greets a client the way agentd does, answers the list, records every line and how
   many connections are open) and a temp `tips.json`: the list and its order and New, only what is listed, choosing
   and the signal order, the words for the pill, ticks and the file's damage, the press on the card, one-shot
-  connections and nothing left open, agentd away and back, and what is dropped from a line.
+  connections and nothing left open (counted on the app's side, where a close is seen at once), agentd away and
+  back, an agentd that says nothing (not asked back to back), looking when the window comes forward, the clock
+  under the watcher running only while there is nothing to watch, the app's sections equal to `tips.py`'s, and
+  what is dropped from a line.
 - `tests/test_tips_app_qml.py` runs the real window (the runtime's `Host`, offscreen, one child process per
   scenario) and drives it with mouse and key events: the sections and rows, a tip plays once and holds, Replay and
   Space, Up and Down, Enter and the button (the log shows the window hiding before the summon, the summon is
   exactly the words and nothing is sent as a prompt), marks, Esc, reduced motion, ticks that leave the list in
-  place, agentd away and back, the AI resting, every tip fitting 960 x 516 (and two absurdly long ones), the list
-  scrolling with the keys, and no orange of its own in the item tree or the pixels. `BOMBADIL_SCREENS=<dir>`
+  place, agentd away and back, the window looking when it comes forward, the AI resting, every tip fitting 960 x 516
+  (and two absurdly long ones, the 36 px button and the 17 px line among the sizes held), the list scrolling with
+  the keys, and no orange of its own in the item tree or the pixels. `BOMBADIL_SCREENS=<dir>`
   saves pictures (`tips-app-<name>.png`).
 - Tests in `tests/test_launcher.py` (every word, the near misses, completion), `tests/test_agentd_tips.py` (the open
-  and opened ops) and `tests/test_appkit_native.py` (`Agent.draft`) hold the rest.
+  and opened ops, and the empty list when Tips is off), `tests/test_apps.py` (an app called Tips cannot stand in
+  for the window) and `tests/test_appkit_native.py` (`Agent.draft`, and that a binding, a handler or a read of the
+  lazy `Agent` connects it with no error logged while one that only drafts holds no socket) hold the rest.
 
 What these do not show: the drawer sliding in, the window going away and the pill taking the keyboard in that
 order on a real compositor, and how long the stage takes to play at the screen's own frame rate. Those need
