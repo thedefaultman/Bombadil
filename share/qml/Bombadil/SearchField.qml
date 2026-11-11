@@ -3,9 +3,13 @@ import QtQuick.Controls
 import QtQuick.Layouts
 
 // A TextField for filtering: search icon, clear button, Ctrl+F focuses it and Esc
-// clears it. Filter your model with its `text`.
+// clears it. Filter your model with its `text`. When the app opens, the first one in sight
+// has the keyboard (AppWindow does it), unless the app focused something itself or this
+// is `focusOnOpen: false`.
 TextField {
     id: root
+
+    property bool focusOnOpen: true
 
     placeholderText: "Search"
     leftPadding: 36

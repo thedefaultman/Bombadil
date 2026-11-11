@@ -36,7 +36,9 @@ BY_ID = {r.id: r for r in ROWS}
 # The brief's seed (docs/design/tips-and-desk-defaults-brief.md, "The seed"), in its order. The rows that wait for
 # their pieces (a coding session by name, mail, noticed) are not here: they ship with those PRs.
 SEED = ["make-an-app", "picture", "esc", "timer", "machine", "bang",
-        "change-app", "open-app", "passwords", "whyhere", "draw",
+        "change-app", "open-app",
+        "passwords",
+        "whyhere", "draw",
         "toolchain", "tests", "code-picture",
         "disk", "pause", "desk", "keep", "why", "undo"]
 APP_ONLY = {"draw", "tests", "code-picture"}
@@ -608,7 +610,8 @@ def test_a_machine_with_nothing_backs_only_the_tips_that_need_nothing():
 def test_each_gate_brings_its_tips_and_only_those():
     base = set(_ids(Facts()))
     model = set(_ids(Facts(ai="Claude"))) - base
-    assert model == {"make-an-app", "esc", "timer", "passwords", "draw", "toolchain", "pause", "why"}
+    assert model == {"make-an-app", "esc", "timer", "draw", "toolchain", "pause", "why",
+                     "passwords"}
     assert set(_ids(Facts(installed=True))) - base == {"undo"}
     assert set(_ids(Facts(app="Tickets"))) - base == {"open-app"}                       # change-app also needs the AI
     assert set(_ids(Facts(ai="Claude", app="Tickets"))) - base - model == {"open-app", "change-app"}
@@ -1126,6 +1129,26 @@ def test_open_keeps_the_tip_for_the_app_and_calls_its_hook_and_opens_nothing(tmp
     assert t.open("keep") == "" and t.open("nope") == "" and t.open(7) == "" and t.open("") == ""
     assert t.state.open_on == ""
     assert asked == [("picture", True), ("", False), ("", False), ("", False), ("", False)]
+
+
+def test_the_app_reading_a_request_clears_it_so_the_same_press_is_a_request_again(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    assert t.opened("picture") is True and t.state.open_on == ""
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == ""
+    assert t.opened("picture") is False                      # nothing left to read
+    t.open("picture")
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == "picture"   # the file changed again
+
+
+def test_only_the_request_that_was_read_is_cleared(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    t.open("bang")                                           # a newer press while the app was reading the old one
+    assert t.opened("picture") is False and t.state.open_on == "bang"
+    for bad in ("", None, 7, ["bang"], "nope"):
+        assert t.opened(bad) is False and t.state.open_on == "bang"
+    assert t.opened("bang") is True and t.state.open_on == ""
 
 
 def test_a_hook_that_breaks_never_costs_the_request(tmp_path, capsys):

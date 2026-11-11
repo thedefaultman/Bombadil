@@ -3,7 +3,11 @@ base
 linux
 linux-firmware
 btrfs-progs
+cryptsetup
+amd-ucode
+intel-ucode
 gptfdisk
+parted
 dosfstools
 snapper
 grub
@@ -29,6 +33,7 @@ slurp
 wl-clipboard
 libnotify
 foot
+tmux
 zellij
 nautilus
 chromium

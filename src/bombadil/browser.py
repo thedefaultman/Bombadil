@@ -182,13 +182,20 @@ def open_url(url: str, hyprland=None, devtools: DevTools | None = None, spawn=su
 
 
 def close_spare_tab(devtools: DevTools, tab_id: str | None) -> None:
-    """Close a tab, but never the last one: that would quit the browser. Best effort."""
+    """Close a tab. The last one is never closed (that would quit the browser, and the panel
+    would wait for a window that is going away): a blank tab takes its place, so the panel
+    does not show the page again. Best effort; a tab that is gone already is left alone."""
     if not tab_id:
         return
     try:
         tabs = devtools.tabs()
-        if any(t.get("id") == tab_id for t in tabs) and len(tabs) > 1:
-            devtools.close(tab_id)
+        if not any(t.get("id") == tab_id for t in tabs):
+            return
+        if len(tabs) == 1:
+            blank = devtools.new_tab("about:blank")
+            if not (isinstance(blank, dict) and blank.get("id")):
+                return
+        devtools.close(tab_id)
     except DOWN:
         pass
 
@@ -238,7 +245,7 @@ class Panel:
             self.hypr.panel("browser", show=False)
 
     def close_tab(self, tab_id: str) -> None:
-        """Close a tab, but never the last one: that would quit the browser."""
+        """Close a tab; the last one becomes a blank tab, since closing it would quit the browser."""
         close_spare_tab(self.devtools, tab_id)
 
 

@@ -262,7 +262,11 @@ def sleeps():
 time.sleep(4)
 shot("00-resting")
 for _ in range(25):   # the picture is a 2560x1440 PNG decoded off the main thread: slow on a cold, busy machine
-    if mean_pixel("00-resting", 640, 180) != (16.0, 18.0, 20.0):
+    px = mean_pixel("00-resting", 640, 180)
+    # Wait past the bare ground (16, 18, 20) the desk shows until the picture is in, and past a first frame
+    # that is still black (the output's own, before the bar has drawn anything): either one read as "drawn"
+    # once and made every wallpaper pixel check below fail on that run.
+    if px != (16.0, 18.0, 20.0) and max(px) > 3:
         break
     time.sleep(1)
     shot("00-resting")

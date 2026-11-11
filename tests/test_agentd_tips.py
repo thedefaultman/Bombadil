@@ -329,6 +329,69 @@ async def test_open_keeps_the_tip_for_the_app_and_calls_the_hook_and_opens_no_wi
 
 
 @pytest.mark.asyncio
+async def test_a_press_on_the_card_shows_the_tips_app_quietly_and_the_tip_waits_in_the_file(home, monkeypatch):
+    """The default Tips has the hook that slides the app in. The app reads open_on from tips.json, so nothing about
+    the tip goes through the launcher, and Tips says nothing: no line, no event, no local action."""
+    monkeypatch.setenv("BOMBADIL_TIPS", "1")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    shown = []
+    monkeypatch.setattr(d.launcher, "open_tips", lambda: shown.append("tips"))
+    server, r, w, _ = await _serve(d)
+    await _say(w, {"type": "tips", "op": "open", "id": "picture", "play": True})
+    await _eventually(lambda: shown)
+    assert shown == ["tips"] and json.loads(paths.tips_file().read_text())["open_on"] == "picture"
+    await _say(w, {"type": "tips", "op": "open", "id": "make-an-app", "play": False})
+    await _say(w, {"type": "tips", "op": "open", "id": "", "play": False})       # "All tips": the app, wherever it was
+    await _eventually(lambda: len(shown) == 3)
+    heard = await _heard(r, 0.4)
+    assert [m for m in heard if m.get("type") in ("event", "local", "summon") or "kind" in m] == []
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_the_app_says_opened_and_the_same_press_is_a_request_again(home, monkeypatch):
+    monkeypatch.setenv("BOMBADIL_TIPS", "1")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+    shown = []
+    monkeypatch.setattr(d.launcher, "open_tips", lambda: shown.append("tips"))
+    server, r, w, _ = await _serve(d)
+    await _say(w, {"type": "tips", "op": "open", "id": "bang", "play": True})
+    await _eventually(lambda: d.tips.state.open_on == "bang")
+    await _say(w, {"type": "tips", "op": "opened", "id": "picture"})             # not the request that was read
+    await _say(w, {"type": "tips", "op": "opened", "id": 7})
+    await _say(w, {"type": "tips", "op": "opened"})
+    await _say(w, {"type": "tips", "op": "opened", "id": "bang"})
+    await _eventually(lambda: d.tips.state.open_on == "")
+    assert json.loads(paths.tips_file().read_text())["open_on"] == ""
+    await _say(w, {"type": "tips", "op": "open", "id": "bang", "play": True})
+    await _eventually(lambda: d.tips.state.open_on == "bang" and len(shown) == 2)
+    assert json.loads(paths.tips_file().read_text())["open_on"] == "bang"
+    assert await _tips_heard(r) == []                                             # none of it is for the shell
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
+async def test_a_launcher_that_cannot_open_the_app_costs_agentd_nothing(home, monkeypatch, capsys):
+    monkeypatch.setenv("BOMBADIL_TIPS", "1")
+    d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+
+    def broken():
+        raise OSError("no runner")
+    monkeypatch.setattr(d.launcher, "open_tips", broken)
+    server, r, w, _ = await _serve(d)
+    await _say(w, {"type": "tips", "op": "open", "id": "picture"})
+    said = []
+    await _eventually(lambda: said.append(capsys.readouterr().err) or any("OSError: no runner" in e for e in said))
+    assert d.tips.state.open_on == "picture"
+    await _say(w, {"type": "tips", "op": "list"})
+    assert any(_list(m) for m in await _events_until(r, _list))                    # still answering
+    w.close()
+    server.cancel()
+
+
+@pytest.mark.asyncio
 async def test_list_is_answered_on_that_connection_and_holds_what_this_machine_backs(home):
     d = machine()
     server, r, w, _ = await _serve(d)
@@ -340,8 +403,9 @@ async def test_list_is_answered_on_that_connection_and_holds_what_this_machine_b
     ids = [t["id"] for t in answer["list"]]
     # The fake AI is on, nothing else: no app, no project, no installed disk, no card seen. The desk can keep a
     # widget, so that tip is here (the word "widgets" is a launcher word).
-    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang", "passwords", "whyhere",
-                   "draw", "toolchain", "disk", "pause", "keep", "why"]
+    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang",
+                   "passwords",
+                   "whyhere", "draw", "toolchain", "disk", "pause", "keep", "why"]
     assert [t["tried"] for t in answer["list"]][:3] == [False, True, False]
     assert not any(t["new"] for t in answer["list"])
     pause = next(t for t in answer["list"] if t["id"] == "pause")
@@ -456,8 +520,9 @@ async def test_with_tips_off_nothing_is_sent_and_nothing_is_kept(home, monkeypat
     await _say(w, {"type": "tips", "op": "list"})
     await _say(w, {"type": "summon", "text": "hi", "tip": True, "id": "bang"})
     # (what agentd says to every client on connecting, the coding sessions among it, is not what this is about)
+    # A window that asks for the list is answered, with nothing in it: it must not be left waiting on a socket.
     assert [m for m in await _heard(r) if m["type"] in ("summon", "tips")] == [
-        {"type": "summon", "text": "hi", "tip": True}]
+        {"type": "tips", "list": []}, {"type": "summon", "text": "hi", "tip": True}]
     await _ask(w, "tell me a joke")
     await _read_until(r, "turn_end")
     assert not paths.tips_file().exists()

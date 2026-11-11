@@ -244,6 +244,37 @@ def test_needs_you_is_amber_with_a_glow_and_two_knocks(mark):
     mark.snap("needs")
 
 
+def test_the_knock_is_a_cue_that_ends_and_comes_back_as_one_beat(mark):
+    # A stone that knocks forever keeps the bar drawing every frame (a core or more on a machine that draws
+    # in software). It knocks for cueMs, holds still, amber and glowing, and knocks once more every remindMs.
+    mark.set(cueMs=800, remindMs=1500)
+    mark.set(face="needs")
+    start = time.monotonic()
+    seen = []                           # (seconds since it began to need you, knock, cueing)
+    while time.monotonic() - start < 4.2:
+        mark.pump(0.04)
+        seen.append((time.monotonic() - start, mark.stone.property("knock"), mark.stone.property("cueing")))
+    assert max(k for t, k, _ in seen if t < 0.85) > 4                   # it knocked on arrival
+    resting = [(k, c) for t, k, c in seen if 1.1 < t < 2.0]
+    assert resting and all(k == 0 and c is False for k, c in resting)    # then it held still
+    assert max(k for t, k, _ in seen if t > 2.5) > 4                     # and a reminder (here 1.5 s) later, a beat
+    assert near(mark.at(12, 8), THEME["warn"])                           # amber the whole time
+
+
+def test_a_new_need_knocks_again_and_reduced_motion_never_does(mark):
+    mark.set(cueMs=500, remindMs=60000)
+    mark.set(face="needs")
+    mark.pump(1.0)
+    assert mark.stone.property("cueing") is False
+    mark.set(face="rest")
+    mark.set(face="needs")
+    assert mark.stone.property("cueing") is True                         # it needs you again: the cue again
+    mark.set(face="rest", reducedMotion=True)
+    mark.set(face="needs")
+    mark.pump(0.4)
+    assert mark.stone.property("cueing") is False and mark.stone.property("knock") == 0
+
+
 def test_the_glow_reaches_past_the_slot_and_fades_out(app, tmp_path):
     # At 24 px the old glow (radius 11) was a 1 px halo that did not read. It now spreads into the
     # pill's padding, 5 px past the stone, and is gone by 16 px from the stone's centre.

@@ -21,6 +21,7 @@ import tip_truth as tt
 from test_brain_focus import brain  # noqa: F401  (a fixture)
 from test_desk_qml import app, desk  # noqa: F401  (fixtures)
 from test_pill_qml import bar  # noqa: F401  (a fixture)
+from test_widgets_card_qml import card as widgets_card  # noqa: F401  (a fixture)
 
 from bombadil import desk as desk_module
 from bombadil import launcher, narrate, paths, tip_scene, tips
@@ -36,15 +37,10 @@ def scene(row):
 
 # -- the template strings no code can be asked for, named one by one --
 # (tip, role, string): why. A string is here only while a scene shows it and no code says it; the day the code does
-# say it, the test below fails until the entry is taken out and the string is held to the code.
+# say it, the test below fails until the entry is taken out and the string is held to the code. Nothing is here now:
+# every string of every scene is a sentence the code says, the tip's own words, a reply, or a command's output.
 
-PIECE_2 = ("The Widgets card and its Keep choice are the keep piece's (the `keep` gate). It is not on main, so no "
-           "code says its words yet. The scene is built to the brief's table and is shown nowhere until the gate opens.")
-UNTIED = {
-    ("keep", "window", "Widgets"): PIECE_2,
-    ("keep", "value", "Keep"): PIECE_2,
-    ("keep", "value", "When needed"): PIECE_2,
-}
+UNTIED: dict[tuple[str, str, str], str] = {}
 
 
 # -- every string a scene shows, with where it is --
@@ -88,7 +84,7 @@ def fields(tip):
 
 
 @pytest.fixture
-def said(home, monkeypatch, brain, desk, bar):  # noqa: F811
+def said(home, monkeypatch, brain, desk, bar, widgets_card):  # noqa: F811
     """Everything the code says, by where it is said: the real functions called with fixture inputs."""
     s = tt.Said()
     tt.narrated(s, home)
@@ -100,6 +96,7 @@ def said(home, monkeypatch, brain, desk, bar):  # noqa: F811
     tt.brain_says(s, brain, monkeypatch)
     tt.shell_says(s)
     tt.desk_says(s, desk, s.touched)
+    tt.widgets_says(s, widgets_card)
     tt.bang_ends(s, bar, monkeypatch)
     tt.pill_says(s, bar)
     tt.buttons(s)
@@ -267,6 +264,23 @@ def test_the_machine_card_shows_the_rows_the_vitals_make_and_how_full_each_meter
             assert said.machine[label] == meter, (tid, label)
 
 
+def test_the_widgets_card_in_the_scene_follows_the_desks_order_and_says_the_part_that_is_raised(said):
+    """The word "widgets" opens the card and the line says so; its rows are the desk's, in its order, each with the
+    part that is raised: "When needed" for each as the desk ships. A press on Keep for Machine says what it did, and
+    the same card then reads Keep on that row alone, changed in place (no new window)."""
+    opened, pressed = [b for b in BY_ID["keep"].beats if tip_scene.shows_window(b)]
+    assert opened["line"] == said.opened and pressed["line"] == said.pressed
+    assert opened["window"] == pressed["window"] and said.has("window", opened["window"])
+    assert pressed.get("reload") and not opened.get("reload")
+    for beat, desk_is in ((opened, "shipped"), (pressed, "kept")):
+        labels = [label for label, _ in beat["rows"]]
+        assert labels == [t for t in said.widgets.order if t in labels] and len(labels) >= 2
+        for label, value in beat["rows"]:
+            assert value == said.widgets.raised[desk_is][label], (desk_is, label)
+    assert [r[0] for r in opened["rows"]] == [r[0] for r in pressed["rows"]]       # the same rows, one part moved
+    assert [r for r in pressed["rows"] if r not in opened["rows"]] == [["Machine", said.widgets.part["keep"]]]
+
+
 def test_the_stop_is_of_the_step_that_was_running_and_undo_is_of_what_was_asked(said):
     esc = BY_ID["esc"].beats
     step = next(b for b in esc if b.get("command"))["line"]
@@ -321,8 +335,7 @@ EXTRA = {"esc": {"install docker and set it up"}, "pause": {"tidy my downloads",
 # Where a typed string goes: the launcher's action, or "model" for a sentence for the agent.
 GOES = {"How am I connected?": "picture", "Where did my disk go?": "picture", "How's the machine?": "widget",
         "pause Claude": "rest", "resume claude": "rest", "undo": "undo", "desk": "desk", "brain": "brain",
-        "where did this come from?": "whyhere", "why": "why", "!uname -r": "bang",
-        "widgets": "widgets"}
+        "where did this come from?": "whyhere", "why": "why", "!uname -r": "bang", "widgets": "widgets"}
 
 
 def goes(text):

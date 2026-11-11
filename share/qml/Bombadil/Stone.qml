@@ -6,7 +6,8 @@ import QtQuick.Shapes
 //   rest       green, still
 //   listening  green, leans toward what you type
 //   working    orange, turns a third of a turn a second around the b, which never moves
-//   needs      amber, knocks twice and waits, with a glow that breathes behind it
+//   needs      amber, knocks twice and waits, with a glow that breathes behind it (for ten seconds, then
+//              it holds still and glows; one beat again every five minutes)
 //   done       green, one hop with a squash on landing, then still
 //   resting    the AI is out of plan or paused: the outline whole in grey over a faint fill, the b cut in; still
 //   stopped    the Stop button's own grey square
@@ -156,7 +157,7 @@ Item {
     Shape {
         anchors.fill: parent
         visible: stone.face === "needs"
-        opacity: stone.reducedMotion ? 0.45 : stone.glowOpacity
+        opacity: stone.reducedMotion || (stone.animate && !stone.cueing) ? 0.45 : stone.glowOpacity
         ShapePath {
             strokeColor: "transparent"
             fillGradient: RadialGradient {
@@ -281,10 +282,38 @@ Item {
         onStopped: mark.opacity = 1
     }
 
-    // Needs you: two knocks tipping 8 degrees to the right, then a wait, on a 1.6 s beat; the
-    // glow breathes 0.25 to 0.6 and back on the same beat.
+    // Needs you plays as a cue, not for as long as the person is away: a stone that knocks and breathes
+    // forever keeps the bar drawing every frame, and on a machine that draws in software that is a core
+    // or more of an idle computer (and a laptop's battery). The cue plays for `cueMs` when the stone starts
+    // to need you, then the stone holds still, amber and glowing as under reduced motion, and one beat
+    // plays again every `remindMs`. A beat costs a frame at a time: in a virtual machine that draws in
+    // software (1920x1080) one cost about fifteen core-seconds of the compositor and the bar, so one a minute
+    // was a third of a core for as long as the need stood; every five minutes it is about a fifteenth.
+    property int cueMs: 9600
+    property int remindMs: 300000
+    property bool cueing: false
+    property int _cueFor: cueMs
+    readonly property bool _needsCue: animate && face === "needs" && !reducedMotion
+    on_NeedsCueChanged: {
+        _cueFor = cueMs
+        cueing = _needsCue
+    }
+    Component.onCompleted: if (_needsCue) cueing = true
+    Timer {
+        interval: stone._cueFor
+        running: stone.cueing
+        onTriggered: stone.cueing = false
+    }
+    Timer {
+        interval: stone.remindMs
+        running: stone._needsCue && !stone.cueing
+        onTriggered: { stone._cueFor = 1600; stone.cueing = true }
+    }
+
+    // Two knocks tipping 8 degrees to the right, then a wait, on a 1.6 s beat; the glow breathes
+    // 0.25 to 0.6 and back on the same beat.
     SequentialAnimation {
-        running: stone.animate && stone.face === "needs" && !stone.reducedMotion
+        running: stone.cueing && !stone.reducedMotion
         loops: Animation.Infinite
         NumberAnimation { target: stone; property: "knock"; to: 8; duration: 192; easing.type: Easing.OutQuad }
         NumberAnimation { target: stone; property: "knock"; to: 0; duration: 160; easing.type: Easing.InQuad }
@@ -294,7 +323,7 @@ Item {
         onStopped: stone.knock = 0
     }
     SequentialAnimation {
-        running: stone.animate && stone.face === "needs" && !stone.reducedMotion
+        running: stone.cueing && !stone.reducedMotion
         loops: Animation.Infinite
         NumberAnimation { target: stone; property: "glowOpacity"; from: 0.25; to: 0.6; duration: 560; easing.type: Easing.InOutSine }
         NumberAnimation { target: stone; property: "glowOpacity"; to: 0.25; duration: 1040; easing.type: Easing.InOutSine }
