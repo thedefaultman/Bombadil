@@ -3,7 +3,7 @@
 > **Status:** Partly shipped  
 > **Code:** `src/bombadil/tips.py`, `share/tips/tips.toml`, `src/bombadil/agentd.py`, `src/bombadil/paths.py`, `iso/airootfs/usr/local/bin/bombadil-install`, `tests/test_tips.py`, `tests/test_agentd_tips.py`, `tests/test_iso_profile.py`  
 > **Design:** [Tips, and the desk after boot](../design/tips-and-desk-defaults-brief.md), piece 1; the contract the code comments point to is [TIPS.md](../TIPS.md)  
-> **Verified:** 2026-11-09 against `main` at `f0485c2`: `src/bombadil/tips.py` and every row of `share/tips/tips.toml` were read in full. The Tips parts of `src/bombadil/agentd.py` were read: the constants, `AgentD.__init__`, `handle` (the `prompt`, `summon` and `tips` branches), `_tips_refresh` and the other `_tips_*` methods, `_set_access`, `event`, `stop`, `turn`, `_job_tool`, `_on_event`, and the places that tell Tips a card was seen. So were `paths.tips_file` and `paths.tips_table`, the widget table and `hidden` in `src/bombadil/desk.py`, the copy loop in `bombadil-install`, and the pill's handling of `summon` in `shell/shell.qml` and `shell/PillState.qml`. That no other file in `shell/`, `share/`, `bin/` or `scripts/` mentions Tips was checked by searching them. Run on 2026-11-09: `tests/test_tips.py` (179 passed, 1 skipped), `tests/test_agentd_tips.py` (65 passed) and the two installer tests in `tests/test_iso_profile.py`. The skipped test needs PySide6 and the Inter font, so the 272 px rule was held to the character bounds here and not measured. The brief's account of the card and the app is design and was not checked against code, and nothing was run on a real desk.
+> **Verified:** 2026-11-09 against `main` at `f0485c2`: `src/bombadil/tips.py` and every row of `share/tips/tips.toml` were read in full. The Tips parts of `src/bombadil/agentd.py` were read: the constants, `AgentD.__init__`, `handle` (the `prompt`, `summon` and `tips` branches), `_tips_refresh` and the other `_tips_*` methods, `_set_access`, `event`, `stop`, `turn`, `_job_tool`, `_on_event`, and the places that tell Tips a card was seen. So were `paths.tips_file` and `paths.tips_table`, the widget table and `hidden` in `src/bombadil/desk.py`, the copy loop in `bombadil-install`, and the pill's handling of `summon` in `shell/shell.qml` and `shell/PillState.qml`. That no other file in `shell/`, `share/`, `bin/` or `scripts/` mentions Tips was checked by searching them. Run on 2026-11-09: `tests/test_tips.py` (179 passed, 1 skipped), `tests/test_agentd_tips.py` (65 passed) and the two installer tests in `tests/test_iso_profile.py`. The skipped test needs PySide6 and the Inter font, so the 272 px rule was held to the character bounds here and not measured. The brief's account of the card and the app is design and was not checked against code, and nothing was run on a real desk. The change since `24c836c` was added and checked against `main` at `7d17600`: the `keep` fact is true, the tip `keep` is tried by the launcher word `widgets`, and the desk has a `kept` list (`src/bombadil/desk.py`, `src/bombadil/tips.py`, `share/tips/tips.toml` and the `keep` and `desk-seen` parts of `src/bombadil/agentd.py`); the rest of the text was not read again.
 
 Tips teaches a person what they can ask, one line at a time, and only what this machine can really do. Its data side is a table of twenty one-line tips in `share/tips/tips.toml`, which `src/bombadil/tips.py` loads and checks. agentd works out which tips the machine can back, notes which ones the person has tried from what agentd itself sees with no model, and sends clients one `tips` message that names the tip to show. The brief decides why a tip is one line with the exact words to type, why a tip the machine cannot back is shown nowhere, and why pressing a tip's button runs nothing. The flat page [TIPS.md](../TIPS.md) is the contract and stays where code comments point to it; this page says how the data side works on `main` and does not copy it.
 
@@ -11,7 +11,7 @@ Tips teaches a person what they can ask, one line at a time, and only what this 
 
 Only the data side of Tips is on `main`. A person on `main` is never shown a tip, because no client reads the `tips` message ([Known gaps](#known-gaps)). Of the five steps the brief gives piece 1, the first (reduced motion, [MOTION.md](../MOTION.md)) and the second (the table and agentd's side, this page) are on `main`.
 
-| Part | State on `main` at `f0485c2` |
+| Part | State on `main` |
 |---|---|
 | The table, `share/tips/tips.toml`: twenty rows in four sections | Shipped |
 | `src/bombadil/tips.py`: loading and checking, gates, placeholders, `tips.json`, the choice of the card, the evidence | Shipped, tested |
@@ -20,7 +20,7 @@ Only the data side of Tips is on `main`. A person on `main` is never shown a tip
 | The Tips card, a desk widget | Not built: `src/bombadil/desk.py` has no `tips` widget and no file in `shell/` reads a `tips` message |
 | The Tips app, `share/apps/tips`, and its launcher words | Not built: `share/apps` holds `brain` and `mail`, and `src/bombadil/launcher.py` has no word for Tips |
 | The scenes: `Kit.TipScene`, `Kit.Stone` and `docs/TIP-SCENES.md` | Not built: `share/qml/Bombadil/` has neither component, there is no such page, and every row has `beats = []` |
-| Keeping a widget on the desk, the Widgets card | Not built (piece 2 of the brief): `Desk` has no `kept`, so `Tips.kept` is never true |
+| Keeping a widget on the desk, the Widgets card | Shipped for Machine (piece 2 of the brief): `Desk.kept` in `src/bombadil/desk.py`, `shell/WidgetsCard.qml` and the launcher word `widgets` ([the desk](desk.md#your-desk-keep-when-needed-off)). Tips cannot be kept, because `desk.py` has no `tips` widget, so `Tips.kept` is always false |
 | The pill keeping words the person typed when a tip's button fills it | Not built: `shell/shell.qml` replaces them |
 
 What the rest will do, from the brief, is designed and not on `main`:
@@ -30,7 +30,7 @@ What the rest will do, from the brief, is designed and not on `main`:
 | The Tips card | Sit in the right rail for a person's first week as a still picture, one line and a button with the exact words. It will draw the `card` of the `tips` message, turn on its arrows, and hand the button's words to the pill with `summon` and `tip: true`. It will run nothing itself. Its section is written in [TIPS.md](../TIPS.md) when it is built |
 | The Tips app | Open from the word `tips` and from the card, ask agentd for `list` in a one-shot request, and play each tip once |
 | The scenes | `Kit.TipScene` will draw each tip's `beats`, so the card has a still picture and the app has a scene |
-| Keep and the Widgets card | Let a person keep Tips, or Machine, on the desk after every boot. `Tips.kept` is the hook that piece will set |
+| Keeping Tips | Let a person keep Tips on the desk after every boot, as they can keep Machine. It needs a `tips` widget in `src/bombadil/desk.py` with `calm=True`, and the Tips card as its face. `Tips.kept` is the hook that reads `desk.kept` |
 
 ## How it works
 
@@ -92,8 +92,9 @@ A tip is shown only where every gate in its `needs` is met and every `{ai}`, `{a
 | `app` | `newest_app` finds an app in `~/Apps` whose name fits a button | `read_facts` |
 | `project` | `newest_project` finds a folder in `~/Projects` | `read_facts` |
 | `sessions` | `bombadil.dev` can be imported | `read_facts`; true on `main`, and no tip needs it |
-| `mail`, `noticed`, `keep` | Always false on `main`: `_tips_refresh` calls `read_facts` without them | No tip needs `mail` or `noticed`. The tip `keep` needs `keep`, so it is never listed: at most 19 of the 20 are |
-| `desk-seen` | A desk card other than Tips has been on the screen | agentd, through `Tips.card_seen`: the Machine card is up, the jobs table has rows, a step touches the system, or a plan has two steps or more. Kept in `tips.json` |
+| `mail`, `noticed` | Always false on `main`: `_tips_refresh` calls `read_facts` without them | No tip needs either |
+| `keep` | Always true on `main`: the `keep` argument of `read_facts` defaults to true, because the desk can keep a widget | `read_facts`. The tip `keep` needs it, so all 20 tips can be listed |
+| `desk-seen` | A desk card other than Tips has been on the screen | agentd, through `Tips.card_seen`: the Machine card is up (a kept Machine at rest too), the jobs table has rows, a step touches the system, or a plan has two steps or more. Kept in `tips.json` |
 
 `{app}` is the title of the app whose `main.qml` was written last, with its folder name as the fallback. `{project}` is the newest folder in `~/Projects`, and a dot folder is not one. `{ai}` is the AI's title. A name goes into the pill as words, so `fit` takes it only when it starts with a letter or a digit (never `!` or `~`, which would make it a shell command or a path), holds only letters, digits, spaces and a few marks, and is at most 18 characters for an app and 24 for a project. A name that fails is skipped and the next newest is used. An app whose title the launcher answers as a command (Lock, Desk, Mail) is skipped too, because typing it would not open the app; `newest_app` asks `launcher.match`.
 
@@ -119,13 +120,13 @@ A tip is tried when agentd sees, with no model, that the person did it. Showing 
 | `tried_when` | What counts | Where agentd sees it |
 |---|---|---|
 | `words` | The words sent are the tip's own words, case, spaces and end marks aside. Also the exact words a button put in the pill for that tip. Words that end in `…` count with more after them | The `prompt` branch of `AgentD.handle`, through `_tips_typed`, for a line the person typed: no `asked_by`, not `[from app NAME]`, not from a process inside an agent's turn |
-| `local:<kind>[:<target>]` | A launcher action ran well: `local:desk`, `local:picture:disks`, `local:app`, `local:undo`. Closing or hiding an app, a panel, a widget or mail does not count, and neither does a rest that does not pause (`local_keys`). A failed action does not count | `AgentD.event`, for a `local` event in phase `done` with `ok`, except `stop` |
+| `local:<kind>[:<target>]` | A launcher action ran well: `local:desk`, `local:widgets`, `local:picture:disks`, `local:app`, `local:undo`. Closing or hiding an app, a panel, a widget or mail, and keeping a widget, does not count, and neither does a rest that does not pause (`local_keys`). A failed action does not count | `AgentD.event`, for a `local` event in phase `done` with `ok`, except `stop` |
 | `local:stop` | Esc (the `stop` or `cancel` message) or the word "stop", while a turn really runs. Undo, restart, shutdown and the setup card's cancel stop a turn too and do not count | `AgentD.stop(by_person=True)` |
 | `tool:<name>` | The turn's call of that tool worked: its result came back without an `error`. A call with no id counts at once, and at most 64 calls wait. A tool from an MCP server counts by the part of its name after the last `__`, so `tool:create_app` is the OS tool whatever its prefix | `_tips_tool`, from `_on_event` |
 | `job:start[:<kind>]` | A background job of kind `job`, `watch` or `timer` was started | `_job_tool`, the `start` op, through `job_keys` |
 | `bang` | A `!` command the person typed. One a helper asked for (`asked_by`) teaches nobody | `AgentD.turn` |
 
-[TIPS.md](../TIPS.md#what-counts-as-tried) has the same list from the contract's side.
+The tip `keep` ("Keep a widget on your desk.") is tried by the word `widgets`, which opens the Widgets card (`local:widgets`), and not by `keep machine`, which `local_keys` leaves out. [TIPS.md](../TIPS.md#what-counts-as-tried) has the same list from the contract's side.
 
 ### The card
 
@@ -208,9 +209,8 @@ pytest tests/test_iso_profile.py -k "tips or desks_places or nothing_to_carry"
 
 - **No client draws Tips.** agentd sends the `tips` message to every client and keeps `tips.json`, but no file in `shell/`, `share/`, `bin/` or `scripts/` mentions Tips, `src/bombadil/desk.py` has no `tips` widget, and `share/apps` holds only `brain` and `mail`. A person on `main` is never shown a tip.
 - **A tip's button would replace what the person typed.** `summon` in `shell/shell.qml` sets the pill's text to the words (`takeDraft`), and `shell/PillState.qml` passes only `ev.text`, so nothing reads `tip: true`. The contract says the pill keeps words typed and not sent.
-- **Putting Tips away and keeping it cannot happen.** `Tips.hidden` reads `"tips" in desk.hidden` and `Tips.kept` reads `desk.kept` (`AgentD.__init__`). `desk.py` has no `tips` widget, so `desk.toml` cannot hold one, and `Desk` has no `kept`, so both are always false and the card's only mode is the first week. `tests/test_agentd_tips.py` sets them by hand.
+- **Putting Tips away and keeping it cannot happen.** `Tips.hidden` reads `"tips" in desk.hidden` and `Tips.kept` reads `"tips" in desk.kept` (`AgentD.__init__`). `desk.py` has no `tips` widget, so `desk.toml` cannot hold one: `Desk.load` keeps only the ids in `WIDGETS`, and in `kept` only those with `calm=True`. Both are always false and the card's only mode is the first week. `tests/test_agentd_tips.py` sets them by hand.
 - **The Tips app is never asked to open.** `AgentD.__init__` builds `Tips` without `on_open`, so the `open` op keeps `open_on` and nothing else.
-- **One tip is never listed.** `keep` needs the `keep` gate, and `_tips_refresh` calls `read_facts` without it. `tests/test_tips.py` passes `keep=True` to show all twenty.
 - **The scenes are empty and the captions are defaults.** Every row has `beats = []`, and every row but `make-an-app` has the captions "You ask", "It works", "You have it" (`tests/test_tips.py`).
 - **A very wide name can still overflow the card's row.** The limits for an app and a project name are in characters (`MAX_APP`, `MAX_PROJECT`), and the width test measures one sample name, "Customer Dashboard". A name of 18 wide letters can make the button of `change-app` or `open-app` wider than the 272 px row; this was not measured here, because Inter is not installed. [TIPS.md](../TIPS.md#placeholders) puts the answer on the card, which has to elide the button's words.
 
