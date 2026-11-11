@@ -372,10 +372,12 @@ def strings(tip: dict) -> list[tuple[str, str]]:
             out.append((row_tag, r if isinstance(r, str) else str(r[0])))
             if not isinstance(r, str) and len(r) > 1 and isinstance(r[1], str) and r[1] not in NOW_STATES:
                 out.append((row_tag, r[1]))                # a figure or a word in a row, read as the row's tag
+        # A card's title and its why line are the desk's own words, whatever the beat's tag says of the rest: a beat
+        # can carry the agent's reply on its line (model) and the card that goes with it (template) together.
         if b.get("title"):
-            out.append((tag, b["title"]))
+            out.append(("template", b["title"]))
         if b.get("why"):
-            out.append((tag, b["why"]))
+            out.append(("template", b["why"]))
         for c in _items(b.get("columns")):
             out.extend((tag, x) for x in c)
         if b.get("picture"):

@@ -204,6 +204,23 @@ def drawn_point(x, y):
 
 
 PLACES = ("line", "pill", "window", "picture", "card-now", "card-watching", "card-machine", "queue", "strip", "key")
+IN_A_WINDOW = ("windowTitle", "windowRows", "windowDoc", "windowLock")
+
+
+def _clipped(s):
+    """What is in a window that its bottom edge cuts: the window clips its content, so a lock screen or a row that
+    does not fit is not off the picture (`_inside` cannot see it) but is cut through all the same."""
+    out = []
+    for win in s.items("window"):
+        if not win.isVisible() or _opacity(win) < 0.05:
+            continue
+        for name in IN_A_WINDOW:
+            for item in s.items(name):
+                if item.isVisible() and item.height() > 0:
+                    bottom = item.mapToItem(win, drawn_point(0, 0)).y() + item.height()
+                    if bottom > win.height() + 0.5:
+                        out.append((name, round(bottom), round(win.height())))
+    return out
 
 
 @pytest.mark.parametrize("row", [r for r in ROWS if r.card], ids=lambda r: r.id)
@@ -216,9 +233,10 @@ def test_every_card_tip_renders_its_poster_and_nothing_on_it_is_under_12_px_or_o
     assert s.frame["stone"]["face"] and s.frame["ended"]
     off = [x for name in PLACES for x in _inside(s, name)]
     assert off == [], f"{row.id}: runs off the poster: {off}"
-    for item in s.items("lineText") + s.items("windowRowLabel"):
-        if item.isVisible() and item.property("text"):
+    for item in s.items():
+        if item.metaObject().className().startswith("QQuickText") and item.isVisible() and item.property("text"):
             assert not item.property("truncated"), f"{row.id}: {item.property('text')!r} is cut short on the card"
+    assert _clipped(s) == [], f"{row.id}: a window cuts through what is in it: {_clipped(s)}"
     if SHEET:
         s.snap("poster")
 
@@ -226,11 +244,15 @@ def test_every_card_tip_renders_its_poster_and_nothing_on_it_is_under_12_px_or_o
 @pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
 def test_every_tip_renders_at_the_apps_density_at_its_end_and_nothing_on_the_stage_is_elided(row, drawn):
     s = drawn(row, "app")
-    assert (round(s.scene.width()), round(s.scene.height())) == (STAGE[0], STAGE[1] + round(
-        s.scene.property("captionsHeight") or 0)) or s.scene.width() == STAGE[0]
+    stage, captions = s.item("stage"), s.item("captions")
+    assert (round(stage.width()), round(stage.height())) == STAGE
+    assert captions is not None and captions.height() > 0
+    # the stage, a gap of 10 px, and the row of the three captions under it
+    assert (round(s.scene.width()), round(s.scene.height())) == (STAGE[0], STAGE[1] + 10 + round(captions.height()))
     assert s.texts() and min(size for _, size, _ in s.texts()) >= 12
     off = [x for name in PLACES for x in _inside(s, name)]
     assert off == [], f"{row.id}: runs off the stage: {off}"
+    assert _clipped(s) == [], f"{row.id}: a window cuts through what is in it: {_clipped(s)}"
     for ms in range(0, int(s.duration) + 1, 300):
         s.seek(ms)
         for item in s.items():
@@ -272,6 +294,8 @@ def test_a_poster_shows_no_name_number_or_value_of_the_machine_and_no_label_on_a
             if b.get("card") == "machine":
                 for label, value in b["rows"]:
                     assert label not in shown and str(value) not in shown, f"{row.id}: the machine is named"
+            if b.get("title"):
+                assert b["title"] not in shown, f"{row.id}: the task {b['title']!r} is named on the poster"
         assert shown.isdisjoint({"Undo", "Details"}), f"{row.id}: a labelled button on the poster"
 
 
@@ -284,6 +308,45 @@ def test_the_posters_of_the_desks_card_use_no_orange_but_the_state_colours_the_c
         accent = q.THEME["accent"]
         count = q.colour_count(img, "accent", 10) if "accent" in q.THEME else 0
         assert count < 30, f"{row.id}: {count} px of {accent} on the poster"
+
+
+@pytest.mark.parametrize("row", [r for r in ROWS if any("card" in b for b in r.beats)], ids=lambda r: r.id)
+def test_a_card_never_reads_done_while_the_stone_works_nor_running_beside_a_line_that_says_done(row, drawn):
+    """The scene is one machine: the desk's card goes done in the moment the turn ends and the line and the stone with
+    it (the real shell does them together), and a finished job's line is never beside a row still counting."""
+    s = drawn(row, "app")
+    for ms in range(0, int(s.duration) + 1, 150):
+        s.seek(ms)
+        f = s.frame
+        cards = f["cardsLeft"] + f["cardsRight"]
+        readings = [str(r["value"]) for c in cards for r in c["rows"] if r.get("value") is not None] + [
+            c["why"] for c in cards]
+        done = [x for x in readings if x.startswith("done in")]
+        if f["stone"]["face"] == "working":
+            assert not done, f"{row.id} at {ms} ms: a card reads {done} while the stone is working"
+        if f["line"] and re.search(r"\bis done in\b", f["line"]["text"]):
+            counting = [x for x in readings if re.search(r"so far$|left$", x)]
+            assert not counting, f"{row.id} at {ms} ms: the line says done, a card reads {counting}"
+
+
+def test_the_stage_has_no_orange_where_the_machine_is_not_acting(drawn):
+    """The design system: accent is only for what the machine is doing now. At a scene's last frame, where the stone
+    is not working, nothing is drawn in it (a lock screen's field, a border, a dot)."""
+    q = drawn.qt
+    accent = QColorBytes(q.THEME["accent"])
+    for row in ROWS:
+        s = drawn(row, "app")
+        if s.frame["stone"]["face"] == "working":
+            continue
+        bits = s.image().copy(12, 12, STAGE[0], STAGE[1]).constBits()
+        found = (bits.tobytes() if hasattr(bits, "tobytes") else bytes(bits)).count(accent)
+        assert found == 0, f"{row.id}: {found} px of the accent at the last frame, where the stone is {s.frame['stone']['face']}"
+
+
+def QColorBytes(hex_colour):
+    """A colour as the bytes of an RGB32 pixel in memory (blue, green, red, opaque), to count it in an image."""
+    h = hex_colour.lstrip("#")
+    return bytes([int(h[4:6], 16), int(h[2:4], 16), int(h[0:2], 16), 255])
 
 
 def test_three_stage_frames_of_each_start_here_tip_show_the_ask_the_work_and_the_result(drawn):

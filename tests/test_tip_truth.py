@@ -22,6 +22,7 @@ from test_brain_focus import brain  # noqa: F401  (a fixture)
 from test_desk_qml import app, desk  # noqa: F401  (fixtures)
 from test_pill_qml import bar  # noqa: F401  (a fixture)
 
+from bombadil import desk as desk_module
 from bombadil import launcher, narrate, paths, tip_scene, tips
 
 ROWS, PROBLEMS = tips.load_rows(paths.tips_table().read_text(encoding="utf-8"))
@@ -73,9 +74,9 @@ def fields(tip):
             if not isinstance(r, str) and len(r) > 1 and isinstance(r[1], str) and r[1] not in tip_scene.NOW_STATES:
                 out.append(("value", row_tag, r[1]))
         if b.get("title"):
-            out.append(("title", tag, b["title"]))
+            out.append(("title", "template", b["title"]))
         if b.get("why"):
-            out.append(("why", tag, b["why"]))
+            out.append(("why", "template", b["why"]))
         for c in b.get("columns") or []:
             out.extend(("cell", tag, x) for x in c)
         if b.get("picture"):
@@ -99,6 +100,7 @@ def said(home, monkeypatch, brain, desk, bar):  # noqa: F811
     tt.brain_says(s, brain, monkeypatch)
     tt.shell_says(s)
     tt.desk_says(s, desk, s.touched)
+    tt.bang_ends(s, bar, monkeypatch)
     tt.pill_says(s, bar)
     tt.buttons(s)
     return s
@@ -164,6 +166,34 @@ def test_a_line_with_a_command_has_the_edge_that_command_has(said):
                 assert edged == [] or b["line"] not in {k[0] for k in edged}, f"{row.id}: {b['line']!r} lost its edge"
 
 
+# -- buttons: Undo and Details are for a turn that changed something --
+
+def test_a_typed_command_changes_nothing_so_the_pill_gives_its_output_no_buttons(said):
+    """agentd ends a `!command` with changed false (no step of it is a change), and the real pill draws no Undo and
+    no Details under it: a bang scene shows exactly the buttons the pill shows."""
+    assert said.bang.end["changed"] is False and said.bang.end["irreversible"] is False
+    assert said.bang.buttons == [] and said.bang.line
+    outputs = [b for row in ROWS for b in row.beats if b.get("tag") == "output"]
+    assert outputs, "no scene shows a command's output"
+    for b in outputs:
+        assert list(b.get("buttons") or ()) == said.bang.buttons, b["line"]
+
+
+def test_a_line_has_buttons_only_after_a_step_that_changed_something(said):
+    """Undo and Details close a turn that changed something. So a scene that draws them has shown, before, a step
+    the narrator counts as a change (it gives that step a `done`)."""
+    seen = 0
+    for row in ROWS:
+        steps = []
+        for b in row.beats:
+            if b.get("line"):
+                steps.append(b["line"])
+            if b.get("buttons"):
+                seen += 1
+                assert any(line in said.changes for line in steps), f"{row.id}: buttons after no step that changed anything"
+    assert seen >= 5
+
+
 # -- consistency: the strings of one scene agree with each other --
 
 def beats_of(tid):
@@ -217,6 +247,19 @@ def test_the_bars_are_the_filesystems_the_disk_picture_draws_and_the_full_one_is
     assert next(b["picture"] for b in BY_ID["disk"].beats if b.get("picture")) == said.disks["card"]["title"]
 
 
+def test_a_finished_job_reads_the_same_on_its_card_and_on_the_line(said):
+    """A job that ends is "done in 3 min" on its Watching row, "finished" on the card, and "<title> is done in 3 min."
+    on the line, all at the same moment: a scene never shows the line done beside a card that is still counting."""
+    beats = BY_ID["tests"].beats
+    ended = next(b for b in beats if "is done in" in b.get("line", ""))
+    assert ended.get("card") == "watching" and ended["why"] == "finished"
+    (label, value), = ended["rows"]
+    assert said.has("value", value) and said.has("why", ended["why"]) and said.has("label", label)
+    assert ended["line"] == f"{label} is {value}."
+    for b in beats[:beats.index(ended)]:
+        assert "is done" not in b.get("line", "")
+
+
 def test_the_machine_card_shows_the_rows_the_vitals_make_and_how_full_each_meter_is(said):
     for tid in ("machine", "keep"):
         b = next(b for b in BY_ID[tid].beats if b.get("card") == "machine")
@@ -235,13 +278,20 @@ def test_the_stop_is_of_the_step_that_was_running_and_undo_is_of_what_was_asked(
     assert next(b["line"] for b in undo if b.get("buttons")) == "Installed htop."
 
 
-def test_a_folded_desk_shows_the_strips_of_the_cards_it_folded():
+def test_a_folded_desk_shows_the_strips_of_the_cards_it_folded_and_then_unfolds():
     beats = BY_ID["desk"].beats
-    fold = next(b for b in beats if b.get("fold"))
+    folds = [b for b in beats if "fold" in b]
+    assert [b["fold"] for b in folds] == [True, False]                      # "desk" folds it, "desk" again unfolds
     now = next(b for b in beats if b.get("card") == "now")
-    counting = [b for b in beats if b.get("card") == "watching"]
-    assert fold["strips"] == [now["why"].split(" · ")[0].lower(), f"{len(counting)} counting"]
+    counting = [r for b in beats if b.get("card") == "watching" for r in b["rows"]]
+    shown = [now["why"].split(" · ")[0].lower()] + ([f"{len(counting)} counting"] if counting else [])
+    assert folds[0]["strips"] == shown
     assert next(b for b in BY_ID["timer"].beats if b.get("fold"))["strips"] == ["1 counting"]
+    # each answer is said as the desk says it, and the cards come back in the same beat as the second one
+    d = desk_module.Desk()
+    said_fold, said_unfold = d.apply("toggle")[1], d.apply("toggle")[1]
+    assert [b["line"] for b in beats if b.get("line") in (said_fold, said_unfold)] == [said_fold, said_unfold]
+    assert folds[1]["line"] == said_unfold and "line" not in folds[0]
 
 
 def test_a_waiting_ask_is_one_the_person_typed_and_says_why_it_waits_in_the_chip_words_the_code_has(said):

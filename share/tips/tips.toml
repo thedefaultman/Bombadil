@@ -140,8 +140,8 @@ beats = [
   { type = "!uname -r" },
   { key = "enter", phase = 1 },
   { stone = "working", line = "On it", tag = "template", counter = true },
-  { hold = 900 },
-  { stone = "done", line = "6.17.2-arch1-1", tag = "output", buttons = ["Details"], phase = 2 },
+  { line = "Running uname", tag = "template" },
+  { stone = "done", line = "6.17.2-arch1-1", tag = "output", phase = 2 },
   { hold = 2200 },
 ]
 
@@ -162,7 +162,7 @@ beats = [
   { key = "enter", phase = 1 },
   { stone = "working", line = "Changing Tickets, 180 lines", tag = "template", counter = true },
   { window = "Tickets", tag = "model", reload = true, columns = [["Due", "Oct 3", "Oct 6", "Oct 9"]], phase = 2 },
-  { stone = "done", line = "Changed Tickets. It has a Due column.", tag = "model", buttons = ["Undo", "Details"] },
+  { stone = "done", line = "Tickets has a Due column.", tag = "model", buttons = ["Undo", "Details"] },
   { hold = 1200 },
 ]
 
@@ -204,7 +204,7 @@ beats = [
   { stone = "working", line = "On it", tag = "template", counter = true },
   { line = "Building Passwords, 210 lines", tag = "template" },
   { window = "Passwords", tag = "model", lock = "Locked after 5 minutes idle", phase = 2 },
-  { stone = "done", line = "Made Passwords. It locks after 5 minutes idle.", tag = "model", buttons = ["Undo", "Details"] },
+  { stone = "done", line = "Made Passwords. It locks itself.", tag = "model", buttons = ["Undo", "Details"] },
   { hold = 1400 },
 ]
 
@@ -267,11 +267,10 @@ captions = ["You ask", "It works", "You have it"]
 beats = [
   { type = "Install rust and set it up" },
   { key = "enter", phase = 1 },
-  { stone = "working", card = "now", tag = "template", title = "Install rust and set it up", why = "Step 1 of 3 · Esc stops", rows = [["Installing rustup", "current"], ["Install stable Rust", "next"], ["Check cargo", "next"]], line = "Installing rustup", tone = "amber", command = "sudo pacman -S --noconfirm rustup", counter = true },
+  { stone = "working", card = "now", tag = "template", title = "Install rust and set it up", why = "Step 1 of 3 · Esc stops", rows = [["Installing rustup", "current"], ["Install stable Rust", "next"], ["Check cargo", "next"]], line = "Installing rustup", tone = "amber", command = "sudo pacman -S --noconfirm rustup", counter = 39 },
   { card = "now", tag = "template", why = "Step 2 of 3 · 1 package so far · Esc stops", phase = 2, rows = [["Install rustup", "done"], ["Installing stable Rust", "current"], ["Check cargo", "next"]], line = "Installing stable Rust" },
-  { card = "now", tag = "template", why = "done in 41 s · Undo is above the pill", rows = [["Install rustup", "done"], ["Install stable Rust", "done"], ["Check cargo", "done"]] },
-  { stone = "done", line = "Installed rust. cargo is ready.", tag = "model", buttons = ["Undo", "Details"] },
-  { hold = 1000 },
+  { stone = "done", card = "now", tag = "model", why = "done in 41 s · Undo is above the pill", rows = [["Install rustup", "done"], ["Install stable Rust", "done"], ["Check cargo", "done"]], line = "Installed rust. cargo is ready.", buttons = ["Undo", "Details"] },
+  { hold = 1800 },
 ]
 
 [[tip]]
@@ -293,7 +292,7 @@ beats = [
   { card = "watching", tag = "template", rows = [["Shop tests", "40 s so far"]] },
   { stone = "done", line = "Started the tests. They run in the background.", tag = "model", phase = 2 },
   { hold = 700 },
-  { line = "Shop tests is done in 3 min.", tag = "template" },
+  { card = "watching", tag = "template", why = "finished", rows = [["Shop tests", "done in 3 min"]], line = "Shop tests is done in 3 min." },
 ]
 
 [[tip]]
@@ -374,13 +373,16 @@ tried_when = ["local:desk"]
 captions = ["You ask", "It works", "You have it"]
 beats = [
   { stone = "working", card = "now", tag = "template", title = "Install rust and set it up", why = "Step 2 of 2 · Esc stops", rows = [["Install rustup", "done"], ["Installing stable Rust", "current"]] },
-  { card = "watching", tag = "template", rows = [["Timer, 25 min", "24:59 left"]], phase = 1 },
   { key = "super" },
   { type = "desk" },
-  { key = "enter", phase = 2 },
-  { fold = true, strips = ["step 2 of 2", "1 counting"], tag = "template" },
+  { key = "enter", phase = 1 },
+  { fold = true, strips = ["step 2 of 2"], tag = "template" },
   { line = "Folded the desk.", tag = "template" },
-  { hold = 1700 },
+  { key = "super" },
+  { type = "desk", phase = 2 },
+  { key = "enter" },
+  { fold = false, line = "Unfolded the desk.", tag = "template" },
+  { hold = 1000 },
 ]
 
 [[tip]]
@@ -417,13 +419,15 @@ card = true
 tried_when = ["local:why"]
 captions = ["You ask", "It works", "You have it"]
 beats = [
-  { stone = "working", line = "Installing docker", tag = "template", tone = "amber", command = "sudo pacman -S --noconfirm docker", counter = 3 },
-  { hold = 1400 },
-  { key = "super", phase = 1 },
-  { type = "why" },
-  { key = "enter" },
-  { line = "Docker comes first in this setup.", tag = "model", phase = 2 },
-  { hold = 1800 },
+  { type = "install docker and set it up" },
+  { key = "enter", phase = 1 },
+  { stone = "working", line = "Installing docker", tag = "template", tone = "amber", command = "sudo pacman -S --noconfirm docker", counter = true },
+  { hold = 600 },
+  { key = "super" },
+  { type = "why", hold = 500 },
+  { key = "enter", phase = 2 },
+  { line = "Docker comes first in this setup.", tag = "model" },
+  { hold = 1500 },
 ]
 
 [[tip]]

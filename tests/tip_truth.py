@@ -47,6 +47,7 @@ class Said:
     def __init__(self):
         self.pool = defaultdict(dict)
         self.risk = {}                 # (line, command) -> the risk narrate gave that step
+        self.changes = set()           # the step lines that change something (narrate gives them a `done`)
 
     def add(self, role, text, where):
         assert role in ROLES, role
@@ -63,6 +64,8 @@ def step(said, name, args, where=None):
     """A tool's step line, as the narrator says it while the tool runs."""
     s = narrate.tool_step(name, args)
     said.add("line", s.text, where or f"narrate.tool_step({name})")
+    if s.done:
+        said.changes.add(s.text)
     return s
 
 
@@ -74,6 +77,8 @@ def shell(said, command, description=None):
     if s.command:
         said.add("command", s.command, where)
     said.risk[(s.text, s.command)] = s.risk
+    if s.done:
+        said.changes.add(s.text)
     return s
 
 
@@ -94,7 +99,7 @@ def narrated(said, home):
     step(said, os_tool + "show_card", {"title": "How a VPN works"})
     step(said, os_tool + "show_card", {"title": "How the shop modules fit"})
     for command in ("sudo pacman -S --noconfirm docker", "sudo pacman -S --noconfirm htop",
-                    "sudo pacman -S --noconfirm rustup"):
+                    "sudo pacman -S --noconfirm rustup", "uname -r"):
         shell(said, command)
     shell(said, "rustup default stable", "Install stable Rust")
     # What a stopped turn says, a finished one and the counts of one still going.
@@ -295,6 +300,30 @@ def brain_module():
     return test_brain_focus
 
 
+def bang_ends(said, bar, monkeypatch):
+    """A typed `!command` through a real agentd, and what the real pill draws when it ends: its turn_end, the line, and
+    the buttons under it. Undo and Details come only after a turn that changed something (shell/StatusLine.qml)."""
+    from test_agentd import _ask, _read_until, _start
+
+    # a turn looks at the machine before it starts (for its receipt); this is not about the machine it runs on
+    monkeypatch.setattr(agentd.sysmap, "snapshot", lambda *a, **k: {})
+
+    async def run():
+        d = agentd.AgentD(providers.Fake("x"), agentd._NoSnapshots())
+        server, r, w = await _start(d)
+        await _ask(w, "!uname -r")
+        msgs = await _read_until(r, "turn_end")
+        w.close()
+        server.cancel()
+        return [m for m in msgs if m.get("type") == "event"]
+    events = asyncio.run(run())
+    for ev in events:
+        bar.send(**{k: v for k, v in ev.items() if k != "type"})
+    said.bang = SimpleNamespace(
+        end=next(e for e in events if e["kind"] == "turn_end"), line=bar.text(),
+        buttons=[label for name, label in (("undoButton", "Undo"), ("detailsButton", "Details")) if bar.shown(name)])
+
+
 def shell_says(said):
     """A "!" command's result is the last lines of its output, whole."""
     p = providers.Shell()
@@ -324,6 +353,13 @@ def desk_says(said, desk_qml, touched):
     row = d.watch["rows"][0]
     said.add("label", row["title"], "the Watching card")
     said.add("value", row["sub"], "the Watching card")
+    # The same job once it has ended: the row reads "done in 3 min" and the card says "finished".
+    d.jobs(job("a1b2", "Shop tests", kind="job", state="done", ended=T0 + 180))
+    d.clock(181)
+    row = d.watch["rows"][0]
+    said.add("label", row["title"], "the Watching card, done")
+    said.add("value", row["sub"], "the Watching card, done")
+    said.add("why", d.watch["why"], "the Watching card, done")
     # The Now card: the ask for its title, the step counter for its why line, strips for a folded one.
     d.jobs()
     prompt = "Install rust and set it up"

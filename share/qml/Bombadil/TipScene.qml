@@ -446,7 +446,7 @@ Item {
                     width: win.width * 0.5; height: st.m.small ? 18 : 30; radius: 6
                     color: Theme.panel
                     border.width: 1
-                    border.color: st.ink ? Theme.borderActive : Theme.accent
+                    border.color: Theme.borderActive         // waiting for a password; orange is the machine acting
                 }
             }
         }
@@ -900,7 +900,9 @@ Item {
         opacity: c.shown
         scale: 0.6 + 0.4 * c.arrive
         transformOrigin: fromRight ? Item.BottomRight : Item.BottomLeft
-        readonly property string heading: c.kind === "now" && c.title !== "" ? c.title
+        // A Now card says its task (the ask, in the user's words). A poster is a picture of the machine, with no
+        // names in it, and the task does not fit 84 px whole: it says "Now", as the card does with no task.
+        readonly property string heading: c.kind === "now" && c.title !== "" && !ink ? c.title
                                          : c.kind === "now" ? "Now" : c.kind === "watching" ? "Watching" : "Machine"
         Column {
             id: body
