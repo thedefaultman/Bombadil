@@ -1636,8 +1636,10 @@ check("a card let go in the middle of the screen stays where it was",
       (st["rails"], st["order"], st["stripped"]) == before and st.get("drag") is None
       and wait(lambda m: m.get("type") == "desk", 0.5, n) is None, (st["order"], st.get("drag")))
 
-# put the desk back as it was, for what follows
-send({"type": "desk", "op": "move", "widget": "machine", "rail": "right", "rank": 2})   # (before Tips, which is last)
+# put the desk back as it was, for what follows. Machine goes first, so that it has left the left rail when Watching
+# is put second there. Watching is still in the right rail then and holds a place in it, so Machine's rank is 3:
+# after Watching, Needs you and Away and before Tips (it is 2 once Watching has gone).
+send({"type": "desk", "op": "move", "widget": "machine", "rail": "right", "rank": 3})
 send({"type": "desk", "op": "move", "widget": "watching", "rail": "left", "rank": 1})
 inject({"type": "jobs", "jobs": []})
 inject({"type": "dev", "sessions": [], "attention": [], "front": "", "line": ""})
@@ -2547,7 +2549,7 @@ check("end reviewer ends it and keeps its copy",
 time.sleep(1)
 shot("39-ended")
 
-# 31. Tips: the card on the desk's right rail, for a new person's first week. Every section above runs with Tips
+# 32. Tips: the card on the desk's right rail, for a new person's first week. Every section above runs with Tips
 # off (BOMBADIL_TIPS=0, as the pytest suite does) so no card sits over what they check; agentd is started once
 # more with it on and the real chain is walked: agentd's card, the face on the rail, the arrows and the x, the
 # button (the words go to the pill and nothing runs), the person's own Enter (the words are their ask, so the tip

@@ -1,6 +1,9 @@
+import ast
 import random
+import re
 import threading
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -665,3 +668,26 @@ def test_a_desk_file_from_before_tips_gets_the_card_last_in_the_right_rail(home)
 ])
 def test_the_agents_desk_tool_works_when_the_words_ask_for_tips_on_the_desk(words, asked):
     assert desk.asked_for_desk(words) is asked
+
+
+def test_the_desktop_test_puts_the_desk_back_in_the_order_it_found_it(home):
+    """Section 12 of tests/desktop/driver.py drags Watching to the right rail and Machine to the left, then sends
+    moves to put them back and checks the order. It needs the image and is not run here, so its moves and the
+    order it expects are read from its source and replayed on a real Desk: a rank that lands a place too early
+    (Watching still holds a place in the right rail when Machine goes back before Tips) shows here, not after a
+    run of twenty-five minutes."""
+    source = (Path(__file__).parent / "desktop" / "driver.py").read_text()
+    after = source.split("# put the desk back as it was, for what follows", 1)[1].split("# 13. Away", 1)[0]
+    sends = re.findall(r'^send\((\{"type": "desk", "op": "move".*\})\)$', after, re.MULTILINE)
+    moves = [ast.literal_eval(m) for m in sends]
+    expected = ast.literal_eval(re.search(r'st\["order"\] == (\{.*\})\n', after).group(1))
+    assert {m["widget"] for m in moves} == {"watching", "machine"}
+    d = fresh(home)
+    start = d.snapshot()["order"]
+    d.apply("move", "watching", "right", 0)               # the drags before it
+    d.apply("fold", "machine")
+    d.apply("move", "machine", "left", 0)
+    for m in moves:
+        assert d.apply("move", m["widget"], m["rail"], m["rank"])[0]
+    assert d.snapshot()["order"] == expected == start and d.snapshot()["stripped"] == []
+

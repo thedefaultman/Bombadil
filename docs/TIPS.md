@@ -468,7 +468,7 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips_card_qml.py tests/te
   launcher word; `tests/test_agentd_tips.py` agentd's `present` following the desk (kept after the first week, no
   longer kept, the x, "keep" from away, a restart); `tests/test_widgets_card_qml.py` Tips's row on the Widgets card
   with its three parts; `tests/test_pill_qml.py` the hand-off (the cursor, kept words, the ellipsis, Enter and Esc).
-- `tests/desktop/driver.py`, section 31: agentd with Tips on in headless sway, the card on the rail, the arrows
+- `tests/desktop/driver.py`, section 32: agentd with Tips on in headless sway, the card on the rail, the arrows
   by a virtual pointer, the button (the summon, no turn), Enter (the turn and the tried tip), the card turning
   12 s after, the x, and then the words "keep tips" (the sentence, `desk.toml`, the card back). Every other
   section runs with `BOMBADIL_TIPS=0`.
