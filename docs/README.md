@@ -10,7 +10,7 @@ The project's documents, next to its code.
 - `VM-TESTING.md`: the whole-system smoke test in a VM, with a diagram, what it covers and its traps.
 - `VOICE.md`: the name card, the three voices, the welcome line and empty places: how it is built and how to extend it.
 - `BRAIN.md`: the brain (the self-writing index and the Focus window): principles, architecture, data model, the watcher's contract, the UX, and how to build on it.
-- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget.
+- `DESK.md`: the desk's widgets, rails and strips: how it is built, what it says to agentd, how to add a widget, and Your desk (Keep, When needed and Off for each widget, the Widgets card, a kept Machine at rest).
 - `TIPS.md`: Tips, what a new person can ask: the table of tips and its gates, what counts a tip as tried, `tips.json`, the card agentd tells the shell, the wire protocol, how to add a tip. Has marked places for the Tips app and the Tips card.
 - `MOTION.md`: reduced motion: the one switch (`Theme.reducedMotion`, from `BOMBADIL_REDUCE_MOTION=1`), what every surface does under it, how to honour it in a new component, how to test it, and the guard that fails an animation that forgot it.
 - `pictures.md`: how the pictures above the pill read the machine, and what a real VM taught us.

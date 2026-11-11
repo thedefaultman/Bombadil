@@ -968,9 +968,12 @@ QtObject {
 
     // -- the launcher: completing and recognising names --
 
-    readonly property var _verbs: ["open ", "show ", "launch ", "start ", "close ", "quit ", "hide "]
+    readonly property var _verbs: ["open ", "show ", "launch ", "start ", "close ", "quit ", "hide ", "keep "]
     // A widget's name means the desk only after one of these ("start now" is for the agent).
     readonly property var _widgetVerbs: ["open ", "show ", "close ", "hide "]
+    // "keep machine on the desk": only the widgets on the Widgets card take it (the entry says so: `keep`), and the
+    // tail says where, which the verb already means. Nothing else is kept: "keep calendar" is for the agent.
+    readonly property var _keepTails: [" on the desk", " on my desk"]
 
     function _split(text) {
         const t = String(text || "").toLowerCase().replace(/^\s+/, "")
@@ -994,7 +997,8 @@ QtObject {
         if (s.rest.length < 2) return ""
         for (const e of entries) {
             if (s.verb && e.kind === "command") continue
-            if (e.kind === "widget" && _widgetVerbs.indexOf(s.verb) < 0) continue
+            if (s.verb === "keep ") { if (e.kind !== "widget" || !e.keep) continue }
+            else if (e.kind === "widget" && _widgetVerbs.indexOf(s.verb) < 0) continue
             for (const w of (e.words || [])) {
                 if (w.length > s.rest.length && w.startsWith(s.rest)) return w.slice(s.rest.length)
             }
@@ -1006,16 +1010,22 @@ QtObject {
     function exact(text) {
         if (String(text || "").trim().startsWith("!")) return ""
         const s = _split(text)
-        const rest = s.rest.trim().replace(/[.!?,;:]+$/, "")
+        let rest = s.rest.trim().replace(/[.!?,;:]+$/, "")
+        if (s.verb === "keep ") {
+            for (const tail of _keepTails)
+                if (rest.endsWith(tail)) { rest = rest.slice(0, rest.length - tail.length).trim(); break }
+        }
         const k = _key(rest)
         const title = _title(rest)
         if (!k && !title) return ""
         // A question about the desk ("desk?", "show machine?") goes to the agent, not the launcher.
         const asks = /\?\s*$/.test(String(text || ""))
         for (const e of entries) {
+            // Only the widgets on the card are kept, and nothing else by that word.
+            if (s.verb === "keep " && (e.kind !== "widget" || !e.keep || asks)) continue
             if (e.kind === "app" && title === _title(e.title)) return e.title || e.name
             if (!k || (s.verb && e.kind === "command")) continue
-            if (e.kind === "widget" && (asks || _widgetVerbs.indexOf(s.verb) < 0)) continue
+            if (e.kind === "widget" && (asks || (s.verb !== "keep " && _widgetVerbs.indexOf(s.verb) < 0))) continue
             if (asks && e.name === "desk") continue
             for (const w of (e.words || []).concat([e.name, String(e.title || "").toLowerCase()])) {
                 if (_key(w) === k) return e.title || e.name
