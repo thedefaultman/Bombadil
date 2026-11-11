@@ -143,6 +143,9 @@ AppWindow {
                 font.weight: Font.DemiBold
             }
 
+            // The button (or the marks) and Replay share the stage's 576 px: each takes its own width and the button
+            // or the marks give it up, eliding, when the two are wider than the stage. Nothing is added after
+            // Replay, so the sum the layout makes is the width of what is drawn.
             RowLayout {
                 objectName: "actions"
                 Layout.fillWidth: true
