@@ -203,7 +203,7 @@ class Facts:
     sessions: bool = False   # the coding-sessions code is on this machine
     mail: bool = False       # the mail tips' code is on this machine
     noticed: bool = False    # the self-improvement code is on this machine
-    keep: bool = False       # the desk can keep a widget
+    keep: bool = False       # the desk can keep a widget (read_facts says so: this code has `keep`)
     desk_seen: bool = False  # a desk card other than Tips has been on the screen
 
     @property
@@ -306,11 +306,11 @@ def newest_project(projects_dir: Path) -> str:
 
 def read_facts(*, ai: str = "", installed: bool = False, desk_seen: bool = False, apps_dir: Path | None = None,
                projects_dir: Path | None = None, has_module: Callable[[str], bool] | None = None,
-               mail: bool = False, noticed: bool = False, keep: bool = False) -> Facts:
+               mail: bool = False, noticed: bool = False, keep: bool = True) -> Facts:
     """What this machine can back, from the folders and the code it has. The AI, the disk and the desk are
     agentd's to say (it knows the setup, the restore points and what the desk showed); the folders are read
-    here. `mail`, `noticed` and `keep` stay false until the code each tip needs is on main: the PR that
-    ships it flips its fact (docs/TIPS.md)."""
+    here. `mail` and `noticed` stay false until the code each tip needs is on main: the PR that ships it
+    flips its fact (docs/TIPS.md). `keep` is flipped: the desk keeps widgets (desk.py, `Desk.kept`)."""
     has_module = has_module or (lambda name: find_spec(name) is not None)
     try:
         sessions = has_module("bombadil.dev")

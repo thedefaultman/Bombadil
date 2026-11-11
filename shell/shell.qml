@@ -36,12 +36,17 @@ ShellRoot {
     readonly property bool reducedMotion: Quickshell.env("BOMBADIL_REDUCE_MOTION") === "1"
     Binding { target: Kit.Theme; property: "reducedMotion"; value: root.reducedMotion }
 
+    // The Widgets card is open only while the pill holds the keyboard: whatever lets go of it (Esc, a click
+    // elsewhere, Super, Enter, the drawer taking it) closes the card with it.
+    onSummonedOnChanged: if (summonedOn === "") deskState.closeWidgets()
+
     // Not "pill": inside StatusLine { pill: ... } that name is the line's own property.
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
         onSummoned: text => root.summon(text)
         onHandOff: root.release()
+        onAiOpenChanged: if (aiOpen) deskState.closeWidgets()   // one card over the pill at a time
         onAsked: root.summonKeep()
         onWelcomeShown: root.welcomeOn = root.focusedScreen()
         // A full-screen window in front: a greeting is dropped rather than drawn over it.
@@ -116,6 +121,13 @@ ShellRoot {
         pill: pillState
         onOutgoing: msg => root.write(msg)
         onWindowOpened: pillState.windowOpened()
+        // The words "widgets" put the card above the pill, and the pill takes the keyboard for it (every time:
+        // the card is open only while the pill holds it).
+        onWidgetsRequested: {
+            pillState.closeAi()
+            root.takeKeyboard()
+            if (root.summonedOn === "") deskState.closeWidgets()   // no screen to hold it: it has no card
+        }
     }
     // The screen the desk lives on: the one desk.toml names, or the first when it names none or one
     // that is not plugged in (a desk on no screen would hide Needs you too).
@@ -273,6 +285,10 @@ ShellRoot {
         root.summonedOn = root.cardOn
     }
 
+    // The pill that was typed into (else the one on the focused screen) takes the keyboard and keeps it: no toggle,
+    // for what asks for it (the Widgets card), not for a tap on Super. The keys are the pill's, as after a tap on Super.
+    function takeKeyboard() { root.cardKeys = false; root.summonedOn = root.focusedScreenName() }
+
     // Running apps, for the chips above the prompt. Each app window lives in its own special
     // workspace "special:app-<name>" (bombadil-app's placement.py puts it there).
     property var specials: ({})   // monitor name -> special workspace shown on it ("" = none)
@@ -363,6 +379,7 @@ ShellRoot {
                 Region { item: sessionChips.visible ? sessionChips : null }   // (a hidden item keeps its last place)
                 Region { item: appChips }
                 Region { item: aiCard.visible ? aiCard : null }
+                Region { item: widgetsCard.visible ? widgetsCard : null }
                 Region { item: pillBox }
                 Region { item: stripsLeft }
                 Region { item: stripsRight }
@@ -451,8 +468,9 @@ ShellRoot {
                 id: idle
                 // (a person writing a reply in a card is not idle, and a longer pause is a person thinking)
                 interval: pillState.composing ? 120000 : (input.text === "" ? 20000 : 60000)
-                // Not while the persona card is up: it is waiting for an answer, and typing a name is slow.
-                running: win.summoned && !personaCard.shown
+                // Not while a card is up: the Widgets card is read at the person's pace, and the persona card is
+                // waiting for an answer that is slow to type; the keyboard stays.
+                running: win.summoned && !widgetsCard.shown && !personaCard.shown
                 onTriggered: root.release()
             }
 
@@ -495,8 +513,10 @@ ShellRoot {
                     Layout.alignment: Qt.AlignHCenter
                     Component.onCompleted: setSource("CardHost.qml", {
                         pill: pillState, maxHeight: Math.round(modelData.height * 0.6) })
-                    // A full-screen window on this screen puts the picture away (it is still there after).
-                    Binding { target: cardHost.item; property: "suppressed"; value: win.capsule; when: cardHost.item !== null }
+                    // A full-screen window on this screen, or the Widgets card, puts the picture away (it is still there
+                    // after): the picture may take 60% of the screen, and the two together would push its top off a
+                    // small one.
+                    Binding { target: cardHost.item; property: "suppressed"; value: win.capsule || widgetsCard.shown; when: cardHost.item !== null }
                     // A card with a box is drawn on one screen (a picture, on every one: the host knows which is which).
                     Binding {
                         target: cardHost.item; property: "onThisScreen"; when: cardHost.item !== null
@@ -659,6 +679,16 @@ ShellRoot {
                     Layout.alignment: Qt.AlignHCenter
                 }
 
+                // The Widgets card: what each widget is set to (Keep, When needed, Off), opened by the word
+                // "widgets". Open only while this pill holds the keyboard.
+                WidgetsCard {
+                    id: widgetsCard
+                    desk: deskState
+                    active: win.summoned
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignHCenter
+                }
+
                 // Prompt bar
                 Rectangle {
                     id: pillBox
@@ -746,6 +776,7 @@ ShellRoot {
                                     if (win.summoned) idle.restart()
                                     if (text !== "") pillState.dismissWelcome()
                                     if (text !== "") pillState.closeAi()
+                                    if (text !== "") deskState.closeWidgets()
                                 }
                                 // Tab takes the suggested name: "pass" + Tab = "passwords". In an empty
                                 // pill it walks to the next session waiting for you.
@@ -758,11 +789,14 @@ ShellRoot {
                                     const rest = pillState.completion(text)
                                     if (rest) text = text + rest
                                 }
-                                // Esc stops a running turn; otherwise it puts the AI card away (and gives the
-                                // keyboard back), clears, then puts the line, the picture and the drawer away
-                                // and gives the keyboard back.
+                                // Esc puts the Widgets card away first, whatever is running: it is the card on top, and
+                                // it can be open while a turn works (a launcher word does not wait for a turn), so the
+                                // first Esc closes it and a second one stops the turn. Then it stops a running turn or a
+                                // sign-in; otherwise it puts the AI card away, clears, then puts the line, the picture
+                                // and the drawer away. Closing a card gives the keyboard back.
                                 Keys.onEscapePressed: {
-                                    if (pillState.stoppable) pillState.stop()
+                                    if (widgetsCard.shown) { deskState.closeWidgets(); root.release() }
+                                    else if (pillState.stoppable) pillState.stop()
                                     else if (pillState.aiOpen) { pillState.closeAi(); root.release() }
                                     else if (text !== "") text = ""
                                     else { pillState.dismiss(); pillState.dismissWelcome(); pillState.closeDetails(); root.release() }
