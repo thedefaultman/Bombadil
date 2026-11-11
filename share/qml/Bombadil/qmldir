@@ -37,3 +37,7 @@ Meter 1.0 Meter.qml
 Ring 1.0 Ring.qml
 StackedBar 1.0 StackedBar.qml
 Diagram 1.0 Diagram.qml
+# Internal: the shell and the Tips app draw these, an app the agent writes may not (appkit/check.py
+# refuses them there), and share/skills/bombadil-apps does not list them.
+Stone 1.0 Stone.qml
+TipScene 1.0 TipScene.qml

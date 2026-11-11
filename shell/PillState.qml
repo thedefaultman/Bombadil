@@ -142,7 +142,7 @@ QtObject {
     // agentd's persona_ask while the card is up, else null:
     // {line, name, voice, current, voices: [{id, name, card}]}
     property var personaAsk: null
-    // The mark's face (Stone.qml): what the machine is doing, in a word. The pill adds "listening" for
+    // The mark's face (Kit.Stone): what the machine is doing, in a word. The pill adds "listening" for
     // the screen that holds the keyboard.
     //   starting  since boot, until agentd first answers (not yet offline)
     //   offline   agentd was there and is gone, or never came

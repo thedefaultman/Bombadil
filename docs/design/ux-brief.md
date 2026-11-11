@@ -69,7 +69,7 @@ Build these six pieces in this order. The first two change how every ask feels. 
 
 ### 6. First boot happens in the pill
 
-**What you see:** After boot the screen is dark except for the pill. With no network, it lists Wi-Fi networks as chips and takes the password in the pill. Next come two large chips, Claude and Codex. Clicking Claude slides the browser in on the sign-in page and back out when you finish, and the pill says "Signed in. Ask me for anything." The empty pill then offers three example chips ("Show me the web", "Make me a password manager", "What's using my memory?"), and for the first day one faint line reads "Super to talk. Esc to stop. Say undo to go back." At no point do you see a terminal, a terms page or a promo tab.
+**What you see:** After boot the screen is dark except for the pill. With no network, it lists Wi-Fi networks as chips and takes the password in the pill. Next come two large chips, Claude and Codex. Clicking Claude slides the browser in on the sign-in page and back out when you finish, and the pill says "Signed in. Ask me for anything." A still Tips card then settles into the corner with one thing to ask (see `tips-and-desk-defaults-brief.md`; it replaced the three example chips that were designed here and never built), and for the first day one faint line reads "Super to talk. Esc to stop. Say undo to go back." At no point do you see a terminal, a terms page or a promo tab.
 
 **Why first:** The first minute decides whether this reads as an OS or as a Linux project. Today that minute shows a foot terminal wizard and Chromium's terms page. Two parts of the fix take about an hour each and can ship today: the Chromium policy file, and preinstalling both CLIs in the image.
 
@@ -83,7 +83,7 @@ This is how a day should feel once the six pieces above and the best of the rest
 
 **First boot.** You boot the USB stick on a laptop. The screen is dark except for the pill, which says "No internet" and shows your home network as a chip. You pick it, type the password into the pill, and pick Claude from two large chips. The browser slides in on the sign-in page and slides away when you finish, and the pill says "Signed in. Ask me for anything." A chip offers "Install on this computer", and the pill notes that undo starts once the system is installed. You pick the disk from a plain list, press the red button that names it, and the laptop restarts into the installed system, still signed in.
 
-**First minute.** The browser, the terminal and Files each slide in and back out once and name themselves, which takes ten seconds. Three example chips sit above the empty pill, with one faint line under it: "Super to talk. Esc to stop. Say undo to go back." You press "What's using my memory?" and a card rises above the pill with a bar for each app. You click the biggest one, ask "why is that so big?", and get a two-line answer.
+**First minute.** One faint line sits above the empty pill: "Super to talk. Esc to stop. Say undo to go back." A still Tips card settles into the bottom-right corner with a picture, one line and a button with the exact words of one thing to ask. You press the button and the words appear in the pill; you press Enter, and a card rises above the pill with a bar for each app. You click the biggest one, ask "why is that so big?", and get a two-line answer. (This replaces the ten-second tour and the three example chips this brief first designed; neither was built. See `tips-and-desk-defaults-brief.md`, answer 4a.)
 
 **An ordinary ask.** In the middle of the morning you are reading a long Arch Wiki page. You tap Super, and the chip at the left of the pill says "Arch Wiki: Btrfs". You type "summarize this". "On it" appears at once, then "Reading the page", then four lines that fade on their own. "The screen's too bright" dims it and leaves a slider; you nudge it and it fades. Typing "terminal" drops the terminal in instantly, and typing "stop" in the middle of a long install ends it, sudo and all.
 
@@ -163,7 +163,7 @@ Daniel agreed with all of these defaults on 2026-09-27, so they are confirmed de
 
 ### First minute
 
-- **A ten-second tour.** Right after sign-in, the browser, the terminal and Files each slide in and out once and name themselves, and then a chip offers "Make me something for what I do". The tour is a fixed script in agentd, so it is the same on both providers, and Esc skips it.
+- **Tips instead of a tour.** The ten-second tour (the browser, the terminal and Files sliding in and out once, then a chip offering "Make me something for what I do") was never built, and the owner replaced it with the Tips card and the Tips app (answer 4a to `tips-and-desk-defaults-brief.md`, 2026-11-08). The card is the one place a new user sees what to ask, and nothing on it runs until they press Enter.
 - **The built-in apps can be changed too.** Rewind, System and Settings ship as ordinary Bombadil apps in /usr/share/bombadil/apps. Your first change makes your own copy in ~/Apps, and "reset Settings" brings back the original. Build this together with Rewind.
 
 ### Ordinary asks
@@ -187,7 +187,7 @@ Daniel agreed with all of these defaults on 2026-09-27, so they are confirmed de
 - **Rewind** (signature). Super+Z or typing "history" slides up every turn, grouped by day. Each turn shows a small screenshot, your words and what changed, and typing filters by words or by a path. Clicking a turn offers "Undo just this", "Go back to before this" and "Ask about this". Rewind replaces a notification center and a recent-files list, and it should be the first app built with the kit. Keep its data under /home so a rollback never erases it.
 - **Every version of an app** (signature). "Show me Passwords from yesterday" opens a slider that steps through each change, labeled by the prompt that made it, and letting go on a version keeps it. "Make a copy for my team" makes a second app. It reads the git history from piece 3.
 - **Why is this like this?** (signature). "Why is my DNS set to 1.1.1.1?" gets an answer with the turn that changed it, the time and the old value, plus "Undo just this file". It is cheap once receipts exist, and the agent can answer from turns.jsonl before any index is built.
-- **Chips that learn your habits.** After about 20 turns, the example chips become your own most-opened apps and "Continue: <the last thing you did>", ranked locally from turns.jsonl.
+- **Chips that learn your habits.** Cut with the example chips (answer 4a to `tips-and-desk-defaults-brief.md`): there are no example chips to turn into habit chips, and noticing repeats is the Noticed chip's job (`self-improvement-brief.md`).
 
 ### When it goes wrong
 
@@ -208,6 +208,7 @@ Daniel agreed with all of these defaults on 2026-09-27, so they are confirmed de
 
 ### Cut, and why
 
+- **The three example chips above the empty pill and the ten-second tour.** Designed in the first brief, never built, and replaced by the Tips card and the Tips app on 2026-11-08 (answer 4a in `tips-and-desk-defaults-brief.md`). The faint first-day line, the one-time "Changed your mind? Say undo." and the Install button on the live USB stay.
 - **Learn undo by breaking something (the pink screen).** The first minute should show what the machine can do, and the live USB has no restore points to undo. Instead, the first real change gets a one-time "Changed your mind? Say undo."
 - **Flip an app over to see its code.** It makes the machine feel like an IDE, and "show me how this works" opening the folder covers the same need.
 - **A three-second countdown before one-way acts.** It is a guard rail by another name, it would work on Claude only, and a regex over shell commands misses scripts anyway. A red line and "can't be undone" are just as honest.

@@ -109,8 +109,9 @@ finished or failed and has not been looked at (agentd's `dev` message lists thos
 Until the coding-sessions code that sends `dev` is on the branch you run, nothing feeds the table and the
 stone never knocks for it. `DeskState.needsYou` says so, and a `Binding` inside `DeskState`
 writes it to `PillState.needsYou`, which turns the pill's stone amber and makes it knock twice every
-1.6 seconds for about ten seconds, then once more each minute while the need stands (`shell/Stone.qml`, the look
-is in the identity brief; why it does not knock without end is in [IDLE-COST](IDLE-COST.md)).
+1.6 seconds for about ten seconds, then once more every five minutes while the need stands
+(`share/qml/Bombadil/Stone.qml`, the look is in the identity brief; why it does not knock without end is in
+[IDLE-COST](IDLE-COST.md)).
 
 - **One session or many.** One waiting session is the your-turn line in the pill and no card; two or
   more raise the Needs you card. The stone knocks in both cases.
@@ -127,7 +128,7 @@ is in the identity brief; why it does not knock without end is in [IDLE-COST](ID
 
 At 24 px the knock is a small tilt that moves the stone about one pixel at its centre and two at its
 foot, and the glow is a faint halo of one to three pixels, so it is the amber colour that tells you
-first. If that proves too quiet on a real screen, the fix is in `Stone.qml`, not in the desk.
+first. If that proves too quiet on a real screen, the fix is in the kit's `Stone.qml`, not in the desk.
 
 ## Your desk: keep, when needed, off
 

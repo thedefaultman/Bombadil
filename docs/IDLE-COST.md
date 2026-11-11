@@ -62,7 +62,7 @@ flowchart TD
    a person already set is kept) and `appkit/engine.py` sets it for every kit app, since an app window is
    as exposed to it as the wallpaper is.
 2. **The stone's knock was an animation that never ended.** While anything needed the person, the `needs`
-   face of `shell/Stone.qml` ran two animations with `loops: Animation.Infinite`; an animation that runs
+   face of `share/qml/Bombadil/Stone.qml` ran two animations with `loops: Animation.Infinite`; an animation that runs
    forever makes the window draw a frame every 16 ms for as long as it runs, and a person away from the
    machine for an hour is an hour of sixty frames a second. The knock is now a *cue*: it plays for 9.6 s
    (six beats) when a need appears and rests, with the stone amber and its glow held at 0.45, and comes
