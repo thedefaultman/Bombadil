@@ -2659,6 +2659,32 @@ check("the x puts Tips away: the card goes and agentd stops saying it",
 check("and the line says the way back, as the words \"hide tips\" do",
       said and said.get("text") == "Put Tips away. Say tips to see them again.", said)
 
+# "tips" is the Tips app's word and never the card's: with the card put away it opens the app (a window of its own
+# here, the drawers are Hyprland's), the line says so, and the card stays away. "Say tips to see them again" is about
+# the tips, which the app lists; the card comes back by "keep tips" below.
+before = api_requests()
+opened = desk_word("tips")
+check('the word "tips" answers Opened Tips., and no model is called',
+      opened and opened.get("ok") and opened.get("text") == "Opened Tips." and api_requests() == before,
+      opened and (opened.get("ok"), opened.get("text")))
+
+
+def tips_app_up():
+    return "bombadil-app-tips" in run("swaymsg", "-t", "get_tree").stdout
+
+
+check("and the Tips app is up as a window", until(tips_app_up, 60), run("swaymsg", "-t", "get_tree").stdout[-300:])
+time.sleep(1)
+st = desk_state()
+text, data = desk_toml()
+shot("47a-tips-word-opens-the-app")
+check("and the card is still away: the word did not bring it back (desk.toml and the bar agree)",
+      "tips" in data.get("hidden", []) and "tips" in (st.get("hidden") or [])
+      and (st.get("faces") or {}).get("tips") == "hidden", (data.get("hidden"), st.get("hidden"), st.get("faces")))
+run("swaymsg", '[app_id="bombadil-app-tips"] kill')       # a window over the right rail would fold the card
+until(lambda: not tips_app_up(), 10)
+time.sleep(1)
+
 # "keep tips" is a launcher word: it brings the card back for good (a kept Tips is present whatever the first week
 # says), the sentence says so, desk.toml keeps it, and the card comes up once the line has faded.
 summon()
@@ -2683,6 +2709,46 @@ check("the Tips card raised no QML error",
       not [ln for ln in re.sub(r"\x1b\[[0-9;]*m", "", (OUT / "quickshell-wallpaper.log").read_text()).splitlines()
            if re.search(r"TipsCard|Tips[A-Z]\w*\.qml", ln) and re.search(r"\.qml\[|\.qml:\d+|Unable to assign|TypeError", ln)],
       "")
+
+# The card's picture is a door to the same app: a press asks agentd to open the Tips app on this tip. agentd keeps the
+# tip in tips.json for the app, shows the app, and the app reads the request and says it did (`opened`), which clears
+# it: the whole chain from the card to the window, with no model.
+tips_json = Path.home() / ".local" / "state" / "bombadil" / "tips.json"
+
+
+def open_on():
+    """The tip tips.json asks the app to open on ("" once it said it did); None while the file cannot be read."""
+    try:
+        return json.loads(tips_json.read_text()).get("open_on")
+    except (OSError, ValueError):
+        return None
+
+
+tslot = desk_state()["slots"]["tips"]
+n = mark()
+before = api_requests()
+pointer(f"move {tslot['x'] + 150} {tslot['y'] + 120}")
+time.sleep(0.8)
+pointer("press")
+time.sleep(0.15)
+pointer("release")
+check("a press on the card's picture opens the Tips app",
+      until(tips_app_up, 60), run("swaymsg", "-t", "get_tree").stdout[-300:])
+cleared = until(lambda: open_on() == "", 60)
+shot("49-tips-app-from-the-card")
+check("the app read the request and said so: agentd cleared it, and nothing ran (no turn, no model call)",
+      cleared and api_requests() == before and wait(ev("turn_start"), 1, n) is None,
+      (open_on(), api_requests() - before))
+run("swaymsg", '[app_id="bombadil-app-tips"] kill')
+until(lambda: not tips_app_up(), 10)
+
+# The desk as what comes after expects it (idle.py starts its own stack in this same home): nothing kept. "hide tips"
+# on a kept Tips only stops keeping it, and says where the app is.
+last = desk_word("hide tips")
+text, data = desk_toml()
+check("hide tips on a kept Tips says it is no longer kept, and where the app is; desk.toml keeps nothing",
+      last and last.get("ok") and last.get("text") == "Tips is no longer kept. Say tips to open the app."
+      and not data.get("kept") and "tips" not in data.get("hidden", []), (last and last.get("text"), data))
 
 (OUT / "results.json").write_text(json.dumps(results, indent=2))
 for p in procs[::-1]:
