@@ -278,9 +278,10 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest tests/test_tips.py tests/test_tip_tr
   line and the card's button to a character count instead (the reverse test, that the app-only tips really do
   not fit the row, needs the font and is skipped). It also holds the twenty scenes: every row has beats that
   validate and run 6 to 8 s (10 at most) and end on their payoff; every `card = true` poster is drawn offscreen
-  with no text under 12 px and nothing off it, no machine's names or figures, no stray orange; every tip is drawn
-  at the app's density with nothing elided; three stage frames of each Start-here tip differ; and the contact
-  sheets are saved. These need PySide6's QtQuick and are skipped as a test where it is not installed.
+  with no text under 12 px and nothing off it or cut, no machine's names or figures, no stray orange; every tip is
+  drawn at the app's density with nothing elided, its words whole in the pill before Enter and no orange where the
+  stone is not working; no window cuts what is in it; a card never reads done while the stone works; replaying
+  a tip raises no QML error; three stage frames of each Start-here tip differ; and the contact sheets are saved. These need PySide6's QtQuick and are skipped as a test where it is not installed.
 - `tests/test_tip_truth.py` is the truth test (`TIP-SCENES.md`, "The truth test"): the sentences the real code says,
   by role, and every `template` string of every scene whole among them; typed is the tip's words; a `model` string
   is at most four plain lines; the voice rules over all of it; the strings no code can be asked for are named.
