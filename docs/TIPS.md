@@ -377,8 +377,10 @@ text is drawn as plain text.
 if there is one and closes: the list (`{"type": "tips", "op": "list"}`, closed when `{"type": "tips", "list": [...]}`
 arrives; given up on after five seconds) and `opened`. A connection that stays open makes agentd sample the machine
 for as long as it lasts, and this window stays open for as long as the session does. For the same reason the kit's
-`Agent` singleton does not connect until an app reads its state or asks, so a window that only drafts holds
-nothing. A request made while one is out is asked once more when it ends, not once each.
+`Agent` singleton does not connect until an app looks at it (reads its state, listens to a signal of it, or
+asks), so a window that only drafts holds nothing. The look can be a binding in the middle of its evaluation,
+so the connection it causes is not announced to it (QML would log a binding loop): it reads the value the
+connection has. A request made while one is out is asked once more when it ends, not once each.
 
 **`tips.json`.** The Backend never writes it (agentd is its only writer, and its source has no way to write a
 file). It watches the file and its folder (agentd replaces the file, which drops a watch on the file itself) with

@@ -1440,29 +1440,141 @@ def test_a_draft_that_is_never_written_is_given_up_on(kit, monkeypatch, tmp_path
         deaf.close()
 
 
+@contextlib.contextmanager
+def _qt_messages():
+    """Everything Qt and QML print while the block runs (a binding loop is a warning there)."""
+    from PySide6.QtCore import qInstallMessageHandler
+
+    messages: list[str] = []
+    qInstallMessageHandler(lambda mode, context, text: messages.append(text))
+    try:
+        yield messages
+    finally:
+        qInstallMessageHandler(None)
+
+
+def _fresh_agent():
+    """The QML singleton as a new app would find it: not started, not connected, no timer. It is made once per
+    engine, so a test puts it back before it looks and after."""
+    a = native.agent._instance
+    if a is not None:
+        a._started = False
+        a._retry.stop()
+        a._socket.abort()
+        a._retry.stop()
+        a._connected = False
+        a._retry.setInterval(3000)
+    return a
+
+
 def test_an_app_that_only_drafts_holds_no_connection_but_one_that_reads_the_agent_connects(kit, monkeypatch, tmp_path):
     """The QML singleton connects the first time the app looks at the agent's state or asks, not when it is made:
     the Tips app drafts and nothing more, and an open line would count as a bar for the machine sampler."""
-    agent_mod = native.agent
     server = _Server(tmp_path / "agentd.sock")
     monkeypatch.setenv("BOMBADIL_SOCKET", str(tmp_path / "agentd.sock"))
-    obj = make(kit, "Item { Component.onCompleted: Agent.draft('desk', 'desk') }")
-    try:
-        a = agent_mod._instance
-        assert a is not None and a._lazy is True
-        assert wait_until(lambda: server.lines == [{"type": "summon", "text": "desk", "tip": True, "id": "desk"}])
-        spin(300)
-        assert a._started is False and server.connections == 1 and server.hung_up == 1
-        reads = make(kit, "Item { property bool up: Agent.connected }")
-        assert wait_until(lambda: a._started and server.connections == 2, 3000)     # looking connects
-        destroy(reads)
-    finally:
-        a = agent_mod._instance
-        a._retry.stop()
-        a._socket.abort()
-        a._started = False
-        server.close()
-        destroy(obj)
+    _fresh_agent()
+    with _qt_messages() as messages:
+        obj = make(kit, """Item { Component.onCompleted: {
+            Agent.draft('desk', 'desk'); Agent.draft('Where did my disk go?') } }""")
+        try:
+            a = native.agent._instance
+            assert a is not None and a._lazy is True
+            assert wait_until(lambda: len(server.lines) == 2 and server.hung_up == 2)
+            assert sorted(server.lines, key=lambda m: m["text"]) == [
+                {"type": "summon", "text": "Where did my disk go?", "tip": True},      # one argument: no id
+                {"type": "summon", "text": "desk", "tip": True, "id": "desk"}]
+            spin(300)
+            assert a._started is False and server.connections == 2 and server.hung_up == 2   # drafts only
+            unrelated = make(kit, "Item { property bool flag: true; property int count: 3 }")       # looks at nothing of it
+            spin(100)
+            assert a._started is False and server.connections == 2
+            destroy(unrelated)
+            reads = make(kit, "Item { property bool up: Agent.connected }")
+            assert wait_until(lambda: a._started and server.connections == 3, 3000)     # looking connects
+            destroy(reads)
+        finally:
+            _fresh_agent()
+            server.close()
+            destroy(obj)
+    assert messages == []
+
+
+BINDINGS = """Item {
+    property bool up: Agent.connected
+    property bool idle: !Agent.busy
+    property string who: Agent.provider
+    property string said: Agent.note + Agent.reply
+    property bool can: Agent.ready
+}"""
+
+
+def test_a_binding_on_the_agent_logs_no_error_and_reads_the_real_value_with_agentd_up_and_down(
+        kit, monkeypatch, tmp_path):
+    """The first look connects, and the connection can be made inside the binding that looks: that binding must
+    not be told of a change while it evaluates (QML calls that a binding loop and logs an error). It reads the
+    value the connection already has, as it did when the singleton connected as it was made."""
+    path = tmp_path / "agentd.sock"
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(path))
+    server = _Server(path)
+    _fresh_agent()
+    with _qt_messages() as messages:
+        up = make(kit, BINDINGS)
+        try:
+            a = native.agent._instance
+            assert up.property("up") is True and a._started is True                # no later than the first read
+            assert up.property("idle") is True and up.property("can") is True
+            server.close()
+            a._socket.abort()
+            assert wait_until(lambda: up.property("up") is False, 3000)             # and it keeps following
+        finally:
+            _fresh_agent()
+            destroy(up)
+    assert messages == []
+
+    # agentd away: false at the first look, no error, and true when it comes back.
+    path.unlink()
+    _fresh_agent()
+    with _qt_messages() as messages:
+        down = make(kit, BINDINGS)
+        again = None
+        try:
+            a = native.agent._instance
+            assert down.property("up") is False and a._started is True and a._retry.isActive()
+            a._retry.setInterval(50)
+            again = _Server(path)
+            assert wait_until(lambda: down.property("up") is True, 3000)
+        finally:
+            _fresh_agent()
+            if again is not None:
+                again.close()
+            destroy(down)
+    assert messages == []
+
+
+def test_listening_to_the_agent_connects_it_too_and_a_handler_may_read_it(kit, monkeypatch, tmp_path):
+    """An app that only listens (`Connections { target: Agent }`) never reads a property until the signal comes:
+    it has to be connected for the signal to come."""
+    path = tmp_path / "agentd.sock"
+    monkeypatch.setenv("BOMBADIL_SOCKET", str(path))
+    server = _Server(path)
+    _fresh_agent()
+    with _qt_messages() as messages:
+        obj = make(kit, """Item {
+            property var seen: []
+            Connections { target: Agent; function onConnectedChanged() { seen = seen.concat([Agent.connected]) } }
+        }""")
+        try:
+            a = native.agent._instance
+            assert a._started is True and a._connected is True                      # listening woke it
+            a._socket.disconnectFromServer()
+            assert wait_until(lambda: js(obj.property("seen")) == [False], 3000)
+            a._retry.setInterval(50)
+            assert wait_until(lambda: js(obj.property("seen")) == [False, True], 3000)
+        finally:
+            _fresh_agent()
+            server.close()
+            destroy(obj)
+    assert messages == []
 
 
 def test_asking_connects_a_lazy_agent_too(kit, monkeypatch, tmp_path):

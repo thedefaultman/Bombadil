@@ -263,8 +263,9 @@ The prompt is prefixed with `[from app <name>]` so the agent knows where it came
 and can, for example, edit this app in response. During `check` Agent never connects.
 
 An app that only uses `draft` (and no member above) holds no connection to agentd at all: `Agent`
-connects the first time the app reads `connected`, `busy`, `provider`, `note`, `ready` or `reply`, or
-calls `ask`. A connection that stays open makes agentd sample the machine as long as it lasts, which a
+connects the first time the app reads `connected`, `busy`, `provider`, `note`, `ready` or `reply` (in a
+binding or a handler), has a handler on one of its signals, or calls `ask`. A binding that reads it gets the
+real value at once and no error. A connection that stays open makes agentd sample the machine as long as it lasts, which a
 window that only hands words to the bar has no reason to cause. Hide the window before you draft, so the
 bar is on a clear screen when the words arrive:
 

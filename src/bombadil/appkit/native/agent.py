@@ -1,9 +1,10 @@
 """`Agent`: the app's line to agentd, the same session the user talks to in the bar.
 
 Newline-delimited JSON over agentd's Unix socket (see agentd.py). The singleton is made the first time
-an app's QML mentions `Agent`, and connects the first time the app reads one of its properties or asks;
-it retries every 3 s while agentd is away. An app that only drafts (`draft`, below) never holds a
-connection open. `check` never connects or sends.
+an app's QML mentions `Agent`, and connects the first time the app looks at it: a read of a property (a
+binding or a handler), a handler on one of its signals, or `ask`. It retries every 3 s while agentd is
+away. An app that only drafts (`draft`, below) never holds a connection open. `check` never connects or
+sends.
 
 `draft(text)` puts words in the pill and nothing more: a one-shot {"type": "summon", "text", "tip": true}
 on a connection of its own that closes as soon as the line is written. The pill takes the keyboard with the
@@ -78,6 +79,10 @@ class _OneShot(QObject):
 
 
 class Agent(QObject):
+    # What an app can look at without reading a property: a handler on one of these is a look too.
+    SIGNALS = frozenset({"connectedChanged", "busyChanged", "providerChanged", "noteChanged", "readyChanged",
+                         "replyChanged", "replied"})
+
     connectedChanged = Signal()
     busyChanged = Signal()
     providerChanged = Signal()
@@ -254,11 +259,30 @@ class Agent(QObject):
             msg["id"] = str(tip)
         _OneShot(self, str(paths.socket_path()), (json.dumps(msg) + "\n").encode())
 
-    def _live(self, attr: str):
-        """What a property of the QML singleton says. The first look connects (an app that only drafts
-        never does)."""
-        if self._lazy:
+    def _wake(self):
+        """The first look at the QML singleton connects it (an app that only drafts never looks). The look may
+        be a binding in the middle of its evaluation, and a connection to a listening socket is made at once:
+        announcing `connectedChanged` then would tell that binding about a change while it runs, which QML
+        logs as a binding loop. So nothing is announced for it: the looker reads the value the connection has
+        by the time it reads, as it did when the singleton connected as it was made. Later changes are
+        announced as always."""
+        if not self._lazy or self._started or self._ctx.check:
+            return
+        was = self.blockSignals(True)
+        try:
             self.start()
+        finally:
+            self.blockSignals(was)
+
+    def connectNotify(self, signal):
+        """A binding or a handler on one of the signals is a look (it comes before the read, for a binding)."""
+        if bytes(signal.name()).decode() in self.SIGNALS:
+            self._wake()
+        super().connectNotify(signal)
+
+    def _live(self, attr: str):
+        """What a property of the QML singleton says; reading it is a look."""
+        self._wake()
         return getattr(self, attr)
 
     connected = Property(bool, lambda self: self._live("_connected"), notify=connectedChanged)
