@@ -443,7 +443,11 @@ def test_the_same_open_on_read_again_does_not_move_the_window_back(agentd, backe
     b.select("timer")                                  # the person went somewhere else
     asked = []
     b.openRequested.connect(asked.append)
-    lab.write_state(state, tried=["esc"], open_on="disk")        # a tick: the file changes, `open_on` is as it was
+    # A tick: the file changes, `open_on` is as it was. agentd lists what its file says, so the list the app asks
+    # for after the tick says esc is tried too (a list that still said it was not would take the tick off again
+    # a few ms after it showed, and a wait that looks every 10 ms would miss it under load).
+    fake.tips = lab.listing(home, tried=("esc",))
+    lab.write_state(state, tried=["esc"], open_on="disk")
     assert lab.wait_until(lambda: next(r for r in rows(b) if r["key"] == "esc")["tried"])
     lab.spin(300)
     assert b.selected == "timer" and asked == []
