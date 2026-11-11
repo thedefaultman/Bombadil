@@ -286,4 +286,4 @@ reads the list and watches tips.json, the stage and the list, reduced motion, wh
 say how it is drawn, arrives, folds and turns, and how its button hands the words to the pill.
 
 <!-- PIECE E: the Tips card. Its section goes here: the desk entry, the TipsCard face, the pill hand-off, how it
-folds, arrives and turns, and the strip. DESK.md's "Adding a widget" is its recipe. -->
+folds, arrives and turns, and the strip. the desk page's "Extending it" is its recipe. -->
