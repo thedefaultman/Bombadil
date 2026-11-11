@@ -340,8 +340,9 @@ async def test_list_is_answered_on_that_connection_and_holds_what_this_machine_b
     ids = [t["id"] for t in answer["list"]]
     # The fake AI is on, nothing else: no app, no project, no installed disk, no card seen. The desk can keep a
     # widget, so that tip is here (the word "widgets" is a launcher word).
-    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang", "passwords", "whyhere",
-                   "draw", "toolchain", "disk", "pause", "keep", "why"]
+    assert ids == ["make-an-app", "picture", "esc", "timer", "machine", "bang",
+                   "passwords",
+                   "whyhere", "draw", "toolchain", "disk", "pause", "keep", "why"]
     assert [t["tried"] for t in answer["list"]][:3] == [False, True, False]
     assert not any(t["new"] for t in answer["list"])
     pause = next(t for t in answer["list"] if t["id"] == "pause")

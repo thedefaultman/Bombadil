@@ -36,7 +36,9 @@ BY_ID = {r.id: r for r in ROWS}
 # The brief's seed (docs/design/tips-and-desk-defaults-brief.md, "The seed"), in its order. The rows that wait for
 # their pieces (a coding session by name, mail, noticed) are not here: they ship with those PRs.
 SEED = ["make-an-app", "picture", "esc", "timer", "machine", "bang",
-        "change-app", "open-app", "passwords", "whyhere", "draw",
+        "change-app", "open-app",
+        "passwords",
+        "whyhere", "draw",
         "toolchain", "tests", "code-picture",
         "disk", "pause", "desk", "keep", "why", "undo"]
 APP_ONLY = {"draw", "tests", "code-picture"}
@@ -608,7 +610,8 @@ def test_a_machine_with_nothing_backs_only_the_tips_that_need_nothing():
 def test_each_gate_brings_its_tips_and_only_those():
     base = set(_ids(Facts()))
     model = set(_ids(Facts(ai="Claude"))) - base
-    assert model == {"make-an-app", "esc", "timer", "passwords", "draw", "toolchain", "pause", "why"}
+    assert model == {"make-an-app", "esc", "timer", "draw", "toolchain", "pause", "why",
+                     "passwords"}
     assert set(_ids(Facts(installed=True))) - base == {"undo"}
     assert set(_ids(Facts(app="Tickets"))) - base == {"open-app"}                       # change-app also needs the AI
     assert set(_ids(Facts(ai="Claude", app="Tickets"))) - base - model == {"open-app", "change-app"}

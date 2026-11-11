@@ -128,7 +128,7 @@ def launched(said, home, monkeypatch):
     """The launcher's words for what it does: its lines while it works, what it answers, and where words go."""
     routes = {}
     for words in ("How am I connected?", "Where did my disk go?", "How's the machine?", "pause Claude",
-                  "resume claude", "undo", "desk", "brain", "where did this come from?"):
+                  "resume claude", "undo", "desk", "widgets", "brain", "where did this come from?"):
         routes[words] = launcher.match(words, [SimpleNamespace(name="tickets", title="Tickets")], busy=True)
     said.routes = routes
     for action in (routes["How am I connected?"], routes["Where did my disk go?"], routes["undo"]):
@@ -152,6 +152,15 @@ def launched(said, home, monkeypatch):
     d = desk.Desk()
     said.add("line", d.apply("toggle")[1], "desk.Desk.apply(toggle)")
     said.add("line", d.apply("toggle")[1], "desk.Desk.apply(toggle)")
+    # The word "widgets" opens the Widgets card and says so; a press on its Keep part says what it did.
+    ok, text = lx.run(routes["widgets"])
+    assert ok
+    said.add("line", text, "launcher.Launcher._widgets (desk.Desk.apply)")
+    said.opened = text
+    ok, text = desk.Desk().apply("set", widget="machine", state="keep")
+    assert ok
+    said.add("line", text, "desk.Desk.apply(set keep), the press on the Widgets card")
+    said.pressed = text
     for wid, widget in desk.WIDGETS.items():
         said.add("label", widget.title, f"desk.WIDGETS[{wid}]")
 
@@ -381,6 +390,36 @@ def desk_says(said, desk_qml, touched):
                                                                       "in_progress")])
     said.add("why", d.now["why"], "the Now card")
     said.add("strip", d.prop("nowStripText"), "the Now strip")
+
+
+def widgets_says(said, card):
+    """The Widgets card the word "widgets" opens, drawn by the shell's own QML (tests/test_widgets_card_qml.py) from
+    the rows the real desk sends: its title, the widgets it lists in its order, the words of the three parts of
+    each control, and which part is raised for the desk as it ships (nothing kept) and for one that keeps Machine."""
+    from PySide6 import QtGui
+    from qml_theme import THEME
+
+    rows = desk.Desk().snapshot()["widgets"]
+    parts = ("keep", "needed", "off")
+    raised = QtGui.QColor(THEME["raised"]).name(QtGui.QColor.HexArgb)
+    said.widgets = SimpleNamespace(order=[], part={}, raised={})
+    for name, kept in (("shipped", []), ("kept", ["machine"])):
+        card.open(kept=kept, widgets=rows)
+        said.add("window", card.item("widgetsTitle").property("text"), "the Widgets card (shell/WidgetsCard.qml)")
+        said.widgets.raised[name] = {}
+        for r in rows:
+            row = card.row(r["id"])
+            title = card.items("widgetsName", root=row)[0].property("text")
+            said.add("label", title, "the Widgets card")
+            if name == "shipped":
+                said.widgets.order.append(title)
+            for state in parts:
+                item = card.part(r["id"], state)
+                label = card.text_of(item).property("text")
+                said.add("value", label, "the Widgets card, a part of a control")
+                said.widgets.part[state] = label
+                if item.property("color").name(QtGui.QColor.HexArgb) == raised:
+                    said.widgets.raised[name][title] = label
 
 
 def pill_says(said, bar):

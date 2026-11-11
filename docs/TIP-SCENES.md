@@ -119,7 +119,7 @@ the validator allows a window three (`MAX_WINDOW_ROWS`); a `card` may have more.
 line, so on the poster a reply of two lines takes a row's worth of it: a window holds its three rows there only
 under a one-line reply, and a lock screen only too. A window never cuts what is in it: the tests fail on a poster or
 a stage whose window's bottom edge runs through a row, the lock screen or the title, so a reply that is too long for
-its window is shortened (the replies of `change-app` and `passwords` are one line for this).
+its window is shortened (the replies of the two scenes that make an app are one line for this).
 
 ## The ten beats
 
@@ -270,11 +270,12 @@ shows must be there, **whole**, for its role: a line is not found among the butt
 | Where the sentences are made | By |
 |---|---|
 | A step ("Building Tickets, 140 lines", "Installing docker" and its command, the amber edge), the reply ("Installed htop."), "Stopped while installing docker.", the reason | `narrate.tool_step`, `shell_step`, `Narrator.summary`, `stopped_line`, `why_text` |
-| What the launcher answers ("Opened Tickets.", "Folded the desk.", "Undone. System files go back to before ...", the Brain's lines), the lines of the pictures and the widget | `launcher.Launcher` (its `_app`, `_widget`, `_undo`, `_brain`, `_whyhere`, `doing`), `desk.Desk.apply`, `agentd.AgentD.picture` and `stop` |
+| What the launcher answers ("Opened Tickets.", "Folded the desk.", "Here are the widgets.", "Undone. System files go back to before ...", the Brain's lines), the lines of the pictures and the widget, and what a press on the Widgets card says ("Machine stays on the desk.") | `launcher.Launcher` (its `_app`, `_widget`, `_widgets`, `_undo`, `_brain`, `_whyhere`, `doing`), `desk.Desk.apply` (`toggle`, `set`), `agentd.AgentD.picture` and `stop` |
 | A timer's title and its ending, the Machine card's rows and its why | `jobs.timer_title` and `ending`, `vitals.Vitals` |
 | The pause and its chip words | `rest.words`, `kept`, `back` |
 | The network picture and the disk picture, with their boxes and bars | `sysmap.capture_network` and `capture_disks` on the fixtures of `tests/test_sysmap.py` |
 | The Watching and Now cards' labels, values and why, the strips, "On it", the buttons | the shell's own QML, driven by the harnesses of `tests/test_desk_qml.py` and `tests/test_pill_qml.py` |
+| The Widgets card: its title, the widgets it lists in its order, the words of the three parts of each control and which part is raised | the shell's own `WidgetsCard.qml`, driven by the harness of `tests/test_widgets_card_qml.py` with the rows `desk.Desk.snapshot` sends, once for the desk as it ships and once for one that keeps Machine |
 | A command's output | `providers.Shell`, and the command itself |
 | The Brain's sentence about a file | the fixture of `tests/test_brain_focus.py` |
 
@@ -291,6 +292,9 @@ What else the test holds, beyond "this sentence is said":
   says "finished", and the line says "Shop tests is done in 3 min.", in one beat; the scenes tests (`test_tips.py`)
   also fail on a frame where a card reads "done in" while the stone is working, or still counts ("so far", "left")
   beside a line that says a job is done.
+- **The Widgets card is the desk's.** The `keep` scene's panel has the card's title, its rows in the order the desk
+  lists them, and the part that is raised in each: "When needed" for every widget as the desk ships. The press on Keep
+  for Machine says what the desk says, and the same panel then reads Keep on that row alone, changed in place.
 - **Pictures are the real ones.** The boxes of the network picture are a prefix of the nodes `capture_network`
   draws; the bars are filesystems `capture_disks` draws, amber exactly where it warns; the Machine card shows the
   rows the vitals make and how full each meter is; a fold shows the strips of the cards it folds; the reason is
@@ -309,17 +313,12 @@ What else the test holds, beyond "this sentence is said":
 ### What no code can be asked for
 
 A string can be shown that no code says yet. It is named in `UNTIED` in `tests/test_tip_truth.py`, one string at a
-time, as `(tip, role, string)` with why. Today it is three, all of the `keep` tip, whose Widgets card and Keep
-choice are the keep piece's and are not on main: the window `Widgets` and the values `Keep` and `When needed`. An
-entry is only allowed while the scene shows the string and no code says it; the day the code does say it, the test
-fails until the entry is taken out, so the exceptions cannot outlast their reason.
-
-When the keep piece merges, the tests turn red on purpose, in three places, and each is the reminder to do the same
-thing: `test_a_template_string_the_code_cannot_be_asked_for...` fails because the code now says "Widgets", `Keep` and
-`When needed`, and `test_what_a_scene_types_is_the_tips_words...[keep]` fails because the launcher now matches
-"widgets" to its own action while `GOES` still says "model". Then: empty `UNTIED`; make the sentences in
-`tests/tip_truth.py` by driving the Widgets card's own QML (as the Watching and Now cards are driven); add
-`"widgets": "widgets"` to `GOES`; and redraw the `keep` scene as that card above the pill, not as a window of rows.
+time, as `(tip, role, string)` with why. **Nothing is named today**: every `template` string of every scene is a
+sentence the code says. The three that were (the `keep` tip's window `Widgets` and its values `Keep` and `When
+needed`) were taken out the day the desk's keep piece reached main, which is how the list is meant to work: an entry
+is only allowed while the scene shows the string and no code says it, and the day the code does say it, the test
+fails until the entry is taken out, so an exception cannot outlast its reason. The same day, `GOES` learned that the
+word "widgets" is the launcher's (it said "model" while no launcher word matched it).
 
 ### Keeping a scene true when a line changes
 
@@ -363,7 +362,7 @@ tip's words, and what it draws is what the desk draws.
 | `disk` | "Drawing your disks"; three bars, the fullest amber; "Showing your disks." | `sysmap.capture_disks` |
 | `pause` | "pause Claude"; the pause line; an ask that waits as a grey chip; "resume claude"; "Claude is back. Running your waiting ask." | `rest.words`, `kept`, `back` |
 | `desk` | a Now card; "desk"; it folds to the strip "step 2 of 2"; "Folded the desk."; "desk" again; the card is back and "Unfolded the desk." | `desk.Desk.apply`, the strips' own words |
-| `keep` | "widgets"; the Widgets card with its Keep choice; the Machine card kept | not on main: `UNTIED`, see above |
+| `keep` | "widgets"; "Here are the widgets." and the Widgets card, a row for each widget with the part that is raised; Machine changes to Keep, "Machine stays on the desk."; the Machine card kept | `launcher.Launcher._widgets`, `desk.Desk.apply`, the Widgets card's own QML, `vitals.Vitals` |
 | `why` | the ask "install docker and set it up"; an amber install, counting; Super, "why"; the agent's reason, the install still going | `narrate.shell_step`, `Narrator.why_text` |
 | `undo` | an install and "Installed htop." with Undo; "undo"; "Undoing the last change"; the real undo reply | `narrate`, `launcher.Launcher._undo` |
 
@@ -380,8 +379,10 @@ Where a scene is less than the whole tip, it says so here, so the next person do
 - `code-picture` draws the picture but not a click on a box that opens the file.
 - `passwords` shows the lock screen, but not the time that passes before it locks: the lock screen's own words say it.
 - `picture` is drawn for a machine on a cable, four boxes, which is one of the shapes `capture_network` makes.
-- `keep` draws the Widgets card as a window and not the restart a kept widget survives; its three strings are
-  `UNTIED` until the keep piece lands.
+- `keep` draws the Widgets card with the `window` beat: a panel above the line with one value for each row, the part
+  that is raised, and not the card's three-part control, its questions or "Reset the desk". It shows three of the
+  five widgets the card lists (Now, Watching and Machine, in the card's own order; a window holds three rows on the
+  poster) and not the restart a kept widget survives: the scene ends on the Machine card the desk then shows.
 - The example content of a window (the Tickets rows, Notes, the Brain's rows) is tagged `model`: it is the
   agent's work, not a sentence of the code.
 
