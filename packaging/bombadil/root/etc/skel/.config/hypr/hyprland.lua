@@ -7,6 +7,8 @@ if not ok then
     if f then
         f:close()
         dofile(old)
+        -- That file holds your own lines too: stop here, so they do not run twice.
+        return
     else
         -- Nothing to fall back to: still start the agent and the bar, so there is a pill to ask.
         hl.on("hyprland.start", function()
@@ -15,4 +17,4 @@ if not ok then
     end
 end
 
--- Your own lines go below. They run after Bombadil's, so a monitor or a bind here wins.
+-- Your own lines go below. They run after Bombadil's.

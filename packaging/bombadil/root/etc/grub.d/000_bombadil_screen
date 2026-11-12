@@ -8,7 +8,7 @@
 # the serial line keeps the text terminal. Without the font the block does nothing either.
 [ "${GRUB_TERMINAL_OUTPUT:-}" = gfxterm ] || exit 0
 cat <<'EOF'
-# The screen the disk's password is asked on (iso/airootfs/etc/grub.d/000_bombadil_screen).
+# The screen the disk's password is asked on (/etc/grub.d/000_bombadil_screen, from the bombadil package).
 if loadfont ($root)/grub/themes/bombadil/inter-16.pf2; then
   insmod all_video
   insmod gfxterm

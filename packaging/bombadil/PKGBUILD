@@ -17,7 +17,13 @@ depends=(sudo pacman systemd python python-cryptography python-httpx python-mcp 
 source=()
 options=(!strip !debug !docs !emptydirs)
 install=bombadil.install
-backup=(etc/bombadil/config.toml etc/pacman.d/bombadil.conf)
+# What a person may change and an update must not take back: the settings, the repository list and the sudoers file (a
+# person who tightens NOPASSWD keeps the rule; the new file arrives beside it as .pacnew, which sudo ignores because
+# the name has a dot in it). Every other file in /etc is Bombadil's own policy or default and is replaced by each
+# update on purpose, so a change in the source reaches every machine with the package: the managed settings of
+# Chromium, Claude Code, Codex and Thunderbird, the default browser (mimeapps.list), the GRUB console parameters and
+# the GRUB screen script. A person's own choices go in their home or in a file of their own, not in those.
+backup=(etc/bombadil/config.toml etc/pacman.d/bombadil.conf etc/sudoers.d/bombadil)
 
 package() {
   : "${BOMBADIL_STAGE:?BOMBADIL_STAGE is set by scripts/build-package.sh}"

@@ -738,6 +738,10 @@ def test_mode_update_builds_a_newer_package_serves_it_while_the_vm_runs_and_stop
     env = {a.split("=", 1)[0]: a.split("=", 1)[1] for a in args if re.match(r"^BOMBADIL_[A-Z]+=", a)}
     assert env["BOMBADIL_COMMIT"] == f"{host.commit}+update"
     assert env["BOMBADIL_PKGVER"] == "2026.01.02" and int(env["BOMBADIL_PKGREL"]) > 1_700_000_000
+    # With the host of the VM listed first in its repository file, as the image's file has it: pacman would replace the
+    # unmodified file on the disk with one that lacks the line if the update did not carry it. The harness's own
+    # environment has none of it, so it is the script that sets it.
+    assert "BOMBADIL_DEV_SERVER=1" in args
     joined = "\n".join(args)
     assert "pacman -Syu --noconfirm --needed fakeroot binutils" in joined
     assert "build-package.sh /src/out/repo" in joined and "build-iso.sh" not in joined
@@ -778,6 +782,8 @@ def test_build_in_container_builds_only_the_package_for_the_package_argument_and
     args = host.calls("docker.args")
     assert "build-package.sh /src/out/repo" in "\n".join(args) and "build-iso.sh" not in "\n".join(args)
     assert "BOMBADIL_PKGREL=1" in args and f"BOMBADIL_COMMIT={host.commit}" in args
+    # A package nobody asked to list the host of a test VM does not: the switch is not passed unless it is set.
+    assert not [a for a in args if a.startswith("BOMBADIL_DEV_SERVER")]
     # The image build is what no argument asks for, as it always was.
     shutil.rmtree(host.tree / "out")
     (host.stub / "docker.args").unlink()
@@ -802,6 +808,7 @@ def test_build_in_container_passes_the_package_version_it_was_given_through(tmp_
         "BOMBADIL_PKGVER": "2026.02.03",
         "BOMBADIL_PKGREL": "17",
         "BOMBADIL_COMMIT": "abc1234+update",
+        "BOMBADIL_DEV_SERVER": "1",
     }
     subprocess.run(
         ["bash", str(host.tree / "scripts/build-in-container.sh"), "package"],
@@ -811,6 +818,8 @@ def test_build_in_container_passes_the_package_version_it_was_given_through(tmp_
     )
     args = host.calls("docker.args")
     assert {"BOMBADIL_PKGVER=2026.02.03", "BOMBADIL_PKGREL=17", "BOMBADIL_COMMIT=abc1234+update"} <= set(args)
+    # The switch for the test VM's repository file goes into the container too, where the package is built.
+    assert "BOMBADIL_DEV_SERVER=1" in args
 
 
 def test_the_host_script_names_the_new_mode_and_the_reuse_switch_in_its_header():
@@ -821,11 +830,20 @@ def test_the_host_script_names_the_new_mode_and_the_reuse_switch_in_its_header()
     # The server ends with the script, and the VM does too: one trap, not one per VM.
     text = TEST_VM.read_text()
     assert text.count("trap ") == 1 and "trap cleanup EXIT" in text
+    assert "BOMBADIL_DEV_SERVER=1" in header
     assert 'python3 -m http.server 8123 --bind 127.0.0.1 --directory "$root/out/repo"' in text
     assert text.index("need_entries()") < text.index('disk="$out/disk.qcow2"')
 
 
 # -- scripts/wsl-vm.sh --------------------------------------------------------
+
+
+def command_of(function: str, word: str) -> str:
+    """The shell command in FUNCTION that runs WORD, with its backslash continuations joined into one line."""
+    joined = function.replace("\\\n", " ")
+    found = [ln for ln in joined.splitlines() if word in ln and not ln.lstrip().startswith("#")]
+    assert len(found) == 1, (word, found)
+    return found[0]
 
 
 def test_wsl_vm_builds_serves_and_refreshes_the_way_the_laptop_flow_is_documented():
@@ -864,6 +882,12 @@ def test_wsl_vm_builds_serves_and_refreshes_the_way_the_laptop_flow_is_documente
         'say "update" to the agent',
     ):
         assert want in update, want
+    # The package carries the host of the VM (10.0.2.2:8123) in its repository file, like the ISO the disk was installed
+    # from: an update without the line would drop it from the disk.
+    assert "BOMBADIL_DEV_SERVER=1" in command_of(update, "scripts/build-package.sh")
+    build = text[text.index("\nbuild() {") : text.index("\n}\n", text.index("\nbuild() {"))]
+    iso_build = command_of(build, "scripts/build-iso.sh")
+    assert "BOMBADIL_TEST_ENTRIES=1" in iso_build and "BOMBADIL_DEV_SERVER=1" in iso_build
     # install and refresh write the marker, update reads it.
     install = text[text.index("\ninstall() {") : text.index("\n}\n", text.index("\ninstall() {"))]
     refresh = text[text.index("\nrefresh() {") : text.index("\n}\n", text.index("\nrefresh() {"))]

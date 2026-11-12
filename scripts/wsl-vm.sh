@@ -54,7 +54,9 @@ build() {
   if [[ -f "$out/.iso-key" && "$(cat "$out/.iso-key")" == "$key" ]] && ls "$out"/*.iso >/dev/null 2>&1; then return; fi
   echo "Building the ISO for $(git -C "$tree" log -1 --format='%h %s') (15 to 30 minutes)..."
   rm -f "$out"/*.iso "$out/.iso-key"
-  (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) BOMBADIL_TEST_ENTRIES=1 WORK=/var/tmp/bombadil-work scripts/build-iso.sh)
+  # BOMBADIL_DEV_SERVER: the package on this ISO lists the VM's host (10.0.2.2:8123) as a server, which `update` serves.
+  (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) BOMBADIL_TEST_ENTRIES=1 BOMBADIL_DEV_SERVER=1 \
+    WORK=/var/tmp/bombadil-work scripts/build-iso.sh)
   rm -rf /var/tmp/bombadil-work   # several GB of build tree; pacman's package cache stays for next time
   echo "$key" > "$out/.iso-key"
 }
@@ -187,7 +189,8 @@ refresh() {
 
 # A newer Bombadil with everything on the disk kept: this checkout's package, built here and served to the VM, which
 # installs it with pacman when the person says "update" to the agent. /etc/pacman.d/bombadil.conf in the VM tries the
-# host (10.0.2.2:8123) first.
+# host (10.0.2.2:8123) first: only a package built with BOMBADIL_DEV_SERVER=1 has that line, and so this one is, or
+# pacman would replace the file on the disk with one that lacks it.
 update() {
   [[ -f "$out/.installed" && -f "$disk" ]] || { echo "Nothing to update: there is no installed disk yet. Run without arguments first." >&2; exit 1; }
   [[ -f "$out/.installed-packaged" ]] || { echo "This disk was installed before Bombadil was a package, so it has nothing to update: 'refresh' replaces its system and keeps the home folder." >&2; exit 1; }
@@ -195,7 +198,7 @@ update() {
   local pkgwork=/var/tmp/bombadil-pkg-work
   echo "Building the package for $(git -C "$tree" log -1 --format='%h %s')..."
   (cd "$tree" && SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) BOMBADIL_COMMIT=$(git rev-parse --short HEAD) BOMBADIL_PKGREL=$(date +%s) \
-    WORK="$pkgwork" scripts/build-package.sh "$out/repo")
+    BOMBADIL_DEV_SERVER=1 WORK="$pkgwork" scripts/build-package.sh "$out/repo")
   rm -rf "$pkgwork"
   mkdir -p "$vm"
   python3 -m http.server 8123 --bind 127.0.0.1 --directory "$out/repo" >"$vm/update-server.log" 2>&1 &

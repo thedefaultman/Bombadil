@@ -4,7 +4,8 @@
 # It turns Bombadil's units on once, from two lists the package ships. A unit goes into a ledger when it is
 # enabled, and a unit in the ledger is never enabled again: one that the person turned off stays off through
 # every upgrade. Nothing is started or restarted here, and nothing here can make the transaction fail.
-# The files other packages own are changed by the migrate steps, which an alpm hook runs.
+# The files other packages own are changed by the migrate steps, which an alpm hook runs; the one change that
+# has to be undone when the package goes, its section in pacman.conf, is undone in post_remove.
 #
 # BOMBADIL_ROOT is a prefix for the files this reads and writes, so a test can run the functions on a fake root.
 
@@ -37,4 +38,22 @@ post_install() {
 
 post_upgrade() {
   bombadil_enable_units || true
+}
+
+# A step of the package put a [bombadil] section into /etc/pacman.conf, and it includes a file this package owns.
+# With the package gone the file is gone, and pacman stops on the include in every command until the section is
+# taken out by hand. So the section goes with the package: its lines up to the next section header.
+post_remove() {
+  local conf="${BOMBADIL_ROOT:-}/etc/pacman.conf" tmp
+  [[ -f "$conf" ]] || return 0
+  grep -qE '^[[:space:]]*\[bombadil\]' "$conf" || return 0
+  tmp=$(mktemp "$conf.XXXXXX") || return 0
+  if awk '/^[[:space:]]*\[bombadil\]/ { s = 1; next } /^[[:space:]]*\[/ { s = 0 } !s' "$conf" > "$tmp" \
+     && chmod --reference="$conf" "$tmp"; then
+    chown --reference="$conf" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$conf" || rm -f "$tmp"
+  else
+    rm -f "$tmp"
+  fi
+  return 0
 }

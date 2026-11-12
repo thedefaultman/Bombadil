@@ -848,6 +848,10 @@ if [[ "$mode" == "refresh" ]]; then
     mount -o subvolid=5 /dev/vda2 "$top" || return 1
     echo planted >"$top/@home/user/.bombadil-refresh-marker"
     printf '\n%s\n' "$smoke_user_line" >>"$top/@home/user/.config/hypr/hyprland.lua" || { umount "$top"; return 1; }
+    # A value the person changed inside Bombadil's own hl.config call (every version Bombadil shipped has this
+    # line): the split has to carry it as an hl.config call of its own, and Hyprland has to run with it.
+    { sed -i 's/^\( *\)rounding = 12,$/\1rounding = 5,/' "$top/@home/user/.config/hypr/hyprland.lua" \
+        && grep -qx ' *rounding = 5,' "$top/@home/user/.config/hypr/hyprland.lua"; } || { umount "$top"; return 1; }
     mkdir -p "$top/@home/user/.claude" "$top/@home/user/Projects/demo"
     echo home-login >"$top/@home/user/.claude/credentials.json"
     echo code >"$top/@home/user/Projects/demo/main.py"
@@ -1034,6 +1038,20 @@ if [[ "$mode" == "refreshed" ]]; then
   check refresh-homefix-wrote-the-stub wait_for 90 starts_with_the_stub
   check refresh-homefix-kept-the-old-file old_file_kept
   check refresh-homefix-kept-the-persons-line grep -qxF "$smoke_user_line" "$lua"
+  # The changed value: carried as a call of its own (a line of code, not a comment), and the person's value is the
+  # one Hyprland runs with. The old file already had it when Hyprland first started, so the config is read again
+  # here (after the rewrite) to see that the split file gives it too. Bombadil's part says 12, so 5 is the person's,
+  # and a second hl.config call must set only that leaf: Bombadil's blur size (6, not Hyprland's 8) stays.
+  carried_config_value() { grep -qE '^ +rounding = 5,$' "$lua" && grep -qx 'hl.config({' "$lua"; }
+  hypr_reload() { local o; o=$(as_user hyprctl reload) && [[ "$o" == "" || "$o" == "ok" ]] || { echo "$o"; return 1; }; }
+  hypr_int_option() {
+    local o; o=$(as_user hyprctl -j getoption "$1") || return 1
+    python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(d); sys.exit(not any(d.get(k) == int(sys.argv[2]) for k in ("int", "float", "value")))' "$o" "$2"
+  }
+  config_values_are_merged() { hypr_int_option decoration:rounding 5 && hypr_int_option decoration:blur:size 6; }
+  check refresh-homefix-carried-the-persons-config-value carried_config_value
+  check refresh-homefix-hypr-reloads hypr_reload
+  check refresh-homefix-hypr-has-the-persons-config-value wait_for 30 config_values_are_merged
   check refresh-homefix-recorded-step-one wait_for 90 homefix_recorded_step_one
   check refresh-homefix-hypr-config-ok wait_for 30 no_config_errors
   check refresh-homefix-left-the-sign-in bash -c 'test "$(cat /home/user/.claude/credentials.json)" = home-login'

@@ -44,15 +44,21 @@ def kinds(tree: Path) -> dict[str, str]:
             for p in tree.rglob("*")}
 
 
-def stage(tmp_path: Path) -> Path:
-    """The staging tree the way scripts/build-package.sh lays it out."""
+def stage(tmp_path: Path, *, dev_server: bool = False) -> Path:
+    """The staging tree the way scripts/build-package.sh lays it out (dev_server: a build made for a test VM)."""
     dest = tmp_path / "stage"
-    bash('source "$1"; stage_tree "$2" "$3"', str(BUILD_PACKAGE), str(dest), VERSION_LINE)
+    bash('source "$1"; stage_tree "$2" "$3"', str(BUILD_PACKAGE), str(dest), VERSION_LINE,
+         env={"BOMBADIL_DEV_SERVER": "1"} if dev_server else {})
     return dest
 
 
 def pkgbuild_depends() -> list[str]:
     out = bash('source "$1"; printf "%s\\n" "${depends[@]}"', str(PKGBUILD), env={"BOMBADIL_PKGVER": "1"}).stdout
+    return out.split()
+
+
+def pkgbuild_backup() -> list[str]:
+    out = bash('source "$1"; printf "%s\\n" "${backup[@]}"', str(PKGBUILD), env={"BOMBADIL_PKGVER": "1"}).stdout
     return out.split()
 
 
@@ -111,8 +117,13 @@ def test_the_pkgbuild_says_what_the_package_is():
     assert "pkgver=${BOMBADIL_PKGVER:?" in text and "pkgrel=${BOMBADIL_PKGREL:-1}" in text
     assert re.search(r"^source=\(\)$", text, re.M) and "install=bombadil.install" in text
     assert "options=(!strip !debug !docs !emptydirs)" in text
-    # The two files a person may edit and an update must not overwrite.
-    assert "backup=(etc/bombadil/config.toml etc/pacman.d/bombadil.conf)" in text
+    # The files a person may edit and an update must not overwrite (the sudoers file is one: a person who tightens
+    # NOPASSWD keeps the rule, and the new file comes beside it as .pacnew, which sudo skips for its dot).
+    assert pkgbuild_backup() == ["etc/bombadil/config.toml", "etc/pacman.d/bombadil.conf", "etc/sudoers.d/bombadil"]
+    assert [b for b in pkgbuild_backup() if not (PAYLOAD / b).is_file()] == []
+    # The installer gets the sudoers file from the package, as pacstrap installs it, and neither copies nor rewrites it,
+    # so it does not depend on an update replacing it.
+    assert "sudoers" not in (PAYLOAD / "usr/bin/bombadil-install").read_text()
     assert (ROOT / "LICENSE").read_text().startswith("MIT License") and re.search(r"^license=\(MIT\)$", text, re.M)
     assert SCRIPTLET.is_file()
 
@@ -210,6 +221,27 @@ def test_build_package_builds_as_a_throwaway_user_from_a_clean_cache_into_a_repo
     for var in ("BOMBADIL_COMMIT", "BOMBADIL_PKGVER", "BOMBADIL_PKGREL", "SOURCE_DATE_EPOCH", "WORK"):
         assert var in text, var
     assert "--exclude=__pycache__" in text and "--exclude='*.pyc'" in text
+
+
+# 2026-12-01 00:20 UTC: still 30 November, and in November, for a host ten hours west of UTC.
+JUST_AFTER_MIDNIGHT_UTC = "1796084400"
+
+
+@pytest.mark.parametrize("zone", ["UTC", "UTC+10", "UTC-12"])
+def test_the_package_version_is_the_utc_day_of_the_build_time_in_every_time_zone(zone):
+    # pkgver is compared before pkgrel: a build host west of UTC that named its update with the local day would make
+    # one older than the package it updates, and pacman would offer nothing.
+    r = bash('source "$1"; day_of "$2"', str(BUILD_PACKAGE), JUST_AFTER_MIDNIGHT_UTC, env={"TZ": zone})
+    assert r.stdout == "2026.12.01\n"
+    text = BUILD_PACKAGE.read_text()
+    assert 'ver="${BOMBADIL_PKGVER:-$(day_of "$epoch")}"' in text and "stage_tree \"$stage\" \"$ver ($commit)\"" in text
+
+
+def test_no_script_turns_a_build_time_into_a_date_in_the_hosts_time_zone():
+    scripts = [*(ROOT / "scripts").glob("*.sh"), ROOT / "iso/profiledef.sh", *(PAYLOAD / "usr/bin").iterdir()]
+    local = [f"{s.relative_to(ROOT)}: {ln.strip()}" for s in scripts for ln in s.read_text(errors="replace").splitlines()
+             if re.search(r'\bdate\b[^|;)]*(--date|-d)[ =]"?@', ln) and not re.search(r"\bdate (-u|--utc)\b", ln)]
+    assert local == []
 
 
 def test_the_iso_build_makes_the_package_and_reads_it_back_from_the_image_tree():
@@ -321,14 +353,118 @@ def test_tmpfiles_makes_the_linger_file_and_sysusers_the_connection_account():
     assert [s[:3] for s in sysusers] == [["u", "bombadil-connect", "-"]]
 
 
-def test_the_repository_file_lists_the_laptops_host_first_and_the_copy_on_the_image_second():
-    lines = [ln for ln in (PAYLOAD / "etc/pacman.d/bombadil.conf").read_text().splitlines()
-             if ln.strip() and not ln.startswith("#")]
-    assert lines == ["SigLevel = Optional TrustAll", "Server = http://10.0.2.2:8123", "Server = file:///var/lib/bombadil/repo"]
-    assert (PAYLOAD / "etc/pacman.d/bombadil.conf").read_text().startswith("#"), "a comment says what the file is"
+def server_lines(path: Path) -> list[str]:
+    return [ln for ln in path.read_text().splitlines() if ln.strip() and not ln.startswith("#")]
 
 
-def test_the_hook_runs_the_migrate_steps_after_a_change_to_a_package_that_owns_a_file_they_edit():
+def test_a_release_lists_only_the_copy_on_the_image_and_a_test_build_puts_the_laptops_host_first(tmp_path):
+    conf = "etc/pacman.d/bombadil.conf"
+    # The file in the source tree is what a release ships: SigLevel and the copy on the image, and a comment first.
+    assert server_lines(PAYLOAD / conf) == ["SigLevel = Optional TrustAll", "Server = file:///var/lib/bombadil/repo"]
+    assert (PAYLOAD / conf).read_text().startswith("#"), "a comment says what the file is"
+    # No file of the release names the address, bar the smoke test that reaches the host on the laptop.
+    release = stage(tmp_path / "release")
+    named = [p.relative_to(release).as_posix() for p in release.rglob("*")
+             if p.is_file() and not p.is_symlink() and b"10.0.2.2" in p.read_bytes()]
+    assert [n for n in named if n != "usr/bin/bombadil-smoke"] == []
+    assert (release / conf).read_bytes() == (PAYLOAD / conf).read_bytes()
+    # A build made for a test VM lists the host first (QEMU and WSL guests see it at 10.0.2.2), then the copy.
+    dev = stage(tmp_path / "dev", dev_server=True)
+    assert server_lines(dev / conf) == ["SigLevel = Optional TrustAll", "Server = http://10.0.2.2:8123",
+                                        "Server = file:///var/lib/bombadil/repo"]
+    assert stat.S_IMODE((dev / conf).stat().st_mode) == stat.S_IMODE((release / conf).stat().st_mode)
+    # That file is the only difference between the two builds.
+    differ = subprocess.run(["diff", "-rq", str(release), str(dev)], capture_output=True, text=True).stdout
+    assert differ.splitlines() == [f"Files {release / conf} and {dev / conf} differ"]
+    # Set to nothing is not set: the variable is a switch, and an empty one is off.
+    off = bash('source "$1"; stage_tree "$2" "$3"', str(BUILD_PACKAGE), str(tmp_path / "off"), VERSION_LINE,
+               env={"BOMBADIL_DEV_SERVER": ""})
+    assert off.returncode == 0 and "10.0.2.2" not in (tmp_path / "off" / conf).read_text()
+    if shutil.which("pacman-conf"):
+        wrapper = tmp_path / "pacman.conf"
+        wrapper.write_text(f"[options]\n\n[bombadil]\nInclude = {dev / conf}\n")
+        got = subprocess.run(["pacman-conf", "--config", str(wrapper), "-r", "bombadil", "Server"], capture_output=True,
+                             text=True, check=True).stdout.split()
+        assert got == ["http://10.0.2.2:8123", "file:///var/lib/bombadil/repo"]
+
+
+def verify_package(work: Path, env: dict) -> subprocess.CompletedProcess:
+    """build-iso.sh's own verify_package, run under its own set -e against a tree made by the test."""
+    text = (ROOT / "scripts/build-iso.sh").read_text()
+    start = text.index("verify_package() {")
+    function = text[start:text.index("\n}\n", start) + 3]
+    return bash(f'set -euo pipefail\nwork="$1"\n{function}\nverify_package', str(work), env=env, check=False)
+
+
+def test_the_iso_build_reads_the_repository_file_back_and_says_what_is_missing(tmp_path):
+    work = tmp_path / "work"
+    rootfs = work / "build/x86_64/airootfs"
+
+    def image(*, dev_conf: bool = False) -> None:
+        """The tree mkarchiso leaves, with what the package puts in it."""
+        shutil.rmtree(work, ignore_errors=True)
+        share = rootfs / "usr/share/bombadil"
+        share.mkdir(parents=True)
+        for kind, wants in (("system", "multi-user.target.wants"), ("user", "default.target.wants")):
+            shutil.copy(PAYLOAD / f"usr/share/bombadil/enable.{kind}", share)
+            (rootfs / "etc/systemd" / kind / wants).mkdir(parents=True)
+            for name in enable_list(kind):
+                (rootfs / "etc/systemd" / kind / wants / name).symlink_to(f"/usr/lib/systemd/{kind}/{name}")
+        (rootfs / "usr/bin").mkdir(parents=True)
+        (rootfs / "usr/bin/agentd").symlink_to("../share/bombadil/bin/agentd")
+        (rootfs / "etc/pacman.d").mkdir(parents=True)
+        (rootfs / "etc/pacman.conf").write_text("[options]\n\n[bombadil]\nInclude = x\n\n[core]\nInclude = y\n")
+        shutil.copy(stage(tmp_path / "s", dev_server=dev_conf) / "etc/pacman.d/bombadil.conf", rootfs / "etc/pacman.d")
+        (rootfs / "var").mkdir()
+        (rootfs / "root").mkdir()
+
+    image()
+    ok = verify_package(work, {})
+    assert ok.returncode == 0 and "The image holds the package" in ok.stdout, ok.stderr
+    # The laptop's host is in the file of a test build and of no release: either way round is an error.
+    image(dev_conf=True)
+    assert verify_package(work, {"BOMBADIL_DEV_SERVER": "1"}).returncode == 0
+    r = verify_package(work, {})
+    assert r.returncode == 1 and "lists 10.0.2.2, and this is not a test build" in r.stderr
+    image()
+    r = verify_package(work, {"BOMBADIL_DEV_SERVER": "1"})
+    assert r.returncode == 1 and "does not list the host of the VM, and this is a test build" in r.stderr
+    # Whatever is missing is named. An image with no /etc/systemd/user used to end the build with no word at all
+    # (a failing find in an assignment, under set -e).
+    image()
+    shutil.rmtree(rootfs / "etc/systemd/user")
+    r = verify_package(work, {})
+    assert r.returncode == 1 and "has no /etc/systemd/user" in r.stderr
+    image()
+    (rootfs / "etc/systemd/system/multi-user.target.wants/bombadil-connect.service").unlink()
+    r = verify_package(work, {})
+    assert r.returncode == 1 and "does not enable bombadil-connect.service (system)" in r.stderr
+    image()
+    (rootfs / "etc/pacman.d/bombadil.conf").unlink()
+    r = verify_package(work, {})
+    assert r.returncode == 1 and "has no /etc/pacman.d/bombadil.conf" in r.stderr
+
+
+def test_the_iso_build_names_the_dev_server_switch_only_where_the_test_entries_are(tmp_path):
+    # build-iso.sh with BOMBADIL_TEST_ENTRIES makes its package with BOMBADIL_DEV_SERVER, and without it does not.
+    tree = tmp_path / "tree"
+    (tree / "scripts").mkdir(parents=True)
+    (tree / "iso/efiboot/loader/entries").mkdir(parents=True)
+    shutil.copy(ROOT / "scripts/build-iso.sh", tree / "scripts/build-iso.sh")
+    stub = tree / "scripts/build-package.sh"
+    stub.write_text('#!/usr/bin/env bash\necho "${BOMBADIL_DEV_SERVER-unset}" > "$SEEN"\nexit 7\n')
+    stub.chmod(0o755)
+    seen = tmp_path / "seen"
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "WORK": str(tmp_path / "work"), "OUT": str(tmp_path / "out"),
+           "SEEN": str(seen)}
+    r = subprocess.run(["bash", str(tree / "scripts/build-iso.sh")], env={**env, "BOMBADIL_TEST_ENTRIES": "1"},
+                       capture_output=True, text=True)
+    assert r.returncode == 7 and seen.read_text() == "1\n"
+    r = subprocess.run(["bash", str(tree / "scripts/build-iso.sh")], env=env, capture_output=True, text=True)
+    assert r.returncode == 7 and seen.read_text() == "unset\n"
+
+
+def test_the_hook_runs_the_migrate_steps_after_any_transaction_so_a_repository_that_was_lost_comes_back():
     text = (PAYLOAD / "usr/share/libalpm/hooks/bombadil-migrate.hook").read_text()
     sections: list[tuple[str, dict[str, list[str]]]] = []
     for line in text.splitlines():
@@ -342,9 +478,11 @@ def test_the_hook_runs_the_migrate_steps_after_a_change_to_a_package_that_owns_a
             sections[-1][1].setdefault(key.strip(), []).append(value.strip())
     assert [name for name, _ in sections] == ["Trigger", "Trigger", "Action"]
     package, path, action = (body for _, body in sections)
-    # pacman.conf is pacman's, /etc/environment is pam's, os-release is filesystem's; bombadil's own change re-runs them.
-    assert package == {"Operation": ["Install", "Upgrade"], "Type": ["Package"],
-                       "Target": ["bombadil", "pacman", "filesystem", "pam"]}
+    # pacman.conf is pacman's, /etc/environment is pam's, os-release is filesystem's. A new default pacman.conf that the
+    # person merged in has lost [bombadil], and then pacman does not know this package: no transaction of pacman's,
+    # filesystem's or pam's would bring it back, so any package's does. Run once per transaction (no NeedsTargets).
+    assert package == {"Operation": ["Install", "Upgrade"], "Type": ["Package"], "Target": ["*"]}
+    assert "NeedsTargets" not in text
     assert path == {"Operation": ["Install", "Upgrade"], "Type": ["Path"], "Target": ["usr/lib/os-release"]}
     assert action["When"] == ["PostTransaction"] and action["Exec"] == ["/usr/share/bombadil/migrate/run"]
     assert action["Description"][0]
@@ -467,9 +605,11 @@ def test_the_runner_runs_every_step_logs_each_and_always_exits_0(tmp_path):
     assert [ln.split()[1:] for ln in log] == [["001-pacman-repo", "changed"], ["002-os-release-logo", "changed"],
                                               ["003-browser-env", "changed"]]
     assert all(re.match(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4} ", ln) for ln in log)
-    # A second run changes nothing and says so.
-    bash('bash "$1"', str(MIGRATE / "run"), env={"BOMBADIL_ROOT": str(root)})
-    # (A step with nothing to do is not logged: the hook runs on every upgrade of the packages it watches.)
+    # A second run changes nothing, and since the hook runs after every transaction it says nothing and logs nothing.
+    log_before = (root / "var/log/bombadil-migrate.log").read_bytes()
+    second = bash('bash "$1"', str(MIGRATE / "run"), env={"BOMBADIL_ROOT": str(root)})
+    assert (second.stdout, second.stderr) == ("", "")
+    assert (root / "var/log/bombadil-migrate.log").read_bytes() == log_before
     log = (root / "var/log/bombadil-migrate.log").read_text().splitlines()
     assert len(log) == 3
     # A step that fails is logged with its words and does not stop the next, nor the runner's exit.
@@ -579,6 +719,41 @@ def test_a_unit_that_would_not_enable_stays_out_of_the_ledger_and_the_transactio
     (unwritable / "var").chmod(0o755)
 
 
+def test_removing_the_package_takes_its_section_out_of_pacman_conf_and_leaves_the_rest(tmp_path):
+    # Without the section's include file pacman stops on every command, so post_remove undoes step 001.
+    root = fake_root(tmp_path)
+    conf = root / "etc/pacman.conf"
+    before_files = only_files(root)
+    assert step(root, "001-pacman-repo.sh").stdout.strip() == "changed"
+    env = {"BOMBADIL_ROOT": str(root)}
+    first = scriptlet("post_remove", env)
+    assert (first.stdout.strip(), first.stderr) == ("rc=0", "")
+    assert conf.read_text() == STOCK_PACMAN_CONF and stat.S_IMODE(conf.stat().st_mode) == 0o640
+    assert only_files(root) == before_files
+    # Again: nothing to do, and not a byte moves.
+    snapshot = conf.read_bytes()
+    assert scriptlet("post_remove", env).stdout.strip() == "rc=0" and conf.read_bytes() == snapshot
+    # What the person wrote stays: lines above the section, a section after it, one that only starts with the name, and
+    # a section that is the last of the file with no newline at the end. The section's own lines go, up to the next header.
+    conf.write_text("[options]\nHoldPkg = pacman\n\n# mine\n  [bombadil]\nSigLevel = Never\nServer = https://example.org\n\n"
+                    "[core]\nInclude = x\n\n[bombadil-extra]\nServer = y\n\n[bombadil]\nInclude = z")
+    assert scriptlet("post_remove", env).stdout.strip() == "rc=0"
+    assert conf.read_text() == "[options]\nHoldPkg = pacman\n\n# mine\n[core]\nInclude = x\n\n[bombadil-extra]\nServer = y\n\n"
+    # No pacman.conf at all, and one that cannot be rewritten: the removal still goes on and nothing is left behind.
+    conf.write_text("[options]\n\n[bombadil]\nInclude = x\n\n[core]\n")
+    for broken in ("mktemp", "awk"):
+        fake = tmp_path / f"no-{broken}"
+        fake.mkdir()
+        (fake / broken).write_text("#!/bin/sh\nexit 1\n")
+        (fake / broken).chmod(0o755)
+        failing = {**env, "PATH": f"{fake}:/usr/bin:/bin"}
+        r = bash('set -e; source "$1"; post_remove; echo "rc=$?"', str(SCRIPTLET), env=failing)
+        assert r.stdout.strip() == "rc=0" and "[bombadil]" in conf.read_text(), broken
+        assert only_files(root) == before_files, broken
+    conf.unlink()
+    assert scriptlet("post_remove", env).stdout.strip() == "rc=0"
+
+
 # -- the stamp and the record, and the stub (the pieces of other files this package rests on) ------------------------------
 
 def test_the_home_stub_loads_the_packages_part_falls_back_and_leaves_the_rest_to_the_person():
@@ -597,6 +772,13 @@ def test_the_home_stub_loads_the_packages_part_falls_back_and_leaves_the_rest_to
     # The module is the old file, with the defaults a person's own lines can override.
     module = (ROOT / "share/hypr/bombadil.lua").read_text()
     assert 'kb_layout = "us"' in module and module.index('hl.on("hyprland.start"') < module.index("hl.config(")
+
+
+def test_the_grub_screen_names_the_file_it_comes_from_where_the_machine_has_it():
+    # What the script prints goes into every grub.cfg: the path in its comment is the one on that machine.
+    r = subprocess.run(["sh", str(PAYLOAD / "etc/grub.d/000_bombadil_screen")], capture_output=True, text=True, check=True,
+                       env={"PATH": "/usr/bin:/bin", "GRUB_TERMINAL_OUTPUT": "gfxterm"})
+    assert "/etc/grub.d/000_bombadil_screen" in r.stdout and "iso/airootfs" not in r.stdout
 
 
 def test_every_command_in_bin_is_executable_in_git_so_the_links_in_usr_bin_run():

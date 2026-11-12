@@ -1,6 +1,7 @@
 """What the ISO profile ships. The VM smoke proves a booted machine; these catch a dropped line sooner."""
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from payload import HYPR_LUA, PAYLOAD
@@ -157,6 +158,17 @@ def test_the_image_is_built_without_erofs_tail_packing():
     profiledef = (ISO / "profiledef.sh").read_text()
     options = re.search(r"^airootfs_image_tool_options=\((.*)\)", profiledef, re.M).group(1)
     assert "ztailpacking" not in options
+
+
+def test_the_image_version_and_label_are_the_utc_day_and_month_in_every_time_zone():
+    # The package the image carries is named with the UTC day of the same build time, and scripts/test-vm.sh reads that
+    # day off the image's file name: a host west of UTC must not move either. 2026-12-01 00:20 UTC is still 30 November
+    # ten hours west.
+    for zone in ("UTC", "UTC+10", "UTC-12"):
+        r = subprocess.run(["bash", "-c", 'declare -A file_permissions; source "$1"; echo "$iso_version $iso_label"', "_",
+                            str(ISO / "profiledef.sh")], capture_output=True, text=True, check=True,
+                           env={"PATH": "/usr/bin:/bin", "TZ": zone, "SOURCE_DATE_EPOCH": "1796084400"})
+        assert r.stdout == "2026.12.01 BOMBADIL_202612\n", zone
 
 
 def test_the_build_reads_the_image_back_and_compares_it_with_its_tree():

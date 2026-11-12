@@ -4,16 +4,18 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
-from bombadil import agentd, homefix, notices, paths
+from bombadil import agentd, homefix, notices, paths, version
 
 ROOT = Path(__file__).resolve().parents[1]
 HYPR = ROOT / "share" / "hypr"
@@ -26,6 +28,42 @@ PRE_SPLIT = OLD / "94afe47b.lua"   # the skel file as it was the last time it he
 VM_MONITOR = ('hl.monitor({ output = "Virtual-1", mode = "1600x900@60", position = "0x0", scale = 1 })'
               " -- the VM window (scripts/wsl-vm.sh)")
 SKEL_STUB = ROOT / "packaging" / "bombadil" / "root" / "etc" / "skel" / ".config" / "hypr" / "hyprland.lua"
+SMOKE = ROOT / "packaging" / "bombadil" / "root" / "usr" / "bin" / "bombadil-smoke"
+
+
+def _lua_syntax_checker():
+    """A function that says why Lua text does not parse (None when it does), or None when there is nothing here to
+    ask: the lupa module, else a Lua tool on the PATH. Looked up when the tests load, before the person fixture
+    narrows the PATH."""
+    try:
+        from lupa import lua54
+        load = lua54.LuaRuntime().eval("load")
+
+        def with_lupa(text: str):
+            got = load(text)
+            return got[1] if isinstance(got, tuple) else None
+        return with_lupa
+    except (ImportError, RuntimeError):
+        pass
+    for name, args in (("luac", ["-p"]), ("luac5.4", ["-p"]), ("luajit", ["-bl"])):
+        exe = shutil.which(name)
+        if exe is None:
+            continue
+
+        def with_tool(text: str, exe=exe, args=args):
+            with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as f:
+                f.write(text)
+            try:
+                done = subprocess.run([exe, *args, f.name], capture_output=True, text=True, check=False,
+                                      stdin=subprocess.DEVNULL, timeout=20)
+            finally:
+                os.unlink(f.name)
+            return None if done.returncode == 0 else (done.stderr or done.stdout or "rejected")
+        return with_tool
+    return None
+
+
+LUA_SYNTAX = _lua_syntax_checker()
 
 
 def tree(root: Path) -> dict:
@@ -49,6 +87,12 @@ def digest(path: Path) -> str:
 def code_lines(text: str) -> list[str]:
     """The lines that are not comments or blank."""
     return [ln for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("--")]
+
+
+def assert_parses(text: str) -> None:
+    """Lua itself accepts the text, when there is a Lua here to ask (the tests that need one say so by name)."""
+    if LUA_SYNTAX is not None:
+        assert LUA_SYNTAX(text) is None, LUA_SYNTAX(text)
 
 
 def assert_whole(text: str) -> None:
@@ -167,20 +211,138 @@ def test_a_block_of_several_lines_is_carried_whole(person):
     assert person.state()["steps"]["1"]["kept"] == 2
 
 
-def test_a_user_edit_inside_hl_config_is_commented_out_not_carried_as_a_fragment(person):
+def test_a_value_changed_inside_hl_config_is_carried_as_an_hl_config_call_of_its_own(person):
     edited = PRE_SPLIT.read_text().replace("gaps_in = 6", "gaps_in = 3").replace('kb_layout = "us"', 'kb_layout = "de"')
-    person.write_lua(edited + 'hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))\n')
+    bind = 'hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))'
+    person.write_lua(edited + bind + "\n")
     report = person.twice()
     text = person.lua.read_text()
     body = text[len(STUB):]
-    assert code_lines(body) == ['hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))']
-    left = body[body.index(homefix.LEFT_OVER):]
-    assert "-- gaps_in = 3," in left and '-- input = { kb_layout = "de", follow_mouse = 1 },' in left
-    assert "gaps_in" not in body[:body.index(homefix.LEFT_OVER)]
+    assert code_lines(body) == ["hl.config({", "    general = {", "        gaps_in = 3,", "    },", "})",
+                                "hl.config({", '    input = { kb_layout = "de", follow_mouse = 1 },', "})", bind]
+    assert "-- gaps_in" not in text and homefix.LEFT_OVER not in text
     assert_whole(text)
-    assert person.before.read_text() == edited + 'hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))\n'
-    assert len(report.notes) == 1 and homefix.BEFORE_SPLIT in report.notes[0] and "2 lines" in report.notes[0]
-    assert person.state()["steps"]["1"]["left"] == 2
+    assert_parses(text)
+    assert person.before.read_text() == edited + bind + "\n"
+    assert report.notes == [] and person.state()["steps"]["1"]["left"] == 0
+    assert person.state()["steps"]["1"]["kept"] == 3
+
+
+def test_a_key_added_inside_hl_config_or_a_table_added_around_it_is_carried_the_same_way(person):
+    text = PRE_SPLIT.read_text()
+    text = text.replace('    input = { kb_layout = "us", follow_mouse = 1 },\n',
+                        '    input = { kb_layout = "us", follow_mouse = 1 },\n'
+                        '    cursor = {\n        no_hardware_cursors = true, -- the VM\n    },\n')
+    text = text.replace("        rounding = 12,\n", "        rounding = 12,\n        dim_inactive = true,\n")
+    person.write_lua(text)
+    report = person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == [
+        "hl.config({", "    decoration = {", "        dim_inactive = true,", "    },", "})",
+        "hl.config({", "    cursor = {", "        no_hardware_cursors = true, -- the VM", "    },", "})"]
+    assert "-- cursor = {" not in out and "-- }," not in out
+    assert_whole(out)
+    assert_parses(out)
+    assert report.notes == []
+
+
+def test_a_value_changed_inside_a_table_of_a_table_keeps_its_whole_path(person):
+    person.write_lua(PRE_SPLIT.read_text().replace('active_border = "rgba(d97757ee)"', 'active_border = "rgba(00ff00ee)"'))
+    person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == [
+        "hl.config({", "    general = {", "        col = {", '            active_border = "rgba(00ff00ee)",',
+        "        },", "    },", "})"]
+    assert_parses(out)
+
+
+def test_values_changed_in_the_same_table_are_carried_in_one_call(person):
+    person.write_lua(PRE_SPLIT.read_text().replace("gaps_in = 6", "gaps_in = 3").replace("gaps_out = 12", "gaps_out = 20")
+                     .replace("border_size = 1", "border_size = 2"))
+    person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == ["hl.config({", "    general = {", "        gaps_in = 3,", "        gaps_out = 20,",
+                                           "        border_size = 2,", "    },", "})"]
+    assert_parses(out)
+
+
+def test_a_carried_config_call_that_luac_rejects_goes_back_to_the_comments_as_the_lines_it_came_from(person, tmp_path):
+    fake_tool(tmp_path, "luac", 'grep -q SYNTAXERR && exit 1\nexit 0\n')
+    person.write_lua(PRE_SPLIT.read_text().replace("gaps_in = 6,", "gaps_in = 3, -- SYNTAXERR"))
+    report = person.run()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == [] and "-- gaps_in = 3, -- SYNTAXERR" in out
+    assert "hl.config" not in out[len(STUB):] and len(report.notes) == 1 and "1 line " in report.notes[0]
+
+
+def test_a_changed_value_that_cannot_be_placed_for_sure_is_commented_out_and_the_notice_says_so(person):
+    # The last field of a table has no comma, and a comment after it: a comma cannot be added to it safely.
+    text = PRE_SPLIT.read_text().replace('layout = "dwindle",', 'layout = "master" -- try this')
+    person.write_lua(text + 'hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))\n')
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body) == ['hl.bind("SUPER + Y", hl.dsp.exec_cmd("bar"))']
+    assert '-- layout = "master" -- try this' in body[body.index(homefix.LEFT_OVER):]
+    assert_whole(out)
+    assert len(report.notes) == 1 and "1 line " in report.notes[0] and homefix.BEFORE_SPLIT in report.notes[0]
+
+
+def test_a_field_added_to_a_table_without_its_comma_gets_one_when_it_is_safe(person):
+    text = PRE_SPLIT.read_text().replace('layout = "dwindle",\n', 'layout = "dwindle",\n        resize_on_border = true\n')
+    person.write_lua(text)
+    person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == ["hl.config({", "    general = {", "        resize_on_border = true,",
+                                           "    },", "})"]
+    assert_parses(out)
+
+
+def test_a_change_in_hl_config_the_scanner_cannot_follow_is_not_guessed_at(person):
+    text = PRE_SPLIT.read_text().replace("hl.config({\n", 'hl.config({\n    ["extra"] = {\n        a = 1,\n    },\n', 1)
+    person.write_lua(text)
+    report = person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == []
+    assert '-- ["extra"] = {' in out and "-- a = 1," in out
+    assert_whole(out)
+    assert len(report.notes) == 1
+
+
+def test_a_statement_right_after_a_shipped_one_that_ends_the_same_way_is_carried_whole(person):
+    """Compared line by line, the person's closing `end)` was matched to the shipped hook's and their statement was
+    torn in two (half of it commented out, a stray `-- end)`)."""
+    base = PRE_SPLIT.read_text().splitlines(True)
+    first_end = next(k for k, line in enumerate(base) if line.startswith("end)"))
+    own = 'hl.on("hyprland.start", function()\n    hl.exec_cmd("nm-applet")\nend)\n'
+    person.write_lua("".join(base[:first_end + 1]) + own + "".join(base[first_end + 1:]))
+    report = person.twice()
+    assert person.lua.read_text() == STUB + "\n-- Kept from your old file; all of it is in hyprland.lua.before-split.\n" + own
+    assert report.notes == [] and homefix.LEFT_OVER not in person.lua.read_text()
+
+
+STATEMENTS = {
+    "a window rule": 'hl.window_rule({\n    name = "mine",\n    match = { class = "^(foo)$" },\n    float = true,\n})\n',
+    "a start hook": 'hl.on("hyprland.start", function()\n    hl.exec_cmd("nm-applet")\nend)\n',
+    "a bind": 'hl.bind("SUPER + X", hl.dsp.exec_cmd("foo"))\n',
+}
+
+
+@pytest.mark.parametrize("path", [HYPR / "bombadil.lua", PRE_SPLIT, OLD / "f38ed0d3.lua"], ids=lambda p: p.name)
+def test_a_statement_put_in_anywhere_between_a_shipped_versions_statements_is_carried_whole(path, tmp_path):
+    share = tmp_path / "share"                           # this version as the only one shipped, so each split is quick
+    (share / "share" / "hypr").mkdir(parents=True)
+    (share / "share" / "hypr" / "bombadil.lua").write_bytes(path.read_bytes())
+    lines = path.read_text().splitlines(True)
+    boundaries = [end for _, end, _ in homefix.statements(homefix.scan([ln.rstrip("\n") for ln in lines]))]
+    torn = []
+    for end in boundaries:
+        for what, own in STATEMENTS.items():
+            text = "".join(lines[:end]) + own + "".join(lines[end:])         # no blank line either side
+            out, kept, left = homefix.split(text, share, STUB)
+            if left or kept != 1 or code_lines(out[len(STUB):]) != code_lines(own):
+                torn.append((end, what))
+    assert torn == [] and len(boundaries) > 50
 
 
 def test_a_comment_changed_inside_one_of_bombadils_statements_is_kept_and_not_made_a_fuss_of(person):
@@ -208,6 +370,20 @@ def test_lines_the_person_deleted_come_back_with_bombadils_part_and_the_file_say
     assert "took out" in written and "comes from the system" in written
 
 
+@pytest.mark.parametrize("content", [b"", b"\n\n", b"   \n"])
+def test_an_empty_file_gets_the_stub_and_no_note_about_lines_taken_out(person, content):
+    person.write_lua(content)
+    report = person.twice()
+    assert person.lua.read_text() == STUB and "took out" not in person.lua.read_text()
+    assert person.before.read_bytes() == content and report.notes == []
+
+
+def test_a_file_that_only_has_comments_still_says_what_it_took_out(person):
+    person.write_lua("-- nothing here\n")
+    person.run()
+    assert "took out" in person.lua.read_text() and "-- nothing here" in person.lua.read_text()
+
+
 def test_a_file_made_of_two_versions_does_not_carry_what_an_older_version_shipped(person):
     old_bind = 'hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("bombadil pill"), { release = true })'
     assert old_bind in (OLD / "041c3ba6.lua").read_text() and old_bind not in PRE_SPLIT.read_text()
@@ -216,15 +392,39 @@ def test_a_file_made_of_two_versions_does_not_carry_what_an_older_version_shippe
     assert person.lua.read_text() == STUB
 
 
-def test_blocks_and_locals_are_not_statements_to_carry(person):
-    extra = 'local mod = "ALT"\nif os.getenv("X") then\n  hl.bind(mod .. " + A", hl.dsp.exec_cmd("a"))\nend\n'
+def test_a_local_a_block_and_the_calls_that_use_them_are_carried_whole_and_in_order(person):
+    extra = ('local mod = "ALT"\nlocal function open(c)\n  return hl.dsp.exec_cmd(c)\nend\n'
+             'if os.getenv("X") then\n  hl.bind(mod .. " + A", open("a"))\nend\n'
+             'require("mybinds")\ndofile(os.getenv("HOME") .. "/.config/hypr/more.lua")\n'
+             'for _, key in ipairs({ "F1", "F2" }) do\n  hl.bind(mod .. " + " .. key, open(key))\nend\n')
     person.write_lua(PRE_SPLIT.read_text() + extra + 'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))\n')
-    person.twice()
-    body = person.lua.read_text()[len(STUB):]
-    assert code_lines(body[:body.index(homefix.LEFT_OVER)]) == ['hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))']
-    for line in ('local mod = "ALT"', 'if os.getenv("X") then', "end"):
-        assert f"-- {line}" in body
-    assert_whole(person.lua.read_text())
+    report = person.twice()
+    out = person.lua.read_text()
+    assert out[len(STUB):].endswith(extra + 'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))\n')
+    assert homefix.LEFT_OVER not in out and report.notes == []
+    assert_whole(out)
+    assert_parses(out)
+    assert person.state()["steps"]["1"]["kept"] == 7
+
+
+def test_a_use_is_never_kept_without_what_it_names(person):
+    # `mod = ...` (a global) is not a statement that is carried, so what names `mod` is not either, and what
+    # names that in turn. The bind that names nothing left out stays.
+    extra = ('mod = "ALT"\nlocal key = mod .. " + A"\nhl.bind(key, hl.dsp.exec_cmd("a"))\n'
+             'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))\n'
+             'hl.window_rule({ name = "mod", match = { class = "^mod$" }, float = true })\n')
+    person.write_lua(PRE_SPLIT.read_text() + extra)
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body[:body.index(homefix.LEFT_OVER)]) == [
+        'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))',
+        'hl.window_rule({ name = "mod", match = { class = "^mod$" }, float = true })']
+    left = body[body.index(homefix.LEFT_OVER):]
+    assert left.splitlines()[1:] == ['-- mod = "ALT"', '-- local key = mod .. " + A"', '-- hl.bind(key, hl.dsp.exec_cmd("a"))']
+    assert_whole(out)
+    assert_parses(out)
+    assert len(report.notes) == 1 and "3 lines" in report.notes[0]
 
 
 def test_a_trailing_comma_is_a_fragment_and_not_carried(person):
@@ -233,13 +433,78 @@ def test_a_trailing_comma_is_a_fragment_and_not_carried(person):
     assert code_lines(person.lua.read_text()[len(STUB):]) == []
 
 
-def test_a_before_split_that_is_already_there_is_never_overwritten(person):
+def test_a_before_split_that_is_already_there_is_never_overwritten_and_the_old_file_gets_a_name_of_its_own(person):
     person.before.parent.mkdir(parents=True)
     person.before.write_text("-- the first one\n")
-    person.write_lua(PRE_SPLIT.read_text() + VM_MONITOR + "\n")
-    person.twice()
+    text = PRE_SPLIT.read_text() + VM_MONITOR + "\n"
+    person.write_lua(text)
+    report = person.twice()
+    second = person.before.with_name(homefix.BEFORE_SPLIT + ".2")
     assert person.before.read_text() == "-- the first one\n"
-    assert VM_MONITOR in person.lua.read_text()
+    assert second.read_text() == text                      # the file as it was is saved, whatever else was there
+    out = person.lua.read_text()
+    assert VM_MONITOR in out
+    # The file says where the old one is, and it is the one that has it. So does the notice.
+    assert "all of it is in hyprland.lua.before-split.2." in out
+    assert len(report.notes) == 1 and "hyprland.lua.before-split.2" in report.notes[0]
+    assert "hyprland.lua.before-split was already there" in report.notes[0]
+    assert person.state()["steps"]["1"]["old_file"] == "hyprland.lua.before-split.2"
+    # The stub's fallback (a restore point from before the package) runs that one, not the older file.
+    assert 'hyprland.lua.before-split.2"' in out and 'hyprland.lua.before-split"' not in out
+
+
+def test_the_next_free_name_is_used_and_a_copy_with_the_same_bytes_is_reused(person):
+    text = PRE_SPLIT.read_text() + VM_MONITOR + "\n"
+    person.before.parent.mkdir(parents=True)
+    person.before.write_text("one\n")
+    person.before.with_name(homefix.BEFORE_SPLIT + ".2").write_text("two\n")
+    person.write_lua(text)
+    person.run()
+    assert person.before.with_name(homefix.BEFORE_SPLIT + ".3").read_text() == text
+    assert "all of it is in hyprland.lua.before-split.3." in person.lua.read_text()
+    # The very same bytes are already kept (a start that stopped half way): nothing new is made.
+    person.lua.unlink()
+    for leftover in person.before.parent.glob(homefix.BEFORE_SPLIT + "*"):
+        leftover.unlink()
+    person.before.write_text(text)
+    paths.home_file().unlink()
+    person.write_lua(text)
+    report = person.run()
+    assert sorted(p.name for p in person.before.parent.glob(homefix.BEFORE_SPLIT + "*")) == [homefix.BEFORE_SPLIT]
+    assert "all of it is in hyprland.lua.before-split." in person.lua.read_text() and report.notes == []
+
+
+def test_a_dangling_link_at_the_before_split_name_is_taken_and_not_followed(person):
+    person.before.parent.mkdir(parents=True)
+    person.before.symlink_to(person.home / "nowhere")
+    text = PRE_SPLIT.read_text() + VM_MONITOR + "\n"
+    person.write_lua(text)
+    person.run()
+    assert person.before.is_symlink() and not (person.home / "nowhere").exists()
+    assert person.before.with_name(homefix.BEFORE_SPLIT + ".2").read_text() == text
+
+
+def test_the_file_is_not_replaced_when_no_copy_of_it_can_be_made(person, monkeypatch):
+    text = PRE_SPLIT.read_text() + VM_MONITOR + "\n"
+    person.write_lua(text)
+    monkeypatch.setattr(homefix, "_create_only", lambda *a, **k: False)      # the name was taken meanwhile
+    report = person.run()
+    assert person.lua.read_text() == text and "1" not in report.steps
+    assert any("step 1" in line and "appeared meanwhile" in line for line in person.log)
+    monkeypatch.undo()
+    person.run()                                                              # and the next start does it
+    assert VM_MONITOR in person.lua.read_text() and person.before.read_text() == text
+
+
+def test_a_run_of_taken_names_stops_instead_of_going_on_for_ever(person):
+    person.before.parent.mkdir(parents=True)
+    person.before.write_text("x\n")
+    for n in range(2, 100):
+        person.before.with_name(f"{homefix.BEFORE_SPLIT}.{n}").write_text("x\n")
+    person.write_lua(PRE_SPLIT.read_text() + VM_MONITOR + "\n")
+    before = person.lua.read_bytes()
+    person.run()
+    assert person.lua.read_bytes() == before and any("no name is free" in line for line in person.log)
 
 
 def test_a_home_that_already_has_the_stub_is_untouched(person):
@@ -282,10 +547,13 @@ def test_a_symlinked_hyprland_lua_is_replaced_by_a_file_and_what_it_pointed_at_i
     dotfiles.write_text(PRE_SPLIT.read_text() + VM_MONITOR + "\n")
     person.lua.parent.mkdir(parents=True)
     person.lua.symlink_to(dotfiles)
-    person.twice()
+    report = person.twice()
     assert not person.lua.is_symlink() and VM_MONITOR in person.lua.read_text()
     assert dotfiles.read_text() == PRE_SPLIT.read_text() + VM_MONITOR + "\n"
     assert person.before.read_text() == dotfiles.read_text()
+    # They are told, since a link into their dotfiles is not what the file is now.
+    assert len(report.notes) == 1 and f"was a link to {dotfiles}" in report.notes[0]
+    assert "what the link pointed at is as it was" in report.notes[0]
 
 
 def test_a_dangling_symlink_is_left_alone_and_the_step_fails(person):
@@ -388,13 +656,36 @@ def test_a_stray_closer_or_an_open_string_or_an_unclosed_block_is_not_whole():
     assert statements("if x then\n") == [(0, 1, True)]
 
 
-def test_only_comments_blanks_and_whole_hl_calls_are_fit_to_carry():
-    def fit(line):
-        rows = homefix.scan([line])
-        return homefix._carryable(rows, 0, 1, rows[0].bad)
+def test_only_comments_blanks_and_whole_statements_of_a_few_kinds_are_fit_to_carry():
+    def fit(*lines):
+        rows = homefix.scan(list(lines))
+        return homefix._carryable(rows, 0, len(lines), any(r.bad for r in rows) or rows[-1].end != 0)
     assert fit("") and fit("-- a comment") and fit('hl.bind("a", hl.dsp.exec_cmd("b")) -- ok')
-    assert not fit("gaps_in = 3,") and not fit('local x = "y"') and not fit("end") and not fit('hl.bind("a", b),')
-    assert not fit("})") and not fit('hl.bind("a')
+    assert fit('local x = "y"') and fit("local function f()", "end") and fit('require("mybinds")')
+    assert fit('dofile("a.lua")') and fit("if a then", "  hl.a()", "end") and fit("for i = 1, 2 do", "end")
+    assert fit("while x do", "end") and fit("do", "  hl.a()", "end")
+    assert not fit("gaps_in = 3,") and not fit("end") and not fit('hl.bind("a", b),') and not fit('local t = { 1, 2 },')
+    assert not fit("})") and not fit('hl.bind("a') and not fit("if x then") and not fit('mod = "ALT"')
+    assert not fit("format(1)") and not fit("iffy()") and not fit("document()")
+
+
+def test_the_names_a_statement_makes_and_uses():
+    assert homefix._defines('local a, b = "", 1') == {"a", "b"}
+    assert homefix._defines("local function f()") == {"f"}
+    assert homefix._defines("function g(x)") == {"g"} and homefix._defines('mod = ""') == {"mod"}
+    assert homefix._defines('hl.bind("", mod)') == set() and homefix._defines("x == 1") == set()
+    assert "mod" in homefix._names_used('hl.bind(mod .. "", f(x))') and {"f", "x"} <= homefix._names_used("f(x)")
+    assert "mod" not in homefix._names_used("hl.bind(a.mod, b:mod())")          # a field is not the name
+    assert "mod" not in homefix._names_used('hl.window_rule({ mod = "" })')       # nor a key
+    assert "mod" not in homefix._names_used("amod = 1 + modest") and "mode" in homefix._names_used("mode == 1")
+    assert "mod" not in homefix._names_used("mode = 1")                            # a longer word is not a shorter one
+
+
+def test_a_long_chain_of_names_that_depend_on_a_left_out_one_is_not_slow():
+    lines = ["mod0 = 1"] + [f"local mod{i + 1} = mod{i}" for i in range(1500)]
+    began = time.monotonic()
+    _, kept, left = homefix.split("\n".join(lines) + "\n", ROOT, STUB)
+    assert kept == 0 and left == 1501 and time.monotonic() - began < 5
 
 
 # -- step 2: the skel entries --
@@ -510,7 +801,81 @@ def test_the_stub_carries_the_same_last_resort_start_hook_as_bombadils_part():
     hook = "systemctl --user import-environment && systemctl --user restart bombadil-agentd bombadil-shell"
     assert hook in STUB and hook in (HYPR / "bombadil.lua").read_text()
     assert homefix.LOAD_LINE in STUB
-    assert STUB.endswith("-- Your own lines go below. They run after Bombadil's, so a monitor or a bind here wins.\n")
+    # Only what is true: the person's lines run after Bombadil's. (Whether a monitor or a bind there overrides a
+    # line of Bombadil's is Hyprland's to say, and the stub does not claim it.)
+    assert STUB.endswith("-- Your own lines go below. They run after Bombadil's.\n")
+    assert "wins" not in STUB and "wins" not in SKEL_STUB.read_text()
+    # The fallback that runs the old file stops there: that file holds the person's lines, which come again below.
+    assert re.search(r"dofile\(old\)\n(?:\s*--[^\n]*\n)*\s*return\n\s*else\n", STUB)
+
+
+def test_the_loader_line_and_the_path_it_names_are_permanent():
+    """Every home that was split has this line, and homefix tells a split file by it. A home never gets a new stub,
+    so a different path would leave the ones already made loading nothing (the fallback would then run). The
+    module is at that path because the package installs its share tree there. Change it only with a step that
+    rewrites the stub in every home."""
+    assert homefix.LOAD_LINE == 'pcall(require, "/usr/share/bombadil/share/hypr/bombadil")'
+    for text in (STUB, SKEL_STUB.read_text()):
+        assert text.splitlines()[1] == "local ok = " + homefix.LOAD_LINE
+    assert homefix.INSTALLED_SHARE / "share" / "hypr" / "bombadil.lua" == Path("/usr/share/bombadil/share/hypr/bombadil.lua")
+    assert (HYPR / "bombadil.lua").is_file()
+    assert homefix.LOAD_LINE in SMOKE.read_text()                  # what the VM test looks for in a split home
+
+
+def test_bombadils_part_and_the_stub_are_valid_lua():
+    """A syntax error in either one stops the whole config, and pcall does not catch it in a module."""
+    if LUA_SYNTAX is None:
+        pytest.skip("no Lua here to check syntax with (pip install lupa, or install a lua package)")
+    for name, text in (("share/hypr/bombadil.lua", (HYPR / "bombadil.lua").read_text()),
+                       ("homefix.STUB", STUB), ("the skel's hyprland.lua", SKEL_STUB.read_text())):
+        assert LUA_SYNTAX(text) is None, f"{name}: {LUA_SYNTAX(text)}"
+    assert LUA_SYNTAX("hl.bind(") is not None                       # and the checker does say no
+
+
+# What the stub does when it runs, with a Lua of our own: a recording hl, and `require` finding a module (or not).
+def run_stub(config: Path, module_present: bool) -> list[str]:
+    lupa = pytest.importorskip("lupa.lua54", reason="the stub is run with the lupa module")
+    lua = lupa.LuaRuntime()
+    lua.execute("""
+        calls = {}
+        local function rec(name)
+            return function(first)
+                if type(first) == "table" then first = first.output end
+                calls[#calls + 1] = name .. " " .. tostring(first)
+            end
+        end
+        local any
+        any = setmetatable({}, { __index = function() return any end, __call = function() return any end })
+        hl = setmetatable({ dsp = any }, { __index = function(_, name) return rec(name) end })
+        package.path, package.cpath = "", ""
+    """)
+    if module_present:
+        lua.execute('package.preload["/usr/share/bombadil/share/hypr/bombadil"] = function() calls[#calls + 1] = "module" end')
+    lua.eval("dofile")(str(config))
+    return list(lua.eval("calls").values())
+
+
+def test_the_stub_loads_the_part_and_then_runs_the_persons_lines(person):
+    person.write_lua(PRE_SPLIT.read_text() + VM_MONITOR + "\n")
+    person.run()
+    assert run_stub(person.lua, module_present=True) == ["module", "monitor Virtual-1"]
+
+
+def test_the_stub_without_the_part_runs_the_old_file_once_and_stops(person):
+    """A restore point from before the package has no part. The old file holds the person's lines too, and the
+    copies carried after the stub must not run them a second time."""
+    bind = 'hl.bind("SUPER + F9", hl.dsp.exec_cmd("true"))'
+    person.write_lua(PRE_SPLIT.read_text() + bind + "\n")
+    person.run()
+    assert bind in person.lua.read_text() and bind in person.before.read_text()
+    calls = run_stub(person.lua, module_present=False)
+    assert calls.count("bind SUPER + F9") == 1 and "module" not in calls
+    assert calls.count("on hyprland.start") == 1                     # the old file's own start hook, once
+
+
+def test_the_stub_without_the_part_and_without_an_old_file_still_starts_the_pill_and_the_persons_lines(person):
+    person.write_lua(STUB + 'hl.bind("SUPER + F9", hl.dsp.exec_cmd("true"))\n')
+    assert run_stub(person.lua, module_present=False) == ["on hyprland.start", "bind SUPER + F9"]
 
 
 # -- the state file --
@@ -541,7 +906,8 @@ def test_a_lost_state_file_makes_the_steps_run_again_harmlessly(person):
 
 
 @pytest.mark.parametrize("content", [
-    "not json {", "[]", '{"version": 2, "steps": {}, "failed": {}, "skel_seen": []}',
+    "not json {", "[]", '{"version": 0, "steps": {}, "failed": {}, "skel_seen": []}',
+    '{"version": "2", "steps": {}, "failed": {}, "skel_seen": []}', '{"version": true}',
     '{"version": 1, "steps": [], "failed": {}, "skel_seen": []}',
     '{"version": 1, "steps": {}, "failed": {}, "skel_seen": [1, 2]}', "",
 ])
@@ -555,10 +921,28 @@ def test_a_state_file_that_cannot_be_believed_is_set_aside_and_the_table_starts_
     assert person.state()["steps"]["1"]["result"] == "stub-only" and person.lua.read_text() == STUB
 
 
+def test_a_state_file_from_a_newer_bombadil_is_left_alone_and_so_is_the_home(person):
+    paths.home_file().parent.mkdir(parents=True)
+    newer = json.dumps({"version": homefix.STATE_VERSION + 1, "steps": {}, "failed": {}, "skel_seen": [],
+                        "entries": ["a shape this code does not know"]})
+    paths.home_file().write_text(newer)
+    person.write_lua(PRE_SPLIT.read_text() + VM_MONITOR + "\n")
+    before = tree(person.home)
+    report = person.run()
+    assert paths.home_file().read_text() == newer and not list(paths.home_file().parent.glob("home.json.bad-*"))
+    assert tree(person.home) == before and report.steps == {} and report.notes == []
+    assert any("newer Bombadil" in line for line in person.log)
+    # A state file of an older version than this one is not newer: it is set aside as before.
+    paths.home_file().write_text('{"version": 0, "steps": {}, "failed": {}, "skel_seen": []}')
+    person.run()
+    assert person.state()["version"] == homefix.STATE_VERSION and list(paths.home_file().parent.glob("home.json.bad-*"))
+
+
 def test_a_failure_record_that_is_nonsense_is_forgotten_and_nothing_else_is(person):
     paths.home_file().parent.mkdir(parents=True)
     paths.home_file().write_text(json.dumps({"version": 1, "steps": {}, "skel_seen": ["x"],
-                                             "failed": {"1": "oops", "2": {"attempts": "many"}}}))
+                                             "failed": {"1": "oops", "2": {"attempts": "many"},
+                                                        "3": {"attempts": 1, "epoch": "soon"}}}))
     person.run()
     assert not list(paths.home_file().parent.glob("home.json.bad-*"))
     assert person.state()["failed"] == {} and "x" in person.state()["skel_seen"] and person.lua.read_text() == STUB
@@ -579,14 +963,101 @@ def test_run_never_raises_and_says_why(person, tmp_path, monkeypatch):
     assert homefix.run(home=person.home, share=ROOT, skel=person.skel).steps == {}
 
 
-def test_a_step_that_keeps_failing_is_tried_three_times_and_then_left_alone(person):
+def an_hour_later(person, key: str = "1") -> None:
+    """The last failure that counted for a step is more than an hour old."""
+    doc = person.state()
+    doc["failed"][key]["epoch"] -= homefix.RETRY_AFTER_SECS + 1
+    paths.home_file().write_text(json.dumps(doc))
+
+
+def new_release(monkeypatch, number: str = "2026.12.01 (abc1234)") -> None:
+    monkeypatch.setattr(version, "read", lambda: number)
+
+
+def test_a_step_that_keeps_failing_is_tried_at_every_start_but_counts_once_an_hour(person):
     person.lua.mkdir(parents=True)                           # hyprland.lua is a folder: it cannot be read
     for _ in range(5):
         report = person.run()
         assert report.steps == {"2": "added"} or report.steps == {"2": "seen"}   # step 2 does not wait on step 1
     failures = [line for line in person.log if line.startswith("step 1")]
-    assert len(failures) == 3 and "attempt 3 of 3" in failures[-1]
+    assert len(failures) == 5 and all("attempt 1 of 3" in line for line in failures)
+    assert "not counted" not in failures[0] and "not counted" in failures[1]
+    assert person.state()["failed"]["1"]["attempts"] == 1 and report.notes == []
+
+
+def test_an_agentd_that_restarts_in_a_loop_does_not_use_the_attempts_up(person):
+    person.lua.mkdir(parents=True)
+    for _ in range(30):
+        person.run()
+    assert person.state()["failed"]["1"]["attempts"] == 1 and not any("attempt 2" in line for line in person.log)
+
+
+def test_the_third_counted_failure_leaves_the_step_alone_and_says_so_once(person):
+    person.lua.mkdir(parents=True)
+    person.run()
+    for attempts in (2, 3):
+        an_hour_later(person)
+        report = person.run()
+        assert person.state()["failed"]["1"]["attempts"] == attempts
+        assert (len(report.notes) == 1) == (attempts == 3)
+    assert "config split" in report.notes[0] and "3 tries" in report.notes[0] and "next update" in report.notes[0]
+    assert "IsADirectoryError" in report.notes[0] and "\u2014" not in report.notes[0]
+    tried = len(person.log)
+    an_hour_later(person)
+    assert person.run().notes == [] and len(person.log) == tried       # left alone, and not told again
     assert person.state()["failed"]["1"]["attempts"] == 3
+
+
+def test_a_newer_bombadil_gives_a_left_alone_step_its_attempts_back(person, monkeypatch):
+    person.lua.mkdir(parents=True)
+    for _ in range(3):
+        person.run()
+        an_hour_later(person)
+    assert person.state()["failed"]["1"]["attempts"] == 3
+    person.lua.rmdir()                                       # what stopped it is gone, but the version is the same
+    assert "1" not in person.run().steps and not person.lua.exists()
+    new_release(monkeypatch)
+    assert person.run().steps["1"] == "stub-written" and person.lua.read_text() == STUB
+    assert person.state()["failed"] == {}
+
+
+def test_a_failure_on_a_newer_bombadil_starts_counting_again_and_records_that_version(person, monkeypatch):
+    person.lua.mkdir(parents=True)
+    monkeypatch.setattr(version, "read", lambda: "2026.11.01 (aaa1111)")
+    for _ in range(3):
+        person.run()
+        an_hour_later(person)
+    new_release(monkeypatch)
+    person.run()
+    failed = person.state()["failed"]["1"]
+    assert failed["attempts"] == 1 and failed["bombadil"] == "2026.12.01 (abc1234)"
+
+
+def test_one_entry_that_can_never_be_made_does_not_shut_later_releases_out_of_step_2(person, monkeypatch):
+    (person.home / ".config").mkdir()
+    (person.home / ".config/bombadil").write_text("a file where the folder should be")
+    for _ in range(3):
+        person.run()
+        an_hour_later(person, "2")
+    assert person.state()["failed"]["2"]["attempts"] == 3
+    (person.skel / ".config/new-thing.conf").write_text("new\n")      # a later release brings a file
+    person.run()
+    assert not (person.home / ".config/new-thing.conf").exists()      # the same release: left alone
+    new_release(monkeypatch)
+    person.run()
+    assert (person.home / ".config/new-thing.conf").read_text() == "new\n"
+    assert person.state()["failed"]["2"]["attempts"] == 1              # the blocked one still fails, and counts anew
+
+
+def test_a_file_too_long_to_compare_fails_until_a_newer_bombadil(person, monkeypatch):
+    person.write_lua("-- a line\n" * (homefix.MAX_LINES + 1))
+    for _ in range(3):
+        person.run()
+        an_hour_later(person)
+    assert person.state()["failed"]["1"]["attempts"] == 3 and not person.before.exists()
+    monkeypatch.setattr(homefix, "MAX_LINES", homefix.MAX_LINES + 10)     # what a newer release might allow
+    new_release(monkeypatch)
+    assert person.run().steps["1"] == "migrated"
 
 
 def test_a_step_that_works_again_forgets_its_failures(person):

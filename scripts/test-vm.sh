@@ -20,7 +20,9 @@
 # installer meets copy-to-RAM on a real stick.
 # MODE=update builds the package a second time (scripts/build-in-container.sh package, into out/repo) with a newer
 # release number and a commit that ends in +update, and serves out/repo on 127.0.0.1:8123 while the VM runs: QEMU's
-# user network shows the host to the guest as 10.0.2.2, which is where /etc/pacman.d/bombadil.conf looks first.
+# user network shows the host to the guest as 10.0.2.2, which is where /etc/pacman.d/bombadil.conf looks first. That line
+# is in the file of a build made with BOMBADIL_DEV_SERVER=1 only (BOMBADIL_TEST_ENTRIES=1 implies it), and the newer package
+# is built with it too: pacman would replace the unmodified file on the disk with one that lacks the line.
 # QEMU's own option syntax has commas in it (-accel tcg,thread=multi); they are not array separators.
 # shellcheck disable=SC2054
 set -euo pipefail
@@ -166,10 +168,11 @@ boot() {
 # and its commit says +update, which is how the VM tells it from the one it had.
 serve_update() {
   local day commit server
-  if [[ "$(basename "$iso")" =~ ^bombadil-([0-9]{4}\.[0-9]{2}\.[0-9]{2})- ]]; then day=${BASH_REMATCH[1]}; else day=$(date +%Y.%m.%d); fi
+  if [[ "$(basename "$iso")" =~ ^bombadil-([0-9]{4}\.[0-9]{2}\.[0-9]{2})- ]]; then day=${BASH_REMATCH[1]}; else day=$(date -u +%Y.%m.%d); fi
   commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)
   echo "Building the newer package ($commit+update, version $day) into out/repo..."
-  BOMBADIL_COMMIT="$commit+update" BOMBADIL_PKGREL="$(date +%s)" BOMBADIL_PKGVER="$day" "$root/scripts/build-in-container.sh" package
+  BOMBADIL_DEV_SERVER=1 BOMBADIL_COMMIT="$commit+update" BOMBADIL_PKGREL="$(date +%s)" BOMBADIL_PKGVER="$day" \
+    "$root/scripts/build-in-container.sh" package
   [[ -s "$root/out/repo/bombadil.db" ]] || { echo "the build left no repository in out/repo"; exit 2; }
   python3 -m http.server 8123 --bind 127.0.0.1 --directory "$root/out/repo" >"$out/update-server.log" 2>&1 &
   server=$!
