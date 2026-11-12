@@ -25,6 +25,8 @@ the decision log and the roadmap.
   doing, or styles something one-off will be sent back.
 - **Document it in the same pull request.** Update the page of the piece you changed, and the decision log or
   the roadmap if you decided or shipped something. [How, and what never to commit](docs/contributing/documenting.md).
+- **If the change adds something a person can ask, add its tip too.** The tip row and its scene go in the same
+  pull request, gated by a `needs` flag until the code is on `main` ([how](docs/TIPS.md#how-a-tip-is-added)).
 - **Check the docs:** `python3 docs/tools/check_docs.py --mermaid` (the flag needs Mermaid's CLI; leave it off without it).
 - **Describe what a person sees.** Open the pull request description with what it looked like before and
   what it looks like after, then say in a sentence what the change does and how.
