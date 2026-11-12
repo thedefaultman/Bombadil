@@ -1,42 +1,32 @@
 # Testing the whole system in a VM
 
 > **Status:** Shipped
-> **Code:** `scripts/test-vm.sh`, `scripts/qmp.py`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/etc/systemd/system/bombadil-smoke.service`, `iso/efiboot/loader/entries/02-bombadil-serial.conf`, `iso/efiboot/loader/entries/03-bombadil-install-test.conf`, `src/bombadil/fake_signin.py`, `scripts/vm-tools/vmsmoke`, `tests/test_iso_profile.py`, `tests/test_boot_console.py`, `tests/test_brain_service.py`
+> **Code:** `scripts/test-vm.sh`, `scripts/qmp.py`, `scripts/build-iso.sh`, `scripts/build-in-container.sh`, `scripts/wsl-vm.sh`, `iso/airootfs/usr/local/bin/bombadil-smoke`, `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-rollback`, `iso/airootfs/etc/systemd/system/bombadil-smoke.service`, `iso/efiboot/loader/entries/02-bombadil-serial.conf`, `iso/efiboot/loader/entries/03-bombadil-install-test.conf`, `iso/efiboot/loader/entries/04-bombadil-install-encrypted-test.conf`, `iso/efiboot/loader/entries/05-bombadil-refresh-test.conf`, `src/bombadil/fake_signin.py`, `scripts/vm-tools/vmsmoke`, `tests/desktop/idle.py`, `tests/test_iso_profile.py`, `tests/test_installer.py`, `tests/test_boot_console.py`, `tests/test_brain_service.py`
 > **Design:** there is no brief for the test layers; [developing and testing](development.md) places this layer among the others
-> **Verified:** 2026-11-09 against `main` at `ca7f80a` for the coding-sessions checks and the `DIAG` lines after a failure, which were read from the script and not run, and for the smoke's picture checks; the rest as checked on 2026-11-08 at `7176e55`
+> **Verified:** 2026-11-12 against `main` at `7d37bc5` for the modes and host logic of `scripts/test-vm.sh`, the five boot entries and the build flag that adds them, and the smoke's checks of the pill shortcuts, Super+Return, the sign-in cancel, the idle cost, the layout, the encrypted install and the refresh. All of it was read from the scripts and the tests that pin them, and none was run: no VM was booted and no test was run for this check. The rest of the page was checked on 2026-11-09 against `main` at `ca7f80a` and on 2026-11-08 at `7176e55`.
 
 Unit tests cover the Python and the QML that load without a compositor, and a headless desktop test
 (`tests/desktop/run.sh`) drives the bar and the daemon in a sway session against a scripted model
 API. Neither can say whether Hyprland focuses the pill, whether the units come back, whether an
-install boots. That is the VM smoke test: it boots the real ISO, runs the real session and, in
-install mode, installs it to a scratch disk and boots that too, judging each boot from the serial log.
+install boots. That is the VM smoke test: it boots the real ISO, runs the real session and, in the
+install modes, installs it to a scratch disk (with a password, or as a refresh of an older system) and boots
+that too, judging each boot from the serial log.
 
 This page covers the host side (`scripts/test-vm.sh`), the protocol between the host and the guest,
 what the run covers, the traps and what to do when a check fails. The catalogue of checks is in
 [ISO and install](../architecture/iso-and-install.md#the-smoke-test), and the recipe for adding one is
 in [Developing and testing](development.md#add-a-smoke-check).
 
-No boot was observed for this page on 2026-11-08. Every statement comes from reading the scripts and
-the code they call. What QEMU, systemd and systemd-boot do with their inputs (QMP's `send-key` and
-`screendump`, the unit condition matching `bombadil.smoke=install`, the `Boot in` countdown) is taken
-from how the scripts rely on it.
-
-The parts of this page about the smoke's picture checks (a wait for a calm guest, and a capture asked
-again with more time) were added on 2026-11-09 against `main` at `9d5c729`. They were checked by reading
-the script and by running the five tests that exercise it, which run the script's `picture()` function in
-bash and need no VM. The coding-sessions checks and the `DIAG` lines after a failed check were added on
-2026-11-09 against `main` at `ca7f80a` by reading the script, which passes `bash -n`; no VM was booted. The
-change from `ca7f80a` to `f0485c2` was added and checked on 2026-11-09 and nothing else on the page was read
-again: the smoke's checks of the name and voice card (25 lines of `bombadil-smoke`, in the sign-in block), the
-installer carrying the desk's places and what Tips has taught, and the tests that read them. They were checked
-by reading the two scripts, which pass `bash -n`, and by running `tests/test_iso_profile.py` (34 tests, one of
-them the installer's carry loop run in bash on two folders); no VM was booted. The change from `f0485c2` to
-`24c836c` was added and checked on 2026-11-09 and nothing else on the page was read again: the smoke's 21 checks of
-the connection service, the browser service and the notifications, the one it dropped (the bar and the daemon are
-the two user services it kills now, and `mako` is gone), and the tests that read them. They were checked by reading
-the smoke, which passes `bash -n`, and by running `tests/test_iso_profile.py` (46 tests, all passed, with the one that
-runs `systemd-sysusers` on a scratch root among them); no VM was booted. The rest of the page is as it was checked
-on 2026-11-08 at `7176e55`.
+No boot was observed for this page. Every statement comes from reading the scripts and the code they
+call, and, for the parts that run in bash without a VM, from the tests that run them. What QEMU, systemd,
+systemd-boot and GRUB do with their inputs (QMP's `send-key` and `screendump`, the unit condition matching
+`bombadil.smoke=install`, the `Boot in` countdown, the password prompt GRUB prints) is taken from how the
+scripts rely on it. The smoke's picture checks (a wait for a calm guest, and a capture asked again with
+more time) were checked on 2026-11-09 by running the five tests that exercise the script's `picture()`
+function in bash. The coding-sessions checks, the checks of the name and voice card and the 21 checks of the
+connection service, the browser service and the notifications were read from the script, which passes `bash
+-n`. The modes added on 2026-11-12 (the encrypted install, the refresh, the layout checks, the idle cost) were
+read, not run.
 
 ## How it fits together
 
@@ -64,15 +54,23 @@ flowchart LR
 ```
 
 The ISO carries `bombadil-smoke.service`, which runs only when the kernel command line has
-`bombadil.smoke` (`ConditionKernelCommandLine`, after `greetd.service`). The argument and its value
-pick the mode. Two of the ISO's three boot entries set it; the third mode is set on the installed disk.
+`bombadil.smoke` (`ConditionKernelCommandLine`, after `greetd.service`; systemd matches the bare word as the
+left side of `bombadil.smoke=<mode>` too, which is its behaviour and not shown by a file here). The argument
+and its value pick the mode. A plain build has the boot entry `01` only: `scripts/build-iso.sh` deletes
+`entries/0[2-9]-*.conf` unless `BOMBADIL_TEST_ENTRIES` is set (`build-iso.sh:19-23`), and its comment says the
+entries are never in a release, because two of them erase a disk without asking. A build made with
+`BOMBADIL_TEST_ENTRIES=1` adds `02` to `05`. The modes that run on a disk are set by the installer into that
+disk's GRUB defaults.
 
 | Boot | Kernel argument | Mode and what runs |
 |---|---|---|
-| ISO entry `01-bombadil.conf` | none | The plain boot. The service does not run. |
+| ISO entry `01-bombadil.conf`, in every build | none | The plain boot. The service does not run. |
 | ISO entry `02-bombadil-serial.conf` | `bombadil.smoke` | `live`: the checks, then power off. |
-| ISO entry `03-bombadil-install-test.conf` | `bombadil.smoke=install` | `install`: the live checks, then `bombadil-install /dev/vda --yes`, then power off. |
-| the installed disk | `bombadil.smoke=undo` | `undo`: the common checks, then the brain checks, a restore point, a change, `bombadil undo` and a reboot; after the reboot the common checks run again and `undo-applied` checks that the change is gone. The install check writes the argument into the installed disk's GRUB defaults through `BOMBADIL_INSTALL_CMDLINE`. |
+| ISO entry `03-bombadil-install-test.conf` | `bombadil.smoke=install` | `install`: the live checks, then `bombadil-install /dev/vda --yes`, then power off. When the ISO is attached as a USB disk, it first checks that the installer refuses the stick it runs from (`install-refuses-the-stick`). |
+| ISO entry `04-bombadil-install-encrypted-test.conf` | `bombadil.smoke=install-encrypted` | `install-encrypted`: the live checks, then it puts a sign-in and two folders in the stick's home folder and runs `bombadil-install --plan` with a name, a time zone, a keyboard and a short carry list, and the password `correct-horse-battery-staple` on file descriptor 3. GRUB is shown on the serial line (`BOMBADIL_INSTALL_GRUB_SERIAL=1`) so that the host can type the password. Then power off. |
+| ISO entry `05-bombadil-refresh-test.conf` | `bombadil.smoke=refresh` | `refresh`: on a disk an older Bombadil installed, the live checks, then it plants a marker, a sign-in and a project in the disk's home folder, a hostname and a marker in its system, and runs `bombadil-install --refresh /dev/vda --yes`. Then power off. |
+| the installed disk, after entry 03 or 04 | `bombadil.smoke=undo` | `undo`: the common checks, then the brain checks, the layout checks, a restore point, a change, `bombadil undo` and a reboot; after the reboot the common checks run again and `undo-applied` checks that the change is gone, with two checks of the kernel and the root. The install check writes the argument into the installed disk's GRUB defaults through `BOMBADIL_INSTALL_CMDLINE`. |
+| the refreshed disk, after entry 05 | `bombadil.smoke=refreshed` | `refreshed`: the common checks, the layout checks and the refresh checks, then `bombadil-rollback refresh` and a reboot, which starts the old system from the same GRUB. The refresh check writes the argument the same way. |
 
 An empty value is printed as `mode=live`. [The boot menu](../architecture/iso-and-install.md#the-boot-menu)
 holds the entries and [the smoke test](../architecture/iso-and-install.md#the-smoke-test) the whole
@@ -88,57 +86,96 @@ takes a screenshot with QMP `screendump`.
 ## Running it
 
 ```sh
-scripts/build-in-container.sh              # the ISO, in out/
+BOMBADIL_TEST_ENTRIES=1 scripts/build-in-container.sh   # an ISO with the test entries, in out/
 scripts/test-vm.sh                         # live checks
 MODE=install scripts/test-vm.sh            # live checks, install to a scratch disk, boot it, undo
+MODE=install-encrypted scripts/test-vm.sh  # the same with a password: typed once at GRUB, never asked again
 MODE=installed scripts/test-vm.sh          # boot the disk the last install run left
+OLD_ISO=old.iso MODE=refresh scripts/test-vm.sh   # install with an older ISO, refresh with this one, put the old system back
 TIMEOUT=5400 MODE=install scripts/test-vm.sh
 ```
 
-`MODE=installed` boots `out/test/disk.qcow2` again without installing. After an undo round trip that
-was cut short (the emulator died as the guest rebooted) it is the second boot: the guest keeps
-`~/.bombadil-smoke-phase`, the second boot checks `undo-applied` and removes the file. After a round
-trip that finished there is no phase file, so the boot runs the whole first pass again (the checks, a
-restore point, the undo, the reboot) and then the second.
+A plain `scripts/build-in-container.sh` build has no test entries. `test-vm.sh` looks for the text of the entry
+its mode needs in the ISO file (`need_entries`) and, when it is not there, prints how to build the ISO and
+exits 2, before it boots anything. `live` needs `console=ttyS0,115200 bombadil.smoke`, `install`
+`bombadil.smoke=install`, `install-encrypted` `bombadil.smoke=install-encrypted`, and `refresh` needs
+`bombadil.smoke=refresh` in the new ISO and `bombadil.smoke=install` in `OLD_ISO`.
+
+| `MODE` | The disk | What boots |
+|---|---|---|
+| `live` (the default) | none | entry 02 of the ISO, attached as a CD |
+| `install` | a new 40 GiB qcow2, `out/test/disk.qcow2`, replaced at each run | entry 03 of the ISO, attached as a USB stick; then the installed disk, which runs the `undo` mode |
+| `install-encrypted` | the same | entry 04; then the installed disk, where the host types the password at GRUB's prompt each time it shows |
+| `refresh` | the same | entry 03 of `OLD_ISO` as a CD, which installs the older system; entry 05 of the ISO as a USB stick, which refreshes the disk; then the disk, which checks the refreshed system, puts the old one back and restarts into it |
+| `installed` | the disk the last install run left | the installed disk |
+| anything else | none | the run stops with exit 2 and `unknown MODE=<value>` |
+
+`MODE=installed` boots `out/test/disk.qcow2` again without installing; it exits 2 when there is none
+(`no out/test/disk.qcow2: run MODE=install or MODE=install-encrypted first`). It reads the log the previous
+boot left (`installed-first.serial.log`) to see whether GRUB asked for a password, and types it again if it
+did. After an undo round trip that was cut short (the emulator died as the guest rebooted) it is the second
+boot: the guest keeps `~/.bombadil-smoke-phase`, the second boot checks `undo-applied` and removes the file.
+After a round trip that finished there is no phase file, so the boot runs the whole first pass again (the
+checks, a restore point, the undo, the reboot) and then the second.
 
 What the host needs:
 
 | Need | Notes |
 |---|---|
 | `qemu-system-x86_64` | KVM is used when `/dev/kvm` is writable; otherwise software emulation. |
-| `qemu-img` | Install mode only: it creates the 40 GiB qcow2 disk. |
-| an OVMF firmware file | One of `/usr/share/edk2/x64/OVMF_CODE.4m.fd`, `/usr/share/edk2/x64/OVMF.4m.fd`, `/usr/share/OVMF/OVMF_CODE_4M.fd` or `/usr/share/OVMF/OVMF_CODE.fd` (`edk2-ovmf` on Arch, `ovmf` on Debian and Ubuntu). |
+| `qemu-img` | The install modes only: it creates the 40 GiB qcow2 disk. |
+| 8 GiB of memory to give the guest | The guest gets 8 GiB in every mode but `live` (4 GiB). |
+| an OVMF firmware file | One of `/usr/share/edk2/x64/OVMF_CODE.4m.fd`, `/usr/share/edk2/x64/OVMF.4m.fd`, `/usr/share/OVMF/OVMF_CODE_4M.fd` or `/usr/share/OVMF/OVMF_CODE.fd` (`edk2-ovmf` on Arch, `ovmf` on Debian and Ubuntu). When the matching variables file is beside it (`OVMF_VARS...`), it is used too. |
 | `python3` | For `scripts/qmp.py`. |
 | an ISO | The newest `out/*.iso`, or `ISO`. The lookup runs in every mode, so `MODE=installed` with no ISO in `out/` and no `ISO` stops before it boots anything. |
+| a second, older ISO | `MODE=refresh` only: `OLD_ISO`, an ISO built before this disk layout, with its install test entry. |
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `MODE` | `live` | `live`, `install` or `installed`. Any other value runs as `live`. |
+| `MODE` | `live` | `live`, `install`, `install-encrypted`, `refresh` or `installed`. Any other value exits 2. |
 | `ISO` | newest `out/*.iso` | The image to boot. |
-| `TIMEOUT` | `2400` | Seconds per boot, not per run: install mode boots twice. |
+| `OLD_ISO` | none | `MODE=refresh` only, and required there: the ISO that installs the older system. The run stops with `MODE=refresh needs OLD_ISO` (exit 1) without it. |
+| `TIMEOUT` | `2400` | Seconds per boot, not per run: the install modes boot more than once. |
 | `QEMU_CPU` | `Nehalem` | The CPU under software emulation; ignored with KVM. |
 | `VNC` | `127.0.0.1:99` | The VNC display QEMU offers, to watch a run. |
+| `RAM` | `4G` for `live`, `8G` otherwise | The guest's memory. The script sets `4G` itself for the CD that boots `OLD_ISO`. |
 
-The guest gets 4 GiB of memory, one virtual CPU per host CPU, a virtio GPU, keyboard and mouse, an
-Intel HDA sound card with no host audio behind it, and user-mode networking, so whether it has
-internet depends on the host. The firmware is a read-only code image with no variable store. In install
-mode the 40 GiB disk is a virtio disk, seen as `/dev/vda`.
+The guest gets one virtual CPU per host CPU, a virtio GPU, a virtio mouse, an Intel HDA sound card with no host
+audio behind it, user-mode networking (so whether it has internet depends on the host) and, by default, a
+virtio keyboard. The firmware is a read-only code image. Where the host has the matching variables file, the
+script copies it to `out/test/OVMF_VARS.fd` once per run and attaches it writable, so that the boot entry GRUB
+makes stays for the later boots of that run. In the install modes the 40 GiB disk is a virtio disk, seen as
+`/dev/vda`.
 
-The host picks the boot entry itself. It waits up to 120 seconds for systemd-boot's countdown (`Boot
-in`) on the serial log, then presses Down over QMP once for the live mode (entry 02) or twice for the
-install mode (entry 03), then Enter. The order is the entries' `sort-key`. For the installed disk it
-presses nothing, because GRUB's menu is hidden there.
+The ISO reaches the guest in one of two ways. In `live`, and for `OLD_ISO`, it is a CD. Otherwise it is a USB
+disk behind an xHCI controller (`stick_for`), booted first, and with 8 GiB the script's comment says the image is
+copied into RAM and the stick is no longer mounted, which is how the installer meets a real stick. The older
+installer took its kernel from the stick's own mount, which copying to RAM removes, so `OLD_ISO` is given as a CD
+with 4 GiB. On the encrypted disk the keyboard is a USB one (`-device qemu-xhci -device usb-kbd`), because the
+firmware does not see a virtio keyboard and GRUB's password prompt is typed on it.
 
-Files in `out/test/`, where `<boot>` is `live`, `live-install` or `installed`:
+The host picks the boot entry itself. It waits up to 120 seconds for systemd-boot's countdown (`Boot in`) on the
+serial log, then presses Down over QMP `MENU_DOWN` times and Enter: once for the live mode (entry 02), twice for
+install (entry 03, and for `OLD_ISO`), three times for the encrypted install (entry 04) and four times for the
+refresh (entry 05). The order is the entries' `sort-key`. For a disk it presses nothing, because GRUB's menu is
+hidden there. On the encrypted disk it types the password, `correct-horse-battery-staple` and Enter, three seconds
+after `Enter passphrase` shows on the serial log, once for every time the prompt has shown: the installed system
+restarts itself once (the undo applies on boot), and GRUB asks again (`TYPE_WHEN`, `seen > typed`). After
+that, nothing may ask again: a second prompt, `Please enter passphrase` or `Enter passphrase for /dev`, fails the
+run.
+
+Files in `out/test/`, where `<boot>` is `live`, `live-install`, `installed`, or for a refresh `old-install`,
+`refresh` and `refreshed`:
 
 | File | Holds |
 |---|---|
-| `<boot>.serial.log` | The whole serial console of the boot. For the installed disk it holds both passes of the undo round trip, because the reboot happens inside one QEMU process. |
+| `<boot>.serial.log` | The whole serial console of the boot. For the installed disk it holds both passes of the undo round trip, because the reboot happens inside one QEMU process; for `refreshed` it holds the refreshed system and then the old one it put back. |
 | `<boot>-<name>.png` | The screenshot for `SHOT <name>`, with the raw `<boot>-<name>.png.ppm` beside it. |
 | `<boot>-last.png` | The screen when the boot ended. It is not taken when QEMU has already exited (the call's errors are ignored). |
 | `<boot>.keys.<bootid>-<n>` | An empty marker for each key request already sent. |
 | `<boot>.qmp.sock`, `<boot>.serial.sock` | QEMU's QMP and serial sockets. |
-| `disk.qcow2` | The scratch disk. `MODE=install` deletes and creates it again. |
+| `disk.qcow2` | The scratch disk. `install`, `install-encrypted` and `refresh` delete it and create it again. |
+| `OVMF_VARS.fd` | The firmware's variables for the run, when the host has the file to copy. |
 | `installed-first.serial.log` | The log the previous `installed` boot left, copied by `MODE=installed` before it starts the next boot. |
 
 A boot empties its own serial log and removes its earlier key markers, screenshots and QMP socket when
@@ -149,9 +186,10 @@ The exit status:
 
 | Exit | When |
 |---|---|
-| 0 | Each log has a `DONE pass=<n> fail=0` line, no log has a `FAIL` line, the first log has no `SKIP signin` line, and in install mode the first log has `PASS install`. |
-| 1 | Any of those is not met, including a boot that ran to the timeout without a `DONE` line. In install mode a first boot without `PASS install` ends the run before the installed disk boots. |
-| 2 | No OVMF file is found, `MODE=installed` finds no `out/test/disk.qcow2`, or there is no ISO to boot. |
+| 0 | Each log has a `DONE pass=<n> fail=0` line, no log has a `FAIL` line, the first log has no `SKIP signin` line, and in an install mode the first log has `PASS install` (or `PASS install-encrypted`), anchored at the end of the line because a serial console ends its lines with a carriage return. The encrypted run also needs GRUB to have asked for the password and nothing to have asked again. |
+| 0, for `refresh` | The old install and the refresh logs have `DONE` with `fail=0`, the refreshed log has `REBOOT pass=<n> fail=0`, none of the three has a `FAIL`, and the old system started again (`PASS hyprland-running` after the `REBOOT` line, with none of the refreshed system's `layout-` or `refresh-` checks in it). This mode does not look for `SKIP signin`. |
+| 1 | Any of those is not met, including a boot that ran to the timeout without a `DONE` line. In an install mode a first boot without its `PASS` line ends the run before the installed disk boots; in `refresh`, so does an `OLD_ISO` that did not install and a refresh without `PASS refresh-runs`. `MODE=refresh` with no `OLD_ISO` also exits 1. |
+| 2 | No OVMF file is found, `MODE` is not one of the five, `MODE=installed` finds no `out/test/disk.qcow2`, there is no ISO to boot, or the ISO has no boot entry for the mode (`need_entries`). |
 
 ## The serial protocol
 
@@ -161,7 +199,7 @@ when the kernel has one. The host reads the log every two seconds, answers a `SH
 
 | Line | Meaning | Host action |
 |---|---|---|
-| `START mode=<mode>` | A run begins. | none |
+| `START mode=<mode>` | A run begins. The mode is the value of `bombadil.smoke` (`install`, `install-encrypted`, `refresh`, `undo`, `refreshed`), or `live` when it is empty. | none |
 | `PASS <name>` | A check passed. | none |
 | `FAIL <name>: <tail>` | A check failed. The tail is the last 300 bytes of its output, with newlines turned into spaces. | none |
 | `SHOT <name>` | The guest wants a picture, then sleeps `SHOT_WAIT` seconds (8 by default). | A screenshot to `out/test/<boot>-<name>.png`, once per name, so the second pass of the undo round trip takes none of the shots whose names the first pass used. The name matches `[a-z0-9-]*`. Nothing reads the picture; it is for the person who opens it. |
@@ -169,8 +207,8 @@ when the kernel has one. The host reads the log every two seconds, answers a `SH
 | `NOTE <text>` | The machine was still busy when the keys went in, or when the pictures were taken. | none |
 | `DIAG <text>` | What the machine looked like when something went wrong: after each of the first four `FAIL` lines, two lines `DIAG <name> windows:` and `DIAG <name> programs:`, and the cases under [When a check fails](#when-a-check-fails). | none |
 | `AGENTD-LOG: <line>`, `MAIL-LOG: <line>` | The last 60 lines of `/tmp/smoke.agentd.log`, printed at the end of the sign-in block, and the last 30 of `/tmp/smoke.mail.log`, printed at the end of the mail block. Both appear in a passing run. `AGENTD-LOG:` is printed again when `signin-page-again` fails. | none |
-| `SKIP signin: <reason>` | The sign-in checks did not run. | The run exits 1 when this is in the first log. |
-| `REBOOT pass=<n> fail=<m>` | The first pass of the undo mode ends and the guest reboots. There is no `DONE` yet. | none |
+| `SKIP signin: <reason>` | The sign-in checks did not run. It is printed in the `live` and `install` modes only, the ones that run those checks. | The run exits 1 when this is in the first log, except in `refresh`, which does not look. |
+| `REBOOT pass=<n> fail=<m>` | The first pass of the `undo` mode ends and the guest reboots; so does the `refreshed` mode, after `bombadil-rollback refresh`. There is no `DONE` yet. | none, except in `refresh`: the host stops the VM when `PASS hyprland-running` shows after this line (`STOP=1`), and does not wait for it to power off. |
 | `DONE pass=<n> fail=<m>` | The run ends and the guest powers off. | The host stops polling, takes `<boot>-last.png` and waits for QEMU to exit. |
 
 Without a host that answers, `shot` and `keys` only sleep, and the checks that depend on key presses
@@ -205,8 +243,14 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   `shown above the bar`). The boot picture must hold at least three timed lines. On a guest without KVM
   the smoke waits for the guest to be calm first and asks a capture that gave up again with more time
   (see [Traps](#traps)).
-- **The pill.** A Super tap and Alt+Space give it the keyboard, a launcher word runs without a model, a
-  `!` turn runs and Super+Esc stops it and says so in the history.
+- **The pill.** Hyprland lists the bar's two global shortcuts (`pill-shortcuts-registered`, waited for up to 60
+  seconds: Hyprland does nothing, and says nothing, for a shortcut nobody registered), then a Super tap and
+  Alt+Space give the pill the keyboard, a launcher word runs without a model, a `!` turn runs and Super+Esc stops
+  it and says so in the history. When the tap does nothing, the log says whether the bind or the pill failed
+  (see [When a check fails](#when-a-check-fails)).
+- **The terminal key.** With the browser's drawer showing, Super+Return opens a `foot` window that is not on a
+  special workspace (`super-return-terminal`) and puts the drawer away (`super-return-puts-the-drawer-away`): a
+  window that opens while a drawer shows lands inside it and leaves with it.
 - **The details drawer.** It takes the keyboard and every way out closes it. The message a click on
   a service in a picture sends (`open-unit`) opens the unit in the same drawer.
 - **Coding sessions**, in every mode, `undo` included. `zellij`, `foot`, `footclient` and `bombadil-signal` are
@@ -239,15 +283,19 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   page's, becomes a notice on the line with actions. The live image has no connection and no account, so the
   service is then put on its fake engine through a drop-in, answers `status`, `connections` and `messages`, and the
   unit is put back (`connect-unit-restored`). No real Slack or work tool is reached, and no key is held.
-- **Sign-in**, in every mode but `undo`, when no provider is chosen. The real Codex and Claude pages
-  are opened in the browser panel (or the offline line shows when the VM has no internet) and
-  cancelled, with a check that cancelling Codex frees port 1455. The stand-in login
+- **Sign-in**, in the `live` and `install` modes only, when no provider is chosen. The modes that plant a
+  sign-in of their own (`install-encrypted`, `refresh`) and the ones that run on a disk do not run it. The real
+  Codex and Claude pages are opened in the browser panel (or the offline line shows when the VM has no internet)
+  and cancelled, with a check that cancelling Codex frees port 1455. Cancelling a login puts its page away: no tab is
+  left on the login address, another tab takes its place, the browser window stays, and the login program has
+  ended (`signin-page-put-away`, `signin-a-tab-stays`, `signin-browser-stays`, `signin-cli-ended`). The browser's
+  last tab is never closed, because that would quit it and leave the panel waiting for a window. The stand-in login
   (`src/bombadil/fake_signin.py`, chosen with `BOMBADIL_PROVIDER=fake`) then covers the round trip, a
   pasted code, a slid-out panel, a closed browser, a timeout, and no internet followed by internet.
   The block deletes the provider choice at its end and starts and cancels real logins (a Codex login
   revokes the stored one), so it is gated on `~/.config/bombadil/config.toml`, which is what
   `config.Config.configured` reads. When the file exists the smoke prints `SKIP signin`, and the host
-  fails a run whose first log has it.
+  fails a run whose first log has it (not in `refresh`).
 - **The name and voice card**, inside the sign-in block and so under the same gate, before the first real
   login. With no `~/.config/bombadil/persona.toml` yet (`no-persona-before-voice`), a stand-in sign-in that
   turns ready makes the first-run card appear in place of the "Signed in" line (`voice-signin`,
@@ -260,24 +308,58 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   voice-word` around them). It then deletes the stand-in's marker and `config.toml` and restarts the daemon
   with no stand-in environment (`voice-agentd-restored`), so the real logins that follow start from a system
   with no provider chosen. Eight checks and four pictures.
-- **The installer**, in install mode: `bombadil-install /dev/vda --yes` finishes.
-- **The installed disk**, in the undo mode: the brain (the watcher and the service, a file a turn
-  writes is named as the machine's and one the person writes as theirs, a rename keeps the thing, the
-  Brain window opens), the hidden GRUB menu, snapper available, a restore point created and filed under snapper's `number`
-  cleanup class so it may be pruned, the installed snapper config keeping 30 and taking no hourly ones
-  with `snapper-cleanup.timer` enabled, an undo across a reboot, and `undo-applied` after it. It never
-  runs a cleanup or sees a restore point removed, so pruning itself is not exercised.
+- **What it costs left alone**, in every mode, after the checks above and before the installer or the installed
+  disk's own checks. `idle-cpu` waits up to 240 seconds for a calm guest and then 30 seconds more, and samples
+  Hyprland, the bar (`quickshell`), the daemon and the brain in three slices of `IDLE_CPU_SECONDS` (10) seconds,
+  as a share of one core. Together they must use under `IDLE_CPU_LIMIT` (30 percent) in the middle slice, and
+  Hyprland and the bar must be running. The middle slice is what counts: a need that stands for the person plays
+  one beat of the stone's knock now and then, which a software compositor pays for in a slice of its own, where
+  a loop that never ends is in every slice. The check prints all three slices as a `NOTE` line, passing or
+  failing. The limit is for this VM, where Hyprland draws in software under TCG; the headless desktop test
+  (`tests/desktop/idle.py`) holds the same stack to 10 percent of a core and to a rate of frames the bar commits,
+  and [the idle cost](../IDLE-COST.md) has what each regression looked like. A bar that redraws without end
+  makes Hyprland draw without end too, so this is where the whole of it shows.
+- **The installer**, in the install modes. In `install`, `bombadil-install /dev/vda --yes` finishes, after
+  `install-refuses-the-stick` when the ISO is a USB disk: the installer must refuse the stick it runs from. In
+  `install-encrypted` the installer takes a plan and a password: GRUB asks for the password once at every start,
+  and nothing asks again. In `refresh`, an older Bombadil installs first, and then `bombadil-install --refresh
+  /dev/vda --yes` replaces its system under the home folder that is there, with a stick sign-in that must not
+  replace the home's. `refresh-runs` passes, and the refreshed system then checks, in `refreshed`, that the home
+  folder, the sign-in, the computer's name and the home's ownership were kept (`refresh-kept-the-home-folder`,
+  `refresh-kept-the-sign-in`, `refresh-home-is-the-users`, `refresh-kept-the-computer-name`), that it is the new
+  system (`refresh-is-the-new-system`), that the old one is aside (`refresh-old-system-kept`) and named in the
+  record (`refresh-record`), and that `snapper -c home list` works (`refresh-home-restore-points`).
+- **The layout of an installed disk**, in the `undo` boots (after `install` and after `install-encrypted`) and in
+  `refreshed` (`layout_checks`): layout 1 in `/var/lib/bombadil/install.json`; `@`, `@home`, `@snapshots`, `@log` and `@pkg` mounted by subvolume
+  name, the EFI partition at `/efi`, the kernel and the initramfs in the root's own `/boot` with no `/boot` mount,
+  GRUB on the EFI partition reading `/@/boot/vmlinuz-linux`, the snapper configs `root` and `home` with the limit
+  of 30, the nested subvolumes in the home folder, and time sync enabled. With a password it also checks LUKS2, three
+  ways to open the disk, the key file in the initramfs, the recovery key waiting with mode 0600, the record, the
+  chosen name and what the plan carried over and left behind. [Restore points](../architecture/restore-points.md)
+  has what the layout is for.
+- **The installed disk**, in the `undo` mode: the brain (the watcher and the service, a file a turn writes is
+  named as the machine's and one the person writes as theirs, a rename keeps the thing, the Brain window opens),
+  the hidden GRUB menu, snapper available, a restore point created that holds a kernel of its own
+  (`restore-point-has-a-kernel`) and is filed under snapper's `number` cleanup class so it may be pruned, the
+  installed snapper config keeping 30 and taking no hourly ones with `snapper-cleanup.timer` enabled, an undo
+  across a reboot, and after it `undo-applied`, `undo-kernel-matches-modules` (the kernel that started has a
+  module folder, and `modinfo` finds btrfs in it) and `undo-layout-kept` (the root is still `subvol=/@` and `/boot`
+  still has the kernel). It never runs a cleanup or sees a restore point removed, so pruning itself is not exercised.
+- **Undoing a refresh**, in the `refreshed` mode: `bombadil-rollback refresh` puts the old system and its restore
+  points back (`refresh-undo`), the guest reboots, and the host waits for the old system's own session to come
+  up. The refreshed system's checks must not show again, or the undo did not take.
 
 ## Traps
 
 - **Software emulation is slower, and load shows.** Without KVM the guest runs under QEMU's software
   emulation, and it shares the host's CPUs (one virtual CPU per host CPU), so anything else running
   on the host (a unit-test run, a second VM, a build) slows it. An app that is still starting can make
-  the handover from a Super tap to the pill take longer than the check waits. Before the Super tap and
-  before the Alt+Space tap the smoke waits up to 240 seconds for the guest's one-minute load average to
-  fall below 1.5, and prints `NOTE the machine was still busy when the keys went in` if it did not.
-  The other key requests have no such wait. A picture capture can run out of its time too: it is given
-  half a second (`BUDGET` in `src/bombadil/sysmap.py`), and the smoke's own comment gives 6 to 10 seconds
+  the handover from a Super tap to the pill take longer than the check waits. Before the Super tap, the
+  Alt+Space tap and the Super+Return key the smoke waits up to 240 seconds for the guest's one-minute load
+  average to fall below 1.5, and prints `NOTE the machine was still busy when the keys went in` if it did not.
+  It waits the same way before it measures the idle cost (`NOTE the machine was still busy when the idle cost
+  was measured`). The other key requests have no such wait. A picture capture can run out of its time too: it
+  is given half a second (`BUDGET` in `src/bombadil/sysmap.py`), and the smoke's own comment gives 6 to 10 seconds
   for `ip` or `systemd-analyze` while the guest is still starting things. So the smoke waits up to 240
   seconds for calm once before its first picture check (`NOTE the machine was still busy when the
   pictures were taken` if it did not come), and a reply that says `Could not read` is asked again, up to
@@ -318,22 +400,41 @@ Every mode runs the common checks. The catalogue, with every check name, is in
   `config.toml` but not `~/.config/bombadil/persona.toml`, which holds the name the smoke typed. Two
   things follow, both read from the scripts and not seen in a VM. `no-persona-before-voice` fails on any
   guest that already has the file, so a second run of the smoke in a VM that stays up (`vmsmoke`) with no
-  `config.toml` fails on it, and the file has to be removed first. In install mode the installer copies
-  `~/.config/bombadil` to the disk, so the installed system starts with that name and the voice card does
-  not ask again there.
+  `config.toml` fails on it, and the file has to be removed first. In the install modes the installer carries
+  `~/.config/bombadil` to the disk (it is on `install/carry.list`, and on the encrypted plan's own list), so
+  the installed system starts with that name and the voice card does not ask again there.
 - **The installed disk is a smoke disk.** The install check puts `bombadil.smoke=undo` into the GRUB
   defaults of the disk it installs, `out/test/disk.qcow2`, so every boot of that disk runs the smoke's
-  undo mode: a first pass that reboots, or a second pass that powers off. Use the disk for the test
+  undo mode: a first pass that reboots, or a second pass that powers off. The refresh check puts
+  `bombadil.smoke=refreshed` there, so a refreshed disk runs the `refreshed` mode on every boot, and, after the
+  undo, the old system starts with that argument on the same GRUB. Use the disk for the test
   only. `scripts/run-vm.sh --installed` boots a different file, `out/bombadil.qcow2`, and
   `scripts/wsl-vm.sh` installs that one with `BOMBADIL_INSTALL_CMDLINE` set to the console arguments
-  alone. It would run the undo mode only if it was installed through entry 03 or is a copy of the test
-  disk.
+  alone (and `BOMBADIL_INSTALL_LEAVE_MOUNTED=1`, so that the new system stays mounted for the script to add its
+  monitor line before it unmounts). It would run the undo mode only if it was installed through entry 03 or is a
+  copy of the test disk. `wsl-vm.sh` builds its ISO with `BOMBADIL_TEST_ENTRIES=1` and boots entry 02 with the
+  smoke argument edited out.
+- **A plain build cannot run the modes.** Entries 02 to 05 exist only in a build made with
+  `BOMBADIL_TEST_ENTRIES=1`. `test-vm.sh` finds that out from the ISO file and stops with exit 2 before it
+  boots, but a person who boots a plain ISO by hand sees one entry. Nothing tests that a plain build drops the
+  entries.
+- **The encrypted disk is typed to, not opened from the host.** The password is in the script
+  (`correct-horse-battery-staple`), and the host sends it over QMP when `Enter passphrase` shows on the serial log.
+  The prompt reaches the serial log only because the install check sets `BOMBADIL_INSTALL_GRUB_SERIAL=1`, which adds
+  the serial console to GRUB (`grub_defaults`, `bombadil-install:554-558`); without it the host has nothing on the
+  log to type to. The firmware does not see a virtio keyboard, so the USB keyboard is attached on that disk's boots.
+- **A refresh test is three boots of two ISOs.** The older ISO has to be one whose installer made the older layout
+  (`OLD_ISO`), and it is attached as a CD with 4 GiB, where this ISO is a USB stick with 8 GiB. The three boots share
+  one disk and one set of firmware variables. A run that stops between them leaves a disk in a state the next
+  `MODE=refresh` throws away: it deletes the disk first.
 
-> **Warning: entry 03 erases a disk without asking.** It runs `bombadil-install /dev/vda --yes`, which
-> wipes and formats the first virtio disk with no prompt. Never pick it by hand in a VM that has a disk
-> you want to keep; `scripts/run-vm.sh --disk` refuses to attach `out/bombadil.qcow2` when it is larger
-> than 100 MB (the script takes that to mean it holds a system) unless `FORCE=1` is set. `MODE=install`
-> also deletes the previous `out/test/disk.qcow2`.
+> **Warning: entries 03 and 04 erase a disk without asking, and entry 05 replaces a system.** Entry 03 runs
+> `bombadil-install /dev/vda --yes` and entry 04 `bombadil-install --plan` on `/dev/vda`: each wipes and formats the
+> first virtio disk with no prompt. Entry 05 replaces the system on `/dev/vda` and keeps its home folder. Never pick
+> one by hand in a VM that has a disk you want to keep; `scripts/run-vm.sh --disk` refuses to attach
+> `out/bombadil.qcow2` when it is larger than 100 MB (the script takes that to mean it holds a system) unless
+> `FORCE=1` is set. `MODE=install`, `MODE=install-encrypted` and `MODE=refresh` also delete the previous
+> `out/test/disk.qcow2`.
 > [The boot menu](../architecture/iso-and-install.md#the-boot-menu) holds the warning in full.
 
 ## When a check fails
@@ -347,8 +448,8 @@ Every mode runs the common checks. The catalogue, with every check name, is in
    checks it lists Hyprland's windows (class, workspace and pid) and the pids of Hyprland, quickshell, foot,
    footclient, zellij and agentd, with the count of chromium processes (`DIAG <name> windows:` and `DIAG <name>
    programs:`). The other three: when the first Super tap did
-   nothing, it names the active window and the release binds, asks for the pill by hand, types the
-   word again and says whether the pill took it (the Super bind did not fire) or not. When the word
+   nothing, it names the active window, the release binds and the global shortcuts Hyprland lists, asks for the
+   pill by hand, types the word again and says whether the pill took it (the Super bind did not fire) or not. When the word
    did not reach the pill during the mail window test, it names the active window. When
    `signin-page-again` fails, it prints the browser's whole command lines, the windows, every target
    the debugging port lists, the profile's singleton files and the last lines of the daemon's log
@@ -361,7 +462,9 @@ Every mode runs the common checks. The catalogue, with every check name, is in
 4. Rule out the host. A `NOTE the machine was still busy` line, a `timed out after` line and a run
    without KVM say more about the machine than about the code. Run again with nothing else running.
 5. Run the one boot again. `scripts/test-vm.sh` repeats the live boot, `MODE=install` the whole path,
-   and `MODE=installed` the installed disk without installing again.
+   and `MODE=installed` the installed disk without installing again, at the password prompt too. There is no
+   shorter run for the encrypted install or the refresh: each makes a new disk, and the refresh installs the older
+   system first.
 6. Read the check's whole output. It is in the guest at `/tmp/smoke.<name>.log` and is lost at power
    off, so the host sees only its last 300 bytes. To keep the guest, run the smoke in a VM that stays
    up: `scripts/vm-tools/vmsmoke` runs it with `BOMBADIL_SMOKE_NO_POWEROFF=1` and says how to read a
@@ -393,6 +496,16 @@ the script for the wait: it comes before the picture checks, and `calm` is defin
 for the pictures and the wait for the keys. A third reads the script for the connection and notification checks: it
 holds the 21 names, the fake engine, its scratch folder and `restore_connect`, and what the smoke asks of the loaded
 unit equal to what `bombadil-connect.service` says. `tests/test_brain_service.py` runs `bash -n` on it and matches the loop that looks
-for the brain's two programs one by one. `tests/test_boot_console.py` keeps the two serial entries
-loud (no `quiet`, no colour parameters), because the host reads them on the serial console. Run one
-file with `pytest tests/test_iso_profile.py`; they do not boot anything.
+for the brain's two programs one by one. `tests/test_iso_profile.py` also holds that the smoke asks Hyprland for the bar's shortcuts before the
+first Super tap (`pill-shortcuts-registered` comes before the first `keys meta_l`), and that the binds name the
+shortcuts the bar registers. `tests/test_installer.py` runs the installer and the rollback script as sourced
+functions against folders, with shims for the disk tools: what needs a disk (partitioning, btrfs, LUKS, GRUB)
+is left to the VM. It also pins three things in the scripts of this page: that the host's `PASS install` patterns
+end in `[[:space:]]*$`, because a serial console ends lines with a carriage return; that the host types the password
+once for every time GRUB asks (`seen > typed`), because the installed system restarts itself once; and that the
+smoke and the installer name the stick refusal in the same words. `tests/test_boot_console.py` keeps the serial
+entries 02 and 03 loud (no `quiet`, no colour parameters), because the host reads them on the serial console; it
+does not look at 04 and 05. No test reads the encrypted and refresh modes of `test-vm.sh` beyond the two text pins above, and none parses
+`test-vm.sh`. No test reads the `idle-cpu` check either: the smoke is parsed with `bash -n`, and the headless desktop
+test (`tests/desktop/run.sh`) runs `idle.py` for the same cost on a compositor that draws in memory. Run one file with `pytest tests/test_iso_profile.py`; they do not
+boot anything.

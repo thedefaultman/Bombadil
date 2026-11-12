@@ -1,10 +1,10 @@
 # Brand assets
 
 > **Status:** Partly shipped
-> **Pieces:** on `main`: the six files in `docs/brand/`, the stone in the pill with its nine faces, the icon files the image installs, the README banner and the wallpaper. On `main` but not installed: the GRUB screen's files. Designed, with no file or code: `LOGO=bombadil` in `os-release`, the greeter and the lock as the pill, and a separate 16 px colour drawing.
-> **Code:** `docs/brand/bombadil-mark.svg`, `docs/brand/bombadil-tile.svg`, `docs/brand/bombadil-lockup.svg`, `docs/brand/bombadil-lockup-light.svg`, `docs/brand/bombadil-avatar.png`, `docs/brand/bombadil-social-preview.png`. The mark is used by `shell/Stone.qml`, `shell/PillState.qml`, `shell/shell.qml`, `README.md`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py` and `share/grub/bombadil/`.
+> **Pieces:** on `main`: the six files in `docs/brand/`, the stone in the pill with its nine faces (drawn by the kit's `Stone`, which the tip scenes draw as well), the icon files the image installs, the README banner, the wallpaper, and the GRUB screen's background and font, which the installer puts on the disk. On `main` but not wired: the GRUB theme file `theme.txt`. Designed, with no file or code: `LOGO=bombadil` in `os-release`, the greeter and the lock as the pill, and a 16 px drawing in colour in a file or in the product (the 16 px drawing itself is in `Kit.Stone` and is used in ink).
+> **Code:** `docs/brand/bombadil-mark.svg`, `docs/brand/bombadil-tile.svg`, `docs/brand/bombadil-lockup.svg`, `docs/brand/bombadil-lockup-light.svg`, `docs/brand/bombadil-avatar.png`, `docs/brand/bombadil-social-preview.png`. The mark is used by `share/qml/Bombadil/Stone.qml`, `share/qml/Bombadil/TipScene.qml`, `shell/PillState.qml`, `shell/shell.qml`, `README.md`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg`, `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`, `iso/airootfs/usr/share/pixmaps/bombadil.svg`, `share/wallpaper/bombadil.png`, `scripts/make-wallpaper.py`, `share/grub/bombadil/`, `iso/airootfs/etc/grub.d/000_bombadil_screen` and the `grub_theme` function of `iso/airootfs/usr/local/bin/bombadil-install`.
 > **Design:** [The Bombadil mark](../design/identity-brief.md)
-> **Verified:** 2026-11-08 against `main` at `7176e55` The line numbers it cites were moved to the code at `ca7f80a` afterwards; the text was not read again. The stone's lean under reduced motion, and the link to the motion page, were added and checked against `main` at `f0485c2`.
+> **Verified:** 2026-11-08 against `main` at `7176e55`. The line numbers it cites were moved to the code at `ca7f80a` afterwards; the text was not read again. The stone's lean under reduced motion, and the link to the motion page, were added and checked against `main` at `f0485c2`. 2026-11-12 against `main` at `7d37bc5`, for the move of the stone into the kit and what is written about it (the three properties, the knock as a cue, the 16 px drawing, the paths, the traps and the test counts), the GRUB statements, and the line numbers into `bombadil-install`, `hyprland.lua` and `tests/test_theme.py`: read in `share/qml/Bombadil/Stone.qml`, `share/qml/Bombadil/TipScene.qml`, `share/qml/Bombadil/qmldir`, `shell/shell.qml`, `shell/PillState.qml`, `src/bombadil/appkit/check.py`, `iso/airootfs/etc/grub.d/000_bombadil_screen`, `iso/airootfs/usr/local/bin/bombadil-install`, `tests/test_stone_qml.py`, `tests/test_installer.py`, `tests/test_theme.py` and `tests/desktop/idle.py`, with the test functions counted. No test was run, and the GRUB screen was not seen on a display. The rest of the text was not read again.
 
 Bombadil's mark is a stone with a lowercase b cut through it. It is the dot in the pill, where it says
 what the machine is doing without a word, the `bombadil` icon that the image installs in its icon theme
@@ -42,32 +42,34 @@ drawing in the repository uses the same two ratios:
 
 | Drawing | Stone width W | Corner radius | Side radius | Cut (b stroke) | Cut as a share of W |
 |---|---|---|---|---|---|
-| `shell/Stone.qml`, in a 24 px slot | 18 | 2.7 | 15.3 | 1.6 | 0.089 |
+| `share/qml/Bombadil/Stone.qml`, in a 24 px slot | 18 | 2.7 | 15.3 | 1.6 | 0.089 |
 | `docs/brand/bombadil-mark.svg` | 58 | 8.7 | 49.3 | 5.6 | 0.097 |
 | `docs/brand/bombadil-tile.svg`, and the installed tile | 84 | 12.6 | 71.4 | 8.2 | 0.098 |
 | the two lockups | 64 | 9.6 | 54.4 | 6.208 | 0.097 |
 | the i's stone in the lockups | 15.4 | 2.31 | 13.09 | none | none |
-| the `resting` and `offline` outlines in `shell/Stone.qml`, stroked 1.5 | 16.5 | 2.475 | 14.025 | the pill's 1.6 b | not applicable |
-| `bombadil-symbolic.svg` | 16 | 2.4 | 13.6 | 1.5 | 0.094 |
+| the `resting` and `offline` outlines in `Stone.qml`, stroked 1.5 | 16.5 | 2.475 | 14.025 | the pill's 1.6 b | not applicable |
+| `bombadil-symbolic.svg`, and `Stone.qml` with `small` | 16 | 2.4 | 13.6 | 1.5 | 0.094 |
 
 The `resting` and `offline` outlines are the stone at 16.5, which is 18 less the 1.5 px stroke, so the
-stroke's outer edge lands on the stone's edge. The stone is the same shape at every size, but the b is
-drawn per size: the files are not scaled copies of `shell/Stone.qml`.
+stroke's outer edge lands on the stone's edge (at 14.5 in the 16 px drawing, which is 16 less 1.5). The
+stone is the same shape at every size, but the b is drawn per size: the files are not scaled copies of
+`share/qml/Bombadil/Stone.qml`.
 
 **The cut b.** A lowercase b cut clean through the stone: a straight, flat-topped stem and a bowl that is
 half a pill (a bar, a half circle and a bar), meeting the stem in a square corner. Its ends are flat and
-its corners are mitred (`capStyle: ShapePath.FlatCap`, `joinStyle: ShapePath.MiterJoin` in
-`shell/Stone.qml`). The brief places it so that its reach from the stone's centroid stays inside the circle
+its corners are mitred (`capStyle: ShapePath.FlatCap`, `joinStyle: ShapePath.MiterJoin` in the `BCut`
+component of `share/qml/Bombadil/Stone.qml`). The brief places it so that its reach from the stone's centroid stays inside the circle
 that every pose of the stone covers, so the cut never breaks the stone's edge.
 `test_the_b_stays_inside_the_stone_in_every_pose` renders the stone at six turn angles (0, 17, 45, 60, 90
 and 120 degrees) and fails if any cut pixel has a ground pixel next to it. How the cut is made depends on
 the file. In the pill the b is a stroke drawn in `ground` over the stone (or over the faint fill of the
 `resting` outline), so it reads as a cut only on a flat surface of that colour (`Stone.ground`, default
-`glassPill`); on the `offline` face it is a line in `bad`. In the four masked SVGs it is a transparent
-hole. In the installed tile it is a stroke in the tile's colour, and in `bombadil-symbolic.svg` it is a
+`glassPill`); on the `offline` face it is a line in `bad`. In the 16 px drawing (`small`) it is not a
+stroke: it is the brand's own outline of the b, 1.5 px wide, filled with even-odd in the same colour. In the
+four masked SVGs it is a transparent hole. In the installed tile it is a stroke in the tile's colour, and in `bombadil-symbolic.svg` it is a
 hole made by even-odd fill.
 
-On the 24 px grid of `shell/Stone.qml` the stone's top corner is centred on (12, 5.7) and its centroid,
+On the 24 px grid of `Stone.qml` the stone's top corner is centred on (12, 5.7) and its centroid,
 the pivot of the roll, is (12, 12.975). The b's centre line is
 `M7.97 10.96H13.24A3.41 3.41 0 0 1 13.24 17.78H8.59V7.86`, stroked 1.6 px. The other drawings carry
 their own b paths: the installed tile's is `M43.85 58.473H70.2A17.05 17.05 0 0 1 70.2 92.573H46.95V42.973`,
@@ -75,7 +77,7 @@ stroked 8.2.
 
 **What stays level.** The b never tilts and never turns. While the machine works the stone turns a third
 of a turn each second about its centroid and the b does not move, so the stone rolls around a b that
-stays put, like a hub that never turns. In `shell/Stone.qml` the turn rotates only the stone's shape; the
+stays put, like a hub that never turns. In `Stone.qml` the turn rotates only the stone's shape; the
 b's shape is offset by `rideX` and `rideY` and has no rotation. In a lean or a knock the stone rocks on
 its bottom arc (radius 15.3 about the top corner's centre) and the b slides with the stone's centre
 without tilting. In the hop it hops and squashes with the stone. In the `resting` face the outline is
@@ -90,6 +92,31 @@ plan or paused, and after a turn the limit cut off. What each face looks like an
 With reduced motion (`BOMBADIL_REDUCE_MOTION=1`) the roll becomes an opacity pulse, the needs-you glow
 is held still, the lean is instant and the hop becomes a fade. The switch, and what it does to the rest of
 the screen, is on [the motion page](../MOTION.md).
+
+**The knock is a cue, not a loop.** When the face becomes `needs` the stone knocks for `cueMs` (9 600 ms,
+six beats of 1.6 s) and then holds still, amber, with the glow held at 0.45. While it stays `needs` it
+knocks one beat (1.6 s) again every `remindMs` (300 000 ms, five minutes). Becoming `needs` again after
+another face starts the whole cue again, and under reduced motion it never knocks and never plays the beat.
+It used to knock until the person answered, and an animation that never ends keeps the bar drawing a frame
+every 16 ms for as long as someone is away: a stone left knocking on an idle machine was one of three causes
+of the desktop's idle cost ([IDLE-COST](../IDLE-COST.md)). The numbers are in `Stone.qml`: the two
+properties `cueMs` and `remindMs`, and the single beat's 1 600 ms.
+
+## Stone in the kit
+
+The stone is a component of the app kit, `Kit.Stone` (`share/qml/Bombadil/Stone.qml`), and not a file of the
+shell, because two places draw it: the pill (`shell/shell.qml`) and the tip scenes
+([`../TIP-SCENES.md`](../TIP-SCENES.md), drawn by `share/qml/Bombadil/TipScene.qml`), which show it at 16 px in
+ink on the desk's Tips card and at 24 px in colour on the Tips app's stage. It is an internal component:
+`share/qml/Bombadil/qmldir` says so, the apps skill does not list it, and `bombadil-app check` refuses it in
+an app the agent writes (the built-in apps may use it). The pill uses it as it did when it lived in `shell/`;
+three properties were added for the scenes, and each defaults to what the pill needs.
+
+| Property | Default | What it does |
+|---|---|---|
+| `animate` | `true` | `false` gates every animation and the settle timer: the stone is painted at once in its face's colour, and the pose (`turn`, `knock`, `lean`, `hopY`, `hopSx`, `hopSy`, `glowOpacity`) is plain values that a host may write, so a scene can draw it a frame at a time. Nothing runs. |
+| `ink` | `""` | `""` or `false` keeps the state colours. `"fg"` (or `true`) draws the stone, its glow, the square, the outline and the dashes in the primary text colour, `"muted"` in the secondary one: no green, orange, amber or red, and every face still reads by its shape and its motion. For use outside the pill, where colour says who and a poster belongs to nobody. |
+| `small` | `false` | The 16 px drawing: the stone full-bleed (W 16, corners 2.4, sides 13.6, centroid on (8, 8.866)) and the b cut as the brand's own 1.5 px outline, the one in `bombadil-symbolic.svg`. The stone and the b are that icon's paths, and `tests/test_stone_qml.py` compares them. The outlines of `resting` and `offline` are the stone inset by 0.75 (W 14.5), where the 24 px ones are W 16.5, and the glow reaches 14 px instead of 16. |
 
 ## The wordmark
 
@@ -140,7 +167,7 @@ files repeat some of them as literals.
 shape, never by an orange blob. In the files, orange appears in two places:
 `docs/brand/bombadil-lockup.svg` (`#d97757`) and `docs/brand/bombadil-lockup-light.svg` (the darker
 `#b4532f`). The two PNGs in `docs/brand/` and `share/grub/bombadil/background.png` contain no warm pixel
-(no pixel with red above blue by more than 5). In `shell/Stone.qml` the only use of `accent` is the fill
+(no pixel with red above blue by more than 5). In `Stone.qml` the only use of `accent` is the fill
 of a rolling stone. The pill's border while a turn runs and the Stop button are `accent` too, but they
 are not the mark. See
 [colour says who](../principles.md#colour-says-who) and [original](../principles.md#original).
@@ -148,7 +175,7 @@ are not the mark. See
 ## Clear space and smallest size
 
 The identity brief sets no clear space around the mark. It does give the sizes each drawing was made at,
-and what the b is guaranteed. These are the brief's figures. The files and `shell/Stone.qml` carry the
+and what the b is guaranteed. These are the brief's figures. The files and `Stone.qml` carry the
 stone widths and cut widths in the table above. The clearances come from the brief's own checks; the
 repository's test is coarser, and fails if a cut pixel has a ground pixel among its eight neighbours.
 
@@ -162,15 +189,16 @@ repository's test is coarser, and fails if a cut pixel has a ground pixel among 
 
 At 16 px the b's bowl is about 2 px across: the brief says it holds at 1x, but only just. If the 18 px
 stone makes the pill at rest feel too loud, the brief's fallback is a 16 px stone with the b at scale
-0.55; that is an open question and nothing is built for it. A separate 16 px drawing in colour is
-designed and has no file. The only 16 px file is `bombadil-symbolic.svg`: one colour, the stone filling
-the 16 by 16 box, and a b with a 1.5 px stroke.
+0.55; that is an open question and nothing is built for it. The 16 px drawing is also in code, as
+`Kit.Stone` with `small` (see [Stone in the kit](#stone-in-the-kit)), which the tip scenes draw in ink; a 16 px
+drawing in colour, in a file or in the product, is designed and not built. The only 16 px file is
+`bombadil-symbolic.svg`: one colour, the stone filling the 16 by 16 box, and a b with a 1.5 px stroke.
 
 ## Do and do not
 
 From [the rules](../design/identity-brief.md#the-rules) and
 [Cut, and why](../design/identity-brief.md#cut-and-why) in the identity brief. The brief does not name the
-`resting` face; it is added below from `shell/Stone.qml`.
+`resting` face; it is added below from `Stone.qml`.
 
 Do:
 
@@ -215,31 +243,34 @@ release. The decisions are D-1045 to D-1048, D-1050 and D-1080 to D-1087 in
 
 | Place | Files | What shows | State |
 |---|---|---|---|
-| The pill | `shell/Stone.qml` draws it; `shell/shell.qml` puts it in `dotBox`, the pill's 24 px slot; `shell/PillState.qml` gives it its `face` | The stone, 18 px wide, in its nine faces. While a turn can be stopped, hovering it swaps it for the Stop button. | Shipped, tested |
+| The pill | `Kit.Stone` (`share/qml/Bombadil/Stone.qml`) draws it; `shell/shell.qml` puts it in `dotBox`, the pill's 24 px slot; `shell/PillState.qml` gives it its `face` | The stone, 18 px wide, in its nine faces. While a turn can be stopped, hovering it swaps it for the Stop button. | Shipped, tested |
+| The tip scenes | `share/qml/Bombadil/TipScene.qml` draws `Kit.Stone` with `animate` off, in a miniature of the pill; the Tips card in `shell/TipsCard.qml` and the Tips app in `share/apps/tips` show it | The stone at 16 px in ink (`ink: "fg"`) on the posters of the desk's Tips card, and at 24 px in its state colours on the stage of the Tips app, its pose written by the scene's clock | Shipped, tested |
 | The README banner | `README.md` (lines 1 to 6), `docs/brand/bombadil-lockup.svg`, `docs/brand/bombadil-lockup-light.svg` | The lockup, 72 px high, dark or light by the viewer's colour scheme | Shipped, tested |
-| The installed icon | `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg` and `iso/airootfs/usr/share/pixmaps/bombadil.svg` (byte-identical): the tile, 128 by 128, with the b as a `panel` stroke instead of a mask. `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`: 16 by 16, one path, `#bebebe`, even-odd. | An icon named `bombadil` in the icon theme and in pixmaps. `iso/airootfs/` is the image's overlay, and the installer copies the live root (`cp -ax /. /mnt/`, `iso/airootfs/usr/local/bin/bombadil-install:32`), so an installed system has the same files. Nothing in the repository selects the icon by name: `bombadil-browser.desktop` sets no `Icon=`. | The files are shipped and tested; nothing uses the icon |
+| The installed icon | `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil.svg` and `iso/airootfs/usr/share/pixmaps/bombadil.svg` (byte-identical): the tile, 128 by 128, with the b as a `panel` stroke instead of a mask. `iso/airootfs/usr/share/icons/hicolor/scalable/apps/bombadil-symbolic.svg`: 16 by 16, one path, `#bebebe`, even-odd. | An icon named `bombadil` in the icon theme and in pixmaps. `iso/airootfs/` is the image's overlay, and the installer copies the system image under the live overlay to the disk (`cp -a "$image/." "$target/"` in `copy_system`, `iso/airootfs/usr/local/bin/bombadil-install:425`, or `cp -ax /.` at :428 when no image is mounted), so an installed system has the same files. Nothing in the repository selects the icon by name: `bombadil-browser.desktop` sets no `Icon=`. | The files are shipped and tested; nothing uses the icon |
 | The wallpaper | `share/wallpaper/bombadil.png` (2560 by 1440), drawn by `scripts/make-wallpaper.py` from `docs/brand/bombadil-mark.svg`, shown by `shell/Wallpaper.qml` | The stone lying very quietly in the middle: between `panel` and `raised` at its top (85% of the way from `panel` to `raised`), and at its foot 70% of the way from `bg` to `panel`, with a hairline of `border` along its top. No orange. | Shipped, tested |
-| GRUB's password screen | `share/grub/bombadil/background.png` (1920 by 1080), `theme.txt`, `README.md` | The mark in `fg` on `bg`, 182 px square, centred, with its top at y = 289, and GRUB's own line below it | Files only. They are in the tree and `test_the_grub_theme_names_its_files_and_the_ground` checks them, but nothing installs them: no script or `iso/` file refers to `share/grub/bombadil` (`bombadil-install` does not), although the folder's own `README.md` says the installer copies it to the ESP. The whole `share/` tree is on the image at `/usr/share/bombadil/share/`, so the folder is there, but the one GRUB drop-in (`iso/airootfs/etc/default/grub.d/zz-bombadil-console.cfg`) sets kernel parameters only and nothing sets `GRUB_THEME`, and `bombadil-install` sets `GRUB_TERMINAL_OUTPUT=console` (`iso/airootfs/usr/local/bin/bombadil-install:75`), so an installed system's GRUB draws text. |
+| GRUB's password screen | `share/grub/bombadil/background.png` (1920 by 1080), `theme.txt`, `README.md`; the installer's `grub_theme` and `iso/airootfs/etc/grub.d/000_bombadil_screen` | The mark in `fg` on `bg`, 182 px square, centred, with its top at y = 289, behind GRUB's own prompt line in Inter (the folder's `README.md` puts the line at the top left) | On `main`, for an encrypted disk, where GRUB asks for the password. `grub_theme` in `bombadil-install` copies `background.png` to `/efi/grub/themes/bombadil/` on the disk's EFI partition and makes `inter-16.pf2` beside it from the system's Inter. The drop-in `/etc/default/grub.d/bombadil.cfg` that it writes switches GRUB to the graphical terminal once the font exists, unless the terminal was set to something else (a test install that reads GRUB on a serial line keeps the text terminal), and `/etc/grub.d/000_bombadil_screen` loads the font and sets the picture as the background ahead of `00_header`, which asks for the password. If the font cannot be made, GRUB keeps its plain text screen. An install that is not encrypted has no password to ask for, and its menu is hidden unless Esc is held. `theme.txt` is not wired: nothing sets `GRUB_THEME`, because GRUB applies a theme only once its menu shows, which is after the password, and the theme has no menu components. `test_the_grub_theme_names_its_files_and_the_ground` checks the files, and `tests/test_installer.py` checks the installer's side with stand-ins for the chroot and the output of the `grub.d` script; none of them draws the screen. |
 | The repository page | `docs/brand/bombadil-avatar.png`, `docs/brand/bombadil-social-preview.png` | The tile | Made for upload in the repository's settings; not checkable from the tree |
 
 Designed, with no drawing in `shell/`, `share/` or `iso/`: the lockup on a download page; the 16 px mark in
 ink on the install card and the recovery key card; the mono mark on the stick's label; the pill itself as
 the greeter and the lock (`iso/airootfs/etc/greetd/config.toml` starts Hyprland with no greeter);
 `LOGO=bombadil` in `os-release` (the image has no `os-release` of its own under `iso/airootfs/etc/`); a
-separate 16 px colour drawing. The stick's boot menu has no mark by design: systemd-boot draws text only
+16 px drawing in colour (the 16 px drawing in ink is `Kit.Stone`'s `small`). The stick's boot menu has no mark by design: systemd-boot draws text only
 (`iso/efiboot/loader/entries/01-bombadil.conf`).
 
 ## Changing it
 
 No script in the repository draws the files in `docs/brand/`, the installed icons or the GRUB
 background. The SVGs are edited by hand, and the PNGs are renders of them. The one generator that reads
-a brand file is `scripts/make-wallpaper.py`. Nothing compares the SVG drawings with `shell/Stone.qml`. The
+a brand file is `scripts/make-wallpaper.py`. Nothing compares the SVG drawings in `docs/brand/`, or the 24 px
+drawing, with `share/qml/Bombadil/Stone.qml`; `tests/test_stone_qml.py` compares the 16 px drawing with
+`bombadil-symbolic.svg`. The
 files in `docs/brand/` are checked only by `tests/test_brand.py` (the four SVGs parse, the PNGs have the
 right size, the README's banner files exist) and, for `bombadil-mark.svg`, by the wallpaper tests.
 
 | You change | Then redo | How |
 |---|---|---|
-| The stone or the b in `shell/Stone.qml` (the stone path in `rockShape`, the b path used three times, for the cut, the `resting` face and the `offline` face, and the outline path used twice, for `resting` and `offline`) | The drawings in the SVG files that should match it | By hand. The paths are literal strings: `bombadil-mark.svg` (64 grid), `bombadil-tile.svg` and the two installed tiles (128), both lockups (stone, b and the i's stone), `bombadil-symbolic.svg` (16). |
+| The stone or the b in `share/qml/Bombadil/Stone.qml` (`stonePath` and `outlinePath`, each with a 24 px and a 16 px version, and the two b paths in `BCut`, which draws the cut, the `resting` face and the `offline` face) | The drawings in the SVG files that should match it | By hand. The paths are literal strings: `bombadil-mark.svg` (64 grid), `bombadil-tile.svg` and the two installed tiles (128), both lockups (stone, b and the i's stone), `bombadil-symbolic.svg` (16). The 16 px stone and b in `Stone.qml` are `bombadil-symbolic.svg`'s own path, and a test compares them. |
 | `bombadil-mark.svg` | The wallpaper and the GRUB background | `scripts/make-wallpaper.py`, and the render below |
 | `bombadil-tile.svg` | The two PNGs and the installed tile | The renders below; edit the installed copy by hand (the stone and the b path are identical, the b is a stroke in `panel` and the `<mask>` is gone) and keep the two copies identical. |
 | A token the mark uses | The literal copies in the SVGs and in `share/grub/bombadil/theme.txt` | By hand. [Changing a token](../design-system/README.md#changing-a-token) lists which copies a test covers. |
@@ -281,22 +312,25 @@ and the stone `fg`; the symbolic icon must keep `fill-rule="evenodd"`, `#bebebe`
   hook restarts the unit when Hyprland starts
   (`iso/airootfs/etc/skel/.config/hypr/hyprland.lua:10`). To start the bar again after a change to
   `Stone.qml`, run `systemctl --user restart bombadil-shell`; Super+Ctrl+Esc does the same
-  (`hyprland.lua:69`). `test_the_shell_gets_the_kit_on_its_import_path` and
+  (`hyprland.lua:83`). `test_the_shell_gets_the_kit_on_its_import_path` and
   `test_nothing_launches_quickshell_without_the_kit_path` in `tests/test_theme.py` pin the launcher, and
   the headless desktop test fails on any QML error in the shell's log (`the shell logged no QML errors`
   in `tests/desktop/driver.py`).
-- The first frames lose a colour change. The comment in `shell/Stone.qml` says the scene graph drops a
+- The first frames lose a colour change. The comment in `Stone.qml` says the scene graph drops a
   colour change made in the first frames after the bar starts: on a VM the face went `starting`, then
   `rest` 39 ms later, and the stone stayed the starting orange until its next change, a hundred seconds
   on. So for the first 400 ms (`Stone.settle`) the stone is painted resting green whatever its face is,
-  then follows it. The comment gives no reason why the scene graph drops it. Keep the workaround while the
-  behaviour holds: `test_the_first_frames_keep_the_resting_green_then_the_face_shows` and
+  then follows it. With `animate: false` there is no first frame to lose and no wait: the stone is painted in
+  its face's colour at once. The comment gives no reason why the scene graph drops it. Keep the workaround
+  while the behaviour holds: `test_the_first_frames_keep_the_resting_green_then_the_face_shows` and
   `test_a_face_that_waits_is_amber_once_the_stone_has_settled` pin it.
-- The needs-you glow is a filled radial fade of radius 16 about the centroid: 5 px past the stone's edge,
-  into the pill's padding. At radius 11 it was a 1 px halo that did not read at 24 px.
+- The needs-you glow is a filled radial fade of radius 16 about the centroid (14 for the 16 px stone): 5 px
+  past the stone's edge, into the pill's padding. At radius 11 it was a 1 px halo that did not read at 24 px.
   `test_the_glow_reaches_past_the_slot_and_fades_out` pins the reach.
-- `shell/*.qml` may hold no hex colour and no `"white"` or `"black"`: `tests/test_theme.py` fails on it,
-  so every face takes its colour from a `Theme` token.
+- `shell/*.qml` may hold no hex colour and no `"white"` or `"black"`: `tests/test_theme.py` fails on it. The
+  stone left that folder, so the test no longer reads it. Keep every face on a `Theme` token all the same: the
+  only literal colours in `Stone.qml` are `"transparent"` and the `"magenta"` default of `BCut`'s `tone`,
+  which every use sets. Nothing checks that.
 - To add a face, follow [the design system's recipe](../design-system/README.md#3-add-a-state-to-the-stone).
 
 **Tests.** The QML tests skip without PySide6; the two wallpaper tests that redraw the picture also need
@@ -304,20 +338,23 @@ and the stone `fg`; the symbolic icon must keep `fill-rule="evenodd"`, `#bebebe`
 
 | Test file | What it guards |
 |---|---|
-| `tests/test_stone_qml.py` (17 tests) | `shell/Stone.qml` rendered offscreen at 1x and read back pixel by pixel: the colour of every face, the b inside the stone in every pose, a third of a turn leaving the stone where it was, the b's stem never moving while it works, two knocks and the glow's reach, the lean, one hop, reduced motion, the first 400 ms, and the `resting` outline: whole, still and unlike every other face |
+| `tests/test_stone_qml.py` (33 tests) | `Stone.qml` rendered offscreen at 1x and read back pixel by pixel, at 24 and 16 px, animated, still and in ink: the colour of every face, the b inside the stone in every pose, a third of a turn leaving the stone where it was, the b's stem never moving while it works, two knocks and the glow's reach, the knock as a cue that ends and comes back as one beat, a new need knocking again, the lean, one hop, reduced motion, the first 400 ms, the `resting` outline (whole, still and unlike every other face), `animate` off (painted at once, nothing runs), `ink`, `small` (compared with `bombadil-symbolic.svg`), and the pill's defaults unchanged |
 | `tests/test_brand.py` (5 tests) | The installed icons (identical in `hicolor` and `pixmaps`, no mask, tile colours, the symbolic icon's fill rule), the README banner (it opens with `<p align="center">`, its image files exist and a dark source is named), the PNG sizes (1280 by 640, 500 by 500, 1920 by 1080), that the four SVGs parse, the GRUB theme's file names and ground |
 | `tests/test_motion.py` | Among the rest of reduced motion, that the stone leans at once under it, and that the shell binds the switch to `Kit.Theme.reducedMotion` and hands it on to the stone and to the wallpaper ([how it is tested](../MOTION.md#how-to-test-it)) |
 | `tests/test_wallpaper.py` (14 tests) | The wallpaper picture against the tokens, and that `scripts/make-wallpaper.py` redraws it from `bombadil-mark.svg` |
 | `tests/test_pill_qml.py`, `tests/test_desk_qml.py`, `tests/test_rest_qml.py` | Which face the pill gives: `starting`, `offline`, `rest`, `working`, `done`, `stopped` and `needs` (`tests/test_pill_qml.py`), `needs` while a session waits (`tests/test_desk_qml.py`), and `resting` while the AI is out of plan, paused or cut off by the limit (`tests/test_rest_qml.py`) |
 | `tests/desktop/driver.py` | The real bar in headless sway: the stone's pixels at rest, while a turn runs, needing you and while the AI rests, and that the shell's log holds no QML error |
+| `tests/desktop/idle.py` | The bar's frames and the stack's CPU while nothing happens, one scene with something waiting on the person, by which time the stone has stopped knocking ([IDLE-COST](../IDLE-COST.md)) |
+| `tests/test_installer.py` | The installer's side of the GRUB screen: `grub_theme` with stand-ins for the chroot (the picture, the font, the drop-in, a font that cannot be made) and the output of `000_bombadil_screen` |
 
 ```sh
 pytest -q tests/test_stone_qml.py tests/test_brand.py tests/test_wallpaper.py tests/test_motion.py
 BOMBADIL_SCREENS=/tmp/stone pytest -q tests/test_stone_qml.py   # stone-<face>.png at 8x
 ```
 
-`BOMBADIL_SCREENS` saves `rest`, `listening`, `working`, `needs`, `stopped`, `resting` and `offline`;
-`done` and `starting` are not saved. On a running VM, `scripts/vm-tools/stonecrop OUT.png N INTERVAL`
+`BOMBADIL_SCREENS` saves `rest`, `listening`, `working`, `needs`, `stopped`, `resting` and `offline`, and
+`ink-needs`, `ink-rest`, `small-rest`, `small-needs`, `small-resting` and `small-offline`; `done` and
+`starting` are not saved. On a running VM, `scripts/vm-tools/stonecrop OUT.png N INTERVAL`
 takes N frames of the stone from the VM's own screen over QMP and lays them in a row.
 
 ### For a fork
@@ -325,8 +362,8 @@ takes N frames of the stone from the VM's own screen over QMP and lays them in a
 [Making it yours](../forking.md#what-carries-the-identity) lists what carries the identity and what to
 keep. To replace the whole brand pack, redo these in this order:
 
-1. **The stone.** Redraw the stone, the b and the outline in `shell/Stone.qml`: the geometry there is the
-   master the files copy.
+1. **The stone.** Redraw the stone, the b and the outline in `share/qml/Bombadil/Stone.qml`, at 24 px and
+   at 16 px: the geometry there is the master the files copy, and its 16 px paths are the symbolic icon's.
 2. **The six files in `docs/brand/`.** Redraw `bombadil-mark.svg` and `bombadil-tile.svg` from it, and both
    lockups (they draw the name in paths, so another name means redrawing the letters as well as the i's
    stone: see [the wordmark](#the-wordmark)). Keep the structure `scripts/make-wallpaper.py` reads in `bombadil-mark.svg`. Render
@@ -342,9 +379,11 @@ keep. To replace the whole brand pack, redo these in this order:
    wide, 8-bit RGB with no alpha and under 6 MB.
 6. **GRUB.** Render `share/grub/bombadil/background.png` at 1920 by 1080 and keep `desktop-color` in
    `theme.txt` equal to `bg`, with `desktop-image: "background.png"` and `terminal-font: "Inter Regular 16"`
-   as `test_the_grub_theme_names_its_files_and_the_ground` expects. Nothing installs the theme, so wiring it in is your work.
+   as `test_the_grub_theme_names_its_files_and_the_ground` expects. The installer copies `background.png` and
+   makes the font from the system's Inter (`grub_theme`), and `000_bombadil_screen` uses both; `theme.txt` is
+   neither installed nor wired, so a themed menu is your work.
 7. **The colours.** Change `share/qml/Bombadil/Theme.qml` first and follow
-   [recipe 8](../forking.md#8-change-the-colour). `tests/test_theme.py:72` pins `accent` at `#d97757`: edit
+   [recipe 8](../forking.md#8-change-the-colour). `tests/test_theme.py:73` pins `accent` at `#d97757`: edit
    that line on purpose if you change the orange.
 8. **This page.** Update its tables with the new numbers.
 

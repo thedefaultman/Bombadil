@@ -3,7 +3,7 @@
 > **Status:** Partly shipped
 > **Code:** `src/bombadil/cards.py`, `src/bombadil/cardtools.py`, `src/bombadil/connect/cardmake.py`, `src/bombadil/sysmap.py`, `src/bombadil/narrate.py`, `src/bombadil/pager.py`, `src/bombadil/mcp_server.py`, `src/bombadil/launcher.py`, `src/bombadil/agentd.py`, `src/bombadil/watch.py`, `src/bombadil/providers.py`, `src/bombadil/config.py`, `bin/bombadil`, `shell/CardHost.qml`, `shell/CardBox.qml`, `shell/CardButton.qml`, `shell/CardScroll.qml`, `shell/MessageFace.qml`, `shell/TaskFace.qml`, `shell/ListFace.qml`, `shell/Draft.qml`, `shell/DraftBar.qml`, `shell/StatusLine.qml`, `shell/PillState.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `share/qml/Bombadil/Diagram.qml`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
 > **Design:** [Riding with Bombadil, piece 1](../design/passenger-brief.md#1-why-and-after-reading-what) and [piece 2](../design/passenger-brief.md#2-pictures-from-the-machine), [How Bombadil should feel, piece 5](../design/ux-brief.md#5-answers-you-can-touch), [Messages and connections](../design/messages-and-connections.md)
-> **Verified:** 2026-11-08 against `main` at `7176e55`. The change since that commit (a picture beside a window up to 560 px wide, the scale for the captures' time, the smoke's calm wait and retries) was added and checked against the code at `9d5c729`; the rest of the page was not read again. The change since `f0485c2` (the `message`, `task` and `list` cards, how a card is checked, their faces and the box with its button, the keyboard and the screen a card with a box has, and what puts a card away) was added and checked against the code at `24c836c`; the rest of the page was not read again.
+> **Verified:** 2026-11-12 against `main` at `7d37bc5`, for what changed since `7d17600`, read in the code and not run: the Tips row of the table (`shell/TipsCard.qml`, `share/qml/Bombadil/TipScene.qml`, `share/qml/Bombadil/TipScene.js` and `src/bombadil/tip_scene.py` for what the scenes use, the `tried_when` of the tips that name a picture in `share/tips/tips.toml`) and the list of the desk's cards. The figures of a bar of fixed height in Known gaps were read from [IDLE-COST](../IDLE-COST.md#a-fixed-height-bar-costs-nothing-extra) and not measured again. The rest of the page keeps its earlier check, which was made on 2026-11-08 against `main` at `7176e55`. The change since that commit (a picture beside a window up to 560 px wide, the scale for the captures' time, the smoke's calm wait and retries) was added and checked against the code at `9d5c729`; the rest of the page was not read again. The change since `f0485c2` (the `message`, `task` and `list` cards, how a card is checked, their faces and the box with its button, the keyboard and the screen a card with a box has, and what puts a card away) was added and checked against the code at `24c836c`; the rest of the page was not read again.
 
 A card is validated data that the shell draws above the status line. The machine and the agent draw one kind,
 `diagram`, in four fixed shapes (`chain`, `layers`, `compare`, `timeline`). The person's connections make three more,
@@ -33,10 +33,10 @@ commands, and a reason is the agent's own sentence from just before it acted.
 | Cards the agent draws other than `diagram`: list, checklist, timer, control, markdown reader | Designed | [UX brief, piece 5](../design/ux-brief.md#5-answers-you-can-touch). The `list` card that exists comes from connections and the agent cannot draw it |
 | Cards the agent writes in QML | Designed | UX brief, piece 5 |
 | The `teach` explain level (a faint chip on system words that opens their picture) | Designed | [Passenger brief, "How much does it explain?"](../design/passenger-brief.md#decisions-i-picked-a-default-for) |
-| Tips: a desk card and an app whose scenes reuse `Diagram` at app size, and that count a local action such as a picture word as a tip tried | Partly shipped | [Tips and the desk after boot](../design/tips-and-desk-defaults-brief.md). The data side is on `main` (`src/bombadil/tips.py`, `share/tips/tips.toml`, agentd's `tips` message and the local actions it counts as a tip tried: [tips](tips.md)); no Tips card, app or scene exists |
+| Tips: a card on the desk, an app that plays each tip once on a small copy of the screen, and a picture word or the agent's `show_card` and `system_map` counted as a tip tried | Shipped | [Tips](tips.md). The brief has the scenes reuse `Diagram` at app size; on `main` `Kit.TipScene` (`share/qml/Bombadil/TipScene.qml`) draws them, with a `picture` beat of its own, and it does not use `Diagram`. A picture word counts through `local:picture` (`local:picture:disks` for the one tip that names the disks), and the agent's `show_card` and `system_map` through `tool:show_card` and `tool:system_map`, in the `tried_when` of `share/tips/tips.toml`. The brief is [Tips and the desk after boot](../design/tips-and-desk-defaults-brief.md) |
 
-The desk draws its own cards (`DeskCard.qml`, `RowsCard.qml`, `NowCard.qml`); they do not use `Diagram` and are
-described in [the desk](desk.md). The status line's other behaviours (the counter, the command, Undo, Details, the cut
+The desk draws its own cards (`DeskCard.qml`, `RowsCard.qml`, `NowCard.qml`, `TipsCard.qml`); they do not use `Diagram` (the
+Tips card draws a tip's poster with `Kit.TipScene`) and are described in [the desk](desk.md) and [Tips](tips.md). The status line's other behaviours (the counter, the command, Undo, Details, the cut
 of the agent's own words at a word) are described in [the shell](shell.md); this page covers its `because` and `after`
 lines and how a picture holds the line.
 
@@ -1036,9 +1036,13 @@ Esc closes it.
   terminal turns it into arrow keys in the alternate screen. That was not checked.
 - With the `layers` animation off, a measurement on a virtual machine (`scripts/vm-tools/lifttrace`) still saw the pill
   move briefly when a card appeared in one size step. The cause is not known and no test covers it, because `lifttrace`
-  needs a running virtual machine. A bar window of fixed height would end the resizes at the price of compositing a
-  large transparent surface all the time, which could cost CPU under software rendering; that cost has not been
-  measured. The figures are one dated measurement, taken on 2026-10-01 on a virtual machine at about ten samples a
+  needs a running virtual machine. A bar window of fixed height would end the resizes. Its price, compositing a
+  large transparent surface all the time, was measured once on a virtual machine whose compositor draws in software,
+  and it was within the noise: a bar fixed at 600 px and one fixed at the full 1080 px cost the same as the shipped one,
+  at rest (all three within 1.4 to 2.1% of a core for Hyprland and 6.8 to 8.8% for the bar) and with a turn working (the
+  compositor saturated either way; the table is in [IDLE-COST](../IDLE-COST.md#a-fixed-height-bar-costs-nothing-extra)).
+  Nothing has chosen that height yet (it has to fit the tallest card), and nothing repeats that measurement. The figures
+  of the pill's movement are one dated measurement, taken on 2026-10-01 on a virtual machine at about ten samples a
   second, and no code or test repeats them: with the animation on, the pill dipped by up to about 55 px for about half
   a second at each box added, at the final layout and when the card went; with it off, it stayed at rest in 739 of 749
   samples. What was left with it off: a card that appeared in one step still moved the pill for 3 to 5 samples (the
