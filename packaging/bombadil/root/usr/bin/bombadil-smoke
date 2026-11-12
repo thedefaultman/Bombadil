@@ -978,7 +978,7 @@ if [[ "$mode" == "update" ]]; then
   update_package() { local rc; pacman --config "$update_conf" -Syu --noconfirm >/tmp/update-pacman.log 2>&1; rc=$?; tail -n 25 /tmp/update-pacman.log; return $rc; }
   # The commit of the served build ends in +update (scripts/test-vm.sh names it so).
   version_is_the_served_build() { local o; o=$(version_now); echo "now: $o"; echo "was: $was_version"; [[ "$o" != "$was_version" && "$o" == *"+update)"* ]]; }
-  package_version_changed() { local o; o=$(pacman -Q bombadil 2>&1); echo "now: $o"; echo "was: $was_package"; [[ "$o" != "$was_package" ]]; }
+  package_version_changed() { local o; o=$(pacman -Q bombadil 2>/dev/null); echo "now: $o"; echo "was: $was_package"; [[ "$o" != "$was_package" ]]; }
   migrate_log_clean() { local new; new=$(tail -n +$(($1 + 1)) "$migrate_log" 2>/dev/null); echo "${new:-no new lines}"; ! grep -q FAILED <<<"$new"; }
   ledger_unchanged() { local now; now=$(sort "$ledger"); echo "$now"; [[ "$now" == "$ledger_was" ]]; }
   bar_answers() { line_state | python3 -c 'import json, sys; print(json.load(sys.stdin))'; }
@@ -1012,7 +1012,7 @@ if [[ "$mode" == "update" ]]; then
   fi
   mapfile -t old <"$was_file"
   check update-undo-brought-the-old-version-back same_as "$(version_now)" "${old[0]:-}"
-  check update-undo-brought-the-old-package-back same_as "$(pacman -Q bombadil 2>&1)" "${old[1]:-}"
+  check update-undo-brought-the-old-package-back same_as "$(pacman -Q bombadil 2>/dev/null)" "${old[1]:-}"
   check update-home-keeps-the-stub hypr_loads_the_part
   check update-hypr-config-ok wait_for 30 no_config_errors
   check update-bar-layer wait_for 60 has_layer bombadil-bar
