@@ -41,7 +41,7 @@ permission prompt.
 | `bin/bombadil-connect` | The connection service, a system unit (`bombadil-connect.service`) that runs as its own user, `bombadil-connect`. Owns `/run/bombadil-connect/connect.sock` and the token store in `/var/lib/bombadil-connect` (mode 0700), runs the Slack and MCP drivers, keeps a ring of recent messages in memory, and performs a Slack reply, a ticket or a comment only for a press the person made (`docs/CONNECT.md`). `BOMBADIL_CONNECT_ENGINE=fake` runs it on sample messages and tasks. |
 | `bin/bombadil-browserd` | The browser service, a user unit (`bombadil-browserd.service`): one connection to the browser panel's Chromium that opens, reads, points at a button and takes a token off a page into the connection service. It has no hands. |
 | `share/skills/bombadil-connect` | The skill both CLIs load for messages and connections: the five tools, the rules (other people's words, no send, no token) and how a service is connected. |
-| `packaging/bombadil/` | Bombadil as a pacman package: `PKGBUILD`, the install scriptlet, and `root/`, a mirror of `/` for every file the package puts outside `/usr/share/bombadil`: the units, the installer and setup commands (`bombadil-install`, `bombadil-setup`, `bombadil-rollback`), greetd autologin, passwordless sudo, the managed settings, `/etc/skel`, and the migrate steps that change files other packages own. `bin/`, `src/`, `shell/` and `share/` are installed at `/usr/share/bombadil`, and each command in `bin/` gets a link in `/usr/bin`. `scripts/build-package.sh` builds it. How a file reaches a machine, and how to add one: `docs/INSTALLED-OS.md`, "Packages and updates". |
+| `packaging/bombadil/` | Bombadil as a pacman package: `PKGBUILD`, the install scriptlet, and `root/`, a mirror of `/` for every file the package puts outside `/usr/share/bombadil`: the units, the installer and setup commands (`bombadil-install`, `bombadil-setup`, `bombadil-rollback`), greetd autologin, passwordless sudo, the managed settings, `/etc/skel`, and the pacman hook and migrate steps that change files other packages own. `bin/`, `src/`, `shell/`, `share/` and `install/` are installed at `/usr/share/bombadil`, and each command in `bin/` gets a link in `/usr/bin`. `scripts/build-package.sh` builds it. How a file reaches a machine, and how to add one: `docs/INSTALLED-OS.md`, "Packages and updates". |
 | `iso/` | The archiso profile of the live stick: the package list (which includes `bombadil`), the boot entries, and the few files only the stick needs (`iso/airootfs/`). `bombadil-install` writes the system to an encrypted or plain btrfs disk with snapper (layout in `docs/INSTALLED-OS.md`). |
 
 Switching provider changes one line in `~/.config/bombadil/config.toml`; the OS tools
@@ -88,12 +88,13 @@ On Windows 11, `scripts\bombadil-vm.cmd` does all of it in one go: it sets up an
 distro named `bombadil` with QEMU (KVM works inside WSL), builds the ISO for the commit this
 checkout has checked out, installs it onto a VM disk, and opens the VM as a window. Run it again
 to boot the same VM. `bombadil-vm update` builds the package from this checkout, serves it to the VM
-and boots it: the new Bombadil arrives as a normal pacman update and the disk, the home folder and the
-programs on it stay. `bombadil-vm refresh` keeps the disk (the login, apps and files on it) but replaces
-the system with the one from this checkout's image, after a `qemu-img` restore point; `bombadil-vm stop`
-shuts it down cleanly; `bombadil-vm reinstall` wipes the disk and asks first; `wsl --unregister bombadil`
-removes everything. `scripts/vm-tools/` drives a running VM without a window (keys, a shell,
-screenshots, the smoke checks, scratch copies to try a branch on); see its README.
+and boots it: when you say "update" to the agent there, the new Bombadil arrives as a normal pacman
+update and the disk, the home folder and the programs on it stay. `bombadil-vm refresh` keeps the disk
+(the login, apps and files on it) but replaces the system with the one from this checkout's image, after
+a `qemu-img` restore point; `bombadil-vm stop` shuts it down cleanly; `bombadil-vm reinstall` wipes
+the disk and asks first; `wsl --unregister bombadil` removes everything. `scripts/vm-tools/` drives a
+running VM without a window (keys, a shell, screenshots, the smoke checks, scratch copies to try a
+branch on); see its README.
 
 ## Status
 

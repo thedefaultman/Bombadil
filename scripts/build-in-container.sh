@@ -9,7 +9,9 @@
 #                                                             what it says it is; MODE=update of scripts/test-vm.sh uses it)
 #   BOMBADIL_DEV_SERVER=1 scripts/build-in-container.sh package
 #                                                             a package whose repository file also lists the test VM's
-#                                                             host (10.0.2.2:8123); BOMBADIL_TEST_ENTRIES=1 implies it
+#                                                             host (10.0.2.2:8123). Only the package build is given the
+#                                                             switch: an image build with BOMBADIL_TEST_ENTRIES=1 sets it
+#                                                             itself, and one without is a release, which never lists it
 #
 # Behind an HTTP(S) proxy, export HTTPS_PROXY (and SSL_CERT_FILE for a private CA) and set
 # BOMBADIL_HOST_NET=1 if the proxy listens on localhost; both are passed through to pacman.
@@ -27,7 +29,9 @@ args+=(-e BOMBADIL_PKGREL="${BOMBADIL_PKGREL:-$(git -C "$root" rev-list --count 
 [[ "${BOMBADIL_PKGVER:-}" ]] && args+=(-e BOMBADIL_PKGVER="$BOMBADIL_PKGVER")
 [[ "${BOMBADIL_HOST_NET:-}" ]] && args+=(--network host)
 [[ "${BOMBADIL_TEST_ENTRIES:-}" ]] && args+=(-e BOMBADIL_TEST_ENTRIES="$BOMBADIL_TEST_ENTRIES")
-[[ "${BOMBADIL_DEV_SERVER:-}" ]] && args+=(-e BOMBADIL_DEV_SERVER="$BOMBADIL_DEV_SERVER")
+# The switch goes only to the build of a package: an image build decides it from BOMBADIL_TEST_ENTRIES (see build-iso.sh),
+# so one left in the shell cannot reach a release.
+[[ "${BOMBADIL_DEV_SERVER:-}" && "${1:-iso}" == package ]] && args+=(-e BOMBADIL_DEV_SERVER="$BOMBADIL_DEV_SERVER")
 for v in HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy; do
   [[ "${!v:-}" ]] && args+=(-e "$v=${!v}")
 done

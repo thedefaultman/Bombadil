@@ -25,9 +25,12 @@ Launcher commands (`scripts/wsl-vm.sh`, `bombadil-vm.cmd`):
 
 - no argument boots the disk, and `stop` shuts it down cleanly (ACPI power button).
 - `update` builds the package from this checkout, serves it on `127.0.0.1:8123` while the VM runs (the
-  guest's `/etc/pacman.d/bombadil.conf` tries `10.0.2.2:8123` first) and boots the disk. Saying "update" to
-  the agent there installs it with pacman, and nothing on the disk is replaced. It refuses a disk installed
-  before Bombadil was a package.
+  guest's `/etc/pacman.d/bombadil.conf` tries `10.0.2.2:8123` first, which it does on a build `wsl-vm.sh`
+  made: it sets `BOMBADIL_DEV_SERVER=1` for the ISO and for this package, and a release has no such line)
+  and boots the disk. Saying "update" to the agent there installs it with pacman, and nothing on the disk
+  is replaced. It refuses a disk installed before Bombadil was a package. This mode and `refresh` (now the
+  installer's own) are tested here only against stand-ins (`tests/test_vm_harness.py`) and have not yet been
+  run on a real WSL machine.
 - `refresh` stops the VM, takes a host-side `qemu-img` restore point of the disk and runs the installer's own
   refresh from this checkout's ISO: the system is replaced, the home folder (login, apps and files) stays,
   and the old system is kept aside on the disk.
@@ -56,7 +59,7 @@ empty line; the script does it).
   run the new agentd and bar. GRUB's menu is not regenerated: after a change to GRUB's defaults in
   `/etc/default/grub` run `sudo bombadil-grub-config` (it runs `grub-mkconfig` the way the installer does, in
   the C locale and with the "Loading ..." lines cut; do not run `grub-mkconfig` itself on a layout-1 disk, see
-  docs/ARCHITECTURE.md). The person's own files stay theirs: `~/.config/hypr/hyprland.lua` loads Bombadil's part
+  docs/INSTALLED-OS.md, "What GRUB shows", and docs/ARCHITECTURE.md). The person's own files stay theirs: `~/.config/hypr/hyprland.lua` loads Bombadil's part
   from the package, and a line they or the launcher put under it, such as the `Virtual-1` pin, stays (so the
   smoke's `virtual-display-size` fails here).
 - **Windows**: the Windows key opens the Start menu, not the pill (use Alt+Space once it is on the

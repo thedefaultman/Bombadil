@@ -822,6 +822,37 @@ def test_build_in_container_passes_the_package_version_it_was_given_through(tmp_
     assert "BOMBADIL_DEV_SERVER=1" in args
 
 
+def test_build_in_container_gives_the_dev_server_switch_to_a_package_build_and_to_no_image_build(tmp_path):
+    # The switch is for the package of a test VM. An image build decides it from BOMBADIL_TEST_ENTRIES (build-iso.sh sets
+    # it for a test build, and drops it for a release), so one left in the shell is not even handed to a release build.
+    host = Host(tmp_path)
+    env = {
+        "PATH": f"{host.stub / 'bin'}:{os.environ['PATH']}",
+        "STUB": str(host.stub),
+        "HOME": str(host.stub),
+        "CONTAINER_RUNTIME": str(host.stub / "bin/docker"),
+        "BOMBADIL_DEV_SERVER": "1",
+    }
+    script = host.tree / "scripts/build-in-container.sh"
+
+    def container_args(*argv: str, **extra: str) -> list[str]:
+        (host.stub / "docker.args").unlink(missing_ok=True)
+        r = subprocess.run(
+            ["bash", str(script), *argv], env={**env, **extra}, capture_output=True, text=True, check=False
+        )
+        assert r.returncode == 0, r.stderr
+        return host.calls("docker.args")
+
+    assert "BOMBADIL_DEV_SERVER=1" in container_args("package")
+    for argv in ((), ("iso",)):
+        args = container_args(*argv)
+        assert "build-iso.sh" in "\n".join(args) and not [
+            a for a in args if a.startswith("BOMBADIL_DEV_SERVER")
+        ], argv
+    args = container_args(BOMBADIL_TEST_ENTRIES="1")
+    assert "BOMBADIL_TEST_ENTRIES=1" in args and not [a for a in args if a.startswith("BOMBADIL_DEV_SERVER")]
+
+
 def test_the_host_script_names_the_new_mode_and_the_reuse_switch_in_its_header():
     header = TEST_VM.read_text().split("set -euo pipefail")[0]
     assert (

@@ -362,13 +362,26 @@ _CLOSERS = frozenset({"end", "until"})
 _LONG_OPEN = re.compile(r"\[(=*)\[")
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _NUMBER = re.compile(r"[0-9][0-9A-Za-z_.]*")
-_CARRY_START = re.compile(r"(?:hl\.[A-Za-z_]|(?:local|function|require|dofile|if|for|while|do)(?![A-Za-z0-9_]))")
+_CARRY_START = re.compile(r"(?:hl\s*\.\s*[A-Za-z_]|(?:local|function|require|dofile|if|for|while|do)(?![A-Za-z0-9_]))")
 _LOCAL = re.compile(r"(?<![\w.:])local\s+(?:function\s+)?([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)")
 _FUNCTION = re.compile(r"function\s+([A-Za-z_]\w*)")
 _ASSIGNED = re.compile(r"([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*=(?!=)")
-_USED = re.compile(r"(?<![\w.:])[A-Za-z_]\w*(?!\w)(?!\s*=(?!=))")
+# A name that is used, not a field (after a single dot or a colon) or a key. The second dot of `..` is not a field
+# dot: in `"x"..mod` the name is used.
+_USED = re.compile(r"(?<![\w:])(?<!(?<!\.)\.)[A-Za-z_]\w*(?!\w)(?!\s*=(?!=))")
 _KEY_OPEN = re.compile(r"([A-Za-z_]\w*) = \{")
 _FIELD = re.compile(r"[A-Za-z_]\w* =(?!=)")
+_VALUE_END = re.compile(r"(?:[A-Za-z_]\w*|[0-9][\w.]*|\"\"|[)\]}])\Z")
+_RESERVED = frozenset({"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in",
+                       "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"})
+# A statement is not over after one of these (the expression, the assignment or the list goes on), and it goes on
+# into a row that starts with one of the next set, which no statement can start with.
+_UNFINISHED = frozenset({"..", "+", "-", "*", "/", "%", "^", "#", "&", "|", "~", "<", ">", "=", ",", ".", ":",
+                         "and", "or", "not", "in", "local", "until", "for", "while"})
+_CONTINUING = frozenset({"..", ".", ":", "=", ",", "+", "-", "*", "/", "%", "^", "&", "|", "~", "<", ">", "and", "or",
+                         "in"})
+# Lua reads a row that starts with one of these as a call or an index of what ends the row before it.
+_CALL_START = frozenset({"(", "[", "{", '""'})
 
 
 @dataclass
@@ -377,6 +390,8 @@ class Row:
     end: int        # how deep the line leaves us in brackets and blocks
     open: bool      # it ends inside a long string or comment
     bad: bool       # a string left open on it, or a closer with nothing to close
+    head: str = ""  # its first token (a string is "", a long string too), empty when it has no code
+    tail: str = ""  # its last token
 
 
 def scan(lines: list[str]) -> list[Row]:
@@ -387,6 +402,7 @@ def scan(lines: list[str]) -> list[Row]:
     closing = ""    # what ends the long string or comment we are inside
     for raw in lines:
         code: list[str] = []
+        tokens: list[str] = []
         bad = False
         i, n = 0, len(raw)
         while i < n:
@@ -411,41 +427,75 @@ def scan(lines: list[str]) -> list[Row]:
                     bad = True
                     break
                 code.append('""')
+                tokens.append('""')
                 i = j + 1
                 continue
             if c == "[" and (m := _LONG_OPEN.match(raw, i)):
                 closing, i = "]" + m.group(1) + "]", m.end()
                 code.append('""')
+                tokens.append('""')
                 continue
             if m := _WORD.match(raw, i):
                 word = m.group()
                 depth += 1 if word in _OPENERS else -1 if word in _CLOSERS else 0
                 code.append(word)
+                tokens.append(word)
                 i = m.end()
                 continue
             if m := _NUMBER.match(raw, i):
                 code.append(m.group())
+                tokens.append(m.group())
                 i = m.end()
                 continue
             depth += 1 if c in "([{" else -1 if c in ")]}" else 0
-            code.append(c)
-            i += 1
+            if c.isspace():
+                code.append(c)
+                i += 1
+                continue
+            # `..`, `...` and `::` are one token: a row that ends in `..` is not over, one that ends in `...` is.
+            op = next((o for o in ("...", "..", "::") if raw.startswith(o, i)), c)
+            code.append(op)
+            tokens.append(op)
+            i += len(op)
         if depth < 0:
             bad, depth = True, 0
-        rows.append(Row("".join(code).strip(), depth, bool(closing), bad))
+        rows.append(Row("".join(code).strip(), depth, bool(closing), bad, tokens[0] if tokens else "",
+                        tokens[-1] if tokens else ""))
     return rows
+
+
+def _goes_on(start: str, tail: str, head: str) -> bool:
+    """Is a statement that began with `start` and has code up to `tail` still going on in a row that begins with
+    `head`? Lua reads on after an operator, an `=` or a comma, into a row that cannot start a statement (`.. x`,
+    `:m()`), into a `(` or an index or a table or a string after a name or a call (they are a call or an index of
+    it), and into the `do` of a loop whose head is over."""
+    if not tail:
+        return False
+    if tail in _UNFINISHED or head in _CONTINUING:
+        return True
+    if head in _CALL_START and (tail in (")", "]") or (_WORD.fullmatch(tail) and tail not in _RESERVED)):
+        return True
+    return start in ("for", "while") and tail not in ("end", ";") and head == "do"
 
 
 def statements(rows: list[Row]) -> list[tuple[int, int, bool]]:
     """The top-level statements as (first line, line after the last, fit): a statement runs until the nesting is
-    back to nothing. Not fit: something was left open or closed too often in it."""
+    back to nothing and it is not going on (a row that ends in `..` or a comma, or the next row starting with `..`,
+    is one statement with the one it goes on in). Not fit: something was left open or closed too often in it."""
+    after = [""] * len(rows)        # the first token of the next row that has code
+    following = ""
+    for k in range(len(rows) - 1, -1, -1):
+        after[k] = following
+        following = rows[k].head or following
     out = []
     i = 0
     while i < len(rows):
-        j, bad = i, False
+        j, bad, start, tail = i, False, "", ""
         while True:
-            bad = bad or rows[j].bad
-            closed = rows[j].end == 0 and not rows[j].open
+            row = rows[j]
+            bad = bad or row.bad
+            start, tail = start or row.head, row.tail or tail
+            closed = row.end == 0 and not row.open and (row.bad or not _goes_on(start, tail, after[j]))
             j += 1
             if closed or j >= len(rows):
                 break
@@ -548,8 +598,10 @@ class Piece:
 
 
 def _statement_texts(lines: list[str]) -> tuple[list[tuple[int, int, bool]], list[str]]:
-    """The statements of a text, and each one as its stripped lines joined: what two texts are compared by."""
-    spans = statements(scan(lines))
+    """The statements of a text, and each one as its stripped lines joined: what two texts are compared by. A blank
+    line is left out: every text has many, a blank matched across a statement the person changed would pair the
+    shipped one with nothing (it would be taken out) and the changed one with nothing (it would be all theirs)."""
+    spans = [span for span in statements(scan(lines)) if any(s.strip() for s in lines[span[0]:span[1]])]
     return spans, ["\n".join(s.strip() for s in lines[a:b]) for a, b, _ in spans]
 
 
@@ -586,6 +638,32 @@ def _persons_lines(theirs: list[str], mine_lines: list[str]) -> tuple[list[bool]
     return mine, removed
 
 
+def _ends_a_value(code: str) -> bool:
+    """Does the code end where a value can end (a name, a number, a string, a closing bracket), and not on an operator
+    that wants something after it?"""
+    m = _VALUE_END.search(code)
+    return bool(m) and m.group() not in ("and", "or", "not")
+
+
+def _leaf(lines: list[str], rows: list[Row], k: int, last: int) -> str | None:
+    """The field on row k as it is written into a call of its own, or None when it cannot be placed for sure. A field
+    that ends in a comma is taken as it is, and one that ends in a `;` gets a comma instead (a comma after a `;` is
+    a syntax error). One with neither gets a comma only where a value ends and the next row is a field, a table
+    opening or a closer: after `3 +` or `"a" or` a comma would cut the value off. A `--` in the line hides where
+    the code ends, so a field that does not end in a comma is left then."""
+    code, leaf = rows[k].code, lines[k].strip()
+    if code.endswith(","):
+        return leaf
+    if "--" in leaf:
+        return None
+    if code.endswith(";"):
+        return leaf[:-1].rstrip() + "," if leaf.endswith(";") and _ends_a_value(code[:-1].rstrip()) else None
+    nxt = next((r.code for r in rows[k + 1:last] if r.code), "")
+    if _ends_a_value(code) and (_FIELD.match(nxt) or _KEY_OPEN.fullmatch(nxt) or nxt.startswith("}")):
+        return leaf + ","
+    return None
+
+
 def _config_pieces(lines: list[str], rows: list[Row], first: int, last: int,
                    mine: list[bool]) -> tuple[list[Piece], set[int]]:
     """The person's lines inside an `hl.config({ ... })` call of Bombadil's (a value they changed, a key they added)
@@ -597,17 +675,19 @@ def _config_pieces(lines: list[str], rows: list[Row], first: int, last: int,
         return [], set()
     base = rows[first].end
     path: list[str] = []
-    leaves: dict[tuple[str, ...], list[int]] = {}
+    leaves: dict[tuple[str, ...], list[tuple[int, str]]] = {}     # per table: its fields, as written into the call
     shape: list[int] = []
     for k in range(first + 1, last):
         row, before = rows[k], rows[k - 1].end
-        if row.bad or row.open or before != base + len(path):
+        # A row that ends inside a long string or comment is not a field on one line. (A bad row cannot be here:
+        # split() does not ask about a statement that has one.)
+        if row.open or before != base + len(path):
             break
         if not row.code:
             continue
         if row.end == before and _FIELD.match(row.code):
-            if mine[k] and (row.code.endswith(",") or "--" not in lines[k]):
-                leaves.setdefault(tuple(path), []).append(k)
+            if mine[k] and (leaf := _leaf(lines, rows, k, last)) is not None:
+                leaves.setdefault(tuple(path), []).append((k, leaf))
         elif row.end == before + 1 and (m := _KEY_OPEN.fullmatch(row.code)):
             path.append(m.group(1))
             if mine[k]:
@@ -622,15 +702,23 @@ def _config_pieces(lines: list[str], rows: list[Row], first: int, last: int,
     for where, rows_of in leaves.items():
         out = ["hl.config({"]
         out += [f"{'    ' * depth}{key} = {{" for depth, key in enumerate(where, 1)]
-        for k in rows_of:
-            leaf = lines[k].strip()
-            out.append("    " * (len(where) + 1) + (leaf if rows[k].code.endswith(",") else leaf + ","))
+        out += ["    " * (len(where) + 1) + leaf for _, leaf in rows_of]
         out += [f"{'    ' * depth}}}," for depth in range(len(where), 0, -1)]
         out.append("})")
-        pieces.append(Piece(rows_of[0], rows_of[-1] + 1, out, [lines[k].strip() for k in rows_of],
-                            " ".join(rows[k].code for k in rows_of)))
-    covered = {k for rows_of in leaves.values() for k in rows_of}
+        ks = [k for k, _ in rows_of]
+        pieces.append(Piece(ks[0], ks[-1] + 1, out, [lines[k].strip() for k in ks], " ".join(rows[k].code for k in ks)))
+    covered = {k for rows_of in leaves.values() for k, _ in rows_of}
     return pieces, covered | set(shape) if covered else set()
+
+
+def _lines(text: str) -> list[str]:
+    """The lines of a Lua file. Lua ends a line at a newline, a carriage return or a pair of them and nowhere else;
+    str.splitlines() also breaks at a form feed or a Unicode line separator, and a comment that has one in it would
+    leave the text after it as code."""
+    lines = re.split(r"\r\n|\r|\n", text)
+    if lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def split(text: str, share: Path, stub: str, kept_as: str = BEFORE_SPLIT) -> tuple[str, int, int]:
@@ -639,7 +727,7 @@ def split(text: str, share: Path, stub: str, kept_as: str = BEFORE_SPLIT) -> tup
     shipped = _shipped(share)
     if not any(name == "bombadil.lua" for name, _ in shipped):
         raise RuntimeError(f"Bombadil's part is not in {share / 'share' / 'hypr'}")
-    mine_lines = text.splitlines()
+    mine_lines = _lines(text)
     if len(mine_lines) > MAX_LINES:
         raise ValueError(f"hyprland.lua has {len(mine_lines)} lines")
     user = [s.strip() for s in mine_lines]

@@ -224,10 +224,10 @@ an update.
 flowchart LR
     repo["the source tree<br/>bin src shell share install<br/>packaging/bombadil/root"] --> build["scripts/build-package.sh<br/>makepkg, repo-add"]
     build --> dir["a pacman repository directory<br/>bombadil-DATE-N-any.pkg.tar.zst<br/>bombadil.db"]
-    dir -->|"file:// copy on the image,<br/>http for the laptop VM"| pacman["pacman -Syu"]
+    dir -->|"file:// copy on the image,<br/>http only in a test build"| pacman["pacman -Syu"]
     pacman --> files["package files<br/>/usr/share/bombadil, /usr/bin,<br/>/usr/lib/systemd, /etc"]
-    pacman --> scriptlet["scriptlet<br/>turns the listed units on, once"]
-    pacman --> hook["alpm hook: migrate steps<br/>files other packages own"]
+    pacman --> scriptlet["scriptlet<br/>turns the listed units on, once<br/>on removal takes out its pacman.conf section"]
+    pacman --> hook["alpm hook after every install or upgrade:<br/>migrate steps for files other packages own"]
     files -.->|"next agentd start"| homefix["homefix steps<br/>files in the person's home"]
 ```
 
@@ -246,7 +246,7 @@ to keep in step.
 | the package list | `iso/packages.x86_64` | `/usr/share/bombadil/packages.x86_64` |
 | the version | not in git; the build writes it | `/usr/share/bombadil/VERSION` |
 | a unit, a config file, a sudoers file, a hook, an icon, a desktop entry, a sysusers or tmpfiles file, a file for a new home | `packaging/bombadil/root/`, at the path it has on the machine | the same path |
-| something only the live stick needs | `iso/airootfs/` | the stick, never an installed system |
+| something only the live stick needs, or the image's own base files | `iso/airootfs/` | the stick; the installer copies the system to the disk without the live-only units |
 
 `packaging/bombadil/` also holds `PKGBUILD` (what the package is: its name, dependencies and the
 files pacman keeps the person's edits to) and `bombadil.install` (the scriptlet). The numbered
@@ -261,20 +261,27 @@ the commands the package ships itself (`bombadil-setup`, `bombadil-install`, `bo
 - **Nothing the package ships names `/usr/local`.** It is no package's. (A migrate step names it, to
   fix a line an older install has.)
 - **Modes.** Git holds only 644 and 755, and a build user's umask is not to be trusted, so
-  `package()` sets them: folders 755, files readable by all and writable by the owner alone, and
-  `etc/sudoers.d/bombadil` 440. The agent runs as the person, so a file it cannot read would break
-  every start.
-- **`backup=`** lists the files a person may edit (`/etc/bombadil/config.toml`,
-  `/etc/pacman.d/bombadil.conf`). When one of them was edited and a new version changes it, pacman
-  keeps the person's and writes the new one beside it as `.pacnew`.
+  `package()` sets them: folders 755 (`etc/sudoers.d` is sudo's own folder, so 750), files readable by
+  all and writable by the owner alone, and `etc/sudoers.d/bombadil` 440. The agent runs as the
+  person, so a file it cannot read would break every start.
+- **`backup=`** lists the files a person may edit and an update must not take back:
+  `/etc/bombadil/config.toml`, `/etc/pacman.d/bombadil.conf` and `/etc/sudoers.d/bombadil` (a person
+  who tightens a rule there keeps it). When one of them was edited and a new version changes it,
+  pacman keeps the person's and writes the new one beside it as `.pacnew`, which sudo skips because
+  of the dot in its name. Every other file the package puts in `/etc` is Bombadil's own policy or
+  default and is replaced by each update on purpose: the managed settings of Chromium, Claude Code,
+  Codex and Thunderbird, `mimeapps.list`, the GRUB drop-in, the GRUB screen script and `/etc/skel`.
+  A person's own choices go in their home or in a file of their own. The `.pacnew` round trip is
+  pacman's own behaviour and has not been run on a machine with this package yet.
 - **`depends`** names only packages that `iso/packages.x86_64` lists, so the image has every one (a
   test checks, and checks that the image lists `bombadil`). A new dependency goes in both.
 - **Nothing may be in both `iso/airootfs/` and `packaging/bombadil/root/`.** mkarchiso copies
   `airootfs` first and pacstrap installs the package after, and pacman refuses to overwrite a file it
-  does not own ("exists in filesystem"). A test guards it. What stays in `iso/airootfs/` is the live
-  stick's own: `bombadil-live.service`, `pacman-init.service`, the links that start them, the
-  hostname, locale, console and mkinitcpio files, the mirror list, and `/etc/environment` (pam
-  owns that one).
+  does not own ("exists in filesystem"). A test guards it. What stays in `iso/airootfs/` is what no
+  package ships: the live stick's own `bombadil-live.service` and `pacman-init.service` with the links
+  that start them (the installer leaves these out of an installed system), and the base files the
+  installer copies along: the hostname, locale, console and mkinitcpio files, the mirror list, and
+  `/etc/environment` (pam owns that one).
 
 ### The three ways a file changes
 
@@ -284,22 +291,29 @@ first thing to decide when you add a file.
 | The file | How a new version changes it | Where that lives | What records it |
 |---|---|---|---|
 | **Bombadil's own**: anything the package ships | pacman replaces it in the update | the file itself, in the source tree | pacman's database |
-| **Another package's**: `/etc/pacman.conf` (pacman), `/usr/lib/os-release` (filesystem), `/etc/environment` (pam) | a numbered **migrate step** that checks the file and edits it if it needs it; an alpm hook runs the steps after the transaction | `packaging/bombadil/root/usr/share/bombadil/migrate/NNN-name.sh` | `/var/log/bombadil-migrate.log` |
-| **The person's**, in their home: `~/.config/hypr/hyprland.lua`, the skill links | a numbered **homefix step** that only creates what is missing; agentd runs it at start, before its socket opens | `STEPS` in `src/bombadil/homefix.py` | `~/.local/state/bombadil/home.json` |
+| **Another package's**: `/etc/pacman.conf` (pacman), `/usr/lib/os-release` (filesystem), `/etc/environment` (pam) | a numbered **migrate step** that checks the file and edits it if it needs it; an alpm hook runs the steps after every install or upgrade of any package | `packaging/bombadil/root/usr/share/bombadil/migrate/NNN-name.sh` | `/var/log/bombadil-migrate.log` |
+| **The person's**, in their home: `~/.config/hypr/hyprland.lua`, the skill links | a numbered **homefix step** that only creates what is missing (the one file it rewrites is `hyprland.lua`, after keeping the old one); agentd runs it at start, before its socket opens | `STEPS` in `src/bombadil/homefix.py` | `~/.local/state/bombadil/home.json` |
 
 **Migrate steps.** pacman does not let two packages own one path, and an upgrade of the owner can
 put the original file back. So Bombadil never ships a file another package owns. The hook
-`bombadil-migrate.hook` runs `/usr/share/bombadil/migrate/run` after a transaction that installs or
-upgrades `bombadil`, `pacman`, `filesystem` or `pam`, or touches `usr/lib/os-release`. The runner
-runs `NNN-*.sh` in order, each in its own `bash`, and always exits 0: a step that fails is written
-to the log (`FAILED rc=N` and its words) and to stderr as one line, and the rest still run, because
-a failed step must never fail the update. A step with nothing to do is not logged, since the hook
-runs on many upgrades. Today's steps:
+`bombadil-migrate.hook` runs `/usr/share/bombadil/migrate/run` once after every transaction that
+installs or upgrades any package (one `Package` trigger with `Target = *`), not only one of
+`bombadil`, `pacman`, `filesystem` or `pam`. A `pacman.conf` that someone replaced with pacman's new
+default has lost `[bombadil]`, and then pacman no longer knows this package: only a step that runs
+after a later transaction of any other package can put the section back. The runner runs
+`NNN-*.sh` in order, each in its own `bash`, and always exits 0: a step that fails is written to the
+log (`FAILED rc=N` and its words) and to stderr as one line, and the rest still run, because a failed
+step must never fail the update. A step that changed something is logged; one with nothing to do
+prints and logs nothing, since the hook runs after every transaction. A test reads the hook file and
+runs the steps on a fake root; the hook firing in a real pacman transaction is checked only by an
+image build (it reads `/etc/pacman.conf` back) and has not been run for real yet. Today's steps:
 
 - `001-pacman-repo.sh` puts `[bombadil]` with `Include = /etc/pacman.d/bombadil.conf` above the
   first `[core]` in `/etc/pacman.conf`.
-- `002-os-release-logo.sh` gives `/usr/lib/os-release` the line `LOGO=bombadil` (a `LOGO=` the person
-  set stays; `ID` and `ID_LIKE` are not touched).
+- `002-os-release-logo.sh` gives the system's os-release the line `LOGO=bombadil`: it replaces
+  Arch's `LOGO=archlinux-logo`, or adds the line when there is none. A `LOGO=` the person set stays,
+  and `ID` and `ID_LIKE` are not touched. It edits `/etc/os-release` when that is a regular file
+  (systemd reads it first), else `/usr/lib/os-release`.
 - `003-browser-env.sh` changes the exact line `BROWSER=/usr/local/bin/bombadil-browser` in
   `/etc/environment` to `/usr/bin/bombadil-browser`.
 
@@ -308,11 +322,17 @@ missing there and changes nothing that exists, with one exception, the Hyprland 
 agentd runs the steps only on a real installed system: `paths.share_dir()` is `/usr/share/bombadil`,
 `BOMBADIL_SHARE` is not set, `/usr/share/bombadil/VERSION` exists and `BOMBADIL_NO_HOMEFIX` is not
 set, so a checkout that a developer runs never touches their home. homefix never raises and never
-waits: a step that fails is tried again at the next start, three times, then left alone, and a
-second homefix that finds the lock held does nothing. (agentd restarts for ever, so a step that
-could crash it would be a loop with no pill.) `home.json` says what was done, but it is advisory:
-every step also looks at the files, so a lost record makes a step run again harmlessly. It lives in
-the state folder, which a restore point of the home does not roll back. Today's steps:
+waits. A step that fails is tried again at every start, but a failure counts at most once an hour,
+so a crash loop does not use the tries up. The third counted failure leaves the step alone until a
+Bombadil of a different version is installed (the failure record in `home.json` holds the version),
+and says so once above the pill, with the reason. A second homefix that finds the lock held does
+nothing. (agentd restarts for ever, so a step that could crash it would be a loop with no pill.)
+`home.json` says what was done, but it is advisory: every step also looks at the files, so a lost
+record makes a step run again harmlessly. A `home.json` written by a newer Bombadil than this code
+is left where it is and homefix does nothing, since this code cannot tell what its records mean;
+one that cannot be read or understood, or is older, is set aside beside itself as
+`home.json.bad-<time>` and the table starts empty. The file lives in the state folder, which a
+restore point of the home does not roll back. Today's steps:
 
 1. **config split**: the Hyprland config, described below.
 2. **skel entries**: adds what `/etc/skel` has and the home lacks, as `cp -an` would, but each path
@@ -355,9 +375,8 @@ above says, and that is all: nothing lists it.
    `chown --reference`), and `mv -f` it over. Print `changed`.
 5. If it cannot (no file, no `[core]`), say why on one line and `exit 1`. Change nothing then.
 6. Never run `grub-mkconfig` or `bombadil-grub-config`, and never restart anything.
-7. If the owner is not a `Target` of `bombadil-migrate.hook`, add it (`Type = Package`), so the step
-   runs again when the owner's upgrade puts the original back. A `Type = Path` trigger, like the one
-   on `usr/lib/os-release`, runs the steps whenever anything installs that path.
+7. Change nothing in `bombadil-migrate.hook`: it runs the steps after every install or upgrade of any
+   package, so the step runs again whenever the owner's upgrade puts the original back.
 
 Test it on a fake root: in `tests/test_packaging.py`, `fake_root(tmp_path, ...)` makes a small root
 (`etc/pacman.conf`, `usr/lib/os-release`, `etc/environment`) and `step(root, "NNN-name.sh")` runs one
@@ -372,8 +391,9 @@ mode is kept, that the person's own value stays, and that a file it cannot chang
    included) and never open, change or delete what is there. The config split is the one step that
    replaces a file, and only after it has kept the old one.
 3. Look at the files, not at the record. Return `Result("already")` when there is nothing to do.
-4. Raise when it cannot. homefix keeps the failure, retries it at the next start, and goes on to
-   the next step. Do not wait, ask the network or stop for input.
+4. Raise when it cannot. homefix keeps the failure, retries it at the next start (a failure counts
+   at most once an hour, and the third leaves the step alone until another Bombadil is installed),
+   and goes on to the next step. Do not wait, ask the network or stop for input.
 5. Never touch the sign-in or the person's settings. To tell the person something, add a line to
    `ctx.notes`.
 
@@ -390,52 +410,94 @@ Bombadil's part from the system and then leaves the rest to them:
 ```lua
 local ok = pcall(require, "/usr/share/bombadil/share/hypr/bombadil")
 -- ... a fallback if that is missing (below) ...
--- Your own lines go below. They run after Bombadil's, so a monitor or a bind here wins.
+-- Your own lines go below. They run after Bombadil's.
 ```
 
 Bombadil's part is `share/hypr/bombadil.lua` in the source tree and
 `/usr/share/bombadil/share/hypr/bombadil.lua` on the machine. It holds the start hook, the binds, the
-rules and the look, with defaults the person can override (`input.kb_layout` is one). It follows
-updates, so a change a person makes inside it is replaced by the next one; their own lines go in
-their file. Hyprland reads it at its next start; `hyprctl reload` reads it again.
+rules and the look, with defaults the person can override. It follows updates, so a change a person
+makes inside it is replaced by the next one; their own lines go in their file. Hyprland reads it at
+its next start; `hyprctl reload` reads it again.
 
+The person's lines run after Bombadil's. Their own `hl.config({ input = { kb_layout = "de" } })`
+after the stub sets that value, and a second `hl.config` call sets only the values it names, so the
+rest stay Bombadil's. Whether a bind or a monitor line of theirs replaces a shipped one is
+Hyprland's business, and a second bind for the same keys may fire both. The merge of two `hl.config`
+calls is checked in a real Hyprland only by the VM check
+`refresh-homefix-hypr-has-the-persons-config-value` (`docs/VM-TESTING.md`), which has not been run
+yet. The Python tests run the files through a Lua (when one is installed) and the stub against a
+recording stand-in for `hl`.
+
+- **The loader line is permanent.** `local ok = pcall(require, "/usr/share/bombadil/share/hypr/bombadil")`
+  and the path it names never change. Every split home has the line, homefix tells a split file by
+  it, and a home never gets a new stub, so a different path would leave every home already made
+  loading nothing. Changing it needs a step that rewrites the stub in every home.
+  `test_the_loader_line_and_the_path_it_names_are_permanent` in `tests/test_homefix.py` pins it.
 - **A missing part falls back; a broken one does not.** If the module is not on the system (a
-  restore point from before the package existed), the stub runs `hyprland.lua.before-split` if
-  there is one, and otherwise still starts agentd and the bar, so there is a pill to ask. A module
-  with a syntax or run-time error does not make `pcall` fail: Hyprland shows the error in `hyprctl
-  configerrors`.
+  restore point from before the package existed), the stub runs the person's old file, the copy
+  `hyprland.lua.before-split` that the split of this home made, and then stops with `return`, so the
+  person's lines in that file do not run twice. Lines added to `hyprland.lua` after the split are not
+  run in that fallback. With no old file the stub still starts agentd and the bar, so there is a pill
+  to ask. A module with a syntax or run-time error does not make `pcall` fail, so the fallback does
+  not run: Hyprland shows the error in `hyprctl configerrors`, and none of Bombadil's part
+  loads (no start hook, so no pill), while the lines below the stub's loader still run.
+  `test_bombadils_part_and_the_stub_are_valid_lua` (same file) parses Bombadil's part and the stub
+  when a Lua is available to the tests (`lupa`, `luac`, `luac5.4` or `luajit`).
 - **The old versions.** `share/hypr/old/<8 hex>.lua` is every text that `share/hypr/bombadil.lua`
   (or the skel `hyprland.lua` it grew out of) ever had in git, named for the first 8 hex of its git
   blob id. homefix compares a person's old file with all of them and the current one, takes the
-  nearest, and calls what differs from it the person's. If a text Bombadil once shipped were missing
-  here, its lines would be kept as the person's own, run after Bombadil's current part, and undo its
-  fixes. `scripts/hypr-old-versions.py` keeps the folder complete. When you change
-  `share/hypr/bombadil.lua`, run it before you commit: the committed text is still the previous one,
-  and it is added. Commit the new file with the change. Nothing is ever removed from `old/`, because
-  a machine may still have that version. `--check` lists what is missing from the history of `HEAD`;
-  `tests/test_homefix.py` runs it.
-- **What the config split does.** On a home whose `hyprland.lua` does not load Bombadil's part (the
-  whole file from before the split), the first agentd start after the update moves it aside as
-  `hyprland.lua.before-split`, a byte-for-byte copy with the same mode that is never overwritten,
-  and writes the stub (from `/etc/skel` when it has one, else the copy inside `homefix.py`; a test
-  keeps them the same). A missing file just gets the stub. A symlink is replaced by a file and
-  what it pointed at is left alone. A file that already loads Bombadil's part is not touched.
+  nearest, and calls what differs from it the person's. It compares statement by statement, and
+  line by line only inside statements that differ, so a statement added right after a shipped one is
+  never torn in two. Blank lines are not compared, so a changed statement next to a blank line and a
+  statement of the person's own is carried as the changed fields only. If a text Bombadil once
+  shipped were missing here, its lines would be kept as the person's own, run after Bombadil's
+  current part, and undo its fixes. `scripts/hypr-old-versions.py` keeps the folder complete. When
+  you change `share/hypr/bombadil.lua`, run it before you commit: the committed text is still the
+  previous one, and it is added. Commit the new file with the change. Nothing is ever removed from
+  `old/`, because a machine may still have that version. `--check` lists what is missing from the
+  history of `HEAD`; `tests/test_homefix.py` runs it.
+- **What the config split does.** On a home whose `hyprland.lua` does not hold the loader line (the
+  whole file from before the split), the first agentd start after the update keeps the old file
+  whole and writes the stub (from `/etc/skel` when it has one, else the copy inside `homefix.py`; a
+  test keeps them the same). The copy has the old file's bytes and mode and is never overwritten. It
+  is named `hyprland.lua.before-split` when that name is free or already holds the same bytes,
+  otherwise `hyprland.lua.before-split.2`, `.3` and so on; a name that holds anything else, even a
+  dangling link, is passed over. The header comment, the notice and the stub's fallback name the
+  copy used. If no copy can be made, the file is not replaced and the step is tried again. A
+  missing file just gets the stub. A symlink is replaced by a file, what it pointed at is left
+  alone, and the person is told; a dangling link is left alone and the step fails. A file that
+  already loads Bombadil's part is not touched, and one of more than 5000 lines is not compared (the
+  step fails). A text is split into lines the way Lua does it, at a newline or a carriage return and
+  nowhere else, so a form feed or a Unicode line separator inside a comment or a string stays inside
+  it.
 - **What it carries over.** Whole top-level statements that are not in any shipped text: comments,
-  blank lines, and whole calls of `hl.` (a bind, a monitor, a window rule). They follow the stub
-  under "Kept from your old file".
-- **What it comments out.** Anything it cannot move whole: a line the person changed inside one of
-  Bombadil's statements (a number in `hl.config`), a `local`, a block, a fragment such as a table
-  field with its trailing comma. A fragment at the top level is a syntax error, and a syntax error
-  stops Bombadil's part loading too. These lines are written as comments under "lines I could not
-  carry over", and one line above the pill says how many. If `luac` is on the machine and rejects
-  the new file, everything that would have been carried is commented out instead. A line the
-  person deleted from a shipped version comes back with Bombadil's part, and the file says so.
+  blank lines, whole calls of `hl.` (a bind, a monitor, a window rule), and also a `local`, a
+  `function`, `require` and `dofile`, and blocks (`if`, `for`, `while`, `do`). A statement that goes
+  on over several lines (a line ending in `..`, an operator, `=` or a comma, or the next one
+  starting with `..` or `:method()`) is one statement. A value the person changed, or a key they
+  added, inside Bombadil's `hl.config` call is carried as an `hl.config` call of its own after
+  Bombadil's, for example `hl.config({ general = { gaps_in = 3, }, })` (a trailing `;` is written as
+  a comma). All of it follows the stub under "Kept from your old file".
+- **What it comments out.** Anything it cannot move whole or place for sure: a global assignment
+  (`mod = ...`), a bare call that is not `hl.`, `require` or `dofile`, a `repeat` loop, a fragment
+  such as a table field with its trailing comma, a changed `hl.config` field it cannot place for
+  sure (it goes on over several lines or ends in an operator, a `;` followed by a comment, a nested
+  table opened on a line with other text, a long string), a table the person wrapped around
+  Bombadil's fields, and anything that uses a name that was left out (the use goes too, `"x"..mod`
+  included, and so does whatever that use was making). A fragment at the top level is a syntax
+  error, and a syntax error stops Bombadil's part loading too. These lines are written as comments
+  under "lines I could not carry over", and one line above the pill says how many (a comment the
+  person changed is kept but not counted). If `luac` is on the machine and rejects the new file,
+  everything that would have been carried is commented out instead. A line the person deleted from a
+  shipped version comes back with Bombadil's part, and the file says so.
 - **After a rewrite**, agentd asks a running Hyprland to reload, since on the first sign-in after
   an update Hyprland read the old file before agentd started.
 - **Undo.** Undo puts the system back and leaves the home as it is. A restore point from before the
-  package has no Bombadil part, so the stub falls back to `hyprland.lua.before-split`, which is the
-  old file whole. A restore point from after it has an older Bombadil part, which the stub loads
-  as usual.
+  package has no Bombadil part, so the stub falls back to the copy of the old file, which runs whole
+  and then stops (the person's lines in it do not run twice, and lines added to `hyprland.lua` after
+  the split do not run). A restore point from after it has an older Bombadil part, which the stub
+  loads as usual. After an undo to a system that lacks a skill, the link the skel step added for it
+  stays in the home and dangles, which does no harm.
 
 ### Repositories
 
@@ -448,33 +510,51 @@ Include = /etc/pacman.d/bombadil.conf
 ```
 
 and the list of servers is in `/etc/pacman.d/bombadil.conf`, which the package owns (and keeps in
-`backup=`), so a later release can change it:
+`backup=`), so a later release can change it. A release ships this, after a comment that says what
+the file is:
 
 ```
 SigLevel = Optional TrustAll
-Server = http://10.0.2.2:8123
 Server = file:///var/lib/bombadil/repo
+```
+
+A build made for a test VM on a laptop (`BOMBADIL_DEV_SERVER=1`, below) has one more line, with a
+one-line comment, right after `SigLevel`, so that it is the first server:
+
+```
+Server = http://10.0.2.2:8123
 ```
 
 - **`file:///var/lib/bombadil/repo`** is a copy of the pacman repository the image was built from. It is
   on every image and on a system installed from it, and needs no network. It holds the version the
   machine started with; an update does not change it.
-- **`http://10.0.2.2:8123`** is the laptop VM's host as QEMU's own network shows it. A build served
-  on that port is the first place pacman looks, and when nothing answers it goes on to the next
-  line.
+- **`http://10.0.2.2:8123`** is a test VM's host as QEMU's own network shows it. It is in the file of
+  a build made with `BOMBADIL_DEV_SERVER` set (to any value but empty), and in no other. An image
+  build with `BOMBADIL_TEST_ENTRIES=1` sets it itself; `scripts/test-vm.sh` (`MODE=update`) and
+  `scripts/wsl-vm.sh` set it for the packages they build. A build served on that port is the first
+  place pacman looks, and when nothing answers it goes on to the next line. A release never has it:
+  the file is trusted without a signature, so anything that answered at that address on the network
+  a machine happened to be on would be a source of packages that run as root. The newer package of
+  an update must be built with the same switch as the image, or pacman replaces the unmodified file
+  on the disk with one that lacks the line. A release image build ignores a `BOMBADIL_DEV_SERVER`
+  left in the shell (it says so in one line on stderr), and `scripts/build-iso.sh` reads the
+  image's file back and fails if it lists `10.0.2.2` when `BOMBADIL_TEST_ENTRIES` is not set, or
+  does not list it when it is.
 - **`Optional TrustAll`** means pacman does not require a signature on the package or the
   database, and trusts any key it already holds. The package is not signed yet, so pacman checks
-  nothing about where Bombadil's package came from, and anyone who can answer on that address can
-  hand the machine a package that runs as root. That is acceptable for a development VM and for a
-  directory the image build wrote itself; it is not what a released system keeps. A later piece
-  replaces it with a signed server. A `SigLevel` line inside an included file applies to the
-  repository section that includes it.
+  nothing about where Bombadil's package came from. A release lists only the `file://` copy, which
+  the image build wrote itself; a test build also lists the host of the VM, and anyone who can
+  answer on that address can hand the machine a package that runs as root. That is acceptable for a
+  development VM; it is not what a released system keeps. There is no server for a release yet: a
+  machine from a release image updates by `sudo pacman -U` of a package file, or with a `Server` line
+  added by hand to `/etc/pacman.d/bombadil.conf`. A later piece replaces this with a signed server. A
+  `SigLevel` line inside an included file applies to the repository section that includes it.
 - **During the image build** the section points at the directory the build just made:
-  `scripts/pacman-conf-with-repo.sh` writes a copy of `iso/pacman.conf` with `[bombadil]` and
-  `Server = file://<work dir>/repo` above `[core]`, and pacstrap reads that copy. `iso/pacman.conf`
-  itself is never changed. The build then copies that pacman repository to
-  `/var/lib/bombadil/repo` on the image and fails if any file the image keeps still names the build
-  directory.
+  `scripts/pacman-conf-with-repo.sh` writes a copy of `iso/pacman.conf` with `[bombadil]`,
+  `SigLevel = Optional TrustAll` and `Server = file://<work dir>/repo` above `[core]`, and pacstrap
+  reads that copy. `iso/pacman.conf` itself is never changed. The build then copies that pacman
+  repository to `/var/lib/bombadil/repo` on the image and fails if a file under `/etc`, `/var` or
+  `/root` of the image still names the build directory.
 
 ### Units
 
@@ -501,23 +581,31 @@ said yes. The scriptlet never starts, stops or restarts anything (no `--now`), n
 migrate steps (the hook does) and never runs `grub-mkconfig`. If `systemctl` fails, it prints one
 warning line and the transaction goes on. A test runs it on a fake root with a fake `systemctl`.
 
+The scriptlet's `post_remove` takes the `[bombadil]` section out of `/etc/pacman.conf` when the
+package is removed (its lines up to the next section header), because migrate step 001 put it there,
+its include file goes with the package, and pacman would stop on the missing file in every command.
+It touches nothing else, keeps the file's mode and owner, and always returns 0. A test runs it on a
+fake root; a real `pacman -R` of the package has not been run yet.
+
 ### Versions
 
 - **`/usr/share/bombadil/VERSION`** is one line, `YYYY.MM.DD (commit)`, written by the build. It
   moves with every update, so it is the version that runs.
-- **`pkgver`** is the date (`BOMBADIL_PKGVER`, default the day of `SOURCE_DATE_EPOCH`, with dots, no
-  dashes) and **`pkgrel`** is the release number (`BOMBADIL_PKGREL`, default 1). pacman compares
-  `pkgver-pkgrel`, so a build with a higher one is an update. `scripts/build-in-container.sh` sets
-  the release number to the number of commits (unless `BOMBADIL_PKGREL` is set), so each build of
-  a later commit updates the one before. `pacman -Q bombadil` prints both.
+- **`pkgver`** is the UTC day (`BOMBADIL_PKGVER`, default the UTC day of `SOURCE_DATE_EPOCH`, with
+  dots, no dashes): a host west of UTC would otherwise name an update older than the installed
+  package, since pacman compares `pkgver` first. **`pkgrel`** is the release number
+  (`BOMBADIL_PKGREL`, default 1). A build with a higher `pkgver-pkgrel` is an update.
+  `scripts/build-in-container.sh` sets the release number to the number of commits (unless
+  `BOMBADIL_PKGREL` is set), so each build of a later commit updates the one before. The ISO's
+  version and label (`iso/profiledef.sh`) are UTC too. `pacman -Q bombadil` prints both.
 - **`bombadil version`** (`--json` for the parts) prints `Bombadil 2026.10.06 (d9dde3b), installed 2
   Oct`, with `, refreshed 9 Oct` added after a refresh on a later day. It reads two files and asks
   neither pacman nor agentd, so it answers offline. A missing file costs only its words, and with no
   `VERSION` it says `Bombadil (version unknown)`.
 - **`/var/lib/bombadil/install.json`**, written by the installer: `first_installed` is the first
   install of this home, kept by a refresh from the old system's record (a record from before the key
-  existed gives its `date`); `date` is this install or refresh; `image_version` stays at the image the
-  machine was installed from, however many updates came after.
+  existed gives its `date`); `date` is this install or refresh; `image_version` is the version of the
+  image that install or refresh ran from, and does not move with updates after it.
 
 ### Building a package and serving an update
 
@@ -529,28 +617,43 @@ and `*.pyc`) with the `VERSION` line, runs `makepkg --nodeps` (as a throwaway us
 when it is run as root, since makepkg will not run as root), and makes the directory readable by
 everyone, because pacman's download user reads a `file://` repository. Environment:
 `BOMBADIL_COMMIT` (for a checkout git cannot read, as in a container), `BOMBADIL_PKGVER`,
-`BOMBADIL_PKGREL`, `SOURCE_DATE_EPOCH`, `WORK` (scratch, default `/tmp/bombadil-work`).
+`BOMBADIL_PKGREL`, `BOMBADIL_DEV_SERVER` (set for a build that a test VM on a laptop installs or
+updates from: its `bombadil.conf` also lists the VM's host, see "Repositories"; never for a release),
+`SOURCE_DATE_EPOCH`, `WORK` (scratch, default `/tmp/bombadil-work`). Run as root, it also makes the
+system user `bombadil-build` and deletes the host's cached `bombadil-*` packages from
+`/var/cache/pacman/pkg` (pacman would reuse a cached file of the same name); that is meant for a
+throwaway container.
 
 `scripts/build-iso.sh` calls it first, writes the pacman.conf above, adds `bombadil` to the
 image's package list, and lets pacstrap install it like any other package. After `mkarchiso` it
-reads the tree back and fails unless the package's units are enabled, `/usr/bin/agentd` is a link,
-`/etc/pacman.conf` lists `[bombadil]` above `[core]`, and nothing keeps the build directory's path.
-`scripts/build-in-container.sh` runs all of it in an Arch container.
+reads the tree back and fails, with a message that names what is missing, unless the package's units
+are enabled, `/usr/bin/agentd` is a link, `/etc/pacman.conf` lists `[bombadil]` above `[core]`, the
+image's `bombadil.conf` lists `10.0.2.2` exactly when it is a test build, and nothing under `/etc`,
+`/var` or `/root` keeps the build directory's path. `scripts/build-in-container.sh` runs all of it in
+an Arch container.
 
 To put a newer Bombadil on a machine that is already installed, build into a directory with a
 release number above the one the machine has (pacman keeps a downloaded package by its file name, and
-would reuse an older build of the same name), serve it, and update:
+would reuse an older build of the same name), serve it, and update. For a machine from a test build,
+where the host of the VM is the first server:
 
 ```sh
-BOMBADIL_PKGREL=900 scripts/build-package.sh /tmp/bombadil-repo   # 900: above the release the machine has
+BOMBADIL_DEV_SERVER=1 BOMBADIL_PKGREL=900 scripts/build-package.sh /tmp/bombadil-repo   # 900: above the release the machine has
 python3 -m http.server 8123 --directory /tmp/bombadil-repo       # the address its bombadil.conf lists
 sudo pacman -Syu                                                 # on the machine
 ```
 
+`BOMBADIL_DEV_SERVER=1` is what makes that package's `bombadil.conf` list `10.0.2.2:8123`, as the
+machine's does. A machine from a release image does not look at that address: build without the
+switch, serve the directory and add a `Server` line for it to `/etc/pacman.d/bombadil.conf` by hand,
+or copy the package file over and use `pacman -U` (below).
+
 `scripts/build-in-container.sh package` does the same build inside an Arch container, for a machine
-that has no `makepkg` (`BOMBADIL_PKGREL`, `BOMBADIL_PKGVER` and `BOMBADIL_COMMIT` choose the
-version; without a release number it uses the count of commits, so each commit is an update). The
-test VM and `wsl-vm.sh update` use the time of the build as the release number, which is always
+that has no `makepkg`, into `out/repo` (`BOMBADIL_PKGREL`, `BOMBADIL_PKGVER` and `BOMBADIL_COMMIT`
+choose the version; without a release number it uses the count of commits, so each commit is an
+update). It also takes `BOMBADIL_DEV_SERVER=1`, which goes to the package build only: an image
+build decides it from `BOMBADIL_TEST_ENTRIES`, so a switch left in the shell cannot reach a release.
+The test VM and `wsl-vm.sh update` use the time of the build as the release number, which is always
 above the commit count: a machine that took such a build on the same day as a release image would
 see that image's package as older and keep the newer one until the date moves on or it is refreshed.
 
@@ -569,7 +672,8 @@ ends that. Nothing in the package restarts anything: the scriptlet never runs `s
 `--now`, and the migrate steps never restart either. A new version starts at the next sign-in for
 what Hyprland's start hook restarts (agentd, the shell, mail, the browser service), and at the next
 boot, or when someone restarts the unit, for the rest (the brain, the connection service, the
-brain's watcher).
+brain's watcher). agentd's status carries two versions, the one it started on and the one installed
+now, and they differ after an update until it restarts.
 
 ### An install from before the package
 
@@ -609,14 +713,24 @@ The container the project is built in has no KVM, btrfs or LUKS support, so ther
    into a shell with the disk tools replaced by shims), `tests/test_installplan.py`,
    `tests/test_packaging.py` (the PKGBUILD's `package()` on a staged tree, the scriptlet and the
    migrate steps on a fake root with a fake `systemctl`; no pacman runs), `tests/test_homefix.py`
-   (the steps on a fake home) and `tests/test_version.py`. A real `makepkg` and install is a check
-   in an Arch container, by hand.
+   (the steps on a fake home, and the Lua checks when a Lua is installed), `tests/test_version.py`
+   and `tests/test_vm_harness.py` (the VM scripts and the smoke's functions against stand-ins for
+   QEMU, `qemu-img`, the container runtime and the guest's commands). A real `makepkg` and install
+   is a check in an Arch container, by hand.
 2. A real run in a virtual machine: build the image with `BOMBADIL_TEST_ENTRIES=1
    scripts/build-in-container.sh`, then `MODE=install scripts/test-vm.sh`,
-   `MODE=install-encrypted scripts/test-vm.sh` (types the password at GRUB), and
+   `MODE=install-encrypted scripts/test-vm.sh` (types the password at GRUB),
    `MODE=refresh OLD_ISO=path/to/older.iso scripts/test-vm.sh` (installs from an older image,
-   refreshes, then undoes across a reboot). The test boot entries erase `/dev/vda` without asking,
-   so they exist only in images built with that flag and must never be started on a real disk.
+   refreshes, then undoes across a reboot) and `MODE=update scripts/test-vm.sh` (installs from this
+   image, builds and serves a newer package, updates with pacman, then undoes across a reboot; see
+   `docs/VM-TESTING.md`). The test boot entries erase `/dev/vda` without asking, so they exist only
+   in images built with that flag and must never be started on a real disk. The flag also builds the
+   image's package with `BOMBADIL_DEV_SERVER=1`, so a test image lists the VM's host as a server.
+
+Not yet run for real, only against the stand-ins above: `MODE=update`, `scripts/wsl-vm.sh`, the
+VM checks that need a real Hyprland (`refresh-homefix-hypr-reloads` and
+`refresh-homefix-hypr-has-the-persons-config-value`), a `pacman -R` of the package, and a `.pacnew`
+for a file in `backup=`.
 
 On a machine with a disk you care about, take a snapshot of the virtual disk first (`qemu-img
 snapshot -c before-refresh disk.qcow2` with the VM off): it is the only way back to the old EFI

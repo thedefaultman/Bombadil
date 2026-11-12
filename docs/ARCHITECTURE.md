@@ -100,13 +100,15 @@ tree decides where it lands:
 | `bin/`, `src/`, `shell/`, `share/`, `install/` | `/usr/share/bombadil/`, with `/usr/bin/NAME` a link to each `bin/NAME` |
 | `share/hypr/bombadil.lua` | `/usr/share/bombadil/share/hypr/bombadil.lua`, which the person's `~/.config/hypr/hyprland.lua` loads first |
 | `packaging/bombadil/root/...` | the same path under `/`: the units in `/usr/lib/systemd`, `/etc/skel`, `/etc/sudoers.d`, the managed settings, the installer's commands in `/usr/bin` |
-| `iso/airootfs/...` | the live stick only |
+| `iso/airootfs/...` | the live stick; an installed system gets a copy of its base files (hostname, locale, mirror list), not its live-only units |
 
 A file another package owns (`/etc/pacman.conf`, `/usr/lib/os-release`, `/etc/environment`) is
-changed by a numbered migrate step that an alpm hook runs; a file in the person's home is changed
-by a numbered homefix step that agentd runs at start, and only creates. The package turns on its
-units once, from two lists. `docs/INSTALLED-OS.md`, "Packages and updates", has the rules for adding
-a file, the config split, the repositories, versions and what an update does to running programs.
+changed by a numbered migrate step that an alpm hook runs after every install or upgrade of any
+package; a file in the person's home is changed by a numbered homefix step that agentd runs at start,
+and only adds what is missing (the one file it rewrites is an old `hyprland.lua`, after keeping a
+copy of it). The package turns on its units once, from two lists. `docs/INSTALLED-OS.md`, "Packages
+and updates", has the rules for adding a file, the config split, the repositories, versions and what
+an update does to running programs.
 
 ## Signing in
 

@@ -298,6 +298,83 @@ def test_a_field_added_to_a_table_without_its_comma_gets_one_when_it_is_safe(per
     assert_parses(out)
 
 
+def test_a_field_added_without_its_comma_before_another_field_gets_one_too(person):
+    person.write_lua(PRE_SPLIT.read_text().replace("rounding = 12,\n", "rounding = 12,\n        dim_inactive = true\n"))
+    report = person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == ["hl.config({", "    decoration = {", "        dim_inactive = true,",
+                                           "    },", "})"]
+    assert_parses(out)
+    assert report.notes == []
+
+
+def test_a_value_changed_to_end_in_a_semicolon_is_carried_with_a_comma(person):
+    """A `;` separates table fields as a comma does, and a comma added after it is a syntax error."""
+    person.write_lua(PRE_SPLIT.read_text().replace("rounding = 12,", "rounding = 5;"))
+    report = person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == ["hl.config({", "    decoration = {", "        rounding = 5,", "    },", "})"]
+    assert_whole(out)
+    assert_parses(out)
+    assert report.notes == []
+
+
+NOT_PLACED = {
+    "an operator at the end of the line": ("gaps_in = 6,", "gaps_in = 3 +\n        2,", 2),
+    "an or at the end of the line": ('layout = "dwindle",', 'layout = "a" or\n        "b",', 2),
+    "a concatenation on the next line": ('layout = "dwindle",', 'layout = "a"\n        .. "b",', 2),
+    "a semicolon and a comment": ("rounding = 12,", "rounding = 5; -- mine", 1),
+    "a semicolon after a comma": ("rounding = 12,", "rounding = 5,;", 1),
+}
+
+
+@pytest.mark.parametrize("old, new, lines", NOT_PLACED.values(), ids=NOT_PLACED.keys())
+def test_a_changed_value_that_goes_on_or_whose_end_is_hidden_is_commented_out_and_counted(person, old, new, lines):
+    """Only a field that ends in a comma, or where a value ends with the next row a field or a closer, is rebuilt: a
+    comma put after `3 +` or after `"a" or` is a syntax error, and Bombadil's part would not load."""
+    person.write_lua(PRE_SPLIT.read_text().replace(old, new))
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body) == []
+    assert [line[3:] for line in body[body.index(homefix.LEFT_OVER):].splitlines()[1:]] == new.replace("\n        ", "\n").splitlines()
+    assert_whole(out)
+    assert_parses(out)
+    assert len(report.notes) == 1 and f"{lines} line" in report.notes[0]
+
+
+@pytest.mark.parametrize("old, new", [
+    ('layout = "dwindle",', "layout = [[dwindle\n]]"),                      # a long string over two lines, no comma
+    ('layout = "dwindle",', "layout = [[dwi\nndle]],"),
+], ids=["a long string that ends on a row of its own", "a long string that ends with a comma"])
+def test_a_changed_value_that_runs_over_lines_in_a_long_string_is_not_rebuilt(person, old, new):
+    """The row that opens the string has no comma, and the next code row is the table's closer: it looks like a field
+    that only lacks its comma, and `layout = [[dwindle,` would be written."""
+    person.write_lua(PRE_SPLIT.read_text().replace(old, new))
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body) == [] and "[[" not in "".join(code_lines(body))
+    assert [line[3:] for line in body[body.index(homefix.LEFT_OVER):].splitlines()[1:]] == new.splitlines()
+    assert_whole(out)
+    assert_parses(out)
+    assert len(report.notes) == 1 and "2 lines" in report.notes[0]
+
+
+def test_a_table_the_person_put_around_bombadils_own_fields_is_commented_out_and_counted(person):
+    """Their `foo = {` and `},` are the only lines of theirs there, and the fields between are Bombadil's. Rebuilt,
+    they would stand for nothing: dropped, with no comment and no word of it in the notice."""
+    person.write_lua(PRE_SPLIT.read_text().replace("        rounding = 12,\n", "        foo = {\n            rounding = 12,\n        },\n"))
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body) == [] and homefix.LEFT_OVER in body
+    assert body[body.index(homefix.LEFT_OVER):].splitlines()[1:] == ["-- foo = {", "-- },"]
+    assert_whole(out)
+    assert_parses(out)
+    assert len(report.notes) == 1 and "2 lines" in report.notes[0]
+
+
 def test_a_change_in_hl_config_the_scanner_cannot_follow_is_not_guessed_at(person):
     text = PRE_SPLIT.read_text().replace("hl.config({\n", 'hl.config({\n    ["extra"] = {\n        a = 1,\n    },\n', 1)
     person.write_lua(text)
@@ -307,6 +384,25 @@ def test_a_change_in_hl_config_the_scanner_cannot_follow_is_not_guessed_at(perso
     assert '-- ["extra"] = {' in out and "-- a = 1," in out
     assert_whole(out)
     assert len(report.notes) == 1
+
+
+@pytest.mark.parametrize("path", [PRE_SPLIT, HYPR / "bombadil.lua"], ids=lambda p: p.name)
+def test_a_changed_statement_between_a_blank_line_and_a_statement_of_their_own_is_not_carried_whole(person, path):
+    """A blank line is the same in every statement list. With one more before `hl.config` and the person's own line
+    where the blank after it was, the blank after the shipped call was matched to the extra one, the shipped call
+    was taken out and the changed one counted as all theirs: the whole of it was carried, old values and all, and
+    would override every later update of Bombadil's part."""
+    text = path.read_text().replace("hl.config({\n", "\nhl.config({\n", 1).replace("rounding = 12,", "rounding = 5,")
+    text = text.replace("\n})\n\nhl.curve", "\n})\nlocal mod = 'ALT'\nhl.curve", 1)
+    assert "local mod" in text and "rounding = 5," in text
+    person.write_lua(text)
+    report = person.twice()
+    out = person.lua.read_text()
+    assert code_lines(out[len(STUB):]) == ["hl.config({", "    decoration = {", "        rounding = 5,", "    },", "})",
+                                           "local mod = 'ALT'"]
+    assert_whole(out)
+    assert_parses(out)
+    assert report.notes == []
 
 
 def test_a_statement_right_after_a_shipped_one_that_ends_the_same_way_is_carried_whole(person):
@@ -425,6 +521,98 @@ def test_a_use_is_never_kept_without_what_it_names(person):
     assert_whole(out)
     assert_parses(out)
     assert len(report.notes) == 1 and "3 lines" in report.notes[0]
+
+
+USES = {
+    "after .. with a string before it": 'hl.bind("SUPER + "..mod, hl.dsp.exec_cmd("a"))',
+    "after .. with a name before it": 'hl.bind(key..mod, hl.dsp.exec_cmd("a"))',
+    "after .. and a space": 'hl.bind("SUPER + " ..mod, hl.dsp.exec_cmd("a"))',
+    "before ..": 'hl.bind(mod.."A", hl.dsp.exec_cmd("a"))',
+}
+
+
+@pytest.mark.parametrize("use", USES.values(), ids=USES.keys())
+def test_a_use_written_without_spaces_around_the_dots_is_not_kept_without_what_it_names(person, use):
+    """`"x"..mod` is a use of `mod`: the second dot of `..` is not the dot of a field. Kept while `mod = ...` is left
+    out, the call fails at load ("attempt to concatenate a nil value") and every line after it is skipped."""
+    bind = 'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))'
+    person.write_lua(PRE_SPLIT.read_text() + f'mod = "ALT"\nlocal key = "SUPER"\n{use}\n{bind}\n')
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body[:body.index(homefix.LEFT_OVER)]) == ['local key = "SUPER"', bind]
+    assert body[body.index(homefix.LEFT_OVER):].splitlines()[1:] == ['-- mod = "ALT"', f"-- {use}"]
+    assert_parses(out)
+    assert run_stub(person.lua, module_present=True) == ["module", "bind SUPER + K"]       # it loads, to the end
+    assert len(report.notes) == 1 and "2 lines" in report.notes[0]
+
+
+CONTINUED = {
+    "a line that ends in ..": 'local cmd = "systemctl --user import-environment" ..\n    " && systemctl restart foo"\n',
+    "a line that starts with ..": 'local cmd = "systemctl --user import-environment"\n    .. " && systemctl restart foo"\n',
+    "a line that ends in =": 'local cmd =\n    "a"\n',
+    "a line that ends in a comma": 'local first, second = "a",\n    "b"\n',
+    "a method call on the next line": 'local cmd = ("a")\n    :upper()\n',
+    "a comment between the two lines": 'local cmd = "a" ..\n    -- and the rest\n    "b"\n',
+    "a blank line between the two lines": 'local cmd = "a"\n\n    .. "b"\n',
+    "a line that ends in an operator": 'local width = 1 +\n    2\n',
+    "a line that ends in and": 'local on = os.getenv("A") and\n    os.getenv("B")\n',
+    "a call whose dot is on the next line": 'hl\n    .bind("SUPER + J", hl.dsp.exec_cmd("j"))\n',
+    "a call whose name is on the next line": 'hl.\n    bind("SUPER + J", hl.dsp.exec_cmd("j"))\n',
+    "a call whose bracket is on the next line": 'hl.bind\n    ("SUPER + J", hl.dsp.exec_cmd("j"))\n',
+    "a loop head that goes on": 'for _, key in\n    ipairs({ "F1", "F2" }) do\n    hl.bind("SUPER + " .. key, hl.dsp.exec_cmd(key))\nend\n',
+    "a loop whose do is on the next line": 'for _, key in ipairs({ "F1" })\ndo\n    hl.bind("SUPER + " .. key, hl.dsp.exec_cmd(key))\nend\n',
+}
+
+
+@pytest.mark.parametrize("extra", CONTINUED.values(), ids=CONTINUED.keys())
+def test_a_statement_that_goes_on_over_lines_is_carried_whole_and_the_lines_after_it_are_whole_too(person, extra):
+    """A line that ends in `..` is no statement of its own: carried alone it was `local cmd = "a" ..` followed by
+    the next statement, which Lua reads as part of the first or refuses."""
+    after = 'local mod = "SUPER"\nhl.bind(mod .. " + K", hl.dsp.exec_cmd("k"))\n'
+    person.write_lua(PRE_SPLIT.read_text() + extra + after)
+    report = person.twice()
+    out = person.lua.read_text()
+    assert out[len(STUB):].endswith(extra + after)
+    assert homefix.LEFT_OVER not in out and report.notes == []
+    assert_whole(out)
+    assert_parses(out)
+
+
+def test_a_statement_that_goes_on_and_is_left_out_takes_what_uses_it_with_it(person):
+    # A global set over two lines is not carried, and neither is the call that names it.
+    extra = 'mod = "AL" ..\n    "T"\nhl.bind("SUPER + " .. mod, hl.dsp.exec_cmd("a"))\nhl.bind("SUPER + K", hl.dsp.exec_cmd("k"))\n'
+    person.write_lua(PRE_SPLIT.read_text() + extra)
+    report = person.twice()
+    out = person.lua.read_text()
+    body = out[len(STUB):]
+    assert code_lines(body[:body.index(homefix.LEFT_OVER)]) == ['hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))']
+    assert body[body.index(homefix.LEFT_OVER):].splitlines()[1:] == [
+        '-- mod = "AL" ..', '-- "T"', '-- hl.bind("SUPER + " .. mod, hl.dsp.exec_cmd("a"))']
+    assert_parses(out)
+    assert len(report.notes) == 1 and "3 lines" in report.notes[0]
+
+
+@pytest.mark.parametrize("separator", ["\x0c", "\x0b", "\x1c", "\x85", "\u2028", "\u2029"])
+def test_a_character_that_python_calls_a_line_break_and_lua_does_not_is_no_line_break(person, separator):
+    """In a comment it would leave what follows as a bind of its own, one the person never had."""
+    note = f'-- keep this off{separator}hl.bind("SUPER + J", hl.dsp.exec_cmd("j"))'
+    person.write_lua(PRE_SPLIT.read_text() + note + "\n")
+    report = person.twice()
+    out = person.lua.read_text()
+    rows = out[len(STUB):].split("\n")           # not splitlines(), which breaks at the character too
+    assert note in rows and not [row for row in rows if row.strip() and not row.startswith("--")]
+    assert_parses(out)
+    assert report.notes == []
+
+
+def test_a_carriage_return_ends_a_line_as_it_does_in_lua(person):
+    binds = 'hl.bind("SUPER + J", hl.dsp.exec_cmd("j"))\r\nhl.bind("SUPER + K", hl.dsp.exec_cmd("k"))\r'
+    person.write_lua(PRE_SPLIT.read_text() + binds)
+    report = person.twice()
+    assert code_lines(person.lua.read_text()[len(STUB):]) == [
+        'hl.bind("SUPER + J", hl.dsp.exec_cmd("j"))', 'hl.bind("SUPER + K", hl.dsp.exec_cmd("k"))']
+    assert report.notes == []
 
 
 def test_a_trailing_comma_is_a_fragment_and_not_carried(person):
@@ -656,6 +844,57 @@ def test_a_stray_closer_or_an_open_string_or_an_unclosed_block_is_not_whole():
     assert statements("if x then\n") == [(0, 1, True)]
 
 
+def test_a_statement_goes_on_over_a_line_that_cannot_end_it_or_one_that_cannot_start_one():
+    two = [(0, 2, False), (2, 3, False)]
+    assert statements('local a = "x" ..\n  "y"\nlocal b = 1\n') == two             # ends in an operator
+    assert statements('local a = "x"\n  .. "y"\nlocal b = 1\n') == two             # the next row starts with one
+    assert statements("local a =\n  1\nlocal b = 2\n") == two
+    assert statements("local a, b = 1,\n  2\nlocal c = 3\n") == two
+    assert statements('local s = ("a")\n  :upper()\nlocal c = 3\n') == two
+    assert statements("x = a and\n  b or\n  c\nlocal c = 3\n") == [(0, 3, False), (3, 4, False)]
+    assert statements('local a = "x" ..\n  -- note\n  "y"\nlocal c = 3\n') == [(0, 3, False), (3, 4, False)]
+    assert statements('local a = "x"\n\n  .. "y"\nlocal c = 3\n') == [(0, 3, False), (3, 4, False)]
+    assert statements("local a = 1 +\n") == [(0, 1, True)]               # and one that never gets its end is not fit
+    assert statements('hl.bind("a", b),\n') == [(0, 1, True)]
+
+
+def test_a_token_that_cannot_end_a_statement_or_start_one_joins_the_row_next_to_it():
+    for tail in ["..", "+", "-", "*", "/", "%", "^", "#", "&", "|", "~", "<", ">", "=", ",", ".", ":", "and", "or", "not",
+                 "in", "local", "for", "while"]:
+        assert statements(f"x = a {tail}\n  b\ny = 1\n") == [(0, 2, False), (2, 3, False)], tail
+    assert statements("repeat x = 1 until\n  a\ny = 1\n") == [(0, 2, False), (2, 3, False)]
+    for head in ["..", ".", ":", "=", ",", "+", "-", "*", "/", "%", "^", "&", "|", "~", "<", ">", "and", "or", "in"]:
+        assert statements(f"x = a\n{head} b\ny = 1\n") == [(0, 2, False), (2, 3, False)], head
+
+
+def test_a_row_that_may_end_a_statement_or_start_one_does_not_join_the_rows_around_it():
+    assert statements("local a = ...\nlocal b = 1\n") == [(0, 1, False), (1, 2, False)]       # `...` is a value
+    assert statements("-- note\n.. x\n") == [(0, 1, False), (1, 2, False)]                      # a comment has no end
+    assert statements("x = 1\n::top::\n") == [(0, 1, False), (1, 2, False)]
+    assert statements("local t = {}\n(f)()\n") == [(0, 1, False), (1, 2, False)]               # a table is not called
+    assert statements("if x then\nend\n(f)()\n") == [(0, 2, False), (2, 3, False)]
+    assert statements("gaps_in = 3,\n},\nhl.a()\n") == [(0, 2, True), (2, 3, False)]          # a stray closer ends it
+    assert statements("local a = 1\ndo\n  hl.a()\nend\n") == [(0, 1, False), (1, 4, False)]    # a do block of its own
+    assert statements("for i = 1, 2 do\nend\ndo\nend\n") == [(0, 2, False), (2, 4, False)]
+    assert statements("for i = 1, 2 do hl.a() end;\ndo\nend\n") == [(0, 1, False), (1, 3, False)]
+
+
+def test_lua_reads_a_row_that_starts_with_a_bracket_as_a_call_or_an_index_of_the_one_before():
+    assert statements('local f = print\n(f)("x")\nlocal b = 1\n') == [(0, 2, False), (2, 3, False)]
+    assert statements('hl.bind("a", b)\n[[x]]\n') == [(0, 2, False)]
+    assert statements("local t = f\n{ 1 }\n") == [(0, 2, False)]
+
+
+def test_the_head_of_a_loop_and_its_do_are_one_statement():
+    assert statements("for i = 1, 3\ndo\n  hl.a()\nend\nlocal b = 1\n") == [(0, 4, False), (4, 5, False)]
+    assert statements("for k, v in\n pairs(t) do\n hl.a()\nend\n") == [(0, 4, False)]
+    assert statements("while a and\n b do\nend\n") == [(0, 3, False)]
+    assert statements("for\n i = 1, 2 do\nend\n") == [(0, 3, False)]
+    assert statements("for k, v\n in pairs(t) do\nend\n") == [(0, 3, False)]       # an `in` that starts a row
+    assert statements("while\n x do\nend\n") == [(0, 3, False)]
+    assert statements("repeat\n  x = 1\nuntil a and\n  b\nlocal c = 1\n") == [(0, 4, False), (4, 5, False)]
+
+
 def test_only_comments_blanks_and_whole_statements_of_a_few_kinds_are_fit_to_carry():
     def fit(*lines):
         rows = homefix.scan(list(lines))
@@ -679,6 +918,9 @@ def test_the_names_a_statement_makes_and_uses():
     assert "mod" not in homefix._names_used('hl.window_rule({ mod = "" })')       # nor a key
     assert "mod" not in homefix._names_used("amod = 1 + modest") and "mode" in homefix._names_used("mode == 1")
     assert "mod" not in homefix._names_used("mode = 1")                            # a longer word is not a shorter one
+    assert "mod" in homefix._names_used('hl.bind(""..mod, f)') and {"a", "b", "c"} <= homefix._names_used("a..b..c")
+    assert "mod" in homefix._names_used('hl.bind("" ..mod, f)') and "mod" in homefix._names_used("f(1 ..mod)")
+    assert homefix._names_used("a.b..c.d") == {"a", "c"}                           # the dot of a field still is not
 
 
 def test_a_long_chain_of_names_that_depend_on_a_left_out_one_is_not_slow():

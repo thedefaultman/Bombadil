@@ -14,6 +14,12 @@ cp -a "$root/iso/." "$profile/"
 # /dev/vda without asking) are only in builds made for the VM tests, never in a release.
 if [[ -z "${BOMBADIL_TEST_ENTRIES:-}" ]]; then
   rm -f "$profile"/efiboot/loader/entries/0[2-9]-*.conf
+  # A BOMBADIL_DEV_SERVER left in the shell (it is meant for a package build for a test VM) must not put the VM's host
+  # into the package of a release.
+  if [[ -n "${BOMBADIL_DEV_SERVER:-}" ]]; then
+    echo "Note: BOMBADIL_DEV_SERVER is ignored, because this is a release build (BOMBADIL_TEST_ENTRIES is not set)" >&2
+  fi
+  unset BOMBADIL_DEV_SERVER
 else
   # The same builds are the ones a test VM installs from and updates from, so the package they carry also lists the
   # VM's host as a server (see stage_tree in scripts/build-package.sh). A release never does.
@@ -58,12 +64,13 @@ verify_package() {
   awk '/^\[bombadil\]/ { b = NR } /^\[core\]/ { c = NR } END { exit !(b && c && b < c) }' "$rootfs/etc/pacman.conf" \
     || { echo "Error: /etc/pacman.conf in the image does not name [bombadil] above [core]" >&2; exit 1; }
   # The laptop's host is a server of a build made for the VM tests and of no other: a release that lists it would
-  # trust whatever answers at that address.
+  # trust whatever answers at that address. What the image should hold is decided by the test entries of the boot menu
+  # (BOMBADIL_TEST_ENTRIES), never by BOMBADIL_DEV_SERVER: that one is what a stray setting in the shell could change.
   conf="$rootfs/etc/pacman.d/bombadil.conf"
   [[ -r "$conf" ]] || { echo "Error: the image has no /etc/pacman.d/bombadil.conf" >&2; exit 1; }
   if grep -qF 10.0.2.2 "$conf"; then
-    [[ -n "${BOMBADIL_DEV_SERVER:-}" ]] || { echo "Error: /etc/pacman.d/bombadil.conf in the image lists 10.0.2.2, and this is not a test build" >&2; exit 1; }
-  elif [[ -n "${BOMBADIL_DEV_SERVER:-}" ]]; then
+    [[ -n "${BOMBADIL_TEST_ENTRIES:-}" ]] || { echo "Error: /etc/pacman.d/bombadil.conf in the image lists 10.0.2.2, and this is not a test build" >&2; exit 1; }
+  elif [[ -n "${BOMBADIL_TEST_ENTRIES:-}" ]]; then
     echo "Error: /etc/pacman.d/bombadil.conf in the image does not list the host of the VM, and this is a test build" >&2; exit 1
   fi
   # The build-time repository is a path on this machine: it must not have leaked into anything the image keeps.

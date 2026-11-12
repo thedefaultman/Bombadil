@@ -31,7 +31,9 @@ flowchart LR
   power off), `04` `bombadil.smoke=install-encrypted` (the same with a password, so GRUB asks for it
   at every start), `05` `bombadil.smoke=refresh` (refresh a disk an older Bombadil installed) and
   `06` `bombadil.smoke=install-update` (the same install as `03`, but the installed system starts as
-  `update`). The menu number a mode picks follows this order.
+  `update`). The menu number a mode picks follows this order. The flag also builds the image's package with
+  `BOMBADIL_DEV_SERVER=1`, so the image's `/etc/pacman.d/bombadil.conf` lists the VM's host as its first server,
+  which `MODE=update` needs; a release image does not.
   On the installed disk, `bombadil.smoke=undo` runs session checks and then an undo round trip over a
   reboot; `bombadil.smoke=update` updates the package from a newer build the host serves and then undoes
   the update over a reboot; `bombadil.smoke=refreshed` runs on a refreshed disk.
@@ -77,24 +79,39 @@ promised here.
 
 **The config split in `refresh`.** The old system's home folder holds the old `hyprland.lua`, with
 Bombadil's part and the person's lines together. Before the refresh the smoke adds a line of the person's
-own to it (`hl.bind("SUPER + F9", ...)`). The refreshed system's agentd then runs its home fix (a moment
-after login), and the smoke waits up to 90 s for the result: `hyprland.lua` starts with the stub that
-`/etc/skel` has, `hyprland.lua.before-split` holds the old file with the planted line, the planted line is
-still in `hyprland.lua`, `~/.local/state/bombadil/home.json` records step 1, Hyprland reports no config
-errors and the sign-in marker is as it was. When the old system comes back after the undo, its own checks
-run, including the config check, which proves the stub falls back to the old file.
+own to it (`hl.bind("SUPER + F9", ...)`), and changes `rounding = 12,` to `rounding = 5,` inside the old
+file's `hl.config` call. The refreshed system's agentd then runs its home fix (a moment after login), and
+the smoke waits up to 90 s for the result: `hyprland.lua` starts with the stub that `/etc/skel` has,
+`hyprland.lua.before-split` holds the old file with the planted line, the planted line is still in
+`hyprland.lua`, `~/.local/state/bombadil/home.json` records step 1, Hyprland reports no config errors and
+the sign-in marker is as it was. Three more checks are about the changed value:
+
+- `refresh-homefix-carried-the-persons-config-value`: the new file has `hl.config({` and `rounding = 5,`
+  as code, not as a comment.
+- `refresh-homefix-hypr-reloads`: the smoke runs `hyprctl reload` itself, because the old file already had
+  the 5 when Hyprland first started, before the rewrite.
+- `refresh-homefix-hypr-has-the-persons-config-value`: `decoration:rounding` is 5 and
+  `decoration:blur:size` is still Bombadil's 6, which shows that a second `hl.config` call merges with the
+  first and does not replace it.
+
+When the old system comes back after the undo, its own checks run, including the config check, which
+proves the stub falls back to the old file. These three checks are written and their pieces are tested
+against stand-ins, but they have not yet been run in a real VM.
 
 **What `update` does.** The first boot of the installed system runs the live checks and the `package-*`
 checks, writes down the version, takes a restore point, turns one user unit off (`bombadil-mail`), and runs
 `pacman -Syu` against a pacman.conf of its own that has the real `[options]` and only `[bombadil]` (the VM has
 no route to the Arch mirrors). The host serves the newer build on `127.0.0.1:8123`, which the guest sees as
-`10.0.2.2:8123`, the first server in `/etc/pacman.d/bombadil.conf`. Afterwards the smoke checks the
-version changed to the served build (its commit ends in `+update`), that pacman still owns the package's
-files and finds none missing, that the migrate log has no `FAILED` line from this update, that Hyprland
-runs without config errors and the bar answers, that the package's units are still enabled, that the
-ledger of enabled units is unchanged and that the unit it turned off is still off. Then `bombadil undo` and
-a reboot. The second boot checks that the old version, the old package, the stub in the home folder and the
-bar are back.
+`10.0.2.2:8123`, the first server in `/etc/pacman.d/bombadil.conf` on a test build. That line is in the file of
+a package built with `BOMBADIL_DEV_SERVER=1` only: the test ISO has it because `build-iso.sh` implies the
+switch from `BOMBADIL_TEST_ENTRIES`, and `test-vm.sh` sets it for the newer package, so pacman does not
+replace the unmodified file on the disk with one that lacks the line. A release image has no such line.
+Afterwards the smoke checks the version changed to the served build (its commit ends in `+update`), that
+pacman still owns the package's files and finds none missing, that the migrate log has no `FAILED` line from
+this update, that Hyprland runs without config errors and the bar answers, that the package's units are
+still enabled, that the ledger of enabled units is unchanged and that the unit it turned off is still off.
+Then `bombadil undo` and a reboot. The second boot checks that the old version, the old package, the stub in
+the home folder and the bar are back.
 
 ```mermaid
 sequenceDiagram
@@ -108,6 +125,9 @@ sequenceDiagram
   G->>G: checks after the update, bombadil undo, reboot
   G->>G: the old build is back: checks, done
 ```
+
+`MODE=update` is tested here only against stand-ins for QEMU, the container runtime and the guest's commands
+(`tests/test_vm_harness.py`); a run in a real VM has not been done yet.
 
 **`REUSE_DISK=1`** skips the install and the live run and boots the disk an earlier `MODE=update` run
 left: the undo at the end of a run puts the installed system back as it was, so the disk is ready for the
@@ -166,7 +186,9 @@ the config, and a fresh-ISO run that skips it fails.
 - **The update test needs port 8123 on the host.** The host script starts a small web server there and
   stops the run before the VM starts when the server does not answer. The package is built in the same kind
   of container as the ISO (`scripts/build-in-container.sh package`, into `out/repo`), so Docker or Podman is
-  needed, and it is built every run: its release number is the time, which is always above the image's.
+  needed, and it is built every run: its version day is the ISO's own and its release number is the time,
+  which is always above the image's. It is built with `BOMBADIL_DEV_SERVER=1`, so it carries the same
+  repository file as the image.
 - **A user unit that is enabled for everyone is turned off with `systemctl --global disable`.** `systemctl
   --user disable` leaves the link in `/etc/systemd/user` where it is and says so, so it would not test that
   an update leaves a turned-off unit off.

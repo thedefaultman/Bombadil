@@ -237,10 +237,71 @@ def test_the_package_version_is_the_utc_day_of_the_build_time_in_every_time_zone
     assert 'ver="${BOMBADIL_PKGVER:-$(day_of "$epoch")}"' in text and "stage_tree \"$stage\" \"$ver ($commit)\"" in text
 
 
+# The calls of date that name a day or a month without -u, and are none of a version: a snapshot's name and a log's
+# stamp are the time on the machine's own clock and say so with the time of day. Each is the file and its format.
+LOCAL_CLOCK_STAMPS = {
+    ("scripts/wsl-vm.sh", "%Y%m%d-%H%M%S"),
+    ("packaging/bombadil/root/usr/bin/bombadil-install", "%Y%m%d-%H%M%S"),
+    ("packaging/bombadil/root/usr/bin/bombadil-rollback", "%Y%m%d-%H%M%S"),
+    ("packaging/bombadil/root/usr/share/bombadil/migrate/run", "%Y-%m-%dT%H:%M:%S%z"),
+}
+
+
+def date_calls(line: str) -> list[str]:
+    """The text of each call of date in LINE: from the word to the closing bracket, `;`, `|` or `&` that ends it."""
+    calls = []
+    for m in re.finditer(r"(?<![\w-])date\b", line):
+        depth, end = 0, len(line)
+        for i in range(m.end(), len(line)):
+            if line[i] == "(":
+                depth += 1
+            elif line[i] == ")" and depth == 0:
+                end = i
+                break
+            elif line[i] == ")":
+                depth -= 1
+            elif line[i] in ";|&" and depth == 0:
+                end = i
+                break
+        calls.append(line[m.start():end])
+    return calls
+
+
+def dates_in_the_local_zone(name: str, line: str) -> list[str]:
+    """The calls of date in LINE that turn a time into a calendar day in the host's time zone: one that converts a given
+    time (--date=@N) or one that prints a year, month or day, and has no -u, bar the stamps above."""
+    line = re.sub(r"\bdate \+%s(%N)?", "NOW", line)  # the clock in seconds has no zone in it
+    found = []
+    for call in date_calls(line):
+        days = [f for f in re.findall(r"\s\"?\+([^\s\"')}]+)", call) if re.search(r"%[YyCmbBhdeFDxcjaAuwUVWGg]", f)]
+        converts = bool(re.search(r'(--date|-d)[ =]"?@', call))
+        if (days or converts) and not re.search(r"\s(-u|--utc|--universal)\b", call):
+            if converts or any((name, f) not in LOCAL_CLOCK_STAMPS for f in days):
+                found.append(call.strip())
+    return found
+
+
+def test_the_scan_for_dates_in_the_hosts_time_zone_sees_a_bare_date_and_lets_the_others_by():
+    scan = dates_in_the_local_zone
+    for bad in ("day=$(date +%Y.%m.%d)", 'v=$(date --date="@$1" +%Y.%m.%d)', "date -d @1796084400",
+                'label="X_$(date -u --date="@$(date +%s)" +%Y%m)" ; other=$(date +%Y%m)', 'date "+%F"', "date +%Y%m%d-%H%M%S",
+                'a=$(date +%Y%m) b=$(date -u +%Y)'):
+        assert scan("x.sh", bad), bad
+    for good in ("day=$(date -u +%Y.%m.%d)", 'v=$(date --utc --date="@$1" +%Y.%m.%d)', "start=$(date +%s)",
+                 'now=$(date +%s%N); s=$(date -d "$t" +%s)', 'x="$(date -u --date="@${SOURCE_DATE_EPOCH:-$(date +%s)}" +%Y%m)"',
+                 "snap=$(date +%Y%m%d-%H%M%S)  # the stamps of the list", "d=$(date -u --date=@5 +%Y.%m.%d)"):
+        assert scan("scripts/wsl-vm.sh", good) == [], good
+
+
 def test_no_script_turns_a_build_time_into_a_date_in_the_hosts_time_zone():
-    scripts = [*(ROOT / "scripts").glob("*.sh"), ROOT / "iso/profiledef.sh", *(PAYLOAD / "usr/bin").iterdir()]
-    local = [f"{s.relative_to(ROOT)}: {ln.strip()}" for s in scripts for ln in s.read_text(errors="replace").splitlines()
-             if re.search(r'\bdate\b[^|;)]*(--date|-d)[ =]"?@', ln) and not re.search(r"\bdate (-u|--utc)\b", ln)]
+    # A version, a label or an image name made from the build time must be the UTC day: the local one would depend on
+    # the host's time zone, and a host west of UTC names an update older than the package it updates. That is true of
+    # a bare `date +%Y.%m.%d` as much as of `date --date=@N`.
+    scripts = [*(ROOT / "scripts").glob("*.sh"), ROOT / "iso/profiledef.sh", *(PAYLOAD / "usr/bin").iterdir(),
+               *MIGRATE.iterdir()]
+    local = [f"{name}: {call}" for s in scripts for name in [s.relative_to(ROOT).as_posix()]
+             for ln in s.read_text(errors="replace").splitlines() if not ln.lstrip().startswith("#")
+             for call in dates_in_the_local_zone(name, ln)]
     assert local == []
 
 
@@ -421,14 +482,21 @@ def test_the_iso_build_reads_the_repository_file_back_and_says_what_is_missing(t
     image()
     ok = verify_package(work, {})
     assert ok.returncode == 0 and "The image holds the package" in ok.stdout, ok.stderr
-    # The laptop's host is in the file of a test build and of no release: either way round is an error.
+    # The laptop's host is in the file of a test build and of no release: either way round is an error. Which one
+    # the image is meant to be is told by the test entries of the boot menu, not by BOMBADIL_DEV_SERVER: that switch
+    # is the one a stray setting in the shell could change, and a check that reads it cannot catch what it caused.
+    test_build = {"BOMBADIL_TEST_ENTRIES": "1"}
     image(dev_conf=True)
-    assert verify_package(work, {"BOMBADIL_DEV_SERVER": "1"}).returncode == 0
-    r = verify_package(work, {})
-    assert r.returncode == 1 and "lists 10.0.2.2, and this is not a test build" in r.stderr
+    assert verify_package(work, test_build).returncode == 0
+    for env in ({}, {"BOMBADIL_DEV_SERVER": "1"}):
+        r = verify_package(work, env)
+        assert r.returncode == 1 and "lists 10.0.2.2, and this is not a test build" in r.stderr, env
     image()
-    r = verify_package(work, {"BOMBADIL_DEV_SERVER": "1"})
+    r = verify_package(work, test_build)
     assert r.returncode == 1 and "does not list the host of the VM, and this is a test build" in r.stderr
+    r = verify_package(work, {"BOMBADIL_DEV_SERVER": "1", **test_build})
+    assert r.returncode == 1 and "does not list the host of the VM, and this is a test build" in r.stderr
+    assert verify_package(work, {"BOMBADIL_DEV_SERVER": "1"}).returncode == 0
     # Whatever is missing is named. An image with no /etc/systemd/user used to end the build with no word at all
     # (a failing find in an assignment, under set -e).
     image()
@@ -445,23 +513,43 @@ def test_the_iso_build_reads_the_repository_file_back_and_says_what_is_missing(t
     assert r.returncode == 1 and "has no /etc/pacman.d/bombadil.conf" in r.stderr
 
 
-def test_the_iso_build_names_the_dev_server_switch_only_where_the_test_entries_are(tmp_path):
-    # build-iso.sh with BOMBADIL_TEST_ENTRIES makes its package with BOMBADIL_DEV_SERVER, and without it does not.
+def iso_build_with_a_stub_package(tmp_path: Path, env: dict) -> tuple[subprocess.CompletedProcess, str, Path]:
+    """build-iso.sh run up to its package build, which is a stub: what the stub saw of BOMBADIL_DEV_SERVER, and the
+    repository file of the package it stages the way the real build-package.sh does (the stub exits 7 after that)."""
     tree = tmp_path / "tree"
     (tree / "scripts").mkdir(parents=True)
     (tree / "iso/efiboot/loader/entries").mkdir(parents=True)
     shutil.copy(ROOT / "scripts/build-iso.sh", tree / "scripts/build-iso.sh")
     stub = tree / "scripts/build-package.sh"
-    stub.write_text('#!/usr/bin/env bash\necho "${BOMBADIL_DEV_SERVER-unset}" > "$SEEN"\nexit 7\n')
+    stub.write_text('#!/usr/bin/env bash\necho "${BOMBADIL_DEV_SERVER-unset}" > "$SEEN"\n'
+                    'source "$REAL_BUILD_PACKAGE"\nstage_tree "$STAGE" "2026.11.12 (abc1234)"\nexit 7\n')
     stub.chmod(0o755)
-    seen = tmp_path / "seen"
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "WORK": str(tmp_path / "work"), "OUT": str(tmp_path / "out"),
-           "SEEN": str(seen)}
-    r = subprocess.run(["bash", str(tree / "scripts/build-iso.sh")], env={**env, "BOMBADIL_TEST_ENTRIES": "1"},
-                       capture_output=True, text=True)
-    assert r.returncode == 7 and seen.read_text() == "1\n"
-    r = subprocess.run(["bash", str(tree / "scripts/build-iso.sh")], env=env, capture_output=True, text=True)
-    assert r.returncode == 7 and seen.read_text() == "unset\n"
+    seen, stage_dir = tmp_path / "seen", tmp_path / "staged"
+    base = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "WORK": str(tmp_path / "work"), "OUT": str(tmp_path / "out"),
+            "SEEN": str(seen), "STAGE": str(stage_dir), "REAL_BUILD_PACKAGE": str(BUILD_PACKAGE)}
+    r = subprocess.run(["bash", str(tree / "scripts/build-iso.sh")], env={**base, **env}, capture_output=True, text=True)
+    assert r.returncode == 7, r.stderr
+    return r, seen.read_text().strip(), stage_dir / "etc/pacman.d/bombadil.conf"
+
+
+def test_the_iso_build_names_the_dev_server_switch_only_where_the_test_entries_are(tmp_path):
+    # build-iso.sh with BOMBADIL_TEST_ENTRIES makes its package with BOMBADIL_DEV_SERVER, and without it does not.
+    r, seen, conf = iso_build_with_a_stub_package(tmp_path / "test", {"BOMBADIL_TEST_ENTRIES": "1"})
+    assert seen == "1" and "10.0.2.2" in conf.read_text() and r.stderr == ""
+    r, seen, conf = iso_build_with_a_stub_package(tmp_path / "release", {})
+    assert seen == "unset" and "10.0.2.2" not in conf.read_text() and r.stderr == ""
+
+
+@pytest.mark.parametrize("value", ["1", "0", "yes"])
+def test_a_switch_left_in_the_shell_does_not_put_the_vm_host_into_the_package_of_a_release(tmp_path, value):
+    # BOMBADIL_DEV_SERVER is documented for the package build of a test VM, so it can be in the shell of someone who
+    # then builds a release. Any non-empty value is on for build-package.sh, "0" included.
+    r, seen, conf = iso_build_with_a_stub_package(tmp_path / "release", {"BOMBADIL_DEV_SERVER": value})
+    assert seen == "unset" and "10.0.2.2" not in conf.read_text()
+    assert "BOMBADIL_DEV_SERVER is ignored" in r.stderr and "release build" in r.stderr
+    # A test build does not need it said: it sets the switch itself, whatever the shell had.
+    r, seen, conf = iso_build_with_a_stub_package(tmp_path / "test", {"BOMBADIL_DEV_SERVER": value, "BOMBADIL_TEST_ENTRIES": "1"})
+    assert seen == "1" and "10.0.2.2" in conf.read_text() and r.stderr == ""
 
 
 def test_the_hook_runs_the_migrate_steps_after_any_transaction_so_a_repository_that_was_lost_comes_back():
@@ -476,14 +564,15 @@ def test_the_hook_runs_the_migrate_steps_after_any_transaction_so_a_repository_t
         else:
             key, _, value = line.partition("=")
             sections[-1][1].setdefault(key.strip(), []).append(value.strip())
-    assert [name for name, _ in sections] == ["Trigger", "Trigger", "Action"]
-    package, path, action = (body for _, body in sections)
+    # One trigger and no other: a Path trigger on usr/lib/os-release would only repeat it, since only a package of
+    # filesystem puts that file back.
+    assert [name for name, _ in sections] == ["Trigger", "Action"]
+    package, action = (body for _, body in sections)
     # pacman.conf is pacman's, /etc/environment is pam's, os-release is filesystem's. A new default pacman.conf that the
     # person merged in has lost [bombadil], and then pacman does not know this package: no transaction of pacman's,
     # filesystem's or pam's would bring it back, so any package's does. Run once per transaction (no NeedsTargets).
     assert package == {"Operation": ["Install", "Upgrade"], "Type": ["Package"], "Target": ["*"]}
     assert "NeedsTargets" not in text
-    assert path == {"Operation": ["Install", "Upgrade"], "Type": ["Path"], "Target": ["usr/lib/os-release"]}
     assert action["When"] == ["PostTransaction"] and action["Exec"] == ["/usr/share/bombadil/migrate/run"]
     assert action["Description"][0]
     assert (MIGRATE / "run").is_file() and git_mode(MIGRATE / "run") == "100755"
@@ -752,6 +841,46 @@ def test_removing_the_package_takes_its_section_out_of_pacman_conf_and_leaves_th
         assert only_files(root) == before_files, broken
     conf.unlink()
     assert scriptlet("post_remove", env).stdout.strip() == "rc=0"
+
+
+def tree_of(root: Path) -> dict[str, str]:
+    """Every path under root, a link and a temporary file included, with what it is (a link: where it points)."""
+    return {p.relative_to(root).as_posix(): os.readlink(p) if p.is_symlink() else ("dir" if p.is_dir() else "file")
+            for p in root.rglob("*")}
+
+
+def test_removing_the_package_leaves_a_pacman_conf_without_its_section_exactly_as_it_was(tmp_path):
+    # Nothing to take out means nothing is written: a rewrite through a temporary file would add the newline that the
+    # file lacks at its end, give it a new inode and, for a link, turn the link into a plain file.
+    root = fake_root(tmp_path)
+    conf = root / "etc/pacman.conf"
+    env = {"BOMBADIL_ROOT": str(root)}
+    odd = b"[options]\n[core]\nInclude = x"
+    conf.write_bytes(odd)
+    conf.chmod(0o640)
+    inode, before_tree = conf.stat().st_ino, tree_of(root)
+    r = scriptlet("post_remove", env)
+    assert (r.stdout.strip(), r.stderr) == ("rc=0", "")
+    assert conf.read_bytes() == odd and stat.S_IMODE(conf.stat().st_mode) == 0o640 and conf.stat().st_ino == inode
+    assert tree_of(root) == before_tree
+    # A header that only starts with the name, or is commented out, is not the section either.
+    odd = b"[options]\n#[bombadil]\n[bombadil-extra]\nServer = y\n[core]\nInclude = x"
+    conf.write_bytes(odd)
+    assert scriptlet("post_remove", env).stdout.strip() == "rc=0"
+    assert conf.read_bytes() == odd and conf.stat().st_ino == inode and tree_of(root) == before_tree
+    # A pacman.conf that is a link (to a file elsewhere) stays a link to the same file, which is not touched.
+    real = root / "usr/share/pacman.conf.real"
+    real.parent.mkdir(parents=True)
+    real.write_bytes(b"[options]\n[core]\nInclude = x")
+    real.chmod(0o600)
+    conf.unlink()
+    conf.symlink_to("../usr/share/pacman.conf.real")
+    before_tree = tree_of(root)
+    r = scriptlet("post_remove", env)
+    assert (r.stdout.strip(), r.stderr) == ("rc=0", "")
+    assert conf.is_symlink() and os.readlink(conf) == "../usr/share/pacman.conf.real"
+    assert real.read_bytes() == b"[options]\n[core]\nInclude = x" and stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert tree_of(root) == before_tree
 
 
 # -- the stamp and the record, and the stub (the pieces of other files this package rests on) ------------------------------

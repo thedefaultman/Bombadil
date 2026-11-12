@@ -36,9 +36,9 @@ end)
 manager, so the import comes first. Nothing else starts the daemon or the bar, so no second
 copy can race the first. (The home's own `~/.config/hypr/hyprland.lua` is a short stub that loads
 that file. If the file is missing, the stub runs the old whole config kept beside it as
-`hyprland.lua.before-split`, and with none of that it has the same `systemctl` line of its own, so
-the pill and the bar still start.) Notifications are the bar's own: its `NotificationServer` owns
-`org.freedesktop.Notifications`, and no notification daemon is installed.
+`hyprland.lua.before-split` and stops there, and with none of that it has the same `systemctl` line
+of its own, so the pill and the bar still start.) Notifications are the bar's own: its
+`NotificationServer` owns `org.freedesktop.Notifications`, and no notification daemon is installed.
 
 | Key | Does |
 |---|---|
@@ -71,9 +71,9 @@ These binds are in Bombadil's part of the config, which comes with the package, 
 them on a machine that already exists; Hyprland reads them at its next start. The home's own
 `~/.config/hypr/hyprland.lua` is a stub that loads that part and then holds the person's own lines.
 A home that still has the whole old file (from before the config was split) is fixed the first time
-agentd starts after the update: homefix moves the old file aside as `hyprland.lua.before-split` and
-writes the stub (`docs/INSTALLED-OS.md`, "The Hyprland config"). Until then a tap keeps running
-`bombadil pill` and Super+Return keeps running plain `foot`, as they did.
+agentd starts after the update: homefix keeps the old file whole as `hyprland.lua.before-split` and
+writes the stub with the person's own lines under it (`docs/INSTALLED-OS.md`, "The Hyprland config").
+Until then a tap keeps running `bombadil pill` and Super+Return keeps running plain `foot`, as they did.
 
 Setup and the terminal client's hints restart the daemon through systemd too (`systemctl --user
 restart bombadil-agentd`), so a settings change and a crash take the same path.
