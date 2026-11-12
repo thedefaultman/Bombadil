@@ -77,14 +77,32 @@ def test_a_sign_in_page_opens_whole_in_a_new_tab(devtools):
     assert [t["url"] for t in devtools.tabs()] == [SIGNIN]
 
 
-def test_the_last_tab_is_never_closed(devtools):
+def test_the_last_tab_is_swapped_for_a_blank_one_never_closed(devtools):
     panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
     first = panel.open("https://example.com/a")
     second = panel.open("https://example.com/b")
     panel.close_tab(second["id"])
-    assert [t["id"] for t in panel.tabs()] == [first["id"]]
-    panel.close_tab(first["id"])   # closing it would quit Chromium
-    assert [t["id"] for t in panel.tabs()] == [first["id"]]
+    assert [t["id"] for t in panel.tabs()] == [first["id"]]   # another tab is left as it was
+    panel.close_tab(first["id"])   # closing it would quit Chromium: a blank tab takes its place
+    assert [t["url"] for t in panel.tabs()] == ["about:blank"]
+
+
+def test_a_tab_that_is_gone_already_is_not_replaced_by_a_blank_one(devtools):
+    panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
+    only = panel.open("https://example.com/a")
+    panel.close_tab("Tclosed-by-the-person")
+    assert [t["id"] for t in panel.tabs()] == [only["id"]]
+
+
+def test_the_last_tab_stays_when_the_browser_will_not_open_the_blank_one(devtools, monkeypatch):
+    panel = browser.Panel(hyprland=NoHyprland(), devtools=devtools)
+    only = panel.open("https://example.com/a")
+
+    def refuse(url):
+        raise OSError("500")
+    monkeypatch.setattr(devtools, "new_tab", refuse)
+    panel.close_tab(only["id"])   # closing it with nothing to replace it would quit the browser
+    assert [t["id"] for t in panel.tabs()] == [only["id"]]
 
 
 def test_a_browser_that_is_not_running_has_no_tabs(monkeypatch):

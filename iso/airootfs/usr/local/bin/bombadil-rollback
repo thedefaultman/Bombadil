@@ -1,16 +1,67 @@
 #!/usr/bin/env bash
 # Undo: make snapper snapshot N the root filesystem from the next boot on.
 # The current root is kept as @.undone-<time> in the btrfs top level, so an undo can itself
-# be undone by hand. Usage: sudo bombadil-rollback N
+# be undone by hand.
+#
+#   bombadil-rollback N                       on the running system
+#   bombadil-rollback --device DEV N          from another system (the USB stick): DEV is the btrfs
+#                                             device, already unlocked if the disk is encrypted
+#   bombadil-rollback --device DEV refresh    put back the system that a refresh moved aside
 set -euo pipefail
-n="${1:?usage: bombadil-rollback SNAPSHOT_NUMBER}"
-dev="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+dev=""
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --device) dev="${2:?--device needs a device}"; shift 2 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+n="${1:?usage: bombadil-rollback [--device DEV] SNAPSHOT_NUMBER|refresh}"
+[[ -n "$dev" ]] || dev="$(findmnt -no SOURCE / | sed 's/\[.*\]$//')"
+[[ -e "$dev" ]] || { echo "$dev is not a device" >&2; exit 1; }
 top="$(mktemp -d)"
 mount -o subvolid=5 "$dev" "$top"
 trap 'umount "$top"; rmdir "$top"' EXIT
+stamp="$(date +%Y%m%d-%H%M%S)"
+INCOMPLETE=var/lib/bombadil/install-incomplete
+
+# Put $top/NEW in as $top/NAME and keep what was there as $top/ASIDE. One exchange where the system has it,
+# so there is never a moment with no NAME; with two renames, a stop between them leaves NAME missing, and
+# running this again finishes the job.
+swap_in() {  # swap_in NAME NEW ASIDE
+  local name=$1 new=$2 aside=$3
+  if [[ -e "$top/$name" ]]; then
+    if mv --exchange "$top/$new" "$top/$name" 2>/dev/null; then mv "$top/$new" "$top/$aside"; return; fi
+    mv "$top/$name" "$top/$aside"
+  fi
+  mv "$top/$new" "$top/$name"
+}
+
+if [[ "$n" == refresh ]]; then
+  # The newest system a refresh put aside that is whole (a refresh that stopped part way leaves a half one).
+  old=""
+  for d in "$top"/@.before-refresh-*; do
+    [[ -d "$d" && -f "$d/etc/fstab" && -d "$d/usr/lib/modules" && ! -e "$d/$INCOMPLETE" ]] && old="$d"
+  done
+  [[ -n "$old" ]] || { echo "no system from before a refresh on $dev" >&2; exit 1; }
+  name="${old##*/}"
+  [[ -f "$old/boot/vmlinuz-linux" ]] || { echo "the system from before the refresh has no kernel to start" >&2; exit 1; }
+  swap_in @ "$name" "@.after-refresh-$stamp"
+  if [[ -d "$top/@snapshots.$name" ]]; then
+    swap_in @snapshots "@snapshots.$name" "@snapshots.after-refresh-$stamp"
+  fi
+  echo "the system from before the refresh starts next time; the refreshed one is kept as @.after-refresh-$stamp"
+  exit 0
+fi
+
 src="$top/@snapshots/$n/snapshot"
 [[ -d "$src" ]] || { echo "no snapshot $n" >&2; exit 1; }
-aside="@.undone-$(date +%Y%m%d-%H%M%S)"
-mv "$top/@" "$top/$aside"
-btrfs subvolume snapshot "$src" "$top/@" >/dev/null
-echo "root is snapshot $n from the next boot; the previous root is kept as $aside"
+# From layout 1 on the kernel lives in the root's own /boot, so a restore point from before that has
+# none to start. A system from before layout 1 keeps its kernel on the EFI partition, outside every restore point.
+if [[ -f "$top/@/boot/vmlinuz-linux" && ! -f "$src/boot/vmlinuz-linux" ]]; then
+  echo "restore point $n has no kernel of its own and cannot start" >&2; exit 1
+fi
+# The snapshot is made beside @ first, so a failure leaves @ as it was.
+new="@.new-$stamp"
+btrfs subvolume snapshot "$src" "$top/$new" >/dev/null
+swap_in @ "$new" "@.undone-$stamp"
+echo "root is snapshot $n from the next boot; the previous root is kept as @.undone-$stamp"

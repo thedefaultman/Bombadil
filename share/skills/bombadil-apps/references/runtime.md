@@ -20,7 +20,8 @@ Calling `create_app` again with the same title updates the same app.
 Some apps ship with the OS (`/usr/share/bombadil/share/apps/<name>/`, read-only). They run
 by name like yours (`bombadil-app run <name>`), keep their saved state in
 `~/.local/state/bombadil/apps/<name>/data/`, and are not listed among your apps. An app of
-your own with the same name takes its place.
+your own with the same name takes its place, except Mail and Tips, which nothing replaces:
+`create_app` refuses those two titles, so pick another name.
 
 ## Loading and hot reload
 
@@ -131,8 +132,8 @@ your own with the same name takes its place.
   running, and errors and console lines still reach the status file when that can be
   written.
 - Check mode is read-only: Store, Vault and TextFile never write, window/agent/clipboard
-  calls do nothing, and Qt's own storage (QtCore `Settings`, `LocalStorage`) goes to a
-  throwaway test location (`~/.qttest`) instead of the user's `~/.config` and
+  calls do nothing (`Agent.ask` and `Agent.draft` included), and Qt's own storage (QtCore
+  `Settings`, `LocalStorage`) goes to a throwaway test location (`~/.qttest`) instead of the user's `~/.config` and
   `~/.local/share`. `Command`s do run so the screenshot has real data. `App.checking` is
   true if an app wants to skip something during a check, and the check's environment has
   `BOMBADIL_CHECK=1`, so `app.py` (`os.environ`) and the programs Commands run can tell too.

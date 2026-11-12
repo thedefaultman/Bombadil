@@ -81,7 +81,8 @@ def test_widgets_is_a_completion_and_keep_is_not_a_word_to_complete(home):
     assert not any(x["name"].startswith("keep") for x in e)
     # What the pill is told so that "keep ..." hints and completes as "show ..." does: the widgets on the card.
     assert {x["name"]: x["keep"] for x in e if x["kind"] == "widget"} == {
-        "now": True, "watching": True, "needs": True, "machine": True, "alive": False, "away": True}
+        "now": True, "watching": True, "needs": True, "machine": True, "alive": False, "away": True,
+        "tips": True}
     assert not any("keep" in x for x in e if x["kind"] != "widget")
 
 

@@ -1,7 +1,7 @@
 """The pill is also the launcher: a small exact list of words that never wait for the model.
 
 Typing an app's name, a panel's name ("browser", or an alias people already use: "chrome"),
-or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "why is this here?")
+or one of a few commands ("undo", "stop", "history", "wifi", "desk", "brain", "tips", "why is this here?")
 is handled here, by agentd, in a fraction of a second and offline. So are the desk's widgets, but
 only with a verb ("show machine", "hide now", "keep machine on the desk"): a bare "now" or "away" is an
 ordinary word for the agent. "widgets" opens the card where each widget is kept, shown when needed or
@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from . import apps, browser, dev, hypr, paths, snapshots, sysmap
+from . import apps, browser, dev, hypr, paths, remote, snapshots, sysmap
 from .brain import client as brain_client
 from .brain import this
 from .connect.cardmake import SERVICE_TITLES
@@ -73,6 +73,15 @@ BRAIN_COMMANDS = {
     "whyhere": ["why is this here", "where did this come from", "where is this from", "who made this",
                 "what made this"],
 }
+# The Tips app (a kit app that ships with Bombadil, docs/TIPS.md): what to ask, shown in action. Checked after
+# the core commands and before app names and the desk's widget words, so "show tips" opens the app whatever an
+# app of yours is called and although Tips is also a widget on the desk (APP_WIDGETS below keeps the desk out of
+# its open words). Only these whole sentences: "help me write a poem" and "what can you do about my disk" are for
+# the agent.
+TIPS_COMMANDS = {
+    "tips": ["tips", "the tips", "open tips", "show tips", "open the tips", "show the tips", "what can you do",
+             "what can I ask", "help"],
+}
 # Signing in to the AI, and switching which AI runs the machine; agentd does these itself.
 SIGNIN_WORDS = ["sign in", "log in", "login", "signin", "sign in again", "log in again", "sign me in",
                 "log me in"]
@@ -94,6 +103,8 @@ UTILITY_COMMANDS = {
     "unmute": ["unmute", "unmute the sound", "unmute the volume"],
     "brightness": ["brightness"],
     "battery": ["battery"],
+    "remote": ["remote", "remote control", "start remote control", "remote session", "start a remote session"],
+    "install": ["install", "install bombadil", "install on this computer", "install to disk", "install this"],
     "voice": ["voice"],   # agentd opens the name and voice card itself
 }
 # The Mail window (a kit app that ships with Bombadil), and what people call it.
@@ -154,6 +165,11 @@ HIDE_VERBS = ("hide", "put away")
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"),
                 (("keep",), "keep"))
 KEEP_TAILS = (" on the desk", " on my desk")
+# A widget whose name is also the Tips app's command ("tips" is both): its open words are the app's, so "tips",
+# "show tips" and "open tips" open the app (TIPS_COMMANDS, the one table of them) and the desk never answers an open
+# verb for it. Only "hide tips", "put tips away" and "keep tips" are desk words. Saying "tips" never brings a card
+# that was put away back: the card comes back by "keep tips" (or a press on the Widgets card).
+APP_WIDGETS = {w for w in WIDGETS if w in TIPS_COMMANDS}
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
@@ -162,6 +178,7 @@ VOLUME_STEP = "5%"
 
 DETAILS_CLASS = "bombadil-details"
 BRAIN_APP = "brain"
+TIPS_APP = "tips"
 
 
 @dataclass
@@ -180,6 +197,11 @@ class Action:
 DEV_RE = re.compile(r"(claude|codex|shell) ([^\s]+)(?: ([^\s]+))?")
 SESSIONS_WORDS = {"whats running", "what is running", "sessions", "coding sessions", "list sessions"}
 END_VERBS = ("end",)
+
+
+def _live() -> bool:
+    """True on the USB stick, false on an installed computer."""
+    return Path("/run/archiso").exists()
 
 
 def normalize(text: str, keep_case: bool = False) -> str:
@@ -330,10 +352,10 @@ def _picture(t: str, typed: str = "") -> Action | None:
 
 
 def _fixed_word(t: str) -> bool:
-    """Is this text one of Bombadil's own words: a model, the brain's, Mail, a panel? A project or a
+    """Is this text one of Bombadil's own words: a model, the brain's, Tips, Mail, a panel? A project or a
     session named like one never stands in for it ("open mail" opens Mail whatever ~/Projects holds);
     its own form, "claude mail", still names the project."""
-    if _lookup(t, MODEL_WORDS) is not None or _lookup(t, BRAIN_COMMANDS) is not None:
+    if any(_lookup(t, table) is not None for table in (MODEL_WORDS, BRAIN_COMMANDS, TIPS_COMMANDS)):
         return True
     for verbs in (OPEN_VERBS, CLOSE_VERBS, HIDE_VERBS, ()):
         word = _strip_verb(t, verbs) if verbs else t.removeprefix("the ")
@@ -394,6 +416,9 @@ def match(text: str, app_list: list | None = None, dev_names=None, busy: bool = 
     brain = _lookup(t, BRAIN_COMMANDS) if plain else None
     if brain:
         return Action(brain)
+    tips = _lookup(t, TIPS_COMMANDS) if plain else None
+    if tips:
+        return Action(tips, title="Tips")
     connect = _connect_action(apostrophe) if apostrophe.isascii() else None
     if connect is not None:
         return connect
@@ -465,7 +490,7 @@ def _widget_action(t: str, app_list: list) -> Action | None:
             widget = _lookup(word, {w: WIDGET_WORDS[w] for w in WIDGET_WORDS if WIDGETS[w].listed})
         else:
             widget = _lookup(word, WIDGET_WORDS) if word is not None else None
-        if widget is not None:
+        if widget is not None and not (verb == "open" and widget in APP_WIDGETS):
             return Action("widget", widget, verb, WIDGET_TITLES[widget])
     if t.startswith("put ") and t.endswith(" away"):
         word = t[4:-5].removeprefix("the ")
@@ -488,9 +513,15 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     # `keep`: the ones "keep ..." is a launcher word of (the widgets on the Widgets card; "keep watching" is answered
     # here, and says when Watching shows), so the pill can hint and complete it as it does "show machine".
-    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
-            for w, words in WIDGET_WORDS.items()]
-    for table in (CORE_COMMANDS, BRAIN_COMMANDS, UTILITY_COMMANDS):
+    for w, words in WIDGET_WORDS.items():
+        entry = {"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
+        # "show tips" and "open tips" are the Tips app's words, not the desk's. Should nothing answer them, the pill
+        # must not hint or complete them as it does "show machine", so the entry says so; while the app answers
+        # them (TIPS_COMMANDS) the flag is absent and the hint is true.
+        if w in APP_WIDGETS and match(f"show {words[0]}", []) is None:
+            entry["open"] = False
+        out.append(entry)
+    for table in (CORE_COMMANDS, BRAIN_COMMANDS, TIPS_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]
     out.append({"name": "signin", "title": "Sign in", "kind": "command", "words": ["sign in"]})
@@ -556,10 +587,11 @@ class Launcher:
                 "lock": "Locking the screen", "restart": "Restarting", "shutdown": "Shutting down",
                 "wifi": "Opening Wi-Fi", "sound": "Checking the sound", "brightness": "Checking the brightness",
                 "battery": "Checking the battery", "stop": "Stopping", "signin": "Signing in",
+                "remote": "Starting remote control", "install": "Opening the installer",
                 "provider": f"Switching to {action.title or action.target}",
                 "volume_up": "Turning the volume up", "volume_down": "Turning the volume down",
                 "mute": "Muting the sound", "unmute": "Unmuting the sound",
-                "brain": "Opening the Brain", "whyhere": "Looking it up",
+                "brain": "Opening the Brain", "whyhere": "Looking it up", "tips": "Opening Tips",
                 "desk": "Changing the desk", "widgets": "Opening the widgets",
                 "send": "Sending is yours"}.get(action.kind, "On it")
 
@@ -587,9 +619,11 @@ class Launcher:
                 "lock": "Could not lock the screen", "restart": "Could not restart", "shutdown": "Could not shut down",
                 "wifi": "Could not open Wi-Fi", "sound": "Could not check the sound",
                 "brightness": "Could not check the brightness", "battery": "Could not check the battery",
+                "remote": "Could not start remote control", "install": "Could not open the installer",
                 "volume_up": "Could not change the volume", "volume_down": "Could not change the volume",
                 "mute": "Could not mute the sound", "unmute": "Could not unmute the sound",
                 "brain": "Could not open the Brain", "whyhere": "Could not look it up",
+                "tips": "Could not open Tips",
                 "desk": "Could not change the desk", "widgets": "Could not open the widgets"}.get(
                     action.kind, "That did not work")
 
@@ -781,6 +815,24 @@ class Launcher:
             self._focus_class(f"bombadil-app-{BRAIN_APP}")
         else:
             apps.run(BRAIN_APP)
+
+    # -- the tips --
+
+    def _tips(self, _a: Action) -> tuple[bool, str]:
+        self.open_tips()
+        return True, "Opened Tips."
+
+    def open_tips(self) -> None:
+        """The Tips window, the way the Brain's is opened: the kit's drawer when there is one, else its own
+        window, brought forward when it is already open. Which tip it shows is the app's to read (the tip
+        agentd keeps in tips.json); the words only open it."""
+        placement = _placement()
+        if placement is not None:
+            placement.show(TIPS_APP)
+        elif _app_running(TIPS_APP):
+            self._focus_class(f"bombadil-app-{TIPS_APP}")
+        else:
+            apps.run(TIPS_APP)
 
     def _whyhere(self, a: Action) -> tuple[bool, str]:
         ref = this.resolve(self.hypr)
@@ -1001,6 +1053,17 @@ class Launcher:
             return False, "Wi-Fi settings need NetworkManager, which is not installed."
         self.details(["nmtui", "connect"])
         return True, "Opened Wi-Fi."
+
+    def _install(self, _a: Action) -> tuple[bool, str]:
+        """On the USB stick: the installer, in the terminal drawer, asking its own questions."""
+        if not _live():
+            return False, "Bombadil is already installed on this computer."
+        self.details(["sudo", "bombadil-install"])
+        return True, "Opened the installer."
+
+    def _remote(self, _a: Action) -> tuple[bool, str]:
+        """Remote control: a Claude Code session on this computer that claude.ai/code steers (bombadil remote)."""
+        return remote.start()
 
     # -- one-line readouts (cards with controls come later) --
 

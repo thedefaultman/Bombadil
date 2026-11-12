@@ -7,9 +7,10 @@ QtObject {
 
     // Messages for agentd; shell.qml writes them to the socket.
     signal outgoing(var msg)
-    // agentd asked the bar to take the keyboard (Super was tapped), or an app asked for the
-    // pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
-    signal summoned(string text)
+    // The bar is asked to take the keyboard (Super was tapped, or Alt+Space was pressed), or an app
+    // asked for the pill with words already in it ("About ~/lease.pdf: ", from the Brain's Ask about this).
+    // `tip` is a tip's button (the Tips card, the Tips app): its words wait for the person, and never replace theirs.
+    signal summoned(string text, bool tip)
     // The drawer is opening: the bar gives the keyboard back so the drawer can take it.
     signal handOff()
     // A card with a box wants the keyboard: the person pressed Reply and this is the card that came of it, or
@@ -142,7 +143,7 @@ QtObject {
     // agentd's persona_ask while the card is up, else null:
     // {line, name, voice, current, voices: [{id, name, card}]}
     property var personaAsk: null
-    // The mark's face (Stone.qml): what the machine is doing, in a word. The pill adds "listening" for
+    // The mark's face (Kit.Stone): what the machine is doing, in a word. The pill adds "listening" for
     // the screen that holds the keyboard.
     //   starting  since boot, until agentd first answers (not yet offline)
     //   offline   agentd was there and is gone, or never came
@@ -379,6 +380,17 @@ QtObject {
         }
     }
 
+    // The pill is asked for: agentd relays `bombadil pill` and the apps' words, and the bar's own
+    // global shortcuts (PillKeys.qml, from Hyprland's Super tap and Alt+Space) call it directly.
+    function summon(text, tip) {
+        summoned(text, tip === true)
+        // The pill comes up: say why the AI does not answer, unless a line is being read.
+        if (resting && setupLine) {
+            if (foundShown) return   // the line of what was found is being read: it stays
+            if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
+        }
+    }
+
     function handle(ev) {
         if (!ev || typeof ev !== "object") return
         if (ev.type === "status") {
@@ -406,15 +418,7 @@ QtObject {
         if (ev.type === "card") { _takeCard(ev.card); return }
         if (ev.type === "proposal") { _takeProposal(ev.proposal); return }
         if (ev.type === "press_result") { _pressResult(ev); return }
-        if (ev.type === "summon") {
-            summoned(typeof ev.text === "string" ? ev.text : "")
-            // The pill comes up: say why the AI does not answer, unless a line is being read.
-            if (resting && setupLine) {
-                if (foundShown) return   // the line of what was found is being read: it stays
-                if (mode === "idle" || mode === "resting") _showRest(); else _restOwed = true
-            }
-            return
-        }
+        if (ev.type === "summon") { summon(typeof ev.text === "string" ? ev.text : "", ev.tip === true); return }
         if (ev.type === "welcome") { _welcome(ev); return }
         if (ev.type === "persona_ask") { _ask(ev); return }
         if (ev.type === "persona") { personaAsk = null; return }
@@ -857,6 +861,9 @@ QtObject {
         if (mode === "working") {
             mode = "local"; line = "Lost touch with the agent. Reconnecting."; source = "error"
             risk = ""; command = ""; lineAt = _now(); fadeAfter = 8000
+        } else if (mode === "setup") {
+            // "Sign in" and "Claude" chips under a dead agentd answer nobody; the new one sends the setup again.
+            mode = "idle"; line = ""
         }
     }
 
@@ -991,6 +998,10 @@ QtObject {
 
     function _title(s) { return String(s || "").trim().split(/\s+/).join(" ").toLowerCase() }
 
+    // A widget entry that says `open: false` has "open" and "show" words nothing answers (they are the Tips app's,
+    // not the desk's), so the pill hints and completes it only with the verbs that are the desk's.
+    function _opens(e, verb) { return !(e.open === false && (verb === "open " || verb === "show ")) }
+
     // The rest of the word Tab would fill in, or "".
     function completion(text) {
         const s = _split(text)
@@ -998,12 +1009,43 @@ QtObject {
         for (const e of entries) {
             if (s.verb && e.kind === "command") continue
             if (s.verb === "keep ") { if (e.kind !== "widget" || !e.keep) continue }
-            else if (e.kind === "widget" && _widgetVerbs.indexOf(s.verb) < 0) continue
+            else if (e.kind === "widget" && (_widgetVerbs.indexOf(s.verb) < 0 || !_opens(e, s.verb))) continue
             for (const w of (e.words || [])) {
                 if (w.length > s.rest.length && w.startsWith(s.rest)) return w.slice(s.rest.length)
             }
         }
         return ""
+    }
+
+    // What the pill holds after a summon with words, given what it holds now. Words an app put there (the
+    // Brain's "Ask about this") replace what was typed. A tip's words (`tip`) fill an empty pill only: words
+    // the person typed and has not sent stay, and nothing is lost. Words an earlier tip put there (`tipWords`) and
+    // nobody has changed are not typed words: the next tip replaces them, so a second press is never silent. A tip
+    // whose words end in an ellipsis ("In Tickets, add…") fills the words before it and a space, so the cursor waits
+    // for the person's detail.
+    function summonText(current, text, tip, tipWords) {
+        const words = String(text || "")
+        if (words === "") return String(current || "")
+        if (tip !== true) return words
+        if (_typed(current, tipWords)) return String(current)
+        return /…\s*$/.test(words) ? words.replace(/\s*…\s*$/, "") + " " : words
+    }
+
+    // Words in the pill that are the person's: not empty, and not what a tip's button put there and nobody has
+    // changed (`tipWords`, which the pill remembers; one more typed word makes them the person's).
+    function _typed(current, tipWords) {
+        return String(current || "").trim() !== "" && String(current) !== String(tipWords || "")
+    }
+
+    // What the pill takes from a summon with words: its new text, whether the person's own typed words stayed (`kept`,
+    // so the cursor stays where it was; otherwise it goes to the end), and what a tip's button put there now
+    // (`tipWords`, "" when the words are the person's or came from an app). The pill (shell.qml) applies it as it is,
+    // so a press of a tip's button over typed words changes nothing in the pill and the draft is never lost.
+    function draftFor(current, text, tip, tipWords) {
+        const out = summonText(current, text, tip, tipWords)
+        if (String(text || "") === "") return { text: out, kept: true, tipWords: String(tipWords || "") }
+        const kept = tip === true && _typed(current, tipWords)
+        return { text: out, kept: kept, tipWords: tip === true && !kept ? out : "" }
     }
 
     // What an exact launcher word would open ("Passwords"), or "" when it goes to the agent.
@@ -1025,7 +1067,8 @@ QtObject {
             if (s.verb === "keep " && (e.kind !== "widget" || !e.keep || asks)) continue
             if (e.kind === "app" && title === _title(e.title)) return e.title || e.name
             if (!k || (s.verb && e.kind === "command")) continue
-            if (e.kind === "widget" && (asks || (s.verb !== "keep " && _widgetVerbs.indexOf(s.verb) < 0))) continue
+            if (e.kind === "widget" && (asks || !_opens(e, s.verb)
+                    || (s.verb !== "keep " && _widgetVerbs.indexOf(s.verb) < 0))) continue
             if (asks && e.name === "desk") continue
             for (const w of (e.words || []).concat([e.name, String(e.title || "").toLowerCase()])) {
                 if (_key(w) === k) return e.title || e.name

@@ -447,6 +447,9 @@ ALLOWED = {
     # to under reduced motion, so it is already the still-friendly form and nothing in it moves.
     ("SessionChips.qml", "loops: Animation.Infinite"): (1, "the working dot's opacity pulse, the form the stone falls back to"),
     ("SessionChips.qml", "duration: 600"): (2, "the two halves of that pulse"),
+    # The tip scene's own clock: its duration is the scene's length, set by play(), which never starts it under
+    # reducedMotion (it settles on the last frame, and the app stage draws three stills instead).
+    ("TipScene.qml", "NumberAnimation without a duration"): (1, "the scene clock, never started under reducedMotion"),
 }
 
 MOTION = re.compile(r"(?:^|[\s:;{}])(Behavior|Transition|[A-Z]\w*(?:Animation|Animator))(?:\s+on\s+[\w.]+)?\s*$")

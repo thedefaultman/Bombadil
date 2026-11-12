@@ -20,6 +20,8 @@ Item {
     signal titleClicked()
     // A card whose whole header is a button says so: a tap on the line under the title counts as one on it.
     property bool captionTaps: false
+    // The line under the title in tabular figures, for one that counts ("Start here · 3 of 6").
+    property bool whyFigures: false
 
     readonly property color edgeColor: edge === "machine" ? T.machine
                                      : edge === "ok" ? T.ok
@@ -133,6 +135,7 @@ Item {
         text: card.why
         color: T.muted
         font.pixelSize: 12
+        font.features: card.whyFigures ? ({ "tnum": 1 }) : ({})
         textFormat: Text.PlainText
         elide: Text.ElideRight
         maximumLineCount: 1

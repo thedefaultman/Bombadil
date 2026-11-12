@@ -163,8 +163,8 @@ class SignIn:
     async def show(self) -> None:
         """Put the sign-in page back on screen: slide the panel in, or open the page again in a
         new tab when its tab (or the whole browser) was closed. The CLI is still waiting for it."""
-        if self.url is None or self.phase not in ("waiting", "finishing"):
-            return
+        if self.url is None or self.phase not in ("waiting", "finishing") or self._over.is_set():
+            return   # (the run has ended and is putting its page away: opening it again would leave a stale tab)
         if self.view == "closed":
             if self._opening is not None and not self._opening.done():
                 return   # a second tap while the first is still opening it
@@ -230,7 +230,7 @@ class SignIn:
             self._close_terminal()
         await self._settle()
         if phase in ("done", "cancelled", "timeout"):
-            # Finished or given up: the page slides back out, and its tab goes if others remain.
+            # Finished or given up: the page slides back out and its tab goes (a lone one becomes blank).
             await asyncio.to_thread(self._put_away)
         self._set(phase)
         return phase

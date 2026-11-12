@@ -176,3 +176,81 @@ def test_the_browser_panel_does_not_offer_to_restore_pages_after_a_kill():
     from bombadil import browser
     assert "--hide-crash-restore-bubble" in browser.command()
     assert "--hide-crash-restore-bubble" in hypr.panel_command("browser")
+
+
+class Terminals(Ipc):
+    """Ipc that remembers the dispatchers, and a drawer showing on the focused monitor."""
+
+    def __init__(self, showing="", **kw):
+        super().__init__(monitors=[dict(_monitor(), specialWorkspace={"name": showing, "id": -98})], **kw)
+        self.dispatched = []
+
+    def dispatch(self, lua):
+        self.dispatched.append(lua)
+        return ""
+
+
+def _spawned():
+    calls = []
+
+    def spawn(cmd, **kw):
+        calls.append((cmd, kw))
+    return calls, spawn
+
+
+def test_a_terminal_opens_on_the_desktop_when_no_drawer_shows():
+    calls, spawn = _spawned()
+    h = Terminals()
+    assert h.open_terminal(spawn) == "terminal opened"
+    assert calls[0][0] == ["foot"] and calls[0][1]["start_new_session"] is True
+    assert h.dispatched == []
+
+
+@pytest.mark.parametrize("drawer", ["details", "files", "browser", "passwords"])
+def test_a_drawer_that_shows_is_put_away_before_the_terminal_opens(drawer):
+    calls, spawn = _spawned()
+    h = Terminals(showing=f"special:{drawer}")
+    assert h.open_terminal(spawn) == f"terminal opened, {drawer} put away"
+    assert h.dispatched == [f'hl.dsp.workspace.toggle_special("{drawer}")']
+    assert [c[0] for c in calls] == [["foot"]]
+
+
+def test_the_terminal_does_not_carry_hyprlands_workspace_token(monkeypatch):
+    # The Super+Return bind starts `bombadil terminal` with HL_INITIAL_WORKSPACE_TOKEN set to the drawer that
+    # showed when the keys went down; a window started with it opens there for a few seconds, whatever was
+    # put away since (seen in the VM: the drawer gone, the terminal on special:browser).
+    monkeypatch.setenv("HL_INITIAL_WORKSPACE_TOKEN", "a-made-up-token")
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-1")
+    calls, spawn = _spawned()
+    Terminals(showing="special:browser").open_terminal(spawn)
+    env = calls[0][1]["env"]
+    assert "HL_INITIAL_WORKSPACE_TOKEN" not in env
+    assert env["WAYLAND_DISPLAY"] == "wayland-1"
+    assert hypr.os.environ["HL_INITIAL_WORKSPACE_TOKEN"]    # the process's own environment is left alone
+
+
+def test_the_terminal_drawer_is_left_showing_for_the_terminal_that_opens_in_it():
+    calls, spawn = _spawned()
+    h = Terminals(showing="special:terminal")
+    assert h.open_terminal(spawn) == "terminal opened" and h.dispatched == []
+
+
+def test_a_terminal_opens_whatever_goes_wrong_with_the_drawer():
+    class Hung(Terminals):
+        def request(self, command, timeout=10):
+            raise TimeoutError("did not answer")
+
+    class Refuses(Terminals):
+        def dispatch(self, lua):
+            raise RuntimeError("hyprctl dispatch: no")
+
+    for h in (Hung(), Refuses(showing="special:details")):
+        calls, spawn = _spawned()
+        assert h.open_terminal(spawn).startswith("terminal opened, could not tell which drawer shows")
+        assert [c[0] for c in calls] == [["foot"]]
+
+
+def test_without_hyprland_the_terminal_still_opens():
+    calls, spawn = _spawned()
+    hypr.Hyprland().open_terminal(spawn)    # no HYPRLAND_INSTANCE_SIGNATURE in the test
+    assert [c[0] for c in calls] == [["foot"]]

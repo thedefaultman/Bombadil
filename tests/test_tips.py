@@ -7,6 +7,7 @@ import os
 import re
 from dataclasses import replace
 from datetime import date, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -35,7 +36,9 @@ BY_ID = {r.id: r for r in ROWS}
 # The brief's seed (docs/design/tips-and-desk-defaults-brief.md, "The seed"), in its order. The rows that wait for
 # their pieces (a coding session by name, mail, noticed) are not here: they ship with those PRs.
 SEED = ["make-an-app", "picture", "esc", "timer", "machine", "bang",
-        "change-app", "open-app", "passwords", "whyhere", "draw",
+        "change-app", "open-app",
+        "passwords",
+        "whyhere", "draw",
         "toolchain", "tests", "code-picture",
         "disk", "pause", "desk", "keep", "why", "undo"]
 APP_ONLY = {"draw", "tests", "code-picture"}
@@ -73,7 +76,7 @@ def test_needs_are_gates_and_nothing_waiting_for_its_piece_ships():
     assert BY_ID["keep"].needs == ("keep",) and BY_ID["desk"].needs == ("desk-seen",)
     # The coding sessions' tip, mail's and noticed's come with their PRs, gated until their code is on main.
     assert not any(set(r.needs) & {"sessions", "mail", "noticed"} for r in ROWS)
-    assert all(r.beats == () for r in ROWS)      # the scenes are the next piece's
+    assert all(r.beats for r in ROWS)            # every tip ships its scene: a row without beats is not finished
 
 
 def test_marks_and_the_cards_the_brief_decided():
@@ -81,6 +84,36 @@ def test_marks_and_the_cards_the_brief_decided():
     assert all(r.words == "" for r in ROWS if r.marks)                 # a mark is not a button
     assert {r.id for r in ROWS if not r.card} == APP_ONLY
     assert all(r.words or r.marks for r in ROWS)                       # every tip shows a button or a mark
+
+
+def _scene(r):
+    return {"id": r.id, "line": r.line, "words": r.words, "marks": list(r.marks), "captions": list(r.captions),
+            "beats": [dict(b) for b in r.beats]}
+
+
+def test_every_row_has_beats_that_are_a_sound_scene_of_six_to_eight_seconds():
+    """tip_scene.validate (the vocabulary, the tags and the timing, docs/TIP-SCENES.md) over every row, so a bad
+    scene in the table fails here and not on a person's screen. The brief says 6 to 8 s and never over 10."""
+    from bombadil import tip_scene
+
+    for r in ROWS:
+        assert r.beats, f"{r.id} has no beats"
+        assert tip_scene.validate(_scene(r), strict=True) == [], r.id
+        seconds = tip_scene.duration(_scene(r)["beats"]) / 1000
+        assert 6 <= seconds <= 10, f"{r.id} runs {seconds:.1f} s"
+
+
+def test_a_scene_ends_on_its_payoff_and_phases_are_marked_in_order():
+    """The last beat that draws is not a clearing (an empty line, a window sliding out), so the last frame, the
+    reduced-motion still and the poster, has something in it; a scene that marks one phase marks both."""
+    from bombadil import tip_scene
+
+    for r in ROWS:
+        last = [b for b in r.beats if set(b) != {"hold"}][-1]
+        clearing = last.get("line") == "" or ("window" in last and not tip_scene.shows_window(last))
+        assert not clearing, f"{r.id} ends on a clearing"
+        marks = [b["phase"] for b in r.beats if "phase" in b]
+        assert marks in ([], [1, 2]), f"{r.id}: phase marks {marks}"
 
 
 VOICE_NO = [(re.compile(r"!"), "an exclamation mark"), (re.compile("—"), "an em-dash"),
@@ -108,6 +141,277 @@ def test_captions_are_the_default_three_unless_the_brief_words_a_tips_own():
     for the voice thread."""
     assert BY_ID["make-an-app"].captions == ("You ask", "It builds", "You have it")
     assert {r.captions for r in ROWS if r.id != "make-an-app"} == {("You ask", "It works", "You have it")}
+
+
+# -- the scenes drawn: the posters on the desk's card and the stage in the Tips app --
+
+POSTER = (272, 153)
+STAGE = (576, 324)
+SHEET = os.environ.get("BOMBADIL_SCREENS")
+
+
+@pytest.fixture
+def drawn(tmp_path):
+    """Draw a row's scene with Kit.TipScene offscreen (the harness of test_tip_scene_qml.py): drawn(row, density)
+    gives the scene seeked to its last frame, where it stays for ever."""
+    pytest.importorskip("PySide6.QtQuick", exc_type=ImportError)
+    import test_tip_scene_qml as q
+
+    app = q.QtGui.QGuiApplication.instance() or q.QtGui.QGuiApplication([])
+    made = []
+    del q.QML_MESSAGES[:]
+
+    def draw(row, density="card", reduced=False, at=None):
+        where = tmp_path / f"s{len(made)}"
+        where.mkdir()
+        s = q.Scene(app, where, row.as_dict(), density, reduced)
+        made.append(s)
+        assert s.warnings == [], (row.id, s.warnings)
+        s.seek(s.duration if at is None else at)
+        return s
+
+    draw.qt = q
+    yield draw
+    for s in made:
+        s.close()
+    assert q.QML_MESSAGES == [], q.QML_MESSAGES        # a binding that threw at run time
+
+
+def _inside(s, name):
+    """The visible items of a name that are not wholly inside the scene's picture."""
+    out = []
+    box = s.scene
+    for item in s.items(name):
+        if not item.isVisible() or item.width() <= 0 or item.height() <= 0 or _opacity(item) < 0.05:
+            continue
+        at = item.mapToItem(box, drawn_point(0, 0))
+        if at.x() < -0.5 or at.y() < -0.5 or at.x() + item.width() > box.width() + 0.5 \
+                or at.y() + item.height() > box.height() + 0.5:
+            out.append((name, round(at.x()), round(at.y()), round(item.width()), round(item.height())))
+    return out
+
+
+def _opacity(item):
+    """How much of an item shows: its own opacity and every parent's (a folded card is faded out, not gone)."""
+    out = 1.0
+    while item is not None:
+        out *= item.opacity()
+        item = item.parentItem()
+    return out
+
+
+def drawn_point(x, y):
+    from PySide6 import QtCore
+    return QtCore.QPointF(x, y)
+
+
+PLACES = ("line", "pill", "window", "picture", "card-now", "card-watching", "card-machine", "queue", "strip", "key")
+IN_A_WINDOW = ("windowTitle", "windowRows", "windowDoc", "windowLock")
+
+
+def _clipped(s):
+    """What is in a window that its bottom edge cuts: the window clips its content, so a lock screen or a row that
+    does not fit is not off the picture (`_inside` cannot see it) but is cut through all the same."""
+    out = []
+    for win in s.items("window"):
+        if not win.isVisible() or _opacity(win) < 0.05:
+            continue
+        for name in IN_A_WINDOW:
+            for item in s.items(name):
+                if item.isVisible() and item.height() > 0:
+                    bottom = item.mapToItem(win, drawn_point(0, 0)).y() + item.height()
+                    if bottom > win.height() + 0.5:
+                        out.append((name, round(bottom), round(win.height())))
+    return out
+
+
+@pytest.mark.parametrize("row", [r for r in ROWS if r.card], ids=lambda r: r.id)
+def test_every_card_tip_renders_its_poster_and_nothing_on_it_is_under_12_px_or_off_it(row, drawn):
+    s = drawn(row, "card")
+    assert (round(s.scene.width()), round(s.scene.height())) == POSTER
+    texts = s.texts()
+    assert texts, f"{row.id}: an empty poster"
+    assert min(size for _, size, _ in texts) >= 12, f"{row.id}: {[t for t in texts if t[1] < 12]}"
+    assert s.frame["stone"]["face"] and s.frame["ended"]
+    off = [x for name in PLACES for x in _inside(s, name)]
+    assert off == [], f"{row.id}: runs off the poster: {off}"
+    for item in s.items():
+        if item.metaObject().className().startswith("QQuickText") and item.isVisible() and item.property("text"):
+            assert not item.property("truncated"), f"{row.id}: {item.property('text')!r} is cut short on the card"
+    assert _clipped(s) == [], f"{row.id}: a window cuts through what is in it: {_clipped(s)}"
+    if SHEET:
+        s.snap("poster")
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
+def test_every_tip_renders_at_the_apps_density_at_its_end_and_nothing_on_the_stage_is_elided(row, drawn):
+    s = drawn(row, "app")
+    stage, captions = s.item("stage"), s.item("captions")
+    assert (round(stage.width()), round(stage.height())) == STAGE
+    assert captions is not None and captions.height() > 0
+    # the stage, a gap of 10 px, and the row of the three captions under it
+    assert (round(s.scene.width()), round(s.scene.height())) == (STAGE[0], STAGE[1] + 10 + round(captions.height()))
+    assert s.texts() and min(size for _, size, _ in s.texts()) >= 12
+    off = [x for name in PLACES for x in _inside(s, name)]
+    assert off == [], f"{row.id}: runs off the stage: {off}"
+    assert _clipped(s) == [], f"{row.id}: a window cuts through what is in it: {_clipped(s)}"
+    for ms in range(0, int(s.duration) + 1, 300):
+        s.seek(ms)
+        for item in s.items():
+            if item.metaObject().className().startswith("QQuickText") and item.isVisible() and item.property("text"):
+                assert not item.property("truncated"), f"{row.id} at {ms}: {item.property('text')!r} is elided"
+        for item in s.items("lineText"):
+            if item.isVisible() and item.property("text"):
+                assert item.property("lineCount") <= 4
+    if SHEET:
+        s.seek(s.duration)
+        s.snap("stage")
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
+def test_replaying_a_tip_raises_no_qml_error_at_either_density(row, drawn):
+    """Replay seeks a scene that has reached its end back to the start: no binding may read what the frame no longer
+    holds (QML errors are collected by the harness and the fixture fails on any)."""
+    for density in ("card", "app"):
+        s = drawn(row, density)
+        for ms in (0, s.duration, s.duration / 2, 0):
+            s.seek(ms)
+        s.call("replay")
+        s.seek(0)
+    assert drawn.qt.QML_MESSAGES == [], drawn.qt.QML_MESSAGES
+
+
+def test_a_poster_shows_no_name_number_or_value_of_the_machine_and_no_label_on_a_button(drawn):
+    """The card's rule (docs/TIP-SCENES.md, the two densities): a picture of the machine is generic shapes, and the
+    line's buttons are unlabelled outlines."""
+    for row in (r for r in ROWS if r.card):
+        s = drawn(row, "card")
+        shown = {t for t, _, _ in s.texts()}
+        beats = [b for b in row.beats]
+        for b in beats:
+            for x in b.get("boxes") or ():
+                assert x not in shown, f"{row.id}: the box {x!r} is named on the poster"
+            for x in b.get("bars") or ():
+                assert x[0] not in shown and str(x[1]) not in shown, f"{row.id}: a disk is named on the poster"
+            if b.get("card") == "machine":
+                for label, value in b["rows"]:
+                    assert label not in shown and str(value) not in shown, f"{row.id}: the machine is named"
+            if b.get("title"):
+                assert b["title"] not in shown, f"{row.id}: the task {b['title']!r} is named on the poster"
+        assert shown.isdisjoint({"Undo", "Details"}), f"{row.id}: a labelled button on the poster"
+
+
+def test_the_posters_of_the_desks_card_use_no_orange_but_the_state_colours_the_card_allows(drawn):
+    """On the card the stone and the line are in ink: no accent colour (the app's orange is only where it acts)."""
+    q = drawn.qt
+    for row in (r for r in ROWS if r.card):
+        s = drawn(row, "card")
+        img = s.image().copy(12, 12, POSTER[0], POSTER[1])
+        accent = q.THEME["accent"]
+        count = q.colour_count(img, "accent", 10) if "accent" in q.THEME else 0
+        assert count < 30, f"{row.id}: {count} px of {accent} on the poster"
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: r.id)
+def test_the_stage_shows_the_words_the_button_puts_in_the_pill_whole_before_enter(row, drawn):
+    """Every tip that types has its words whole in the stage's pill the moment before Enter (the long asks of the
+    tests and the code picture are set smaller to fit, never cut), and never under 12 px."""
+    s = drawn(row, "app")
+    beats = row.beats
+    times = tip_scene_times(beats)
+    for i, b in enumerate(beats):
+        if "type" in b and i + 1 < len(beats) and beats[i + 1].get("key") == "enter":
+            s.seek(times[i + 1][0] + 40)                       # the key is in, and what is typed is still in the pill
+            text = s.item("pillText")
+            row_item, box = text.parentItem(), text.parentItem().parentItem()
+            assert text.property("text") == b["type"], row.id
+            assert row_item.x() == 0 and row_item.width() <= box.width(), f"{row.id}: {b['type']!r} is cut in the pill"
+            assert text.property("font").pixelSize() >= 12, row.id
+
+
+def tip_scene_times(beats):
+    from bombadil import tip_scene
+    return tip_scene.beat_times(beats)
+
+
+@pytest.mark.parametrize("row", [r for r in ROWS if any("card" in b for b in r.beats)], ids=lambda r: r.id)
+def test_a_card_never_reads_done_while_the_stone_works_nor_running_beside_a_line_that_says_done(row, drawn):
+    """The scene is one machine: the desk's card goes done in the moment the turn ends and the line and the stone with
+    it (the real shell does them together), and a finished job's line is never beside a row still counting."""
+    s = drawn(row, "app")
+    for ms in range(0, int(s.duration) + 1, 150):
+        s.seek(ms)
+        f = s.frame
+        cards = f["cardsLeft"] + f["cardsRight"]
+        readings = [str(r["value"]) for c in cards for r in c["rows"] if r.get("value") is not None] + [
+            c["why"] for c in cards]
+        done = [x for x in readings if x.startswith("done in")]
+        if f["stone"]["face"] == "working":
+            assert not done, f"{row.id} at {ms} ms: a card reads {done} while the stone is working"
+        if f["line"] and re.search(r"\bis done in\b", f["line"]["text"]):
+            counting = [x for x in readings if re.search(r"so far$|left$", x)]
+            assert not counting, f"{row.id} at {ms} ms: the line says done, a card reads {counting}"
+
+
+def test_the_stage_has_no_orange_where_the_machine_is_not_acting(drawn):
+    """The design system: accent is only for what the machine is doing now. At a scene's last frame, where the stone
+    is not working, nothing is drawn in it (a lock screen's field, a border, a dot)."""
+    q = drawn.qt
+    accent = QColorBytes(q.THEME["accent"])
+    for row in ROWS:
+        s = drawn(row, "app")
+        if s.frame["stone"]["face"] == "working":
+            continue
+        bits = s.image().copy(12, 12, STAGE[0], STAGE[1]).constBits()
+        found = (bits.tobytes() if hasattr(bits, "tobytes") else bytes(bits)).count(accent)
+        assert found == 0, f"{row.id}: {found} px of the accent at the last frame, where the stone is {s.frame['stone']['face']}"
+
+
+def QColorBytes(hex_colour):
+    """A colour as the bytes of an RGB32 pixel in memory (blue, green, red, opaque), to count it in an image."""
+    h = hex_colour.lstrip("#")
+    return bytes([int(h[4:6], 16), int(h[2:4], 16), int(h[0:2], 16), 255])
+
+
+def test_three_stage_frames_of_each_start_here_tip_show_the_ask_the_work_and_the_result(drawn):
+    """The six Start-here tips are the ones everyone sees: the stage at the end of each phase has its caption and
+    a different picture, and the reduced-motion stills are three, one per phase."""
+    for row in (r for r in ROWS if r.section == "start"):
+        s = drawn(row, "app")
+        from bombadil import tip_scene
+        starts = tip_scene.phase_starts(row.beats)
+        times = [max(0, starts[0] - 1), max(0, starts[1] - 1), s.duration]
+        frames = []
+        for ms in times:
+            s.seek(ms)
+            frames.append(s.image().copy(12, 12, int(s.scene.width()), int(s.scene.height())))
+            if SHEET:
+                s.snap(f"stage-{times.index(ms)}")
+        assert len({f.constBits().tobytes() if hasattr(f.constBits(), "tobytes") else bytes(f.constBits())
+                    for f in frames}) == 3, f"{row.id}: two of its three phases look the same"
+        still = drawn(row, "app", True)
+        assert len([i for i in still.items() if i.objectName().startswith("still-") and not
+                    i.objectName().startswith("still-caption")]) == 3
+
+
+def test_the_contact_sheets_of_the_posters_and_the_stage_payoffs_are_saved(drawn, tmp_path):
+    """One picture of the twenty posters and one of the twenty stage payoffs is made on every run, to look at: an
+    empty poster, an overflowing one or a stray colour is seen at once. BOMBADIL_SCREENS=<dir> keeps them there."""
+    q = drawn.qt
+    out = Path(SHEET) if SHEET else tmp_path
+    out.mkdir(parents=True, exist_ok=True)
+    for name, density, (w, h), cols in (("tip-posters", "card", POSTER, 5), ("tip-stage-payoffs", "app", STAGE, 4)):
+        rows = -(-len(ROWS) // cols)
+        sheet = q.QtGui.QImage(cols * (w + 8) + 8, rows * (h + 8) + 8, q.QtGui.QImage.Format_RGB32)
+        sheet.fill(q.QtGui.QColor("#0b0c0e"))
+        paint = q.QtGui.QPainter(sheet)
+        for i, row in enumerate(ROWS):
+            s = drawn(row, density)
+            img = s.image().copy(12, 12, w, h)
+            paint.drawImage(8 + (i % cols) * (w + 8), 8 + (i // cols) * (h + 8), img)
+        paint.end()
+        assert sheet.save(str(out / f"{name}.png"))
+        assert (out / f"{name}.png").stat().st_size > 10_000
 
 
 def _qt():
@@ -306,7 +610,8 @@ def test_a_machine_with_nothing_backs_only_the_tips_that_need_nothing():
 def test_each_gate_brings_its_tips_and_only_those():
     base = set(_ids(Facts()))
     model = set(_ids(Facts(ai="Claude"))) - base
-    assert model == {"make-an-app", "esc", "timer", "passwords", "draw", "toolchain", "pause", "why"}
+    assert model == {"make-an-app", "esc", "timer", "draw", "toolchain", "pause", "why",
+                     "passwords"}
     assert set(_ids(Facts(installed=True))) - base == {"undo"}
     assert set(_ids(Facts(app="Tickets"))) - base == {"open-app"}                       # change-app also needs the AI
     assert set(_ids(Facts(ai="Claude", app="Tickets"))) - base - model == {"open-app", "change-app"}
@@ -349,7 +654,8 @@ def test_the_filled_row_is_what_the_card_and_the_app_are_sent():
     assert t.as_dict() == {"id": "open-app", "section": "work", "order": 2, "line": "Type an app's name to open it.",
                            "words": "Tickets", "marks": [], "needs": ["app"], "card": True,
                            "tried_when": ["local:app"], "captions": ["You ask", "It works", "You have it"],
-                           "beats": []}
+                           "beats": [dict(b) for b in BY_ID["open-app"].beats]}
+    assert t.as_dict()["beats"] and json.loads(json.dumps(t.as_dict()))["beats"] == t.as_dict()["beats"]
 
 
 # -- reading the machine --
@@ -774,7 +1080,8 @@ def test_the_list_holds_only_what_the_machine_can_back_with_what_the_app_draws_f
     assert [r["id"] for r in rows] == ["picture", "machine", "bang", "whyhere", "disk"]
     assert rows[0] == {"id": "picture", "section": "start", "order": 2, "line": "Ask for a picture, not a paragraph.",
                        "words": "How am I connected?", "marks": [], "card": True, "tried": True, "new": False,
-                       "captions": ["You ask", "It works", "You have it"], "beats": []}
+                       "captions": ["You ask", "It works", "You have it"],
+                       "beats": [dict(b) for b in BY_ID["picture"].beats]}
     assert [r["tried"] for r in rows] == [True, False, False, False, False]
     t.facts = Facts(ai="Claude", app="Tickets", project="myapp", installed=True, desk_seen=True)
     full = t.listing()
@@ -822,6 +1129,26 @@ def test_open_keeps_the_tip_for_the_app_and_calls_its_hook_and_opens_nothing(tmp
     assert t.open("keep") == "" and t.open("nope") == "" and t.open(7) == "" and t.open("") == ""
     assert t.state.open_on == ""
     assert asked == [("picture", True), ("", False), ("", False), ("", False), ("", False)]
+
+
+def test_the_app_reading_a_request_clears_it_so_the_same_press_is_a_request_again(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    assert t.opened("picture") is True and t.state.open_on == ""
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == ""
+    assert t.opened("picture") is False                      # nothing left to read
+    t.open("picture")
+    assert json.loads((tmp_path / "tips.json").read_text())["open_on"] == "picture"   # the file changed again
+
+
+def test_only_the_request_that_was_read_is_cleared(tmp_path):
+    t = machine(tmp_path)
+    t.open("picture")
+    t.open("bang")                                           # a newer press while the app was reading the old one
+    assert t.opened("picture") is False and t.state.open_on == "bang"
+    for bad in ("", None, 7, ["bang"], "nope"):
+        assert t.opened(bad) is False and t.state.open_on == "bang"
+    assert t.opened("bang") is True and t.state.open_on == ""
 
 
 def test_a_hook_that_breaks_never_costs_the_request(tmp_path, capsys):

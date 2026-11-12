@@ -62,6 +62,10 @@ WIDGETS: dict[str, Widget] = {w.id: w for w in (
            quiet="Away shows only after you have been away."),
     Widget("machine", "Machine", ("machine",), "right", "Is the machine in trouble?", calm=True,
            then="It still comes up when something needs a look."),
+    # The least urgent, so the top of the right rail: it shows a new person what to ask in their first week, and a
+    # person can keep it (docs/TIPS.md). "show tips" is not a desk word: it opens the Tips app (launcher.py).
+    Widget("tips", "Tips", ("tips",), "right", "What can I ask it to do?", calm=True,
+           then="Say tips to open the app."),
 )}
 STATES = ("keep", "needed", "off")
 # The only place two sessions' requests can be answered together, so it cannot be put away.
@@ -72,6 +76,11 @@ OPT_IN = ("alive",)
 # brings the card up even when nothing is wrong ("how's the machine": for a while; "show away": until it is
 # seen, with "nothing happened" when that is so). The sentence is the answer.
 ASKABLE = {"machine": "Here is the machine.", "away": "Here is what happened while you were away."}
+# What putting a widget away adds to its sentence, when the person would not otherwise know the way back. For Tips the
+# word is the Tips app's (launcher.TIPS_COMMANDS): "tips" opens the app, which lists every tip, so "see them again" is
+# true of the tips. It does not bring a put-away card back, nor undo "no longer kept" (`then` above says the same of
+# the app): the card comes back by "keep tips" or the Widgets card.
+HIDE_NOTES = {"tips": " Say tips to see them again."}
 
 # "desk" as a place (not a standing desk or a help desk), or a widget anywhere in the words.
 _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!writing )\bdesk\b"
@@ -79,9 +88,12 @@ _DESK_WORD = re.compile(r"\bwidgets?\b|(?<!standing )(?<!front )(?<!help )(?<!wr
 # A verb for moving things about, then a widget's name right after it, and then the end of the
 # words or a word that goes on about where it should be: "hide machine", "put watching on the
 # right", "bring the machine card back". Not "show me the machine's logs" or "keep watching the build".
+# "tips" is a plain word as well, so after on, to, in or at it must name where on the desk ("put tips on the left"),
+# and "keep tips in mind", "put tips in the README" and "bring tips to the meeting" are not the desk.
 _DESK_ASK = re.compile(
     r"\b(?:show|hide|put|keep|pin|move|bring|fold|unfold)\s+(?:(?:up|back|the|my)\s+)*"
-    r"(?:now|watching|needs you|machine|alive|while you were away)\b(?!')"
+    r"(?:now|watching|needs you|machine|alive|while you were away"
+    r"|tips(?!\s+(?:on|to|in|into|at)\s+(?!(?:the\s+|my\s+)?(?:left|right|other|opposite|rails?|card)\b)))\b(?!')"
     r"(?=\s*$|\s*,"
     r"|\s+(?:on|to|in|into|at|above|below|up|back|first|last|again|always|please|rails?|card|where)\b)")
 
@@ -254,7 +266,7 @@ class Desk:
             if wid in self.hidden:
                 return True, f"{name} is already put away.", False
             self.hidden.add(wid)
-            return True, f"Put {name} away.", True
+            return True, f"Put {name} away." + HIDE_NOTES.get(wid, ""), True
         if op in ("fold", "unfold"):
             want = op == "fold"
             if want == (wid in self.stripped):
@@ -314,7 +326,7 @@ class Desk:
                 return True, f"{name} is already put away.", False
             self.hidden.add(wid)
             self.kept.discard(wid)
-            return True, f"Put {name} away.", True
+            return True, f"Put {name} away." + HIDE_NOTES.get(wid, ""), True
         if wid in self.kept:
             self.kept.discard(wid)
             return True, self._unkept(wid), True

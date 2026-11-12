@@ -215,6 +215,20 @@ def test_a_window_root_is_recreated_on_reload(home):
     assert out["second"] == ["Legacy v2", 300, True, True]
 
 
+def test_an_app_waits_longer_than_qt_does_for_a_slow_compositor_to_answer_a_frame(monkeypatch):
+    # The same reason as bin/bombadil-shell: Qt redraws a window whose frame was answered after 100 ms, and
+    # a window drawn by a compositor in software is answered later than that, over and over.
+    from bombadil.appkit import engine
+    for name in ("BOMBADIL_CHECK", "QT_QPA_PLATFORM"):    # (configure sets these; put them back afterwards)
+        monkeypatch.setenv(name, os.environ.get(name, ""))
+    monkeypatch.delenv("QT_WAYLAND_FRAME_CALLBACK_TIMEOUT", raising=False)
+    engine.configure(check=True)
+    assert os.environ["QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"] == "2000"
+    monkeypatch.setenv("QT_WAYLAND_FRAME_CALLBACK_TIMEOUT", "5000")
+    engine.configure(check=True)
+    assert os.environ["QT_WAYLAND_FRAME_CALLBACK_TIMEOUT"] == "5000"
+
+
 def test_check_renders_through_the_runtime(home, tmp_path):
     pytest.importorskip("PySide6")
     make_app("demo", {"main.qml": ITEM_QML, "app.py": BACKEND})
@@ -262,6 +276,33 @@ def test_a_broken_app_py_is_retried_on_every_reload_until_fixed(home):
     assert out["broken_again"] == [True, False, ["app.py:1: ValueError: bad edit"]]
     # The old UI and its old backend stay up, and the status does not claim otherwise.
     assert out["then_qml"] == [True, False, ["app.py:1: ValueError: bad edit"], "hello v2 from py1", False]
+
+
+def test_an_app_py_edit_made_with_a_refused_component_is_not_lost_once_the_qml_is_fixed(home):
+    """A refused load (an internal component in the app's QML) still reads app.py, as a QML syntax error does, so
+    the edit is used on the load that follows and the old backend does not stay under newer code."""
+    pytest.importorskip("PySide6")
+    make_app("held", {"main.qml": ITEM_QML, "app.py": BACKEND, "app.toml": 'title = "Held"\n'})
+    out = drive("held", """
+        src = (d / "main.qml").read_text()
+        out["start"] = [host.load(), label()]
+        write("app.py", (d / "app.py").read_text().replace("from py1", "from py2"))
+        write("main.qml", src.replace("Item {\\n", "Item {\\n    Stone { }\\n", 1))
+        out["refused"] = [host.load({"app.py", "main.qml"}), host.collector.errors, label()]
+        write("main.qml", src.replace("hello v1", "hello v3"))
+        out["fixed"] = [host.load({"main.qml"}), host.collector.errors, label()]
+        # the same with a QML syntax error in place of the refused component
+        write("app.py", (d / "app.py").read_text().replace("from py2", "from py3"))
+        write("main.qml", src + "}")
+        out["syntax"] = [host.load({"app.py", "main.qml"})]
+        write("main.qml", src.replace("hello v1", "hello v4"))
+        out["syntax_fixed"] = [host.load({"main.qml"}), label()]
+    """)
+    assert out["start"] == [True, "hello v1 from py1"]
+    ok, errors, text = out["refused"]
+    assert not ok and len(errors) == 1 and errors[0].startswith("main.qml:5: Stone ") and text == "hello v1 from py1"
+    assert out["fixed"] == [True, [], "hello v3 from py2"]
+    assert out["syntax"] == [False] and out["syntax_fixed"] == [True, "hello v4 from py3"]
 
 
 def test_the_first_size_is_read_after_bindings_run(home):

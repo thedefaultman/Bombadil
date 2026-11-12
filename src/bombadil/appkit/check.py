@@ -23,6 +23,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .. import apps
 from . import engine as kit_engine
 from .context import AppContext
 from .placement import kill_children
@@ -40,6 +41,67 @@ FATAL = re.compile(
     r"Type .* unavailable|Cannot anchor|No such file")
 WAIT_MS = 1200  # how long a check lets the app run before judging it (`--wait`)
 SETTLE_S = 25   # seconds a check may run past that before the watchdog ends it (tools gives up at 40)
+
+
+# Kit components that belong to Bombadil's own screens, not to the apps the agent writes: the pill's
+# stone, and the scenes of the Tips app. They are registered in the kit (the shell and the built-in apps
+# import them) but are not in the apps skill, and an app that uses one is refused here, so the agent gets
+# a plain error to fix instead of drawing a mark it was never meant to.
+INTERNAL_COMPONENTS = {
+    "Stone": "is the mark in Bombadil's pill, not an app component: use Icon for a symbol, "
+             "Badge or Meter for a status",
+    "TipScene": "plays Bombadil's own tips, not an app component: use Diagram for an explainer, "
+                "LineChart, BarChart or Ring for data",
+}
+
+_KIT_IMPORT = re.compile(
+    r"^[ \t]*import[ \t]+Bombadil(?:[ \t]+\d+(?:\.\d+)?)?(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$", re.MULTILINE)
+_DIR_IMPORT = re.compile(r'^[ \t]*import[ \t]+"([^"]+)"(?:[ \t]+as[ \t]+(\w+))?[ \t]*;?[ \t]*$', re.MULTILINE)
+_COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+# What the error says where the app has a component by that name of its own which the kit's hides.
+_OWN = ("is the kit's here, not your {name}.qml: QML lets the later import win, and a folder's own files come first. "
+        "Write `import \".\"` below `import Bombadil` (or `import \"folder\"` for one in a folder) to use yours, "
+        "or give it another name")
+
+
+def _blank(m: re.Match) -> str:
+    return re.sub(r"[^\n]", " ", m.group(0))   # a comment goes and its lines stay, so line numbers hold
+
+
+def refused_components(ctx: AppContext) -> list[str]:
+    """One `file.qml:line: Name ...` for each use of an internal kit component (INTERNAL_COMPONENTS) in an
+    app of the user's. The built-in apps under share/apps (the Tips app) may use them. A use is an object
+    declaration: `Stone {` after `import Bombadil`, or `Kit.Stone {` after `import Bombadil as Kit`.
+
+    A bare `Stone {` is the kit's unless the app's own Stone.qml is imported after the kit: QML lets the
+    later import win, and a folder's own files (the implicit import) come first and weakest. So an own
+    component is let through where `import "."` (or `import "lib"`, for one in a folder) comes below
+    `import Bombadil` in that file, and a use that the kit's component would win gets an error that says so."""
+    if apps.is_builtin(ctx.dir):
+        return []
+    out = []
+    for f in sorted(ctx.dir.rglob("*.qml")):
+        rel = f.relative_to(ctx.dir)
+        if rel.parts[0] == "data" or any(part.startswith(".") for part in rel.parts):
+            continue
+        try:
+            text = _COMMENTS.sub(_blank, f.read_text(errors="replace"))
+        except OSError:
+            continue
+        kit = [(m.start(), m.group(1)) for m in _KIT_IMPORT.finditer(text)]       # (where, the alias or None)
+        folders = [(m.start(), (f.parent / m.group(1)).resolve()) for m in _DIR_IMPORT.finditer(text) if not m.group(2)]
+        bare = max((where for where, alias in kit if alias is None), default=None)   # the last `import Bombadil`
+        for name, why in INTERNAL_COMPONENTS.items():
+            spellings = [(rf"(?<![\w.]){re.escape(alias)}\.{name}", f"{name} {why}") for _, alias in kit if alias]
+            if bare is not None:
+                own = [(where, d) for where, d in folders if (d / f"{name}.qml").is_file()]
+                if not any(where > bare for where, _ in own):       # no import of an own one below the kit's wins
+                    hidden = (f.parent / f"{name}.qml").is_file() or bool(own)
+                    spellings.append((rf"(?<![\w.]){name}", f"{name} " + (_OWN.format(name=name) if hidden else why)))
+            for spelling, message in spellings:
+                for m in re.finditer(rf"{spelling}\s*\{{", text):
+                    out.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}: {message}")
+    return out
 
 
 class Collector:
