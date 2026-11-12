@@ -3,7 +3,7 @@
 > **Status:** Shipped. The image, the installer, the refresh and the Windows VM launcher are on `main`. The install card in the pill is not built: the word "install" opens the installer's own questions in a terminal drawer, and this page describes those.
 > **Code:** `iso/airootfs/usr/local/bin/bombadil-install`, `iso/airootfs/usr/local/bin/bombadil-rollback`, `src/bombadil/installplan.py`, `src/bombadil/launcher.py` (the words `install`, `wifi`, `remote`), `src/bombadil/remote.py`, `install/carry.list`, `iso/profiledef.sh`, `iso/efiboot/loader/`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`, `scripts/build-in-container.sh`, `scripts/build-iso.sh`, `scripts/run-vm.sh`, `scripts/wsl-vm.sh`, `scripts/bombadil-vm.cmd`, `scripts/vm-tools/update-in-place`
 > **Design:** [Installed OS](INSTALLED-OS.md) (the principles, the disk and why it is laid out so), [Session services](SESSION-SERVICES.md) (the Super tap and updating a running system), [VM testing](VM-TESTING.md) (what the installer was tested with)
-> **Verified:** 2026-11-12 against `main` at `7d37bc5`. Every prompt, message, key and command on this page was read from the code at that commit and checked a second time against it, and the page's links and diagrams were checked with the documentation checker. The installer's own tests ran in a virtual machine: an unencrypted and an encrypted install, one password at the boot screen, an undo across a restart, and a refresh of a disk an older Bombadil installed (the refresh ran before the last merge of `main`). **Nothing on this page has been run on a real computer.** The advanced recipe in [Path C](#path-c-the-windows-laptop-vm) is written from the scripts and was not run, and NVIDIA graphics are unchecked.
+> **Verified:** 2026-11-12 against `main` at `7d37bc5`. Every prompt, message, key and command on this page was read from the code at that commit and checked a second time against it, and the page's links and diagrams were checked with the documentation checker. The published image `bombadil-2026.11.12-x86_64.iso` was built from that commit; attached to a virtual machine as a USB stick, it started through UEFI to the desk, and Alt+Space opened the pill and took typed text. The installer's own tests ran in a virtual machine on earlier builds of the same installer: an unencrypted and an encrypted install, one password at the boot screen, an undo across a restart, and a refresh of a disk an older Bombadil installed. **Nothing on this page has been run on a real computer.** In the slow software-emulated machine a tap on Super did not bring up the pill (Alt+Space did); the tests of an earlier build on a fast virtual machine passed that check. The advanced recipe in [Path C](#path-c-the-windows-laptop-vm) is written from the scripts and was not run, and NVIDIA graphics are unchecked.
 
 This page puts Bombadil on a computer, keeps it up to date, and says what to do when a step goes wrong. It is written to be followed from another device, because the computer you install on is the one you cannot read it on.
 
@@ -45,7 +45,7 @@ The install **erases the whole disk you pick**. There is no dual boot: if Window
 | A computer that starts in UEFI mode, x86_64 | The image has no legacy BIOS boot and no ARM build. The installer stops with "This computer did not start in UEFI mode" if it was started the old way. |
 | Secure Boot off, and kept off | The boot loaders on the stick and on the installed disk are not signed. Turning it on again later stops the installed system from starting. |
 | A disk of 16 GiB or more that may be erased | 16 GiB is about 17.2 GB as drive makers count, so a drive sold as "16 GB" is too small: use 32 GB or more. A smaller disk is listed as "not offered, it is smaller than 16 GB". |
-| A USB stick of 8 GB or more | The image is a few GB (its size is not recorded anywhere; measure yours with `ls -lh` after the build). Everything on the stick is erased. |
+| A USB stick of 8 GB or more | The image is about 3 GB (the 2026.11.12 build is 2.98 GB). Everything on the stick is erased. |
 | The charger | Keep the laptop plugged in, with the lid open, while the image is written and the whole install runs. A computer that sleeps or loses power in the middle of an install may not start afterwards. |
 | A network | Wi-Fi or a cable. Signing in to the AI needs it. |
 | An account that can use Claude Code or Codex | Claude Code needs a plan that includes it, and Codex a ChatGPT plan that includes it (a free chat account may not). The install does not check the plan: if the sign-in page says the plan does not include it, the AI will not run. Remote control, if you want it, needs a claude.ai account; an API key does not do. |
@@ -55,72 +55,25 @@ The install **erases the whole disk you pick**. There is no dual boot: if Window
 
 ## Path A: install on a computer
 
-### 1. Get the image
+### 1. Download the image
 
-The image is one file, `bombadil-YYYY.MM.DD-x86_64.iso`. There is no download that is always current: **you build it from the repository**, which takes about 30 minutes and needs the network. Pick the route that matches the computer you build on. (If someone hands you a ready-made image, skip to step 2.)
+The image is one file, `bombadil-YYYY.MM.DD-x86_64.iso`, with a small checksum file beside it, `bombadil-YYYY.MM.DD-x86_64.iso.sha256`. Download both to the second device, into one folder. (They are published in the project's `images` folder. A fork that makes its own image builds it: see [Build the image yourself](#build-the-image-yourself).)
 
-**Build it from a commit that contains the installed-OS work (pull request 35, merged on 2026-11-11).** Images built before it have damaged kernel modules: an option of the image builder wrote zeros over the end of some files, and nothing complained until a driver (a Wi-Fi card, the crypto engine) failed to load months later. Anything built from the current `main` is fine; to be sure of your checkout, `grep -c ztailpacking iso/profiledef.sh` must print `0`. The installer also reads every kernel module back, and stops with "write it again, or try another stick" if one is damaged. An image's date is the date of the commit it was built from, and the fix reached `main` late on 2026-11-11, so a date of 2026.11.12 or later is safe and 2026.11.11 may not be.
+At the time of writing the newest is `bombadil-2026.11.12-x86_64.iso`, 2,977,300,480 bytes (2.98 GB), whose SHA-256 is `e4d770af0fb524f80382b774cc35ef1d9230bb83b4aff293a41939b747cf43a7`. The checksum file is the authority if a newer image has been published since.
 
-**On Linux (or any Linux with Docker or Podman running)**
-
-```sh
-git clone <the repository's address, or your fork's> Bombadil
-cd Bombadil
-scripts/build-in-container.sh        # downloads packages, then builds: about 30 minutes
-ls -lh out/                          # bombadil-YYYY.MM.DD-x86_64.iso
-```
-
-You need Docker or Podman and permission to run a privileged container (be in the `docker` group, or run the script with `sudo`). With neither installed the script stops without a word. Allow about 10 GB of free disk space for the build files. The result lands in `out/`.
-
-**On Windows, when it is the only computer you have.** The build runs in the WSL distro that `scripts\bombadil-vm.cmd` sets up (no Docker needed). You need:
-
-- **Git for Windows** (git-scm.com).
-- **WSL 2.** Open PowerShell as administrator, run `wsl --install`, restart when it asks, then run `wsl --update`.
-- **CPU virtualization turned on in the firmware** (usually called "Intel Virtualization Technology" or "SVM Mode"). Task Manager, Performance, CPU says "Virtualization: Enabled" when it is.
-- **Tens of GB free on C:.** The build alone writes several GB, and the distro keeps a package cache. (Not measured.)
-
-Then, **in PowerShell**:
-
-```text
-git clone <the repository's address, or your fork's> Bombadil
-cd Bombadil
-scripts\bombadil-vm.cmd build
-```
-
-The first run sets up the distro once and builds the VM launcher's own test image, 15 to 30 minutes. You will not use that image for the stick, but the distro and its package cache are what you need. Then, **still in PowerShell**, open the distro's Linux shell (type this one line; the prompt changes to a Linux one):
-
-```text
-wsl -d bombadil -u root
-```
-
-Now **type these lines in that Linux window**. `C:\path\to\Bombadil` is the Bombadil folder you cloned (in PowerShell, `pwd` prints it while you are inside it), and the last `cp` puts the image into a Windows folder you choose, for example your Downloads folder:
-
-```sh
-cd /root/Bombadil
-git fetch "$(wslpath 'C:\path\to\Bombadil')" HEAD && git checkout --detach FETCH_HEAD
-WORK=/var/tmp/bombadil-work OUT=/root/release SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) scripts/build-iso.sh
-rm -rf /var/tmp/bombadil-work                                      # several GB of build files
-cp /root/release/bombadil-*.iso "$(wslpath 'C:\path\to\a\folder')"/   # the image, into a Windows folder
-exit                                                              # back to PowerShell
-```
-
-The `git fetch` line is what the launcher itself does to move its clone to your checkout's commit; run it again after every `git pull`. The build ends with "ISO in /root/release".
-
-**On a Mac** there is no tested way to build the image. Build it on a Linux computer (or a Linux machine with Docker) and copy the `.iso` over. An Apple Silicon Mac cannot build it natively: the image is x86_64.
-
-**Never put an image on a stick that was built with `BOMBADIL_TEST_ENTRIES=1`, and never use the image `scripts\bombadil-vm.cmd` builds for a real computer.** Those have extra boot entries made for the VM tests, which install onto or refresh `/dev/vda` without asking (two of them erase it). The release builds above leave them out, and the two images have the same kind of file name, so keep track of which is which.
+**Use the newest date, and never one dated 2026.11.11 or earlier.** Images from before the fix in pull request 35 can have damaged kernel modules: an option of the image builder wrote zeros over the end of some files, and nothing complained until a driver (a Wi-Fi card, the crypto engine) failed to load. The installer also reads every kernel module back, and stops with "write it again, or try another stick" if one is damaged.
 
 ### 2. Check the image
 
-An image you built yourself needs no check; go on to step 3. For an image someone handed you with a `.sha256` file beside it, put both in one folder, then:
+The `.sha256` file holds one line, the image's checksum and its name. Check that the download matches it, in the folder that holds both:
 
 | System | Command | Right answer |
 |---|---|---|
 | Linux | `sha256sum -c bombadil-YYYY.MM.DD-x86_64.iso.sha256` | `bombadil-YYYY.MM.DD-x86_64.iso: OK` |
-| macOS | `shasum -a 256 -c bombadil-YYYY.MM.DD-x86_64.iso.sha256` | `...: OK` |
-| Windows (PowerShell) | `(Get-FileHash .\bombadil-YYYY.MM.DD-x86_64.iso -Algorithm SHA256).Hash` | The same 64 letters and digits as in the `.sha256` file (capitals do not matter) |
+| macOS | `shasum -a 256 -c bombadil-YYYY.MM.DD-x86_64.iso.sha256` | `bombadil-YYYY.MM.DD-x86_64.iso: OK` |
+| Windows (PowerShell) | `(Get-FileHash .\bombadil-YYYY.MM.DD-x86_64.iso -Algorithm SHA256).Hash` | The same 64 letters and digits as the start of the `.sha256` file (capitals do not matter). `Get-Content .\bombadil-YYYY.MM.DD-x86_64.iso.sha256` shows it. |
 
-The `-c` commands need the file to hold one line, `<64 hex digits>  bombadil-YYYY.MM.DD-x86_64.iso`. If it holds only the 64 digits, run `sha256sum bombadil-YYYY.MM.DD-x86_64.iso` (Linux) or `shasum -a 256 bombadil-YYYY.MM.DD-x86_64.iso` (macOS) and compare by eye. The checksum has to belong to that exact image: one from another build never matches. If they differ, get the file again before going on. The repository does not make a `.sha256` file. A matching checksum proves the file, not the stick: if the installer later says "a copied kernel module is damaged", write the stick again or use another one.
+If they differ, download the image again before going on. A checksum that matches proves the file, not the stick: if the installer later says "a copied kernel module is damaged", write the stick again or use another one.
 
 ### 3. Write the USB stick
 
@@ -158,19 +111,20 @@ macOS prints nothing while `dd` runs (Control+T shows how far it is). When it sa
 
 ### 4. Set the firmware up
 
-Restart the computer and open its firmware settings (the setup screen). The key to press while it starts is usually F2, F10, F12, Del or Esc. On a Windows computer you can also hold Shift while clicking Restart, then Troubleshoot, Advanced options, **UEFI Firmware Settings**. Write down each value before you change it.
+Plug the stick in first, so that the firmware lists it. Then restart the computer and open its firmware settings (the setup screen). The key to press while it starts is usually F2, F10, F12, Del or Esc. On a Windows computer you can also hold Shift while clicking Restart, then Troubleshoot, Advanced options, **UEFI Firmware Settings**. Write down each value before you change it.
 
 | Setting | Value | Why |
 |---|---|---|
 | Secure Boot | Off (Disabled) | Bombadil's boot loaders are not signed. It has to stay off after the install. |
 | Boot mode | UEFI only. Turn Legacy or CSM off. | The image has no legacy boot, and the installer refuses a legacy start. |
+| Boot order (the boot sequence) | The USB stick first, above the internal disk. It may be called "USB HDD", "Removable device" or "UEFI: " followed by the stick's name. Turn USB boot on if the firmware has such a switch. | So the computer starts from the stick. If you would rather not change the order, leave it and use the one-time boot menu in step 5. |
 | Storage mode | AHCI, if the installer later shows no internal disk | On some Intel laptops "RAID" or "Intel RST/VMD" mode hides the disk from Linux. While it is set to AHCI an installed Windows may not start, so put the old value back if you stop without installing. |
 
-Save the changes and shut the computer down. Plug the stick in and start it again.
+Save the changes and exit. With the boot order set, the computer now starts from the stick by itself (step 5). If you left the order alone, shut it down and start it again with the stick plugged in.
 
 ### 5. Start from the stick and see the desk
 
-Open the **one-time boot menu** while the computer starts (usually F12, Esc or F9) and choose the stick. If the stick appears twice, choose the entry marked UEFI. (Some computers list the stick only if it was already plugged in when they were switched on.) You should see:
+If the boot order is not set, open the **one-time boot menu** while the computer starts (usually F12, Esc or F9) and choose the stick. If the stick appears twice, choose the entry marked UEFI. (Some computers list the stick only if it was already plugged in when they were switched on.) You should see:
 
 1. A boot menu whose Bombadil line, **Bombadil**, is chosen by itself after 3 seconds. (Your firmware may add a line of its own, such as "Reboot Into Firmware Interface"; leave it alone.) If you see **more than one Bombadil line**, this is a test image: choose none of them, turn the computer off, take out the stick and write a release image (step 1) instead.
 2. A quiet screen in a dark ground colour with no boot text.
@@ -359,7 +313,7 @@ Do not resize or minimise the window from a script; it can go black. If the wind
 | `scripts\bombadil-vm.cmd reinstall` | Wipes the disk and installs again. It asks first (type `wipe`). The old disk is kept as `/root/Bombadil/out/bombadil.qcow2.before-reinstall` in the distro until the next reinstall, which replaces it. |
 | `scripts\bombadil-vm.cmd build` | Only builds the image. |
 
-To remove everything the launcher made: `wsl --unregister bombadil`. This deletes the VM's disk, the saved copy `bombadil.qcow2.before-reinstall` and any image still in `/root/release`, with no question and no undo. Copy out what you want first (for example the image, as in [step 1](#1-get-the-image)).
+To remove everything the launcher made: `wsl --unregister bombadil`. This deletes the VM's disk, the saved copy `bombadil.qcow2.before-reinstall` and any image still in `/root/release`, with no question and no undo. Copy out what you want first (for example an image you built, see [Build the image yourself](#build-the-image-yourself)).
 
 ### Updating the VM
 
@@ -467,15 +421,70 @@ The password you set is typed on a US layout at the boot screen, so choose one w
 | `wifi` shows no networks | The laptop's Wi-Fi chip needs a driver the image does not have | Use a network cable or a USB network adapter. The install itself needs no network. |
 | The installer says "There is no disk here that Bombadil can be put on", or the disk is not in its list | A storage mode that hides it, or the disk is the stick | Power off, go back to step 4 and set the storage mode to AHCI, start the stick again, and redo steps 6 and 7: the stick forgets everything at power-off. A disk listed as "not offered" gives its reason on the same line. |
 | "`/dev/...` is smaller than 16 GB" or "in use (something on it is mounted)" | Too small, or something from it is mounted | Pick another disk. Nothing was changed. |
-| "a copied kernel module is damaged ... write it again, or try another stick" | A bad stick, a bad copy of the image, or an image built before the fix in pull request 35 (see step 1) | Check the checksum (step 2), write the stick again (or use another stick), and run the install again. The installer reads every kernel module back before it writes the boot loader, so a disk that failed this check has no boot loader and is not mistaken for a working install. |
+| "a copied kernel module is damaged ... write it again, or try another stick" | A bad stick, a bad copy of the image, or an image dated 2026.11.11 or earlier (see step 1) | Check the checksum (step 2), write the stick again (or use another stick), and run the install again. The installer reads every kernel module back before it writes the boot loader, so a disk that failed this check has no boot loader and is not mistaken for a working install. |
 | "the password has characters the boot screen cannot type" | An accented letter, a tab or a character GRUB cannot read | Choose one with letters, numbers and ordinary symbols from a US keyboard. |
 | "No internet. Connect to a network to sign in..." | No network | Say `wifi`, or plug in a cable, and press **Try again**. |
 | The installer stopped before "Installed." | A power cut, a pulled stick, a damaged image | Start the stick and run it again: a fresh install begins over, and a refresh starts over from the old system that is still aside. Its log is `/tmp/bombadil-install.log` on the stick and `/var/log/bombadil-install.log` on the installed disk (readable by its owner only). |
 | The boot screen does not accept the password | The keyboard layout (US at that screen), or a typing slip | Type it on a US layout. If it is lost, the recovery key opens the disk. |
 | After the install, a boot error screen and no desk | Secure Boot got turned on again | Open the firmware settings, turn Secure Boot off and restart. |
 | The first letters after tapping Super are lost | An old `hyprland.lua` | [Copying the new Hyprland lines](#copying-the-new-hyprland-lines). |
-| The tap on Super does nothing in a VM window on Windows | Windows keeps the key | Use Alt+Space. |
+| The tap on Super does nothing | In a VM window on Windows, Windows keeps the key. On any computer, the shortcut may not have registered yet, or the tap may have been too short or too long | Press **Alt+Space** instead (it opens the same pill), or click the pill at the bottom of the screen. |
 | "Bombadil is already installed on this computer" when you say `install` | You are on the installed system, not the stick | The installer runs from the stick only. To update, use Path B. |
+
+## Build the image yourself
+
+The download in step 1 is the normal way. A fork, or a newer commit than the published image, builds its own. It takes about 30 minutes and needs the network. Pick the route that matches the computer you build on, then go on at step 2 (an image you built yourself needs no check) and step 3.
+
+**Build it from a commit that contains pull request 35 (merged on 2026-11-11).** To be sure of your checkout, `grep -c "'ztailpacking'" iso/profiledef.sh` must print `0` (it prints `1` while the option that damages kernel modules is still there). An image's date is the date of the commit it was built from, and the fix reached `main` late on 2026-11-11, so a date of 2026.11.12 or later is safe and 2026.11.11 may not be.
+
+**On Linux (or any Linux with Docker or Podman running)**
+
+```sh
+git clone <the repository's address, or your fork's> Bombadil
+cd Bombadil
+scripts/build-in-container.sh        # downloads packages, then builds: about 30 minutes
+ls -lh out/                          # bombadil-YYYY.MM.DD-x86_64.iso
+```
+
+You need Docker or Podman and permission to run a privileged container (be in the `docker` group, or run the script with `sudo`). With neither installed the script stops without a word. Allow about 10 GB of free disk space for the build files. The result lands in `out/`.
+
+**On Windows, when it is the only computer you have.** The build runs in the WSL distro that `scripts\bombadil-vm.cmd` sets up (no Docker needed). You need:
+
+- **Git for Windows** (git-scm.com).
+- **WSL 2.** Open PowerShell as administrator, run `wsl --install`, restart when it asks, then run `wsl --update`.
+- **CPU virtualization turned on in the firmware** (usually called "Intel Virtualization Technology" or "SVM Mode"). Task Manager, Performance, CPU says "Virtualization: Enabled" when it is.
+- **Tens of GB free on C:.** The build alone writes several GB, and the distro keeps a package cache. (Not measured.)
+
+Then, **in PowerShell**:
+
+```text
+git clone <the repository's address, or your fork's> Bombadil
+cd Bombadil
+scripts\bombadil-vm.cmd build
+```
+
+The first run sets up the distro once and builds the VM launcher's own test image, 15 to 30 minutes. You will not use that image for the stick, but the distro and its package cache are what you need. Then, **still in PowerShell**, open the distro's Linux shell (type this one line; the prompt changes to a Linux one):
+
+```text
+wsl -d bombadil -u root
+```
+
+Now **type these lines in that Linux window**. `C:\path\to\Bombadil` is the Bombadil folder you cloned (in PowerShell, `pwd` prints it while you are inside it), and the last `cp` puts the image into a Windows folder you choose, for example your Downloads folder:
+
+```sh
+cd /root/Bombadil
+git fetch "$(wslpath 'C:\path\to\Bombadil')" HEAD && git checkout --detach FETCH_HEAD
+WORK=/var/tmp/bombadil-work OUT=/root/release SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) scripts/build-iso.sh
+rm -rf /var/tmp/bombadil-work                                      # several GB of build files
+cp /root/release/bombadil-*.iso "$(wslpath 'C:\path\to\a\folder')"/   # the image, into a Windows folder
+exit                                                              # back to PowerShell
+```
+
+The `git fetch` line is what the launcher itself does to move its clone to your checkout's commit; run it again after every `git pull`. The build ends with "ISO in /root/release".
+
+**On a Mac** there is no tested way to build the image. Build it on a Linux computer (or a Linux machine with Docker) and copy the `.iso` over. An Apple Silicon Mac cannot build it natively: the image is x86_64.
+
+**Never put an image on a stick that was built with `BOMBADIL_TEST_ENTRIES=1`, and never use the image `scripts\bombadil-vm.cmd` builds for a real computer.** Those have extra boot entries made for the VM tests, which install onto or refresh `/dev/vda` without asking (two of them erase it). The release builds above leave them out, and the two images have the same kind of file name, so keep track of which is which.
 
 ## How it is built, and what it keeps to
 
