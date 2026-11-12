@@ -75,7 +75,7 @@ the same `make_engine`, so a check sees what the window sees.
 | Surface | Normally | Under reduced motion |
 |---|---|---|
 | The stone, working or starting | rolls a third of a turn, once a second | one opacity pulse, 1 to 0.3 and back |
-| The stone, needs you | two knocks and a breathing glow, 1.6 s beat | holds still, glow held at 0.45 |
+| The stone, needs you | two knocks and a breathing glow on a 1.6 s beat, as a cue: it plays for 9.6 s when the face becomes `needs`, then the stone rests amber with the glow held at 0.45 and one 1.6 s beat plays every five minutes while the need stands | never plays: holds still, glow held at 0.45 |
 | The stone, done | one hop | fades in from 0.3 over 600 ms |
 | The stone, listening | leans toward the text over 240 ms | leans at once |
 | The wallpaper | the picture settles in over 300 ms | there at once |

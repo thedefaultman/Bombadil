@@ -97,7 +97,7 @@ A tip is shown only where every gate in `needs` is met (the brief's rule 2). `Fa
 | `sessions` | the coding-sessions code is on this machine. |
 | `mail` | the mail tips' code is on this machine (false until a tip needs it; the PR that ships it flips the fact). |
 | `noticed` | the self-improvement code is on this machine (as `mail`). |
-| `keep` | the desk can keep a widget: true, since the desk's piece 2 (`kept` in `desk.py`, the word "widgets" and the Widgets card, [DESK.md](DESK.md#your-desk-keep-when-needed-off)). The "Keep a widget on your desk" tip is tried by the launcher word `widgets` (`local:widgets`). |
+| `keep` | the desk can keep a widget: true, since the desk's piece 2 (`kept` in `desk.py`, the word "widgets" and the Widgets card, [the desk page](architecture/desk.md#your-desk-keep-when-needed-off)). The "Keep a widget on your desk" tip is tried by the launcher word `widgets` (`local:widgets`). |
 | `desk-seen` | a desk card other than Tips has been on the screen. agentd sees the Machine card present, a plan of two steps, a step that touches the system or a job on the desk, and remembers it in `tips.json`. |
 
 ### Placeholders
@@ -576,7 +576,7 @@ as for any full card, so the line above it never covers it.
 
 Tips is a calm widget (`calm=True` in `desk.py`): it has something true to show with nothing happening, so a person
 can keep it, and its row on the Widgets card has all three parts. The way it was built is the recipe in
-[DESK.md](DESK.md#adding-a-widget): the widget's declaration, a feed that reads `desk.kept`, and the sentences.
+[the desk page](architecture/desk.md#extending-it): the widget's declaration, a feed that reads `desk.kept`, and the sentences.
 
 | State | Card | What the card is |
 |---|---|---|

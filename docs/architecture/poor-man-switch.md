@@ -1,9 +1,9 @@
 # The poor man switch
 
 > **Status:** Partly shipped  
-> **Code:** `src/bombadil/rest.py`, `src/bombadil/finder.py`, `src/bombadil/providers.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/config.py`, `src/bombadil/appkit/native/agent.py`, `bin/bombadil`, `shell/AiCard.qml`, `shell/FoundChips.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `shell/Stone.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `iso/airootfs/etc/systemd/user/bombadil-agentd.service`  
+> **Code:** `src/bombadil/rest.py`, `src/bombadil/finder.py`, `src/bombadil/providers.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/config.py`, `src/bombadil/appkit/native/agent.py`, `bin/bombadil`, `shell/AiCard.qml`, `shell/FoundChips.qml`, `shell/PillState.qml`, `shell/StatusLine.qml`, `share/qml/Bombadil/Stone.qml`, `shell/QueueChips.qml`, `shell/SetupChips.qml`, `shell/DeskState.qml`, `shell/shell.qml`, `iso/airootfs/etc/systemd/user/bombadil-agentd.service`  
 > **Design:** [The poor man switch](../design/poor-man-switch-brief.md), [its page](../design/pages/the-poor-man-switch.html)  
-> **Verified:** 2026-11-09 against `main` at `ca7f80a`
+> **Verified:** 2026-11-09 against `main` at `ca7f80a`. On 2026-11-12, against `main` at `7d37bc5`, the place of the stone (`share/qml/Bombadil/Stone.qml`) and what the Tips card and app do while the AI rests were read in the code; the rest of the page was not read again.
 
 When Claude or Codex refuses an ask because the plan or the spending limit is used up, Bombadil treats that as a state of the machine and not as the failure of one ask. Most of the machine needs no model (apps and their processes, background jobs, the browser, files, the terminal, launcher words, `!` commands, undo, Details, Stop), so agentd says once that the AI is out, with the time the provider gave, holds every ask as a chip, offers things found on the computer for a sentence the AI cannot answer, and gives the person a switch to rest the AI by hand. In the code the state is `resting`. "The poor man switch" is the design's name and appears nowhere on screen, which says what is true: "Claude is at its limit until 15:00", "Claude is paused".
 
@@ -11,7 +11,7 @@ When Claude or Codex refuses an ask because the plan or the spending limit is us
 
 | Part of the design | Status | Where |
 |---|---|---|
-| Piece 1, Resting: the `resting` state, `rest.json`, the line, the buttons, the AI card, the waiting chips, the pause words | Shipped | `rest.py`, `providers.py`, `agentd.py`, `launcher.py`, `AiCard.qml`, `PillState.qml`, `Stone.qml` |
+| Piece 1, Resting: the `resting` state, `rest.json`, the line, the buttons, the AI card, the waiting chips, the pause words | Shipped | `rest.py`, `providers.py`, `agentd.py`, `launcher.py`, `AiCard.qml`, `PillState.qml`, `Stone.qml` (the kit's `Kit.Stone`) |
 | Piece 2, the finder | Shipped | `finder.py`, `FoundChips.qml` |
 | Piece 4, in part: the words `use opus` and `use sonnet` switch Claude's model by hand | Shipped | `launcher.MODEL_WORDS`, `AgentD._switch_model` |
 
@@ -98,7 +98,7 @@ A spending limit, or a limit with no time, offers one button, "Raise the limit".
 
 ### On the screen
 
-- **The stone.** `PillState.face` is `resting` while the state is `resting` or the closing line is of a turn the limit cut off, unless a turn runs or something needs the person. `Stone.qml` draws a whole grey outline over a faint grey fill with the `b` cut in the ground colour, and it stands still. Resting is not among the causes of the `needs` face.
+- **The stone.** `PillState.face` is `resting` while the state is `resting` or the closing line is of a turn the limit cut off, unless a turn runs or something needs the person. `Kit.Stone` (`share/qml/Bombadil/Stone.qml`) draws a whole grey outline over a faint grey fill with the `b` cut in the ground colour, and it stands still. Resting is not among the causes of the `needs` face.
 - **The line.** It is agentd's own `setup.line`, built by `rest.words` and the same in every voice: the shell holds none of the words. It shows for 12 s when the state flips, when the pill is summoned and when an ask has to wait. After that the empty field carries the state (`PillState.restHint`, the placeholder in `shell.qml`). A running turn, or a closing line with Undo, keeps the line and the resting line waits behind it. At most one button sits under it (`SetupChips`: `resume`, `raise` or `retry`).
 - **The AI card.** A click on the stone while no turn runs sends `ai` `get` and opens `AiCard.qml`: one row per AI with a switch, dimmed when it cannot be flipped (not signed in, not installed). The rows are agentd's, so a switch follows what agentd sends back and not the tap. Esc, a second click on the stone, typing or a turn starting puts it away. While a turn runs the stone is Stop.
 
@@ -296,7 +296,7 @@ Pieces 3 to 9 of [the brief](../design/poor-man-switch-brief.md#after-these-in-o
 | 8. A usage number on the card | Designed. |
 | 9. A small local model | Not built, by decision ([the brief](../design/poor-man-switch-brief.md#questions-and-the-answers)). |
 
-The [Tips and desk defaults brief](../design/tips-and-desk-defaults-brief.md) is design only: it has the Tips card not react to the AI resting, a model tip queue as the waiting chip while the AI rests, tips that need no AI run at once, and lists `resting` among the stone's faces.
+The [Tips and desk defaults brief](../design/tips-and-desk-defaults-brief.md) is built ([Tips](tips.md)) and keeps to this piece: the Tips card does not react to the AI resting (`DeskState.tipsWanted` holds while setup is `ready` or `resting`), the list in the Tips app does not change while it rests (`TIPS_AI_STATES` in `src/bombadil/agentd.py`), a tip's button only fills the pill, so a model tip queues as the waiting chip when the person sends it and a tip that needs no AI (a launcher word or a `!` line) runs at once, and `resting` is among the faces a tip scene may draw (`FACES` in `src/bombadil/tip_scene.py`).
 
 Gaps in what is built:
 

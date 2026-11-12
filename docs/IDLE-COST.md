@@ -105,7 +105,7 @@ under TCG even the resting bar and the compositor's slice of it are above 10%.
 ### A fixed-height bar costs nothing extra
 
 The bar is a layer surface as tall as what is in it, so a picture or a card that appears resizes it
-([`pictures.md`](pictures.md) lists what that does to the pill). Making it a fixed height would never resize
+([the cards and pictures page](architecture/cards-and-pictures.md#where-the-card-sits) lists what that does to the pill). Making it a fixed height would never resize
 it, at the price of a large transparent surface kept composited. The same measurements with the bar's
 `implicitHeight` fixed at 600 px and at the full 1080 px:
 

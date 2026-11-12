@@ -3,7 +3,7 @@
 > **Status:** In progress
 > **Code:** `docs/tools/check_docs.py`. This guide and the checker are on the documentation branch and not yet on `main`; the status becomes Shipped when that branch merges
 > **Design:** there is no brief for the docs; the pages that follow this guide are the examples, starting with [the architecture overview](../ARCHITECTURE.md)
-> **Verified:** 2026-11-08 against `main` at `9d5c729`, and for what `main` lacks (it has no `docs/tools/` and no `docs/contributing/`) against the documentation branch: the checker section by running `docs/tools/check_docs.py` as it stands on that branch, on sample files for every check, option and exit status it names; both tables against the files in the tree of that branch and the headings of the pages they name; the claim about code comments that name `MAIL.md` and `BRAIN.md` against `src/`, `bin/`, `share/`, `shell/`, `iso/`, `scripts/` and `tests/` on `main`; the status words against [the roadmap](../roadmap.md). The rules for style and diagrams are rules, not claims about code, and were not checked against anything.
+> **Verified:** 2026-11-12 against `main` at `7d37bc5` and the documentation branch, for what changed since 2026-11-08: the list of contract pages, by searching `src/`, `bin/`, `share/`, `shell/`, `iso/`, `scripts/`, `tests/` and `install/` on `main` for the comments that name each, and by reading the top of each for a status block; the owners named in the table of what to update against the pages in `docs/architecture/` and their Status blocks; the Tips rule against [TIPS.md](../TIPS.md#how-a-tip-is-added) and `CONTRIBUTING.md`; the idle-cost row against [IDLE-COST.md](../IDLE-COST.md#rules-for-adding-to-the-shell); the installed-OS row against the headings and Interfaces table of [the installed OS](../architecture/installed-os.md). Before that, 2026-11-08 against `main` at `9d5c729`, and for what `main` lacks (it has no `docs/tools/` and no `docs/contributing/`) against the documentation branch: the checker section by running `docs/tools/check_docs.py` as it stands on that branch, on sample files for every check, option and exit status it names; both tables against the files in the tree of that branch and the headings of the pages they name; the status words against [the roadmap](../roadmap.md). The rules for style and diagrams are rules, not claims about code, and were not checked against anything.
 
 Every pull request that changes what Bombadil does also changes the page that describes it, in the
 same pull request. This page says where each kind of fact lives, how a page is shaped, how to draw
@@ -35,7 +35,7 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 | `docs/reference.md` | every command, environment variable, file, socket, unit, configuration key, tool and event, one line each, with the page that owns the detail |
 | `docs/security-model.md` | what the agent can do, who can reach what, and what undo covers and does not |
 | `docs/forking.md` | making a fork: what carries Bombadil's identity, what to keep, recipes for the common changes |
-| `docs/MAIL.md`, `docs/BRAIN.md` | the contracts of Mail and of the brain: wire formats, states and rules. Comments in the code, the add-on and the tests point to `MAIL.md` by name, in more than twenty files. For the brain, one comment in `tests/test_brain_watch.py` points to the contract a replacement watcher has to keep, "The watcher's edge" in `BRAIN.md`. Both stay as flat files; the piece pages say how each piece works |
+| `docs/MAIL.md`, `docs/BRAIN.md`, `docs/CONNECT.md`, `docs/TIPS.md`, `docs/TIP-SCENES.md`, `docs/MOTION.md`, `docs/IDLE-COST.md` | the contracts: the wire formats, states and rules of Mail, of the brain, of connections and of Tips, the vocabulary of a tip's scene, the one switch for reduced motion, and what the desktop may cost at rest. Comments in the code, the add-on and the tests point to them by name: to `MAIL.md` in more than twenty files, to `CONNECT.md` in more than twenty, to `TIPS.md` in eleven, to `TIP-SCENES.md` in seven and to `MOTION.md` and `IDLE-COST.md` in three each. For the brain, one comment in `tests/test_brain_watch.py` points to the contract a replacement watcher has to keep, "The watcher's edge" in `BRAIN.md`. All stay as flat files; the piece pages say how each piece works |
 | `docs/contributing/` | how to develop, how to test the whole system in a VM, how to document, how to write a design brief |
 | `docs/glossary.md` | the project's own words |
 | `docs/known-issues.md` | defects that are still true |
@@ -48,7 +48,7 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 
 | You changed | Update |
 |---|---|
-| a command, a socket message, an event, a tool, a file, a unit, a configuration key or an environment variable | the page of the piece that owns it, and its row in `reference.md`. The owners: `architecture/agentd.md` for the agent socket, `architecture/mail.md` and `MAIL.md` for the Mail socket, `architecture/brain.md` and `BRAIN.md` for the brain, `architecture/browser-and-signin.md` for the browser panel and sign-in, `architecture/iso-and-install.md` and `contributing/development.md` for build and VM variables |
+| a command, a socket message, an event, a tool, a file, a unit, a configuration key or an environment variable | the page of the piece that owns it, and its row in `reference.md`. The owners: `architecture/agentd.md` for the agent socket, `architecture/mail.md` and `MAIL.md` for the Mail socket, `architecture/brain.md` and `BRAIN.md` for the brain, `architecture/browser-and-signin.md` for the browser panel and sign-in, `architecture/iso-and-install.md` and `contributing/development.md` for build and VM variables, `architecture/installed-os.md` for the installer's own switches and the files it writes on the disk |
 | an `os-mcp` tool | `architecture/os-mcp.md`, and the skill or system prompt if the agent needs to know |
 | a card type or a `system_map` subject | `architecture/cards-and-pictures.md` |
 | a kit component or a native binding | `architecture/app-kit.md` and the skill's `references/` |
@@ -61,7 +61,10 @@ and keep its [principles](../principles.md) without asking the people who wrote 
 | a restore point, how many are kept, or undo | `architecture/restore-points.md` |
 | the browser panel or provider sign-in | `architecture/browser-and-signin.md` |
 | Mail or the brain | `architecture/mail.md` with `MAIL.md`, `architecture/brain.md` with `BRAIN.md` |
-| the ISO, the installer or the boot flow | `architecture/iso-and-install.md` |
+| the ISO, the stick's installer or the boot flow | `architecture/iso-and-install.md` |
+| what an install writes on the disk (the layout, encryption, the carry list, the refresh, the GRUB screen, `bombadil remote`, `bombadil snapshot`) | `architecture/installed-os.md`, and `architecture/iso-and-install.md` for the part that runs on the stick |
+| a tip, its scene or the Tips app | `architecture/tips.md` with `TIPS.md` and `TIP-SCENES.md`. A change that adds something a person can ask ships its tip row and scene in the same pull request, behind a `needs` gate until its code is on `main` ([how a tip is added](../TIPS.md#how-a-tip-is-added)) |
+| a timer, a poll or an animation in the shell, or the stone's idle cost | `architecture/idle-cost.md` with `IDLE-COST.md`, and a scene in `tests/desktop/idle.py` when the feature has a state that can last ([the rules](../IDLE-COST.md#rules-for-adding-to-the-shell)) |
 | a test, or how the tests run | `contributing/development.md`, and the Tests part of the piece's page |
 | a smoke check, a mode of `scripts/test-vm.sh` or a VM tool | `contributing/vm-testing.md` and `contributing/development.md`; the check names are catalogued in `architecture/iso-and-install.md#the-smoke-test` |
 | anything that widens what the agent can do or reach | `security-model.md`, as well as the page of the piece |
@@ -81,7 +84,8 @@ The brief says what was meant; the page says what is true.
 A page about a piece, a guide or a list starts with a status block and one plain paragraph. A line that
 does not apply may be left out (`known-issues.md` has no Status line). The entry and index pages have no block: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`,
 `docs/README.md`, `docs/design/README.md` and every file in `docs/decisions/`, and so do the contract pages
-`MAIL.md` and `BRAIN.md`. `roadmap.md` and `history.md` have a `Covers` line and a `Verified` line instead.
+(`MAIL.md`, `BRAIN.md`, `CONNECT.md`, `TIPS.md`, `TIP-SCENES.md`, `MOTION.md` and `IDLE-COST.md`).
+`roadmap.md` and `history.md` have a `Covers` line and a `Verified` line instead.
 A design brief adds `Decided by` and sometimes `Pieces`, `Built differently` and a reading note
 ([how](design-briefs.md#the-top-of-a-brief)).
 
