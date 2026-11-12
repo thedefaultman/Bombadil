@@ -735,7 +735,7 @@ def test_shell_qml_takes_the_keyboard_for_the_card_without_toggling_it_away():
     pick = code.split("function focusedScreenName()", 1)[1].split("\n    }", 1)[0]
     assert pick.index("root.summonedOn") < pick.index("Hyprland.focusedMonitor")
     assert code.count("function focusedScreenName()") == 1
-    assert "const m = Hyprland.focusedMonitor" in code.split("function summon(text)", 1)[1].split("}", 1)[0]
+    assert "const m = Hyprland.focusedMonitor" in code.split("function summon(text, tip)", 1)[1].split("}", 1)[0]
 
 
 def test_shell_qml_has_the_card_open_only_while_the_pill_holds_the_keyboard():
@@ -764,3 +764,48 @@ def test_shell_qml_puts_the_picture_away_while_the_card_is_up():
     code = shell_code()
     binding = code.split('property: "suppressed"', 1)[1].split("\n", 1)[0]
     assert "value: win.capsule || widgetsCard.shown" in binding and "when: cardHost.item !== null" in binding
+
+
+# -- Tips on the card (desk.py declares it calm, so its row has all three parts) --
+
+def desk_rows():
+    """The rows agentd really sends: desk.py's own widgets, in its order."""
+    from bombadil import desk
+    return desk.Desk().snapshot()["widgets"]
+
+
+def test_the_card_lists_tips_last_with_its_three_parts_and_the_desks_own_words(card):
+    rows = desk_rows()
+    assert [r["id"] for r in rows] == ["now", "watching", "needs", "away", "machine", "tips"]
+    card.open(widgets=rows)
+    row = card.row("tips")
+    assert card.item("widgetsName", root=row).property("text") == "Tips"
+    assert card.item("widgetsQuestion", root=row).property("text") == "What can I ask it to do?"
+    # all three parts can be pressed: Keep is not faint, as it is on Now, Watching, Away and Needs you
+    faint = hexa(THEME["faint"])
+    assert [hexa(card.text_of(card.part("tips", s)).property("color")) != faint for s in STATES] == [True] * 3
+    assert card.rect(row)[1] > card.rect(card.row("machine"))[1]              # the last row, under Machine
+    assert all(not t["truncated"] and t["painted"] <= t["width"] + 0.01 for t in card.ask("texts"))
+
+
+def test_the_three_parts_of_tips_follow_the_desk_and_each_press_is_its_own_message(card):
+    raised = hexa(THEME["raised"])
+    for kw, state in (({}, "needed"), ({"kept": ["tips"]}, "keep"), ({"hidden": ["tips"]}, "off")):
+        card.open(widgets=desk_rows(), **kw)
+        assert hexa(card.part("tips", state).property("color")) == raised, state
+        assert [s for s in STATES if card.part("tips", s).property("color").alpha() == 255] == [state]
+    card.open(widgets=desk_rows())
+    for state in ("keep", "off"):
+        before = len(card.sent)
+        card.click(card.part("tips", state))
+        assert card.sent[before:] == [message("tips", state)], state
+    card.state(kept=["tips"], widgets=desk_rows())               # agentd's answer to the Keep
+    card.click(card.part("tips", "needed"))
+    assert card.sent[-1] == message("tips", "needed")
+    card.snap("tips-kept")
+
+
+def test_the_card_with_every_row_the_desk_lists_still_fits_a_small_screen(card):
+    card.open(widgets=desk_rows())
+    # the card rises above a 52 px pill: six rows, the title and "Reset the desk" must leave room on 720 px
+    assert card.card.height() + 52 + 100 < 720, card.card.height()

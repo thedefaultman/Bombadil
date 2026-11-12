@@ -124,7 +124,7 @@ def test_the_desk_and_its_widgets_are_in_the_names_the_pill_completes(home):
     rank = {"app": 0, "panel": 1, "widget": 2, "command": 3}
     assert kinds == sorted(kinds, key=rank.get)   # apps, then panels, widgets and commands
     widgets = {x["name"]: x for x in e if x["kind"] == "widget"}
-    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine"]
+    assert list(widgets) == ["now", "watching", "alive", "needs", "away", "machine", "tips"]
     assert widgets["needs"] == {"name": "needs", "title": "Needs you", "kind": "widget",
                                 "words": ["needs", "needs you"], "keep": True}
     assert "while you were away" in widgets["away"]["words"] and "route" in widgets["now"]["words"]
@@ -1187,10 +1187,9 @@ def test_the_tips_words_win_over_an_app_of_yours_but_not_over_a_core_command(hom
     assert launcher.match("passwords").kind == "app"
 
 
-def test_the_tips_words_win_over_the_desks_widget_words(home, monkeypatch):
-    """The desk gets a Tips widget in a later piece; "show tips" must still open the app, never the widget."""
-    monkeypatch.setitem(launcher.WIDGET_WORDS, "tips", ["tips", "tip"])
-    monkeypatch.setitem(launcher.WIDGET_TITLES, "tips", "Tips")
+def test_the_tips_words_win_over_the_desks_widget_words(home):
+    """Tips is a widget on the desk too: "show tips" opens the app, never the widget."""
+    assert launcher.WIDGET_WORDS["tips"] == ["tips"]
     for text in ("tips", "show tips", "open tips", "show the tips", "open the tips"):
         assert launcher.match(text, []).kind == "tips", text
     widget = launcher.match("hide tips", [])                  # the widget's own words keep their verbs
@@ -1198,10 +1197,52 @@ def test_the_tips_words_win_over_the_desks_widget_words(home, monkeypatch):
     assert launcher.match("put tips away", []).kind == "widget"
 
 
+def test_tips_words_are_the_apps_and_hide_tips_put_tips_away_and_keep_tips_are_the_desks(home):
+    """One word, two owners: what opens the Tips app is the app's (TIPS_COMMANDS) and a person who says it is never
+    told the card came back; what stops, puts away or keeps the card is the desk's (a widget action for Desk.apply)."""
+    for text in ("tips", "show tips", "open tips", "Show Tips", "open the tips", "show the tips"):
+        a = launcher.match(text, _apps(home))
+        assert (a.kind, a.verb, a.title) == ("tips", "open", "Tips"), text
+    for text, verb in (("hide tips", "hide"), ("put tips away", "hide"), ("put the tips away", "hide"),
+                       ("keep tips", "keep"), ("keep tips on the desk", "keep"), ("Keep Tips", "keep")):
+        a = launcher.match(text, _apps(home))
+        assert (a.kind, a.target, a.verb, a.title) == ("widget", "tips", verb, "Tips"), text
+    # the desk never answers an open verb for Tips, whichever way it is said: nothing local brings the card back
+    # but "keep tips", so "bring up tips" is a sentence for the agent and not "Put Tips on the desk."
+    assert launcher.match("bring up tips", _apps(home)) is None
+    assert launcher.match("show machine", _apps(home)).kind == "widget"       # the other widgets keep their verbs
+
+
+def test_the_one_table_of_the_tips_words_decides_which_widgets_the_desk_keeps_its_open_verbs_from(home):
+    assert launcher.APP_WIDGETS == {"tips"} == set(launcher.TIPS_COMMANDS) & set(launcher.WIDGET_WORDS)
+    assert launcher.match("show machine", []).verb == "open"
+
+
+def test_saying_tips_opens_the_app_and_changes_nothing_on_the_desk(home, brain_lx):
+    """"Put Tips away. Say tips to see them again." and "Say tips to open the app.": the word opens the app, where
+    every tip can be seen, and leaves the desk as it is, put away or no longer kept. The card is brought back by
+    "keep tips" alone."""
+    lx, state = brain_lx
+    for text in ("hide tips", "tips", "show tips", "open tips"):
+        done, _line = lx.run(launcher.match(text, []))
+        assert done is True, text
+    assert lx.desk_state.state_of("tips") == "off"
+    assert state["opened"] == ["tips", "tips", "tips"]
+    lx.run(launcher.match("keep tips", []))
+    assert lx.desk_state.state_of("tips") == "keep"
+    lx.run(launcher.match("hide tips", []))
+    lx.run(launcher.match("tips", []))
+    assert lx.desk_state.state_of("tips") == "needed"                         # still no longer kept, not put away
+
+
 def test_tips_is_offered_for_tab_by_its_one_word(home):
-    e = {x["name"]: x for x in launcher.entries(_apps(home))}
-    assert e["tips"] == {"name": "tips", "title": "Tips", "kind": "command", "words": ["tips"]}
-    assert "help" not in e                                                    # the other words are not completions
+    entries = launcher.entries(_apps(home))
+    [command] = [e for e in entries if e["name"] == "tips" and e["kind"] == "command"]
+    assert command == {"name": "tips", "title": "Tips", "kind": "command", "words": ["tips"]}
+    [widget] = [e for e in entries if e["name"] == "tips" and e["kind"] == "widget"]
+    assert widget == {"name": "tips", "title": "Tips", "kind": "widget", "words": ["tips"], "keep": True}
+    assert "open" not in widget                          # the app answers "show tips", so the hint is true
+    assert "help" not in {e["name"] for e in entries}                         # the other words are not completions
 
 
 def test_the_line_says_what_the_tips_word_does():
@@ -1334,7 +1375,11 @@ def test_messages_and_connections_are_offered_for_tab_once_each_as_commands(home
     for name, title in (("messages", "Messages"), ("connections", "Connections")):
         [e] = [e for e in entries if e["name"] == name]
         assert e == {"name": name, "title": title, "kind": "command", "words": [name]}
-    assert len({e["name"] for e in entries}) == len(entries)           # no name is offered twice
+    # no name is offered twice, except Tips, which is both the desk's widget (its verbs) and the app's command (the
+    # bare word): the pill takes the widget only after a verb and the command only without one
+    assert len({(e["name"], e["kind"]) for e in entries}) == len(entries)
+    assert sorted(e["kind"] for e in entries if e["name"] == "tips") == ["command", "widget"]
+    assert len({e["name"] for e in entries if e["name"] != "tips"}) == len(entries) - 2
 
 
 def test_the_line_says_what_the_connection_words_are_doing_and_what_went_wrong(home):

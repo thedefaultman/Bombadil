@@ -18,6 +18,7 @@ why it is built that way is in [`design/tips-and-desk-defaults-brief.md`](design
 | `shell/DeskStrips.qml`, `shell/DeskStrip.qml` | The chips beside the pill, in the bar's own window. |
 | `shell/DeskDrag.qml` | The handle a card's title and a chip share: a left-button drag that says where the pointer is, in screen coordinates, and when it lets go. |
 | `shell/DeskCard.qml`, `shell/NowCard.qml`, `shell/RowsCard.qml` | The faces: the shared card chrome, the route (Now), and a card of rows (Watching, Needs you, Away, Machine; a row is a dot, a meter, a stacked meter or plain text). |
+| `shell/TipsCard.qml` | The Tips face: a still picture, one line and a button, for a new person's first week. How it is drawn, when it is there and what its button does is in [`TIPS.md`](TIPS.md#the-tips-card-on-the-desk). |
 | `shell/WidgetsCard.qml` | The card the word "widgets" opens above the pill, in the AI card's shape: one row per widget with its three-part control (Keep, When needed, Off), and "Reset the desk". It draws what `DeskState` says and changes nothing itself. |
 | `shell/DeskTheme.js` | The desk's colours and sizes. Each is a token of the app kit's `Theme.qml`; `tests/test_theme.py` fails when one drifts. |
 | `shell/HyprCover.qml` | Where the windows are, from Hyprland, so cards can get out of their way. |
@@ -67,18 +68,21 @@ drops the rest.
 | `{"type":"dev","sessions":[...],"attention":[...]}` | agentd to shell | The coding sessions, and the keys that want the person, in Tab's order. Needs you is those keys drawn as rows. |
 | `{"type":"machine","present":...,"asked":...,"calm":...,"why":...,"strip":{...},"rows":[...]}` | agentd to shell | The Machine card, replaced whole. `present: false` takes it away. `calm: true` is a kept Machine at rest ("The machine is fine"); the shell draws it as it draws every Machine card. See [the Machine card](#the-machine-card). |
 | `{"type":"away","since":...,"count":...,"why":...,"rows":[...]}` | agentd to shell | The Away card, replaced whole. `rows: []` takes it away. See [the Away card](#the-away-card). |
+| `{"type":"tips","present":...,"card":{...}}` | agentd to shell | The Tips card, replaced whole, sent only when it changed. `present: false` takes it away. See [`TIPS.md`](TIPS.md#the-tips-card-on-the-desk). |
 | `{"type":"desk","folded":...,"hidden":...,"stripped":...,"kept":...,"rails":...,"order":...,"widgets":[...]}` | agentd to shell | The desk's own state. `stripped` lists the widgets folded by hand, `kept` the ones kept on the desk at rest, and `widgets` the rows of the Widgets card (`{id, title, question, can}`, where `can` lists the states the widget may take). Whatever it leaves out stays as it was. |
 | `{"type":"widgets","op":"open"}` | agentd to shell | The person typed "widgets" (or the agent asked): open the Widgets card and take the keyboard for it. Every time, even with the card up. There is no message to close it. |
 | `{"type":"desk","op":"fold"\|"unfold"\|"hide"\|"show"\|"move",...}` | shell to agentd | A change. agentd applies it, saves it, and answers with the new `desk` state; the shell never changes its own state first. `fold` with no widget is the word "desk"; with a widget it puts only that card on its strip. |
-| `{"type":"desk","op":"set","widget":...,"state":"keep"\|"needed"\|"off"}`, `{"type":"desk","op":"reset"}` | shell to agentd | A press on the Widgets card. Answered with the new `desk` state like any change, and with one sentence on the line above the pill (a `local` event, `phase: "done"`), because a press has no gesture to show what it did: "Machine stays on the desk.", or a refusal ("Needs you cannot be hidden."). |
+| `{"type":"desk","op":"set","widget":...,"state":"keep"\|"needed"\|"off"}`, `{"type":"desk","op":"reset"}` | shell to agentd | A press on the Widgets card, or on the Tips card's x (which sends `set` to `off` for `tips`: Off at once, kept or not). Answered with the new `desk` state like any change, and with one sentence on the line above the pill (a `local` event, `phase: "done"`), because a press has no gesture to show what it did: "Machine stays on the desk.", or a refusal ("Needs you cannot be hidden."). |
 | `{"type":"jobs","op":"stop"\|"dismiss"\|"why","id":...}`, `{"type":"dev","action":"open","key":...}`, `{"type":"vitals","op":"open","row":"disk"}` | shell to agentd | A press on a row's button or its small x, or on a Machine row that opens something. None of them reaches the model. |
 | `{"type":"vitals","op":"get"}` | shell to agentd | Asks for the Machine card again. |
 | `{"type":"away","op":"get"\|"seen"}` | shell to agentd | `get` asks for the Away card again; `seen` says the person has looked at it (a tap on it), so it can go. Neither reaches the model. |
+| `{"type":"tips","op":"turn"\|"open",...}`, `{"type":"summon","text":...,"tip":true,"id":...}` | shell to agentd | The Tips card's arrows and wheel, its title, picture and "All tips ›", and its button. A press on the button puts the words in the pill (agentd broadcasts the summon); nothing runs. |
 
 ## Faces, slots and right of way
 
 A widget is *present* when it has something to say (Now while a plan or a system step runs, Watching
-while anything counts, Needs you when two or more sessions wait). A present widget has one of three faces:
+while anything counts, Needs you when two or more sessions wait, Tips in a new person's first week, or always
+when it is kept, and only once the shell is calm: [`TIPS.md`](TIPS.md#when-it-is-there)). A present widget has one of three faces:
 
 - **full**: a card in its rail. Slots stack from the pill outward, nearest first, in the rail's order. A
   card whose full height does not fit the room left, and everything above it, becomes a strip.
@@ -143,7 +147,7 @@ is kept in `desk.toml` and so survives every boot. A widget is in one of three s
 | off | Off | Put away: not on the desk, and it does not raise itself either. | `hidden = [...]` |
 
 **Which widget can be which.** Only a widget with a calm face, one that has something true to show while
-nothing is happening, can be kept (`Widget.calm` in `desk.py`). Today that is Machine; Tips will be the second.
+nothing is happening, can be kept (`Widget.calm` in `desk.py`). Today that is Machine and Tips.
 Now and Watching have nothing to show at rest, so they offer *When needed* and *Off*. Needs you offers only
 *When needed*: it is the one place two sessions' requests can be answered together, so it cannot be put away.
 Away offers the same two, now that it has a face. Alive has none yet and is not listed (`Widget.listed`). `desk.can(widget)` says the states a
@@ -158,7 +162,11 @@ nothing.
 |---|---|---|
 | `keep machine`, `keep the machine`, `keep machine on the desk`, `keep machine on my desk` | "Machine stays on the desk." (again: "Machine is already kept on the desk."; a hand-folded card is unfolded: "Unfolded Machine.") | Machine kept, and brought back if it was put away |
 | `keep watching`, `keep now`, `keep needs you`, `keep away` | "Watching shows only while something counts." (and the like: each widget says when it does show; one that is put away says "Watching is put away. Say show watching to bring it back.") | nothing changes, nothing is saved |
+| `keep tips`, `keep the tips`, `keep tips on the desk` | "Tips stays on the desk." (again: "Tips is already kept on the desk."; a card put away is back) | Tips kept: the card after every boot, whatever the first week says ([A kept Tips card](TIPS.md#a-kept-tips-card)) |
 | `hide machine` while it is kept | "Machine is no longer kept. It still comes up when something needs a look." | back to *When needed* |
+| `hide tips` while it is kept | "Tips is no longer kept. Say tips to open the app." | back to *When needed*: the card shows in the first week and goes after it |
+| `hide tips`, the x on the card | "Put Tips away. Say tips to see them again." (the x is one press, kept or not) | *Off* |
+| `tips`, `show tips`, `open tips` | not the desk's: they open the Tips app (`TIPS_COMMANDS` in `launcher.py` answers them first, and `APP_WIDGETS`, made from it, keeps the desk out of the open verbs; the card comes back by `keep tips` or the Widgets card, never by these) | nothing changes |
 | `hide machine` again | "Put Machine away." | *Off*; its warnings stop too |
 | `show machine` | "Here is the machine." (+ " It is back on the desk." if it was put away) | raises the card for 30 s, as before |
 | `widgets` (also `my widgets`, `show widgets`, `open the widgets`) | "Here are the widgets." | opens the Widgets card |
@@ -188,6 +196,8 @@ Is the machine in trouble?
 Now                                  When needed · Off   (Keep drawn faint)
 What is it doing, and why?
 ...
+Tips                         Keep · When needed · Off
+What can I ask it to do?
 Reset the desk
 ```
 
@@ -241,6 +251,12 @@ sequenceDiagram
 - **What the agent is told.** A press is a change at the desk like a drag: the next turn's prompt says "at the
   desk: Machine stays on the desk." and the history keeps the line.
 
+**What a kept Tips is.** Tips is the second calm widget. Its feed is agentd's own: `Tips(kept=lambda: "tips" in
+self.desk.kept)` makes `present` true whatever the first week says, and a change of the desk makes Tips look again,
+so keeping, unkeeping and putting away reach the shell as one `tips` message. The shell has no new behaviour for it
+either: the card is the same still card, and it first appears only once the shell is calm. What the card shows,
+turns through and does at rest is in [TIPS.md](TIPS.md#a-kept-tips-card).
+
 **What a kept Machine is.** The Machine card, with its message arriving at rest. The shell has no new behaviour
 for it: `present` and the rows decide, so a kept Machine takes the right rail's slot, folds to its strip under a
 window and goes under a full-screen window like every card. agentd keeps `Vitals` in step with the desk
@@ -257,8 +273,8 @@ Machine is sampled from the first bar after boot. See [A kept Machine at rest](#
 - *A double press sends two messages.* agentd answers the second as "already", and what is raised follows its
   answer.
 - *Its motion is the design's tokens,* as the AI card's: it fades (`Theme.normal`) and its height eases (`Theme.fast`), so under reduced motion ([MOTION.md](MOTION.md)) it appears and goes at once.
-- *Only Machine can be kept today.* Tips will make it two: its widget is declared with `calm=True` and a
-  `quiet` and `then` sentence, and its row appears on the card by itself.
+- *Only Machine and Tips can be kept today.* Each is declared with `calm=True` and a `then` sentence, has a
+  feed that reads `desk.kept` (the vitals loop, and Tips in agentd), and its row appears on the card by itself.
 - *There is no word for "reset the desk".* It is the card's footer, and the agent's `reset` op.
 
 ## The Machine card
@@ -552,13 +568,17 @@ the real shell, so the first limit below is about Hyprland alone:
    once it is no longer kept: "Machine is no longer kept. It still comes up when something needs a look."), and
    for one that cannot, `quiet` (when it does show: the answer to "keep watching"). A calm widget also needs a
    feed that reads `desk.kept` and says its calm face at rest, as agentd does for Machine (`vitals.keep(...)` in
-   `_vitals_kick`); declaring `calm=True` alone puts "Keep" on its row and nothing on the desk. `listed=False`
+   `_vitals_kick`) and for Tips (`Tips(kept=...)`, which also looks again when the desk changes); declaring
+   `calm=True` alone puts "Keep" on its row and nothing on the desk. A widget whose word is also an app's ("tips")
+   keeps `show` and `open` out of the desk's words (`APP_WIDGETS` in `launcher.py`, made from the app's own table, `TIPS_COMMANDS`); its `hide` and `keep` stay. `listed=False`
    keeps a widget with no face yet off the Widgets card. The card, the words and `can` follow from those fields.
 2. Give `DeskState` a model for it (`machineModel` and `awayModel` are the examples to copy) filled from one
    agentd message, and say when it is present. A model with no rows is a widget that is not there.
 3. Say how tall its full face is in `heightOf`, and give it a strip in `_stripOf`.
 4. Draw it: reuse `RowsCard` (rows with a dot or a meter, a button, a small x) or write a card on
-   `DeskCard`, and add its component to the loader in `DeskRail.qml`.
+   `DeskCard` (`TipsCard` is the example of a card with a picture and its own controls), and add its
+   component to the loader in `DeskRail.qml`. A widget that has a press on its strip says so in
+   `DeskState.stripClicked`.
 5. Test it offscreen in `tests/test_desk_qml.py` (the harness builds the real `PillState`, `DeskState`,
    both rails and both strips in one window) and, for what only a real compositor shows, in
    `tests/desktop/driver.py`.
@@ -568,6 +588,9 @@ the real shell, so the first limit below is about Hyprland alone:
 - `pytest tests/test_desk.py tests/test_desk_qml.py tests/test_desk_cards_qml.py`: the desk's state file
   and its words, and the whole desk drawn offscreen (set `BOMBADIL_SCREENS=<dir>` to save pictures).
   They need PySide6 and, in a bare container, the system libraries Qt loads (libEGL, libxkbcommon).
+- `pytest tests/test_tips_card_qml.py`: the Tips card in the real rail and its presence rules, first week and
+  kept (see [`TIPS.md`](TIPS.md#testing-the-card)); `tests/test_agentd_tips.py` has agentd's `present` follow the
+  desk, and `tests/test_widgets_card_qml.py` Tips's row on the Widgets card.
 - Your desk: `tests/test_desk_keep.py` (keep, set, reset, the file, a hand-edited `kept`, a random run of
   every op that must leave a consistent desk that round-trips, and threads), `tests/test_launcher_keep.py` (the
   words, and every sentence that must stay the agent's), `tests/test_agentd_desk_keep.py` (a press on the card

@@ -37,6 +37,7 @@ Window {
     property var sent: []
     property int screens: 1
     property var summons: []
+    property var summonTips: []
     property int handOffs: 0
     property int keys: 0
     // What shell.qml does with a line from agentd (lists arrive as they do from a parsed line).
@@ -45,7 +46,7 @@ Window {
         id: pillState
         objectName: "pill"
         onOutgoing: msg => w.sent = w.sent.concat([msg])
-        onSummoned: text => w.summons = w.summons.concat([text])
+        onSummoned: (text, tip) => { w.summons = w.summons.concat([text]); w.summonTips = w.summonTips.concat([tip]) }
         onHandOff: w.handOffs += 1
         onCardKeys: w.keys += 1
     }
@@ -490,6 +491,29 @@ def test_keep_is_a_launcher_word_of_the_widgets_on_the_card_and_of_nothing_else(
     assert bar.call("completion", "keep cal") == "" and bar.call("completion", "keep wat") == "ching"
 
 
+@pytest.mark.parametrize("words", [
+    "Show Tips.", "keep tips on the desk",
+    *[f"{verb} {word}" for word in sorted({w for ws in launcher.WIDGET_WORDS.values() for w in ws})
+      for verb in ("show", "open", "close", "hide", "keep")],
+])
+def test_the_pill_hints_a_widget_word_only_when_the_launcher_answers_it(bar, words):
+    """"show tips" is the Tips app's word and "hide tips" and "keep tips" are the desk's. Until the app answers it,
+    the launcher leaves "show tips" to the agent, and a hint "Enter opens Tips" over it would promise what does not
+    happen. The entries say which (`open: false`), so the pill and the launcher cannot disagree."""
+    hinted = bar.call("exact", words)
+    answered = launcher.match(words, []) is not None
+    assert (hinted != "") == answered, (words, hinted, answered)
+
+
+def test_a_widget_whose_open_words_are_the_apps_still_completes_with_the_desks_verbs(bar):
+    entry = next(e for e in launcher.entries([]) if e["name"] == "tips")
+    app_answers = launcher.match("show tips", []) is not None
+    assert ("open" in entry) is not app_answers            # `open: false` only while nothing answers "show tips"
+    assert bar.call("completion", "hide ti") == "ps" and bar.call("completion", "keep ti") == "ps"
+    assert (bar.call("completion", "show ti") == "ps") is app_answers
+    assert (bar.call("completion", "open ti") == "ps") is app_answers
+
+
 def test_the_bar_loads_without_qml_warnings(bar):
     bar.call("submit", "hello")
     bar.send(kind="turn_start", turn=1, prompt="hello")
@@ -585,6 +609,134 @@ def test_a_summon_can_carry_words_for_the_pill(bar):
     summons = bar.win.property("summons")
     summons = summons.toVariant() if hasattr(summons, "toVariant") else summons
     assert list(summons) == ["", "About ~/Documents/lease.pdf: "]
+
+
+def _summons(bar, name="summons"):
+    value = bar.win.property(name)
+    return list(value.toVariant() if hasattr(value, "toVariant") else value)
+
+
+def test_a_summon_says_whether_it_is_a_tips_button(bar):
+    """agentd broadcasts a tip's button as a summon with tip true; the Brain's "Ask about this" and Super carry
+    none. Only the JSON true is a tip."""
+    bar.send(type="summon")
+    bar.send(type="summon", text="About ~/Documents/lease.pdf: ")
+    bar.send(type="summon", text="Make me a ticketing app", tip=True)
+    bar.send(type="summon", text="Make me a ticketing app", tip="yes")
+    bar.send(type="summon", text="Make me a ticketing app", tip=1)
+    assert _summons(bar) == ["", "About ~/Documents/lease.pdf: ", "Make me a ticketing app",
+                             "Make me a ticketing app", "Make me a ticketing app"]
+    assert _summons(bar, "summonTips") == [False, False, True, False, False]
+
+
+@pytest.mark.parametrize("current, text, tip, want", [
+    # an empty pill takes whatever it is given, with the cursor at the end (the bar puts it there)
+    ("", "Make me a ticketing app", True, "Make me a ticketing app"),
+    ("", "Make me a ticketing app", False, "Make me a ticketing app"),
+    ("   ", "How am I connected?", True, "How am I connected?"),
+    # a tip's words never replace what the person typed and has not sent
+    ("install docker and", "Make me a ticketing app", True, "install docker and"),
+    ("a", "How's the machine?", True, "a"),
+    # the Brain's "Ask about this" (no tip) still replaces them, as it always did
+    ("install docker and", "About ~/Documents/lease.pdf: ", False, "About ~/Documents/lease.pdf: "),
+    # a button that ends in an ellipsis fills the words before it and a space for the person's detail
+    ("", "In Tickets, add…", True, "In Tickets, add "),
+    ("", "In Tickets, add …", True, "In Tickets, add "),
+    ("", "In Tickets, add… ", True, "In Tickets, add "),
+    ("typed", "In Tickets, add…", True, "typed"),
+    ("", "In Tickets, add…", False, "In Tickets, add…"),        # only a tip's words are read as an ask to finish
+    # nothing to put in: the pill is as it was
+    ("typed", "", True, "typed"),
+    ("", "", False, ""),
+])
+def test_what_a_summon_puts_in_the_pill(bar, current, text, tip, want):
+    assert bar.call("summonText", current, text, tip, "") == want
+
+
+@pytest.mark.parametrize("current, text, tip_words, want", [
+    # words a tip's button put there and nobody changed are not the person's: the next tip replaces them
+    ("Make me a ticketing app", "How am I connected?", "Make me a ticketing app", "How am I connected?"),
+    ("In Tickets, add ", "How's the machine?", "In Tickets, add ", "How's the machine?"),
+    ("Make me a ticketing app", "In Tickets, add…", "Make me a ticketing app", "In Tickets, add "),
+    # one more word and they are the person's, kept as ever
+    ("Make me a ticketing app for four", "How am I connected?", "Make me a ticketing app",
+     "Make me a ticketing app for four"),
+    ("In Tickets, add a due date", "How am I connected?", "In Tickets, add ", "In Tickets, add a due date"),
+    # words typed in an empty pill, or after a tip's were sent or dropped, are kept: nothing remembered matches
+    ("install docker and", "How am I connected?", "", "install docker and"),
+    ("install docker and", "How am I connected?", "Make me a ticketing app", "install docker and"),
+    ("a", "How am I connected?", "Make me a ticketing app", "a"),
+    # no memory at all (an older caller): as before
+    ("Make me a ticketing app", "How am I connected?", None, "Make me a ticketing app"),
+])
+def test_a_tip_replaces_the_words_an_earlier_tip_put_there_and_never_the_ones_typed(bar, current, text, tip_words, want):
+    assert bar.call("summonText", current, text, True, tip_words) == want
+
+
+def _draft(bar, current, text, tip, tip_words):
+    """What the pill takes from a summon, as shell.qml applies it: (the text, whether the cursor stays, what a tip
+    put there)."""
+    got = bar.call("draftFor", current, text, tip, tip_words)
+    got = got.toVariant() if hasattr(got, "toVariant") else got
+    return got["text"], got["kept"], got["tipWords"]
+
+
+def test_a_run_of_tip_buttons_over_an_empty_pill_then_typing_then_another_button(bar):
+    """The hand-off over time, as the bar keeps it: the pill's text and what a tip put in it (`tipWords`). A tip's
+    button fills an empty pill with the cursor at the end; the next button replaces those words while nobody has
+    changed them; the person's own word makes them theirs, and then no button touches them (a typed draft is never
+    lost); an app's summon (the Brain's "Ask about this") still replaces whatever is there."""
+    text, tip_words = "", ""
+    # a press in an empty pill: the words, the cursor at the end, remembered as the tip's
+    text, kept, tip_words = _draft(bar, text, "Make me a ticketing app", True, tip_words)
+    assert (text, kept, tip_words) == ("Make me a ticketing app", False, "Make me a ticketing app")
+    # the card turned and its button pressed, nothing typed: the new words, not a silent press
+    text, kept, tip_words = _draft(bar, text, "How am I connected?", True, tip_words)
+    assert (text, kept, tip_words) == ("How am I connected?", False, "How am I connected?")
+    # the person adds a word: the pill's words are theirs now
+    text += " today"
+    text, kept, tip_words = _draft(bar, text, "Make me a ticketing app", True, tip_words)
+    assert (text, kept, tip_words) == ("How am I connected? today", True, "")
+    text, kept, tip_words = _draft(bar, text, "In Tickets, add…", True, tip_words)       # and again: still theirs
+    assert (text, kept, tip_words) == ("How am I connected? today", True, "")
+    # the Brain's "Ask about this" is not a tip: it replaces them, and what it put is nobody's tip words
+    text, kept, tip_words = _draft(bar, text, "About ~/Documents/lease.pdf: ", False, tip_words)
+    assert (text, kept, tip_words) == ("About ~/Documents/lease.pdf: ", False, "")
+    # and a button after that keeps it, because it is not a tip's
+    text, kept, tip_words = _draft(bar, text, "How am I connected?", True, tip_words)
+    assert (text, kept, tip_words) == ("About ~/Documents/lease.pdf: ", True, "")
+
+
+def test_a_tip_button_over_a_draft_the_person_typed_changes_nothing_not_even_the_cursor(bar):
+    """The person typed before they pressed: the draft stays whole, the cursor stays where it was, and nothing is
+    remembered as the tip's (so a second press does not take it either)."""
+    for typed in ("install docker and", "a", "In Tickets, add a due date"):
+        assert _draft(bar, typed, "Make me a ticketing app", True, "") == (typed, True, "")
+        assert _draft(bar, typed, "In Tickets, add…", True, "") == (typed, True, "")
+        # what an earlier tip put there is not what is in the pill now
+        assert _draft(bar, typed, "How am I connected?", True, "Make me a ticketing app") == (typed, True, "")
+    # a button ending in an ellipsis fills the words before it and a space, for the person's detail
+    assert _draft(bar, "", "In Tickets, add…", True, "") == ("In Tickets, add ", False, "In Tickets, add ")
+    # and the next button, over those untouched words, replaces them
+    assert _draft(bar, "In Tickets, add ", "How am I connected?", True, "In Tickets, add ") == (
+        "How am I connected?", False, "How am I connected?")
+    # nothing to put in: nothing changes, and what a tip put there is still the tip's
+    assert _draft(bar, "Make me a ticketing app", "", True, "Make me a ticketing app") == (
+        "Make me a ticketing app", True, "Make me a ticketing app")
+
+
+def test_the_bar_hands_the_tip_flag_to_the_pill_and_takes_the_draft_through_it():
+    """shell.qml is Quickshell's, so it cannot load offscreen: the plumbing that must be there is read from its
+    source, and what it decides is PillState.draftFor (tested above). The tip's flag goes from the pill's summon to
+    the draft before the draft (whose change takes it), the draft is taken through draftFor, the pill's text and
+    cursor follow what it says, and the pill remembers what a tip put in it."""
+    shell = (SHELL / "shell.qml").read_text()
+    assert "onSummoned: (text, tip) => root.summon(text, tip)" in shell
+    assert shell.index("root.draftTip = tip === true") < shell.index("root.draft = text")
+    assert "pillState.draftFor(input.text, root.draft, root.draftTip, win.tipWords)" in shell
+    assert "input.text = taken.text" in shell
+    assert "if (!taken.kept) input.cursorPosition = input.text.length" in shell
+    assert "win.tipWords = taken.tipWords" in shell
 
 
 def _hover_line(bar):

@@ -23,6 +23,7 @@ ShellRoot {
     // The screen whose pill has the keyboard after a tap on Super ("" = none).
     property string summonedOn: ""
     property string draft: ""          // words an app put in the pill, taken by the summoned pill
+    property bool draftTip: false      // they are a tip's: they wait in an empty pill and never replace typed words
     readonly property bool hyprland: !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
     // The screens that show the card and the welcome: the ones that had the focus when they
     // arrived ("" = every screen).
@@ -44,7 +45,7 @@ ShellRoot {
     PillState {
         id: pillState
         onOutgoing: msg => root.write(msg)
-        onSummoned: text => root.summon(text)
+        onSummoned: (text, tip) => root.summon(text, tip)
         onHandOff: root.release()
         onAiOpenChanged: if (aiOpen) deskState.closeWidgets()   // one card over the pill at a time
         onAsked: root.summonKeep()
@@ -246,13 +247,14 @@ ShellRoot {
 
     // Super tapped (Hyprland's global shortcut, or `bombadil pill` relayed by agentd): the pill on
     // the focused screen takes the keyboard. A second tap gives it back.
-    function summon(text) {
+    function summon(text, tip) {
         const m = Hyprland.focusedMonitor
         const name = m ? m.name : (Quickshell.screens.length > 0 ? Quickshell.screens[0].name : "")
         root.cardKeys = false
         if (text) {
             // Words to finish: always take the keyboard, never toggle it away. A card holding the keys
             // here gives them to the pill.
+            root.draftTip = tip === true
             root.draft = text
             root.summonedOn = name
             if (pillState.personaAsk !== null) pillState.focusPill()
@@ -416,10 +418,16 @@ ShellRoot {
                 target: pillState
                 function onTyping() { if (win.summoned) idle.restart() }
             }
+            // What a tip's button put in this pill, to tell those words from the person's own when the next one comes.
+            property string tipWords: ""
             function takeDraft() {
                 if (!summoned || root.draft === "") return
-                input.text = root.draft
-                input.cursorPosition = input.text.length
+                // A tip's words wait in an empty pill and leave typed words alone (the person's draft is never lost);
+                // words an earlier tip put there and nobody changed are replaced (PillState.draftFor decides).
+                const taken = pillState.draftFor(input.text, root.draft, root.draftTip, win.tipWords)
+                input.text = taken.text
+                if (!taken.kept) input.cursorPosition = input.text.length
+                win.tipWords = taken.tipWords
                 root.draft = ""
             }
             Connections {

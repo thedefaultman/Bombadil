@@ -75,8 +75,9 @@ BRAIN_COMMANDS = {
 }
 # The Tips app (a kit app that ships with Bombadil, docs/TIPS.md): what to ask, shown in action. Checked after
 # the core commands and before app names and the desk's widget words, so "show tips" opens the app whatever an
-# app of yours is called and whatever widget Tips becomes on the desk. Only these whole sentences: "help me write
-# a poem" and "what can you do about my disk" are for the agent.
+# app of yours is called and although Tips is also a widget on the desk (APP_WIDGETS below keeps the desk out of
+# its open words). Only these whole sentences: "help me write a poem" and "what can you do about my disk" are for
+# the agent.
 TIPS_COMMANDS = {
     "tips": ["tips", "the tips", "open tips", "show tips", "open the tips", "show the tips", "what can you do",
              "what can I ask", "help"],
@@ -164,6 +165,11 @@ HIDE_VERBS = ("hide", "put away")
 WIDGET_VERBS = ((("open", "show", "bring up"), "open"), (("close",), "close"), (("hide", "put away"), "hide"),
                 (("keep",), "keep"))
 KEEP_TAILS = (" on the desk", " on my desk")
+# A widget whose name is also the Tips app's command ("tips" is both): its open words are the app's, so "tips",
+# "show tips" and "open tips" open the app (TIPS_COMMANDS, the one table of them) and the desk never answers an open
+# verb for it. Only "hide tips", "put tips away" and "keep tips" are desk words. Saying "tips" never brings a card
+# that was put away back: the card comes back by "keep tips" (or a press on the Widgets card).
+APP_WIDGETS = {w for w in WIDGETS if w in TIPS_COMMANDS}
 # Not offered as completions: Tab should never land on these by accident, and a question
 # is typed rather than completed.
 NO_COMPLETE = {"restart", "shutdown", "lock", "stop", "volume_up", "volume_down", "mute", "unmute",
@@ -484,7 +490,7 @@ def _widget_action(t: str, app_list: list) -> Action | None:
             widget = _lookup(word, {w: WIDGET_WORDS[w] for w in WIDGET_WORDS if WIDGETS[w].listed})
         else:
             widget = _lookup(word, WIDGET_WORDS) if word is not None else None
-        if widget is not None:
+        if widget is not None and not (verb == "open" and widget in APP_WIDGETS):
             return Action("widget", widget, verb, WIDGET_TITLES[widget])
     if t.startswith("put ") and t.endswith(" away"):
         word = t[4:-5].removeprefix("the ")
@@ -507,8 +513,14 @@ def entries(app_list: list | None = None, dev_names=None) -> list[dict]:
              "kind": "panel", "words": words} for p, words in PANEL_WORDS.items()]
     # `keep`: the ones "keep ..." is a launcher word of (the widgets on the Widgets card; "keep watching" is answered
     # here, and says when Watching shows), so the pill can hint and complete it as it does "show machine".
-    out += [{"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
-            for w, words in WIDGET_WORDS.items()]
+    for w, words in WIDGET_WORDS.items():
+        entry = {"name": w, "title": WIDGET_TITLES[w], "kind": "widget", "words": words, "keep": WIDGETS[w].listed}
+        # "show tips" and "open tips" are the Tips app's words, not the desk's. Should nothing answer them, the pill
+        # must not hint or complete them as it does "show machine", so the entry says so; while the app answers
+        # them (TIPS_COMMANDS) the flag is absent and the hint is true.
+        if w in APP_WIDGETS and match(f"show {words[0]}", []) is None:
+            entry["open"] = False
+        out.append(entry)
     for table in (CORE_COMMANDS, BRAIN_COMMANDS, TIPS_COMMANDS, UTILITY_COMMANDS):
         out += [{"name": c, "title": words[0].capitalize(), "kind": "command", "words": words[:1]}
                 for c, words in table.items() if c not in NO_COMPLETE]

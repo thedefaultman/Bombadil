@@ -316,6 +316,17 @@ def test_title_and_why_elide_inside_the_card_and_the_ask_is_never_markup(cards):
     assert abs(title.property("contentWidth") - painted) < 2      # markup would have been swallowed
 
 
+def test_the_why_line_is_proportional_unless_the_card_asks_for_tabular_figures(cards):
+    (card,) = cards.show(("now", "now", now()))
+    why = cards.one(card, "nowWhy")
+    tnum = QtGui.QFont.Tag("tnum")
+    assert why.property("font").featureValue(tnum) != 1 and not card.property("whyFigures")
+    cards.set(card, whyFigures=True)                     # Tips: "1 of 6" and "2 of 6" are as wide
+    assert why.property("font").featureValue(tnum) == 1
+    cards.set(card, whyFigures=False)
+    assert why.property("font").featureValue(tnum) != 1
+
+
 def test_a_tap_on_the_title_reports_and_a_tap_elsewhere_does_not(cards):
     (card,) = cards.show(("now", "now", now()))
     cards.click(cards.one(card, "nowWhy"))
