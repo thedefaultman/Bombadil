@@ -733,7 +733,8 @@ say "NOTE $(tr '\n' ' ' </tmp/smoke.idle-cpu.log)"
 # in files other packages own.
 # prints WANT COMMAND...: the command prints WANT (is-enabled exits non-zero for "disabled", so its words are read).
 prints() { local want=$1 got; shift; got=$("$@" 2>&1); echo "$got"; [[ "$got" == "$want" ]]; }
-owned_by_bombadil() { local o; o=$(pacman -Qoq "$1" 2>&1); echo "$1: $o"; [[ "$o" == bombadil ]]; }
+# pacman -Qo warns on stderr about sync databases the image deleted; only its answer counts.
+owned_by_bombadil() { local o; o=$(pacman -Qoq "$1" 2>/dev/null); echo "$1: $o"; [[ "$o" == bombadil ]]; }
 package_complete() { local o rc; o=$(pacman -Qk bombadil 2>&1); rc=$?; echo "$o"; (( rc == 0 )) && grep -q ' 0 missing files' <<<"$o"; }
 # The old image linked every command into the local bin directory. The path is written in two parts because a test
 # holds that nothing the package ships names that directory.
