@@ -57,15 +57,51 @@ The install **erases the whole disk you pick**. There is no dual boot: if Window
 
 ### 1. Download the image
 
-The image is one file, `bombadil-YYYY.MM.DD-x86_64.iso`, with a small checksum file beside it, `bombadil-YYYY.MM.DD-x86_64.iso.sha256`. Download both to the second device, into one folder. (They are published in the project's `images` folder. A fork that makes its own image builds it: see [Build the image yourself](#build-the-image-yourself).)
+The image is one file, `bombadil-YYYY.MM.DD-x86_64.iso`, about 3 GB. The project's `images` folder keeps it in parts of at most 500 MB, because that folder does not take a bigger file: `bombadil-YYYY.MM.DD-x86_64.iso.001`, `.002` and so on. Download **every part**, and the two checksum files, into one folder on the second device:
 
-At the time of writing the newest is `bombadil-2026.11.12-x86_64.iso`, 2,977,300,480 bytes (2.98 GB), whose SHA-256 is `e4d770af0fb524f80382b774cc35ef1d9230bb83b4aff293a41939b747cf43a7`. The checksum file is the authority if a newer image has been published since.
+| File | What it is |
+|---|---|
+| `bombadil-YYYY.MM.DD-x86_64.iso.001` to `.006` | The image, in order. A part is not a usable file on its own. |
+| `bombadil-YYYY.MM.DD-x86_64.iso.parts.sha256` | The checksum of each part. |
+| `bombadil-YYYY.MM.DD-x86_64.iso.sha256` | The checksum of the whole image, once the parts are joined. |
+
+Keep about 6 GB free on the second device: the parts, and then the joined image beside them. (A fork that makes its own image gets one `.iso` and no parts: see [Build the image yourself](#build-the-image-yourself).)
+
+At the time of writing the newest is `bombadil-2026.11.12-x86_64.iso`: 2,977,300,480 bytes (2.98 GB) in six parts, whose SHA-256 once joined is `e4d770af0fb524f80382b774cc35ef1d9230bb83b4aff293a41939b747cf43a7`. The checksum file is the authority if a newer image has been published since.
 
 **Use the newest date, and never one dated 2026.11.11 or earlier.** Images from before the fix in pull request 35 can have damaged kernel modules: an option of the image builder wrote zeros over the end of some files, and nothing complained until a driver (a Wi-Fi card, the crypto engine) failed to load. The installer also reads every kernel module back, and stops with "write it again, or try another stick" if one is damaged.
 
-### 2. Check the image
+### 2. Check the parts, join them, check the image
 
-The `.sha256` file holds one line, the image's checksum and its name. Check that the download matches it, in the folder that holds both:
+**Check the parts** (skip this if you have one `.iso` file). Each line of the `.parts.sha256` file is a checksum and a part's name. In the folder that holds them all:
+
+| System | Command | Right answer |
+|---|---|---|
+| Linux | `sha256sum -c bombadil-YYYY.MM.DD-x86_64.iso.parts.sha256` | One `...iso.00N: OK` line for each part |
+| macOS | `shasum -a 256 -c bombadil-YYYY.MM.DD-x86_64.iso.parts.sha256` | The same |
+| Windows (PowerShell) | `Get-FileHash .\bombadil-YYYY.MM.DD-x86_64.iso.00? -Algorithm SHA256` | The same 64 letters and digits as the matching line of `Get-Content .\bombadil-YYYY.MM.DD-x86_64.iso.parts.sha256` (capitals do not matter), part for part |
+
+A part that differs: download that part again.
+
+**Join the parts** into the image, in the same folder. Order matters: `.001` first.
+
+On Linux and macOS:
+
+```sh
+cat bombadil-YYYY.MM.DD-x86_64.iso.00* > bombadil-YYYY.MM.DD-x86_64.iso
+```
+
+On Windows, in PowerShell, in that folder (three lines; paste them together):
+
+```powershell
+$out = [IO.File]::Create("$PWD\bombadil-YYYY.MM.DD-x86_64.iso")
+foreach ($p in Get-ChildItem .\bombadil-YYYY.MM.DD-x86_64.iso.00? | Sort-Object Name) { $in = [IO.File]::OpenRead($p.FullName); $in.CopyTo($out); $in.Close() }
+$out.Close()
+```
+
+The `cat` line was run on Linux on the 2026.11.12 parts and gives the checksum above (macOS's `cat` is the same). The Windows lines were not run on Windows: the check below is what tells you whether the join worked.
+
+**Check the image.** The `.iso.sha256` file holds one line, the image's checksum and its name. In the folder that holds both:
 
 | System | Command | Right answer |
 |---|---|---|
@@ -73,7 +109,7 @@ The `.sha256` file holds one line, the image's checksum and its name. Check that
 | macOS | `shasum -a 256 -c bombadil-YYYY.MM.DD-x86_64.iso.sha256` | `bombadil-YYYY.MM.DD-x86_64.iso: OK` |
 | Windows (PowerShell) | `(Get-FileHash .\bombadil-YYYY.MM.DD-x86_64.iso -Algorithm SHA256).Hash` | The same 64 letters and digits as the start of the `.sha256` file (capitals do not matter). `Get-Content .\bombadil-YYYY.MM.DD-x86_64.iso.sha256` shows it. |
 
-If they differ, download the image again before going on. A checksum that matches proves the file, not the stick: if the installer later says "a copied kernel module is damaged", write the stick again or use another one.
+If they differ, join again, or download the parts again, before going on. A checksum that matches proves the file, not the stick: if the installer later says "a copied kernel module is damaged", write the stick again or use another one.
 
 ### 3. Write the USB stick
 
