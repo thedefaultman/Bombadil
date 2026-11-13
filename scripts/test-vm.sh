@@ -222,12 +222,16 @@ case "$mode" in
     MENU_DOWN=4 boot refresh "BOMBADIL-SMOKE: DONE" "${STICK[@]}" -drive file="$disk",if=virtio,format=qcow2 -boot menu=off -no-reboot
     grep -aqE "BOMBADIL-SMOKE: PASS refresh-runs[[:space:]]*$" "$out/refresh.serial.log" || exit 1
     # 3. The refreshed system starts, and puts the old system back: it then starts from the same GRUB.
-    MENU_DOWN="" STOP=1 PCRE=1 boot refreshed "(?s)BOMBADIL-SMOKE: REBOOT.*BOMBADIL-SMOKE: PASS hyprland-running" \
+    MENU_DOWN="" STOP=1 PCRE=1 boot refreshed "(?s)BOMBADIL-SMOKE: REBOOT.*BOMBADIL-SMOKE: PASS bar-layer" \
       -drive file="$disk",if=virtio,format=qcow2
     # What boot() waited for is not what it found: a start that never came ends in a timeout it only reports.
     # Read only what the second start printed (after the REBOOT line), and say which system that was.
     second=$(sed -n '/BOMBADIL-SMOKE: REBOOT/,$p' "$out/refreshed.serial.log" | tail -n +2)
     grep -aq "BOMBADIL-SMOKE: PASS hyprland-running" <<<"$second" || { echo "the old system did not start again after the undo"; exit 1; }
+    # The old system reads the new home's stub: with no Bombadil part on that system it has to run the old file, so the
+    # config is clean and the bar is up (the stub's fallback, on a real Hyprland).
+    grep -aq "BOMBADIL-SMOKE: PASS hypr-config-ok" <<<"$second" || { echo "the old system's Hyprland reports config errors with the new home's stub"; exit 1; }
+    grep -aq "BOMBADIL-SMOKE: PASS bar-layer" <<<"$second" || { echo "the old system's bar did not come up with the new home's stub"; exit 1; }
     # The refreshed system's own checks (layout-*, refresh-*) are not in the old image: seeing them again means
     # the undo did not take and the new system started a second time.
     if grep -aqE "BOMBADIL-SMOKE: (PASS|FAIL) (layout-|refresh-)" <<<"$second"; then

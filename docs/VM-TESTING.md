@@ -94,9 +94,10 @@ the sign-in marker is as it was. Three more checks are about the changed value:
   `decoration:blur:size` is still Bombadil's 6, which shows that a second `hl.config` call merges with the
   first and does not replace it.
 
-When the old system comes back after the undo, its own checks run, including the config check, which
-proves the stub falls back to the old file. These three checks are written and their pieces are tested
-against stand-ins, but they have not yet been run in a real VM.
+When the old system comes back after the undo, `test-vm.sh` waits for its bar and requires its config
+check to pass: that system has no Bombadil part, so the home's stub has to fall back to the old file, and
+this shows it does on a real Hyprland. The three checks above passed in a real VM run, with the old image from
+before the package; the fallback check was added after that run and has not run yet.
 
 **What `update` does.** The first boot of the installed system runs the live checks and the `package-*`
 checks, writes down the version, takes a restore point, turns one user unit off (`bombadil-mail`), and runs
