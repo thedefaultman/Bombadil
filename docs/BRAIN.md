@@ -23,8 +23,9 @@ you change anything here.
    removed for being old.
 6. **What a model writes is pinned to what it read.** A description carries a fingerprint of
    its sources and greys out when they change.
-7. **You and the agents see the same brain.** The pill, the window, the machine's agent and
-   the CLI all ask one index.
+7. **You and the agents see the same brain.** The pill, the window and the CLI all ask one index.
+   The machine's agent is meant to ask it too through a tool; no such tool is in
+   `src/bombadil/mcp_server.py` yet.
 
 Two more that the code relies on: **every piece degrades** (no watcher, no brain, no Chromium,
 no btrfs: the rest carries on and says what is missing in one plain sentence) and **nothing
@@ -65,7 +66,7 @@ flowchart LR
   T[agentd: turns.jsonl + turn start/end notes] --> S
   H[Chromium History] --> S
   P[pacman.log, memory.md] --> S
-  S[bombadil-brain<br/>one writer thread: ingest, rules] --> D[(brain.db<br/>SQLite WAL + FTS5)]
+  S[bombadil-brain<br/>one ingest thread; a second writes descriptions] --> D[(brain.db<br/>SQLite WAL + FTS5)]
   D --> F[focus.py: slots, why, search]
   F -- JSON lines over brain.sock --> A[Brain window]
   F --> L[the pill: brain, why is this here?]
@@ -84,8 +85,9 @@ plain files, xattrs, `turns.jsonl`, git, Chromium's History and `pacman.log`.
 
 - **things**: anything a person would name (a file, folder, project, app, page, site, one of the
   machine's turns, a coding session, a package, a line of memory). Files are found by `path`, the
-  rest by `key` (`turn:41`, `app:passwords`, `url:...`). A thing is never deleted; `deleted` says
-  when it went. `private` things are known by name only.
+  rest by `key` (`turn:41`, `app:passwords`, `url:...`). A thing is not deleted when it goes; `deleted` says
+  when it went. The one exception is scaffolding made and removed within 30 seconds by a single writer,
+  which `Ingest.purge` removes entirely. `private` things are known by name only.
 - **events**: what was witnessed, with who did it (`actor`: you, turn, session, app, system,
   unknown, before). Bursts by one writer within a minute fold into one row.
 - **links**: the strong edges (made by, changed by, came from, asked about, mentions), each with
@@ -128,8 +130,8 @@ watches the filesystem holding DIR and treats DIR as the home root (development,
 
 **Talks over** a Unix stream socket, `/run/bombadil-brain/watch.sock`, one JSON object per
 line. A connection is a user (SO_PEERCRED); root gets everything, anyone else the events under
-their own home and `/etc`, `/var/log/pacman.log`. The brain sends `{"op":"ping"}`, the watcher
-answers `{"op":"pong"}`; nothing else is read.
+their own home and `/etc`, `/var/log/pacman.log`. The watcher answers `{"op":"ping"}` with
+`{"op":"pong"}`; nothing else is read. The service never sends a ping.
 
 **Says**, in this order: `hello` (`v`, `watching`, `fs`, `top`, `reason`; `watching:false`
 with a reason when the root is not btrfs, and then no events come); the spool of what
@@ -208,8 +210,7 @@ places everything else in Bombadil is: the pill and a window.
   behind. **Ask about this** puts "About ~/path: " in the pill for you to finish.
 - Every line is a sentence a person would say: "the machine, turn 41, 'install the VPN'",
   "builder on Bombadil", "you, in the terminal", with "13:02" today, "Tue 14:02" this week
-  (`words.py`). The window, the CLI, the pill and the agents' tools share them, so they never
-  disagree.
+  (`words.py`). The window, the CLI and the pill share them, so they never disagree.
 - A thing that is being changed right now by another turn or session is amber. A description the
   model wrote greys out when its source changed and is rewritten the next time someone looks.
   Private things (keys, password stores, `.env` files) show a name and a history, never contents.
@@ -228,7 +229,8 @@ bombadil brain rebuild          start the index over from files, xattrs and logs
 
 The service also answers these as JSON lines on `brain.sock` (`status`, `thing`, `focus`,
 `children`, `why`, `search`, `recent`, `show`, `requested`, `describe`, `note`, `subscribe`, `rebuild`);
-`src/bombadil/brain/client.py` is the small blocking client every caller uses.
+`src/bombadil/brain/client.py` is the small blocking client that agentd and the launcher use; the Brain window
+talks to the socket with Qt's `QLocalSocket` instead.
 
 ## Building on it
 

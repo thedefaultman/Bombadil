@@ -1,9 +1,15 @@
 # Mail: every account in one list, in Bombadil's own view
 
+> **Status:** Partly shipped. Piece 1 of "Bombadil at work" is Shipped: it is on `main` and tested. That is the Mail window, the five agent tools and the skill, the press with its four fingerprints, the notice lines and receipts, the reserved app name `mail`, and the Thunderbird engine with its add-on, its host and the image side. The coding sessions' dots beside the pill and Tab's walk through them are Shipped on `main`, and neither reads mail, so a waiting draft lights no dot and joins no walk, as the design says. The message card and the task card that reuse the hand-over are Shipped on `main` with piece 2, which is Shipped ([messages and connections](messages-and-connections.md)): the card kinds (`src/bombadil/cards.py`), the outbox entries (`src/bombadil/outbox.py`), agentd, the OS server and the shell's faces (`shell/MessageFace.qml`, `shell/TaskFace.qml`) are joined, and tested against fakes. Not on `main` in full, as of 2026-11-11, and where each stands: the hardening that would turn the press from a rule into a wall, in three steps. The connections as their own system user is Partly shipped: `bombadil-connect` runs as its own system user and holds the keys of Slack and the work tools (`iso/airootfs/etc/systemd/system/bombadil-connect.service`), and the mail service does not use it, so mail's Thunderbird profile is still the person's. Presses accepted only from the shell's own process is Designed. The agent without `sudo` is Designed, and the image still gives its user passwordless `sudo`. The Brain reading mail's sender, subject and time is Designed: the service's `recent` is Shipped and tested, and nothing in `src/bombadil/brain/` calls it. The encrypted disk of the installed system is In progress, with the installed system, which is not on `main`: the installer on `main` makes a plain btrfs disk, so on `main` Thunderbird's copy of the mail is not inside an encrypted disk. Not checked, as "What is checked and what is not" says: a real Gmail or Microsoft sign-in, a Microsoft 365 account (built as IMAP and SMTP with OAuth, not through Graph), an iCloud app-specific password, Arch's Thunderbird package and the hidden workspace on a real compositor, and a mailbox of tens of thousands of mails.
+> **Built differently:** three things in what is on `main` differ from the design below, and the design stands. Sign-in is Thunderbird's own: Thunderbird opens the provider's page, which reaches the browser panel because the image makes the panel the default browser, and the address is not filled in (`iso/airootfs/etc/xdg/mimeapps.list`). Microsoft 365 is IMAP and SMTP with OAuth, not Microsoft Graph (`MICROSOFT` in `src/bombadil/mail/accounts.py`), and a real Thunderbird never says an account is blocked by an administrator, so the row "asks an admin to approve mail apps" is drawn only on the fake engine (`share/mail/extension/accounts.js`, `src/bombadil/mail/fake.py`).
+> **Code:** `src/bombadil/mail/`, `bin/bombadil-mail`, `bin/bombadil-mail-host`, `share/apps/mail/`, `share/mail/extension/`, `share/skills/bombadil-mail/SKILL.md`, `src/bombadil/outbox.py`, `src/bombadil/notices.py`, `src/bombadil/agentd.py`, `src/bombadil/launcher.py`, `src/bombadil/apps.py`, `src/bombadil/narrate.py`, `iso/packages.x86_64`, `iso/airootfs/etc/systemd/user/bombadil-mail.service`, `iso/airootfs/etc/skel/.config/hypr/hyprland.lua`
+> **Design:** this page and the contract it is built to, [Mail](../MAIL.md); the brief it is piece 1 of, [Bombadil at work](everyday-work-brief.md#1-mail-in-bombadils-own-view) and its page, [Bombadil at work](pages/bombadil-at-work.html); [Mail (architecture)](../architecture/mail.md)
+> **Verified:** 2026-11-11 against `main` at `7d17600`: the status statements above only (what is on `main`, what is Designed, what is In progress, the lines on what was built differently, and that the coding sessions' dots and walk do not read mail), and that the files above exist. They were read in `src/bombadil/dev.py` (`Dev.attention`, `Dev.next` and `Dev.snapshot` take no mail) and `shell/DevState.qml`; in `iso/airootfs/etc/systemd/system/bombadil-connect.service` and `iso/airootfs/etc/systemd/user/bombadil-mail.service` (the mail unit is a user unit and does not use the connection service); in `iso/airootfs/etc/sudoers.d/bombadil` (the image still gives its user passwordless `sudo`); in `src/bombadil/outbox.py` (`Outbox.from_agent` refuses a press from inside a turn or a coding session's scope and does not ask for the shell's own process, and the performers are the mail kind and the three kinds of piece 2), `src/bombadil/cards.py`, `src/bombadil/connect/watch.py`, `src/bombadil/notifications.py` and `shell/CardHost.qml` (the message and task faces); and in `iso/airootfs/usr/local/bin/bombadil-install` (a plain btrfs disk). That nothing in `src/bombadil/mail/` calls the connection service, and that nothing in `src/bombadil/brain/` names mail or asks the service's `recent`, were checked by search. For the installed system, its installer was read at the head the [roadmap](../roadmap.md#in-progress) lists (an encrypted layout and the same passwordless `sudo`). The mail service, its add-on, its window and the image's files for them are unchanged between `7176e55` and `7d17600` (compared with `git diff`), so the lines on what was built differently rest on `src/bombadil/mail/accounts.py`, `share/mail/extension/accounts.js`, `src/bombadil/mail/fake.py` and `iso/airootfs/etc/xdg/mimeapps.list`, and on a search for a login hint that found none. The rest of the page was last read on 2026-10-01 against `main` at `969b80b`: the five tools (`src/bombadil/mail/tools.py`), the notice calls (`src/bombadil/notices.py`), the window's list, buttons and first-run field (`share/apps/mail/`), the lines the page quotes ("Reply to Sam is ready. Sending is yours.", "I never press Send for you.", "I can't tell whether that went.", the receipt "Sent to ... from ... · 09:08", "Yours: Send", the new-address warning), the reserved name (`RESERVED` in `src/bombadil/apps.py`), the image's package, user service and window rule, and the press checks (`Outbox.from_agent` in `src/bombadil/outbox.py`). On that day the mail tests were run: 1230 passed and 33 skipped. The skips are the window's QML tests (no PySide6 here) and the real-Thunderbird tests (`tests/test_mail_e2e_real.py`, `tests/test_mail_addon_real.py`, which need an unpacked Thunderbird), so the paragraph "What is checked and what is not" is the project's own report and was not re-run. The vendor facts about Google, Microsoft and Thunderbird (dated September 2026) were not re-checked. The rest of the page was not read again at `7d17600`, and no test was run for this check.
+
 You say "what needs me in mail?" and a Mail window opens on the mails that ask something of you, from
 every account you have, each with one line on why. You open one, say what the reply should say, and the
 words appear in the reply box with an orange ring on Send and the label "Yours: Send". You read them,
-change a word, and press Send. The line above the pill says "Sent to Sam from you@example.test · 09:08".
+change a word, and press Send. The line above the pill says "Sent to Sam from alex@example.com · 09:08".
 At no point did anything leave the machine that you had not seen, and the one press that lets it go was
 yours.
 
@@ -121,18 +127,21 @@ skill at `share/skills/bombadil-mail/SKILL.md` tells the agent what it may not d
 ## What is a rule, not yet a wall
 
 The agent runs as the person, with a shell. What keeps "never" true is code that checks where a press
-comes from (agentd refuses one from a process inside a turn, from a process it cannot name, or from one
-that has gone) and what is being pressed (the fingerprints). A process of the same user that is outside
+comes from (agentd refuses one from a process inside a turn or a coding session's scope, from a process it cannot name,
+or from one that has gone) and what is being pressed (the fingerprints). A process of the same user that is outside
 every turn could in principle write to the mail socket or read Thunderbird's profile. The hardening order,
 which later pieces carry out: connections run as their own system user with their own token store, agentd
 accepts presses only from the shell's own process, and the agent loses `sudo`. Until then it is a rule with
-a check, and the pages say so wherever it matters.
+a check, and the pages say so wherever it matters. As of 2026-11-11 the first step is on `main` for the keys of
+Slack and the work tools and not for mail, and the other two are not; the Status block above says where each
+stands.
 
 ## What changes in the rest of Bombadil
 
 - **A reserved app name.** `mail` is Bombadil's own; an app made on request cannot take it.
 - **The pill line** gains notices (`notice`, `notice_end`, `notice_action`, `notice_dismiss`) with up to
-  three buttons, drawn with the shared tokens. Mail is the first consumer; messages are the second.
+  three buttons, drawn with the shared tokens. Mail is the first consumer; messages are the second, and both
+  are on `main`.
 - **agentd** gains the press path and the outbox. The narration says "Looking through your mail", "Writing
   a draft" and so on, and counts reading mail as reading other people's words.
 - **The image** gains the `thunderbird` package, a user service, a window rule that keeps every
@@ -147,7 +156,7 @@ it answers, a second press sends nothing, and stopping the service leaves no Thu
 add-on has its own tests with and without a real Thunderbird, and the window has screenshot-checked states.
 
 Not checked, and said so wherever a person might assume otherwise: a real Gmail or Microsoft sign-in (the
-consent screens change), Microsoft Graph accounts, an iCloud app-specific password, Arch's own Thunderbird
+consent screens change), a Microsoft 365 account (built as IMAP and SMTP with OAuth, not through Graph), an iCloud app-specific password, Arch's own Thunderbird
 package on Hyprland (the lab used Mozilla's builds), the hidden workspace's behaviour on a real
 compositor, and a long-lived mailbox of tens of thousands of mails.
 
